@@ -139,9 +139,22 @@ as a button in the pipeline:
 
 - `linux:package` -- the Linux tarball.
 - `craft_windows_qt6_x86_64`, `craft_macos_qt6_arm64`,
-  `craft_macos_qt6_x86_64` -- the Craft packages (unsigned: signing
-  happens on tags). They sit in the last stage, `deploy`, so their
-  buttons appear once the build and test stages have finished.
+  `craft_macos_qt6_x86_64` -- the Craft packages. They sit in the last
+  stage, `deploy`, so their buttons appear once the build and test stages
+  have finished.
+- `macos:universal` -- the two macOS halves merged, signed and notarised
+  (see "A universal macOS package"). Only on `Seabass/X.Y`, and only
+  once both macOS halves have run in the same pipeline.
+
+**Signing depends on the ref, and tags are not signed.** KDE's signing
+service clears a request by project and exact ref name
+(`sysadmin/ci-utilities`, `signing/*-projects.yaml`). Seabass is cleared
+on `Seabass/0.8` and `Seabass/1.0` for macOS signing and notarisation and
+Windows signing, and on `master` for macOS and Windows signing. A tag is
+its own ref name and is not listed, and the secure services key has not
+reached our tag pipelines either (the tags are not protected). A tag pipeline's
+packages come out unsigned and its jobs still pass; only the log says
+"is not cleared for signing. Skipping."
 
 The MSYS2 Windows chain (`windows:build` and what follows it) needs a
 self-hosted runner tagged `windows`, and none is registered, so it does
@@ -157,8 +170,8 @@ does not check for updates. That is what a pre-tag test build is.
 
 A release tag runs the full lane: Linux build and the whole `ctest`
 suite including the `integration` label, Windows build, test, installer
-and installer test, and the Craft macOS job that signs and notarises a
-`.dmg`.
+and installer test, and the two Craft macOS halves. None of them is
+signed on a tag: see "Signing depends on the ref" above.
 
 | Platform | Job | Package |
 |---|---|---|
@@ -214,6 +227,14 @@ a Mac -- `lipo` has a Linux equivalent in `llvm-lipo`, and `rcodesign` can
 sign there, but the `.dmg` itself needs `hdiutil`, and both halves are
 produced on Macs anyway -- while being scriptable from the Linux publisher
 over ssh: each script is non-interactive and exits non-zero on any fault.
+
+On a `Seabass/X.Y` branch CI does the same: `macos:universal` takes the two
+halves' `.dmg` files and the `install.db` each Craft job keeps, merges them
+with `--from-dmgs`, has the merged bundle and the image signed and the
+image notarised by KDE's signing service, and runs
+`tools/macos-verify-dmg.sh` against the committed fixture. It refuses when
+the runner cannot execute x86_64 code, rather than check one slice and
+pass.
 
 ```sh
 # on the Mac, once per architecture, from the same source tree
@@ -293,19 +314,15 @@ the download directory.
   downloading it can read a dependency list. Not good enough for a stable
   release aimed at DJs; that needs a self-contained build, and it is not
   written yet.
-- **The macOS package has to be universal, and CI does not merge it.**
+- **The macOS package has to be universal, and CI merges it only on a
+  `Seabass/X.Y` branch, not on a tag** (`macos:universal`, above).
   Rosetta translates x86_64 to ARM and never the reverse, so an arm64-only
   `.dmg` mounts on an Intel Mac and refuses to launch -- and
   `publish-release.py` has one macOS slot, which is the right shape only if
   what goes in it carries both architectures. `tools/macos-universal-dmg.sh`
   merges an arm64 and an x86_64 Craft bundle into one package; see "A
-  universal macOS package" above. So the published `.dmg` is not the build
-  CI tested, and the release notes have to say so. It cannot simply be
-  merged from the two `.dmg` files CI produces either: the check that the
-  two sides hold the same package versions reads each Craft root's
-  `install.db`, and a `.dmg` does not carry one. Two CI runners clone
-  `craft-blueprints-kde` at their own times, so that is exactly the case
-  the check exists for and exactly the case a `.dmg` cannot answer.
+  universal macOS package" above. A `.dmg` merged by hand is not the build
+  CI tested, and the release notes have to say so.
 - **The release text.** `publish-release.py` proposes one from the
   commits on the tag, grouped and trimmed, and will not publish until a
   person has edited it. A changelog nobody read is a changelog nobody
