@@ -472,6 +472,40 @@ int main()
         std::cout << "case 14 (an image beside a blob hash is named by that hash) OK\n";
     }
 
+    // 15. Tidying the local copies, once per library per run: image files
+    //     straight under the library's folder (the layout before copies
+    //     were kept per stick) go, and so does a location's folder nobody
+    //     has written to for 30 days. The folder in use, and a recent one,
+    //     stay.
+    {
+        const fs::path tidy = library.parent_path() / "tidy" / "Engine Library";
+        fs::create_directories(tidy.parent_path());
+        fs::copy(source, tidy, fs::copy_options::recursive);
+        const std::string uuid = "33333333-4444-5555-6666-777777777777";
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(tidy / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 1, "af2f6f87c56583adb67003735089017e2eb03572", pngImage);
+        assert(sqlite3_exec(db, ("UPDATE Information SET uuid = '" + uuid + "';").c_str(), nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(db);
+        const fs::path libraryCopies = cache / uuid;
+        const fs::path oldLayout = libraryCopies / "af2f6f87c56583adb67003735089017e2eb03572.png";
+        const fs::path stale = libraryCopies / "at-0123456789abcdef" / "old-10.png";
+        const fs::path recent = libraryCopies / "at-fedcba9876543210" / "new-10.png";
+        for (const fs::path &file : {oldLayout, stale, recent}) {
+            fs::create_directories(file.parent_path());
+            std::ofstream(file, std::ios::binary) << "0123456789";
+        }
+        fs::last_write_time(stale, fs::file_time_type::clock::now() - std::chrono::hours(24 * 31));
+        const auto read = artworkBySourceId(seabass::pathToUtf8(tidy));
+        assert(slurp(read.at("1")) == pngImage);
+        assert(!fs::exists(oldLayout));
+        assert(!fs::exists(stale.parent_path()));
+        assert(fs::exists(recent));
+        assert(fs::exists(seabass::pathFromUtf8(read.at("1"))));
+        std::cout << "case 15 (old layout and forgotten locations are tidied away) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
