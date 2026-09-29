@@ -148,6 +148,41 @@ int main()
     assert(seabass::infrastructure::hasPendingJournal(copy / "m.db") && "the copy is the state as it was found");
     std::cout << "case 2 (a copy kept first: " << seabass::pathToUtf8(copy) << ") OK\n";
 
+    // 3. The artwork stage opens m.db on its own, in a later pass, and a
+    //    stick pulled mid-save can have left a journal by then: it is
+    //    recovered the same way, a copy kept first, before that read.
+    {
+        const fs::path again = scratch / "crashed-again" / "Engine Library";
+        fs::remove_all(again.parent_path(), ec);
+        fs::create_directories(again.parent_path());
+        fs::copy(source, again, fs::copy_options::recursive);
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(live / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        exec(db, "PRAGMA journal_mode=DELETE");
+        exec(db, "PRAGMA cache_size=1");
+        exec(db, "PRAGMA cache_spill=1");
+        exec(db, "BEGIN");
+        exec(db, "UPDATE Track SET title = 'INTERRUPTED', path = hex(randomblob(400))");
+        fs::copy_file(live / "Database2" / "m.db", again / "Database2" / "m.db", fs::copy_options::overwrite_existing);
+        fs::copy_file(live / "Database2" / "m.db-journal", again / "Database2" / "m.db-journal",
+                      fs::copy_options::overwrite_existing);
+        exec(db, "ROLLBACK");
+        sqlite3_close(db);
+        const fs::path againDb = again / "Database2" / "m.db";
+        assert(seabass::infrastructure::hasPendingJournal(againDb));
+        // Folders are named to the second, so case 1's could be reused.
+        fs::remove_all(recovered, ec);
+
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(again));
+        reader.setProgressReporter(reporter);
+        std::vector<seabass::domain::Track> none;
+        reader.fillArtwork(none);
+        assert(!seabass::infrastructure::hasPendingJournal(againDb) && "recovered before the artwork read");
+        assert(entriesOf(recovered).size() == 1 && "and a copy kept first");
+        std::cout << "case 3 (the artwork stage recovers a pending journal before it reads) OK\n";
+    }
+
     fs::remove_all(scratch, ec);
     std::cout << "engine_pending_journal_test: all passed\n";
     return 0;
