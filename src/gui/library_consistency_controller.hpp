@@ -293,6 +293,7 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int artworkMissingFileCount READ artworkMissingFileCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkEmptyFileCount READ artworkEmptyFileCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkEmptyInDatabaseCount READ artworkEmptyInDatabaseCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
     // Tracks whose Engine row does not say what sample rate they are, and
     // how many of those the files themselves can answer for. Engine turns
@@ -408,6 +409,9 @@ public:
     // And a third: the track asked for art, and the row it points at has
     // no hash to find it by. Nothing here can repair that.
     int artworkBrokenRowCount() const;
+    // Art kept inside the database whose row holds no image a player can
+    // draw. Not repaired: the library reads its art from those rows.
+    int artworkEmptyInDatabaseCount() const;
     // Set when the audit could not read the database. Without it an audit
     // that failed looks exactly like a library with nothing wrong: no
     // counts, no notice, no word to the user.

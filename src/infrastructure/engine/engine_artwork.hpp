@@ -19,13 +19,16 @@ namespace seabass::infrastructure::engine
 
 // Where a track's cover art actually is, and whether a player can find it.
 //
-// Engine stores art as files, never in the database. An AlbumArt row that
-// a player can use holds a hash as a blob, and the image sits at
-// "Artwork/<that hash, base64url>.jpg" inside the library -- self-contained,
-// so it survives the stick being plugged into anything.
+// Engine has kept art two ways. Current libraries store it as files: an
+// AlbumArt row holds a hash as a blob, and the image sits at
+// "Artwork/<that hash, base64url>.jpg" inside the library. Older ones
+// (schema 3.0.1 and earlier, and libraries Engine DJ 4.5.0 migrated from
+// them) keep the image itself in AlbumArt.albumArt, beside a hash written
+// as hex text. Both are self-contained, so they survive the stick being
+// plugged into anything.
 //
 // Engine's own "import rekordbox library" writes something else into the
-// same column: the text "image://fileart//<absolute path>" naming the
+// hash column: the text "image://fileart//<absolute path>" naming the
 // rekordbox JPEG as the *importing computer* saw it, e.g.
 // "/media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg". That path exists on
 // no player and on no other machine, so the art silently never appears --
@@ -49,7 +52,14 @@ enum class ArtworkStorage {
     // art was asked for and there is nothing to find it by. Never
     // repairable -- there is no image to copy and no name to write.
     RowWithoutHash,
-    // No art row, or an empty one.
+    // The image is in the row itself, in AlbumArt.albumArt: readable by a
+    // player whatever the row's hash or id.
+    InDatabase,
+    // A row that keeps its image in the database, holding none, or bytes
+    // that are neither JPEG nor PNG. Never repaired: pointing the track at
+    // a file instead would move it off the storage its library reads.
+    InDatabaseUnreadable,
+    // No art row, or Engine's own empty "no cover" row.
     None,
 };
 
@@ -124,8 +134,13 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
 // every other implementation agrees on; nothing else calls it yet.
 std::string artworkFileName(std::span<const std::uint8_t> hash);
 
+// How SQLite stored an AlbumArt.hash value, which is what tells the two
+// kinds of storage apart: a blob names a file, text names the image in
+// the row beside it.
+enum class ReferenceType { Blob, Text };
+
 // Which storage a raw AlbumArt.hash value is.
-ArtworkStorage classifyArtworkReference(std::string_view reference);
+ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type);
 
 // The "PIONEER/Artwork/..." tail of an imported reference, joined onto
 // this stick. Empty when the reference carries no such tail, and also
@@ -149,6 +164,9 @@ struct ArtworkRepair
     // player will read: the name a repair writes carries the format, so
     // only JPEG and PNG, decided on the bytes rather than the extension.
     int notAnImage = 0;
+    // Entries left alone because the track's row keeps its art in the
+    // database: re-pointing it would drop that image.
+    int keptInDatabase = 0;
     std::string error;
 };
 
@@ -184,7 +202,8 @@ inline std::string extensionForImage(std::string_view bytes)
 
 // Gives each entry Engine's own storage: copies its image into Artwork/
 // under the hash of its bytes, adds the AlbumArt row, and points the track
-// at it. Entries with no imageOnStick are skipped. One transaction.
+// at it. Entries with no imageOnStick are skipped, and so is any track
+// whose current row keeps its art in the database. One transaction.
 //
 // `databaseFile` is the m.db to write. It is a parameter rather than
 // <engineLibraryPath>/Database2/m.db because a save may have redirected

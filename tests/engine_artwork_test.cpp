@@ -154,10 +154,17 @@ int main(int argc, char **argv)
     //    is on *this* stick -- the volume label in the path is the machine
     //    that did the import, so only the tail is worth anything.
     {
-        assert(classifyArtworkReference("") == ArtworkStorage::None);
-        assert(classifyArtworkReference("image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg")
-               == ArtworkStorage::ImportedPath);
-        assert(classifyArtworkReference(std::string("\x01\x02\x03", 3)) == ArtworkStorage::Cached);
+        assert(classifyArtworkReference("", ReferenceType::Blob) == ArtworkStorage::None);
+        assert(classifyArtworkReference("", ReferenceType::Text) == ArtworkStorage::None);
+        for (const ReferenceType type : {ReferenceType::Blob, ReferenceType::Text}) {
+            assert(classifyArtworkReference("image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg", type)
+                   == ArtworkStorage::ImportedPath);
+        }
+        assert(classifyArtworkReference(std::string("\x01\x02\x03", 3), ReferenceType::Blob) == ArtworkStorage::Cached);
+        // Hex text is the hash of an image kept in the row, never a file
+        // name to spell out.
+        assert(classifyArtworkReference("af2f6f87c56583adb67003735089017e2eb03572", ReferenceType::Text)
+               == ArtworkStorage::InDatabase);
         const std::string here =
             imageOnStickFor("image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg", "/media/OTHER");
         assert(here == pathToUtf8((fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a5_m.jpg").make_preferred()));
@@ -558,6 +565,116 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (4, 'Four', 'D', 7);");
         sqlite3_close(db);
         std::cout << "case 12 (a stop lands at the next row, and the database is let go) OK\n";
+    }
+
+    // 13. An older library keeps each cover inside its row, in
+    //     AlbumArt.albumArt, beside a hash written as hex text (39 or 40
+    //     characters: leading zeros dropped). A player reads those, so the
+    //     audit counts them readable, whatever the hash says and even at
+    //     id 1. A row whose image is empty or not a picture is a fault of
+    //     its own that nothing offers to repair, however many other copies
+    //     the tags or backups hold: re-pointing the track would move it
+    //     off the storage its library reads. And the empty "no cover" row
+    //     is told by its content, not by sitting at id 1.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_in_database");
+        fs::create_directories(fixture.stick / "Contents");
+        sqlite3 *db = fixture.open();
+        exec(db, "DROP TABLE Track;");
+        exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER, path TEXT);");
+        const std::string pngImage = png("A-PNG-KEPT-IN-THE-ROW");
+        const std::string jpegImage = jpeg("A-JPEG-KEPT-IN-THE-ROW");
+        const auto insertRow = [db](int id, const char *hash, const std::string *image) {
+            sqlite3_stmt *insert = nullptr;
+            assert(sqlite3_prepare_v2(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (?, ?, ?);", -1, &insert,
+                                      nullptr)
+                   == SQLITE_OK);
+            sqlite3_bind_int(insert, 1, id);
+            sqlite3_bind_text(insert, 2, hash, -1, SQLITE_TRANSIENT);
+            if (image != nullptr) {
+                sqlite3_bind_blob(insert, 3, image->data(), static_cast<int>(image->size()), SQLITE_TRANSIENT);
+            } else {
+                sqlite3_bind_null(insert, 3);
+            }
+            assert(sqlite3_step(insert) == SQLITE_DONE);
+            sqlite3_finalize(insert);
+        };
+        const std::string emptyImage;
+        const std::string notAPicture = "NOT A PICTURE";
+        insertRow(1, "af2f6f87c56583adb67003735089017e2eb03572", &pngImage);
+        insertRow(2, "551c96558e2eb05ea31f3735b129f242b720c15", &jpegImage);  // 39 characters
+        insertRow(3, "934a576ac3a4a0ab6d66478652b9bb8b7ac68b82", &emptyImage);
+        insertRow(4, "8998055a7787a03a8e8de2fa607a11f37b4c674a", &notAPicture);
+        insertRow(5, "", nullptr);  // Engine's "no cover" row, not at id 1
+        for (int track = 1; track <= 6; ++track) {
+            const int row = track <= 2 ? track : track - 1;  // tracks 2 and 3 share row 2
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId, path) VALUES (" + std::to_string(track)
+                         + ", 'T', 'A', " + std::to_string(row) + ", '../Contents/t" + std::to_string(track)
+                         + ".mp3');");
+        }
+        sqlite3_close(db);
+
+        // Every track's tags carry a cover: the case in which a repair
+        // used to be offered for all of them.
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const auto reader = [](const ArtworkEntry &) { return jpeg("FROM-THE-TAGS"); };
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(audit.error.empty());
+        assert(audit.tracksWithArt == 5);  // track 6 asked for none
+        assert(audit.readableByAPlayer == 3);
+        assert(audit.unreadable.size() == 2);
+        for (const ArtworkEntry &entry : audit.unreadable) {
+            assert(entry.trackId == 4 || entry.trackId == 5);
+            assert(entry.storage == ArtworkStorage::InDatabaseUnreadable);
+            assert(!entry.otherSource);
+        }
+        assert(audit.repairable() == 0);
+
+        // A repair handed these tracks anyway, as the old audit did, leaves
+        // every one on its row: nothing written, nothing re-pointed.
+        std::vector<ArtworkEntry> forced;
+        for (std::int64_t track = 1; track <= 5; ++track) {
+            ArtworkEntry entry;
+            entry.trackId = track;
+            entry.storage = ArtworkStorage::CachedFileMissing;
+            entry.otherSource = true;
+            forced.push_back(entry);
+        }
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), forced, {}, {}, reader);
+        assert(repair.error.empty());
+        assert(repair.repaired == 0);
+        assert(repair.keptInDatabase == 5);
+        assert(repair.filesWritten.empty());
+        db = fixture.open();
+        sqlite3_stmt *rows = nullptr;
+        assert(sqlite3_prepare_v2(db, "SELECT t.id, t.albumArtId, a.albumArt FROM Track t JOIN AlbumArt a "
+                                      "ON a.id = t.albumArtId ORDER BY t.id;",
+                                  -1, &rows, nullptr)
+               == SQLITE_OK);
+        const std::vector<std::string> expected = {pngImage, jpegImage, jpegImage, emptyImage, notAPicture, ""};
+        int seen = 0;
+        while (sqlite3_step(rows) == SQLITE_ROW) {
+            const int track = sqlite3_column_int(rows, 0);
+            assert(sqlite3_column_int(rows, 1) == (track <= 2 ? track : track - 1));
+            const void *blob = sqlite3_column_blob(rows, 2);
+            const std::string image =
+                blob ? std::string(static_cast<const char *>(blob), static_cast<size_t>(sqlite3_column_bytes(rows, 2)))
+                     : std::string();
+            assert(image == expected[static_cast<size_t>(track - 1)]);
+            ++seen;
+        }
+        sqlite3_finalize(rows);
+        sqlite3_stmt *count = nullptr;
+        assert(sqlite3_prepare_v2(db, "SELECT count(*) FROM AlbumArt;", -1, &count, nullptr) == SQLITE_OK);
+        assert(sqlite3_step(count) == SQLITE_ROW);
+        assert(sqlite3_column_int(count, 0) == 5);  // no row added
+        sqlite3_finalize(count);
+        sqlite3_close(db);
+        assert(seen == 6);
+
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(after.readableByAPlayer == 3);
+        std::cout << "case 13 (covers kept in the database are readable, and never re-pointed) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";
