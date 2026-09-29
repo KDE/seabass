@@ -411,9 +411,8 @@ public:
     // And a third: the track asked for art, and the row it points at has
     // no hash to find it by. Nothing here can repair that.
     int artworkBrokenRowCount() const;
-    // Art kept inside the database whose row holds no image a player can
-    // draw. Repaired in place, in that row, since the library reads its
-    // art from there.
+    // Art kept inside the database whose image is empty. Filled in, or a
+    // row of its own for a track sharing the row, in the database.
     int artworkEmptyInDatabaseCount() const;
     // Covers kept inside the database in a form Seabass leaves alone: bytes
     // that are neither JPEG nor PNG. Not among the faults.

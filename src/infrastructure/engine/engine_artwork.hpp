@@ -60,10 +60,10 @@ enum class ArtworkStorage {
     // The image is in the row itself, in AlbumArt.albumArt: readable by a
     // player whatever the row's hash or id.
     InDatabase,
-    // A row that keeps its image in the database, holding none, or bytes
-    // that are neither JPEG nor PNG. Repaired in place, never by pointing
-    // the track at a file, which would move it off the storage its
-    // library reads.
+    // A row that keeps its image in the database, and whose image is empty
+    // (NULL or no bytes). Filled in when the track is alone on the row; a
+    // track sharing it gets a database row of its own. Bytes that are no
+    // picture are InDatabaseLeftAlone instead.
     InDatabaseUnreadable,
     // A row holding bytes in albumArt that are neither JPEG nor PNG: an
     // image in a format a player may not show (GIF, WebP, AVIF...) or

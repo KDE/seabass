@@ -166,9 +166,8 @@ Page {
                 const emptyInDatabase = consistencyController?.artworkEmptyInDatabaseCount;
                 if (emptyInDatabase > 0) {
                     parts.push(emptyInDatabase + " keep their cover inside the Engine database, the way older "
-                        + "Engine libraries do, and the image stored there is empty or not a picture. Seabass "
-                        + "puts a copy back into the database itself, because that library reads its covers "
-                        + "from there.");
+                        + "Engine libraries do, and the image stored there is empty. Seabass fills it in; a track "
+                        + "that shares its row with others gets a row of its own in the database instead.");
                 }
                 const leftAlone = consistencyController?.artworkLeftAloneCount;
                 if (leftAlone > 0) {
