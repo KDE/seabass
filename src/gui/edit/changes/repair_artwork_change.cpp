@@ -122,14 +122,6 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     if (!repair.error.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(repair.error));
     }
-    if (repair.repaired == 0 && repair.alreadyReadable > 0 && repair.keptInDatabase == 0) {
-        // Another track sharing its row in the database was given the
-        // image first in this save: this one reads now too.
-        session.noteItemApplied();
-        ctx.log().record("artwork: track " + std::to_string(m_entry.trackId)
-                         + " shares an art row that already holds a readable image");
-        return ChangeOutcome::success();
-    }
     if (repair.repaired == 0) {
         // This one track could not be given art. That is a skip, not a
         // failure -- and not a success, which the summary would count as a
@@ -151,7 +143,9 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
             m_entry.imageOnStick.empty() ? std::string("the image from the track's tags or a stick backup")
                                          : m_entry.imageOnStick;
         std::string why;
-        if (repair.tracksNoLongerThere > 0) {
+        if (repair.failedReads > 0) {
+            why = "the database could not be read to check it (" + repair.failureReasons.front() + ")";
+        } else if (repair.tracksNoLongerThere > 0) {
             why = "the track is no longer in the library";
         } else if (repair.keptInDatabase > 0) {
             why = "its art row keeps the image in the database";
@@ -168,10 +162,7 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     session.noteItemApplied();
     ctx.log().record("artwork: gave track " + std::to_string(m_entry.trackId)
                      + " cover art Engine can find, " + std::to_string(repair.filesWritten.size())
-                     + " image(s) copied into the library"
-                     + (m_entry.storage == infrastructure::engine::ArtworkStorage::InDatabaseUnreadable
-                            ? ", the image written into its art row in the database"
-                            : ""));
+                     + " image(s) copied into the library");
     return ChangeOutcome::success();
 }
 
