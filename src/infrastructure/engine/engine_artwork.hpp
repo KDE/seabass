@@ -110,6 +110,9 @@ struct ArtworkAudit
     // alone (InDatabaseLeftAlone). Apart from the faults: a library of GIF
     // covers is not a broken one.
     std::vector<ArtworkEntry> leftAlone;
+    // Whether the library keeps its covers in the database, by the rule a
+    // repair writes by (keepsCoversInDatabase in engine_artwork.cpp).
+    bool coversInDatabase = false;
     // Set when the database could not be read at all.
     std::string error;
 

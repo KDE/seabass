@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -76,13 +77,45 @@ std::string databaseImageHash(std::string_view image)
     return first == std::string::npos ? std::string("0") : hex.substr(first);
 }
 
-// Whether the library keeps its covers in the database: schema 3.0.1 and
-// earlier do (libdjinterop's maintainer, and the schemas themselves); from
-// 3.0.2 on they are files under Artwork/. A library without the version, or
-// without an image column, is taken for the file kind.
-bool keepsCoversInDatabase(sqlite3 *handle, bool hasImageColumn)
+// Whether the library keeps its covers in the database, decided from its
+// own rows first: a text hash beside image bytes means it does (libraries
+// Engine DJ 4.5.0 migrated keep doing so while saying schema 3.0.2), a
+// blob hash means files under Artwork/ (as this project's library creator
+// writes them). Only a library with neither is decided by its schema:
+// 3.0.1 and earlier keep images in the column (libdjinterop's maintainer),
+// later ones use files. A library without the image column uses files.
+// Empty when the rows cannot be read, which decides nothing.
+std::optional<bool> keepsCoversInDatabase(sqlite3 *handle, bool hasImageColumn)
 {
     if (!hasImageColumn) {
+        return false;
+    }
+    const auto exists = [handle](const std::string &where) -> std::optional<bool> {
+        sqlite3_stmt *stmt = nullptr;
+        const std::string sql = "SELECT EXISTS (SELECT 1 FROM AlbumArt WHERE " + where + ");";
+        if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            return std::nullopt;
+        }
+        std::optional<bool> found;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            found = sqlite3_column_int(stmt, 0) != 0;
+        }
+        sqlite3_finalize(stmt);
+        return found;
+    };
+    const auto textRows = exists("typeof(hash) = 'text' AND hash != '' AND substr(hash, 1, 8) != 'image://' AND "
+                                 + byteLengthSql("albumArt") + " > 0");
+    if (!textRows) {
+        return std::nullopt;
+    }
+    if (*textRows) {
+        return true;
+    }
+    const auto blobRows = exists("typeof(hash) = 'blob' AND length(hash) > 0 AND substr(hash, 1, 8) != 'image://'");
+    if (!blobRows) {
+        return std::nullopt;
+    }
+    if (*blobRows) {
         return false;
     }
     sqlite3_stmt *stmt = nullptr;
@@ -297,6 +330,14 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
     } catch (const std::exception &e) {
         audit.error = e.what();
+        sqlite3_close(handle);
+        return audit;
+    }
+
+    if (const auto storage = keepsCoversInDatabase(handle, hasImageColumn)) {
+        audit.coversInDatabase = *storage;
+    } else {
+        audit.error = std::string("could not tell how the library keeps its covers: ") + sqlite3_errmsg(handle);
         sqlite3_close(handle);
         return audit;
     }
@@ -620,7 +661,11 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return fail(e.what());
     }
     const std::string imageLength = hasImageColumn ? byteLengthSql("a.albumArt") : "0";
-    const bool coversInDatabase = keepsCoversInDatabase(handle, hasImageColumn);
+    const std::optional<bool> storage = keepsCoversInDatabase(handle, hasImageColumn);
+    if (!storage) {
+        return fail(std::string("could not tell how the library keeps its covers: ") + sqlite3_errmsg(handle));
+    }
+    const bool coversInDatabase = *storage;
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
