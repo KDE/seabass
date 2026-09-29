@@ -514,6 +514,54 @@ int main()
         std::cout << "case 17 (an image beside a hash that is no hex is named by its row) OK\n";
     }
 
+    // 18. Covers that could not be copied out of the database (here the
+    //     local cache cannot be written) are said, once, with how many.
+    {
+        fs::remove_all(cache, ec);
+        fs::create_directories(cache);
+        fs::permissions(cache, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        auto tracks = reader.readTracks();
+        reporter.warnings.clear();
+        reader.fillArtwork(tracks);
+        fs::permissions(cache, fs::perms::owner_all, fs::perm_options::replace);
+        for (const auto &warning : reporter.warnings) {
+            std::cerr << "warning: " << warning << "\n";
+        }
+        assert(reporter.warnings.size() == 1);
+        assert(reporter.warnings[0].find("could not be copied from the Engine database") != std::string::npos);
+        std::cout << "case 18 (covers that could not be copied out are said) OK\n";
+    }
+
+    // 19. A row whose value cannot be read is counted and warned about, and
+    //     not remembered as holding no picture: once it can be read, its
+    //     cover shows in the same run.
+    {
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_exec(db, "UPDATE AlbumArt SET hash = 'abcdef0123', albumArt = 12345 WHERE id = 11; "
+                                "INSERT OR IGNORE INTO AlbumArt (id, hash, albumArt) VALUES (11, 'abcdef0123', 12345); "
+                                "UPDATE Track SET albumArtId = 11 WHERE id = 11;",
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(db);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        auto tracks = reader.readTracks();
+        reporter.warnings.clear();
+        reader.fillArtwork(tracks);
+        assert(reporter.warnings.size() == 1);
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 11, "abcdef0123", pngImage);
+        sqlite3_close(db);
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        assert(!read.at("11").empty() && slurp(read.at("11")) == pngImage);
+        std::cout << "case 19 (a row that could not be read is not remembered as no picture) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
