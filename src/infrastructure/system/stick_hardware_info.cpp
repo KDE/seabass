@@ -72,6 +72,51 @@ std::string fallbackIdentifier(const std::string &stickLabel, std::uint64_t tota
 
 }  // namespace
 
+namespace
+{
+
+// The kernel's escapes in a /proc/mounts field: a backslash and three octal
+// digits (\040 a space, \011 a tab, \012 a newline, \134 a backslash).
+std::string unescapeProcMountsField(const std::string &field)
+{
+    std::string out;
+    out.reserve(field.size());
+    for (size_t i = 0; i < field.size(); ++i) {
+        const auto octal = [&field](size_t at) { return at < field.size() && field[at] >= '0' && field[at] <= '7'; };
+        if (field[i] == '\\' && octal(i + 1) && octal(i + 2) && octal(i + 3)) {
+            out.push_back(static_cast<char>(((field[i + 1] - '0') << 6) | ((field[i + 2] - '0') << 3) | (field[i + 3] - '0')));
+            i += 3;
+        } else {
+            out.push_back(field[i]);
+        }
+    }
+    return out;
+}
+
+// A mount point without its trailing separators, "/" itself kept.
+std::string withoutTrailingSlash(std::string path)
+{
+    while (path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    return path;
+}
+
+}  // namespace
+
+std::optional<ProcMountEntry> findProcMount(std::istream &mounts, const std::string &mountPoint)
+{
+    const std::string wanted = withoutTrailingSlash(mountPoint);
+    std::string device, mount, fstype, rest;
+    while (mounts >> device >> mount >> fstype) {
+        std::getline(mounts, rest);
+        if (withoutTrailingSlash(unescapeProcMountsField(mount)) == wanted) {
+            return ProcMountEntry{unescapeProcMountsField(device), fstype};
+        }
+    }
+    return std::nullopt;
+}
+
 #if defined(__linux__)
 
 namespace
@@ -85,14 +130,8 @@ namespace
 std::string deviceNodeForMountPoint(const std::string &mountPoint)
 {
     std::ifstream in("/proc/mounts");
-    std::string device, mount, rest;
-    while (in >> device >> mount) {
-        std::getline(in, rest);  // consume rest of the line
-        if (mount == mountPoint && device.rfind("/dev/", 0) == 0) {
-            return device;
-        }
-    }
-    return "";
+    const auto entry = findProcMount(in, mountPoint);
+    return entry && entry->device.rfind("/dev/", 0) == 0 ? entry->device : std::string();
 }
 
 std::string basename(const std::string &path)
@@ -111,13 +150,8 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
     // the mount point directly, no device node needed.
     {
         std::ifstream in("/proc/mounts");
-        std::string device, mount, fstype, rest;
-        while (in >> device >> mount >> fstype) {
-            std::getline(in, rest);
-            if (mount == mountPoint) {
-                info.filesystem = lower(fstype);
-                break;
-            }
+        if (const auto entry = findProcMount(in, mountPoint)) {
+            info.filesystem = lower(entry->filesystem);
         }
     }
     {
