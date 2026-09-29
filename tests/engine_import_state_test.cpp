@@ -20,10 +20,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
+#include <string>
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/sqlite_pending_journal.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -55,12 +59,28 @@ void setCounter(const fs::path &library, std::int64_t value)
     sqlite3_close(db);
 }
 
+std::set<std::string> entriesOf(const fs::path &dir)
+{
+    std::set<std::string> names;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(dir, ec)) {
+        names.insert(seabass::pathToUtf8(entry.path().filename()));
+    }
+    return names;
+}
+
+void exec(sqlite3 *db, const char *sql)
+{
+    assert(sqlite3_exec(db, sql, nullptr, nullptr, nullptr) == SQLITE_OK);
+}
+
 }  // namespace
 
 int main()
 {
     const fs::path root = seabass::testing::scratchRoot() / "seabass_engine_import_state_test";
     fs::remove_all(root);
+    seabass::testing::sandboxSeabassHome(root / "home");
     const fs::path library = root / "Engine Library";
     const fs::path pioneer = root / "PIONEER";
     fs::create_directories(library);
@@ -105,6 +125,53 @@ int main()
         const auto rekordboxOnly = readRekordboxImportState(seabass::pathToUtf8(root / "nowhere"), seabass::pathToUtf8(pioneer));
         assert(!rekordboxOnly.playerWillOfferImport() && !rekordboxOnly.hasEngineLibrary);
         std::cout << "case 4 (one library alone is not a finding) OK\n";
+    }
+
+    // 5. Another connection writing m.db (Engine DJ, the CLI, Seabass on
+    //    another thread) is an error to report, not a stick without an
+    //    Engine library: the read met a lock, not an older schema.
+    const fs::path mdb = library / "Database2" / "m.db";
+    {
+        sqlite3 *writer = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(mdb).c_str(), &writer) == SQLITE_OK);
+        exec(writer, "BEGIN EXCLUSIVE");
+        const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
+        exec(writer, "ROLLBACK");
+        sqlite3_close(writer);
+        if (!state.hasEngineLibrary || state.error.empty()) {
+            std::cerr << "hasEngineLibrary=" << state.hasEngineLibrary << " error='" << state.error << "'\n";
+        }
+        assert(state.hasEngineLibrary && !state.error.empty() && "a locked database is an error, not no library");
+        std::cout << "case 5 (a writer holding the database: an error, not no library) OK\n";
+    }
+
+    // 6. And a writer mid-commit, its journal live beside m.db, is not a
+    //    stick pulled mid-save: nothing copied aside, no "mid-save".
+    {
+        const fs::path recovered = seabass::infrastructure::paths::localRoot() / "recovered";
+        const std::set<std::string> keptBefore = entriesOf(recovered);
+        sqlite3 *writer = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(mdb).c_str(), &writer) == SQLITE_OK);
+        exec(writer, "PRAGMA journal_mode=DELETE");
+        exec(writer, "PRAGMA cache_size=1");
+        exec(writer, "PRAGMA cache_spill=1");
+        exec(writer, "BEGIN");
+        exec(writer, "CREATE TABLE busy_probe(x)");
+        exec(writer, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300) "
+                     "INSERT INTO busy_probe SELECT randomblob(2000) FROM n");
+        assert(seabass::infrastructure::hasPendingJournal(mdb) && "the writer's journal is live");
+        const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
+        exec(writer, "ROLLBACK");
+        sqlite3_close(writer);
+        if (state.error.empty() || state.error.find("mid-save") != std::string::npos) {
+            std::cerr << "error='" << state.error << "'\n";
+        }
+        assert(state.hasEngineLibrary && !state.error.empty());
+        assert(state.error.find("mid-save") == std::string::npos && "a live writer is not a pulled stick");
+        assert(entriesOf(recovered) == keptBefore && "nothing copied aside");
+        const auto after = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
+        assert(after.error.empty() && after.hasEngineLibrary && after.engineCounter == 15217);
+        std::cout << "case 6 (a writer mid-commit is not a pulled stick) OK\n";
     }
 
     fs::remove_all(root);
