@@ -71,6 +71,9 @@ enum class ArtworkStorage {
     // from damage there, so it leaves the row alone: never written over,
     // never pointed away from, and not counted among the faults.
     InDatabaseLeftAlone,
+    // A row holding a value in albumArt that could not be read to see what
+    // it is. Counted apart and left alone until a later check can read it.
+    InDatabaseUnchecked,
     // No art row, or Engine's own empty "no cover" row.
     None,
 };
@@ -115,6 +118,9 @@ struct ArtworkAudit
     // alone (InDatabaseLeftAlone). Apart from the faults: a library of GIF
     // covers is not a broken one.
     std::vector<ArtworkEntry> leftAlone;
+    // Tracks whose row's value could not be read to check it
+    // (InDatabaseUnchecked): neither a fault nor left alone, and said.
+    std::vector<ArtworkEntry> unchecked;
     // Whether the library keeps its covers in the database, by the rule a
     // repair writes by (keepsCoversInDatabase in engine_artwork.cpp).
     bool coversInDatabase = false;
@@ -173,8 +179,9 @@ std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<con
                               bool *anyFile = nullptr, bool checkBytes = true);
 
 // The first bytes (up to 12) of the image an AlbumArt row keeps in the
-// database, read without loading the rest of it. Empty when there is none.
-std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId);
+// database, read without loading the rest of it. Empty when there is none;
+// no value when it could not be read, which says nothing about it.
+std::optional<std::string> albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId);
 
 // The same for many rows, through one blob handle moved from row to row.
 class AlbumArtImageHeads
@@ -185,7 +192,7 @@ public:
     AlbumArtImageHeads(const AlbumArtImageHeads &) = delete;
     AlbumArtImageHeads &operator=(const AlbumArtImageHeads &) = delete;
 
-    std::string of(std::int64_t albumArtId);
+    std::optional<std::string> of(std::int64_t albumArtId);
 
 private:
     sqlite3 *m_handle;

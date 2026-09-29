@@ -203,7 +203,11 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
     }
     // Its own blob handle, closed at once: none may stay open while copies
     // are written, since an open one holds the database.
-    if (extensionForImage(albumArtImageHead(db, albumArtId)).empty()) {
+    const std::optional<std::string> head = albumArtImageHead(db, albumArtId);
+    if (!head) {
+        return {};  // not read: nothing is concluded about it
+    }
+    if (extensionForImage(*head).empty()) {
         const std::lock_guard<std::mutex> guard(notImagesLock);
         notImages.insert(rowKey);
         return {};

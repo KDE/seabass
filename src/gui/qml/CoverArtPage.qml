@@ -176,6 +176,11 @@ Page {
                         + "alone: an image in a format players may not show, or data that is no picture. Seabass "
                         + "never writes over those.");
                 }
+                const unchecked = consistencyController?.artworkUncheckedCount;
+                if (unchecked > 0) {
+                    parts.push(unchecked + " keep a cover inside the Engine database that Seabass could not read "
+                        + "to check. Nothing is changed for those; a later check may read them.");
+                }
                 if (consistencyController?.artworkUnreadableCount > 0) {
                     parts.push(fixable > 0
                         ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
