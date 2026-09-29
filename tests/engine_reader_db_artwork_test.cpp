@@ -198,6 +198,34 @@ int main()
         std::cout << "case 5 (a cover kept as a file under Artwork/ is shown from the stick) OK\n";
     }
 
+    // 6. Bytes in albumArt that are no image do not hide the art the
+    //    row's hash names: an imported rekordbox path, or a file under
+    //    Artwork/, is shown as if the bytes were not there.
+    {
+        const fs::path imported = library.parent_path() / "PIONEER" / "Artwork" / "00001" / "a6.jpg";
+        fs::create_directories(imported.parent_path());
+        std::ofstream(imported, std::ios::binary) << jpegImage;
+        const std::vector<std::uint8_t> fileHash(20, 0x3C);
+        const fs::path onStick =
+            library / "Artwork" / (seabass::infrastructure::engine::artworkFileName(fileHash) + ".jpg");
+        std::ofstream(onStick, std::ios::binary) << jpegImage;
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 6, "image://fileart//media/ELSEWHERE/PIONEER/Artwork/00001/a6.jpg", "JUNK");
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES (7, ?, 'JUNK');", -1,
+                                  &stmt, nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_blob(stmt, 1, fileHash.data(), static_cast<int>(fileHash.size()), SQLITE_TRANSIENT);
+        assert(sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        assert(!read.at("6").empty() && fs::equivalent(seabass::pathFromUtf8(read.at("6")), imported));
+        assert(!read.at("7").empty() && fs::equivalent(seabass::pathFromUtf8(read.at("7")), onStick));
+        std::cout << "case 6 (junk in albumArt does not hide the art the hash names) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
