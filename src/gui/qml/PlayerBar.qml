@@ -122,11 +122,29 @@ Frame {
                     const h = height;
                     const cx = width / 2, cy = height / 2;
                     const top = cy - 0.21 * h, bottom = cy + 0.21 * h;
+                    // Where the triangle sits. On the flat Pioneer key it
+                    // is centred on its bounding box, which is what reads
+                    // as centred inside a rectangle. Inside the round
+                    // Denon pad that left the tip 0.18h from the centre
+                    // and the two back corners 0.28h, so the triangle
+                    // looked pushed off the ring; there it is centred on
+                    // its circumcentre instead, all three corners on one
+                    // circle concentric with the rim (an equilateral
+                    // triangle of the same height). The key's own
+                    // roundness blends the two, so the form morph
+                    // carries the glyph with it.
+                    const round = Math.max(0, Math.min(1, playButton.radius / (playButton.height / 2)));
+                    const circR = 0.21 * h / (Math.sqrt(3) / 2);
+                    const backX = cx + ((-0.18 * h) + ((-circR / 2) - (-0.18 * h)) * round);
+                    const tipX = cx + (0.18 * h + (circR - 0.18 * h) * round);
+                    // Where the triangle's edges cross the vertical through
+                    // cx, which is where its two halves meet.
+                    const midHalf = 0.21 * h * (tipX - cx) / (tipX - backX);
                     // Left half of the triangle to the left bar, right
                     // half to the right bar, corner for corner.
                     const play = [
-                        [[cx - 0.18 * h, top], [cx - 0.18 * h, bottom], [cx, cy + 0.105 * h], [cx, cy - 0.105 * h]],
-                        [[cx, cy - 0.105 * h], [cx, cy + 0.105 * h], [cx + 0.18 * h, cy], [cx + 0.18 * h, cy]]
+                        [[backX, top], [backX, bottom], [cx, cy + midHalf], [cx, cy - midHalf]],
+                        [[cx, cy - midHalf], [cx, cy + midHalf], [tipX, cy], [tipX, cy]]
                     ];
                     const pause = [
                         [[cx - 0.19 * h, top], [cx - 0.19 * h, bottom], [cx - 0.06 * h, bottom], [cx - 0.06 * h, top]],
@@ -152,6 +170,7 @@ Frame {
                     target: playButton
                     function onMorphChanged() { playIcon.requestPaint(); }
                     function onLightChanged() { playIcon.requestPaint(); }
+                    function onRadiusChanged() { playIcon.requestPaint(); }
                 }
             }
 
