@@ -965,6 +965,73 @@ int main(int argc, char **argv)
         std::cout << "case 19 (a save committing is waited out) OK\n";
     }
 
+    // 20. A real image in a format players may not show (GIF, WebP, BMP,
+    //     TIFF) is not "not a picture": it is reported apart, and never
+    //     overwritten in place nor left behind by pointing the track
+    //     elsewhere, whatever source is offered.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_other_formats");
+        sqlite3 *db = fixture.open();
+        const std::string gif = std::string("GIF89a") + std::string(40, 'g');
+        const std::string webp = std::string("RIFF\x20\x00\x00\x00WEBPVP8 ", 16) + std::string(40, 'w');
+        const auto insertRow = [db](int id, const std::string &image) {
+            sqlite3_stmt *insert = nullptr;
+            assert(sqlite3_prepare_v2(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (?, ?, ?);", -1, &insert,
+                                      nullptr)
+                   == SQLITE_OK);
+            sqlite3_bind_int(insert, 1, id);
+            sqlite3_bind_text(insert, 2, ("abcdef" + std::to_string(id)).c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_blob(insert, 3, image.data(), static_cast<int>(image.size()), SQLITE_TRANSIENT);
+            assert(sqlite3_step(insert) == SQLITE_DONE);
+            sqlite3_finalize(insert);
+        };
+        insertRow(2, gif);
+        insertRow(3, webp);
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Gif', 'A', 2);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'WebP', 'B', 3);");
+        sqlite3_close(db);
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const auto reader = [](const ArtworkEntry &) { return jpeg("FROM-THE-TAGS"); };
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(audit.error.empty());
+        assert(audit.unreadable.size() == 2);
+        for (const ArtworkEntry &entry : audit.unreadable) {
+            assert(entry.storage == ArtworkStorage::InDatabaseOtherFormat);
+        }
+        assert(audit.repairable() == 0);
+        std::vector<ArtworkEntry> forced;
+        for (const ArtworkStorage storage : {ArtworkStorage::InDatabaseUnreadable, ArtworkStorage::CachedFileMissing}) {
+            for (std::int64_t track : {1, 2}) {
+                ArtworkEntry entry;
+                entry.trackId = track;
+                entry.storage = storage;
+                entry.otherSource = true;
+                forced.push_back(entry);
+            }
+        }
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), forced, {}, {}, reader);
+        assert(repair.error.empty());
+        assert(repair.repaired == 0);
+        assert(repair.filesWritten.empty());
+        db = fixture.open();
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(db, "SELECT t.albumArtId, a.albumArt FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+                                      "ORDER BY t.id;",
+                                  -1, &stmt, nullptr)
+               == SQLITE_OK);
+        const std::vector<std::pair<int, std::string>> expected = {{2, gif}, {3, webp}};
+        for (const auto &[row, image] : expected) {
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            assert(sqlite3_column_int(stmt, 0) == row);
+            assert(std::string(static_cast<const char *>(sqlite3_column_blob(stmt, 1)),
+                               static_cast<size_t>(sqlite3_column_bytes(stmt, 1)))
+                   == image);
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        std::cout << "case 20 (a GIF or WebP kept in the database is never written over) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

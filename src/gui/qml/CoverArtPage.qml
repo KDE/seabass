@@ -170,6 +170,11 @@ Page {
                         + "puts a copy back into the database itself, because that library reads its covers "
                         + "from there.");
                 }
+                const otherFormat = consistencyController?.artworkOtherFormatCount;
+                if (otherFormat > 0) {
+                    parts.push(otherFormat + " keep their cover inside the Engine database in a format players may "
+                        + "not show (GIF, WebP, BMP or TIFF). Seabass leaves those as they are.");
+                }
                 parts.push(fixable > 0
                     ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
                       + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
