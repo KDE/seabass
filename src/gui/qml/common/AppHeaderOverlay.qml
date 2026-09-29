@@ -21,7 +21,11 @@ import SeabassGui
 // page without them (a stick's tool pages) gets no row.
 Item {
     id: root
-    required property StackView stackView
+    // An Item, not a StackView: Main.qml imports the Material style, so
+    // its StackView is Material's type and this file's is the running
+    // style's, and a StackView-typed property refused the window's own
+    // ("Unable to assign"), leaving the row with no stack at all.
+    required property Item stackView
     readonly property var page: root.stackView ? root.stackView.currentItem : null
     readonly property string place: root.page && root.page.appHeaderPlace !== undefined ? root.page.appHeaderPlace : ""
     property int iconSize: Math.round(Theme.scaled(22))
