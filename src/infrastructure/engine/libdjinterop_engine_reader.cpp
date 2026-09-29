@@ -11,12 +11,14 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
+#include <thread>
 #include <span>
 #include <string_view>
 #include <sstream>
@@ -195,12 +197,27 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
                                      : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
     const std::filesystem::path file = directory / pathFromUtf8(name + extension);
     std::filesystem::create_directories(directory, ec);
-    const bool whole = std::filesystem::is_regular_file(file, ec)
-        && std::filesystem::file_size(file, ec) == bytes.size() && !ec;
-    if (!whole && !writeFileDurablyAtomic(pathToUtf8(file), bytes)) {
-        return {};
+    const auto whole = [&file, &bytes] {
+        std::error_code sizeError;
+        return std::filesystem::is_regular_file(file, sizeError)
+            && std::filesystem::file_size(file, sizeError) == bytes.size() && !sizeError;
+    };
+    if (whole()) {
+        return pathToUtf8(file);
     }
-    return pathToUtf8(file);
+    // Written under a name of its own and renamed into place: two reads of
+    // one library (the prefetch and a page) can write the same cover at
+    // once, and a shared temporary name let one rename the other's away.
+    static std::atomic<unsigned> written{0};
+    std::filesystem::path part = file;
+    part += "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "-"
+        + std::to_string(written.fetch_add(1)) + ".part";
+    const bool ok = writeFileDurablyAtomic(pathToUtf8(part), bytes);
+    if (ok) {
+        std::filesystem::rename(part, file, ec);
+    }
+    std::filesystem::remove(part, ec);
+    return whole() ? pathToUtf8(file) : std::string();
 }
 
 std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
