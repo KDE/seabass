@@ -3,9 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
+#include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -92,15 +98,15 @@ void collectPlaylistMemberships(const djinterop::playlist &pl, const std::string
 // as a type but is an acknowledged stub, "TODO - implement rest of
 // album_art class", and database.hpp has no method returning one), even
 // though the underlying schema has real, resolvable data: every Track row
-// has an albumArtId, and AlbumArt.hash is not a hash at all despite the
-// column name. It's a URI like "image://fileart//media/<label>/PIONEER/
-// Artwork/00001/a5_m.jpg" pointing at a real external JPEG file on the
-// stick (AlbumArt.albumArt, the actual BLOB column, is confirmed always
-// empty on real hardware-written data. Engine stores art as files, not
-// inline). <label> is whatever volume label the *original* Denon hardware
-// mounted the stick under, not necessarily this machine's, so this
-// anchors on the stable "PIONEER/Artwork/..." suffix instead of trying to
-// match the volume label. seabass_core already links plain SQLite3
+// has an albumArtId, and the AlbumArt row it names says where the image is.
+// Two of its spellings are read here. An imported one's hash is a URI like
+// "image://fileart//media/<label>/PIONEER/Artwork/00001/a5_m.jpg" pointing
+// at a real external JPEG file on the stick; <label> is whatever volume
+// label the *original* Denon hardware mounted the stick under, not
+// necessarily this machine's, so this anchors on the stable
+// "PIONEER/Artwork/..." suffix instead of trying to match the volume
+// label. An older library keeps the image itself in AlbumArt.albumArt;
+// see databaseArtworkFile(). seabass_core already links plain SQLite3
 // directly for LocalCueStore, so this doesn't add a new dependency; opened
 // as a second, independent, read-only connection to the same m.db
 // djinterop::engine::load_database() above already has open, never
@@ -138,6 +144,50 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
     return snap;
 }
 
+// The image an AlbumArt row keeps in the database, as a file on this
+// computer, since everything that shows a cover takes a path. Written
+// once under a name taken from the row's hex hash (or, lacking one, from
+// the bytes), so a later scan finds it with a stat and never reads the
+// image again. Empty when the row holds nothing a player could draw.
+std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std::string &hash)
+{
+    const std::filesystem::path directory = paths::localEngineArtworkDir();
+    const bool hexHash = !hash.empty() && hash.size() <= 64
+        && std::all_of(hash.begin(), hash.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
+    std::error_code ec;
+    if (hexHash) {
+        for (const char *extension : {".jpg", ".png"}) {
+            const std::filesystem::path known = directory / pathFromUtf8(hash + extension);
+            if (std::filesystem::is_regular_file(known, ec)) {
+                return pathToUtf8(known);
+            }
+        }
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT albumArt FROM AlbumArt WHERE id = ?", -1, &stmt, nullptr) != SQLITE_OK) {
+        return {};
+    }
+    sqlite3_bind_int64(stmt, 1, albumArtId);
+    std::string bytes;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (const void *blob = sqlite3_column_blob(stmt, 0)) {
+            bytes.assign(static_cast<const char *>(blob), static_cast<size_t>(sqlite3_column_bytes(stmt, 0)));
+        }
+    }
+    sqlite3_finalize(stmt);
+    const std::string extension = extensionForImage(bytes);
+    if (extension.empty()) {
+        return {};
+    }
+    const std::string name = hexHash ? hash : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
+    const std::filesystem::path file = directory / pathFromUtf8(name + extension);
+    std::filesystem::create_directories(directory, ec);
+    if (!std::filesystem::is_regular_file(file, ec) && !writeFileDurablyAtomic(pathToUtf8(file), bytes)) {
+        return {};
+    }
+    return pathToUtf8(file);
+}
+
 std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::string> result;
@@ -155,20 +205,36 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 
     sqlite3_stmt *stmt = nullptr;
     const char *sql =
-        "SELECT t.id, a.hash FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+        "SELECT t.id, a.hash, a.id, length(a.albumArt) FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
         "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return result;
     }
 
+    // Per AlbumArt row, since many tracks share one.
+    std::unordered_map<int64_t, std::string> fileByDatabaseImage;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int64_t trackId = sqlite3_column_int64(stmt, 0);
         const unsigned char *hashText = sqlite3_column_text(stmt, 1);
-        if (!hashText) {
+        std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
+        if (sqlite3_column_int64(stmt, 3) > 0) {
+            const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
+            auto known = fileByDatabaseImage.find(albumArtId);
+            if (known == fileByDatabaseImage.end()) {
+                std::string file;
+                try {
+                    file = databaseArtworkFile(db, albumArtId, hash);
+                } catch (const std::exception &) {
+                    // One unreadable image is not worth the scan.
+                }
+                known = fileByDatabaseImage.emplace(albumArtId, std::move(file)).first;
+            }
+            if (!known->second.empty()) {
+                result[trackId] = known->second;
+            }
             continue;
         }
-        std::string hash = reinterpret_cast<const char *>(hashText);
         auto pos = hash.find("PIONEER/Artwork");
         if (pos == std::string::npos) {
             continue;

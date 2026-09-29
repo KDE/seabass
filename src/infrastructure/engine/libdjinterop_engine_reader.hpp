@@ -37,6 +37,9 @@ public:
     // alone: no audio file is stat'd for its size (application::
     // fillFileSizes) and no artwork file for its existence; artworkPath is
     // what the catalog names, whether or not the file is still there.
+    // A cover kept inside the database is the exception: it is written
+    // out once to paths::localEngineArtworkDir(), on this computer, and
+    // artworkPath names that copy.
     std::vector<domain::Track> readAll() override;
 
 private:
