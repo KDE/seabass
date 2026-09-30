@@ -235,7 +235,10 @@ over ssh: each script is non-interactive and exits non-zero on any fault.
 CI does the same in `macos:universal`: it takes the two halves' `.dmg`
 files and the `install.db` each Craft job keeps, merges them with
 `--from-dmgs`, and runs `tools/macos-verify-dmg.sh` against the committed
-fixture laid out as a stick. On a `Seabass/X.Y` branch it also has the
+fixture laid out as a stick, with the fixture's `SET-EXPECTATIONS.txt`: each
+slice must report exactly its rekordbox track and cue counts and its
+OneLibrary track count, and a `sync --dry-run` that fails or prints no
+OneLibrary count fails the job. On a `Seabass/X.Y` branch it also has the
 merged bundle and the image signed and the image notarised by KDE's
 signing service; on any other ref the package is signed ad hoc, as the
 halves are. It refuses when the runner cannot execute x86_64 code, rather
@@ -255,7 +258,8 @@ tools/macos-universal-dmg.sh \
     seabass-<version>_<channel>_macos.dmg
 
 # then prove it, against a stick or a restored reference carrying all three
-# catalogs -- it reads once per architecture and compares the answers
+# catalogs -- it reads once per architecture and compares the answers; a
+# third argument (a SET-EXPECTATIONS.txt) also pins them to known counts
 tools/macos-verify-dmg.sh seabass-<version>_<channel>_macos.dmg <stick or folder>
 ```
 
