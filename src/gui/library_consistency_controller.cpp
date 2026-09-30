@@ -487,10 +487,13 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                                                                   result.rescue->probe(), cancel, *reporter);
             cancel.throwIfCancelled();
             // The same pass asks each row for its sample rate, and each
-            // file whose row cannot say. Reading a header costs about
-            // 0.07 ms (see TagLibMetadataProbe), so a library where
-            // nothing is missing costs nothing and one where everything
-            // is costs a second.
+            // file whose row cannot say. A library where nothing is
+            // missing costs nothing. One where much is costs a file open
+            // per row: measured on 50 MP3s, about 0.1 ms each from the page
+            // cache and 0.65 ms cold from an SSD, reading 128 KiB and 12
+            // read calls per file (see TagLibMetadataProbe). On a USB stick
+            // that is minutes for a few thousand rows, which is why the
+            // stray-cue pages scan at CuesOnly and never get here.
             // #38: one count query against Track, no file reads, so it
             // costs nothing next to the two audits around it. Reported as
             // one step all the same, so the phase the page shows is this
