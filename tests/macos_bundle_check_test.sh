@@ -63,6 +63,10 @@ make_bundle() {  # <app>
     ln -s Versions/A/QtCore "$app/Contents/Frameworks/QtCore.framework/QtCore"
     macho "$app/Contents/Frameworks/libavcodec.62.dylib"
     macho "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
+    macho "$app/Contents/Frameworks/libwebp.7.2.0.dylib"
+    ln -s libwebp.7.2.0.dylib "$app/Contents/Frameworks/libwebp.7.dylib"
+    macho "$app/Contents/Frameworks/libsharpyuv.0.dylib"
+    macho "$app/Contents/Frameworks/libwebpdemux.2.0.17.dylib"
     mkdir -p "$app/Contents/Resources"
     head -c 2097152 /dev/zero > "$app/Contents/Resources/filler.qm"
     printf 'plist\n' > "$app/Contents/Info.plist"
@@ -99,6 +103,36 @@ make_bundle() {  # <app>
         lc LC_LOAD_DYLIB @loader_path/../../Frameworks/libavcodec.62.dylib
         lc LC_RPATH @loader_path/../../Frameworks
     } > "$work/canned/libqcocoa.dylib"
+    # What KDE's cache build of libwebp really ships: its build directory
+    # left behind as an LC_RPATH, while every load resolves in the bundle.
+    # A warning, not a refusal.
+    local webp_build=/Users/gitlab/builds/xyz/craft-ci/macos-arm-clang/build/libs/webp/work/build
+    {
+        echo "$app/Contents/Frameworks/libwebp.7.2.0.dylib:"
+        n=0; segment
+        lc LC_ID_DYLIB @rpath/libwebp.7.dylib
+        lc LC_LOAD_DYLIB @executable_path/../Frameworks/libsharpyuv.0.dylib
+        lc LC_LOAD_DYLIB /usr/lib/libSystem.B.dylib
+        lc LC_RPATH "$webp_build"
+    } > "$work/canned/libwebp.7.2.0.dylib"
+    {
+        echo "$app/Contents/Frameworks/libsharpyuv.0.dylib:"
+        n=0; segment
+        lc LC_ID_DYLIB @rpath/libsharpyuv.0.dylib
+    } > "$work/canned/libsharpyuv.0.dylib"
+    {
+        echo "$app/Contents/Frameworks/libwebpdemux.2.0.17.dylib:"
+        n=0; segment
+        lc LC_ID_DYLIB @rpath/libwebpdemux.2.dylib
+        lc LC_LOAD_DYLIB @rpath/libwebp.7.dylib
+        lc LC_LOAD_DYLIB @executable_path/../Frameworks/libsharpyuv.0.dylib
+        lc LC_RPATH "$webp_build"
+        lc LC_RPATH @loader_path
+        # The second slice of a fat file carries the same leftover.
+        echo "$app/Contents/Frameworks/libwebpdemux.2.0.17.dylib (architecture x86_64):"
+        n=0; segment
+        lc LC_RPATH "$webp_build"
+    } > "$work/canned/libwebpdemux.2.0.17.dylib"
 }
 
 add_to() {  # <canned name> <cmd> <path>: one more load command for that file
@@ -128,22 +162,55 @@ expect() {
 app="$work/seabass.app"
 
 make_bundle "$app"
-expect "a deployed bundle passes" 0 "self-contained: 4 Mach-O files"
+expect "a deployed bundle passes" 0 "self-contained: 7 Mach-O files"
+expect "libwebp's leftover build rpath is a warning, not a refusal" 0 \
+    "warning: Contents/Frameworks/libwebp.7.2.0.dylib: LC_RPATH /Users/gitlab/builds/xyz/craft-ci/macos-arm-clang/build/libs/webp/work/build lies outside the bundle"
+expect "each warning is counted once" 0 "2 warning(s)"
 
 make_bundle "$app"
 add_to libavcodec.62.dylib LC_LOAD_DYLIB /Users/x/Seabass/builds/craft/lib/libvpx.9.dylib
 expect "a load from a Craft root is refused, naming file and command" 1 \
     "Contents/Frameworks/libavcodec.62.dylib: LC_LOAD_DYLIB /Users/x/Seabass/builds/craft/lib/libvpx.9.dylib lies outside the bundle"
 
+# The Craft root exists here, as it does on the Mac that built the bundle,
+# so the load resolves, but only outside.
 make_bundle "$app"
-add_to seabass-cli LC_RPATH /Users/x/Seabass/builds/craft/lib
-expect "an absolute LC_RPATH outside the bundle is refused" 1 \
-    "Contents/MacOS/seabass-cli: LC_RPATH /Users/x/Seabass/builds/craft/lib lies outside the bundle"
+mkdir -p "$work/craft/lib" && : > "$work/craft/lib/libvpx.9.dylib"
+add_to seabass-cli LC_RPATH "$work/craft/lib"
+add_to seabass-cli LC_LOAD_DYLIB @rpath/libvpx.9.dylib
+expect "an @rpath load found only through a search path outside the bundle is refused" 1 \
+    "Contents/MacOS/seabass-cli: LC_LOAD_DYLIB @rpath/libvpx.9.dylib is found only through $work/craft/lib, outside the bundle"
 
 make_bundle "$app"
 add_to libqcocoa.dylib LC_RPATH @loader_path/../../../../lib
-expect "an LC_RPATH climbing out of the bundle is refused" 1 \
-    "Contents/PlugIns/platforms/libqcocoa.dylib: LC_RPATH @loader_path/../../../../lib lies outside the bundle"
+add_to libqcocoa.dylib LC_LOAD_DYLIB @rpath/libvpx.9.dylib
+expect "an @rpath load no search path inside the bundle finds is refused" 1 \
+    "Contents/PlugIns/platforms/libqcocoa.dylib: LC_LOAD_DYLIB @rpath/libvpx.9.dylib is not found through any LC_RPATH inside the bundle"
+
+# macOS's file(1) on a fat binary prints a line for the file and then one
+# per slice, "<path> (for architecture x86_64)// Mach-O ...". Linux's does
+# not, so a file shim adds the slice lines for seabass-cli.
+make_bundle "$app"
+real_file="$(command -v file)"
+cat > "$work/bin/file" <<SHIM
+#!/bin/bash
+"$real_file" "\$@" | while IFS= read -r line; do
+    p="\${line%%//*}"
+    case "\$p" in
+        */Contents/MacOS/seabass-cli)
+            printf '%s// Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64]\n' "\$p"
+            printf '%s (for architecture x86_64)//\tMach-O 64-bit executable x86_64\n' "\$p"
+            printf '%s (for architecture arm64)//\tMach-O 64-bit executable arm64\n' "\$p" ;;
+        *) printf '%s\n' "\$line" ;;
+    esac
+done
+SHIM
+chmod +x "$work/bin/file"
+expect "a fat binary's per-slice file lines name one file" 0 "self-contained: 7 Mach-O files"
+add_to seabass-cli LC_LOAD_DYLIB /opt/homebrew/lib/libz.1.dylib
+expect "and the fat binary's load commands are still read" 1 \
+    "Contents/MacOS/seabass-cli: LC_LOAD_DYLIB /opt/homebrew/lib/libz.1.dylib lies outside the bundle"
+rm -f "$work/bin/file"
 
 make_bundle "$app"
 add_to libavcodec.62.dylib LC_LOAD_DYLIB "$app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore"

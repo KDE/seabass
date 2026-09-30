@@ -25,9 +25,16 @@
 #     @rpath; any other absolute path is refused (a Craft root, a home
 #     directory, /opt, /usr/local, and the bundle's own location too, which
 #     is only right on the machine that built it);
-#   - every LC_RPATH resolves inside the bundle, or to the system;
-#   - an @rpath load must find its file through some LC_RPATH in the bundle
-#     (a superset of what dyld searches, so a miss here is a miss there);
+#   - an @rpath load must find its file through some LC_RPATH that points
+#     inside the bundle (a superset of what dyld searches, so a miss here
+#     is a miss there); one found only through a search path outside the
+#     bundle is refused as well;
+#   - an LC_RPATH outside the bundle (absolute, or climbing out by "..") is
+#     a WARNING, printed and counted, not a refusal: dyld skips a search
+#     path that does not exist, and KDE's cache build of libwebp leaves its
+#     build directory as one in libwebp, libwebpdemux and libwebpmux, whose
+#     loads all resolve inside the bundle. What such a path could do harm
+#     through is an @rpath load, and those are checked above;
 #   - Contents/Frameworks holds QtCore.framework and every Qt framework the
 #     executables in Contents/MacOS link;
 #   - the bundle is at least SEABASS_BUNDLE_MIN_MB (100) MB unpacked, since
@@ -145,18 +152,26 @@ seabass_bundle_self_contained() {
         problems+=("Contents/Frameworks has no QtCore.framework: Qt is not deployed into this bundle")
 
     # Every Mach-O, found by file(1) in one batch. "//" as the separator:
-    # find never prints it inside a path.
+    # find never prints it inside a path. For a fat file, macOS's file adds
+    # a line per slice, "<path> (for architecture x86_64)// Mach-O ...", so
+    # the suffix is stripped and the list made unique; otool -l then reads
+    # the whole fat file, every slice's load commands in turn.
     local machos=() line
     while IFS= read -r line; do
-        case "${line#*//}" in *Mach-O*) machos+=("${line%%//*}") ;; esac
-    done < <(find "$app" -type f -exec file -N -F // {} + 2>/dev/null)
+        machos+=("$line")
+    done < <(find "$app" -type f -exec file -N -F // {} + 2>/dev/null |
+        while IFS= read -r line; do
+            case "${line#*//}" in
+                *Mach-O*) line="${line%%//*}"; printf '%s\n' "${line% (for architecture *)}" ;;
+            esac
+        done | sort -u)
     if [ "${#machos[@]}" -eq 0 ]; then
         problems+=("no Mach-O file in the bundle at all")
     fi
 
     # First pass: rpaths and every load that can be judged on its own.
     # @rpath loads wait for the second, once every LC_RPATH is known.
-    local rpaths=() deferred=() f rel cmd value target commands
+    local rpaths=() outside_rpaths=() warnings=() deferred=() f rel cmd value target commands
     for f in ${machos[@]+"${machos[@]}"}; do
         rel="${f#"$app"/}"
         if ! commands="$(_sbc_load_commands "$f")"; then
@@ -165,17 +180,19 @@ seabass_bundle_self_contained() {
         while IFS=$'\t' read -r cmd value; do
             [ -n "$cmd" ] || continue
             if [ "$cmd" = LC_RPATH ]; then
+                # An absolute search path, even one into the bundle as it
+                # sits now, is not one a moved bundle can rely on, so it is
+                # never used to resolve an @rpath load below.
                 target="$(_sbc_expand "$value" "$f" "$app")"
                 if [ -z "$target" ]; then
                     problems+=("$rel: LC_RPATH $value cannot be resolved to a directory")
                 elif _sbc_is_system "$target"; then
                     :
-                elif _sbc_absolute_nonsystem "$value" "$app" "$rel: LC_RPATH"; then
-                    :
-                elif _sbc_is_inside "$target" "$app"; then
+                elif [ "${value#/}" = "$value" ] && _sbc_is_inside "$target" "$app"; then
                     rpaths+=("$target")
                 else
-                    problems+=("$rel: LC_RPATH $value lies outside the bundle")
+                    warnings+=("$rel: LC_RPATH $value lies outside the bundle (dyld skips it where it does not exist)")
+                    outside_rpaths+=("$target")
                 fi
                 continue
             fi
@@ -212,24 +229,36 @@ seabass_bundle_self_contained() {
         for r in ${rpaths[@]+"${rpaths[@]}"}; do
             if [ -e "$r/$name" ]; then found=1; break; fi
         done
-        if [ -z "$found" ] && [ "$cmd" != LC_LOAD_WEAK_DYLIB ]; then
+        if [ -n "$found" ] || [ "$cmd" = LC_LOAD_WEAK_DYLIB ]; then continue; fi
+        for r in ${outside_rpaths[@]+"${outside_rpaths[@]}"}; do
+            if [ -e "$r/$name" ]; then found="$r"; break; fi
+        done
+        if [ -n "$found" ]; then
+            problems+=("$rel: $cmd $value is found only through $found, outside the bundle")
+        else
             problems+=("$rel: $cmd $value is not found through any LC_RPATH inside the bundle")
         fi
     done
 
+    # A fat file lists every slice's commands, so the same finding can come
+    # twice; each is reported and counted once.
+    local w nwarnings=0 nproblems=0 shown=0
+    while IFS= read -r w; do
+        [ -n "$w" ] || continue
+        nwarnings=$((nwarnings + 1))
+        echo "    warning: $w"
+    done < <(printf '%s\n' ${warnings[@]+"${warnings[@]}"} | awk '!seen[$0]++')
     if [ "${#problems[@]}" -eq 0 ]; then
-        echo "  self-contained: ${#machos[@]} Mach-O files load only from the bundle and the system, $((kb / 1024)) MB"
+        echo "  self-contained: ${#machos[@]} Mach-O files load only from the bundle and the system, $((kb / 1024)) MB, $nwarnings warning(s)"
         return 0
     fi
     echo "  NOT SELF-CONTAINED: $given would not start on a Mac without this build's Craft root" >&2
-    local p shown=0
-    for p in "${problems[@]}"; do
-        shown=$((shown + 1))
-        if [ "$shown" -gt 40 ]; then
-            echo "    ... and $(( ${#problems[@]} - 40 )) more" >&2; break
-        fi
-        echo "    $p" >&2
-    done
+    while IFS= read -r w; do
+        nproblems=$((nproblems + 1))
+        [ "$nproblems" -le 40 ] && echo "    $w" >&2
+        shown=$nproblems
+    done < <(printf '%s\n' "${problems[@]}" | awk '!seen[$0]++')
+    [ "$shown" -le 40 ] || echo "    ... and $((shown - 40)) more" >&2
     return 1
 }
 
