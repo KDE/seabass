@@ -37,6 +37,10 @@
 # Ad-hoc signed unless SEABASS_SIGN_COMMAND says otherwise.
 set -u
 set -o pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+. "$here/macos-bundle-check.sh" || { echo "cannot read $here/macos-bundle-check.sh" >&2; exit 1; }
+# Nothing this script runs may borrow a library from outside the bundle.
+seabass_clear_dyld_env
 
 # Every step is checked by hand: this script runs without set -e, because
 # several checks below want a failing command's status rather than an exit.
@@ -112,6 +116,16 @@ for app in "$arm" "$intel"; do
         echo "Run 'craft --package seabass' and use <root>/build/qt-apps/seabass/archive/Applications/KDE/seabass.app" >&2
         exit 1
     fi
+done
+
+# Enough Mach-O files is not enough: two halves of 9.6 and 8.7 MB passed
+# the count above, merged, and ran on the Mac that built them, because
+# their binaries still found Qt in that Mac's Craft root. What the binaries
+# ask dyld for is read instead (tools/macos-bundle-check.sh).
+echo "== each bundle is self-contained"
+for app in "$arm" "$intel"; do
+    echo "  $app"
+    seabass_bundle_self_contained "$app" || exit 1
 done
 
 # The two Craft roots must hold the same package versions, and the bundles
@@ -256,6 +270,11 @@ while IFS= read -r f; do
 done < <(find "$app" -type f)
 echo "  $total Mach-O files, $bad not universal"
 [ "$bad" -eq 0 ] || exit 1
+
+# Again on the result, before anything runs it or packs it: the merge
+# copies and lipos, and must not have left a path that reaches outside.
+echo "== the merged bundle is self-contained"
+seabass_bundle_self_contained "$app" || exit 1
 
 # Both slices are made to run, because a universal binary that carries an
 # architecture it cannot execute looks identical to lipo.

@@ -280,7 +280,7 @@ no libfuse2. The first AppImage CI ever built failed it: SQLCipher's own
 `sqlite3_*` calls bound to the plain SQLite also loaded, and the first
 encrypted library crashed (fixed by `RTLD_DEEPBIND` in `sqlcipher_dyn.cpp`).
 
-Three things the merge is not allowed to get wrong, each of which it
+Four things the merge is not allowed to get wrong, each of which it
 checks rather than assumes:
 
 - **The two Craft roots must hold the same package versions.** Roots whose
@@ -300,6 +300,17 @@ checks rather than assumes:
   reads a real library once per architecture and compares the counts: a
   cross-built SQLCipher that fails to decrypt is the failure nobody would
   notice until a user opened a Denon stick.
+- **Every binary must load only from the bundle and the system.**
+  `tools/macos-bundle-check.sh`, run by both scripts on each half, on the
+  merged bundle and on the mounted image, refuses any load command or
+  `LC_RPATH` that is an absolute path other than `/System/Library` or
+  `/usr/lib` (a Craft root, a home directory, `/opt`, `/usr/local`), an
+  `@rpath` load no `LC_RPATH` inside the bundle can find, a
+  `Contents/Frameworks` without `QtCore.framework`, and a bundle under
+  100 MB unpacked, which is Craft's undeployed stub. Running the slices
+  cannot catch this, because on the Mac that built them a path into its
+  Craft root still resolves: two undeployed halves of 9.6 and 8.7 MB were
+  merged, ran there, and would have started on no other Mac.
 
 ## Grave bugs
 
