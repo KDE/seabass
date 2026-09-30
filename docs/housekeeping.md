@@ -56,7 +56,7 @@ subfolders, links, hidden files such as macOS's `._` files, and the folders
 themselves (the hardware makes them again anyway). `Contents/`, `PIONEER/`,
 `Engine Library/` and `Seabass/` are never looked at.
 
-**Delete Recordings** asks first, naming how many and how much space they
+**Delete Selected Recordings** asks first, naming how many and how much space they
 free, and saying they will be gone for good. Nothing is copied and no
 backup holds them: they belong to no library, so a stick backup of the
 libraries would not either, and nothing is added to the orphaned files

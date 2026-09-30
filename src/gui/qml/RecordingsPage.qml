@@ -179,6 +179,12 @@ Page {
                 enabled: !root.controller.busy && root.recordingCount > 0
                 onClicked: root.controller.setAllIncluded(false)
             }
+            Button {
+                objectName: "deleteButton"
+                text: "Delete Selected Recordings"
+                enabled: !root.controller.busy && root.selectedCount > 0
+                onClicked: confirmDeleteDialog.open()
+            }
         }
 
         // What deleting the ticked recordings buys, against the stick's
@@ -300,19 +306,6 @@ Page {
             wrapMode: Text.WordWrap
             color: Theme.textMuted
             text: root.leftAloneLine
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            Item { Layout.fillWidth: true }
-            Button {
-                objectName: "deleteButton"
-                text: "Delete Recordings"
-                highlighted: true
-                enabled: !root.controller.busy && root.selectedCount > 0
-                onClicked: confirmDeleteDialog.open()
-            }
         }
     }
 
