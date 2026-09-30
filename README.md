@@ -32,10 +32,11 @@ Two ways to use it:
   waveform/cue display, add cues by clicking the waveform, merge
   duplicate tracks, sync cues between rekordbox and Engine, check the
   three formats against each other (Library Health), clean up orphaned
-  files, back up and restore a whole stick, clone a stick, keep a
-  metadata backup on the computer, format a stick, measure how a stick
-  performs, and anonymize a library. Every workflow that writes to a
-  stick backs it up first.
+  files, delete set recordings from a stick (see
+  [`docs/housekeeping.md`](docs/housekeeping.md)), back up and restore a
+  whole stick, clone a stick, keep a metadata backup on the computer,
+  format a stick, measure how a stick performs, and anonymize a library.
+  Every workflow that writes to a stick's library backs it up first.
 
 See [`docs/write-path-performance.md`](docs/write-path-performance.md) for how write
 performance against real sticks is measured and what the current numbers are.
