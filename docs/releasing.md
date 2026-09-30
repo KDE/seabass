@@ -244,7 +244,9 @@ signing service; on any other ref the package is signed ad hoc, as the
 halves are. It refuses when the runner cannot execute x86_64 code, rather
 than check one slice and pass. The nightly runs it by itself, so two
 Craft roots that have drifted apart show up as a red job before a
-release rather than on the day of one.
+release rather than on the day of one. On a `Seabass/X.Y` branch the
+nightly also signs and notarises it, and a failure there fails the
+pipeline; a push to that branch offers it as a button, signed as well.
 
 ```sh
 # on the Mac, once per architecture, from the same source tree
