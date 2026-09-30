@@ -16,7 +16,8 @@
 #
 # SEABASS_SIGN_COMMAND, if set, is run with the merged .app and then with
 # the .dmg appended (split on whitespace, like Craft's MacCustomSignCommand),
-# and each must come back with a real signature, not an ad-hoc one.
+# and each must come back signed "Developer ID Application" by the team in
+# SEABASS_SIGN_TEAM_ID (KDE e.V.'s, 5433B4KXM8, unless set), not ad hoc.
 # SEABASS_NOTARIZE_COMMAND, if set, is run with the .dmg appended, and the
 # .dmg must then carry a stapled ticket.
 #
@@ -281,11 +282,21 @@ fi
 sign_cmd=(); notarize_cmd=()
 [ -n "${SEABASS_SIGN_COMMAND:-}" ] && read -r -a sign_cmd <<< "$SEABASS_SIGN_COMMAND"
 [ -n "${SEABASS_NOTARIZE_COMMAND:-}" ] && read -r -a notarize_cmd <<< "$SEABASS_NOTARIZE_COMMAND"
-really_signed() {  # <path>: a signature with an Authority, not an ad-hoc one
+# KDE e.V.'s Apple team, as craft-ci's CraftConfig.ini names it in
+# CodeSigning/MacDeveloperId, "K Desktop Environment e.V. (5433B4KXM8)".
+sign_team="${SEABASS_SIGN_TEAM_ID:-5433B4KXM8}"
+really_signed() {  # <path>: signed for distribution by that team, not ad hoc
     local out
     out="$(codesign -dvv "$1" 2>&1)" || { printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1; }
-    if printf '%s\n' "$out" | grep -q '^Signature=adhoc' || ! printf '%s\n' "$out" | grep -q '^Authority='; then
-        printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1
+    # Any Authority is not enough: an Apple Development certificate, or a
+    # Developer ID from some other team, has one too, and neither makes a
+    # package Gatekeeper opens for a stranger.
+    if printf '%s\n' "$out" | grep -q '^Signature=adhoc' ||
+       ! printf '%s\n' "$out" | grep -q '^Authority=Developer ID Application: ' ||
+       ! printf '%s\n' "$out" | grep -qx "TeamIdentifier=$sign_team"; then
+        printf '%s\n' "$out" | sed 's/^/  /' >&2
+        echo "  wanted: Authority=Developer ID Application: ..., TeamIdentifier=$sign_team" >&2
+        return 1
     fi
     printf '%s\n' "$out" | grep -E '^(Authority|TeamIdentifier|Timestamp)=' | sed 's/^/  /'
 }
