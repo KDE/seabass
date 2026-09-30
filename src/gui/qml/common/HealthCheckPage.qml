@@ -58,8 +58,14 @@ Page {
 
     default property alias content: body.data
 
+    // How deep the page's own scan goes when no hub handed it a
+    // controller. A page that shows only cues (CuesAtZeroPage) sets
+    // CuesOnly, so opened on its own it does not run every audit.
+    property int ownScanDepth: LibraryConsistencyController.Full
+
     LibraryConsistencyController {
         id: ownController
+        scanDepth: root.ownScanDepth
     }
 
     function formatLabel(format) {

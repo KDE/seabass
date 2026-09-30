@@ -252,6 +252,26 @@ class LibraryConsistencyController : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
+
+public:
+    // How much of the stick one scan reads. Full is Library Health's scan:
+    // every check this class has. CuesOnly is the stray-cue pages': the
+    // catalogs, their cues and the two stray-cue finders, and nothing
+    // else. No Clean Up leftover check, no cover-art, analysis or
+    // sample-rate audit, no file-presence check (the missing-file issues),
+    // no import-prompt read. The sample-rate audit alone opens every Engine
+    // track's file whose row lacks a rate, which on a full USB stick is
+    // minutes spent on something those pages never show.
+    enum ScanDepth {
+        Full,
+        CuesOnly,
+    };
+    Q_ENUM(ScanDepth)
+
+private:
+    // Takes effect from the next scan() on, including the rescans after a
+    // save, which keep the depth the page set.
+    Q_PROPERTY(ScanDepth scanDepth READ scanDepth WRITE setScanDepth NOTIFY scanDepthChanged)
     Q_PROPERTY(seabass::gui::LibraryConsistencyIssueListModel *issues READ issuesModel CONSTANT)
     Q_PROPERTY(seabass::gui::JunkCueIssueListModel *junkCues READ junkCuesModel CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -373,6 +393,8 @@ public:
     // actually running, empty once the whole sequence finishes, lets
     // the page show "Scanning Engine..." progressively.
     QString scanningFormat() const { return m_scanningFormat; }
+    ScanDepth scanDepth() const { return m_scanDepth; }
+    void setScanDepth(ScanDepth depth);
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
     QStringList playlistNames() const { return m_playlistNames; }
@@ -523,6 +545,7 @@ signals:
     void writingChanged();
     void scanProgressChanged();
     void scanningFormatChanged();
+    void scanDepthChanged();
     void errorMessageChanged();
     void statusMessageChanged();
     void issuesChanged();
@@ -630,6 +653,8 @@ private:
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_scanningFormat;
+    ScanDepth m_scanDepth = Full;
+    ScanDepth m_chainDepth = Full;  // m_scanDepth when the running chain started
     QString m_errorMessage;
     QString m_statusMessage;
     bool m_statusIsAboutStaging = false;

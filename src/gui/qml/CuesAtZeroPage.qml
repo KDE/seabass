@@ -21,6 +21,8 @@ HealthCheckPage {
     required property var playbackController
 
     checkTitle: "Cues at 0:00"
+    // Opened without the hub, it reads cues and nothing else.
+    ownScanDepth: LibraryConsistencyController.CuesOnly
 
     MessageDialog {
         id: confirmRemoveJunkCueDialog

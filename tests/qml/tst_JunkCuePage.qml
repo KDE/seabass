@@ -141,6 +141,80 @@ TestCase {
         }
     }
 
+    Component {
+        id: fullControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    // The stray-cue page reads cues and nothing else. It used to run
+    // Library Health's whole scan per catalog: the Clean Up leftover
+    // check, the cover-art, analysis and sample-rate audits, and a stat of
+    // every track's file. On a full USB stick the sample-rate audit alone
+    // (one audio file opened per Engine row without a rate) held the
+    // overlay up for minutes, for results this page never shows.
+    //
+    // The same library through Library Health's depth first, on its own
+    // copy so neither scan is answered from the other's catalog cache: it
+    // shows each check that the page skips does find something here, so
+    // the page's zeroes below are the checks not running, not a library
+    // with nothing to find.
+    function test_theStrayCueScanReadsCuesAndNothingElse() {
+        const fullStick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(fullStick.length > 0, "the fixture must copy");
+        const full = createTemporaryObject(fullControllerComponent, testCase);
+        compare(full.scanDepth, LibraryConsistencyController.Full, "a controller scans fully unless told otherwise");
+        const fullStart = Date.now();
+        full.scan(fullStick + "/PIONEER", fullStick + "/Engine Library", "");
+        verify(full.busy, "scanning");
+        tryVerify(() => !full.busy, 300000, "the full scan finishes");
+        const fullMs = Date.now() - fullStart;
+        compare(full.errorMessage, "", "the full scan read everything");
+        verify(full.issues.count > 0, "precondition: the fixture has no audio, so every row is a missing file");
+        verify(full.artworkTracksWithArt > 0, "precondition: the cover-art audit finds art here");
+        verify(full.analysisLibraryPresent, "precondition: the analysis audit finds the Engine library");
+        verify(full.cleanupLeftoversChecked, "precondition: the Clean Up leftover check runs on this stick");
+        verify(full.junkCues.count > 0, "precondition: the fixture has stray cues");
+
+        const page = openOnAFreshCopy();
+        const controller = page.consistencyController;
+        compare(controller.scanDepth, LibraryConsistencyController.CuesOnly, "the page asks for cues only");
+        const cuesStart = Date.now();
+        const overlay = findChild(page, "junkCueBusyOverlay");
+        tryVerify(() => !overlay.visible, 300000, "the page's scan finishes");
+        const cuesMs = Date.now() - cuesStart;
+        compare(controller.errorMessage, "", "the page's scan read everything");
+
+        compare(controller.junkCues.count, full.junkCues.count, "the same stray cues either way");
+        compare(controller.playlistNames, full.playlistNames, "and the same playlists for the picker");
+        compare(controller.issues.count, 0, "no file presence check");
+        compare(controller.artworkTracksWithArt, 0, "no cover-art audit");
+        compare(controller.artworkError, "", "no cover-art audit");
+        compare(controller.analysisLibraryPresent, false, "no analysis audit");
+        compare(controller.sampleRateMissingCount, 0, "no sample-rate audit");
+        compare(controller.sampleRateError, "", "no sample-rate audit");
+        compare(controller.cleanupLeftoversChecked, false, "no Clean Up leftover check");
+        console.log("stray-cue scan on the committed fixture (local disk): full " + fullMs + " ms, cues only "
+                    + cuesMs + " ms");
+    }
+
+    // The depth is part of what was asked. A scan for the same paths is
+    // answered by the one already running (tst_StagedScanRequests), but a
+    // cues-only scan does not answer a request for the whole check: it
+    // would leave Library Health's checks never run and read as clean.
+    function test_aFullScanIsNotAnsweredByACuesOnlyOne() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const controller = createTemporaryObject(fullControllerComponent, testCase);
+        controller.scanDepth = LibraryConsistencyController.CuesOnly;
+        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+        verify(controller.busy, "precondition: the cues-only scan is still running");
+        controller.scanDepth = LibraryConsistencyController.Full;
+        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+        tryVerify(() => !controller.busy, 300000, "the scan finishes");
+        verify(controller.issues.count > 0, "the full check ran after all");
+        verify(controller.cleanupLeftoversChecked, "every part of it");
+    }
+
     // Stopped from the overlay, the page stays and says the list is not
     // the whole answer. Above all it must not say "No cues are sitting
     // at 0:00" about a library it never finished reading.

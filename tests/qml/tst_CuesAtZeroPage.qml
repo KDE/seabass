@@ -58,6 +58,16 @@ TestCase {
         }
     }
 
+    // Opened without the hub, the page scans for itself, and it shows
+    // cues only: Library Health's other audits would read every file on
+    // the stick for nothing it shows.
+    function test_onItsOwnItScansForCuesOnly() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        verify(page !== null, "the page must instantiate");
+        compare(page.consistencyController.scanDepth, LibraryConsistencyController.CuesOnly);
+        tryVerify(() => !page.consistencyController.busy, 30000, "its scan of the missing stick ends");
+    }
+
     function findCrumb(item) {
         if (item === null || item === undefined) {
             return null;

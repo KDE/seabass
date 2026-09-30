@@ -393,8 +393,10 @@ std::atomic_int &runningScanTasks()
 // empty scans/checks the whole format's library, same as before this
 // parameter existed; a real name scopes both the junk-cue list and the
 // consistency check to just that playlist's tracks, via domain::TrackScope
-// -- same seam SyncController::runAnalyzeTask already uses.
+// -- same seam SyncController::runAnalyzeTask already uses. `depth`
+// CuesOnly stops at the stray-cue finders (see ScanDepth).
 LibraryConsistencyScanResult runScanTask(QString format, QString path, QString playlistName,
+                                          LibraryConsistencyController::ScanDepth depth,
                                           std::shared_ptr<QtProgressReporter> reporter,
                                           application::CancellationToken cancel,
                                           infrastructure::engine::ArtworkSourceByTrackFile artSources,
@@ -411,8 +413,9 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
         cancel.throwIfCancelled();
 
         tallyPlaylists(tracks, result);
+        const bool full = depth == LibraryConsistencyController::Full;
 
-        if (format == QStringLiteral("onelibrary")) {
+        if (full && format == QStringLiteral("onelibrary")) {
             // #8: what a Clean Up removed from export.pdb and never from
             // here. Before the playlist scope below, like the Engine
             // audits: a leftover is a fact about the library, and one
@@ -443,7 +446,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             }
         }
 
-        if (format == QStringLiteral("rekordbox")) {
+        if (full && format == QStringLiteral("rekordbox")) {
             // What this catalog holds per audio file, for the Engine pass
             // that follows: Engine keeps its own copies of the art, so
             // when one of those is lost this is the only source still on
@@ -457,7 +460,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             }
         }
 
-        if (format == QStringLiteral("engine")) {
+        if (full && format == QStringLiteral("engine")) {
             // Cover art, checked while this format's library is open
             // anyway: one read of Track/AlbumArt and a stat per image,
             // nothing next to the scan itself.
@@ -533,6 +536,13 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             for (const auto &cue : domain::removableClusterCues(cluster)) {
                 result.junkCues.push_back(domain::JunkCueIssue{cluster.track, cue, reason});
             }
+        }
+
+        if (!full) {
+            // The stray-cue pages are done: what follows stats every
+            // track's file, one round trip per track on a USB stick, for
+            // the missing-file issues those pages never show.
+            return result;
         }
 
         std::vector<domain::Track> healthy;
@@ -706,12 +716,18 @@ void LibraryConsistencyController::rescanAfterWrite()
 void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, const QString &enginePath,
                                                   const QString &playlistName, bool restart)
 {
-    const QString scope = rekordboxPath + QLatin1Char('\n') + enginePath + QLatin1Char('\n') + playlistName;
+    // The depth is part of the request: a Full scan asked for while a
+    // CuesOnly one runs is not answered by it.
+    const QString scope = rekordboxPath + QLatin1Char('\n') + enginePath + QLatin1Char('\n') + playlistName
+        + QLatin1Char('\n') + QString::number(m_scanDepth);
     // The same scope again while it is read: that scan answers it.
     if (!restart && busy() && scope == m_scanScope) {
         return;
     }
     m_scanScope = scope;
+    // Every leg of this chain reads at the depth it was asked for, even if
+    // the page changes it before the last leg starts.
+    m_chainDepth = m_scanDepth;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     m_currentPlaylistName = playlistName;
@@ -736,10 +752,12 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     // pulled stick's m.db aside first.
     m_importState = {};
     emit importStateChanged();
-    m_importStateWatcher.setFuture(
-        QtConcurrent::run([engine = m_enginePath.toStdString(), rekordbox = m_rekordboxPath.toStdString()]() {
-            return infrastructure::engine::readRekordboxImportState(engine, rekordbox);
-        }));
+    if (m_chainDepth == Full) {
+        m_importStateWatcher.setFuture(
+            QtConcurrent::run([engine = m_enginePath.toStdString(), rekordbox = m_rekordboxPath.toStdString()]() {
+                return infrastructure::engine::readRekordboxImportState(engine, rekordbox);
+            }));
+    }
     // The staged fill is NOT cleared here, for the same reason the staged
     // artwork is not: a rescan re-reads the library, it does not unstage
     // what someone asked for. Clearing the flag while the change stayed
@@ -813,10 +831,11 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
     const QString playlist = m_currentPlaylistName;
     const auto artSources = m_artSources;
     const QString backupDirectory = m_backupDirectory;
+    const ScanDepth depth = m_chainDepth;
     auto reporter = makeReporter();
     AsyncRequest<LibraryConsistencyScanResult>::Work work =
-        [format, path, playlist, reporter, artSources, backupDirectory](application::CancellationToken cancel) {
-            return runScanTask(format, path, playlist, reporter, cancel, artSources, backupDirectory);
+        [format, path, playlist, depth, reporter, artSources, backupDirectory](application::CancellationToken cancel) {
+            return runScanTask(format, path, playlist, depth, reporter, cancel, artSources, backupDirectory);
         };
     AsyncRequest<LibraryConsistencyScanResult>::Ending ending{
         [this](LibraryConsistencyScanResult &&result) { onScanFinished(std::move(result)); },
@@ -1746,6 +1765,15 @@ void LibraryConsistencyController::setScanProgress(int current, int total)
     m_scanCurrent = current;
     m_scanTotal = total;
     emit scanProgressChanged();
+}
+
+void LibraryConsistencyController::setScanDepth(ScanDepth depth)
+{
+    if (m_scanDepth == depth) {
+        return;
+    }
+    m_scanDepth = depth;
+    emit scanDepthChanged();
 }
 
 void LibraryConsistencyController::setScanningFormat(const QString &format)
