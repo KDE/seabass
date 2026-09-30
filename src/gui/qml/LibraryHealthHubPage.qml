@@ -439,6 +439,19 @@ Page {
                     : "Everything Seabass can check about this library, and what it found."
             }
 
+            // How far the check is, and in which step. The cards below
+            // each only spin, and a whole-library check on a full USB stick
+            // takes minutes: every step (a catalog, then each audit) says
+            // its own total, so this counts instead of sweeping.
+            ProgressReport {
+                objectName: "healthScanProgress"
+                Layout.fillWidth: true
+                visible: root.scanning
+                unitsDone: healthController.scanCurrent
+                unitsTotal: healthController.scanTotal
+                currentItem: healthController.scanPhase
+            }
+
             HealthCheckCard {
                 objectName: "stickFilesystemCard"
                 title: "The stick itself"

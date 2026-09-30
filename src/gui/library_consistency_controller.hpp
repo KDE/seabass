@@ -272,6 +272,12 @@ private:
     // Takes effect from the next scan() on, including the rescans after a
     // save, which keep the depth the page set.
     Q_PROPERTY(ScanDepth scanDepth READ scanDepth WRITE setScanDepth NOTIFY scanDepthChanged)
+    // What the running leg is doing right now, in the words of whatever
+    // reports it ("Scanning Engine tracks", "Checking sample rates").
+    // scanCurrent/scanTotal count this phase: each phase starts its own
+    // total, so a page shows a counted bar through every audit rather
+    // than a bar that sweeps, or sits full, while a stick is read.
+    Q_PROPERTY(QString scanPhase READ scanPhase NOTIFY scanPhaseChanged)
     Q_PROPERTY(seabass::gui::LibraryConsistencyIssueListModel *issues READ issuesModel CONSTANT)
     Q_PROPERTY(seabass::gui::JunkCueIssueListModel *junkCues READ junkCuesModel CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -394,6 +400,7 @@ public:
     // the page show "Scanning Engine..." progressively.
     QString scanningFormat() const { return m_scanningFormat; }
     ScanDepth scanDepth() const { return m_scanDepth; }
+    QString scanPhase() const { return m_scanPhase; }
     void setScanDepth(ScanDepth depth);
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
@@ -546,6 +553,7 @@ signals:
     void scanProgressChanged();
     void scanningFormatChanged();
     void scanDepthChanged();
+    void scanPhaseChanged();
     void errorMessageChanged();
     void statusMessageChanged();
     void issuesChanged();
@@ -582,6 +590,7 @@ private:
     int indexOfIssueKey(const QString &issueKey) const;
     int indexOfJunkKey(const QString &junkKey) const;
     void setScanningFormat(const QString &format);
+    void setScanPhase(const QString &phase);
     void setErrorMessage(const QString &message);
     void setStatusMessage(const QString &message);
     // A "Staged N ... Press Save" line, which stops being true the moment
@@ -653,6 +662,7 @@ private:
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_scanningFormat;
+    QString m_scanPhase;
     ScanDepth m_scanDepth = Full;
     ScanDepth m_chainDepth = Full;  // m_scanDepth when the running chain started
     QString m_errorMessage;

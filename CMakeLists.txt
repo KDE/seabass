@@ -1680,6 +1680,7 @@ add_test(NAME engine_analysis_state_test COMMAND engine_analysis_state_test
 
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp
+    src/application/ports/progress_reporter.cpp
     tests/engine_sample_rates_test.cpp
 )
 target_include_directories(engine_sample_rates_test PRIVATE src tests)

@@ -296,7 +296,8 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
 }
 
 ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources,
-                          const ArtworkSourceProbe &hasOtherSource, const application::CancellationToken &cancel)
+                          const ArtworkSourceProbe &hasOtherSource, const application::CancellationToken &cancel,
+                          application::ProgressReporter &progress)
 {
     ArtworkAudit audit;
     const fs::path db = databaseFile(engineLibraryPath);
@@ -371,10 +372,32 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             return audit;
         }
         AlbumArtImageHeads heads(handle);
+        // Not announced when there are none (a library that keeps its
+        // covers as files): a phase with nothing to count would sweep.
+        if (!rows.empty()) {
+            progress.start("Reading cover images", rows.size());
+        }
+        size_t headsRead = 0;
         for (const std::int64_t row : rows) {
             imageHeadByRow[row] = heads.of(row);
+            progress.tick(++headsRead);
         }
     }
+
+    // The row count first, inside the same read transaction as the rows,
+    // so the bar below has a total from its first tick. Unknown (0, a
+    // sweeping bar) if the count itself cannot be read; the audit below
+    // says what went wrong with the table.
+    size_t trackRows = 0;
+    if (sqlite3_stmt *count = nullptr;
+        sqlite3_prepare_v2(handle, "SELECT COUNT(*) FROM Track;", -1, &count, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(count) == SQLITE_ROW) {
+            trackRows = static_cast<size_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(count, 0)));
+        }
+        sqlite3_finalize(count);
+    }
+    progress.start("Checking cover art", trackRows);
+    size_t rowsChecked = 0;
 
     sqlite3_stmt *stmt = nullptr;
     const std::string sqlText =
@@ -413,6 +436,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             sqlite3_close(handle);
             throw application::OperationCancelled();
         }
+        // Rows finished before this one: every branch below ends the row
+        // with a continue, so the count is taken on the way in.
+        progress.tick(rowsChecked++);
         ArtworkEntry entry;
         entry.trackId = sqlite3_column_int64(stmt, 0);
         if (const unsigned char *title = sqlite3_column_text(stmt, 1)) {
@@ -566,6 +592,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             audit.unreadable.push_back(std::move(entry));
         }
     }
+    progress.tick(rowsChecked);
     sqlite3_finalize(stmt);
     sqlite3_exec(handle, "COMMIT;", nullptr, nullptr, nullptr);
     sqlite3_close(handle);

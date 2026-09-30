@@ -250,6 +250,7 @@ Page {
         current: consistencyController?.scanCurrent ?? 0
         total: consistencyController?.scanTotal ?? 0
         label: "Checking cover art..."
+        currentItem: consistencyController?.scanPhase ?? ""
         cancellable: consistencyController?.scanCancellable ?? false
         onCancelRequested: consistencyController?.cancelScan()
     }

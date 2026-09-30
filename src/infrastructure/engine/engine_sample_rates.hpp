@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "application/ports/progress_reporter.hpp"
 
 namespace seabass::infrastructure::engine
 {
@@ -55,8 +56,13 @@ using SampleRateProbe = std::function<double(const std::string &audioFile)>;
 // `cancel` is checked before every track, and a stop throws
 // application::OperationCancelled rather than coming back as an error or
 // as a partial count.
+// `progress` hears "Checking sample rates" with the library's track count
+// as its total and a tick per track: the probe opens one audio file per
+// row without a rate, which on a USB stick is minutes for a library that
+// lacks many.
 SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe = {},
-                                 const application::CancellationToken &cancel = application::CancellationToken::none());
+                                 const application::CancellationToken &cancel = application::CancellationToken::none(),
+                                 application::ProgressReporter &progress = application::NullProgressReporter::instance());
 
 struct SampleRateRepair
 {

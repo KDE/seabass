@@ -20,6 +20,7 @@
 #include <string>
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <sqlite3.h>
@@ -36,6 +37,17 @@ using seabass::pathToUtf8;
 
 namespace
 {
+
+// What a page's progress bar would have been told.
+struct RecordingReporter : seabass::application::ProgressReporter
+{
+    std::vector<std::pair<std::string, size_t>> starts;
+    std::vector<size_t> ticks;
+    void start(const std::string &label, size_t total) override { starts.emplace_back(label, total); }
+    void tick(size_t current) override { ticks.push_back(current); }
+    void finish() override {}
+    void warn(const std::string &) override {}
+};
 
 // The first three bytes are what says "JPEG" to anything that looks.
 std::string jpeg(const std::string &payload)
@@ -224,6 +236,15 @@ int main(int argc, char **argv)
         assert(audit.unreadable[0].trackId == 3);
         assert(audit.unreadable[0].storage == ArtworkStorage::ImportedPath);
         assert(!audit.unreadable[0].imageOnStick.empty());
+        // Covers kept as files only: the pass over images in the database
+        // has nothing to count and is not announced, so a bar does not
+        // sweep for it. The tracks are counted as ever.
+        {
+            RecordingReporter progress;
+            auditArtwork(pathToUtf8(fixture.library), {}, {}, seabass::application::CancellationToken::none(), progress);
+            const std::vector<std::pair<std::string, size_t>> phases = {{"Checking cover art", 5}};
+            assert(progress.starts == phases);
+        }
         std::cout << "case 3 (the audit counts what a player can read, and what can be repaired) OK\n";
 
         // 4. The repair gives that track Engine's own storage, and the
@@ -634,6 +655,23 @@ int main(int argc, char **argv)
         assert(audit.unreadable[0].otherSource);
         assert(audit.leftAlone.size() == 1 && audit.leftAlone[0].trackId == 5);
         assert(audit.repairable() == 1);
+
+        // 13b. And it says how far it is, in both of its passes: the
+        //      images kept in the database (three rows hold bytes), then
+        //      the tracks. Each with its total before its first row and a
+        //      count per row, so a page shows a counted bar through an
+        //      audit that stats and probes a file per row on a USB stick.
+        {
+            RecordingReporter progress;
+            const ArtworkAudit counted = auditArtwork(pathToUtf8(fixture.library), {}, probe,
+                                                      seabass::application::CancellationToken::none(), progress);
+            assert(counted.tracksWithArt == audit.tracksWithArt);
+            const std::vector<std::pair<std::string, size_t>> phases = {{"Reading cover images", 3},
+                                                                        {"Checking cover art", 6}};
+            assert(progress.starts == phases);
+            assert((progress.ticks == std::vector<size_t>{1, 2, 3, 0, 1, 2, 3, 4, 5, 6}));
+            std::cout << "case 13b (the audit reports a total and a count per row, per pass) OK\n";
+        }
 
         // A repair handed these tracks anyway, as the old audit did, leaves
         // every one on its row: nothing written, nothing re-pointed.

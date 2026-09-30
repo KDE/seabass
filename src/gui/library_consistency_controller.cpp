@@ -430,9 +430,18 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 // The token rides in on the key: spelling every path of
                 // both catalogs is most of the finder's time (0.2 s of a
                 // Debug build on the committed fixture), and a stop there
-                // must not wait for all of it.
-                const auto keyOrStop = [&cancel](const std::string &file) {
+                // must not wait for all of it. So does the progress: one
+                // key per deleted file and per row of either catalog,
+                // then a few more for the rows it pairs up, which the
+                // count holds at the total rather than running past it.
+                const size_t keysExpected = deleted.size() + rekordboxTracks.size() + tracks.size();
+                reporter->start("Looking for Clean Up leftovers", keysExpected);
+                size_t keysSpelled = 0;
+                const auto keyOrStop = [&cancel, &reporter, &keysSpelled, keysExpected](const std::string &file) {
                     cancel.throwIfCancelled();
+                    if (keysSpelled < keysExpected) {
+                        reporter->tick(++keysSpelled);
+                    }
                     return application::normalizedPathKey(file);
                 };
                 result.cleanupLeftovers =
@@ -475,7 +484,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 backupDirectory.toStdString(),
                 pathToUtf8(pathFromQString(path).parent_path()));
             result.artwork = infrastructure::engine::auditArtwork(path.toStdString(), artSources,
-                                                                  result.rescue->probe(), cancel);
+                                                                  result.rescue->probe(), cancel, *reporter);
             cancel.throwIfCancelled();
             // The same pass asks each row for its sample rate, and each
             // file whose row cannot say. Reading a header costs about
@@ -483,8 +492,12 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // nothing is missing costs nothing and one where everything
             // is costs a second.
             // #38: one count query against Track, no file reads, so it
-            // costs nothing next to the two audits around it.
+            // costs nothing next to the two audits around it. Reported as
+            // one step all the same, so the phase the page shows is this
+            // one and not the audit before it.
+            reporter->start("Counting tracks the player will analyse", 1);
             result.analysisState = infrastructure::engine::auditAnalysisState(path.toStdString());
+            reporter->tick(1);
             cancel.throwIfCancelled();
             result.sampleRates = infrastructure::engine::auditSampleRates(
                 path.toStdString(), [](const std::string &audioFile) -> double {
@@ -497,7 +510,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                     return 0.0;
 #endif
                 },
-                cancel);
+                cancel, *reporter);
             cancel.throwIfCancelled();
         }
 
@@ -635,8 +648,9 @@ std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
     // the one outstanding: a superseded leg reports until it notices.
     auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = m_scan.speaksForNext();
-    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
         if (current()) {
+            setScanPhase(label);
             setScanProgress(0, total);
         }
     });
@@ -822,8 +836,14 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
 {
     if (m_pendingScanFormats.empty()) {
         setScanningFormat({});
+        setScanPhase({});
         return;
     }
+    // A new leg has counted nothing yet. Left standing, the last leg's
+    // phase and counts were shown over this one until its reader started
+    // (and for good, when the reader answered from its cache).
+    setScanPhase({});
+    setScanProgress(0, 0);
     QString format = m_pendingScanFormats.front();
     m_pendingScanFormats.erase(m_pendingScanFormats.begin());
     setScanningFormat(format);
@@ -844,6 +864,7 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
         [this](const QString &message) {
             m_pendingScanFormats.clear();
             setScanningFormat({});
+            setScanPhase({});
             setErrorMessage(message);
         },
         [this]() { endScanCancelled(); },
@@ -870,6 +891,7 @@ void LibraryConsistencyController::endScanCancelled()
     // complete for those formats); the rest of the queue is dropped.
     m_pendingScanFormats.clear();
     setScanningFormat({});
+    setScanPhase({});
     emit scanCancelled();
 }
 
@@ -1783,6 +1805,15 @@ void LibraryConsistencyController::setScanningFormat(const QString &format)
     }
     m_scanningFormat = format;
     emit scanningFormatChanged();
+}
+
+void LibraryConsistencyController::setScanPhase(const QString &phase)
+{
+    if (m_scanPhase == phase) {
+        return;
+    }
+    m_scanPhase = phase;
+    emit scanPhaseChanged();
 }
 
 void LibraryConsistencyController::setErrorMessage(const QString &message)

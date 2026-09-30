@@ -141,6 +141,66 @@ TestCase {
         }
     }
 
+    // Only what the page reads, and a scan that goes where the test says.
+    Component {
+        id: fakeControllerComponent
+        QtObject {
+            property bool busy: false
+            property bool writing: false
+            property bool scanCancellable: true
+            property int scanCurrent: 0
+            property int scanTotal: 0
+            property string scanningFormat: ""
+            property string scanPhase: ""
+            property int unstagedJunkCueCount: 0
+            property var junkCues: ListModel {}
+            property var playlistNames: []
+            property var playlistTrackCounts: ({})
+            property string errorMessage: ""
+            property string statusMessage: ""
+            signal scanCancelled()
+            function scan(a, b, c) {}
+            function cancelScan() {}
+        }
+    }
+
+    // Every step of the scan shows a counted bar and says which step it
+    // is. The steps the page used to sit through (the audits it no longer
+    // runs) never reported at all, so the bar swept for minutes and the
+    // page looked hung; the catalog reads it keeps each report a total.
+    function test_theOverlayCountsEveryStepAndNamesIt() {
+        const fake = createTemporaryObject(fakeControllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {controllerForTesting: fake});
+        verify(page.consistencyController === fake, "precondition: the page reads the stand-in");
+        const overlay = findChild(page, "junkCueBusyOverlay");
+        const report = findChild(overlay, "progressReport");
+        fake.busy = true;
+        verify(overlay.visible, "scanning");
+        const steps = [
+            {format: "rekordbox", phase: "Scanning rekordbox tracks", total: 1501},
+            {format: "rekordbox", phase: "Reading rekordbox cues", total: 1161},
+            {format: "engine", phase: "Scanning Engine tracks", total: 1564},
+            {format: "onelibrary", phase: "Reading OneLibrary", total: 1644},
+        ];
+        for (const step of steps) {
+            fake.scanningFormat = step.format;
+            fake.scanPhase = step.phase;
+            fake.scanTotal = step.total;
+            fake.scanCurrent = Math.floor(step.total / 3);
+            verify(!report.indeterminate, step.phase + ": a counted bar, not a sweeping one");
+            compare(findChild(report, "unitsLabel").text, Math.floor(step.total / 3) + " / " + step.total + " tracks");
+            compare(findChild(report, "currentItemLabel").text, step.phase, "the step is named under the bar");
+            verify(overlay.label.indexOf(page.formatLabel(step.format)) > 0, "and the catalog above it: "
+                   + overlay.label);
+        }
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/JunkCuePage-counted-step.png");
+        }
+        fake.busy = false;
+        verify(!overlay.visible);
+    }
+
     Component {
         id: fullControllerComponent
         LibraryConsistencyController {}

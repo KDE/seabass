@@ -211,6 +211,9 @@ Page {
         total: consistencyController?.scanTotal ?? 0
         label: (consistencyController?.scanningFormat.length > 0
                 ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..." : "Scanning...")
+        // The step the bar is counting: reading a catalog, then each of
+        // Library Health's audits in turn, each with its own total.
+        currentItem: consistencyController?.scanPhase ?? ""
         cancellable: consistencyController?.scanCancellable ?? false
         onCancelRequested: consistencyController?.cancelScan()
     }
