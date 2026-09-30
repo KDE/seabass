@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
@@ -29,6 +30,22 @@
 
 namespace fs = std::filesystem;
 using namespace seabass::infrastructure::engine;
+
+namespace
+{
+
+// What a page's progress bar would have been told.
+struct RecordingReporter : seabass::application::ProgressReporter
+{
+    std::vector<std::pair<std::string, size_t>> starts;
+    std::vector<size_t> ticks;
+    void start(const std::string &label, size_t total) override { starts.emplace_back(label, total); }
+    void tick(size_t current) override { ticks.push_back(current); }
+    void finish() override {}
+    void warn(const std::string &) override {}
+};
+
+}  // namespace
 
 int main()
 {
@@ -98,6 +115,22 @@ int main()
             assert(stopped && "a cancelled audit says so, it is not an error and not a count");
             (void)checkedAfterStop;
             std::cout << "case 1b (a stop lands at the next track) OK\n";
+        }
+
+        // 1c. The audit says how far it is. It opens a file per row
+        //     without a rate, which on a USB stick is minutes, and a page
+        //     whose bar did not move for that long looked hung: a total
+        //     up front (the track count) and a count per row.
+        {
+            RecordingReporter progress;
+            const SampleRateAudit counted = auditSampleRates(seabass::pathToUtf8(library), probe,
+                                                             seabass::application::CancellationToken::none(), progress);
+            assert(counted.tracksChecked == 3);
+            assert(progress.starts.size() == 1 && "one phase");
+            assert(progress.starts[0].first == "Checking sample rates");
+            assert(progress.starts[0].second == 3 && "the total is known before the first row");
+            assert((progress.ticks == std::vector<size_t>{0, 1, 2, 3}) && "a count per row, ending at the total");
+            std::cout << "case 1c (the audit reports a total and a count per track) OK\n";
         }
 
         // 2. The repair writes what the file said, leaves the rest, and

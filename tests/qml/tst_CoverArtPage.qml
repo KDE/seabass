@@ -100,6 +100,42 @@ TestCase {
         LibraryConsistencyController {}
     }
 
+    // Only what the scan overlay reads.
+    Component {
+        id: scanningControllerComponent
+        QtObject {
+            property bool busy: true
+            property bool writing: false
+            property bool scanCancellable: true
+            property int scanCurrent: 0
+            property int scanTotal: 0
+            property string scanningFormat: "engine"
+            property string scanPhase: ""
+            property string errorMessage: ""
+            property string statusMessage: ""
+            signal scanCancelled()
+            function scan(a, b) {}
+            function cancelScan() {}
+        }
+    }
+
+    // The overlay counts the step it is in and names it: the cover-art
+    // audit reads its images and then its tracks, each with its own total.
+    function test_theOverlayCountsAndNamesEachStep() {
+        const fake = createTemporaryObject(scanningControllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: fake});
+        const report = findChild(page, "progressReport");
+        verify(report !== null && report.visible, "scanning, behind the overlay");
+        for (const step of [{phase: "Reading cover images", total: 40}, {phase: "Checking cover art", total: 1564}]) {
+            fake.scanPhase = step.phase;
+            fake.scanTotal = step.total;
+            fake.scanCurrent = 7;
+            verify(!report.indeterminate, step.phase + ": a counted bar");
+            compare(findChild(report, "unitsLabel").text, "7 / " + step.total);
+            compare(findChild(report, "currentItemLabel").text, step.phase);
+        }
+    }
+
     // The hub's controller can go before this page does (a stick pulled and
     // its changes discarded); nothing here may read it afterwards.
     function test_aSharedControllerThatGoesAwayIsNotReadAfterwards() {

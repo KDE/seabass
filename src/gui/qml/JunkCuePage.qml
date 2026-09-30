@@ -38,7 +38,12 @@ Page {
         id: ownController
         scanDepth: LibraryConsistencyController.CuesOnly
     }
-    readonly property QtObject consistencyController: ownController
+    // The page's own controller, unless a test hands in a stand-in to step
+    // through a scan's phases (tst_JunkCuePage). Read when the page is
+    // built, like EditSessionHost's registry.
+    property QtObject controllerForTesting: null
+    readonly property QtObject consistencyController: root.controllerForTesting !== null
+        ? root.controllerForTesting : ownController
 
     // Edit mode for this library: session, floating Save, leave guard.
     EditSessionHost {
@@ -475,6 +480,10 @@ Page {
         label: consistencyController.scanningFormat.length > 0
             ? "Looking for stray cues in " + root.formatLabel(consistencyController.scanningFormat) + "..."
             : "Looking for stray cues..."
+        // Which step of that catalog's read, counted by the bar above it:
+        // each step reports its own total, so the bar counts rather than
+        // sweeps while a stick is read.
+        currentItem: consistencyController.scanPhase
         cancellable: consistencyController.scanCancellable
         onCancelRequested: consistencyController.cancelScan()
     }

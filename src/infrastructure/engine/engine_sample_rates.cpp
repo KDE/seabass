@@ -62,7 +62,7 @@ int SampleRateAudit::fixable() const
 }
 
 SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe,
-                                 const application::CancellationToken &cancel)
+                                 const application::CancellationToken &cancel, application::ProgressReporter &progress)
 {
     SampleRateAudit audit;
     std::error_code ec;
@@ -74,8 +74,12 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         // that itself, and handed the inner path it opens something that
         // answers every read with "SQL logic error".
         auto db = djinterop::engine::load_database(engineLibraryPath);
-        for (djinterop::track track : db.tracks()) {
+        const auto tracks = db.tracks();
+        progress.start("Checking sample rates", tracks.size());
+        for (djinterop::track track : tracks) {
             cancel.throwIfCancelled();
+            // Rows finished before this one; the loop ends rows early.
+            progress.tick(static_cast<size_t>(audit.tracksChecked));
             audit.tracksChecked++;
             bool unreadable = false;
             if (rateOf(track, unreadable) || unreadable) {
@@ -101,6 +105,7 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
             }
             audit.missing.push_back(std::move(entry));
         }
+        progress.tick(static_cast<size_t>(audit.tracksChecked));
     } catch (const application::OperationCancelled &) {
         throw;  // a stop, not an unreadable library
     } catch (const std::exception &e) {

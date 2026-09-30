@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
 
 struct sqlite3;
@@ -154,9 +155,15 @@ using ArtworkSourceReader = std::function<std::string(const ArtworkEntry &)>;
 // work (a stat or two, or one probe of the other sources) rather than
 // after the whole table: throws application::OperationCancelled, with the
 // database already closed.
+//
+// `progress` hears two phases, each with a total set up front and a tick
+// per row: the covers kept inside the database ("Reading cover images"),
+// then the tracks ("Checking cover art"). On a USB stick either can take
+// long enough that a bar which does not move looks like a hang.
 ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources = {},
                           const ArtworkSourceProbe &hasOtherSource = {},
-                          const application::CancellationToken &cancel = application::CancellationToken::none());
+                          const application::CancellationToken &cancel = application::CancellationToken::none(),
+                          application::ProgressReporter &progress = application::NullProgressReporter::instance());
 
 // How Engine spells a hash as a file name under Artwork/: base64url,
 // unpadded. Exposed for the test, which checks it against the encoding

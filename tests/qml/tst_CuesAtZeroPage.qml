@@ -35,6 +35,7 @@ TestCase {
             property string errorMessage: ""
             property string statusMessage: ""
             property string scanningFormat: ""
+            property string scanPhase: ""
             property int scanCurrent: 0
             property int scanTotal: 0
             property bool scanCancellable: false
@@ -66,6 +67,35 @@ TestCase {
         verify(page !== null, "the page must instantiate");
         compare(page.consistencyController.scanDepth, LibraryConsistencyController.CuesOnly);
         tryVerify(() => !page.consistencyController.busy, 30000, "its scan of the missing stick ends");
+    }
+
+    // Library Health's check pages share one overlay (HealthCheckPage's):
+    // a counted bar through every step of the hub's check, the audits
+    // included, each named under the bar.
+    function test_theOverlayCountsEveryStepOfTheCheck() {
+        const fake = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: fake});
+        const report = findChild(page, "progressReport");
+        verify(report !== null, "the check page has a progress overlay");
+        fake.busy = true;
+        verify(report.visible, "scanning");
+        const steps = [
+            {format: "rekordbox", phase: "Scanning rekordbox tracks", total: 1501},
+            {format: "engine", phase: "Checking cover art", total: 1564},
+            {format: "engine", phase: "Counting tracks the player will analyse", total: 1},
+            {format: "engine", phase: "Checking sample rates", total: 1564},
+            {format: "onelibrary", phase: "Looking for Clean Up leftovers", total: 3203},
+        ];
+        for (const step of steps) {
+            fake.scanningFormat = step.format;
+            fake.scanPhase = step.phase;
+            fake.scanTotal = step.total;
+            fake.scanCurrent = step.total - 1;
+            verify(!report.indeterminate, step.phase + ": a counted bar, not a sweeping one");
+            compare(findChild(report, "unitsLabel").text, (step.total - 1) + " / " + step.total);
+            compare(findChild(report, "currentItemLabel").text, step.phase, "the step is named under the bar");
+        }
+        fake.busy = false;
     }
 
     function findCrumb(item) {

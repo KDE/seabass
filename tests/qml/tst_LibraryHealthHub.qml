@@ -680,4 +680,105 @@ TestCase {
         waitForRendering(built);
         verify(findChild(built, "checkAction").visible);
     }
+
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
+        id: stickPageComponent
+        LibraryHealthHubPage {
+            playbackController: realPlayback
+            stickLabel: "TESTSTICK"
+            rekordboxPath: ""
+            enginePath: ""
+        }
+    }
+
+    // Every step of the check counts. It reads each catalog and then runs
+    // its audits: the Clean Up leftover check, the cover-art audit, the
+    // analysis count and the sample-rate audit, which on a full USB stick
+    // opens an audio file per Engine row without a rate. None of those
+    // used to report, so the bar swept (or sat full) for minutes and the
+    // check looked hung. Each now starts its own total and counts, and the
+    // hub's progress shows the step and its count.
+    //
+    // Recorded as each count changes, on the real check of the committed
+    // fixture; the bindings under test are re-evaluated before a handler
+    // connected here runs.
+    function test_everyStepOfTheCheckIsCounted() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        const report = findChild(page, "healthScanProgress");
+        verify(report !== null, "the hub shows the check's progress");
+        const seen = {};
+        const record = () => {
+            if (controller.scanPhase.length === 0 || controller.scanTotal <= 0) {
+                return;
+            }
+            const entry = seen[controller.scanPhase] ?? {total: 0, highest: 0, counted: false, shown: false};
+            entry.total = controller.scanTotal;
+            entry.highest = Math.max(entry.highest, controller.scanCurrent);
+            entry.counted = entry.counted || (report.visible && !report.indeterminate
+                                              && report.unitsTotal === controller.scanTotal);
+            entry.shown = entry.shown || findChild(report, "currentItemLabel").text === controller.scanPhase;
+            seen[controller.scanPhase] = entry;
+        };
+        controller.scanProgressChanged.connect(record);
+        verify(controller.busy, "precondition: the check is running");
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        controller.scanProgressChanged.disconnect(record);
+        compare(controller.errorMessage, "", "the check read everything");
+        verify(!report.visible, "the progress goes once the check is done");
+
+        // Not "Reading cover images": this fixture keeps its covers as
+        // files, so that pass has no rows (engine_artwork_test counts it).
+        const steps = ["Looking for Clean Up leftovers", "Checking cover art",
+                       "Counting tracks the player will analyse", "Checking sample rates"];
+        for (const step of steps) {
+            const entry = seen[step];
+            verify(entry !== undefined, "\"" + step + "\" reported a total; seen: " + JSON.stringify(seen));
+            verify(entry.highest === entry.total, "\"" + step + "\" counted to its total: " + JSON.stringify(entry));
+            verify(entry.counted, "\"" + step + "\" showed a counted bar, not a sweeping one");
+            verify(entry.shown, "\"" + step + "\" was named under the bar");
+        }
+    }
+
+    Component {
+        id: bareControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    // A new catalog's leg starts from nothing counted. It used to inherit
+    // the last leg's step and counts, and a leg whose reader answered from
+    // the catalog cache (the second check of the same stick) never
+    // replaced them: OneLibrary was shown under "Checking sample rates",
+    // at the Engine audit's full count.
+    function test_eachCatalogStartsWithNothingCounted() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const controller = createTemporaryObject(bareControllerComponent, testCase);
+        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+        tryVerify(() => !controller.busy, 300000, "the first check finishes");
+
+        const legs = [];
+        const record = () => legs.push({format: controller.scanningFormat, phase: controller.scanPhase,
+                                        current: controller.scanCurrent, total: controller.scanTotal});
+        controller.scanningFormatChanged.connect(record);
+        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+        tryVerify(() => !controller.busy, 300000, "the second check finishes");
+        controller.scanningFormatChanged.disconnect(record);
+
+        const started = legs.filter((leg) => leg.format.length > 0);
+        compare(started.map((leg) => leg.format), ["rekordbox", "engine", "onelibrary"], "precondition: every leg ran");
+        for (const leg of started) {
+            compare(leg.phase, "", leg.format + " starts with no step of its own yet: " + JSON.stringify(leg));
+            compare(leg.total, 0, leg.format + " starts with nothing counted: " + JSON.stringify(leg));
+        }
+        compare(controller.scanPhase, "", "and nothing is left standing once the check is done");
+    }
 }
