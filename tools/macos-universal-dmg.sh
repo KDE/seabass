@@ -38,7 +38,10 @@
 set -u
 set -o pipefail
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/seabass-universal.XXXXXX")"
+# Every step is checked by hand: this script runs without set -e, because
+# several checks below want a failing command's status rather than an exit.
+# So a step without its own "|| exit 1" is a step whose failure is ignored.
+work="$(mktemp -d "${TMPDIR:-/tmp}/seabass-universal.XXXXXX")" || { echo "could not make a temporary directory" >&2; exit 1; }
 attached=()
 cleanup() {
     # Detached before the temp tree goes: rm -rf over a live mount would
@@ -57,7 +60,7 @@ trap cleanup EXIT
 # keep a failed attach out of $attached, and cleanup would miss it.
 app_from_dmg() {
     local mp="$work/mnt-$2" apps
-    mkdir -p "$mp" "$work/$2"
+    mkdir -p "$mp" "$work/$2" || return 1
     hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mp" "$1" >/dev/null ||
         { echo "could not attach $1" >&2; return 1; }
     attached+=("$mp")
@@ -174,7 +177,7 @@ else
 fi
 
 app="$work/merged/$(basename "$arm")"
-mkdir -p "$work/merged"
+mkdir -p "$work/merged" || exit 1
 echo "== staging from the arm64 bundle"
 cp -R "$arm" "$app" || exit 1
 
@@ -312,11 +315,12 @@ if [ "${#sign_cmd[@]}" -gt 0 ]; then
 fi
 
 echo "== building $out_dmg"
-rm -f "$out_dmg"
+rm -f "$out_dmg" || exit 1
 staging="$work/dmg"
-mkdir -p "$staging"
-cp -R "$app" "$staging/"
-ln -s /Applications "$staging/Applications"
+mkdir -p "$staging" || exit 1
+# A half-copied bundle would still make a perfectly mountable image.
+cp -R "$app" "$staging/" || { echo "  could not stage the bundle" >&2; exit 1; }
+ln -s /Applications "$staging/Applications" || exit 1
 # HFS+ as Craft's dmgbuild makes it, rather than whatever hdiutil defaults to.
 hdiutil create -volname "$volume" -srcfolder "$staging" -fs HFS+ -ov -format UDZO -quiet "$out_dmg" || exit 1
 if [ "${#sign_cmd[@]}" -gt 0 ]; then
@@ -331,5 +335,7 @@ if [ "${#notarize_cmd[@]}" -gt 0 ]; then
 fi
 # Written with the bare filename, so `shasum -c` works wherever the package
 # is downloaded to; with the path as given it only checked on this machine.
-( cd "$(dirname "$out_dmg")" && shasum -a 256 "$(basename "$out_dmg")" | tee "$(basename "$out_dmg").sha256" )
+( cd "$(dirname "$out_dmg")" && shasum -a 256 "$(basename "$out_dmg")" | tee "$(basename "$out_dmg").sha256" &&
+    shasum -a 256 -c "$(basename "$out_dmg").sha256" >/dev/null ) ||
+    { echo "  could not write a checksum that checks" >&2; exit 1; }
 echo "done"
