@@ -153,7 +153,8 @@ seabass_bundle_self_contained() {
 
     # Every Mach-O, found by file(1) in one batch. "//" as the separator:
     # find never prints it inside a path. For a fat file, macOS's file adds
-    # a line per slice, "<path> (for architecture x86_64)// Mach-O ...", so
+    # a line per slice, "<path> (for architecture x86_64):<tab>Mach-O ...", with
+    # no separator on those lines, so
     # the suffix is stripped and the list made unique; otool -l then reads
     # the whole fat file, every slice's load commands in turn.
     local machos=() line
@@ -162,7 +163,7 @@ seabass_bundle_self_contained() {
     done < <(find "$app" -type f -exec file -N -F // {} + 2>/dev/null |
         while IFS= read -r line; do
             case "${line#*//}" in
-                *Mach-O*) line="${line%%//*}"; printf '%s\n' "${line% (for architecture *)}" ;;
+                (*Mach-O*) line="${line%%//*}"; printf '%s\n' "${line%% (for architecture *}" ;;
             esac
         done | sort -u)
     if [ "${#machos[@]}" -eq 0 ]; then
