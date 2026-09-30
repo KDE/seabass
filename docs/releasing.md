@@ -302,12 +302,14 @@ checks rather than assumes:
   notice until a user opened a Denon stick.
 - **Every binary must load only from the bundle and the system.**
   `tools/macos-bundle-check.sh`, run by both scripts on each half, on the
-  merged bundle and on the mounted image, refuses any load command or
-  `LC_RPATH` that is an absolute path other than `/System/Library` or
-  `/usr/lib` (a Craft root, a home directory, `/opt`, `/usr/local`), an
-  `@rpath` load no `LC_RPATH` inside the bundle can find, a
-  `Contents/Frameworks` without `QtCore.framework`, and a bundle under
-  100 MB unpacked, which is Craft's undeployed stub. Running the slices
+  merged bundle and on the mounted image, refuses any load command that
+  is an absolute path other than `/System/Library` or `/usr/lib` (a Craft
+  root, a home directory, `/opt`, `/usr/local`), an `@rpath` load no
+  `LC_RPATH` inside the bundle can find, a `Contents/Frameworks` without
+  `QtCore.framework`, and a bundle under 100 MB unpacked, which is Craft's
+  undeployed stub. An `LC_RPATH` outside the bundle is only a warning:
+  dyld skips one that does not exist, and KDE's cache build of libwebp
+  ships its build directory as one while all its loads resolve inside. Running the slices
   cannot catch this, because on the Mac that built them a path into its
   Craft root still resolves: two undeployed halves of 9.6 and 8.7 MB were
   merged, ran there, and would have started on no other Mac.
