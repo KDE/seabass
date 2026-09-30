@@ -324,11 +324,13 @@ macos:universal:
       src/tools/macos-universal-dmg.sh --from-dmgs "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db" \
           "kde-ci-universal/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
     # The same read-only check a release gets on a Mac, against the committed
-    # fixture laid out as a stick: both slices read the encrypted OneLibrary.
+    # fixture laid out as a stick: both slices read the encrypted OneLibrary,
+    # and each must report the fixture's own counts, pinned in
+    # SET-EXPECTATIONS.txt, so two slices that read it equally wrongly fail.
     - mkdir fixture-stick
     - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
     - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
-    - src/tools/macos-verify-dmg.sh kde-ci-universal/*.dmg fixture-stick
+    - src/tools/macos-verify-dmg.sh kde-ci-universal/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
   after_script:
     - rm -rf src ci-utilities ci-notary-service fixture-stick
   artifacts:

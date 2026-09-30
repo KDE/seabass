@@ -6,7 +6,15 @@
 
 # Check a macOS .dmg against a real stick, once per architecture it carries.
 #
-#   tools/macos-verify-dmg.sh <dmg> <stick mount point>
+#   tools/macos-verify-dmg.sh <dmg> <stick mount point> [expectations]
+#
+# [expectations] is a file in the shape of the fixture's
+# tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt ("key value" per
+# line). Given one, every slice must report exactly its rekordbox.tracks,
+# rekordbox.cues and onelibrary.tracks. Without one the slices are only
+# compared with each other, and two slices that read the stick equally
+# wrongly -- 0 tracks each, say -- agree and pass; that is the mode for a
+# real stick, whose counts nobody wrote down.
 #
 # A package is built with -DSEABASS_TESTS=OFF, so a green build says it
 # compiled and bundled and nothing else. This is the only evidence that the
@@ -21,12 +29,48 @@ set -u
 set -o pipefail
 dmg="${1:?the .dmg to check}"
 stick="${2:?a stick mount point, e.g. /Volumes/VSTICKB}"
+expectations="${3:-}"
 # Trailing slashes come free from tab-completion and broke the -prune paths
 # below, which then reported a perfectly good package as having written to
 # the stick.
 while [ "${stick%/}" != "$stick" ]; do stick="${stick%/}"; done
 [ -f "$dmg" ] || { echo "no such file: $dmg" >&2; exit 1; }
 [ -d "$stick" ] || { echo "not mounted: $stick" >&2; exit 1; }
+
+# The pinned counts are read before anything runs, and every one must be
+# there: a key missing from the file would otherwise pin nothing and pass.
+expect_rb_tracks=""; expect_rb_cues=""; expect_one_tracks=""
+if [ -n "$expectations" ]; then
+    [ -f "$expectations" ] || { echo "no such expectations file: $expectations" >&2; exit 1; }
+    expected() { awk -v k="$1" '$1 == k && $2 ~ /^[0-9]+$/ { print $2; exit }' "$expectations"; }
+    expect_rb_tracks="$(expected rekordbox.tracks)"
+    expect_rb_cues="$(expected rekordbox.cues)"
+    expect_one_tracks="$(expected onelibrary.tracks)"
+    if [ -z "$expect_rb_tracks" ] || [ -z "$expect_rb_cues" ] || [ -z "$expect_one_tracks" ]; then
+        echo "$expectations lacks rekordbox.tracks, rekordbox.cues or onelibrary.tracks" >&2
+        exit 1
+    fi
+    echo "== expected: rekordbox $expect_rb_tracks tracks, $expect_rb_cues cues; onelibrary $expect_one_tracks tracks"
+fi
+
+# Colour codes out and NULs out, before any line is matched. The escape is
+# made by printf because macOS's sed does not read \x1b.
+esc="$(printf '\033')"
+plain() { tr -d '\000' < "$1" | sed "s/${esc}\[[0-9;]*m//g"; }
+# The number on the line "<label>: N", the whole label and nothing else on
+# it, so "tracks:" can never pick up "rekordbox tracks:" or a track title.
+count_of() {  # <log> <label>
+    plain "$1" | awk -v l="$2:" '{ sub(/^[ \t]+/, "") } index($0, l) == 1 {
+        rest = substr($0, length(l) + 1); gsub(/[ \t]/, "", rest)
+        if (rest ~ /^[0-9]+$/) { print rest; exit } }'
+}
+# <what> <got> <expected>: empty expected means nothing is pinned.
+pinned() {
+    [ -n "$3" ] || return 0
+    if [ "$2" = "$3" ]; then echo "  $1: $2, as expected"; return 0; fi
+    echo "  $1: ${2:-none} where $3 was expected" >&2
+    return 1
+}
 
 # The stick must be able to answer the question. rekordbox and OneLibrary
 # are ONE library in two formats, so sync has nothing to reconcile between
@@ -147,29 +191,42 @@ for arch in $arches; do
     rc=$?
     # The counts, not the decoration: they are what gets compared between
     # the slices, and a difference means one of them read the stick wrongly.
-    counts="$(tr -d '\000' < "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'tracks:|total cues:' | tr -s ' ')"
-    echo "$counts" | sed 's/^/  /'
+    tracks="$(count_of "$out" tracks)"
+    cues="$(count_of "$out" "total cues")"
+    echo "  scan: tracks ${tracks:-none}, total cues ${cues:-none}"
     [ "$rc" -eq 0 ] || { echo "  scan failed ($rc)" >&2; fail=1; }
-    if [ -z "$counts" ]; then
-        echo "  scan printed no track or cue counts, so there is nothing to compare" >&2
+    if [ -z "$tracks" ] || [ -z "$cues" ]; then
+        echo "  scan printed no track or cue count, so there is nothing to compare" >&2
         tail -3 "$out" | sed 's/^/    /' >&2
         fail=1
     fi
-    echo "$counts" > "$work/counts-$arch.txt"
+    pinned "scan tracks" "$tracks" "$expect_rb_tracks" || fail=1
+    pinned "scan cues" "$cues" "$expect_rb_cues" || fail=1
+    printf 'tracks %s\ncues %s\n' "$tracks" "$cues" > "$work/counts-$arch.txt"
 
-    # sync --dry-run is what opens OneLibrary (SQLCipher) beside export.pdb.
+    # sync --dry-run is what opens OneLibrary (SQLCipher) beside export.pdb,
+    # so its OneLibrary line is required, not merely one catalog line of
+    # three, and its exit status counts: a sync that printed the rekordbox
+    # count and then failed on OneLibrary has not shown SQLCipher works.
     sout="$work/sync-$arch.log"
     run sync --rekordbox "$stick/PIONEER" --engine "$stick/Engine Library" --dry-run >"$sout" 2>&1
     src_rc=$?
-    one="$(tr -d '\000' < "$sout" | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'onelibrary tracks:|rekordbox tracks:|matched tracks:' | tr -s ' ')"
-    if [ -n "$one" ]; then
-        echo "$one" | sed 's/^/  /'
-        echo "$one" > "$work/one-$arch.txt"
-    else
-        echo "  no catalog line from sync --dry-run (exit $src_rc):" >&2
+    rb="$(count_of "$sout" "rekordbox tracks")"
+    one="$(count_of "$sout" "onelibrary tracks")"
+    matched="$(count_of "$sout" "matched tracks")"
+    echo "  sync: rekordbox ${rb:-none}, onelibrary ${one:-none}, matched ${matched:-none}"
+    if [ "$src_rc" -ne 0 ]; then
+        echo "  sync --dry-run failed ($src_rc):" >&2
         tail -3 "$sout" | sed 's/^/    /' >&2
         fail=1
     fi
+    if [ -z "$one" ]; then
+        echo "  sync --dry-run printed no onelibrary count, so SQLCipher is unchecked" >&2
+        fail=1
+    fi
+    pinned "sync rekordbox tracks" "$rb" "$expect_rb_tracks" || fail=1
+    pinned "sync onelibrary tracks" "$one" "$expect_one_tracks" || fail=1
+    printf 'rekordbox %s\nonelibrary %s\nmatched %s\n' "$rb" "$one" "$matched" > "$work/one-$arch.txt"
 done
 
 echo "== the two slices agree"
