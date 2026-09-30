@@ -56,6 +56,11 @@ subfolders, links, hidden files such as macOS's `._` files, and the folders
 themselves (the hardware makes them again anyway). `Contents/`, `PIONEER/`,
 `Engine Library/` and `Seabass/` are never looked at.
 
+Each row has a Play button, the one Library Health's rows have: the
+recording plays in the player bar as a plain file, named after its folder
+and deck, with the play key in that deck's form. If it is playing when it
+is deleted, the player lets go of it first.
+
 **Delete Selected Recordings** asks first, naming how many and how much space they
 free, and saying they will be gone for good. Nothing is copied and no
 backup holds them: they belong to no library, so a stick backup of the

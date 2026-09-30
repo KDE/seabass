@@ -191,6 +191,40 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     emit queueChanged();
 }
 
+void PlaybackController::loadFile(const QString &format, const QString &libraryPath, const QString &filePath,
+                                  const QString &title, const QString &artist)
+{
+    m_player.stop();
+    setErrorMessage({});
+    dropQueue();
+    m_advanceWhenLibraryFree = false;
+    m_waveform.clear();
+    m_beatTimesMs.clear();
+    m_beatNumbers.clear();
+
+    m_currentFormat = format;
+    m_currentSourceId = QStringLiteral("recording:") + filePath;
+    m_currentLibraryPath = libraryPath;
+    m_title = title;
+    m_artist = artist;
+    m_artworkPath.clear();
+    m_fallbackArtworkPath.clear();
+    m_cues.clear();
+    m_hasTrack = true;
+
+    // Never readAnalysis(): no catalog knows this file.
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
+    } else {
+        m_player.setSource(QUrl::fromLocalFile(filePath));
+        m_player.play();
+    }
+
+    emit trackChanged();
+    emit cuesChanged();
+    emit queueChanged();
+}
+
 bool PlaybackController::takeCues(const QString &format, const QString &libraryPath, const QString &sourceId,
                                   const QVariantList &cues)
 {

@@ -77,8 +77,44 @@ TestCase {
                 }
                 fake.recount();
             }
-            function deleteSelected() { fake.calls.push("delete"); }
+            function deleteSelected() {
+                fake.calls.push("delete");
+                testCase.events.push("delete");
+            }
+            function selectedPaths() {
+                const out = [];
+                for (let i = 0; i < rows.count; ++i) {
+                    if (rows.get(i).included) {
+                        out.push(rows.get(i).path);
+                    }
+                }
+                return out;
+            }
             function cancel() { fake.calls.push("cancel"); }
+        }
+    }
+
+    // What the page asked of the controller and the player, in order.
+    property var events: []
+
+    Component {
+        id: fakePlayerComponent
+        QtObject {
+            id: player
+            property bool hasTrack: false
+            property string currentSourceId: ""
+            property var loads: []
+            function loadFile(format, libraryPath, filePath, title, artist) {
+                player.loads.push({format: format, libraryPath: libraryPath, filePath: filePath,
+                                   title: title, artist: artist});
+                player.hasTrack = true;
+                player.currentSourceId = "recording:" + filePath;
+            }
+            function stop() {
+                testCase.events.push("stop");
+                player.hasTrack = false;
+                player.currentSourceId = "";
+            }
         }
     }
 
@@ -125,13 +161,16 @@ TestCase {
     function makePage(setup) {
         const stack = createTemporaryObject(stackComponent, testCase);
         const controller = createTemporaryObject(fakeControllerComponent, testCase);
+        const player = createTemporaryObject(fakePlayerComponent, testCase);
+        testCase.events = [];
         if (setup) {
             setup(controller);
         }
         // Home, then the Housekeeping hub, then the page.
         stack.push(fillerComponent, {}, StackView.Immediate);
         stack.push(fillerComponent, {}, StackView.Immediate);
-        const page = stack.push(pageComponent, {controller: controller}, StackView.Immediate);
+        const page = stack.push(pageComponent, {controller: controller, playbackController: player},
+                                StackView.Immediate);
         verify(page !== null);
         waitForRendering(page);
         return page;
@@ -284,6 +323,53 @@ TestCase {
         compare(dialog.title, "Delete 1 Recording?");
         compare(dialog.headline, "This deletes 1 recording from WHALESHARK and frees " + Theme.humanBytes(111384620) + ".");
         dialog.reject();
+    }
+
+    // A recording plays as a plain file, in the form of the deck that made it.
+    function test_playPlaysTheRecording() {
+        const page = makePage(addRecordings);
+        const player = page.playbackController;
+        mouseClick(findChild(row(page, 0), "playButton"));
+        compare(player.loads.length, 1);
+        compare(player.loads[0].format, "engine", "Sessions/ is Engine OS's");
+        compare(player.loads[0].libraryPath, "/media/u/WHALESHARK/Engine Library");
+        compare(player.loads[0].filePath, "/media/u/WHALESHARK/Sessions/Milkshaken.wav");
+        compare(player.loads[0].title, "Milkshaken.wav");
+        compare(player.loads[0].artist, "Sessions (Engine OS)");
+
+        mouseClick(findChild(row(page, 2), "playButton"));
+        compare(player.loads[1].format, "rekordbox", "a REC folder is a Pioneer or AlphaTheta deck's");
+        compare(player.loads[1].libraryPath, "/media/u/WHALESHARK/PIONEER");
+        compare(player.loads[1].filePath, "/media/u/WHALESHARK/PIONEER REC/REC001.WAV");
+        compare(player.loads[1].artist, "PIONEER REC (Pioneer)");
+        compare(page.controller.selectedCount, 0, "playing ticks nothing");
+    }
+
+    // The player lets go of a recording about to be deleted before the
+    // delete starts, and of nothing else.
+    function test_aPlayingRecordingIsStoppedBeforeItIsDeleted_data() {
+        return [
+            {tag: "the ticked one plays", play: 0, tick: [0, 2], stopped: true},
+            {tag: "another one plays", play: 1, tick: [0, 2], stopped: false},
+            {tag: "nothing plays", play: -1, tick: [0], stopped: false},
+        ];
+    }
+    function test_aPlayingRecordingIsStoppedBeforeItIsDeleted(data) {
+        const page = makePage(addRecordings);
+        if (data.play >= 0) {
+            mouseClick(findChild(row(page, data.play), "playButton"));
+            verify(page.playbackController.hasTrack);
+        }
+        for (const index of data.tick) {
+            mouseClick(findChild(row(page, index), "includeBox"));
+        }
+        mouseClick(findChild(page, "deleteButton"));
+        const dialog = findChild(page, "confirmDeleteDialog");
+        tryVerify(() => dialog.opened);
+        compare(testCase.events.length, 0, "nothing happens before the answer");
+        dialog.accept();
+        compare(testCase.events, data.stopped ? ["stop", "delete"] : ["delete"]);
+        compare(page.playbackController.hasTrack, data.play >= 0 && !data.stopped);
     }
 
     function test_whatIsNotARecordingIsNamed() {

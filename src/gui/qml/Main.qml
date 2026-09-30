@@ -658,6 +658,7 @@ ApplicationWindow {
         id: recordingsPageComponent
         RecordingsPage {
             controller: RecordingsController {}
+            playbackController: playbackCtrl
         }
     }
 

@@ -170,6 +170,9 @@ public:
     Q_INVOKABLE void setIncluded(int row, bool included);
     Q_INVOKABLE void setAllIncluded(bool included);
 
+    // The ticked recordings' paths, as deleteSelected() would take them.
+    Q_INVOKABLE QStringList selectedPaths() const;
+
     // Deletes the ticked recordings on a worker.
     Q_INVOKABLE void deleteSelected();
     // Stops after the file in flight.
