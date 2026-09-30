@@ -288,7 +288,7 @@ macos:universal:
     # halves' artifacts are unpacked into it before any script runs.
     GIT_STRATEGY: none
   before_script:
-    - rm -rf src ci-utilities ci-notary-service kde-ci-universal fixture-stick
+    - rm -rf src ci-utilities ci-notary-service kde-ci-universal kde-ci-unverified fixture-stick
     - git clone https://invent.kde.org/sysadmin/ci-utilities.git --depth=1
     - git clone https://invent.kde.org/sysadmin/ci-notary-service.git --depth=1
     - python3 -u ci-utilities/gitlab-ci-clone.py src/
@@ -313,7 +313,10 @@ macos:universal:
       intel_dmg="$(pick "kde-ci-packages/*-$CI_PIPELINE_IID-macos-clang-x86_64.dmg")" || exit 1
       arm_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-arm-clang-install.db")" || exit 1
       intel_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-64-clang-install.db")" || exit 1
-      mkdir kde-ci-universal
+      # Built outside the artifact directory: artifacts are kept when the job
+      # fails, and a .dmg that failed signing, notarisation or the check
+      # below must not sit in a failed job looking like a finished package.
+      mkdir kde-ci-unverified
       if [ "${SEABASS_UNIVERSAL_SIGN:-}" = "yes" ]; then
         echo "Signing: $CI_COMMIT_REF_NAME is cleared, the merged bundle and image are signed and notarised"
         export SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini"
@@ -322,7 +325,7 @@ macos:universal:
         echo "Signing: none, $CI_COMMIT_REF_NAME is not a Seabass/X.Y branch the key reaches; the package is signed ad hoc"
       fi
       src/tools/macos-universal-dmg.sh --from-dmgs "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db" \
-          "kde-ci-universal/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
+          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
     # The same read-only check a release gets on a Mac, against the committed
     # fixture laid out as a stick: both slices read the encrypted OneLibrary,
     # and each must report the fixture's own counts, pinned in
@@ -330,12 +333,15 @@ macos:universal:
     - mkdir fixture-stick
     - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
     - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
-    - src/tools/macos-verify-dmg.sh kde-ci-universal/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
+    - src/tools/macos-verify-dmg.sh kde-ci-unverified/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
+    # Only now, merged, signed where cleared, and verified, does it become
+    # the artifact.
+    - mkdir kde-ci-universal
+    - mv kde-ci-unverified/*.dmg kde-ci-unverified/*.dmg.sha256 kde-ci-universal/
   after_script:
-    - rm -rf src ci-utilities ci-notary-service fixture-stick
+    - rm -rf src ci-utilities ci-notary-service kde-ci-unverified fixture-stick
   artifacts:
     expire_in: 1 week
-    when: always
     paths:
       - "kde-ci-universal/"
 
