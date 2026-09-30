@@ -317,12 +317,13 @@ int main(int argc, char **argv)
         const auto hot = legacyEntries(datPath, 1);
         check(hot.size() == 1 && hot.count(1) == 1 && hot.find(1)->second == 3213,
               "the .DAT hot list holds hot cue 1");
-        // Only values real sections hold (the survey: 0xFFFFFFFF, or 0 in
-        // a populated memory list), never one read out of a damaged
-        // header such as WHALESHARK's 0000ffff.
+        // The index of the list's last entry: 0 for the one cue written.
+        // Never a value read out of a damaged header such as WHALESHARK's
+        // 0000ffff, and never 0xFFFFFFFF, which says the list is empty and
+        // made an XDJ-RX2 drop the cue and hang on its next save (#33).
         const std::string memoryList = legacyList(readFile(datPath), 0).bytes;
         const uint32_t memoryCount = memoryList.size() >= 24 ? be32(memoryList, 20) : 1;
-        check(memoryCount == 0xFFFFFFFFu || memoryCount == 0, "the memory list's memory_count is one real files hold");
+        check(memoryCount == 0, "the memory list's header names its one entry");
         if (!c.keptAs.empty()) {
             check(legacyList(readFile(datPath), c.listType).bytes == c.keptAs,
                   "the list was carried over byte for byte");

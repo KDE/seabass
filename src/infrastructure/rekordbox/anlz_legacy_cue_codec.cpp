@@ -24,6 +24,7 @@ constexpr uint32_t SectionHeaderSize = 24;
 constexpr uint32_t EntryHeaderSize = 28;
 constexpr uint32_t EntrySize = 56;
 constexpr uint32_t OrderSentinel = 0xFFFF;
+constexpr size_t OrderFieldsOffset = 24;  // order_first, order_last
 constexpr uint32_t NotALoopSentinel = 0xFFFFFFFFu;
 constexpr uint32_t ModernStatus = 0;
 constexpr uint32_t ModernUnknown1 = 0x00010000u;
@@ -31,7 +32,8 @@ constexpr unsigned char AfterTypeTemplate[3] = {0x00, 0x03, 0xE8};
 // What a section created from scratch gets; a section being replaced
 // keeps whatever it already had. See the header's survey.
 constexpr uint32_t DefaultMemoryCount = 0xFFFFFFFFu;
-constexpr uint32_t PopulatedMemoryListCount = 0;
+// A memory list's last header field: the index of its final entry.
+constexpr uint32_t NoLastEntry = 0xFFFFFFFFu;
 
 void appendU32(std::string &out, uint32_t value)
 {
@@ -163,9 +165,25 @@ std::string AnlzLegacyCueCodec::encodeCues(const std::vector<LegacyCueEntry> &cu
     // older, ascending generation.
     const std::vector<LegacyCueEntry> &ordered = cues;
 
+    // A memory list is a linked list: each entry names the index of the
+    // one before and after it (0xFFFF at either end), and the header's
+    // last field names the final entry (0xFFFFFFFF when there is none).
+    // All of that describes the list, not a cue, so it is set from the
+    // list being written, carried-over entries included. Hot entries are
+    // left as built or carried: 0xFFFF in every real one.
+    const bool isMemoryList = listType == CueListTypeMemory;
+
     std::string entries;
-    for (const auto &cue : ordered) {
-        const std::string bytes = encodeEntry(cue);
+    for (size_t i = 0; i < ordered.size(); ++i) {
+        std::string bytes = encodeEntry(ordered[i]);
+        if (isMemoryList && bytes.size() == EntrySize) {  // any other size is refused below
+            const auto previous = static_cast<uint16_t>(i == 0 ? OrderSentinel : i - 1);
+            const auto next = static_cast<uint16_t>(i + 1 == ordered.size() ? OrderSentinel : i + 1);
+            std::string links;
+            appendU16(links, previous);
+            appendU16(links, next);
+            bytes.replace(OrderFieldsOffset, links.size(), links);
+        }
         // Refused rather than written: carried-over bytes are the only
         // way anything but a fresh entry gets here, and whatever put a
         // bad one in `cues`, it must not reach a stick.
@@ -185,10 +203,11 @@ std::string AnlzLegacyCueCodec::encodeCues(const std::vector<LegacyCueEntry> &cu
     appendU32(out, listType);
     appendU16(out, 0);
     appendU16(out, static_cast<uint16_t>(ordered.size()));
-    const uint32_t forNewSection = (listType == CueListTypeMemory && !ordered.empty())
-        ? PopulatedMemoryListCount
-        : DefaultMemoryCount;
-    appendU32(out, memoryCount.value_or(forNewSection));
+    if (isMemoryList) {
+        appendU32(out, ordered.empty() ? NoLastEntry : static_cast<uint32_t>(ordered.size() - 1));
+    } else {
+        appendU32(out, memoryCount.value_or(DefaultMemoryCount));
+    }
     out += entries;
     checkSection(out);
     return out;
