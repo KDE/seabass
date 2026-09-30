@@ -151,6 +151,16 @@ public:
                            const QString &artworkPath, const QVariantList &cues,
                            const QString &fallbackArtworkPath = QString());
 
+    // A plain audio file that no catalog lists: a set recording on the
+    // stick (Clean Up Recordings). What load() does minus every catalog
+    // part: no analysis is read (the sourceId is not a catalog's, and a
+    // rekordbox lookup would parse it as a number), no waveform, beats,
+    // cues or artwork, and no queue, so next and previous do nothing.
+    // format ("engine" or "rekordbox") only picks the form the play key
+    // takes. The sourceId becomes "recording:" + filePath.
+    Q_INVOKABLE void loadFile(const QString &format, const QString &libraryPath, const QString &filePath,
+                              const QString &title, const QString &artist);
+
     // The loaded track's cues, read after it was loaded: Browse lists a
     // rekordbox stick before its cue pass is done, and a track played in
     // that time was loaded with none. Taken only when format, library

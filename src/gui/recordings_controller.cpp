@@ -336,6 +336,15 @@ void RecordingsController::setAllIncluded(bool included)
     emit selectionChanged();
 }
 
+QStringList RecordingsController::selectedPaths() const
+{
+    QStringList out;
+    for (const std::string &path : m_model.includedPaths()) {
+        out << qtPathFromUtf8(path);
+    }
+    return out;
+}
+
 void RecordingsController::deleteSelected()
 {
     if (busy() || !m_listed) {

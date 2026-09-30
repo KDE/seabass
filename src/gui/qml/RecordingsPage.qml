@@ -20,6 +20,8 @@ Page {
     required property string enginePath
     // A RecordingsController; a QtObject with the same shape in the tests.
     required property var controller
+    // The app's player, which plays a recording as a plain file.
+    required property var playbackController
 
     readonly property bool working: root.controller.working === true
     readonly property int recordingCount: root.controller.recordingCount
@@ -44,6 +46,30 @@ Page {
         const two = (v) => (v < 10 ? "0" : "") + v;
         return h > 0 ? h + ":" + two(m) + ":" + two(s) : m + ":" + two(s);
     }
+    // Sessions/ is Engine OS's, the REC folders a Pioneer or AlphaTheta
+    // deck's: the play key takes that deck's form.
+    function formatFor(source) {
+        return source === "engine" ? "engine" : "rekordbox";
+    }
+    function playRecording(row) {
+        const format = root.formatFor(row.source);
+        root.playbackController.loadFile(format, format === "engine" ? root.enginePath : root.rekordboxPath,
+            row.path, row.fileName, row.folderName + " (" + root.sourceLabel(row.source) + ")");
+    }
+    // A recording that is playing cannot be deleted on Windows and keeps
+    // its space on every system until the player lets go of it, so the
+    // player lets go first when it holds one of those about to go.
+    function releasePlayerFromDeletedRecordings() {
+        const player = root.playbackController;
+        if (!player || !player.hasTrack || !player.currentSourceId.startsWith("recording:")) {
+            return;
+        }
+        const playing = player.currentSourceId.substring("recording:".length);
+        if (root.controller.selectedPaths().indexOf(playing) >= 0) {
+            player.stop();
+        }
+    }
+
     readonly property string totalLine: {
         if (!root.controller.listed) return "";
         let line = Theme.humanBytes(root.controller.totalBytes) + " in "
@@ -99,7 +125,10 @@ Page {
             + root.stickLabel + " and frees " + Theme.humanBytes(root.controller.selectedBytes) + "."
         detailText: "They will be gone for good."
         acceptText: "Delete"
-        onAccepted: root.controller.deleteSelected()
+        onAccepted: {
+            root.releasePlayerFromDeletedRecordings();
+            root.controller.deleteSelected();
+        }
     }
 
     LockedLibraryDialog {
@@ -233,6 +262,7 @@ Page {
                 rightPadding: 0
 
                 required property int index
+                required property string path
                 required property string fileName
                 required property string folderName
                 required property string source
@@ -286,6 +316,17 @@ Page {
                         color: Theme.textMuted
                         font.family: Theme.dataFamily
                         horizontalAlignment: Text.AlignRight
+                    }
+                    // The play button the Library Health rows have.
+                    Button {
+                        objectName: "playButton"
+                        text: "Play"
+                        icon.source: Theme.iconUrl("media-playback-start")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
+                        enabled: !root.controller.busy
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Play this recording"
+                        onClicked: root.playRecording(row)
                     }
                 }
             }

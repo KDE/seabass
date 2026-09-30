@@ -51,6 +51,46 @@ TestCase {
         player.load("rekordbox", libraryPath || "/lib", sourceId, aFile, "Track " + sourceId, "Artist", "", []);
     }
 
+    // A recording that no catalog lists plays as a plain file: no
+    // analysis is read (a rekordbox lookup would take the id for a row
+    // number), no waveform, cues or artwork, and no queue to step through.
+    function test_aPlainFilePlaysWithoutACatalog_data() {
+        return [
+            {tag: "engine", format: "engine", library: "/stick/Engine Library"},
+            {tag: "rekordbox", format: "rekordbox", library: "/stick/PIONEER"},
+        ];
+    }
+    function test_aPlainFilePlaysWithoutACatalog(data) {
+        load("a");
+        verify(player.hasNext, "a queue is in place before");
+        player.loadFile(data.format, data.library, aFile, "Session-0001.wav", "Sessions (Engine OS)");
+        compare(player.hasTrack, true);
+        compare(player.errorMessage, "", "the file is there, so no error");
+        compare(player.currentFormat, data.format);
+        compare(player.currentLibraryPath, data.library);
+        compare(player.currentSourceId, "recording:" + aFile);
+        compare(player.title, "Session-0001.wav");
+        compare(player.artist, "Sessions (Engine OS)");
+        compare(player.artworkPath, "");
+        compare(player.waveform.length, 0);
+        compare(player.cues.length, 0);
+        compare(player.beatTimesMs.length, 0);
+        compare(player.currentQueueRow(), -1);
+        compare(player.hasNext, false);
+        compare(player.hasPrevious, false);
+        player.next();
+        compare(player.currentSourceId, "recording:" + aFile, "next does nothing");
+        compare(advanced.count, 0);
+        player.stop();
+        compare(player.hasTrack, false);
+    }
+
+    function test_aPlainFileThatIsNotThereSaysSo() {
+        player.loadFile("engine", "/stick/Engine Library", "/nonexistent/Session-0009.wav", "Session-0009.wav", "Sessions (Engine OS)");
+        verify(player.errorMessage.indexOf("audio file not found") === 0, player.errorMessage);
+        compare(player.currentSourceId, "recording:/nonexistent/Session-0009.wav");
+    }
+
     function test_nextStepsOverWhatCannotBePlayed() {
         load("a");
         compare(player.currentQueueRow(), 0);
