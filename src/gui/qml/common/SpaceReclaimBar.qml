@@ -31,6 +31,10 @@ Item {
     // Shown as an outline beyond the selection so the difference between
     // "what I picked" and "what is available" is visible.
     property real reclaimableBytes: 0
+    // What the page's rows are, for the caption: Clean Up Duplicates ticks
+    // groups, Clean Up Recordings ticks recordings.
+    property string unitPlural: "groups"
+    property string unitSingular: "group"
 
     readonly property bool known: totalBytes > 0
     readonly property real usedBytes: Math.max(0, totalBytes - freeBytes)
@@ -79,14 +83,15 @@ Item {
                 color: Theme.good
             }
             Text {
+                objectName: "reclaimCaption"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 font.pixelSize: 13
                 color: Theme.textMuted
                 text: root.reclaimBytes > 0
-                      ? "would be freed by the " + "groups you've ticked, on a stick with "
+                      ? "would be freed by the " + root.unitPlural + " you've ticked, on a stick with "
                         + root.human(root.freeBytes) + " free"
-                      : "available to free across every group below, on a stick with "
+                      : "available to free across every " + root.unitSingular + " below, on a stick with "
                         + root.human(root.freeBytes) + " free"
             }
         }

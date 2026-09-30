@@ -76,6 +76,7 @@ actions/22/draw-eraser.svg
 actions/22/archive-insert.svg
 actions/22/view-refresh.svg
 actions/22/deep-history.svg
+actions/22/media-record.svg
 # Buttons and marks on the section pages
 actions/22/go-home.svg
 actions/22/edit-clear.svg

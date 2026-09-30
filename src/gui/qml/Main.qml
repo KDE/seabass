@@ -623,6 +623,11 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
+            onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(recordingsPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
         }
     }
 
@@ -646,6 +651,13 @@ ApplicationWindow {
         CleanupPage {
             appSettingsController: appSettingsCtrl
             playbackController: playbackCtrl
+        }
+    }
+
+    Component {
+        id: recordingsPageComponent
+        RecordingsPage {
+            controller: RecordingsController {}
         }
     }
 

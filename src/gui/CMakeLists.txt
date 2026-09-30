@@ -122,6 +122,7 @@ set(SEABASS_GUI_QML_FILES
     qml/CleanupPage.qml
     qml/CoverArtPage.qml
     qml/PendingDeletionsPage.qml
+    qml/RecordingsPage.qml
     qml/JunkCuePage.qml
     qml/LibraryConsistencyPage.qml
     qml/CuesAtZeroPage.qml
@@ -175,6 +176,8 @@ set(SEABASS_GUI_SOURCES
     duplicates_controller.cpp
     cleanup_controller.hpp
     cleanup_controller.cpp
+    recordings_controller.hpp
+    recordings_controller.cpp
     add_cue_controller.hpp
     add_cue_controller.cpp
     library_consistency_controller.hpp
@@ -312,6 +315,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/media-flash-sd-mmc.svg
     qml/icons/breeze/media-playback-pause.svg
     qml/icons/breeze/media-playback-start.svg
+    qml/icons/breeze/media-record.svg
     qml/icons/breeze/media-seek-backward.svg
     qml/icons/breeze/media-seek-forward.svg
     qml/icons/breeze/media-skip-backward.svg
