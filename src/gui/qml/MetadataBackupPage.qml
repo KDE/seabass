@@ -832,16 +832,10 @@ Page {
                 onExpandToggled: root.expandedTrackId = trackRow.expanded ? -1 : trackRow.trackId
 
                 actionItems: [
-                    ToolButton {
+                    IconToolButton {
                         objectName: "stageDeleteButton"
-                        icon.source: Theme.iconUrl(trackRow.stagedForDeletion ? "edit-undo" : "edit-delete")
-                        icon.color: Theme.text
-                        // Icon only, and the text is still set because
-                        // that is what an assistive reader announces.
-                        // Leaving the display at its default drew both:
-                        // Breeze's own trash icon with the emoji next to
-                        // it, two delete symbols on every row.
-                        display: AbstractButton.IconOnly
+                        iconName: trackRow.stagedForDeletion ? "edit-undo" : "edit-delete"
+                        // The text is what an assistive reader announces.
                         text: trackRow.stagedForDeletion ? "Keep" : "Delete"
                         onClicked: controller.toggleStagedForDeletion(trackRow.index)
                         ToolTip.visible: hovered

@@ -17,8 +17,10 @@ import SeabassGui
 // dot) come out in the same tone as the rest. Dim a disabled icon by
 // passing a dimmer colour, the same one its label gets.
 //
-// For a button, use the button's own icon instead: icon.source:
-// Theme.iconUrl(name), icon.color from the Theme.
+// For an icon-only tool button, use IconToolButton, which draws one of
+// these as its glyph: KDE's desktop style ignores a ToolButton's
+// icon.color. A button with a label keeps the button's own icon:
+// icon.source: Theme.iconUrl(name), icon.color from the Theme.
 ColorImage {
     id: root
     required property string iconName

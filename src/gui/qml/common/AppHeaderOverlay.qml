@@ -68,15 +68,12 @@ Item {
         // stick, behind one button: each is used now and then, and as
         // header buttons plus a row under the list they crowded a page
         // whose subject is the sticks. Home only.
-        ToolButton {
+        IconToolButton {
             id: homeMenuButton
             objectName: "homeMenuButton"
             visible: root.place === "home"
-            icon.source: Theme.iconUrl("application-menu")
-            icon.color: Theme.text
-            icon.width: root.iconSize
-            icon.height: root.iconSize
-            display: AbstractButton.IconOnly
+            iconName: "application-menu"
+            iconSize: root.iconSize
             text: "Backups and folders"
             ToolTip.visible: hovered && !homeMenu.visible
             ToolTip.text: "Backups and folders on this computer"

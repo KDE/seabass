@@ -670,29 +670,16 @@ Page {
                         root.analyzeInScope();
                     }
                 }
-                ToolButton {
+                IconToolButton {
                     id: reanalyzeButton
                     objectName: "reanalyzeButton"
                     implicitWidth: Theme.iconSizeSmall
                     implicitHeight: Theme.iconSizeSmall
                     padding: 0
                     flat: true
-                    // Still needed with a contentItem of our own: the KDE
-                    // style paints the label itself, over the icon, unless
-                    // told the button is icon-only.
-                    display: AbstractButton.IconOnly
                     text: "Re-Analyze"
-                    // Drawn by SeabassIcon rather than icon.source: under
-                    // the KDE style an icon-only ToolButton's own icon
-                    // rendered as an empty square.
-                    contentItem: Item {
-                        SeabassIcon {
-                            anchors.centerIn: parent
-                            iconName: "view-refresh"
-                            size: Theme.iconSizeSmall * 0.5
-                            color: reanalyzeButton.enabled ? Theme.text : Theme.textMuted
-                        }
-                    }
+                    iconName: "view-refresh"
+                    iconSize: Theme.iconSizeSmall * 0.5
                     enabled: !syncController.busy && !syncController.writing
                     ToolTip.visible: hovered
                     ToolTip.text: "Re-scan the catalogs and recompute what needs syncing"

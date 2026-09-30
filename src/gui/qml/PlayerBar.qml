@@ -239,7 +239,7 @@ Frame {
     // Closing is one click, in the top right corner, shown while the
     // pointer is over the player. Stopping unloads the track, and the bar
     // goes with it: Main.qml shows it only while one is loaded.
-    ToolButton {
+    IconToolButton {
         id: closeButton
         objectName: "closePlayerButton"
         // The Frame's own corner, not its content's: declared children go
@@ -252,12 +252,9 @@ Frame {
         implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
         padding: 0
         flat: true
-        display: AbstractButton.IconOnly
         text: "Close the player"
-        icon.source: Theme.iconUrl("window-close")
-        icon.color: Theme.text
-        icon.width: Theme.iconSizeSmall * 0.5
-        icon.height: Theme.iconSizeSmall * 0.5
+        iconName: "window-close"
+        iconSize: Theme.iconSizeSmall * 0.5
         opacity: playerHover.hovered || hovered ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 120 } }

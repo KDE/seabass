@@ -202,11 +202,9 @@ Popup {
                 id: titleRow
                 anchors.fill: parent
                 PageTitle { text: "Camelot Wheel"; level: "section"; Layout.fillWidth: true }
-                ToolButton {
-                    display: AbstractButton.IconOnly
+                IconToolButton {
                     text: "Close"
-                    icon.source: Theme.iconUrl("window-close")
-                    icon.color: Theme.text
+                    iconName: "window-close"
                     ToolTip.visible: hovered
                     ToolTip.text: "Close"
                     onClicked: root.close()

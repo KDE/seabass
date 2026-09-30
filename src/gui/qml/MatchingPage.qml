@@ -319,12 +319,10 @@ ColumnLayout {
                     Layout.fillWidth: true
                 }
             }
-            ToolButton {
+            IconToolButton {
                 Layout.alignment: Qt.AlignTop
-                display: AbstractButton.IconOnly
                 text: "Close"
-                icon.source: Theme.iconUrl("window-close")
-                icon.color: Theme.text
+                iconName: "window-close"
                 ToolTip.visible: hovered
                 ToolTip.text: "Close"
                 onClicked: root.closeRequested()
@@ -667,21 +665,17 @@ ColumnLayout {
                     onRelationHovered: (relationLabel, hovering) =>
                         root.wheelHoverRelationLabel = hovering ? relationLabel : ""
                 }
-                ToolButton {
-                    display: AbstractButton.IconOnly
+                IconToolButton {
                     text: "Track details"
-                    icon.source: Theme.iconUrl("help-about")
-                    icon.color: Theme.text
+                    iconName: "help-about"
                     Layout.preferredWidth: Theme.iconSizeSmall
                     ToolTip.visible: hovered
                     ToolTip.text: "Track details"
                     onClicked: candidateInfoPopup.showFor(candidateDelegate.modelData)
                 }
-                ToolButton {
-                    display: AbstractButton.IconOnly
+                IconToolButton {
                     text: "Move before"
-                    icon.source: Theme.iconUrl("go-up")
-                    icon.color: enabled ? Theme.text : Theme.textMuted
+                    iconName: "go-up"
                     enabled: root.hasTarget
                     ToolTip.visible: hovered
                     // Always a move, never an insert: every candidate is
@@ -692,11 +686,9 @@ ColumnLayout {
                         : "Move before “" + root.anchorTitle + "” in " + root.targetPlaylistName
                     onClicked: root.previewNotSaved("moved before", candidateDelegate.modelData.title)
                 }
-                ToolButton {
-                    display: AbstractButton.IconOnly
+                IconToolButton {
                     text: "Move after"
-                    icon.source: Theme.iconUrl("go-down")
-                    icon.color: enabled ? Theme.text : Theme.textMuted
+                    iconName: "go-down"
                     enabled: root.hasTarget
                     ToolTip.visible: hovered
                     ToolTip.text: !root.hasTarget ? "Pick a playlist first"
