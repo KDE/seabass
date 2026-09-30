@@ -1441,6 +1441,18 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+# tools/macos-bundle-check.sh, which refuses a macOS bundle whose binaries
+# load anything from outside it, run against fake bundles with a canned
+# otool: no Mac is needed, only bash and file(1).
+find_program(SEABASS_BASH bash)
+find_program(SEABASS_FILE file)
+if(SEABASS_BASH AND SEABASS_FILE)
+    add_test(NAME macos_bundle_check_test
+        COMMAND ${SEABASS_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/macos_bundle_check_test.sh)
+else()
+    message(STATUS "bash or file(1) not found: tools/macos-bundle-check.sh is not tested by ctest")
+endif()
+
 # The vendored crate-digger specs and the parser generated from them have
 # to describe the same thing: nothing forces two vendored files to agree,
 # and a spec updated without regenerating the parser fails silently.
