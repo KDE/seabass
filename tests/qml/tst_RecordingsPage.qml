@@ -205,6 +205,11 @@ TestCase {
     function test_selectAllAndDeselectAll() {
         const page = makePage(addRecordings);
         const del = findChild(page, "deleteButton");
+        // The action sits in the row with Select All, a plain button like
+        // Delete Selected Files on Delete Orphaned Files.
+        compare(del.text, "Delete Selected Recordings");
+        compare(del.highlighted, false);
+        compare(del.parent, findChild(page, "selectAllButton").parent);
         mouseClick(findChild(page, "selectAllButton"));
         compare(page.controller.calls[page.controller.calls.length - 1], "all:true");
         compare(page.controller.selectedCount, 3);
