@@ -188,7 +188,8 @@ expect "an @rpath load no search path inside the bundle finds is refused" 1 \
     "Contents/PlugIns/platforms/libqcocoa.dylib: LC_LOAD_DYLIB @rpath/libvpx.9.dylib is not found through any LC_RPATH inside the bundle"
 
 # macOS's file(1) on a fat binary prints a line for the file and then one
-# per slice, "<path> (for architecture x86_64)// Mach-O ...". Linux's does
+# per slice, "<path> (for architecture x86_64):<tab>Mach-O ...", with no
+# separator on those lines. Linux's does
 # not, so a file shim adds the slice lines for seabass-cli.
 make_bundle "$app"
 real_file="$(command -v file)"
@@ -199,8 +200,8 @@ cat > "$work/bin/file" <<SHIM
     case "\$p" in
         */Contents/MacOS/seabass-cli)
             printf '%s// Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64]\n' "\$p"
-            printf '%s (for architecture x86_64)//\tMach-O 64-bit executable x86_64\n' "\$p"
-            printf '%s (for architecture arm64)//\tMach-O 64-bit executable arm64\n' "\$p" ;;
+            printf '%s (for architecture x86_64):\tMach-O 64-bit executable x86_64\n' "\$p"
+            printf '%s (for architecture arm64):\tMach-O 64-bit executable arm64\n' "\$p" ;;
         *) printf '%s\n' "\$line" ;;
     esac
 done
