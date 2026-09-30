@@ -18,10 +18,12 @@ import SeabassGui
 // replaced one) -- this page is the "reachable through the main nav
 // structure" home for the same feature, filed under Clean-up and
 // Housekeeping where someone would actually think to look for it.
-// Reuses LibraryConsistencyController wholesale rather than a new
-// controller: scan() computes both checks together already (see that
-// class's own comment on why that's cheap), this page just never renders
-// the missing-file half of its result.
+// Reuses LibraryConsistencyController rather than a new controller, at
+// its CuesOnly depth: the catalogs and their cues, and none of Library
+// Health's other checks. Those read every track's file on the stick (the
+// sample-rate audit opens each one whose Engine row lacks a rate), and
+// running them here made a stray-cue scan take minutes on a full USB
+// stick for results this page never shows.
 Page {
     id: root
     required property string stickLabel
@@ -33,8 +35,10 @@ Page {
     required property var appSettingsController
 
     LibraryConsistencyController {
-        id: consistencyController
+        id: ownController
+        scanDepth: LibraryConsistencyController.CuesOnly
     }
+    readonly property QtObject consistencyController: ownController
 
     // Edit mode for this library: session, floating Save, leave guard.
     EditSessionHost {
