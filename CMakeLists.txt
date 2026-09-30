@@ -481,6 +481,8 @@ add_library(seabass_core STATIC
     src/application/use_cases/export_rekordbox_xml.cpp
     src/application/use_cases/real_file_sizes.cpp
     src/application/use_cases/fill_file_sizes.cpp
+    src/application/use_cases/clean_up_recordings.cpp
+    src/infrastructure/file_placement.cpp
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
     src/application/use_cases/unreferenced_tracks.cpp
@@ -528,6 +530,7 @@ add_library(seabass_core_testing STATIC
     src/application/path_key.cpp
     src/application/ports/progress_reporter.cpp
     src/application/use_cases/backup_stick.cpp
+    src/application/use_cases/clean_up_recordings.cpp
     src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
@@ -556,6 +559,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
+    src/infrastructure/file_placement.cpp
     src/infrastructure/fs_remove.cpp
     src/infrastructure/hashing/sha256.cpp
     src/infrastructure/hashing/sha1.cpp
@@ -2794,6 +2798,13 @@ add_executable(pending_deletion_applier_test
 target_link_libraries(pending_deletion_applier_test PRIVATE seabass_core_testing)
 target_include_directories(pending_deletion_applier_test PRIVATE src)
 add_test(NAME pending_deletion_applier_test COMMAND pending_deletion_applier_test)
+
+# Clean Up Recordings: which folders count, what is left alone, what is
+# refused, and that a file is counted deleted only when the stick agrees.
+add_executable(clean_up_recordings_test tests/clean_up_recordings_test.cpp)
+target_link_libraries(clean_up_recordings_test PRIVATE seabass_core_testing)
+target_include_directories(clean_up_recordings_test PRIVATE src)
+add_test(NAME clean_up_recordings_test COMMAND clean_up_recordings_test)
 
 add_executable(zip_archive_writer_test
     src/infrastructure/zip_archive_writer.cpp
