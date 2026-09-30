@@ -361,9 +361,13 @@ TestCase {
     }
 
     function test_on_a_development_build_the_taps_claim_nothing() {
-        // The real checker: this test binary is a dev build, offered no
-        // release at all, so the popup would promise something that never
-        // happens (review finding on 4f2cfd21).
+        // The real checker, so the build this test binary is decides what
+        // is right. A dev build is offered no release at all, so the popup
+        // would promise something that never happens (review finding on
+        // 4f2cfd21). tools/release.sh runs this suite on an alpha or beta
+        // build, which follows the testing channel from its first start:
+        // the box is there and ticked, and the taps change nothing, so
+        // there is no popup either.
         const checker = createTemporaryObject(checkerComponent, testCase);
         checker.forgetTestingChoice();
         const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
@@ -374,8 +378,16 @@ TestCase {
         }
         wait(100);
         verify(!findChild(page, "testingRevealedDialog").visible, "no popup");
-        verify(!findChild(page, "includeTestingUpdates").visible, "no checkbox");
-        verify(!checker.includeTesting);
+        if (checker.runningPreRelease) {
+            verify(checker.currentChannel === "alpha" || checker.currentChannel === "beta",
+                   "a pre-release is an alpha or a beta, not " + checker.currentChannel);
+            verify(findChild(page, "includeTestingUpdates").visible, "a test build shows the box");
+            verify(checker.includeTesting, "a test build follows the testing channel");
+        } else {
+            compare(checker.currentChannel, "dev", "the suite runs on a dev build or a pre-release");
+            verify(!findChild(page, "includeTestingUpdates").visible, "no checkbox");
+            verify(!checker.includeTesting);
+        }
     }
 
     function test_the_version_line_is_not_advertised_as_a_switch() {
