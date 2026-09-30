@@ -45,6 +45,15 @@ std::optional<application::FileMetadata> TagLibMetadataProbe::read(const std::st
     // whole file, which on a USB stick costs far more than it buys --
     // and it still cannot turn a headerless VBR length into an exact
     // one, which is what durationIsEstimated exists to flag.
+    //
+    // Fast would not make a sample-rate-only read cheaper. Measured with
+    // TagLib 1.13 on 50 MP3s (2026-09-30): Fast, Average and Accurate
+    // each read the same 6.4 MB in the same 615 read calls, 128 KiB per
+    // file, because MPEG::Properties does not consult the style there.
+    // Most of those bytes are the ID3v2 tag (93 KiB on average, the cover
+    // art), which FileRef parses whatever the style. A caller that wants
+    // only the rate and must be quick on a USB stick needs a reader that
+    // skips the tag, not a different style.
     // TagLib::FileName is const char* on POSIX and, on Windows, a class
     // whose const char* constructor reads the ANSI code page; the
     // fs::path's c_str() is the wchar_t* its other constructor takes.
