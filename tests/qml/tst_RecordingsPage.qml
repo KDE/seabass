@@ -162,11 +162,16 @@ TestCase {
         verify(details.indexOf("3:31:34") > 0, "the length, h:mm:ss: " + details);
         compare(findChild(first, "sizeLabel").text, Theme.humanBytes(2239137764));
 
+        // No length known: folder and date only, nothing where a length
+        // would go. Compared whole, with the date rendered by the call the
+        // page makes on the same Date, so the expectation carries this
+        // machine's locale and time zone rather than one of its own. (The
+        // search for "0:00" this replaces failed on CI, where the C locale
+        // writes the date as "1 Jan 2017 01:00:00".)
         const pioneer = row(page, 2);
-        const pioneerDetails = findChild(pioneer, "detailsLabel").text;
-        verify(pioneerDetails.indexOf("PIONEER REC (Pioneer)") === 0, pioneerDetails);
-        // No length known: none shown, rather than 0:00.
-        verify(pioneerDetails.indexOf("0:00") < 0, pioneerDetails);
+        const stamp = new Date(2017, 0, 1, 1, 0);
+        compare(findChild(pioneer, "detailsLabel").text,
+                "PIONEER REC (Pioneer) · " + stamp.toLocaleString(Qt.locale(), Locale.ShortFormat));
 
         compare(findChild(page, "totalLabel").text,
                 Theme.humanBytes(total) + " in 3 recordings, stick has " + Theme.humanBytes(11.3 * gib) + " free");
