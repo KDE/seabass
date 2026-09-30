@@ -140,15 +140,18 @@ try {
         return;
     }
     if (sectionIt != file.sections.end()) {
-        // Replacing: the section's own memory_count goes back with it,
-        // unless the section is damaged. Then its header is no witness
+        // Replacing: a hot list's memory_count goes back with it (a
+        // memory list's is the codec's to set), unless the section is
+        // damaged. Then its header is no witness
         // to anything (WHALESHARK's read 0000ffff), and the section is
         // written as a new one would be.
         std::optional<uint32_t> memoryCount;
-        try {
-            AnlzLegacyCueCodec::checkSection(sectionIt->rawBytes);
-            memoryCount = AnlzLegacyCueCodec::memoryCountOf(sectionIt->rawBytes);
-        } catch (const std::exception &) {
+        if (listType == CueListTypeHot) {
+            try {
+                AnlzLegacyCueCodec::checkSection(sectionIt->rawBytes);
+                memoryCount = AnlzLegacyCueCodec::memoryCountOf(sectionIt->rawBytes);
+            } catch (const std::exception &) {
+            }
         }
         sectionIt->rawBytes = AnlzLegacyCueCodec::encodeCues(entries, listType, memoryCount);
     } else {

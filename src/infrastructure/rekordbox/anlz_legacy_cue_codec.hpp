@@ -52,18 +52,20 @@ struct LegacyCueEntry
 //    memory_count. HIGH confidence for all of those but the last.
 //  - memory_count is 0xFFFFFFFF in 7965 of the 7968 -- every hot list,
 //    empty or not, and every EMPTY memory list -- and 0 in the three
-//    populated memory lists. No reading of "a count of memory cues"
-//    explains a populated list holding 0, so this codec does not invent
-//    one: the value a section already had is written back with it, and
-//    only a section being created from scratch takes the default, which
-//    is the majority value except for a populated memory list, where it
-//    is what all three real examples hold.
+//    populated memory lists, each holding one entry. In a memory list
+//    it is the index of the last entry: an XDJ-RX2 writes 1 for its own
+//    two-entry list (#33). A hot list's is written back as it was, or
+//    0xFFFFFFFF for a new one; a memory list's is set from the list.
+//    Carrying it over was the #33 freeze: an empty list that gained a
+//    cue kept 0xFFFFFFFF, and the RX2 took the list for empty, dropped
+//    our cue, and hung on its next memory-loop save.
 //  - Every entry is exactly 56 bytes with len_header 28, in all 119.
 //    HIGH.
-//  - order_first and order_last are 0xFFFF in all 119, so this writer
-//    emits that rather than the running order the field's name suggests.
-//    The kaitai spec flags both as unresolved; real data is unambiguous.
-//    HIGH for what to write, unknown for what they mean.
+//  - order_first and order_last are 0xFFFF in all 119, the three
+//    one-entry memory lists included. In a memory list they
+//    link the entries by index (previous, next; 0xFFFF at either end),
+//    as the RX2's two-entry list shows, so the encoder sets them from
+//    the list. Hot entries keep 0xFFFF.
 //  - The 3 bytes after `type` are 00 03 e8 in all 119. HIGH.
 //  - `type` is 1 for a cue and 2 for a loop (3 real loops). HIGH.
 //  - loop_time is 0xFFFFFFFF when the entry is not a loop. HIGH: 94 of
@@ -114,14 +116,16 @@ public:
     // damaged, and nothing in it is carried anywhere.
     static std::vector<LegacyCueEntry> decodeCues(const std::string &pcobSectionBytes);
 
-    // The section's memory_count as it stands, for a caller replacing
-    // that section and wanting to leave the field as it found it.
+    // The section's memory_count as it stands, for a caller replacing a
+    // hot list and wanting to leave the field as it found it.
     static uint32_t memoryCountOf(const std::string &pcobSectionBytes);
 
-    // `memoryCount` unset means "this section is new": see the note
-    // above for what is then written. Throws rather than return a
-    // section that fails checkSection(), and in particular refuses an
-    // entry whose carried-over rawBytes are not a 56-byte PCPT entry.
+    // `memoryCount` is a hot list's: unset means "this section is new",
+    // see the note above. A memory list's header and entry links are
+    // always set from `cues`, and `memoryCount` is ignored. Throws rather
+    // than return a section that fails checkSection(), and in particular
+    // refuses an entry whose carried-over rawBytes are not a 56-byte
+    // PCPT entry.
     static std::string encodeCues(const std::vector<LegacyCueEntry> &cues, uint32_t listType,
                                    std::optional<uint32_t> memoryCount = std::nullopt);
 };

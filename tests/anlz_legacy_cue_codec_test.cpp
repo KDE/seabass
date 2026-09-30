@@ -212,6 +212,54 @@ int main(int argc, char **argv)
         const auto memoryBack = AnlzLegacyCueCodec::decodeCues(newMemory);
         check(memoryBack.size() == 1 && memoryBack[0].timeMs == 45'000, "and the cue survives");
 
+        // A memory list is a linked list, and its header names the last
+        // entry: 0xFFFFFFFF empty, 0 with one entry, 1 with two. This is
+        // an XDJ-RX2's own two-entry list (firmware 1.43, SHAKEDOWN8B,
+        // 2026-09-30, #33), byte for byte: entry 0 links ffff->0001,
+        // entry 1 links 0000->ffff.
+        auto fromHex = [](const std::string &hex) {
+            std::string bytes;
+            for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+                bytes.push_back(static_cast<char>(std::stoi(hex.substr(i, 2), nullptr, 16)));
+            }
+            return bytes;
+        };
+        const std::string playerList = fromHex(
+            "50434f420000001800000088000000000000000200000001"
+            "504350540000001c00000038000000000000000100000000ffff0001020003e800000de2000014ad"
+            "00000000000000000000000000000000"
+            "504350540000001c000000380000000000000001000000000000ffff010003e80000002f00000000"
+            "00000000000000000000000000000000");
+        const auto playerEntries = AnlzLegacyCueCodec::decodeCues(playerList);
+        check(playerEntries.size() == 2, "the player's two-entry memory list decodes");
+        check(AnlzLegacyCueCodec::encodeCues(playerEntries, CueListTypeMemory,
+                                             AnlzLegacyCueCodec::memoryCountOf(playerList))
+                  == playerList,
+              "and re-encodes to the player's exact bytes");
+
+        // The write that froze the RX2: an EMPTY memory list (header
+        // 0xFFFFFFFF) that gains a cue. Carrying the empty list's header
+        // over told the player the list was still empty; it then dropped
+        // our cue, sized the list for two and hung on its next save.
+        const std::string emptyMemory = AnlzLegacyCueCodec::encodeCues({}, CueListTypeMemory);
+        check(AnlzLegacyCueCodec::memoryCountOf(emptyMemory) == 0xFFFFFFFFu, "an empty memory list names no entry");
+        const std::string gained = AnlzLegacyCueCodec::encodeCues(memory, CueListTypeMemory,
+                                                                  AnlzLegacyCueCodec::memoryCountOf(emptyMemory));
+        check(AnlzLegacyCueCodec::memoryCountOf(gained) == 0,
+              "an empty memory list that gains a cue names that cue, whatever the old header said");
+
+        // Reordered, the links follow the new order rather than the bytes
+        // each entry was carried with; one entry left links to nothing.
+        const std::vector<LegacyCueEntry> swapped = {playerEntries[1], playerEntries[0]};
+        const std::string swappedList = AnlzLegacyCueCodec::encodeCues(swapped, CueListTypeMemory);
+        check(swappedList.substr(24 + 24, 4) == fromHex("ffff0001") && swappedList.substr(80 + 24, 4) == fromHex("0000ffff"),
+              "links follow the order the list is written in");
+        check(AnlzLegacyCueCodec::memoryCountOf(swappedList) == 1, "and the header names the second entry");
+        const std::string single = AnlzLegacyCueCodec::encodeCues({playerEntries[0]}, CueListTypeMemory,
+                                                                  AnlzLegacyCueCodec::memoryCountOf(playerList));
+        check(single.substr(24 + 24, 4) == fromHex("ffffffff") && AnlzLegacyCueCodec::memoryCountOf(single) == 0,
+              "a list cut to one entry unlinks it and names it");
+
         // Order is preserved exactly as handed over, and that is the
         // load-bearing property rather than an omission: sorting here
         // would reorder a section read from a file and written straight
