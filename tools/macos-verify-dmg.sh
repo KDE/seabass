@@ -27,6 +27,12 @@
 # compared before and after.
 set -u
 set -o pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+. "$here/macos-bundle-check.sh" || { echo "cannot read $here/macos-bundle-check.sh" >&2; exit 1; }
+# A slice that found its libraries through DYLD_LIBRARY_PATH or
+# DYLD_FRAMEWORK_PATH (a Craft shell sets them) proves nothing about the
+# package, so none of them reaches the runs below.
+seabass_clear_dyld_env
 dmg="${1:?the .dmg to check}"
 stick="${2:?a stick mount point, e.g. /Volumes/VSTICKB}"
 expectations="${3:-}"
@@ -136,6 +142,12 @@ fi
 if [ ! -x "$cli" ]; then
     echo "  no seabass-cli in the bundle at Contents/MacOS/seabass-cli" >&2; exit 1
 fi
+# Before anything runs: a slice that starts proves only that it found its
+# libraries on THIS Mac, and a Mac with a Craft root at the path a binary
+# names finds Qt there. That is how a merge of two undeployed halves passed
+# every check. What the binaries ask for is read instead.
+echo "== the bundle is self-contained"
+seabass_bundle_self_contained "$app" || fail_early=1
 arches="$(lipo -archs "$cli" 2>/dev/null || true)"
 if [ -z "$arches" ]; then
     echo "  seabass-cli is not a Mach-O binary, so there is nothing to check" >&2; exit 1
@@ -185,6 +197,33 @@ for arch in $arches; do
     run() { arch -"$arch" "$cli" "$@" </dev/null; }
     if ! run --help >/dev/null 2>&1; then
         echo "  does not run at all" >&2; fail=1; continue
+    fi
+    # The libraries dyld actually loaded, where it will say. arch passes
+    # DYLD_PRINT_LIBRARIES on with -e: set in our own environment it would
+    # be purged at /usr/bin/arch, which SIP protects. dyld may still ignore
+    # it for the binary (a restricted process; possibly a hardened-runtime
+    # signature, which the Developer ID packages carry), and then there is
+    # nothing to read and nothing to be done about it on CI: making the
+    # Craft root unreadable for one run is not possible there. The static
+    # check above is the gate; this is a second opinion when it is given.
+    loaded="$work/loaded-$arch.log"
+    arch -"$arch" -e DYLD_PRINT_LIBRARIES=1 "$cli" --help </dev/null >/dev/null 2>"$loaded"
+    # "dyld[pid]: <uuid> /path" from dyld4, "dyld: loaded: /path" before it.
+    sed -n -e 's/^dyld\[[0-9]*\]: \(<[^>]*> \)\{0,1\}\(\/.*\)$/\2/p' \
+        -e 's/^dyld: loaded: \(\/.*\)$/\1/p' "$loaded" > "$loaded.paths"
+    if [ ! -s "$loaded.paths" ]; then
+        echo "  dyld printed no loaded libraries (DYLD_PRINT_LIBRARIES ignored for this binary): relying on the static check"
+    else
+        real_app="$(cd "$app" && pwd -P)"
+        outside="$(awk -v a="$app/" -v r="$real_app/" 'index($0, a) != 1 && index($0, r) != 1 &&
+            index($0, "/System/Library/") != 1 && index($0, "/usr/lib/") != 1' "$loaded.paths")"
+        if [ -n "$outside" ]; then
+            echo "  LOADED FROM OUTSIDE THE BUNDLE:" >&2
+            printf '%s\n' "$outside" | sed 's/^/    /' >&2
+            fail=1
+        else
+            echo "  loaded $(wc -l < "$loaded.paths" | tr -d ' ') images, all from the bundle or the system"
+        fi
     fi
     out="$work/scan-$arch.log"
     run scan --rekordbox "$stick/PIONEER" >"$out" 2>&1
