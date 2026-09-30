@@ -2292,6 +2292,25 @@ if(TARGET seabass_edit)
     target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test)
 
+    # Clean Up Recordings through its controller: summary, listing, and a
+    # real delete run on the worker, against a planted stick.
+    add_executable(recordings_controller_test
+        src/gui/recordings_controller.cpp
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/sleep_inhibitor.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/recordings_controller_test.cpp
+    )
+    target_include_directories(recordings_controller_test PRIVATE src tests)
+    target_link_libraries(recordings_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
+    set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.
     add_executable(prefetch_at_exit_test

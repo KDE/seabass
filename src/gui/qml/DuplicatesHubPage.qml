@@ -11,7 +11,8 @@ import SeabassGui
 // non-destructive stats/metadata-sync (DuplicatesPage), the destructive
 // survivor-select+delete flow (CleanupPage), and reviewing/deleting the
 // actual audio files those cleanups orphaned but never touched on disk
-// (PendingDeletionsPage). Three separate pages, not merged into one,
+// (PendingDeletionsPage), and moving the set recordings the players left
+// on the stick off it (RecordingsPage). Separate pages, not merged into one,
 // specifically so each destructive step always requires its own
 // deliberate navigation rather than sitting next to read-only stats
 // where a stray click could reach it.
@@ -24,6 +25,7 @@ Page {
     signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal pendingDeletionsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal recordingsRequested(string stickLabel, string rekordboxPath, string enginePath)
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0
@@ -43,6 +45,33 @@ Page {
     property int rekordboxPendingCount: 0
     property int enginePendingCount: 0
     readonly property bool hasPendingDeletions: rekordboxPendingCount > 0 || enginePendingCount > 0
+
+    // The set recordings the players left on the stick (Sessions/, the
+    // REC folders): a directory listing and a stat per file, no library
+    // read, so it is taken right here like the pending count above. A
+    // RecordingsController; a plain object in the tests.
+    property var recordingsProbe: RecordingsController {}
+    property var recordingsSummary: ({count: 0, bytes: 0, sources: []})
+    readonly property int recordingCount: root.recordingsSummary.count || 0
+    function refreshRecordings() {
+        root.recordingsSummary = root.recordingsProbe.summarize(root.rekordboxPath, root.enginePath);
+    }
+    // "3 recordings, 5.8 GiB, from Engine OS and a Pioneer deck"
+    readonly property string recordingsSubtitle: {
+        const count = root.recordingCount;
+        if (count <= 0) {
+            return root.recordingsSummary.unreadable === true
+                ? "Could not read the recording folders on this stick"
+                : "No recordings on this stick";
+        }
+        const names = {engine: "Engine OS", pioneer: "a Pioneer deck", alphatheta: "an AlphaTheta deck"};
+        const from = (root.recordingsSummary.sources || []).map(key => names[key] || key);
+        const fromText = from.length === 0 ? ""
+            : ", from " + (from.length === 1 ? from[0]
+                : from.slice(0, from.length - 1).join(", ") + " and " + from[from.length - 1]);
+        return count + (count === 1 ? " recording, " : " recordings, ")
+            + Theme.humanBytes(root.recordingsSummary.bytes) + fromText;
+    }
 
     function refreshPendingCounts() {
         if (root.hasRekordbox) {
@@ -92,6 +121,7 @@ Page {
     }
     StackView.onActivated: {
         root.refreshPendingCounts();
+        root.refreshRecordings();
         root.refreshLocks();
     }
 
@@ -166,6 +196,16 @@ Page {
             cardIcon: "draw-eraser"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.junkCueCleanupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
+        }
+        ActionCard {
+            objectName: "recordingsCard"
+            readOnly: root.lockedByOther
+            onReadOnlyClicked: root.explainLock()
+            cardTitle: "Clean Up Recordings"
+            cardSubtitle: root.recordingsSubtitle
+            cardIcon: "media-record"
+            enabled: (root.hasRekordbox || root.hasEngine) && root.recordingCount > 0
+            onClicked: root.recordingsRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
         Item { Layout.fillHeight: true }
     }
