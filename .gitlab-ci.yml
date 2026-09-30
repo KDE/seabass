@@ -243,10 +243,16 @@ craft_macos_qt6_x86_64:
 # One universal .dmg from the two halves above.
 #
 # It runs wherever the halves do, by the same rules: automatic on the
-# nightly schedule, a button on a tag and on any other push. The nightly
-# run is the one that matters most: it is where the two Craft roots
-# drifting apart (the install.db check in tools/macos-universal-dmg.sh)
-# shows up as a red job, rather than on the evening of a release.
+# nightly schedule, on any branch, and a button on any other push. A tag
+# would run it automatically too, but only a pipeline the secure services
+# key reaches, and the key has not reached a tag pipeline so far, so a tag
+# gets the button. The nightly run is the one that matters most: it is
+# where the two Craft roots drifting apart (the install.db check in
+# tools/macos-universal-dmg.sh) shows up as a red job, rather than on the
+# evening of a release. On Seabass/X.Y the nightly also signs and
+# notarises, and there a failure fails the pipeline: that branch is what
+# a release is cut from, so a broken universal package must not leave it
+# green.
 #
 # Signing is a separate question, and only Seabass/X.Y answers yes.
 # sysadmin/ci-utilities clears multimedia/seabass for macOS signing and
@@ -270,10 +276,17 @@ macos:universal:
       artifacts: true
     - job: craft_macos_qt6_x86_64
       artifacts: true
-  # The first rule is *craft_lane_rules' manual branch with signing
-  # switched on; the rest are *craft_lane_rules itself, written out
-  # because a rule list cannot be extended through an anchor.
+  # The first two rules are *craft_lane_rules' schedule and manual
+  # branches with signing switched on for Seabass/X.Y; the rest are
+  # *craft_lane_rules itself, written out because a rule list cannot be
+  # extended through an anchor. The schedule rule comes first: a scheduled
+  # pipeline carries CI_COMMIT_BRANCH as well, and would otherwise match
+  # the manual one and wait for a button nobody presses at night.
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+      allow_failure: false
+      variables:
+        SEABASS_UNIVERSAL_SIGN: "yes"
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       when: manual
       allow_failure: true
