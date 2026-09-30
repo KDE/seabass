@@ -180,8 +180,8 @@ signed on a tag: see "Signing depends on the ref" above.
 | Linux | `linux:package` | `seabass-<version>_<channel>_linux.tar.gz` |
 | Windows | `craft_windows_qt6_x86_64` (Craft; the MSYS2 `windows:package` only once a Windows runner exists) | `seabass-<version>_<channel>_windows.exe` |
 | macOS | `craft_macos_qt6_arm64` | `seabass-<version>_<channel>_macos-arm64.dmg` |
-| macOS | `macos:universal` (a button once both halves are green) | `seabass-<version>_<channel>_macos.dmg` |
 | macOS | `craft_macos_qt6_x86_64` | `seabass-<version>_<channel>_macos-x86_64.dmg` |
+| macOS | `macos:universal` (a button once both halves are green) | `seabass-<version>_<channel>_macos.dmg` |
 
 The `<channel>` in a filename is the build channel, which is what the
 binary reports in its own Settings. The directory it is served from is the
