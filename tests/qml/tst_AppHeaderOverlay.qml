@@ -159,9 +159,16 @@ TestCase {
         for (const b of buttons) {
             const button = findChild(h.overlay, b.name);
             verify(button !== null, b.name + " must exist");
+            // An IconToolButton: the glyph is a bundled icon Seabass draws
+            // itself, since KDE's style ignores a ToolButton's icon.color.
             compare(button.icon.name, "", b.name + " must not look the icon up in the theme");
-            compare(button.icon.source.toString(), Theme.iconUrl(b.icon));
-            compare(button.icon.color, Theme.text, b.name + " must be tinted flat");
+            compare(button.icon.source.toString(), "", b.name + " must not have the style paint its icon");
+            compare(button.iconName, b.icon);
+            const glyph = findChild(button, "iconToolButtonGlyph");
+            verify(glyph !== null, b.name + " must draw its own glyph");
+            compare(glyph.source.toString(), Theme.iconUrl(b.icon));
+            compare(glyph.color, Theme.text, b.name + " must be tinted flat");
+            compare(glyph.size, h.overlay.iconSize);
             compare(button.icon.width, h.overlay.iconSize);
             compare(button.icon.height, h.overlay.iconSize);
         }

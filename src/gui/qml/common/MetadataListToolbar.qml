@@ -71,7 +71,7 @@ RowLayout {
         rightPadding: clearButton.visible ? clearButton.width + 8 : undefined
         onTextChanged: root.searchChanged(text)
 
-        ToolButton {
+        IconToolButton {
             id: clearButton
             objectName: "clearSearchButton"
             anchors.right: parent.right
@@ -80,12 +80,9 @@ RowLayout {
             visible: field.text.length > 0
             width: Theme.iconSizeSmall
             height: Theme.iconSizeSmall
-            display: AbstractButton.IconOnly
             text: "Clear the search"
-            icon.source: Theme.iconUrl("edit-clear")
-            icon.color: Theme.text
-            icon.width: Theme.iconSizeSmall * 0.5
-            icon.height: Theme.iconSizeSmall * 0.5
+            iconName: "edit-clear"
+            iconSize: Theme.iconSizeSmall * 0.5
             onClicked: {
                 field.clear();
                 // Back to the field, not to whatever the click left

@@ -245,16 +245,13 @@ Rectangle {
             // A folder was never mounted, so there is nothing to eject:
             // the equivalent is dropping it from the list, which touches
             // nothing on disk.
-            ToolButton {
+            IconToolButton {
                 visible: root.isFolder
                 objectName: "closeFolderButton"
-                // Icon only; the text is what an assistive reader announces.
-                display: AbstractButton.IconOnly
+                // The text is what an assistive reader announces.
                 text: "Remove from list"
-                icon.source: Theme.iconUrl("window-close")
-                icon.color: Theme.text
-                icon.width: root.buttonIconSize
-                icon.height: root.buttonIconSize
+                iconName: "window-close"
+                iconSize: root.buttonIconSize
                 Layout.preferredWidth: Theme.iconSizeLarge
                 Layout.preferredHeight: Theme.iconSizeLarge
                 Layout.alignment: Qt.AlignVCenter
@@ -263,19 +260,16 @@ Rectangle {
                 onClicked: root.closeFolderRequested(root.mountPoint)
             }
 
-            ToolButton {
+            IconToolButton {
                 // Not gated on the app-wide busy flag: that disabled every
                 // other row's button while any one stick's task ran, which
                 // read as "eject does nothing". A click queues instead.
                 visible: !root.thisRowBusy && !root.isFolder
                 objectName: "ejectButton"
                 enabled: true
-                display: AbstractButton.IconOnly
                 text: root.mounted ? "Eject" : "Mount"
-                icon.source: Theme.iconUrl("media-eject")
-                icon.color: Theme.text
-                icon.width: root.buttonIconSize
-                icon.height: root.buttonIconSize
+                iconName: "media-eject"
+                iconSize: root.buttonIconSize
                 // Kept upright always: an eject icon turned over to mean
                 // "mount" reads as a broken icon. The tooltip and the
                 // click-anywhere row carry the "mount" meaning instead.

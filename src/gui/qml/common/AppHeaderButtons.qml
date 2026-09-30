@@ -25,26 +25,20 @@ RowLayout {
     signal preferencesRequested()
     signal supportRequested()
 
-    ToolButton {
+    IconToolButton {
         objectName: "aboutButton"
-        icon.source: Theme.iconUrl("help-about")
-        icon.color: Theme.text
-        icon.width: root.iconSize
-        icon.height: root.iconSize
-        display: AbstractButton.IconOnly
+        iconName: "help-about"
+        iconSize: root.iconSize
         text: "About Seabass"
         enabled: root.current !== "about"
         ToolTip.visible: hovered
         ToolTip.text: "About Seabass"
         onClicked: root.aboutRequested()
     }
-    ToolButton {
+    IconToolButton {
         objectName: "preferencesButton"
-        icon.source: Theme.iconUrl("configure")
-        icon.color: Theme.text
-        icon.width: root.iconSize
-        icon.height: root.iconSize
-        display: AbstractButton.IconOnly
+        iconName: "configure"
+        iconSize: root.iconSize
         text: "Preferences"
         enabled: root.current !== "preferences"
         ToolTip.visible: hovered

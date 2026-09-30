@@ -437,7 +437,7 @@ Page {
                     rightPadding: searchClearButton.visible ? searchClearButton.width + 4 : 0
                     onTextChanged: scanController.search(text)
 
-                    ToolButton {
+                    IconToolButton {
                         id: searchClearButton
                         visible: searchField.text.length > 0
                         anchors.right: parent.right
@@ -446,10 +446,8 @@ Page {
                         implicitWidth: Theme.iconSizeSmall + 8
                         implicitHeight: Theme.iconSizeSmall + 8
                         flat: true
-                        display: AbstractButton.IconOnly
                         text: "Clear search"
-                        icon.source: Theme.iconUrl("edit-clear")
-                        icon.color: Theme.text
+                        iconName: "edit-clear"
                         ToolTip.visible: hovered
                         ToolTip.text: "Clear search"
                         onClicked: searchField.text = ""
@@ -867,11 +865,9 @@ Page {
                             text: playCount >= 0 ? playCount : "--"
                             Layout.preferredWidth: root.playsColumnWidth
                         }
-                        ToolButton {
-                            display: AbstractButton.IconOnly
+                        IconToolButton {
                             text: "Merge"
-                            icon.source: Theme.iconUrl("link")
-                            icon.color: enabled ? Theme.text : Theme.textMuted
+                            iconName: "link"
                             Layout.preferredWidth: Theme.iconSizeSmall
                             enabled: root.format !== "onelibrary" && trackDelegate.streamingSource.length === 0
                             ToolTip.visible: hovered
@@ -882,12 +878,10 @@ Page {
                                     : "Merge with another track...")
                             onClicked: mergePickerPopup.showFor(trackDelegate)
                         }
-                        ToolButton {
+                        IconToolButton {
                             id: editButton
-                            display: AbstractButton.IconOnly
                             text: "Find matching tracks"
-                            icon.source: Theme.iconUrl("edit-find")
-                            icon.color: Theme.text
+                            iconName: "edit-find"
                             Layout.preferredWidth: Theme.iconSizeSmall
                             ToolTip.visible: hovered
                             ToolTip.text: "Find matching tracks"

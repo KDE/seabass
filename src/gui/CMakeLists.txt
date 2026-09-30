@@ -79,6 +79,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/HomeRail.qml
     qml/common/HeartIcon.qml
     qml/common/SeabassIcon.qml
+    qml/common/IconToolButton.qml
     qml/common/IconLabel.qml
     qml/common/PageTitle.qml
     qml/common/SeabassCheckBox.qml

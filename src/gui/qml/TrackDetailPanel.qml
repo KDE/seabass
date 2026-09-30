@@ -207,12 +207,10 @@ Pane {
                 font.pointSize: Theme.fontMedium
                 Layout.fillWidth: true
             }
-            ToolButton {
+            IconToolButton {
                 objectName: "closeTrackPanelButton"
-                display: AbstractButton.IconOnly
                 text: "Close track details"
-                icon.source: Theme.iconUrl("window-close")
-                icon.color: Theme.text
+                iconName: "window-close"
                 ToolTip.visible: hovered
                 ToolTip.text: "Close track details"
                 onClicked: panel.closeRequested()
