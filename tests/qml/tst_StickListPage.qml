@@ -1109,8 +1109,8 @@ TestCase {
         verify(grid !== null, "the action grid must exist");
         const expected = {
             explore: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"],
-            sync: ["Sync Cue Points", "Metadata", "Create Engine Library"],
-            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Restore Metadata"],
+            sync: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"],
+            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups"],
             maintain: ["Housekeeping", "Library Health", "Format USB Stick"],
         };
         for (const group of page.groupKeys) {

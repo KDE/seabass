@@ -34,10 +34,10 @@ Item {
         case "explore":
             return !(root.showBrowse || root.showStatistics || root.showDeviceProfile || root.showPerformance);
         case "sync":
-            return !(root.showSync || root.showMetadataBackup || root.showCreateEngine);
+            return !(root.showSync || root.showMetadataBackup || root.showRestoreMetadata || root.showCreateEngine);
         case "backup":
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
-                     || root.showManageBackups || root.showRestoreMetadata || root.showCreateBackupStick);
+                     || root.showManageBackups || root.showCreateBackupStick);
         case "maintain":
             return !(root.showHousekeeping || root.showLibraryHealth || root.showFormat);
         default:
@@ -327,6 +327,22 @@ Item {
                 onClicked: root.metadataBackupRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
             }
             ActionCard {
+                objectName: "restoreMetadataCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Restore Metadata"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Put cues from this computer back on tracks that have lost them"
+                cardIcon: "document-import"
+                visible: root.group === "sync" && root.showRestoreMetadata
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.metadataRestoreRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
+            }
+            ActionCard {
                 objectName: "createEngineLibraryCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
@@ -460,22 +476,6 @@ Item {
                 // it ungated too.
                 visible: root.group === "backup" && root.showManageBackups
                 onClicked: root.manageBackupsRequested(root.label, root.currentArchivePath)
-            }
-            ActionCard {
-                objectName: "restoreMetadataCard"
-                large: root.large
-                Layout.preferredWidth: grid.cellWidth
-                Layout.maximumWidth: grid.cellWidth
-                Layout.fillHeight: true
-                cardTitle: "Restore Metadata"
-                readOnly: root.lockedByOther || root.stickReadOnly
-                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
-                onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: "Put cues from this computer back on tracks that have lost them"
-                cardIcon: "document-import"
-                visible: root.group === "backup" && root.showRestoreMetadata
-                enabled: root.hasRekordbox || root.hasEngine
-                onClicked: root.metadataRestoreRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
             }
             // Copying another mounted stick's live library onto this
             // empty one, through a fresh backup of it.
