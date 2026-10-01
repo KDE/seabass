@@ -173,8 +173,11 @@ Canvas {
             for (let j = 0; j < cueData.length; j++) {
                 const cue = cueData[j];
                 const x = (cue.positionMs / span) * w;
-                const color = (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#")
-                    ? cue.color : "#ffcc00";
+                // A memory cue is drawn in the one memory-cue colour, never
+                // its own: see Theme.memoryCue.
+                const isMemory = cue.kind !== "hot";
+                const color = isMemory ? String(Theme.memoryCue)
+                    : (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#") ? cue.color : "#ffcc00";
                 const isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
                 const xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
 
@@ -226,6 +229,16 @@ Canvas {
                     ctx.fillStyle = "#000";
                     ctx.font = "8px sans-serif";
                     ctx.fillText(String(cue.hotCueNumber), x + 2, 8);
+                } else {
+                    // The same flag, "M", at the foot of the line: a memory
+                    // cue often sits exactly under a hot cue (the pad was
+                    // made from the marker), and two flags at the top would
+                    // hide one another.
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, h - 10, 10, 10);
+                    ctx.fillStyle = String(Theme.memoryCueInk);
+                    ctx.font = "8px sans-serif";
+                    ctx.fillText("M", x + 2, h - 2);
                 }
                 ctx.restore();
             }

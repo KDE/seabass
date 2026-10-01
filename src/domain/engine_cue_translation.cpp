@@ -154,4 +154,22 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
     return result;
 }
 
+std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues)
+{
+    CuesFromEngine seen = cuesFromEngine(engineCues, cues);
+    std::vector<CuePoint> out = std::move(seen.hotCues);
+    for (const CuePoint &memory : seen.memoryCues) {
+        const bool already = std::any_of(out.begin(), out.end(), [&](const CuePoint &have) {
+            return have.kind == CuePoint::Kind::Memory && samePlace(have, memory);
+        });
+        if (!already) {
+            CuePoint cue = memory;
+            cue.kind = CuePoint::Kind::Memory;
+            cue.hotCueNumber = 0;
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
 }  // namespace seabass::domain

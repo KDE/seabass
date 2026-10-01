@@ -1250,6 +1250,18 @@ public:
                   {hot(1, 8, "#e03c3c"), hot(2, 120, "#ff9b1a")}),
             track("engine", "116", "Flaschenpost (Edit)", "Kollektiv Turmstrasse",
                   "33_Kollektiv Turmstrasse-Flaschenpost Edit.mp3", 245, 124, "8A", {})));
+        // WHALESHARK2's "Buggy": one memory cue, which Engine holds as pad
+        // 1 and as the cue point. The row must still say one memory cue.
+        {
+            Track buggy = track("rekordbox", "17", "Buggy", "Yotto, Lane 8", "08_Yotto, Lane 8-Buggy.mp3", 300, 123,
+                                "Am", {memory(9.904)});
+            Track onEngine = track("engine", "117", "Buggy", "Yotto, Lane 8", "08_Yotto, Lane 8-Buggy.mp3", 300,
+                                   123, "Am", {});
+            SyncPlan plan = readyPlan(buggy, onEngine);
+            CuePoint pad = hot(1, 9.904, "");
+            plan.cuesToApply = {pad, memory(9.904)};
+            plans.push_back(std::move(plan));
+        }
 
         sync->plansModel()->setAnalysis(std::move(plans), std::move(conflicts));
         return true;

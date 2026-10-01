@@ -106,7 +106,7 @@ TestCase {
     function test_decisionsComeFirstAndEveryTitleLinesUp() {
         var page = openPage(1100, 720);
         var list = listOf(page);
-        compare(list.count, 7, "two decisions and five tracks ready to sync");
+        compare(list.count, 8, "two decisions and six tracks ready to sync");
 
         var titleX = -1;
         for (var r = 0; r < 4; ++r) {
@@ -191,7 +191,7 @@ TestCase {
     function test_selectionAndStagingStayInsideTheSearch() {
         var page = openStagingPage(1100, 720);
         var controller = findChild(page, "syncController");
-        compare(controller.selectedCount, 5, "every track ready to sync starts ticked");
+        compare(controller.selectedCount, 6, "every track ready to sync starts ticked");
 
         findChild(page, "searchField").text = "kollektiv";
         compare(controller.visibleConflictCount, 1);
@@ -199,7 +199,7 @@ TestCase {
 
         mouseClick(findChild(page, "selectNoneButton"));
         compare(controller.selectedVisibleCount, 0);
-        compare(controller.selectedCount, 4, "Select None reached tracks the search hides");
+        compare(controller.selectedCount, 5, "Select None reached tracks the search hides");
         mouseClick(findChild(page, "selectAllButton"));
         compare(controller.selectedVisibleCount, 1);
 
@@ -208,7 +208,7 @@ TestCase {
         mouseClick(stage);
         // No confirmation: staging is a step short of writing anything.
         tryCompare(controller, "stagedCount", 1, 2000);
-        compare(controller.selectedCount, 4, "the hidden ticked tracks stay ticked and unstaged");
+        compare(controller.selectedCount, 5, "the hidden ticked tracks stay ticked and unstaged");
         var notice = findChild(page, "cuesLeftOutDialog");
         verify(!notice.opened, "the shown track fits on Engine's pads, so nothing to say");
         controller.unstage(0);
@@ -219,7 +219,7 @@ TestCase {
         var controller = findChild(page, "syncController");
         controller.resetCuesLeftOutNotice();
         mouseClick(findChild(page, "stageSelectedButton"));
-        tryCompare(controller, "stagedCount", 5, 2000);
+        tryCompare(controller, "stagedCount", 6, 2000);
         var notice = findChild(page, "cuesLeftOutDialog");
         tryCompare(notice, "opened", true, 2000);
         compare(notice.tracks.length, 1, "only the track whose pads were full");
@@ -230,7 +230,7 @@ TestCase {
         findChild(notice, "leftOutTheseTracksBox").checked = true;
         mouseClick(findChild(notice, "acceptButton"));
         tryCompare(notice, "opened", false, 2000);
-        for (var i = 0; i < 5; ++i) {
+        for (var i = 0; i < 6; ++i) {
             controller.unstage(i);
         }
         compare(controller.stagedCount, 0);
@@ -238,13 +238,26 @@ TestCase {
         // swallow a click under the desktop style, and the button's path
         // is proven above.
         controller.stageSelected(false);
-        tryCompare(controller, "stagedCount", 5, 2000);
+        tryCompare(controller, "stagedCount", 6, 2000);
         wait(200);
         verify(!notice.opened, "suppressed for Bloom");
         controller.resetCuesLeftOutNotice();
-        for (var j = 0; j < 5; ++j) {
+        for (var j = 0; j < 6; ++j) {
             controller.unstage(j);
         }
+    }
+
+    // One rekordbox memory cue becomes pad 1 and the cue point on Engine.
+    // To the DJ that is one memory cue, and the row says so.
+    function test_aMemoryCueOnAPadIsStillOneMemoryCue() {
+        var page = openPage(1100, 720);
+        var list = listOf(page);
+        var row = list.itemAtIndex(list.count - 1);
+        verify(row !== null);
+        row.expanded = true;
+        waitForRendering(page);
+        compare(findChild(row, "panelSentence").text,
+                "Adds 1 memory cue from DeviceLibrary. Nothing is written until Save.");
     }
 
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {

@@ -145,6 +145,7 @@ public:
     void clearStaged() override;
 
     static QString cueSummary(const domain::SyncPlan &plan);
+    static domain::CueChange cueChangeOf(const domain::SyncPlan &plan);
     static QString choiceSummary(const domain::CrossSourceSyncConflict &conflict);
 
 signals:
