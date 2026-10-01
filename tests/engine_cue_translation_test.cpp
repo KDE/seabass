@@ -135,6 +135,36 @@ int main()
         std::cout << "case 7 (a rounding drift is still the same cue) OK\n";
     }
 
+    // A memory cue where a hot cue already is: on a pad already, so no
+    // second pad, and still the main cue. WHALESHARK2's "Voices In My
+    // Head" has its marker under hot cue 3.
+    {
+        auto t = translateCuesForEngine({hot(1, 1000.0), hot(3, 52583.0), memory(52583.0), memory(90000.0)}, {});
+        assert((padsOf(t.cues) == std::vector<int>{1, 3, 2}) && "pad 2 goes to the 90 s cue, nothing duplicates pad 3");
+        assert(t.cues.back().kind == CuePoint::Kind::Memory && t.cues.back().positionMs == 52583.0);
+        assert(t.leftOut.empty());
+        std::cout << "case 8 (a memory cue under a hot cue takes no pad of its own) OK\n";
+    }
+
+    // ...and read back, Engine's pad 3 is rekordbox's hot cue 3, not the
+    // marker's translation.
+    {
+        auto seen = cuesFromEngine({hot(1, 1000.0), hot(3, 52583.0), memory(52583.0)},
+                                   {hot(1, 1000.0), hot(3, 52583.0), memory(52583.0)});
+        assert(seen.hotCues.size() == 2 && seen.hotCues[1].hotCueNumber == 3);
+        assert(seen.memoryCues.size() == 1 && seen.memoryCues[0].positionMs == 52583.0 && "the main cue");
+        std::cout << "case 9 (a pad that is also a hot cue is the hot cue) OK\n";
+    }
+
+    // rekordbox's black is no colour: the pad is left to Engine's default.
+    {
+        CuePoint black = memory(5000.0);
+        black.color = "#000000";
+        auto t = translateCuesForEngine({black}, {});
+        assert(t.cues[0].kind == CuePoint::Kind::Hot && t.cues[0].color.empty());
+        std::cout << "case 10 (an uncoloured memory cue makes an uncoloured pad) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

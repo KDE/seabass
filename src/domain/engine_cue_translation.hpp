@@ -37,24 +37,31 @@ struct EngineCueTranslation
 // Memory cues, then memory loops, each in time order, take a free pad:
 // the pad `existing` (Engine's current cues for the track) already holds
 // that cue on when it is still free, so a sync does not shuffle pads,
-// else the lowest free one. Pads full: leftOut. The main cue is Engine's
-// existing one when it has one, else the earliest memory cue it can hold
-// (engineCanHoldMemoryCue): a cue point set on the player is never moved
-// by a sync.
+// else the lowest free one. A memory cue at the place of one of the hot
+// cues is on a pad already and takes no second one (rekordbox often has
+// both, the pad made from the marker). Pads full: leftOut. The main cue
+// is Engine's existing one when it has one, else the earliest memory cue
+// it can hold (engineCanHoldMemoryCue): a cue point set on the player is
+// never moved by a sync.
+//
+// A pad takes the memory cue's colour. rekordbox reports an uncoloured
+// memory cue as black ("#000000"); that is no colour, and the pad is
+// left to Engine's default rather than painted black.
 EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues,
                                             const std::vector<CuePoint> &existing);
 
-// Engine's cues read in the terms of a catalog with memory cues.
-// `memoryCues` are that catalog's own memory cues and loops: an Engine
-// hot cue or saved loop at one of their positions is that memory cue's
-// translation and comes back as it, not as a hot cue; every other hot
-// cue and loop is its own; the main cue is a memory cue.
+// Engine's cues read in the terms of a catalog with memory cues, `cues`
+// being that catalog's own. An Engine hot cue or loop on the same pad at
+// the same place as one of its hot cues is that hot cue; one at the
+// place of one of its memory cues or loops is that memory cue's
+// translation and comes back as it; every other is Engine's own; the
+// main cue is a memory cue.
 struct CuesFromEngine
 {
     std::vector<CuePoint> hotCues;     // Engine's own hot cues and loops
     std::vector<CuePoint> memoryCues;  // translations found on pads, as memory cues, and the main cue
 };
 
-CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &memoryCues);
+CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues);
 
 }  // namespace seabass::domain

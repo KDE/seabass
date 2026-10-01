@@ -122,7 +122,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     const std::vector<CuePoint> hotX = cuesOfKind(x.cues, CuePoint::Kind::Hot);
     const std::vector<CuePoint> memoryX = cuesOfKind(x.cues, CuePoint::Kind::Memory);
     const EngineCueTranslation translation = translateCuesForEngine(x.cues, e.cues);
-    const CuesFromEngine seen = cuesFromEngine(e.cues, memoryX);
+    const CuesFromEngine seen = cuesFromEngine(e.cues, x.cues);
     result.cuesLeftOut = translation.leftOut;
 
     if (x.cues.empty() && e.cues.empty()) {

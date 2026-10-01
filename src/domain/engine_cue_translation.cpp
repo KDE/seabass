@@ -71,6 +71,13 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
     }
 
     for (const CuePoint &cue : memory) {
+        // Already on a pad: one of the hot cues sits here.
+        const bool onAPad = std::any_of(result.cues.begin(), result.cues.end(), [&](const CuePoint &hot) {
+            return isHot(hot) && samePlace(hot, cue);
+        });
+        if (onAPad) {
+            continue;
+        }
         int pad = 0;
         // The pad Engine already holds this cue on, when it is still free.
         for (const CuePoint &had : existing) {
@@ -92,6 +99,9 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
         CuePoint translated = cue;
         translated.kind = CuePoint::Kind::Hot;
         translated.hotCueNumber = pad;
+        if (translated.color == "#000000") {
+            translated.color.clear();
+        }
         result.cues.push_back(translated);
     }
 
@@ -119,7 +129,7 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
     return result;
 }
 
-CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &memoryCues)
+CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues)
 {
     CuesFromEngine result;
     for (const CuePoint &cue : engineCues) {
@@ -127,10 +137,13 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
             result.memoryCues.push_back(cue);
             continue;
         }
-        const auto translationOf = std::find_if(memoryCues.begin(), memoryCues.end(), [&](const CuePoint &memory) {
+        const bool isOwnHotCue = std::any_of(cues.begin(), cues.end(), [&](const CuePoint &own) {
+            return isHot(own) && own.hotCueNumber == cue.hotCueNumber && samePlace(own, cue);
+        });
+        const auto translationOf = std::find_if(cues.begin(), cues.end(), [&](const CuePoint &memory) {
             return memory.kind == CuePoint::Kind::Memory && samePlace(memory, cue);
         });
-        if (translationOf == memoryCues.end()) {
+        if (isOwnHotCue || translationOf == cues.end()) {
             result.hotCues.push_back(cue);
             continue;
         }
