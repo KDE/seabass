@@ -4,6 +4,8 @@
 
 #include "gui/sync_plan_list_model.hpp"
 
+#include "domain/engine_cue_translation.hpp"
+
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
@@ -176,7 +178,7 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
     case CueSummaryRole:
         return cueSummary(plan);
     case CueChangeRole: {
-        const domain::CueChange change = domain::describeCueChange(targetOf(plan).cues, plan.cuesToApply);
+        const domain::CueChange change = cueChangeOf(plan);
         return QVariantMap{
             {QStringLiteral("gainedHot"), change.gainedHot},
             {QStringLiteral("keptHot"), change.keptHot},
@@ -425,9 +427,23 @@ void SyncPlanListModel::clearStaged()
 // The way the row says it, for a DJ rather than for the writer: a hot cue
 // the target already has is kept, not copied again, and one the write
 // leaves out is replaced. See domain::describeCueChange().
+// Counted in the source's terms when the target is Engine: a memory cue
+// that lands on a pad and as the cue point is one memory cue to the DJ,
+// not a hot cue and a memory cue (domain::cuesInTermsOf).
+domain::CueChange SyncPlanListModel::cueChangeOf(const domain::SyncPlan &plan)
+{
+    const domain::Track &target = targetOf(plan);
+    if (target.format != "engine") {
+        return domain::describeCueChange(target.cues, plan.cuesToApply);
+    }
+    const std::vector<domain::CuePoint> &terms = sourceOf(plan).cues;
+    return domain::describeCueChange(domain::cuesInTermsOf(target.cues, terms),
+                                     domain::cuesInTermsOf(plan.cuesToApply, terms));
+}
+
 QString SyncPlanListModel::cueSummary(const domain::SyncPlan &plan)
 {
-    const domain::CueChange change = domain::describeCueChange(targetOf(plan).cues, plan.cuesToApply);
+    const domain::CueChange change = cueChangeOf(plan);
     QStringList parts;
     if (change.gainedHot > 0) {
         parts << QStringLiteral("+%1 hot").arg(change.gainedHot);

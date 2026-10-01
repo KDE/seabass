@@ -64,4 +64,10 @@ struct CuesFromEngine
 
 CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues);
 
+// cuesFromEngine() as one list, the way a page counts it: a memory cue
+// that is on a pad and is the cue point is one cue, not two. For saying
+// what a sync onto Engine does in the other side's own terms: "adds 1
+// memory cue", not "adds 1 hot cue and 1 memory cue".
+std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues);
+
 }  // namespace seabass::domain

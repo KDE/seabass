@@ -106,6 +106,14 @@ QtObject {
     readonly property color dangerBorder: "#e74c3c"
     readonly property color dangerText: isLightBackground ? "#5c1a1a" : "#ffffff"
     readonly property color conflictText: isLightBackground ? "#a85300" : "#ffa500"
+    // The memory cue flag on a waveform: one colour for every memory cue,
+    // not the cue's own. rekordbox reports an uncoloured memory cue as
+    // black, which drew as nothing on the dark waveform (WHALESHARK2's
+    // "Buggy", one memory cue, "where is it?"). A hot cue keeps its pad
+    // colour; a memory cue is the same kind of mark in every library, so
+    // it gets one mark, ice on the dark ground and slate on the light.
+    readonly property color memoryCue: isLightBackground ? "#3b4a5a" : "#e4eef7"
+    readonly property color memoryCueInk: isLightBackground ? "#ffffff" : "#000000"
 
     function mix(a, b, t) {
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0);

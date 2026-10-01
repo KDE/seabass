@@ -165,6 +165,20 @@ int main()
         std::cout << "case 10 (an uncoloured memory cue makes an uncoloured pad) OK\n";
     }
 
+    // WHALESHARK2's "Buggy": one rekordbox memory cue, which Engine holds
+    // as pad 1 and as the cue point. In rekordbox's terms that is still
+    // one memory cue, and the page says "adds 1 memory cue".
+    {
+        std::vector<CuePoint> engine = {hot(1, 9904.0), memory(9904.0)};
+        auto inTerms = cuesInTermsOf(engine, {memory(9904.0)});
+        assert(inTerms.size() == 1 && inTerms[0].kind == CuePoint::Kind::Memory && inTerms[0].positionMs == 9904.0);
+        // Engine's own hot cue stays a hot cue, and a cue point nowhere
+        // else is a memory cue of its own.
+        auto own = cuesInTermsOf({hot(2, 30000.0), memory(60000.0)}, {});
+        assert(own.size() == 2 && own[0].kind == CuePoint::Kind::Hot && own[1].kind == CuePoint::Kind::Memory);
+        std::cout << "case 11 (a pad that is also the cue point is one memory cue in rekordbox's terms) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
