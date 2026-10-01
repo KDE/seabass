@@ -21,8 +21,12 @@ Page {
 
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
 
+    // Overridable so a test can hand in a fake with known numbers; the
+    // real app never sets it.
+    property var controller: realController
+
     StickStatisticsController {
-        id: controller
+        id: realController
     }
 
     property string currentSource: root.rekordboxPath.length > 0 ? "rekordbox"
@@ -286,35 +290,140 @@ Page {
 
                         readonly property var stats: root.statsForSource(root.currentSource)
 
-                        GridLayout {
+                        // The page's first figures, with the cue points pie
+                        // beside them at the same height.
+                        RowLayout {
                             Layout.fillWidth: true
-                            columns: 4
-                            columnSpacing: 16
-                            rowSpacing: 8
+                            spacing: Theme.sectionSpacing
 
-                            component StatTile: ColumnLayout {
-                                id: statTile
-                                property string label
-                                property string value
-                                spacing: 2
-                                StatValue { text: statTile.value }
-                                // Qualified with statTile.: an unqualified `label: label`
-                                // here would bind TableHeaderLabel's own `label` property
-                                // to itself (same scoping gotcha PageTitle.qml hit with
-                                // `text`), not to StatTile's outer one.
-                                TableHeaderLabel { label: statTile.label }
+                            GridLayout {
+                                id: statsGrid
+                                objectName: "statsGrid"
+                                Layout.alignment: Qt.AlignTop
+                                columns: 4
+                                columnSpacing: 16
+                                rowSpacing: 8
+
+                                component StatTile: ColumnLayout {
+                                    id: statTile
+                                    property string label
+                                    property string value
+                                    spacing: 2
+                                    StatValue { text: statTile.value }
+                                    // Qualified with statTile.: an unqualified `label: label`
+                                    // here would bind TableHeaderLabel's own `label` property
+                                    // to itself (same scoping gotcha PageTitle.qml hit with
+                                    // `text`), not to StatTile's outer one.
+                                    TableHeaderLabel { label: statTile.label }
+                                }
+
+                                StatTile { label: "Tracks"; value: statsSection.stats.trackCount || 0 }
+                                StatTile { label: "Playlists"; value: statsSection.stats.playlistCount || 0 }
+                                StatTile { label: "Cue points"; value: statsSection.stats.totalCuePoints || 0 }
+                                StatTile {
+                                    label: "Hot / memory cues"
+                                    value: (statsSection.stats.hotCueCount || 0) + " / " + (statsSection.stats.memoryCueCount || 0)
+                                }
+                                StatTile { label: "Rated tracks"; value: statsSection.stats.ratedTrackCount || 0 }
+                                StatTile { label: "Commented tracks"; value: statsSection.stats.commentedTrackCount || 0 }
+                                StatTile { label: "Streaming tracks"; value: statsSection.stats.streamingTrackCount || 0 }
                             }
 
-                            StatTile { label: "Tracks"; value: statsSection.stats.trackCount || 0 }
-                            StatTile { label: "Playlists"; value: statsSection.stats.playlistCount || 0 }
-                            StatTile { label: "Cue points"; value: statsSection.stats.totalCuePoints || 0 }
-                            StatTile {
-                                label: "Hot / memory cues"
-                                value: (statsSection.stats.hotCueCount || 0) + " / " + (statsSection.stats.memoryCueCount || 0)
+                            // Cue points: how many local tracks carry at least
+                            // one cue (hot, memory or loop) against how many
+                            // carry none. The pie is as tall as the figures
+                            // beside it, and the counts sit in a legend so
+                            // the drawing is never the only place they are.
+                            RowLayout {
+                                id: cueCoverageBlock
+                                objectName: "cueCoverageBlock"
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignTop
+                                spacing: Theme.rowSpacing
+
+                                readonly property var coverage: statsSection.stats.cueCoverage || {}
+                                readonly property int withCues: coverage.withCues || 0
+                                readonly property int withoutCues: coverage.withoutCues || 0
+                                readonly property int total: withCues + withoutCues
+
+                                function percent(count) {
+                                    return cueCoverageBlock.total > 0
+                                        ? Math.round(100 * count / cueCoverageBlock.total) + "%" : "0%";
+                                }
+
+                                CueCoveragePie {
+                                    objectName: "cueCoveragePie"
+                                    Layout.alignment: Qt.AlignTop
+                                    Layout.preferredWidth: statsGrid.height
+                                    Layout.preferredHeight: statsGrid.height
+                                    withCues: cueCoverageBlock.withCues
+                                    withoutCues: cueCoverageBlock.withoutCues
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignVCenter
+                                    spacing: Theme.tightSpacing
+
+                                    Subtitle { text: "Cue points" }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        text: "Any hot cue, memory cue or loop counts. Local tracks only."
+                                        color: Theme.textMuted
+                                        font.pointSize: Theme.fontSmall
+                                    }
+
+                                    // Swatch, count, share, name: one row per slice.
+                                    GridLayout {
+                                        columns: 4
+                                        columnSpacing: Theme.rowSpacing
+                                        rowSpacing: Theme.tightSpacing
+
+                                        Rectangle {
+                                            implicitWidth: Theme.chartSwatchSize
+                                            implicitHeight: Theme.chartSwatchSize
+                                            radius: 2
+                                            color: Theme.accent
+                                        }
+                                        Label {
+                                            objectName: "withCuesCount"
+                                            Layout.alignment: Qt.AlignRight
+                                            text: cueCoverageBlock.withCues
+                                            font.family: Theme.dataFamily
+                                        }
+                                        Label {
+                                            objectName: "withCuesPercent"
+                                            Layout.alignment: Qt.AlignRight
+                                            text: cueCoverageBlock.percent(cueCoverageBlock.withCues)
+                                            font.family: Theme.dataFamily
+                                            color: Theme.textMuted
+                                        }
+                                        Label { text: "with cues" }
+
+                                        Rectangle {
+                                            implicitWidth: Theme.chartSwatchSize
+                                            implicitHeight: Theme.chartSwatchSize
+                                            radius: 2
+                                            color: Theme.textMuted
+                                        }
+                                        Label {
+                                            objectName: "withoutCuesCount"
+                                            Layout.alignment: Qt.AlignRight
+                                            text: cueCoverageBlock.withoutCues
+                                            font.family: Theme.dataFamily
+                                        }
+                                        Label {
+                                            objectName: "withoutCuesPercent"
+                                            Layout.alignment: Qt.AlignRight
+                                            text: cueCoverageBlock.percent(cueCoverageBlock.withoutCues)
+                                            font.family: Theme.dataFamily
+                                            color: Theme.textMuted
+                                        }
+                                        Label { text: "without cues" }
+                                    }
+                                }
                             }
-                            StatTile { label: "Rated tracks"; value: statsSection.stats.ratedTrackCount || 0 }
-                            StatTile { label: "Commented tracks"; value: statsSection.stats.commentedTrackCount || 0 }
-                            StatTile { label: "Streaming tracks"; value: statsSection.stats.streamingTrackCount || 0 }
                         }
 
                         RowLayout {
@@ -359,6 +468,11 @@ Page {
                                 Theme.accent, Theme.good, Theme.conflictText, Theme.warnBorder,
                                 Theme.danger, Qt.lighter(Theme.accent, 1.4), Qt.lighter(Theme.good, 1.4),
                             ]
+                            // A section whose colours MEAN something sets its
+                            // own; the rest cycle through the palette above.
+                            property var barColor: function(index) {
+                                return distSection._barColors[index % distSection._barColors.length];
+                            }
                             Layout.fillWidth: true
                             spacing: 4
                             visible: entries.length > 0
@@ -367,6 +481,7 @@ Page {
                                 model: entries
                                 delegate: RowLayout {
                                     id: barRow
+                                    objectName: "distributionRow"
                                     required property var modelData
                                     required property int index
                                     Layout.fillWidth: true
@@ -394,12 +509,26 @@ Page {
                                             radius: 3
                                             width: parent.width * (distSection.maxCount > 0
                                                 ? barRow.modelData.count / distSection.maxCount : 0)
-                                            color: distSection._barColors[barRow.index % distSection._barColors.length]
+                                            color: distSection.barColor(barRow.index)
                                         }
                                     }
                                     Label { text: barRow.modelData.count; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight }
                                 }
                             }
+                        }
+
+                        // The cue points pie's second half: how the cued
+                        // tracks spread. Always the same seven buckets, in
+                        // order, empty ones included, so its shape compares
+                        // between catalogs.
+                        DistributionSection {
+                            objectName: "cuesPerTrackSection"
+                            Layout.fillWidth: true
+                            title: "Cues per track"
+                            // The pie's colours: the bare tracks muted, every
+                            // cued bucket in the accent.
+                            barColor: function(index) { return index === 0 ? Theme.textMuted : Theme.accent; }
+                            entries: (statsSection.stats.cueCoverage || {}).cuesPerTrack || []
                         }
 
                         DistributionSection {
