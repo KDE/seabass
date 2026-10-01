@@ -449,6 +449,11 @@ QtObject {
     readonly property real sectionSpacing: 14   // between blocks down a page
     readonly property real rowSpacing: 10       // between controls across a row
     readonly property real tightSpacing: 6      // a label and the thing it labels
+    // Charts (the cue points pie on Library Statistics): the colour key
+    // beside a legend entry, and the gap cut between two slices so they
+    // read as two even where they meet.
+    readonly property real chartSwatchSize: scaled(10)
+    readonly property real chartSliceGap: 2
     readonly property real crumbTextInset: scaled(8)
     // The round Back button at the start of every section page's header
     // (BackBreadcrumb): a circle this wide, sized with the type so it

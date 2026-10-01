@@ -85,6 +85,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/SeabassCheckBox.qml
     qml/common/SeabassDialog.qml
     qml/common/SpaceReclaimBar.qml
+    qml/common/CueCoveragePie.qml
     qml/common/UnreferencedFilesNotice.qml
     qml/common/StatValue.qml
     qml/common/StatusBadge.qml
