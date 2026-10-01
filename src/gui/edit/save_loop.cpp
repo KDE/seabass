@@ -44,16 +44,23 @@ bool importLevel(const infrastructure::engine::RekordboxImportState &state)
 // where the save's writes are, which until the finish hooks commit is a
 // scratch copy, not the stick.
 //
-// Never when they were apart to begin with. A stick with an import offer
-// already pending has a rekordbox library that really did move on before
-// Seabass touched it, and quietly swallowing that hides something the
-// DJ may want.
+// Whatever they were before. This used to run only when the two were
+// level already, so an import offer that was pending before Seabass
+// touched the stick stayed pending; the thinking was that a rekordbox
+// library which really had moved on was something the DJ might want
+// imported. Sebastian, 2026-10-02: that prompt is the data loss Seabass
+// exists to prevent. Accepting it replaces the Engine side, cues and
+// pads included, and once Seabass has handled a stick there is nothing
+// it would bring that Seabass did not carry, bar tracks rekordbox
+// exported that Engine never saw, and importing those stays a deliberate
+// choice from the player's own menu. So every save that has both
+// catalogs leaves them level, and the player stays quiet.
 //
 // Returns a warning when the step could not be made, never an error: by
 // now every change the user asked for has landed.
-QString keepImportLevel(SaveContext &ctx, bool levelBefore)
+QString keepImportLevel(SaveContext &ctx, bool wanted)
 {
-    if (!levelBefore) {
+    if (!wanted) {
         return {};
     }
     const std::string rekordboxPath = ctx.rekordboxPath().toStdString();
@@ -133,10 +140,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // overwritten, so a crash in the middle left a save half-applied with
     // half a backup. Changes that cannot answer yet keep backing up as
     // they go, and backupOnce() skips whatever this already covered.
-    const bool importLevelBefore =
-        !ctx.rekordboxPath().isEmpty() && !ctx.enginePath().isEmpty()
-        && importLevel(infrastructure::engine::readRekordboxImportState(ctx.enginePath().toStdString(),
-                                                                        ctx.rekordboxPath().toStdString()));
+    // Both catalogs known: the save leaves the player's import record level
+    // with export.pdb, whatever it was before (see keepImportLevel()).
+    const bool importLevelWanted = !ctx.rekordboxPath().isEmpty() && !ctx.enginePath().isEmpty();
 
     std::vector<BackupTarget> upfront;
     std::vector<std::vector<BackupTarget>> declaredByChange;
@@ -216,12 +222,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // After a cancel or a failure too: the changes that did land are
     // committed by the finish hooks below, and any of them may have moved
     // the sequence.
-    // A save that applied "mark as imported" wants the two level whatever
-    // they were before it: that change carries the sequence as it was
-    // when it was staged, and a repair later in the same save moves the
-    // pdb past it.
-    const bool importLevelWanted =
-        importLevelBefore || result.appliedIds.contains(MarkRekordboxImportedChange::idFor());
+    // "Mark as imported" in the same save carries the sequence from when
+    // it was staged, and a repair later in the save may move the pdb past
+    // it; the step below reads the sequence as the save left it.
     QString importWarning = keepImportLevel(ctx, importLevelWanted);
 
     ctx.status(QStringLiteral("Finishing"));

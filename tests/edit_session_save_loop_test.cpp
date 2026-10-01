@@ -426,9 +426,11 @@ int main()
     }
     std::cout << "case 9 (a save that moves the pdb sequence carries it into Engine, scratch and direct) OK\n";
 
-    // Apart before: the stick already had an import offer pending, which
-    // means the rekordbox library really did move on before Seabass
-    // touched it. Not swallowed.
+    // Apart before: the stick already had an import offer pending. It used
+    // to be left pending, on the thought that the rekordbox library had
+    // really moved on. Sebastian, 2026-10-02: that prompt is the data loss
+    // Seabass exists to prevent, so a save levels the two whatever they
+    // were. See keepImportLevel().
     {
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-apart", 500, 400);
         CancellationToken token;
@@ -436,8 +438,8 @@ int main()
                         pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 1)}, ctx);
         assert(result.error.isEmpty());
-        assert(engineCounter(stick.engine) == 400 && "a pending offer is left for the DJ to see");
-        std::cout << "case 10 (an import offer that was already pending is not swallowed) OK\n";
+        assert(engineCounter(stick.engine) == 501 && "a pending offer is settled by the save");
+        std::cout << "case 10 (an import offer that was already pending is settled by the save) OK\n";
     }
 
     // Level, and the save does not move the sequence: Engine is not
