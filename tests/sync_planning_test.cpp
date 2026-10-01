@@ -588,6 +588,27 @@ int main()
         MatchingPolicy::reset();
     }
 
+    // WHALESHARK2, "Voices In My Head": rekordbox has five hot cues and a
+    // memory cue under hot cue 3; Engine has the five pads and that main
+    // cue. In sync, not "give the marker pad 6".
+    {
+        std::vector<CuePoint> five = {CuePoint{CuePoint::Kind::Hot, 1, 11333.0, "#00FF00", ""},
+                                      CuePoint{CuePoint::Kind::Hot, 2, 26332.0, "#00FF00", ""},
+                                      CuePoint{CuePoint::Kind::Hot, 3, 52583.0, "#00FF00", ""},
+                                      CuePoint{CuePoint::Kind::Hot, 4, 97583.0, "#00FF00", ""},
+                                      CuePoint{CuePoint::Kind::Hot, 5, 127583.0, "#00FF00", ""}};
+        Track r = makeTrack("r1", "song.mp3", 146.0, five);
+        r.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 52583.0, "#000000", ""});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 146.0, five);
+        e.cues[1].positionMs = 26331.0;  // a millisecond of rounding
+        e.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 52583.0, "", ""});
+        e.format = "engine";
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent && "the marker is on pad 3 already");
+        std::cout << "case (a marker under a hot cue is in sync, not a sixth pad) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
