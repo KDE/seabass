@@ -7,6 +7,7 @@
 #include <chrono>
 #include <vector>
 
+#include "application/ports/progress_reporter.hpp"
 #include "domain/sync_planning.hpp"
 #include "domain/track.hpp"
 
@@ -23,15 +24,21 @@ namespace seabass::application
 class SyncLibraries
 {
 public:
+    // `progress` sees one phase, "Comparing cues", a tick per matched pair.
     std::vector<domain::SyncPlan> execute(const std::vector<domain::Track> &tracksA,
                                            const std::vector<domain::Track> &tracksB,
                                            std::chrono::system_clock::time_point mtimeA,
-                                           std::chrono::system_clock::time_point mtimeB)
+                                           std::chrono::system_clock::time_point mtimeB,
+                                           ProgressReporter &progress = NullProgressReporter::instance())
     {
         std::vector<domain::SyncPlan> plans;
-        for (const auto &match : domain::TrackMatcher::match(tracksA, tracksB)) {
+        const auto matches = domain::TrackMatcher::match(tracksA, tracksB);
+        progress.start("Comparing cues", matches.size());
+        for (const auto &match : matches) {
             plans.push_back(domain::SyncPlanner::plan(match, mtimeA, mtimeB));
+            progress.tick(plans.size());
         }
+        progress.finish();
         return plans;
     }
 };

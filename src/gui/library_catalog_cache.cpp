@@ -150,7 +150,7 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
             }
             reader->fillArtwork(tracks);
         }
-        application::completeTracks(tracks, cancel);
+        application::completeTracks(tracks, cancel, progress);
         // The lengths the Tracks stage left out: every file the cache did
         // not know is probed now (and cached for the next insertion).
         // Rows the Tracks stage filled already have a length and are not
