@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "media_controller.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
 #include "application/path_key.hpp"
@@ -118,6 +119,10 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         // test, and only the stick card asks.
         return stick.rekordboxPath.has_value()
                && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*stick.rekordboxPath);
+    case SyncNeededRole:
+        return stick.mounted && stick.rekordboxPath.has_value() && stick.enginePath.has_value()
+            && infrastructure::engine::readRekordboxImportState(*stick.enginePath, *stick.rekordboxPath)
+                   .playerWillOfferImport();
     case ReadOnlyRole:
         return static_cast<size_t>(index.row()) < m_readOnly.size()
                && m_readOnly[static_cast<size_t>(index.row())];
@@ -167,6 +172,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {IdentityStrengthRole, "identityStrength"},
         {SafeToUnplugRole, "safeToUnplug"},
         {HasOneLibraryRole, "hasOneLibrary"},
+        {SyncNeededRole, "syncNeeded"},
         {ReadOnlyRole, "readOnly"},
     };
 }
@@ -207,6 +213,14 @@ std::string rowKey(const application::DetectedStick &stick)
 }
 
 }  // namespace
+
+void DetectedStickListModel::refreshRole(int role)
+{
+    if (rowCount() == 0) {
+        return;
+    }
+    emit dataChanged(index(0), index(rowCount() - 1), {role});
+}
 
 void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> sticks)
 {
@@ -382,6 +396,15 @@ std::vector<std::string> forgetCatalogsOfSticksGone(const std::vector<applicatio
 }
 
 }  // namespace
+
+// Any save may have levelled the player's import record with export.pdb
+// (save_loop.cpp), so the "Sync Needed" badge is asked again. A role
+// looked up when asked needs only the announcement, not a rescan. The
+// edit session registry calls this after every landed save.
+void MediaController::refreshSyncNeeded()
+{
+    m_model.refreshRole(DetectedStickListModel::SyncNeededRole);
+}
 
 void MediaController::detect()
 {

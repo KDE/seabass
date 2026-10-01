@@ -82,6 +82,13 @@ public:
         // Whether OneLibrary's exportLibrary.db sits beside export.pdb, so
         // the stick card can name every catalog on the stick.
         HasOneLibraryRole,
+        // Whether a Denon player will offer to import the rekordbox library
+        // over the Engine one (export.pdb moved on since the player last
+        // imported it; engine_import_state.hpp). Accepting that replaces
+        // the Engine side, so the stick card says "Sync Needed": a save on
+        // Sync Cue Points levels the two. Looked up when asked, like
+        // HasOneLibraryRole: 24 bytes of the pdb and one Engine row.
+        SyncNeededRole,
         // Whether the filesystem is mounted read-only -- what a stick
         // looks like after the kernel found damage on it (typically an
         // unclean unplug). Every card that writes is greyed out for such
@@ -104,6 +111,9 @@ public:
     Q_INVOKABLE QVariantMap get(int row) const;
 
     void setSticks(std::vector<application::DetectedStick> sticks);
+    // Says every row's `role` may read differently now, without a reset:
+    // for a role looked up when asked, after what it looks at changed.
+    void refreshRole(int role);
     const std::vector<application::DetectedStick> &sticks() const { return m_sticks; }
     int removableCount() const;
 
@@ -164,6 +174,9 @@ public:
     QString busyDevicePath() const { return m_busyTask.devicePath; }
 
     Q_INVOKABLE void detect();
+    // Re-asks every stick row whether the player would offer the rekordbox
+    // import (DetectedStickListModel::SyncNeededRole); after a save.
+    Q_INVOKABLE void refreshSyncNeeded();
 
     // Opens an ordinary directory as a library, listed alongside any
     // detected sticks. `path` is checked for the same PIONEER/Engine

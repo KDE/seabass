@@ -67,6 +67,25 @@ TestCase {
         return m;
     }
 
+    // "Sync Needed": the player will offer to import the rekordbox library
+    // over the Engine one. The badge sits with the library badges and is
+    // the way to Sync Cue Points, where a save settles it.
+    function test_syncNeededBadgeLeadsToSync() {
+        const quiet = makeRow(makeStick({syncNeeded: false}));
+        verify(!findChild(quiet, "syncNeededBadge").visible, "nothing to settle: no badge");
+
+        const row = makeRow(makeStick({syncNeeded: true}));
+        const badge = findChild(row, "syncNeededBadge");
+        verify(badge.visible);
+        compare(badge.label, "Sync Needed");
+        const spy = createTemporaryObject(spyComponent, testCase, {target: row, signalName: "syncRequested"});
+        mouseClick(badge);
+        tryCompare(spy, "count", 1, 2000);
+        compare(spy.signalArguments[0][0], "MAIN");
+        compare(spy.signalArguments[0][1], "/media/MAIN/PIONEER");
+        compare(spy.signalArguments[0][2], "/media/MAIN/Engine Library");
+    }
+
     function makeRow(stick, overrides, groundWidth) {
         // The newest on top: a click must land on the row just made.
         const groundProps = {z: ++testCase.grounds};
