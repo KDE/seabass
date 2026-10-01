@@ -442,76 +442,56 @@ Page {
         }
     }
 
+    // Staging is not destructive (Save is the step that writes, and
+    // cancelling it undoes every stage), so nothing asks before it. The
+    // one thing worth a word is a track Engine cannot take whole: its
+    // eight pads were full, and the rest of the memory cues stay off it.
     MessageDialog {
-        id: confirmDialog
-        objectName: "confirmStageDialog"
-        severity: SeabassDialog.Question
-
-        // Same choice Clean Up offers when a search is hiding some of what
-        // is ticked: stage what the search shows (the default, since that
-        // is what is on screen) or everything ticked.
-        readonly property int shownSelected: syncController.selectedVisibleCount
-        readonly property int hiddenSelected: syncController.selectedCount - shownSelected
-        readonly property bool searchHidesSome: root.searching && hiddenSelected > 0
-        // Taken when the dialog opens: directionCountsFor() is a call, not
-        // a property, so nothing would re-evaluate it.
-        property var directions: []
-        function prepare() {
-            confirmDialog.directions = syncController.directionCountsFor(confirmDialog.searchHidesSome);
+        id: leftOutDialog
+        objectName: "cuesLeftOutDialog"
+        severity: SeabassDialog.Info
+        showReject: false
+        acceptText: "OK"
+        property var tracks: []
+        function tracks_(n) { return n + (n === 1 ? " track has" : " tracks have"); }
+        title: "More cues than Engine can hold"
+        headline: leftOutDialog.tracks_(tracks.length) + " more cues than an Engine library can store. "
+            + "Engine holds eight pads per track; the memory cues that found no free pad are left off it."
+        onAccepted: {
+            if (theseTracksBox.checked || everBox.checked) {
+                syncController.suppressCuesLeftOutNotice(theseTracksBox.checked, everBox.checked);
+            }
+            theseTracksBox.checked = false;
+            everBox.checked = false;
         }
-        function tracks(n) { return n + (n === 1 ? " Track" : " Tracks"); }
-
-        title: "Stage syncing " + root.plural(searchHidesSome ? shownSelected : syncController.selectedCount, "track") + "?"
-        acceptText: searchHidesSome ? "Stage " + tracks(shownSelected) + " Matching the Search"
-                                    : "Stage " + tracks(syncController.selectedCount)
-        acceptEnabled: !searchHidesSome || shownSelected > 0
-        alternateText: searchHidesSome ? "Stage All " + tracks(syncController.selectedCount) + " Selected" : ""
-        onAlternateRequested: syncController.stageSelected(false)
-        onAccepted: syncController.stageSelected(searchHidesSome)
-
-        // A per-direction list rather than one sentence, so it stays in the
-        // content slot instead of being flattened into `headline`.
         Repeater {
-            model: confirmDialog.directions
+            model: leftOutDialog.tracks
             delegate: Label {
                 required property var modelData
                 Layout.fillWidth: true
-                text: "Copy cues to " + root.formatLabel(modelData.targetFormat) + " from "
-                    + root.formatLabel(modelData.sourceFormat) + " for " + root.plural(modelData.count, "track") + "."
+                text: modelData.title + (modelData.artist.length > 0 ? ", " + modelData.artist : "")
+                    + ": " + root.plural(modelData.count, "cue") + " left out"
                 wrapMode: Text.WordWrap
+                elide: Text.ElideRight
             }
         }
-        Label {
-            objectName: "hiddenSelectionWarning"
-            Layout.fillWidth: true
-            visible: confirmDialog.searchHidesSome
-            wrapMode: Text.WordWrap
-            color: Theme.warnText
-            text: "Your search (\"" + toolbar.searchText + "\") hides " + confirmDialog.hiddenSelected
-                + " of the " + syncController.selectedCount + " selected tracks. Only the "
-                + confirmDialog.shownSelected + " it shows are staged unless you stage all selected; "
-                + "the hidden ones stay selected either way."
+        SeabassCheckBox {
+            id: theseTracksBox
+            objectName: "leftOutTheseTracksBox"
+            text: "Don't show this again for these tracks"
         }
-        Label {
-            Layout.fillWidth: true
-            visible: {
-                for (var i = 0; i < confirmDialog.directions.length; i++) {
-                    if (confirmDialog.directions[i].targetFormat === "rekordbox") return true;
-                }
-                return false;
-            }
-            text: "DeviceLibrary writing is the least-proven part of Seabass. Verify the result "
-                + "on real hardware before trusting it for a gig."
-            color: Theme.conflictText
-            wrapMode: Text.WordWrap
+        SeabassCheckBox {
+            id: everBox
+            objectName: "leftOutEverBox"
+            text: "Don't show this again"
         }
-        Label {
-            Layout.fillWidth: true
-            text: "Nothing is written yet: this stages the changes, and Save writes them. Every catalog "
-                + "involved is backed up first; afterwards \"Undo Last Save\" reverts every file it touched."
-            color: Theme.textMuted
-            font.pointSize: Theme.fontSmall
-            wrapMode: Text.WordWrap
+    }
+
+    Connections {
+        target: syncController
+        function onCuesLeftOutNoticed(tracks) {
+            leftOutDialog.tracks = tracks;
+            leftOutDialog.open();
         }
     }
 
@@ -528,46 +508,45 @@ Page {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.textMuted
-                text: "A track exported to more than one catalog on this stick can end up with hot cues in "
-                    + "one and none, or different ones, in another. Seabass matches the copies across the "
-                    + "stick's catalogs and lists every track where they differ. Tick the ones you want and "
-                    + "stage them; Save copies the cues across. Every catalog is backed up first, and "
-                    + "\"Undo Last Save\" puts back every file it touched."
+                text: "Lists every track whose cues differ between this stick's catalogs. Tick, stage, Save. "
+                    + "Every catalog is backed up first; \"Undo Last Save\" puts every file back."
             }
             InfoButton {
                 Layout.alignment: Qt.AlignTop
                 explanationTitle: "How Sync Cue Points decides"
-                summaryText: "Copies are matched by file first. A track with cues on only one side is ready "
-                    + "to sync; one whose two sides have different hot cues waits for you to pick."
+                summaryText: "Copies are matched by file. Cues on one side only are ready to sync; "
+                    + "different hot cues on both sides wait for your pick."
                 explanationText:
                       "## Matching\n"
-                    + "The same audio file on the stick is the same track, whichever catalog lists it. "
-                    + "Only when a catalog has no file path for a track does Seabass fall back to title, "
-                    + "artist and length.\n\n"
+                    + "Same audio file, same track. Title, artist and length only when a catalog has no "
+                    + "file path.\n\n"
                     + "## Ready to sync\n"
-                    + "One side has cues the other lacks, and staging copies them across. A hot cue the "
-                    + "other side already has, on the same pad at the same place, is kept rather than "
-                    + "copied again: that is what *keeps 1* on a row means.\n\n"
+                    + "One side lacks cues the other has. A cue already on the same pad at the same place "
+                    + "is kept, not copied: that is *keeps 1* on a row.\n\n"
                     + "## Needs a decision\n"
-                    + "Both sides have hot cues, and they differ. No timestamp can say which set you "
-                    + "meant: Engine moves a track's edit time for a rating or a BPM change just as for "
-                    + "a cue. Pick the side whose hot cues should be on both; the pick is staged straight "
-                    + "away.\n\n"
-                    + "## Positions, and what Quantize does about them\n"
-                    + "The same cue rarely sits at the same millisecond in two catalogs. rekordbox keeps a "
-                    + "pad in more than one list of its own that can disagree by half a second, and every "
-                    + "cross-format conversion rounds. So two cues within half a second count as the same "
-                    + "cue here, rather than as a difference that is not really there.\n\n"
-                    + "Quantize hides the small ones while you play: it snaps the moment a cue fires to the "
-                    + "beat grid. It does not change what is stored, and it is only as good as that grid: "
-                    + "a cue further off than half a quantize step snaps to the next beat, not back to the "
-                    + "one you meant.\n\n"
+                    + "Both sides have hot cues and they differ. No timestamp can tell which you meant, "
+                    + "so you pick; the pick is staged at once.\n\n"
+                    + "## Memory cues on Engine\n"
+                    + "Engine has no memory cues: a track there has eight hot-cue pads, eight saved loops "
+                    + "and one cue point. Seabass does what Engine DJ's own import does: memory cues "
+                    + "become hot cues on the free pads, memory loops become saved loops, and the earliest "
+                    + "memory cue is the cue point. Pads full: the rest stay off Engine, and staging says "
+                    + "so. An Engine hot cue sitting where rekordbox has a memory cue is that memory cue, "
+                    + "so a sync back never duplicates it.\n\n"
+                    + "## Cues at 0:00\n"
+                    + "With *Ignore cues at 0:00* on (Preferences, Music), cues inside the first second are "
+                    + "not compared, not copied, and not kept when a track is written over. Clean them off "
+                    + "on Library Health.\n\n"
+                    + "## Positions\n"
+                    + "Cues within half a second are the same cue: rekordbox's own lists disagree by that "
+                    + "much, and every conversion rounds. Quantize snaps where a cue *fires* to the beat "
+                    + "grid; it changes nothing stored.\n\n"
                     + "## DeviceLibrary and OneLibrary\n"
-                    + "They are one library written in two formats, so they are never synced against each "
-                    + "other. Every write to DeviceLibrary is mirrored into OneLibrary.\n\n"
+                    + "One library in two formats, never synced against each other; every write to one is "
+                    + "mirrored into the other.\n\n"
                     + "## Saving\n"
-                    + "Nothing is written until Save. Every catalog involved is backed up first, and "
-                    + "*Undo Last Save* restores every file the last save touched.\n"
+                    + "Nothing is written until Save. Every catalog is backed up first; *Undo Last Save* "
+                    + "restores every file the last save touched.\n"
             }
         }
 
@@ -731,11 +710,10 @@ Page {
                         + " Selected"
                     enabled: !syncController.busy && !syncController.writing && syncController.selectedCount > 0
                     ToolTip.visible: hovered
-                    ToolTip.text: "Review what will be copied, then stage every ticked track; Save writes them"
-                    onClicked: {
-                        confirmDialog.prepare();
-                        confirmDialog.open();
-                    }
+                    ToolTip.text: root.searching
+                        ? "Stage every ticked track the search shows; Save writes them"
+                        : "Stage every ticked track; Save writes them"
+                    onClicked: syncController.stageSelected(root.searching)
                 }
             }
         }

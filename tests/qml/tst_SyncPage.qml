@@ -66,6 +66,22 @@ TestCase {
         return page;
     }
 
+    // A page on a stick that exists on disk, so staging can take the edit
+    // lock; the plans are still the fixture's.
+    function openStagingPage(pageWidth, pageHeight) {
+        var stick = syncPageFixture.scratchStick();
+        verify(stick.length > 0, "no scratch stick");
+        var page = createTemporaryObject(pageComponent, testCase, {
+            width: pageWidth, height: pageHeight,
+            rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        verify(page !== null, "page did not instantiate");
+        var controller = findChild(page, "syncController");
+        tryCompare(controller, "busy", false, 5000);
+        verify(syncPageFixture.fill(controller), "the fixture did not take");
+        waitForRendering(page);
+        return page;
+    }
+
     function listOf(page) {
         var list = findChild(page, "plansList");
         verify(list !== null, "the list was not found");
@@ -173,7 +189,7 @@ TestCase {
     }
 
     function test_selectionAndStagingStayInsideTheSearch() {
-        var page = openPage(1100, 720);
+        var page = openStagingPage(1100, 720);
         var controller = findChild(page, "syncController");
         compare(controller.selectedCount, 5, "every track ready to sync starts ticked");
 
@@ -190,14 +206,45 @@ TestCase {
         var stage = findChild(page, "stageSelectedButton");
         compare(stage.text, "Stage 1 Selected", "the button counts what the search shows");
         mouseClick(stage);
-        var dialog = findChild(page, "confirmStageDialog");
-        tryCompare(dialog, "opened", true, 2000);
-        verify(dialog.searchHidesSome);
-        compare(dialog.acceptText, "Stage 1 Track Matching the Search", "the default stages only what is shown");
-        compare(dialog.alternateText, "Stage All 5 Tracks Selected");
-        compare(dialog.directions.length, 1, "directions are those of the shown track only");
-        dialog.close();
-        tryCompare(dialog, "opened", false, 2000);
+        // No confirmation: staging is a step short of writing anything.
+        tryCompare(controller, "stagedCount", 1, 2000);
+        compare(controller.selectedCount, 4, "the hidden ticked tracks stay ticked and unstaged");
+        var notice = findChild(page, "cuesLeftOutDialog");
+        verify(!notice.opened, "the shown track fits on Engine's pads, so nothing to say");
+        controller.unstage(0);
+    }
+
+    function test_stagingSaysWhichTracksLeaveCuesOffEngine() {
+        var page = openStagingPage(1100, 720);
+        var controller = findChild(page, "syncController");
+        controller.resetCuesLeftOutNotice();
+        mouseClick(findChild(page, "stageSelectedButton"));
+        tryCompare(controller, "stagedCount", 5, 2000);
+        var notice = findChild(page, "cuesLeftOutDialog");
+        tryCompare(notice, "opened", true, 2000);
+        compare(notice.tracks.length, 1, "only the track whose pads were full");
+        compare(notice.tracks[0].title, "Bloom");
+        compare(notice.tracks[0].count, 1);
+
+        // "Not again for these tracks": staging Bloom again says nothing.
+        findChild(notice, "leftOutTheseTracksBox").checked = true;
+        mouseClick(findChild(notice, "acceptButton"));
+        tryCompare(notice, "opened", false, 2000);
+        for (var i = 0; i < 5; ++i) {
+            controller.unstage(i);
+        }
+        compare(controller.stagedCount, 0);
+        // Through the controller: the dialog's closing overlay can still
+        // swallow a click under the desktop style, and the button's path
+        // is proven above.
+        controller.stageSelected(false);
+        tryCompare(controller, "stagedCount", 5, 2000);
+        wait(200);
+        verify(!notice.opened, "suppressed for Bloom");
+        controller.resetCuesLeftOutNotice();
+        for (var j = 0; j < 5; ++j) {
+            controller.unstage(j);
+        }
     }
 
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {

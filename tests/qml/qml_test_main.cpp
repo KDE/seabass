@@ -1125,6 +1125,23 @@ class SyncPageFixture : public QObject
 public:
     using QObject::QObject;
 
+    // An empty stick on disk: a PIONEER and an Engine Library folder under
+    // one root, so the page can open an edit session and take its lock,
+    // which staging needs. The catalogs are missing, so the page's own
+    // analysis fails at once and fill() supplies the plans.
+    Q_INVOKABLE QString scratchStick()
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_sync_" + std::to_string(QCoreApplication::applicationPid()));
+        fs::remove_all(root, ec);
+        const fs::path stick = root / "TESTSTICK";
+        fs::create_directories(stick / "PIONEER", ec);
+        fs::create_directories(stick / "Engine Library", ec);
+        return ec ? QString() : seabass::gui::pathToQString(stick);
+    }
+
     Q_INVOKABLE bool fill(QObject *controller)
     {
         auto *sync = qobject_cast<seabass::gui::SyncController *>(controller);
@@ -1216,6 +1233,9 @@ public:
                   {hot(1, 4, "#e03c3c"), hot(2, 64, "#ff9b1a"), hot(3, 128, "#ffe13b"), hot(4, 192, "#39d353"),
                    hot(5, 256, "#2ec4f0"), hot(6, 320, "#7b61ff"), memory(4), memory(256)}),
             track("engine", "113", "Bloom", "Nils Hoffmann", "02_Nils Hoffmann-Bloom.mp3", 389, 120, "3A", {})));
+        // As if Engine's pads were full: one memory cue stays off it, which
+        // staging the track says.
+        plans.back().cuesLeftOut = {memory(256)};
         plans.push_back(readyPlan(
             track("rekordbox", "14", "Loop In Loop", "Sven V\u00e4th", "09_Sven Vath-Loop In Loop.mp3", 468, 127,
                   "6A", {hot(1, 32, "#e03c3c"), hot(2, 180, "#ffe13b"), hot(3, 360, "#2ec4f0")}),
