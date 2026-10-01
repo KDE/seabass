@@ -38,6 +38,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
+#include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
@@ -145,6 +146,10 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         }
 
         collectPlaylistSummary(rekordboxTracks, engineTracks, oneLibraryTracks, result);
+        if (hasRekordbox && hasEngine) {
+            result.importState = infrastructure::engine::readRekordboxImportState(enginePath.toStdString(),
+                                                                                   rekordboxPath.toStdString());
+        }
 
         if (!playlistName.isEmpty()) {
             domain::TrackScope scope = domain::TrackScope::playlist(playlistName.toStdString());
@@ -293,6 +298,8 @@ void SyncController::onAnalyzeFinished(SyncTaskResult &&result)
     m_oneLibraryTrackCount = result.oneLibraryTrackCount;
     m_playlistNames = std::move(result.playlistNames);
     m_playlistTrackCounts = std::move(result.playlistTrackCounts);
+    m_importState = result.importState;
+    emit importStateChanged();
     // A rescan is a fresh snapshot -- any decision made against the
     // previous one no longer means anything (the plan it produced is
     // already gone too, replaced by whatever this scan found), so this
@@ -434,6 +441,77 @@ void SyncController::resetCuesLeftOutNotice()
     settings.remove(LeftOutNoticeSuppressedTracksKey);
 }
 
+void SyncController::markRekordboxImported()
+{
+    if (busy() || m_importMarkStaged || !m_importState.playerWillOfferImport()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!session()) {
+        attachSession();
+    }
+    if (!session()) {
+        setErrorMessage("This stick's library could not be identified; nothing was changed.");
+        return;
+    }
+    if (!session()->stage(std::make_unique<MarkRekordboxImportedChange>(m_enginePath, m_importState.librarySequence))) {
+        return;  // the session reported the refusal; the page shows it
+    }
+    m_importMarkStaged = true;
+    emit importStateChanged();
+    setStagedStatusMessage(
+        QStringLiteral("Staged marking this stick's rekordbox library as imported. Press Save to write it."));
+}
+
+void SyncController::unstageRekordboxImportMark()
+{
+    if (!m_importMarkStaged) {
+        return;
+    }
+    if (session()) {
+        session()->unstage(MarkRekordboxImportedChange::idFor());
+    }
+    m_importMarkStaged = false;
+    emit importStateChanged();
+}
+
+void SyncController::setImportStateForTesting(bool playerWillOfferImport)
+{
+    m_importState = {};
+    m_importState.hasEngineLibrary = true;
+    m_importState.hasRekordboxLibrary = true;
+    m_importState.librarySequence = playerWillOfferImport ? 2 : 1;
+    m_importState.engineCounter = 1;
+    emit importStateChanged();
+}
+
+// A landed mark, or any landed save: what the stick says now. One 24-byte
+// read and one row; fine on the main thread.
+void SyncController::rereadImportState()
+{
+    if (m_rekordboxPath.isEmpty() || m_enginePath.isEmpty()) {
+        return;
+    }
+    m_importState = infrastructure::engine::readRekordboxImportState(m_enginePath.toStdString(),
+                                                                      m_rekordboxPath.toStdString());
+    emit importStateChanged();
+}
+
+void SyncController::onImportSessionChangeApplied(const QString &changeId)
+{
+    if (changeId == MarkRekordboxImportedChange::idFor()) {
+        m_importMarkStaged = false;
+    }
+    rereadImportState();
+}
+
+void SyncController::onImportSessionChangesDiscarded()
+{
+    m_importMarkStaged = false;
+    emit importStateChanged();
+}
+
 void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
 {
     if (conflictIndex < 0 || conflictIndex >= m_model.conflictCount()) {
@@ -482,6 +560,13 @@ void SyncController::attachSession()
     attachSessionForPath(any);
     if (LibraryEditSession *s = session()) {
         s->setLibraryPaths(m_rekordboxPath, m_enginePath);
+        // The base disconnects everything from a session it leaves, these
+        // included, so they are made again for a new one and once only.
+        if (s != m_importSession) {
+            m_importSession = s;
+            connect(s, &LibraryEditSession::changeApplied, this, &SyncController::onImportSessionChangeApplied);
+            connect(s, &LibraryEditSession::changesDiscarded, this, &SyncController::onImportSessionChangesDiscarded);
+        }
     }
 }
 

@@ -260,6 +260,26 @@ TestCase {
                 "Adds 1 memory cue from DeviceLibrary. Nothing is written until Save.");
     }
 
+    // The player's import prompt is offered here, where a sync makes it
+    // bite, and the mark is staged into the same session Save writes.
+    function test_theImportPromptCanBeSettledFromTheSyncPage() {
+        var page = openStagingPage(1100, 720);
+        var controller = findChild(page, "syncController");
+        var row = findChild(page, "importPromptRow");
+        verify(!row.visible, "nothing known about the player: no offer");
+        controller.setImportStateForTesting(true);
+        tryCompare(row, "visible", true, 2000);
+        var button = findChild(page, "markImportedButton");
+        compare(button.text, "Mark As Already Imported");
+        mouseClick(button);
+        tryCompare(controller, "importMarkStaged", true, 2000);
+        compare(button.text, "Unstage");
+        mouseClick(button);
+        tryCompare(controller, "importMarkStaged", false, 2000);
+        controller.setImportStateForTesting(false);
+        tryCompare(row, "visible", false, 2000);
+    }
+
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(0);

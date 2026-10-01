@@ -16,6 +16,7 @@
 
 #include "domain/cross_source_sync_conflict.hpp"
 #include "domain/sync_planning.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/staged_cue_edit_controller.hpp"
@@ -44,6 +45,10 @@ struct SyncTaskResult
     QVariantMap playlistTrackCounts;
     QString errorMessage;  // empty on success
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
+    // Whether a Denon player will offer to import the rekordbox library
+    // over the Engine one (see engine_import_state.hpp), read with the
+    // catalogs so the page can offer to settle it with the sync.
+    infrastructure::engine::RekordboxImportState importState;
 };
 
 // Wraps SyncLibraries for QML: two-phase, non-destructive sync across
@@ -90,6 +95,15 @@ class SyncController : public StagedCueEditController
     Q_PROPERTY(int visibleConflictCount READ visibleConflictCount NOTIFY listChanged)
     Q_PROPERTY(int selectedCount READ selectedCount NOTIFY listChanged)
     Q_PROPERTY(int selectedVisibleCount READ selectedVisibleCount NOTIFY listChanged)
+    // The player's import prompt, the same fact Library Health shows. A
+    // sync is where a DJ finds out the hard way: the stick's rekordbox
+    // library moved on since the player last imported it (a rekordbox
+    // export), the player offers the import, and accepting it replaces
+    // the Engine side, the cues this page just levelled included. The
+    // save loop keeps the two level only when they were level before a
+    // save; an offer to mark it imported belongs here as well.
+    Q_PROPERTY(bool playerWillOfferImport READ playerWillOfferImport NOTIFY importStateChanged)
+    Q_PROPERTY(bool importMarkStaged READ importMarkStaged NOTIFY importStateChanged)
 
 public:
     explicit SyncController(QObject *parent = nullptr);
@@ -106,6 +120,8 @@ public:
     int visibleConflictCount() const { return m_model.visibleConflictCount(); }
     int selectedCount() const { return m_model.selectedCount(); }
     int selectedVisibleCount() const { return m_model.selectedVisibleCount(); }
+    bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
+    bool importMarkStaged() const { return m_importMarkStaged; }
 
     // Phase 1: read-only. rekordboxPath/enginePath are the stick's
     // DetectedStick.rekordboxPath / .enginePath (either may be empty if
@@ -146,6 +162,14 @@ public:
     // Test seam: forgets both suppressions.
     Q_INVOKABLE void resetCuesLeftOutNotice();
 
+    // Stages the one-row Engine write that tells the player the rekordbox
+    // library beside it is the one it knows (MarkRekordboxImportedChange);
+    // Save writes it. The same change Library Health stages.
+    Q_INVOKABLE void markRekordboxImported();
+    Q_INVOKABLE void unstageRekordboxImportMark();
+    // Test seam: the state as if read from a stick.
+    Q_INVOKABLE void setImportStateForTesting(bool playerWillOfferImport);
+
     // Picks one side of conflicts()[conflictIndex] (the row's
     // conflictIndex role): it becomes an ordinary plan, appended and
     // staged right away -- the decision is the edit -- and the decision
@@ -157,6 +181,7 @@ signals:
     void analysisChanged();
     void listChanged();
     void cuesLeftOutNoticed(const QVariantList &tracks);
+    void importStateChanged();
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
@@ -172,6 +197,9 @@ private:
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
     void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
     static QString leftOutKeyFor(const domain::SyncPlan &plan);
+    void onImportSessionChangeApplied(const QString &changeId);
+    void onImportSessionChangesDiscarded();
+    void rereadImportState();
 
     SyncPlanListModel m_model;
     QString m_rekordboxPath;
@@ -187,6 +215,11 @@ private:
     QVariantMap m_playlistTrackCounts;
     // The tracks of the last cuesLeftOutNoticed(), for "not again for these".
     QStringList m_lastLeftOutKeys;
+    infrastructure::engine::RekordboxImportState m_importState;
+    bool m_importMarkStaged = false;
+    // The session the two import connections below are made on, so a
+    // repeat attachSession() on the same session does not double them.
+    LibraryEditSession *m_importSession = nullptr;
 };
 
 }  // namespace seabass::gui

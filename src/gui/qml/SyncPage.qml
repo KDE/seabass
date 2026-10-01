@@ -733,6 +733,44 @@ Page {
             Layout.fillWidth: true
         }
 
+        // The player's import prompt, the same offer Library Health makes.
+        // Said here because a sync is where it bites: the player offers to
+        // import the rekordbox library and accepting replaces the Engine
+        // side, the cues just levelled included.
+        RowLayout {
+            objectName: "importPromptRow"
+            visible: syncController.playerWillOfferImport || syncController.importMarkStaged
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.warnText
+                text: "This stick's rekordbox library changed since the player last imported it, so the player "
+                    + "will offer the import, and accepting it replaces the Engine side, cues included. Once the "
+                    + "two are in sync, mark it imported and Save."
+            }
+            Button {
+                objectName: "markImportedButton"
+                text: syncController.importMarkStaged ? "Unstage" : "Mark As Already Imported"
+                enabled: !syncController.busy && !syncController.writing
+                ToolTip.visible: hovered
+                ToolTip.text: syncController.importMarkStaged
+                    ? "Take this back out of the changes to save"
+                    : "Writes the rekordbox library's own sequence number into the Engine library, which is what "
+                      + "the player compares. Nothing else changes, and importing stays available on the player "
+                      + "if you ever do want it."
+                onClicked: syncController.importMarkStaged
+                    ? syncController.unstageRekordboxImportMark()
+                    : syncController.markRekordboxImported()
+            }
+            Label {
+                visible: syncController.importMarkStaged
+                text: "staged, not saved yet"
+                color: Theme.warnText
+            }
+        }
+
         ListView {
             id: plansListView
             objectName: "plansList"
