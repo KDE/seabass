@@ -194,14 +194,14 @@ TestCase {
             {tag: "explore", group: "explore", stick: {},
              expected: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"]},
             {tag: "sync", group: "sync", stick: {},
-             expected: ["Sync Cue Points", "Metadata"]},
+             expected: ["Sync Cue Points", "Metadata", "Restore Metadata"]},
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
-             expected: ["Sync Cue Points", "Metadata", "Create Engine Library"]},
+             expected: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"]},
             {tag: "backup", group: "backup", stick: {},
-             expected: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Restore Metadata"]},
+             expected: ["Full Stick Backup", "Restore Backup", "Manage Backups"]},
             {tag: "backup with a newer copy elsewhere", group: "backup", stick: {},
              advice: {updateSource: spareUpdateSource()},
-             expected: ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Restore Metadata"]},
+             expected: ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]},
             {tag: "backup of an empty stick", group: "backup", stick: {hasRekordbox: false, hasEngine: false},
              advice: {cloneSource: mainCloneSource(true)},
              expected: ["Restore Backup", "Create Backup USB Stick"]},
@@ -297,7 +297,7 @@ TestCase {
             {tag: "Manage Backups", group: "backup", signalName: "manageBackupsRequested", args: ["MAIN", ""]},
             {tag: "Metadata", group: "sync", signalName: "metadataBackupRequested",
              args: main.concat(["lib-main"])},
-            {tag: "Restore Metadata", group: "backup", signalName: "metadataRestoreRequested",
+            {tag: "Restore Metadata", group: "sync", signalName: "metadataRestoreRequested",
              args: main.concat(["lib-main"])},
             {tag: "Housekeeping", group: "maintain", signalName: "duplicateTracksHubRequested", args: main},
             {tag: "Library Health", group: "maintain", signalName: "libraryHealthRequested", args: main},
@@ -324,8 +324,8 @@ TestCase {
         const registry = fakeEditRegistry(["lib-main"]);
         const locked = {
             "explore": ["Device Profile"],
-            "sync": ["Sync Cue Points"],
-            "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Restore Metadata"],
+            "sync": ["Sync Cue Points", "Restore Metadata"],
+            "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
             "maintain": ["Housekeeping", "Library Health"],
         };
         const plain = {
@@ -374,8 +374,8 @@ TestCase {
     function test_readOnlyStickGreysOutEveryWritingCard() {
         const writers = {
             "explore": ["USB Stick Performance"],
-            "sync": ["Sync Cue Points", "Create Engine Library"],
-            "backup": ["Restore Metadata"],
+            "sync": ["Sync Cue Points", "Restore Metadata", "Create Engine Library"],
+            "backup": [],
             "maintain": ["Housekeeping"],
         };
         for (const group in writers) {
@@ -462,7 +462,7 @@ TestCase {
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
         const shown = {"explore": ["USB Stick Performance"], "maintain": ["Format USB Stick"],
-                       "sync": ["Metadata"],
+                       "sync": ["Metadata", "Restore Metadata"],
                        "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]};
         const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
         for (const group in shown) {
@@ -475,7 +475,7 @@ TestCase {
         }
         const off = makeCards(stick, "sync", {}, {appSettingsController: settings});
         compare(card(off, "Create Engine Library").visible, false, "Create Engine Library stays behind the setting");
-        compare(JSON.stringify(shownTitles(off)), JSON.stringify(["Sync Cue Points", "Metadata"]));
+        compare(JSON.stringify(shownTitles(off)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
 
         const on = makeCards(stick, "sync", {});
         compare(card(on, "Create Engine Library").visible, true);
@@ -739,7 +739,7 @@ TestCase {
         // updates a drive it does not have.
         const backup = makeCards(folder, "backup", {"/home/dj/restored": makeAdvice({updateSource: spareUpdateSource()})});
         compare(JSON.stringify(shownTitles(backup)),
-                JSON.stringify(["Full Stick Backup", "Manage Backups", "Restore Metadata"]));
+                JSON.stringify(["Full Stick Backup", "Manage Backups"]));
         // A folder with no library has nothing to restore through either.
         const bare = makeCards(makeStick({isFolder: true, devicePath: "", hasRekordbox: false, hasEngine: false}),
                                "backup", {});
@@ -801,7 +801,7 @@ TestCase {
         compare(cards.empty, true);
         cards.row = makeStick({});
         compare(cards.empty, false);
-        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Sync Cue Points", "Metadata"]));
+        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
     }
 
     // Format is the one card the app-wide busy flag disables: erasing a
