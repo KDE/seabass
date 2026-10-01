@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "domain/library_statistics.hpp"
 
@@ -25,6 +28,116 @@ Track makeTrack(std::string id, std::string filename)
     t.sourceId = std::move(id);
     t.filename = std::move(filename);
     return t;
+}
+
+// Not assert(): a check that vanishes under NDEBUG is green for no
+// reason, and these are the counts the page draws.
+void check(bool ok, const char *what)
+{
+    if (!ok) {
+        std::cerr << "FAIL: " << what << "\n";
+        std::exit(1);
+    }
+}
+
+Track withCues(std::string id, std::vector<CuePoint> cues)
+{
+    Track t = makeTrack(std::move(id), "x.mp3");
+    t.cues = std::move(cues);
+    return t;
+}
+
+CuePoint makeLoop(CuePoint::Kind kind)
+{
+    CuePoint c = makeCue(kind);
+    c.isLoop = true;
+    c.loopEndMs = 4000.0;
+    return c;
+}
+
+int bucketCount(const CueCoverage &coverage, const std::string &label)
+{
+    for (const auto &bucket : coverage.cuesPerTrack) {
+        if (cueCountBucketLabel(bucket) == label) {
+            return bucket.count;
+        }
+    }
+    std::cerr << "FAIL: no bucket labelled " << label << "\n";
+    std::exit(1);
+}
+
+int bucketSum(const CueCoverage &coverage)
+{
+    int sum = 0;
+    for (const auto &bucket : coverage.cuesPerTrack) {
+        sum += bucket.count;
+    }
+    return sum;
+}
+
+void testCueCoverage()
+{
+    // No tracks: zero everywhere, but still the seven buckets in order.
+    {
+        const auto c = calculateCueCoverage({});
+        check(c.withCues == 0 && c.withoutCues == 0, "empty: zero counts");
+        const std::vector<std::string> expected = {"0", "1", "2", "3", "4-5", "6-8", "9+"};
+        check(c.cuesPerTrack.size() == expected.size(), "empty: seven buckets");
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            check(cueCountBucketLabel(c.cuesPerTrack[i]) == expected[i], "bucket labels in order");
+            check(c.cuesPerTrack[i].count == 0, "empty: every bucket zero");
+        }
+        std::cout << "cue coverage: no tracks OK\n";
+    }
+
+    // Every track has cues: nothing without, nothing in bucket 0.
+    {
+        const auto c = calculateCueCoverage({withCues("a", {makeCue(CuePoint::Kind::Hot)}),
+                                             withCues("b", {makeCue(CuePoint::Kind::Hot), makeCue(CuePoint::Kind::Memory)})});
+        check(c.withCues == 2 && c.withoutCues == 0, "all with cues");
+        check(bucketCount(c, "0") == 0 && bucketCount(c, "1") == 1 && bucketCount(c, "2") == 1, "all with cues: buckets");
+        std::cout << "cue coverage: all with cues OK\n";
+    }
+
+    // A track holding only a loop, and one holding only memory cues,
+    // both count as having cues.
+    {
+        const auto c = calculateCueCoverage({withCues("loop", {makeLoop(CuePoint::Kind::Hot)}),
+                                             withCues("memory", {makeCue(CuePoint::Kind::Memory), makeCue(CuePoint::Kind::Memory),
+                                                                 makeCue(CuePoint::Kind::Memory)}),
+                                             withCues("memoryloop", {makeLoop(CuePoint::Kind::Memory)}),
+                                             withCues("none", {})});
+        check(c.withCues == 3, "loop-only and memory-only tracks count as with cues");
+        check(c.withoutCues == 1, "the bare track counts as without");
+        check(bucketCount(c, "1") == 2 && bucketCount(c, "3") == 1 && bucketCount(c, "0") == 1, "loop/memory buckets");
+        std::cout << "cue coverage: loop only, memory only OK\n";
+    }
+
+    // Bucket edges, streaming tracks left out, and the counts add up.
+    {
+        std::vector<Track> tracks;
+        const std::vector<int> cueCounts = {0, 0, 1, 2, 3, 4, 5, 6, 8, 9, 30};
+        for (std::size_t i = 0; i < cueCounts.size(); ++i) {
+            tracks.push_back(withCues("t" + std::to_string(i),
+                                      std::vector<CuePoint>(cueCounts[i], makeCue(CuePoint::Kind::Hot))));
+        }
+        Track streamed = withCues("s", {makeCue(CuePoint::Kind::Hot)});
+        streamed.streamingSource = "TIDAL";
+        tracks.push_back(streamed);
+        Track streamedBare = makeTrack("s2", "");
+        streamedBare.streamingSource = "TIDAL";
+        tracks.push_back(streamedBare);
+
+        const auto stats = LibraryStatisticsCalculator::calculate(tracks);
+        const auto &c = stats.cueCoverage;
+        check(c.withCues == 9 && c.withoutCues == 2, "streaming tracks excluded from with/without");
+        check(c.withCues + c.withoutCues == stats.trackCount - stats.streamingTrackCount, "with + without is the local total");
+        check(bucketSum(c) == stats.trackCount - stats.streamingTrackCount, "histogram adds up to the local total");
+        check(bucketCount(c, "0") == 2 && bucketCount(c, "1") == 1 && bucketCount(c, "2") == 1 && bucketCount(c, "3") == 1,
+              "small buckets");
+        check(bucketCount(c, "4-5") == 2 && bucketCount(c, "6-8") == 2 && bucketCount(c, "9+") == 2, "range bucket edges");
+        std::cout << "cue coverage: bucket edges, streaming excluded, totals OK\n";
+    }
 }
 
 }  // namespace
@@ -130,6 +243,8 @@ int main()
         assert(stats.playlistCount == 2);
         std::cout << "case 7 (distinct playlist count) OK\n";
     }
+
+    testCueCoverage();
 
     std::cout << "All library_statistics tests passed.\n";
     return 0;

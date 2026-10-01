@@ -27,6 +27,41 @@ std::string lowerExtension(const std::string &filename)
 
 }  // namespace
 
+std::string cueCountBucketLabel(const CueCountBucket &bucket)
+{
+    if (bucket.maxCues < 0) {
+        return std::to_string(bucket.minCues) + "+";
+    }
+    if (bucket.maxCues == bucket.minCues) {
+        return std::to_string(bucket.minCues);
+    }
+    return std::to_string(bucket.minCues) + "-" + std::to_string(bucket.maxCues);
+}
+
+CueCoverage calculateCueCoverage(const std::vector<Track> &tracks)
+{
+    CueCoverage coverage;
+    coverage.cuesPerTrack = {{0, 0, 0}, {1, 1, 0}, {2, 2, 0}, {3, 3, 0}, {4, 5, 0}, {6, 8, 0}, {9, -1, 0}};
+    for (const auto &track : tracks) {
+        if (!track.streamingSource.empty()) {
+            continue;
+        }
+        const int cues = static_cast<int>(track.cues.size());
+        if (cues > 0) {
+            coverage.withCues++;
+        } else {
+            coverage.withoutCues++;
+        }
+        for (auto &bucket : coverage.cuesPerTrack) {
+            if (cues >= bucket.minCues && (bucket.maxCues < 0 || cues <= bucket.maxCues)) {
+                bucket.count++;
+                break;
+            }
+        }
+    }
+    return coverage;
+}
+
 LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track> &tracks)
 {
     LibraryStatistics stats;
@@ -71,6 +106,7 @@ LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track
     }
 
     stats.playlistCount = static_cast<int>(playlistNames.size());
+    stats.cueCoverage = calculateCueCoverage(tracks);
 
     stats.bpmDistribution.reserve(bpmBucketCounts.size());
     for (const auto &[start, count] : bpmBucketCounts) {

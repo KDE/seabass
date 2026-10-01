@@ -73,6 +73,21 @@ QVariantMap toVariant(const domain::LibraryStatistics &stats)
     }
     m["bpmDistribution"] = bpmList;
 
+    // Local tracks only (streaming ones excluded), so withCues +
+    // withoutCues is trackCount - streamingTrackCount, not trackCount.
+    QVariantMap coverage;
+    coverage["withCues"] = stats.cueCoverage.withCues;
+    coverage["withoutCues"] = stats.cueCoverage.withoutCues;
+    QVariantList perTrack;
+    for (const auto &bucket : stats.cueCoverage.cuesPerTrack) {
+        QVariantMap b;
+        b["label"] = QString::fromStdString(domain::cueCountBucketLabel(bucket));
+        b["count"] = bucket.count;
+        perTrack << b;
+    }
+    coverage["cuesPerTrack"] = perTrack;
+    m["cueCoverage"] = coverage;
+
     return m;
 }
 
