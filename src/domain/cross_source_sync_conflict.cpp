@@ -173,6 +173,7 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
         choice.sourceB = plan.match.trackB;
         choice.cuesFromB = plan.cuesIfBWins;
         choice.sourceBHasJunkCue = hasJunkCue(plan.match.trackB.cues);
+        choice.cuesLeftOut = plan.cuesLeftOut;
         return choice;
     };
 

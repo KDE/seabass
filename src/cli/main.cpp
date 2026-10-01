@@ -923,7 +923,7 @@ std::string describeCues(const std::vector<seabass::domain::CuePoint> &cues)
     }
     std::string result = std::to_string(hot) + " hot";
     if (memory > 0) {
-        result += ", " + std::to_string(memory) + " memory (not written: Engine writer only handles hot cues)";
+        result += ", " + std::to_string(memory) + " memory";
     }
     return result;
 }

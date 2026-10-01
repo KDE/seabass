@@ -126,10 +126,18 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
     // so a Kind::Memory cue with isLoop set can't be represented here
     // either -- treated the same as any other memory cue, its loop-out
     // is simply dropped, matching this format's genuine limitations.
+    //
+    // The earliest Engine can hold, not the earliest given: a memory cue
+    // at 0:00 would be stored as offset 0, which Engine reads as no cue
+    // (domain::engineCanHoldMemoryCue), so taking it would throw away a
+    // later cue that could have been kept. The sync planner leaves such
+    // cues out before they get here; this is the same rule, kept for
+    // every other caller.
     std::optional<double> earliestMemoryCueMs;
     for (const auto &cue : cues) {
         if (cue.kind == domain::CuePoint::Kind::Memory) {
-            if (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs) {
+            if (domain::engineCanHoldMemoryCue(cue)
+                && (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs)) {
                 earliestMemoryCueMs = cue.positionMs;
             }
             continue;

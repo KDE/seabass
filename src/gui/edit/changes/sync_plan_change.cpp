@@ -151,9 +151,13 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
         return ChangeOutcome::failure("No " + formatLabel(targetFormat) + " catalog path is known for this stick.");
     }
     std::string catalogPath = path.toStdString();
+    // The analysis-path index is a rekordbox thing: building it for an
+    // Engine target looked for export.pdb under the Engine Library and
+    // logged a failure on every sync onto Engine.
     SyncFormatWriter &writer = ctx.shared<SyncFormatWriter>("sync:" + targetFormat, [&]() {
         return std::make_unique<SyncFormatWriter>(targetFormat, catalogPath, m_itemCountHint, ctx,
-                                                 sharedAnlzPathIndex(ctx, path));
+                                                 targetFormat == "rekordbox" ? sharedAnlzPathIndex(ctx, path)
+                                                                             : nullptr);
     });
 
     if (targetFormat == "rekordbox") {

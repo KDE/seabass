@@ -4,7 +4,12 @@
 
 #include "domain/sync_planning.hpp"
 
+#include "domain/engine_cue_translation.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/track_matching.hpp"
+
+#include <algorithm>
+#include <optional>
 
 namespace seabass::domain
 {
@@ -91,13 +96,166 @@ std::vector<CuePoint> unionByPosition(const std::vector<CuePoint> &a, const std:
     return out;
 }
 
+// A pair with exactly one Engine side. Engine holds no memory cues, so
+// the other side ("X") is compared with Engine in X's own terms: an
+// Engine hot cue or saved loop sitting where X has a memory cue is that
+// memory cue's translation (cuesFromEngine), not a hot cue of Engine's
+// own, and what a write onto Engine stores is X's cues as Engine holds
+// them (translateCuesForEngine). Directions and the choice rule are the
+// generic planner's; only the two views differ.
+//
+// Memory cues agree when every one of X's that fits on a pad is on one,
+// and Engine's main cue is among X's memory cues (or neither has one).
+// When X lacks Engine's main cue AND Engine lacks a translation, X is
+// written first and Engine on the next sync: a plan has one direction.
+SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool aIsEngine,
+                        std::chrono::system_clock::time_point mtimeA, std::chrono::system_clock::time_point mtimeB)
+{
+    const Track &x = aIsEngine ? match.trackB : match.trackA;
+    const Track &e = aIsEngine ? match.trackA : match.trackB;
+    const SyncPlan::Direction toX = aIsEngine ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+    const SyncPlan::Direction toE = aIsEngine ? SyncPlan::Direction::ToA : SyncPlan::Direction::ToB;
+
+    SyncPlan result;
+    result.match = original;
+
+    const std::vector<CuePoint> hotX = cuesOfKind(x.cues, CuePoint::Kind::Hot);
+    const std::vector<CuePoint> memoryX = cuesOfKind(x.cues, CuePoint::Kind::Memory);
+    const EngineCueTranslation translation = translateCuesForEngine(x.cues, e.cues);
+    const CuesFromEngine seen = cuesFromEngine(e.cues, memoryX);
+    result.cuesLeftOut = translation.leftOut;
+
+    if (x.cues.empty() && e.cues.empty()) {
+        result.kind = SyncPlan::Kind::NoCues;
+        return result;
+    }
+
+    // What a write onto X carries: Engine's own hot cues and loops, and
+    // every memory cue either side has (X's own, Engine's translations of
+    // them, and Engine's main cue), with X's colours kept.
+    const auto ontoX = [&](const std::vector<CuePoint> &hotFromEngine) {
+        std::vector<CuePoint> cues = hotFromEngine;
+        for (const CuePoint &cue : unionByPosition(memoryX, seen.memoryCues)) {
+            cues.push_back(cue);
+        }
+        return keepExistingColours(std::move(cues), x.cues);
+    };
+    // What a write onto Engine carries: X's cues as Engine holds them.
+    // With a hot-cue choice this is the X-wins set, Engine's own main
+    // cue included (translateCuesForEngine keeps it).
+    const auto ontoE = [&]() { return keepExistingColours(translation.cues, e.cues); };
+
+    if (e.cues.empty()) {
+        if (translation.cues.empty()) {
+            // Only cues Engine cannot hold: nothing to write.
+            result.kind = SyncPlan::Kind::AlreadyConsistent;
+            return result;
+        }
+        result.kind = aIsEngine ? SyncPlan::Kind::BOnly : SyncPlan::Kind::AOnly;
+        result.direction = toE;
+        result.cuesToApply = ontoE();
+        return result;
+    }
+    if (x.cues.empty()) {
+        result.kind = aIsEngine ? SyncPlan::Kind::AOnly : SyncPlan::Kind::BOnly;
+        result.direction = toX;
+        result.cuesToApply = ontoX(seen.hotCues);
+        return result;
+    }
+
+    // X's memory cues that fit on Engine, and whether Engine has them.
+    std::vector<CuePoint> memoryXHeld;
+    for (const CuePoint &cue : memoryX) {
+        const bool leftOut = std::any_of(translation.leftOut.begin(), translation.leftOut.end(),
+                                         [&](const CuePoint &out) { return samePosition(out, cue) && out.isLoop == cue.isLoop; });
+        if (!leftOut) {
+            memoryXHeld.push_back(cue);
+        }
+    }
+    std::optional<CuePoint> mainE;
+    for (const CuePoint &cue : e.cues) {
+        if (cue.kind == CuePoint::Kind::Memory) {
+            mainE = cue;
+        }
+    }
+    // Engine holds a memory cue as a pad or as its main cue; either is
+    // that cue at that place (seen.memoryCues has both).
+    const bool engineHoldsMemory = positionsCoveredBy(memoryXHeld, seen.memoryCues);
+    bool xLacksMain = false;
+    if (mainE) {
+        xLacksMain = std::none_of(memoryX.begin(), memoryX.end(),
+                                  [&](const CuePoint &cue) { return !cue.isLoop && samePosition(cue, *mainE); });
+    }
+    const bool memoryAgrees = engineHoldsMemory && !xLacksMain;
+    const bool hotAgrees = cueSetsEqual(hotX, seen.hotCues);
+
+    if (hotAgrees && memoryAgrees) {
+        result.kind = SyncPlan::Kind::AlreadyConsistent;
+        return result;
+    }
+    result.kind = SyncPlan::Kind::Conflict;
+
+    const bool perTrack = match.trackA.metadataModifiedAt > 0 && match.trackB.metadataModifiedAt > 0;
+    const bool aIsNewer = perTrack ? match.trackA.metadataModifiedAt > match.trackB.metadataModifiedAt
+                                   : mtimeA > mtimeB;
+    const bool xIsNewer = aIsEngine ? !aIsNewer : aIsNewer;
+
+    if (hotAgrees) {
+        // Only memory cues differ. X lacks Engine's main cue: X is written,
+        // it can hold every memory cue. Else Engine lacks a translation or
+        // its main cue: Engine is written.
+        result.direction = xLacksMain ? toX : toE;
+        result.cuesToApply = xLacksMain ? ontoX(seen.hotCues) : ontoE();
+        return result;
+    }
+
+    // Hot cues differ. Only one side has any: it wins, nothing is at risk.
+    if (hotX.empty() != seen.hotCues.empty()) {
+        const bool xHasHot = !hotX.empty();
+        result.direction = xHasHot ? toE : toX;
+        result.cuesToApply = xHasHot ? ontoE() : ontoX(seen.hotCues);
+        return result;
+    }
+
+    // Both have hot cues of their own and they differ: the DJ chooses.
+    result.hotCuesNeedChoice = true;
+    std::vector<CuePoint> ifXWins = ontoE();
+    std::vector<CuePoint> ifEWins = ontoX(seen.hotCues);
+    result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
+    result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
+    result.direction = xIsNewer ? toE : toX;
+    result.cuesToApply = xIsNewer ? ifXWins : ifEWins;
+    return result;
+}
+
 }  // namespace
 
-SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::time_point mtimeA,
+SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock::time_point mtimeA,
                             std::chrono::system_clock::time_point mtimeB)
 {
+    // Preferences -> Music -> "Ignore cues at 0:00": a cue the preference
+    // ignores is not part of a sync. It is not compared, so a track whose
+    // only difference is such a cue is consistent; it is not copied; and
+    // because every write replaces a track's whole cue set, it is not kept
+    // when the other side's cues are written over the track that had it.
+    // Library Health's Stray Cues page is where those are cleaned off. With
+    // the preference off this strips only a negative position, a format's
+    // "no cue" sentinel (see domain::isJunkCue).
+    //
+    // The plan carries the tracks as scanned, those cues included, so the
+    // page can show each side as it is and say what a write drops.
+    SyncMatch match = original;
+    match.trackA.cues = withoutJunkCues(original.trackA.cues);
+    match.trackB.cues = withoutJunkCues(original.trackB.cues);
+
+    const bool aIsEngine = match.trackA.format == "engine";
+    const bool bIsEngine = match.trackB.format == "engine";
+    if (aIsEngine != bIsEngine) {
+        return planWithEngine(original, match, aIsEngine, mtimeA, mtimeB);
+    }
+
     SyncPlan result;
-    result.match = match;
+    result.match = original;
 
     bool aHasCues = !match.trackA.cues.empty();
     bool bHasCues = !match.trackB.cues.empty();
@@ -121,27 +279,14 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
         return result;
     }
 
-    // Both sides have cues. Hot cues and memory cues are decided apart,
-    // because they are not the same kind of fact on both formats: a hot
-    // cue slot exists on every format, while Engine holds exactly one
-    // memory cue and rekordbox holds as many as the DJ set. Comparing the
-    // two lists whole made the difference in memory-cue CAPACITY look like
-    // a disagreement, and resolving it by last-write-wins then replaced
-    // rekordbox's memory cues with Engine's one -- after every sync,
-    // because a sync is exactly what makes m.db the newer file.
+    // Both sides have cues, and both hold hot cues and memory cues alike.
+    // Decided apart all the same: a hot cue is a pad, a memory cue a place.
     const std::vector<CuePoint> hotA = cuesOfKind(match.trackA.cues, CuePoint::Kind::Hot);
     const std::vector<CuePoint> hotB = cuesOfKind(match.trackB.cues, CuePoint::Kind::Hot);
     const std::vector<CuePoint> memoryA = cuesOfKind(match.trackA.cues, CuePoint::Kind::Memory);
     const std::vector<CuePoint> memoryB = cuesOfKind(match.trackB.cues, CuePoint::Kind::Memory);
 
-    // Memory cues agree when the lists match, or when one side is Engine
-    // and holds nothing the other lacks: Engine can only ever keep one, so
-    // "its one is among rekordbox's three" is agreement, not a difference.
-    const bool memoryAgrees = cueSetsEqual(memoryA, memoryB)
-        || (match.trackA.format == "engine" && positionsCoveredBy(memoryA, memoryB))
-        || (match.trackB.format == "engine" && positionsCoveredBy(memoryB, memoryA));
-
-    if (cueSetsEqual(hotA, hotB) && memoryAgrees) {
+    if (cueSetsEqual(hotA, hotB) && cueSetsEqual(memoryA, memoryB)) {
         result.kind = SyncPlan::Kind::AlreadyConsistent;
         return result;
     }
@@ -158,70 +303,31 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
     const bool aIsNewer = perTrack
         ? match.trackA.metadataModifiedAt > match.trackB.metadataModifiedAt
         : mtimeA > mtimeB;
-    const bool aIsEngine = match.trackA.format == "engine";
-    const bool bIsEngine = match.trackB.format == "engine";
 
-    // Memory cues are never resolved by overwriting Engine. Engine holds
-    // one memory cue and its writer keeps the earliest it is given, so
-    // sending it the union of both sides would replace its one cue with
-    // the other side's earliest -- and when that cue exists nowhere else,
-    // it is gone from both formats, with the next sync then calling the
-    // track consistent because Engine's new one is among the other side's.
-    //
-    // Hot cues agree, only memory cues differ: write the side that is
-    // actually missing something, and give it the union.
-    //
-    // With exactly one side Engine there are two ways to disagree. The
-    // other side lacks a memory cue Engine has: write the other side, which
-    // can hold them all. Or Engine has no memory cue at all while the other
-    // side has some: write Engine -- it has nothing to lose, and its writer
-    // keeps the earliest of the union, after which Engine's one cue is
-    // among the other side's and the pair agrees. Writing the non-Engine
-    // side there instead gave it back exactly what it had, left Engine
-    // empty, and repeated -- backup, mirror write, conflict -- on every
-    // sync. With neither or both sides Engine, the clock picks.
+    // Hot cues agree, only memory cues differ: the older side takes the
+    // union, so no memory cue is lost from either.
     if (cueSetsEqual(hotA, hotB)) {
-        const auto engineIsEmpty = [](bool isEngine, const std::vector<CuePoint> &own,
-                                      const std::vector<CuePoint> &other) {
-            return isEngine && own.empty() && !other.empty();
-        };
-        bool writeA;
-        if (aIsEngine != bIsEngine) {
-            const bool engineIsA = aIsEngine;
-            const bool writeEngine = engineIsA ? engineIsEmpty(true, memoryA, memoryB)
-                                               : engineIsEmpty(true, memoryB, memoryA);
-            writeA = writeEngine ? engineIsA : !engineIsA;
-        } else {
-            writeA = !aIsNewer;
-        }
+        const bool writeA = !aIsNewer;
         const Track &target = writeA ? match.trackA : match.trackB;
         result.direction = writeA ? SyncPlan::Direction::ToA : SyncPlan::Direction::ToB;
         result.cuesToApply = cuesOfKind(target.cues, CuePoint::Kind::Hot);
         for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
             result.cuesToApply.push_back(cue);
         }
-        // A memory cue taken from the side that has no colours for them
-        // (Engine's main cue never does) must not paint over the colour
-        // the target already had for the same position.
         result.cuesToApply = keepExistingColours(std::move(result.cuesToApply), target.cues);
         return result;
     }
 
     // Hot cues differ. What each side would write onto the other: its own
-    // hot cues, plus memory cues by the rule above -- an Engine target that
-    // already has a memory cue keeps its own (the other side's extras are
-    // still on the other side, and the next sync, hot cues then agreeing,
-    // carries Engine's across); any other target gets the union.
+    // hot cues, plus the union of memory cues. Whatever the target already
+    // knew about these cues' colours stays: a format that has none for a
+    // kind is silent rather than grey, and silence is not an instruction
+    // to erase.
     const auto writeOnto = [&](const Track &from, const Track &onto) {
         std::vector<CuePoint> cues = cuesOfKind(from.cues, CuePoint::Kind::Hot);
-        const std::vector<CuePoint> ontoMemory = cuesOfKind(onto.cues, CuePoint::Kind::Memory);
-        const std::vector<CuePoint> memory =
-            onto.format == "engine" && !ontoMemory.empty() ? ontoMemory : unionByPosition(memoryA, memoryB);
-        cues.insert(cues.end(), memory.begin(), memory.end());
-        // Whatever the target already knew about these cues' colours
-        // stays: a writer that cannot record one, or a format that has
-        // none for this kind, is silent rather than grey, and silence is
-        // not an instruction to erase.
+        for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
+            cues.push_back(cue);
+        }
         return keepExistingColours(std::move(cues), onto.cues);
     };
 

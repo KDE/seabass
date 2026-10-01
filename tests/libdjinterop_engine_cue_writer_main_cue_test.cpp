@@ -170,6 +170,30 @@ int main()
         std::cout << "case 4 (an unreadable loops blob refuses the write instead of erasing loops) OK\n";
     }
 
+    // A memory cue at 0:00 cannot be the main cue: Engine stores "no main
+    // cue" as offset 0. The earliest cue Engine CAN hold is taken, so a
+    // later real cue is not thrown away for one that stores as nothing.
+    {
+        fs::path root = freshRoot("case5");
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
+        auto track = makeTrack(db);
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
+
+        writer.writeHotCues(std::to_string(track.id()), {memoryCue(0.0), memoryCue(5000.0)});
+
+        auto after = db.track_by_id(track.id());
+        assert(after.has_value());
+        auto mainCue = after->main_cue();
+        assert(mainCue.has_value() && "the cue at 0:00 did not shadow the one at 5 s");
+        assert(std::abs(*mainCue - 5.0 * SampleRate) < 1.0);
+
+        // Only a cue at 0:00: nothing Engine can store, and nothing is.
+        writer.writeHotCues(std::to_string(track.id()), {memoryCue(0.0)});
+        auto cleared = db.track_by_id(track.id());
+        assert(cleared.has_value() && !cleared->main_cue().has_value());
+        std::cout << "case 5 (the earliest memory cue Engine can hold becomes the main cue) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

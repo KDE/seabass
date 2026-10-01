@@ -2000,6 +2000,25 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         }
         return false;
     };
+    // And one share for an Engine target, reserved for the reason above:
+    // the planner's order once happened to put one among the first hot-cue
+    // plans, and when the memory-cue rules changed the order, the case
+    // stopped opening an Engine database without anyone deciding it should.
+    const auto targetsEngine = [](const domain::SyncPlan &plan) {
+        const domain::Track &t =
+            plan.direction == domain::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
+        return t.format == "engine";
+    };
+    const auto carriesHot = [](const domain::SyncPlan &plan) {
+        return std::any_of(plan.cuesToApply.begin(), plan.cuesToApply.end(),
+                           [](const auto &c) { return c.kind == domain::CuePoint::Kind::Hot; });
+    };
+    for (const auto &plan : plans) {
+        if (!plan.hotCuesNeedChoice && targetsEngine(plan) && carriesHot(plan) && !alreadyTaken(plan)) {
+            withCues.push_back(plan);
+            break;
+        }
+    }
     for (const auto &plan : plans) {
         if (withCues.size() >= Sample) {
             break;
