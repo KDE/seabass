@@ -133,14 +133,18 @@ public:
 
     // Stages every ticked, not yet staged track; the page's Save writes
     // them. matchingSearchOnly leaves out ticked tracks the search hides,
-    // which is what the page asks for by default when a search is active
-    // -- the same choice Clean Up offers.
+    // which is what the page does when a search is active: staging is
+    // not destructive (Save is a step away, and cancelling it undoes
+    // every stage), so there is no confirmation in front of it.
     Q_INVOKABLE void stageSelected(bool matchingSearchOnly = false);
 
-    // What stageSelected(matchingSearchOnly) would stage, grouped by
-    // direction: [{sourceFormat, targetFormat, count}, ...]. For the
-    // confirmation dialog, which lists each direction.
-    Q_INVOKABLE QVariantList directionCountsFor(bool matchingSearchOnly) const;
+    // After a stage: the staged tracks whose sync onto Engine leaves cues
+    // off it, because Engine's eight pads were full (SyncPlan::cuesLeftOut).
+    // The page shows them once per stage, unless the notice is suppressed
+    // for those tracks or for good. Each entry is {title, artist, count}.
+    Q_INVOKABLE void suppressCuesLeftOutNotice(bool forTheseTracks, bool ever);
+    // Test seam: forgets both suppressions.
+    Q_INVOKABLE void resetCuesLeftOutNotice();
 
     // Picks one side of conflicts()[conflictIndex] (the row's
     // conflictIndex role): it becomes an ordinary plan, appended and
@@ -152,6 +156,7 @@ public:
 signals:
     void analysisChanged();
     void listChanged();
+    void cuesLeftOutNoticed(const QVariantList &tracks);
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
@@ -165,6 +170,8 @@ private:
     void attachSession();
     void stagePlan(int index);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
+    void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
+    static QString leftOutKeyFor(const domain::SyncPlan &plan);
 
     SyncPlanListModel m_model;
     QString m_rekordboxPath;
@@ -178,6 +185,8 @@ private:
     int m_oneLibraryTrackCount = 0;
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
+    // The tracks of the last cuesLeftOutNoticed(), for "not again for these".
+    QStringList m_lastLeftOutKeys;
 };
 
 }  // namespace seabass::gui

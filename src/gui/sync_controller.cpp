@@ -40,6 +40,7 @@
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
 #include "gui/qt_path.hpp"
+#include "gui/seabass_settings.hpp"
 
 namespace seabass::gui
 {
@@ -341,46 +342,96 @@ void SyncController::stageSelected(bool matchingSearchOnly)
     }
     setErrorMessage({});
     setStatusMessage({});
-    int staged = 0;
+    std::vector<int> staged;
     const int count = m_model.planCount();
     for (int i = 0; i < count; ++i) {
         if (!wouldStage(i, matchingSearchOnly)) {
             continue;
         }
         stagePlan(i);
-        staged++;
+        staged.push_back(i);
         if (session() && !session()->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }
     }
-    if (staged > 0) {
+    if (!staged.empty()) {
         setStagedStatusMessage(
-            QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged));
+            QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged.size()));
+        noticeCuesLeftOut(staged);
     }
 }
 
-QVariantList SyncController::directionCountsFor(bool matchingSearchOnly) const
+namespace
 {
-    std::map<std::pair<std::string, std::string>, int> counts;
-    for (int i = 0; i < m_model.planCount(); ++i) {
-        if (!wouldStage(i, matchingSearchOnly)) {
+const QString LeftOutNoticeSuppressedKey = QStringLiteral("sync/cuesLeftOutNotice/suppressed");
+const QString LeftOutNoticeSuppressedTracksKey = QStringLiteral("sync/cuesLeftOutNotice/suppressedTracks");
+}  // namespace
+
+// The file name, not a catalog row id: the same track on another stick
+// or after a re-export is the same track to the DJ, and the notice is
+// about the track.
+QString SyncController::leftOutKeyFor(const SyncPlan &plan)
+{
+    const domain::Track &nonEngine = plan.match.trackA.format == "engine" ? plan.match.trackB : plan.match.trackA;
+    return QString::fromStdString(nonEngine.filename).toLower();
+}
+
+void SyncController::noticeCuesLeftOut(const std::vector<int> &stagedIndices)
+{
+    QSettings settings = openSeabassSettings();
+    if (settings.value(LeftOutNoticeSuppressedKey, false).toBool()) {
+        return;
+    }
+    const QStringList suppressedTracks = settings.value(LeftOutNoticeSuppressedTracksKey).toStringList();
+    QVariantList tracks;
+    QStringList keys;
+    for (int index : stagedIndices) {
+        const SyncPlan &plan = m_model.plans()[static_cast<size_t>(index)];
+        const domain::Track &target = plan.direction == SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
+        if (plan.cuesLeftOut.empty() || target.format != "engine") {
             continue;
         }
-        const SyncPlan &plan = m_model.plans()[static_cast<size_t>(i)];
-        bool toB = plan.direction == SyncPlan::Direction::ToB;
-        const std::string &sourceFormat = toB ? plan.match.trackA.format : plan.match.trackB.format;
-        const std::string &targetFormat = toB ? plan.match.trackB.format : plan.match.trackA.format;
-        counts[{sourceFormat, targetFormat}]++;
+        const QString key = leftOutKeyFor(plan);
+        if (suppressedTracks.contains(key)) {
+            continue;
+        }
+        const domain::Track &source = plan.direction == SyncPlan::Direction::ToB ? plan.match.trackA : plan.match.trackB;
+        QVariantMap entry;
+        entry["title"] = QString::fromStdString(source.title);
+        entry["artist"] = QString::fromStdString(source.artist);
+        entry["count"] = static_cast<int>(plan.cuesLeftOut.size());
+        tracks << entry;
+        keys << key;
     }
-    QVariantList list;
-    for (const auto &[key, count] : counts) {
-        QVariantMap m;
-        m["sourceFormat"] = QString::fromStdString(key.first);
-        m["targetFormat"] = QString::fromStdString(key.second);
-        m["count"] = count;
-        list << m;
+    if (tracks.isEmpty()) {
+        return;
     }
-    return list;
+    m_lastLeftOutKeys = keys;
+    emit cuesLeftOutNoticed(tracks);
+}
+
+void SyncController::suppressCuesLeftOutNotice(bool forTheseTracks, bool ever)
+{
+    QSettings settings = openSeabassSettings();
+    if (ever) {
+        settings.setValue(LeftOutNoticeSuppressedKey, true);
+    }
+    if (forTheseTracks) {
+        QStringList tracks = settings.value(LeftOutNoticeSuppressedTracksKey).toStringList();
+        for (const QString &key : m_lastLeftOutKeys) {
+            if (!tracks.contains(key)) {
+                tracks << key;
+            }
+        }
+        settings.setValue(LeftOutNoticeSuppressedTracksKey, tracks);
+    }
+}
+
+void SyncController::resetCuesLeftOutNotice()
+{
+    QSettings settings = openSeabassSettings();
+    settings.remove(LeftOutNoticeSuppressedKey);
+    settings.remove(LeftOutNoticeSuppressedTracksKey);
 }
 
 void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
@@ -408,10 +459,13 @@ void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
         plan.direction = domain::SyncPlan::Direction::ToB;
         plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
     }
+    plan.cuesLeftOut = conflict.cuesLeftOut;
     m_model.removeConflictAt(conflictIndex);
     m_model.addPlan(std::move(plan));
     // The decision is the edit: staged right away, Save writes it.
-    stagePlan(m_model.planCount() - 1);
+    const int index = m_model.planCount() - 1;
+    stagePlan(index);
+    noticeCuesLeftOut({index});
 }
 
 // The base wires the session's state and staged-change signals; the only
