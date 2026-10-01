@@ -380,6 +380,7 @@ add_library(seabass_core STATIC
     src/domain/metadata_backup_plan.cpp
     src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
+    src/domain/engine_cue_translation.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/track_queries.cpp
@@ -541,6 +542,7 @@ add_library(seabass_core_testing STATIC
     src/domain/matching_policy.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
+    src/domain/engine_cue_translation.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
@@ -1800,6 +1802,13 @@ target_link_libraries(sync_planning_test PRIVATE seabass_core_testing)
 target_include_directories(sync_planning_test PRIVATE src)
 add_test(NAME sync_planning_test COMMAND sync_planning_test)
 
+add_executable(engine_cue_translation_test
+    tests/engine_cue_translation_test.cpp
+)
+target_link_libraries(engine_cue_translation_test PRIVATE seabass_core_testing)
+target_include_directories(engine_cue_translation_test PRIVATE src)
+add_test(NAME engine_cue_translation_test COMMAND engine_cue_translation_test)
+
 add_executable(format_usb_stick_test
     tests/format_usb_stick_test.cpp
 )
@@ -2166,14 +2175,18 @@ seabass_cli_test(cli_scan_needs_cues EXIT 0 ARGS scan --rekordbox ${_cli_rekordb
     FORBID "hot [0-9]+ @" "mem [0-9]+ @")
 seabass_cli_test(cli_scan_no_stick EXIT 1 ARGS scan --rekordbox
     EXPECT "no rekordbox USB stick found")
+# 28, not the 213 of before: 185 of those were a rekordbox memory cue at
+# 0:00 offered to Engine, which "Ignore cues at 0:00" (on by default)
+# now keeps out of the comparison.
+#
 # Since #59 OneLibrary's cues are its analysis files', and Engine is paired
 # only with the OneLibrary rows no DeviceLibrary row speaks for (the app's
 # rule; the CLI used to pair every row). So 1383 matched, not 2427; 1 copy
-# to OneLibrary, not the 29 its cue table made up; and 214 to Engine, not
-# 213, with the OneLibrary-only rows now offering what their files hold.
+# to OneLibrary, not the 28 its cue table made up; and 30 to Engine, not 28,
+# with the OneLibrary-only rows now offering what their files hold.
 seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469\\n" "onelibrary tracks: 1644\\n"
-           "matched tracks:    1383\\n" "Would copy cues to Engine for 214 track\\(s\\)"
+           "matched tracks:    1383\\n" "Would copy cues to Engine for 30 track\\(s\\)"
            "Would copy cues to rekordbox for 9 track\\(s\\)" "Would copy cues to OneLibrary for 1 track\\(s\\)"
            "--dry-run: no changes made."
     FORBID "Apply the" "backed up")

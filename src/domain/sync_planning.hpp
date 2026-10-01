@@ -70,6 +70,13 @@ struct SyncPlan
     bool hotCuesNeedChoice = false;
     std::vector<CuePoint> cuesIfAWins;  // written onto B
     std::vector<CuePoint> cuesIfBWins;  // written onto A
+
+    // Memory cues and loops of the non-Engine side that no Engine pad was
+    // free for (domain::translateCuesForEngine). Never written onto
+    // Engine, never counted as missing there. Set whenever one side is
+    // Engine, whatever the direction, so the page can say so when the
+    // plan is staged.
+    std::vector<CuePoint> cuesLeftOut;
 };
 
 // Matches tracks across two catalog scans. See domain::matchTracks() for
@@ -89,6 +96,21 @@ public:
 // only to break ties on a genuine conflict (both sides have different
 // cues) -- documented as a heuristic in the plan, not a true edit
 // timestamp.
+//
+// With an Engine side, the other side is compared with Engine the way
+// Engine DJ's own rekordbox import maps cues (domain/engine_cue_translation.hpp):
+// memory cues are hot cues on free pads there, memory loops saved loops,
+// and an Engine hot cue at a memory cue's position is that memory cue.
+//
+// Two kinds of cue never make a pair inconsistent. A cue the preference
+// "Ignore cues at 0:00" ignores (domain::isJunkCue) is left out of every
+// comparison and every write, so it neither travels nor survives the
+// other side's cues being written over its track. And a memory cue no
+// Engine pad is free for, or that Engine cannot hold as its main cue
+// (domain::engineCanHoldMemoryCue), is never something Engine lacks.
+// Either way a sync comes back clean after one save; before this, a
+// stray memory cue at 0:00 was offered to Engine again on every sync,
+// the write having stored nothing.
 class SyncPlanner
 {
 public:

@@ -42,6 +42,18 @@ struct CuePoint
     double loopEndMs = 0.0;  // meaningful only when isLoop
 };
 
+// Whether Engine can hold this memory cue. Engine keeps one memory-style
+// cue per track (its main cue) as a sample offset, and offset 0 is how it
+// spells "no cue set": a memory cue at 0:00 written there reads back as
+// no cue at all. It is also Engine's default -- a track with no main cue
+// cues at its start -- so there is nothing to write and nothing missing.
+// The sync planner and the Engine cue writer share this one rule, so what
+// the planner expects Engine to end up with is what the writer stores.
+inline bool engineCanHoldMemoryCue(const CuePoint &cue)
+{
+    return cue.kind != CuePoint::Kind::Memory || cue.positionMs > 0.0;
+}
+
 // One playlist a track belongs to, with its position within that specific
 // playlist (0-based; -1 if the reader couldn't determine it), lets
 // callers sort a playlist-filtered view back into its original order.

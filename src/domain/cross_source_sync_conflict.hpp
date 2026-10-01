@@ -55,6 +55,9 @@ struct CrossSourceSyncConflict
     // choosing A writes onto B, cuesFromB what choosing B writes onto A, and
     // target is just sourceA, for the heading.
     bool samePair = false;
+    // SyncPlan::cuesLeftOut of the plan this came from: what a pick that
+    // writes Engine leaves off it.
+    std::vector<CuePoint> cuesLeftOut;
 };
 
 struct CrossSourceConflictSplit

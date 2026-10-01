@@ -149,7 +149,7 @@ QString describeCues(const std::vector<domain::CuePoint> &cues)
     }
     QString result = QString("%1 hot").arg(hot);
     if (memory > 0) {
-        result += QString(", %1 memory (not written - Engine writer only handles hot cues)").arg(memory);
+        result += QString(", %1 memory").arg(memory);
     }
     return result;
 }
