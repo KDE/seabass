@@ -161,7 +161,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         auto addPairPlans = [&](const std::vector<domain::Track> &tracksA, const std::vector<domain::Track> &tracksB,
                                  std::chrono::system_clock::time_point mtimeA,
                                  std::chrono::system_clock::time_point mtimeB) {
-            for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB)) {
+            for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB, *reporter)) {
                 if (plan.direction != SyncPlan::Direction::None) {
                     actionable.push_back(std::move(plan));
                 }

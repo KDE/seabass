@@ -34,6 +34,13 @@ void fillFileSizes(std::vector<domain::Track> &tracks, CancellationToken cancel,
 {
     std::unordered_map<std::string, std::uint64_t> sizeByPath;
     size_t statted = 0;
+    // Announced, or the ticks land on whatever phase went before: a stat
+    // per file over USB is seconds on a real stick, and it read as "busy".
+    size_t toStat = 0;
+    for (const auto &track : tracks) {
+        toStat += track.fileSizeBytes == 0 && !track.filePath.empty() ? 1 : 0;
+    }
+    progress.start("Checking files", toStat);
     for (auto &track : tracks) {
         if (track.fileSizeBytes != 0 || track.filePath.empty()) {
             continue;
@@ -59,6 +66,11 @@ void dropMissingArtworkWhere(std::vector<domain::Track> &tracks, const Cancellat
 {
     std::unordered_map<std::string, bool> presentByPath;
     size_t looked = 0;
+    size_t toLook = 0;
+    for (const auto &track : tracks) {
+        toLook += !track.artworkPath.empty() && checked(track) ? 1 : 0;
+    }
+    progress.start("Checking cover files", toLook);
     for (auto &track : tracks) {
         if (track.artworkPath.empty() || !checked(track)) {
             continue;

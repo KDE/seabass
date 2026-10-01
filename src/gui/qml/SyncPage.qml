@@ -1061,7 +1061,7 @@ Page {
         busy: syncController.busy
         current: syncController.scanCurrent
         total: syncController.scanTotal
-        label: "Scanning for sync differences..."
+        label: syncController.scanLabel.length > 0 ? syncController.scanLabel : "Scanning for sync differences..."
         unitName: "tracks"
         cancellable: syncController.scanCancellable
         onCancelRequested: {
