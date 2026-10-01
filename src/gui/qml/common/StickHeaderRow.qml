@@ -38,6 +38,10 @@ Rectangle {
     // to let go of the folder's edit session, and refuses while that has
     // unsaved changes (StickListPage.releaseOpenedFolder).
     signal closeFolderRequested(string mountPoint)
+    // The "Sync Needed" badge: the player will offer to import the
+    // rekordbox library over the Engine one, and Sync Cue Points is where
+    // a save settles that.
+    signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
 
     // How far the stick's name sits from this row's left edge, so the
     // pane can put its group heading and cards on the same line: read off
@@ -54,6 +58,7 @@ Rectangle {
     readonly property bool hasRekordbox: root.hasRow && root.row.hasRekordbox === true
     readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
     readonly property bool hasOneLibrary: root.hasRow && root.row.hasOneLibrary === true
+    readonly property bool syncNeeded: root.hasRow && root.row.syncNeeded === true
     readonly property bool isSdCard: root.hasRow && root.row.isSdCard === true
     readonly property bool isFolder: root.hasRow && root.row.isFolder === true
     readonly property bool safeToUnplug: root.hasRow && root.row.safeToUnplug === true
@@ -224,6 +229,19 @@ Rectangle {
                                 visible: root.mounted && root.hasEngine
                                 label: "Engine"
                                 badgeColor: Theme.accent
+                            }
+                            StatusBadge {
+                                objectName: "syncNeededBadge"
+                                visible: root.mounted && root.syncNeeded
+                                label: "Sync Needed"
+                                badgeColor: Theme.warnIcon
+                                clickable: true
+                                tooltipText: "The rekordbox library changed since the player last imported it, so "
+                                    + "the player will offer the import, which replaces the Engine side, cues "
+                                    + "included. A save on Sync Cue Points settles it."
+                                onClicked: root.syncRequested(root.label,
+                                                              root.hasRow ? String(root.row.rekordboxPath || "") : "",
+                                                              root.hasRow ? String(root.row.enginePath || "") : "")
                             }
                         }
                     }

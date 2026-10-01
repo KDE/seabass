@@ -129,6 +129,9 @@ void EditSessionRegistry::setMediaController(QObject *controller)
     if (m_mediaController) {
         connect(m_mediaController, &MediaController::stickRemoved, this, &EditSessionRegistry::onStickRemoved);
         connect(m_mediaController, &MediaController::stickReturned, this, &EditSessionRegistry::onStickReturned);
+        // A landed save may have levelled the player's import record with
+        // export.pdb: the stick card's "Sync Needed" badge is asked again.
+        connect(this, &EditSessionRegistry::saveFinished, m_mediaController, &MediaController::refreshSyncNeeded);
     }
     emit mediaControllerChanged();
 }

@@ -21,6 +21,10 @@ Rectangle {
     // A bundled Breeze icon in front of the label ("dialog-warning" for a
     // caution), in the badge's colour, or none.
     property string iconName: ""
+    // A badge that is also a way somewhere: the pointer says so, and a tap
+    // emits clicked().
+    property bool clickable: false
+    signal clicked()
 
     radius: 3
     border.color: badge.badgeColor
@@ -48,7 +52,14 @@ Rectangle {
         }
     }
 
-    HoverHandler { id: hoverHandler }
+    HoverHandler {
+        id: hoverHandler
+        cursorShape: badge.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+    }
+    TapHandler {
+        enabled: badge.clickable
+        onTapped: badge.clicked()
+    }
     ToolTip.visible: hoverHandler.hovered && badge.tooltipText.length > 0
     ToolTip.text: badge.tooltipText
     ToolTip.delay: 300
