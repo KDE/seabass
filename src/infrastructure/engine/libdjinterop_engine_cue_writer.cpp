@@ -20,15 +20,40 @@ namespace
 
 constexpr int HotCueSlotCount = 8;
 
-djinterop::pad_color parseColor(const std::string &color)
+// Engine's own colour for a pad, for a cue or loop that brings none.
+// Measured on WHALESHARK2 (2026-10-02) from the cues Engine OS itself
+// labelled "Cue N" / "Loop N": pad 1 yellow, 2 orange, 3 purple, 4 red.
+// No sample for pads 5 to 8 on that stick, so those repeat the four:
+// visible is what matters here, not which shade.
+djinterop::pad_color defaultPadColor(int slot)
 {
-    if (color.size() == 7 && color[0] == '#') {
+    static const djinterop::pad_color palette[4] = {
+        {0xF4, 0xD3, 0x38, 0xFF},
+        {0xEF, 0x81, 0x30, 0xFF},
+        {0xAA, 0x55, 0xC4, 0xFF},
+        {0xCE, 0x32, 0x39, 0xFF},
+    };
+    return palette[((slot - 1) % 4 + 4) % 4];
+}
+
+// A pad's colour, never without one. The Prime 4 does not show a saved
+// loop whose colour has alpha 0, and a hot cue is the same kind of
+// record: on WHALESHARK2 (2026-10-02) two hot loops synced from rekordbox
+// without a colour sat in the blob, byte for byte like the player's own
+// but for the colour, and the Saved Loops bank stayed empty; the same
+// loops with the pad's default colour showed. So a cue with no colour,
+// or rekordbox's black (its "no colour"), takes Engine's default for the
+// pad. The reader maps alpha 0 back to no colour, so nothing here is
+// compared against anything (colour never is).
+djinterop::pad_color padColor(const std::string &color, int slot)
+{
+    if (color.size() == 7 && color[0] == '#' && color != "#000000") {
         auto hexByte = [&](size_t pos) {
             return static_cast<std::uint8_t>(std::stoi(color.substr(pos, 2), nullptr, 16));
         };
         return djinterop::pad_color{hexByte(1), hexByte(3), hexByte(5), 0xFF};
     }
-    return djinterop::pad_color{};
+    return defaultPadColor(slot);
 }
 
 }  // namespace
@@ -149,9 +174,9 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
         double startOffset = cue.positionMs / 1000.0 * sampleRate;
         if (cue.isLoop) {
             double endOffset = cue.loopEndMs / 1000.0 * sampleRate;
-            loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, parseColor(cue.color)};
+            loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, padColor(cue.color, slot + 1)};
         } else {
-            slots[slot] = djinterop::hot_cue{cue.comment, startOffset, parseColor(cue.color)};
+            slots[slot] = djinterop::hot_cue{cue.comment, startOffset, padColor(cue.color, slot + 1)};
         }
     }
 

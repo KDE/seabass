@@ -194,6 +194,38 @@ int main()
         std::cout << "case 5 (the earliest memory cue Engine can hold becomes the main cue) OK\n";
     }
 
+    // A cue or loop without a colour is written with Engine's default for
+    // its pad, alpha 0xff. The Prime 4 shows nothing for alpha 0: two
+    // loops synced onto WHALESHARK2 without a colour were in the blob
+    // and not in the Saved Loops bank; coloured, they showed.
+    {
+        fs::path root = freshRoot("case6");
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
+        auto track = makeTrack(db);
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
+
+        seabass::domain::CuePoint bare = hotCue(1, 1000.0);
+        seabass::domain::CuePoint black = hotCue(2, 2000.0);
+        black.color = "#000000";
+        seabass::domain::CuePoint coloured = hotCue(3, 3000.0);
+        coloured.color = "#12AB34";
+        seabass::domain::CuePoint loop = hotCue(4, 4000.0);
+        loop.isLoop = true;
+        loop.loopEndMs = 6000.0;
+        writer.writeHotCues(std::to_string(track.id()), {bare, black, coloured, loop});
+
+        auto after = db.track_by_id(track.id());
+        assert(after.has_value());
+        auto cues = after->hot_cues();
+        assert(cues[0] && cues[0]->color.a == 0xFF && cues[0]->color.r == 0xF4 && "no colour: pad 1's yellow");
+        assert(cues[1] && cues[1]->color.a == 0xFF && cues[1]->color.r == 0xEF && "black is no colour: pad 2's orange");
+        assert(cues[2] && cues[2]->color.a == 0xFF && cues[2]->color.r == 0x12 && cues[2]->color.g == 0xAB
+               && "a real colour is kept");
+        auto loops = after->loops();
+        assert(loops[3] && loops[3]->color.a == 0xFF && loops[3]->color.r == 0xCE && "a loop too: pad 4's red");
+        std::cout << "case 6 (a cue without a colour takes the pad's default, never alpha 0) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
