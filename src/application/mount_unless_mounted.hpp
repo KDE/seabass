@@ -4,7 +4,10 @@
 
 #pragma once
 
+#include <chrono>
+#include <functional>
 #include <string>
+#include <thread>
 
 #include "application/ports/removable_media_locator.hpp"
 #include "application/ports/removable_media_mounter.hpp"
@@ -52,6 +55,35 @@ inline MountOutcome mountUnlessMounted(RemovableMediaLocator &locator, Removable
     outcome.success = mounter.mount(devicePath, outcome.errorMessage).has_value();
     outcome.mountedHere = outcome.success;
     return outcome;
+}
+
+// Unmounts, and keeps trying for a few seconds before saying it cannot.
+// A stick is often busy for a moment after the last thing that touched it
+// (a file manager's thumbnailer, the desktop's indexer, this app's own
+// reader letting go of a file): the first attempt is refused with "target
+// is busy" and the same request two seconds later goes through. Reporting
+// that first refusal gave an error for a stick that then unmounted fine
+// when asked again. So: `attempts` tries, `pause` apart, and only the
+// last refusal is reported. `sleep` is the test seam.
+inline bool unmountPersistently(
+    RemovableMediaMounter &mounter, const std::string &devicePath, std::string &errorMessage, int attempts = 8,
+    std::chrono::milliseconds pause = std::chrono::milliseconds(750),
+    const std::function<void(std::chrono::milliseconds)> &sleep = [](std::chrono::milliseconds d) {
+        std::this_thread::sleep_for(d);
+    })
+{
+    for (int attempt = 1;; ++attempt) {
+        std::string error;
+        if (mounter.unmount(devicePath, error)) {
+            errorMessage.clear();
+            return true;
+        }
+        errorMessage = error;
+        if (attempt >= attempts) {
+            return false;
+        }
+        sleep(pause);
+    }
 }
 
 }  // namespace seabass::application

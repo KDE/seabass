@@ -173,6 +173,14 @@ class MetadataBackupController : public QObject
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // True while the list is re-read after a backup that landed. The
+    // store just changed, so the plan is stale and is worked out again;
+    // but to the person who pressed Back Up, the backup is over, and its
+    // bar ran to the end. Showing that re-read as a second progress bar
+    // starting from nothing under "Reading this stick" read as the backup
+    // starting over. The page keeps its controls disabled (busy stays
+    // true) and shows no progress for it.
+    Q_PROPERTY(bool refreshing READ refreshing NOTIFY busyChanged)
     Q_PROPERTY(int progressCurrent READ progressCurrent NOTIFY progressChanged)
     Q_PROPERTY(int progressTotal READ progressTotal NOTIFY progressChanged)
     Q_PROPERTY(QString currentPhase READ currentPhase NOTIFY currentPhaseChanged)
@@ -243,6 +251,7 @@ public:
 
     // A scan outstanding (see AsyncRequest) or a save running.
     bool busy() const { return m_scan.busy() || m_saving; }
+    bool refreshing() const { return m_refreshingAfterSave && m_scan.busy() && !m_saving; }
     int progressCurrent() const { return m_progressCurrent; }
     int progressTotal() const { return m_progressTotal; }
     QString currentPhase() const { return m_currentPhase; }
@@ -429,6 +438,7 @@ private:
     // The store is the starting population: a page that opens on a stick
     // it has not scanned would show an empty list and look broken.
     bool m_browsingStore = true;
+    bool m_refreshingAfterSave = false;
     int m_progressCurrent = 0;
     int m_progressTotal = 0;
     // The stick read and the store write share one continuous bar rather

@@ -517,6 +517,7 @@ void MetadataBackupController::discardStagingAndSelectStick(const QString &libra
 void MetadataBackupController::startScan(const QString &libraryPath, const QString &libraryId,
                                           const QString &stickLabel)
 {
+    m_refreshingAfterSave = false;
     // A save is writing the store: the stick is read once it is over,
     // from the save's own ending. Dropped here, as it used to be, the page
     // was told yes and then shown the stick it had just left.
@@ -877,6 +878,10 @@ void MetadataBackupController::onSaveFinished()
         const QString playlist = m_playlist;
         startScan(m_sourceLibraryPath, m_sourceLibraryId, m_sourceStickLabel);
         m_playlist = playlist;
+        // After startScan(), which clears it: this read is the refresh of
+        // a backup that is over, not a scan anyone asked for.
+        m_refreshingAfterSave = true;
+        emit busyChanged();
         emit filterChanged();
     }
 
