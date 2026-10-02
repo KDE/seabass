@@ -1194,9 +1194,10 @@ TestCase {
     // the stick out.
     function test_anUnmountedStickSaysItIsSafeToUnplug() {
         var page = makePage([makeStick({label: "MAIN", mounted: false, safeToUnplug: true})], {});
-        var label = findByName(page, "unmountedLabel");
-        verify(label !== null, "the unmounted label must exist");
-        compare(label.text, "OK to unplug");
+        var badge = findByName(page, "okToUnplugBadge");
+        verify(badge !== null, "the unplug badge must exist");
+        compare(badge.visible, true);
+        compare(badge.label, "OK to unplug");
     }
 
     // The claim is about the DEVICE, not this row's partition. A stick
@@ -1265,7 +1266,7 @@ TestCase {
         var unmountedRow = findByName(unmounted, "stickStateRow");
         verify(mountedRow !== null && unmountedRow !== null, "the state row must exist");
         compare(unmountedRow.visible, true, "the row stays when the stick is unmounted");
-        compare(findByName(unmounted, "unmountedLabel").visible, true);
+        compare(findByName(unmounted, "okToUnplugBadge").visible, true);
         compare(unmountedRow.height, mountedRow.height);
         compare(unmountedRow.mapToItem(unmounted, 0, 0).y, mountedRow.mapToItem(mounted, 0, 0).y);
     }

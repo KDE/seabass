@@ -664,37 +664,57 @@ Page {
                         : "Off, a stable Seabass hears about stable releases only."
                 }
 
+                // The check and its answer on one line: the spinner sits on
+                // the button, and what came back is said beside it. The
+                // spinner stays for a moment even when the answer is
+                // instant, or a check that took 80 ms looks like a button
+                // that did nothing.
                 RowLayout {
                     Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
                     Button {
+                        id: checkNowButton
                         objectName: "checkForUpdatesNow"
+                        readonly property bool checking: (root.updateChecker !== null
+                            && root.updateChecker.state === "checking") || minimumSpin.running
                         text: "Check Now"
-                        enabled: root.updateChecker !== null
-                            && root.updateChecker.state !== "checking"
-                        onClicked: root.updateChecker.checkNow()
+                        enabled: root.updateChecker !== null && !checkNowButton.checking
+                        leftPadding: checkNowButton.checking
+                            ? checkSpinner.width + 2 * Theme.tightSpacing : rightPadding
+                        onClicked: {
+                            minimumSpin.restart();
+                            root.updateChecker.checkNow();
+                        }
+                        BusyIndicator {
+                            id: checkSpinner
+                            objectName: "checkForUpdatesSpinner"
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.tightSpacing
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Theme.scaled(18)
+                            height: Theme.scaled(18)
+                            running: checkNowButton.checking
+                            visible: running
+                        }
+                        Timer {
+                            id: minimumSpin
+                            interval: 700
+                        }
                     }
-                    BusyIndicator {
-                        running: root.updateChecker !== null && root.updateChecker.state === "checking"
-                        visible: running
-                        implicitWidth: Theme.scaled(22)
-                        implicitHeight: Theme.scaled(22)
+                    Label {
+                        objectName: "updateCheckResult"
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        visible: text.length > 0
+                        text: root.updateChecker === null ? ""
+                            : checkNowButton.checking ? "Checking…" : root.updateChecker.message
+                        color: root.updateChecker === null || checkNowButton.checking ? Theme.textMuted
+                            : root.updateChecker.runningWithdrawn ? Theme.danger
+                            : root.updateChecker.updateAvailable ? Theme.good
+                            : Theme.textMuted
                     }
-                }
-
-                // The answer, whatever it is. A button that checks and
-                // says nothing leaves the user wondering whether it did.
-                Label {
-                    objectName: "updateCheckResult"
-                    Layout.leftMargin: root.settingIndent
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    visible: text.length > 0
-                    text: root.updateChecker === null ? "" : root.updateChecker.message
-                    color: root.updateChecker === null ? Theme.textMuted
-                        : root.updateChecker.runningWithdrawn ? Theme.danger
-                        : root.updateChecker.updateAvailable ? Theme.good
-                        : Theme.textMuted
                 }
                 Button {
                     Layout.leftMargin: root.settingIndent

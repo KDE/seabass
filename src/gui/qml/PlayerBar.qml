@@ -192,6 +192,13 @@ Frame {
             visible: playerArtwork.showing.length > 0
             source: root.controller.artworkPath
             fallbackSource: root.controller.fallbackArtworkPath || ""
+            // The cover here is the same cover as the ring's on the detail
+            // pane, and a click on it opens the same fullscreen view.
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
+            TapHandler {
+                objectName: "playerArtworkTap"
+                onTapped: barFullscreen.open()
+            }
         }
 
         ColumnLayout {
@@ -261,5 +268,12 @@ Frame {
         ToolTip.visible: hovered
         ToolTip.text: "Close the player"
         onClicked: root.controller.stop()
+    }
+
+    TrackRingFullscreen {
+        id: barFullscreen
+        objectName: "playerBarFullscreen"
+        playbackController: root.controller
+        hostWindow: root.Window.window
     }
 }

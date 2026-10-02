@@ -675,6 +675,14 @@ Page {
                 Layout.fillWidth: root.compact
                 Layout.preferredWidth: root.compact ? -1 : implicitWidth
                 onStickActivated: (key) => root.selectStick(key)
+                onStickEjectRequested: (devicePath) => {
+                    // As the header's eject button does: stop first, an
+                    // open handle on the playing track would hold the stick.
+                    if (root.playbackController) {
+                        root.playbackController.stop();
+                    }
+                    root.mediaController.unmountStick(devicePath);
+                }
                 onGroupActivated: (group) => root.selectGroup(group)
             }
 

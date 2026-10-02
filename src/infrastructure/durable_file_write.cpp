@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/durable_file_write.hpp"
+
+#if defined(__APPLE__)
+#include <sys/mount.h>
+#endif
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
@@ -295,6 +299,24 @@ bool copyFileDurablyAtomic(const std::string &sourcePath, const std::string &tar
         return false;
     }
     return writeFileDurablyAtomic(targetPath, bytes);
+}
+
+bool flushFilesystemOf(const std::string &path)
+{
+#if defined(_WIN32)
+    (void)path;
+    return false;
+#elif defined(__APPLE__)
+    return ::sync_volume_np(path.c_str(), SYNC_VOLUME_FULLSYNC | SYNC_VOLUME_WAIT) == 0;
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return false;
+    }
+    const bool ok = ::syncfs(fd) == 0;
+    ::close(fd);
+    return ok;
+#endif
 }
 
 }  // namespace seabass::infrastructure

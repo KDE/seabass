@@ -189,6 +189,19 @@ TestCase {
         tryCompare(dialog, "visible", false);
     }
 
+    // Return closes the summary. Its OK button called the base dialog's
+    // functions through an id that only the base file can see, so the key
+    // raised a ReferenceError and the dialog had to be clicked away; the
+    // same slip sat in four more dialogs.
+    function test_returnClosesTheSummary() {
+        var dialog = createTemporaryObject(summaryComponent, testCase);
+        dialog.show({written: 3, total: 3, unit: "tracks", cancelled: false, error: ""});
+        tryCompare(dialog, "opened", true);
+        wait(350);  // the open animation, and the focus that follows it
+        keyClick(Qt.Key_Return);
+        tryCompare(dialog, "opened", false, 2000);
+    }
+
     function test_summaryDialogCountsAndReasons() {
         var dialog = createTemporaryObject(summaryComponent, testCase);
         dialog.show({written: 5, total: 31, unit: "tracks", cancelled: true, error: ""});

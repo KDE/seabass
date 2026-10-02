@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_loop.hpp"
+
+#include "infrastructure/durable_file_write.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -153,7 +155,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         }
     }
     if (!upfront.empty()) {
-        ctx.status(QStringLiteral("Backing up"));
+        // Not "Backing up": on Restore Metadata that read as the page doing
+        // the opposite of what was asked. It is the copy Undo Last Save
+        // restores from, and says so.
+        ctx.status(QStringLiteral("Saving an undo copy"));
         try {
             ctx.backupAllNow(upfront, /*countFiles=*/true);
         } catch (const std::exception &e) {
@@ -248,6 +253,12 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     }
     if (importLevelWanted && importWarning.isEmpty()) {
         importWarning = settleImportLevel(ctx);
+    }
+    // Everything this save left for the kernel to write later (the backup
+    // archive, the log) is written now, while the dialog still says the
+    // stick is being committed, and not at eject. See flushFilesystemOf().
+    if (const std::string stick = ctx.stickRoot(); !stick.empty()) {
+        infrastructure::flushFilesystemOf(stick);
     }
     if (!importWarning.isEmpty() && !finish.error && result.error.isEmpty()) {
         result.warning = result.warning.isEmpty() ? importWarning : result.warning + QStringLiteral("; ") + importWarning;

@@ -185,6 +185,35 @@ TestCase {
 
     // The same rows through the other model shape: count and get(i), as
     // the real stick model and a ListModel have.
+    // A mounted stick can be ejected from its row: a small glyph, there
+    // only under the pointer, whose click ejects and does not select.
+    function test_aMountedStickCanBeEjectedFromItsRow() {
+        const frame = makeFrame([makeStick({mounted: true}),
+                                 makeStick({label: "UNMOUNTED", mountPoint: "", devicePath: "/dev/sdc1",
+                                            mounted: false})]);
+        const rail = frame.rail ? frame.rail : frame;
+        const row = findChild(rail, "railStick:/media/MAIN");
+        verify(row !== null);
+        const eject = findChild(row, "railEject");
+        verify(eject !== null);
+        verify(!eject.visible, "not there until the pointer is");
+        mouseMove(row, row.width / 3, row.height / 2);
+        tryCompare(eject, "visible", true, 2000);
+
+        const ejected = createTemporaryObject(spyComponent, testCase, {target: rail, signalName: "stickEjectRequested"});
+        const activated = createTemporaryObject(spyComponent, testCase, {target: rail, signalName: "stickActivated"});
+        mouseClick(eject);
+        compare(ejected.count, 1);
+        compare(ejected.signalArguments[0][0], "/dev/sdb1");
+        compare(activated.count, 0, "ejecting is not selecting");
+
+        // A stick that is not mounted has nothing to eject.
+        const other = findChild(rail, "railStick:/dev/sdc1");
+        mouseMove(other, other.width / 3, other.height / 2);
+        wait(150);
+        verify(!findChild(other, "railEject").visible);
+    }
+
     function test_theListModelShape() {
         const model = createTemporaryObject(listModelComponent, testCase);
         for (const s of threeSticks()) {
