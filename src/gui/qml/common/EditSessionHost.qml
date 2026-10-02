@@ -97,6 +97,12 @@ Item {
     // for any page that hosts a session without handling it.
     signal backupLocationAccepted()
     signal backupLocationDeclined()
+    // A page that shows a finished save itself (Sync Cue Points: the list
+    // is empty and says how many cues were synced) sets this, and a save
+    // that landed whole then opens no summary. Anything short of that, an
+    // error, a warning, a skip, a cancel or a part left pending, still
+    // gets the dialog: that is news the page does not carry.
+    property bool quietCleanSaves: false
     // The save summary has been read and dismissed. For a page that wants
     // to step back once its one job is done -- after the save the user
     // asked for, never instead of it.
@@ -127,6 +133,29 @@ Item {
             }
             internal.lowSpaceAsked = true;
             lowSpaceDialog.open();
+        }
+
+        // What follows a summary, shown or skipped.
+        function afterSummary() {
+            // Leaving was the goal and everything landed: go. Otherwise
+            // (a plain Save, or a cancelled/failed one) stay on the page
+            // with whatever is still staged.
+            if (internal.leaveAfterSave && host.session && host.session.dirty !== true) {
+                internal.runPendingLeave();
+            } else {
+                internal.pendingLeave = null;
+                internal.leaveAfterSave = false;
+            }
+            host.summaryDismissed();
+        }
+
+        function landedWhole(summary) {
+            return summary !== undefined && summary !== null
+                && !(summary.error && summary.error.length > 0)
+                && !(summary.warning && summary.warning.length > 0)
+                && summary.cancelled !== true
+                && !(summary.skipped > 0)
+                && summary.written !== undefined && summary.written === summary.total;
         }
 
         function runPendingLeave() {
@@ -283,18 +312,7 @@ Item {
     OperationSummaryDialog {
         id: summaryDialog
         objectName: "summaryDialog"
-        onAccepted: {
-            // Leaving was the goal and everything landed: go. Otherwise
-            // (a plain Save, or a cancelled/failed one) stay on the page
-            // with whatever is still staged.
-            if (internal.leaveAfterSave && host.session && host.session.dirty !== true) {
-                internal.runPendingLeave();
-            } else {
-                internal.pendingLeave = null;
-                internal.leaveAfterSave = false;
-            }
-            host.summaryDismissed();
-        }
+        onAccepted: internal.afterSummary()
     }
 
     LockedLibraryDialog {
@@ -370,9 +388,14 @@ Item {
         ignoreUnknownSignals: true
         function onSaveFinished(summary) {
             // On quit the window shows its own summary (see Main.qml).
-            if (!(host.registry && host.registry.quitAfterSave === true)) {
-                summaryDialog.show(summary);
+            if (host.registry && host.registry.quitAfterSave === true) {
+                return;
             }
+            if (host.quietCleanSaves && internal.landedWhole(summary)) {
+                internal.afterSummary();
+                return;
+            }
+            summaryDialog.show(summary);
         }
         function onLockRefused(holder) {
             lockedDialog.openFor(host.libraryId, holder);

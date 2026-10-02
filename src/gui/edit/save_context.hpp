@@ -149,7 +149,10 @@ public:
     // file, so a 201-cue save pays one durable write instead of 201 -- and
     // the whole backup is on the stick before the first live file is
     // touched, which the per-item path could not promise.
-    void backupAllNow(const std::vector<BackupTarget> &targets);
+    // `countFiles`: announce the files as a counted phase on progress().
+    // Only the save loop's up-front backup asks for it; a backup made in
+    // the middle of the item loop must not replace the items' own count.
+    void backupAllNow(const std::vector<BackupTarget> &targets, bool countFiles = false);
     // Throws away the records this save took, for the one case where
     // they are certainly not wanted: nothing was applied and the
     // rollback put everything back, so they are backups of a stick that

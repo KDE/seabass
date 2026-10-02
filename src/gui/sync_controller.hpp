@@ -11,6 +11,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -102,6 +103,11 @@ class SyncController : public StagedCueEditController
     // the Engine side, the cues this page just levelled included. The
     // save loop keeps the two level only when they were level before a
     // save; an offer to mark it imported belongs here as well.
+    // Cues that arrived on their targets in the saves made since the last
+    // staging began: what the page says once the list is empty ("12 cues
+    // synced"). Counted the way a row counts them (cueChangeOf: gained hot
+    // and memory cues, in the source's terms), added as each change lands.
+    Q_PROPERTY(int syncedCueCount READ syncedCueCount NOTIFY syncedChanged)
     Q_PROPERTY(bool playerWillOfferImport READ playerWillOfferImport NOTIFY importStateChanged)
     Q_PROPERTY(bool importMarkStaged READ importMarkStaged NOTIFY importStateChanged)
 
@@ -120,6 +126,7 @@ public:
     int visibleConflictCount() const { return m_model.visibleConflictCount(); }
     int selectedCount() const { return m_model.selectedCount(); }
     int selectedVisibleCount() const { return m_model.selectedVisibleCount(); }
+    int syncedCueCount() const { return m_syncedCueCount; }
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -169,6 +176,8 @@ public:
     Q_INVOKABLE void unstageRekordboxImportMark();
     // Test seam: the state as if read from a stick.
     Q_INVOKABLE void setImportStateForTesting(bool playerWillOfferImport);
+    // Test seam: as if a save had brought this many cues across.
+    Q_INVOKABLE void noteSyncedForTesting(int cues);
 
     // Picks one side of conflicts()[conflictIndex] (the row's
     // conflictIndex role): it becomes an ordinary plan, appended and
@@ -182,6 +191,7 @@ signals:
     void listChanged();
     void cuesLeftOutNoticed(const QVariantList &tracks);
     void importStateChanged();
+    void syncedChanged();
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
@@ -215,6 +225,10 @@ private:
     QVariantMap m_playlistTrackCounts;
     // The tracks of the last cuesLeftOutNoticed(), for "not again for these".
     QStringList m_lastLeftOutKeys;
+    // Gained cues per staged change id, moved into m_syncedCueCount when
+    // the change lands.
+    std::map<QString, int> m_gainedByChangeId;
+    int m_syncedCueCount = 0;
     infrastructure::engine::RekordboxImportState m_importState;
     bool m_importMarkStaged = false;
     // The session the two import connections below are made on, so a

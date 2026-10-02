@@ -108,6 +108,15 @@ QString SyncPlanChange::description() const
              formatLabel(target().format));
 }
 
+// The track, as the page lists it: the progress dialog names what is
+// being written, one line that does not change the dialog's size.
+QString SyncPlanChange::subject() const
+{
+    const domain::Track &track = source();
+    const QString title = QString::fromStdString(track.title.empty() ? track.filename : track.title);
+    return track.artist.empty() ? title : title + QStringLiteral(", ") + QString::fromStdString(track.artist);
+}
+
 QString SyncPlanChange::verb() const
 {
     return QStringLiteral("synchronised");

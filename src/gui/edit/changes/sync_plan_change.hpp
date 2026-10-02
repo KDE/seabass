@@ -27,6 +27,7 @@ public:
 
     QString id() const override;
     QString description() const override;
+    QString subject() const override;
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;

@@ -62,6 +62,11 @@ Page {
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
+        // Once the list is empty the page itself says the save is done
+        // (the checkmark and "N cues synced" below), so a save that landed
+        // whole opens no summary on top of it. A save that leaves rows
+        // behind, or any that did not land whole, still gets one.
+        quietCleanSaves: syncController.planCount === 0 && syncController.conflictCount === 0
         feature: "sync"
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
@@ -1069,12 +1074,56 @@ Page {
                 ]
             }
 
+            // Nothing left after a save: said large, where the list was.
+            readonly property bool justSynced: plansListView.count === 0 && !syncController.busy
+                && !syncController.writing && !root.searching && syncController.syncedCueCount > 0
+
+            Column {
+                objectName: "syncedState"
+                anchors.centerIn: parent
+                visible: parent.justSynced
+                spacing: Theme.rowSpacing
+                Canvas {
+                    id: syncedMark
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Theme.scaled(96)
+                    height: Theme.scaled(96)
+                    readonly property color ink: Theme.good
+                    onInkChanged: requestPaint()
+                    onPaint: {
+                        const ctx = getContext("2d");
+                        ctx.reset();
+                        const w = width;
+                        ctx.strokeStyle = String(syncedMark.ink);
+                        ctx.lineWidth = w * 0.07;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.beginPath();
+                        ctx.arc(w / 2, w / 2, w * 0.44, 0, 2 * Math.PI);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(w * 0.29, w * 0.52);
+                        ctx.lineTo(w * 0.44, w * 0.67);
+                        ctx.lineTo(w * 0.72, w * 0.36);
+                        ctx.stroke();
+                    }
+                }
+                Label {
+                    objectName: "syncedLabel"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root.plural(syncController.syncedCueCount, "cue") + " synced"
+                    color: Theme.good
+                    font.pointSize: Theme.fontLarge
+                }
+            }
+
             Label {
+                objectName: "nothingToSyncLabel"
                 anchors.centerIn: parent
                 width: Math.min(implicitWidth, parent.width)
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
-                visible: plansListView.count === 0 && !syncController.busy
+                visible: plansListView.count === 0 && !syncController.busy && !parent.justSynced
                 text: root.searching
                     ? "No track needing sync matches “" + toolbar.searchText + "”."
                     : "Nothing to sync. Matched tracks' cues are already consistent."

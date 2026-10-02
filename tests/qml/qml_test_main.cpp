@@ -1123,6 +1123,17 @@ class SyncPageFixture : public QObject
 public:
     using QObject::QObject;
 
+    // The page with nothing left to sync.
+    Q_INVOKABLE bool fillEmpty(QObject *controller)
+    {
+        auto *sync = qobject_cast<seabass::gui::SyncController *>(controller);
+        if (sync == nullptr) {
+            return false;
+        }
+        sync->plansModel()->setAnalysis({}, {});
+        return true;
+    }
+
     // An empty stick on disk: a PIONEER and an Engine Library folder under
     // one root, so the page can open an edit session and take its lock,
     // which staging needs. The catalogs are missing, so the page's own

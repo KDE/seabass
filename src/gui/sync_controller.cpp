@@ -496,6 +496,12 @@ void SyncController::unstageRekordboxImportMark()
     emit importStateChanged();
 }
 
+void SyncController::noteSyncedForTesting(int cues)
+{
+    m_syncedCueCount = cues;
+    emit syncedChanged();
+}
+
 void SyncController::setImportStateForTesting(bool playerWillOfferImport)
 {
     m_importState = {};
@@ -522,6 +528,11 @@ void SyncController::onImportSessionChangeApplied(const QString &changeId)
 {
     if (changeId == MarkRekordboxImportedChange::idFor()) {
         m_importMarkStaged = false;
+    }
+    if (auto gained = m_gainedByChangeId.find(changeId); gained != m_gainedByChangeId.end()) {
+        m_syncedCueCount += gained->second;
+        m_gainedByChangeId.erase(gained);
+        emit syncedChanged();
     }
     rereadImportState();
 }
@@ -614,8 +625,17 @@ void SyncController::stagePlan(int index)
             itemCountHint++;
         }
     }
-    stageChange(index, targetKey,
-                std::make_unique<SyncPlanChange>(m_rekordboxPath, m_enginePath, plan, itemCountHint));
+    // A first stage after everything staged before has landed or gone
+    // starts a new count for "N cues synced".
+    if (stagedCount() == 0 && m_syncedCueCount != 0) {
+        m_syncedCueCount = 0;
+        m_gainedByChangeId.clear();
+        emit syncedChanged();
+    }
+    auto change = std::make_unique<SyncPlanChange>(m_rekordboxPath, m_enginePath, plan, itemCountHint);
+    const domain::CueChange gained = SyncPlanListModel::cueChangeOf(plan);
+    m_gainedByChangeId[change->id()] = gained.gainedHot + gained.gainedMemory;
+    stageChange(index, targetKey, std::move(change));
 }
 
 }  // namespace seabass::gui

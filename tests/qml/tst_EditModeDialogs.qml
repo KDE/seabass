@@ -137,6 +137,41 @@ TestCase {
         tryCompare(dialog, "opened", false);
     }
 
+    // The dialog keeps its size through a save: one line for what is
+    // being written, however long the track's name, and a count line that
+    // stays in place when a phase has nothing to count. It used to wrap a
+    // long title onto a second line and jump with every track.
+    function test_writeProgressDialogKeepsItsSize() {
+        var session = createTemporaryObject(sessionComponent, testCase);
+        var dialog = createTemporaryObject(writeProgressComponent, testCase, {session: session});
+        session.writeLabel = "Buggy, Yotto";
+        session.writeCurrent = 1;
+        session.writeTotal = 40;
+        session.writing = true;
+        tryCompare(dialog, "opened", true);
+        wait(300);
+        var height = dialog.height;
+        var width = dialog.width;
+        var label = findByObjectName(dialog, "writeLabel");
+        var labelHeight = label.height;
+
+        session.writeLabel = "The Age Of Love (Charlotte de Witte & Enrico Sangiuliano Remix, Edit), The Age Of Love, "
+            + "with a title long enough to have needed a second line and then some";
+        wait(100);
+        compare(label.lineCount, 1, "one line, elided");
+        compare(label.height, labelHeight);
+        compare(dialog.height, height, "a long title does not make the dialog taller");
+        compare(dialog.width, width, "nor wider");
+
+        // A phase with nothing to count: the count line stays, empty.
+        session.writeLabel = "Committing changes to the stick";
+        session.writeTotal = 0;
+        wait(100);
+        compare(dialog.height, height, "nor does a phase without a count make it shorter");
+        session.writing = false;
+        tryCompare(dialog, "opened", false);
+    }
+
     // A save over before the dialog has finished opening (nine rows that
     // all skip take a few milliseconds; the open animates for 220 ms):
     // the dialog still closes, rather than staying up modal with no way
