@@ -17,7 +17,8 @@ namespace seabass::domain
 std::vector<SyncMatch> TrackMatcher::match(const std::vector<Track> &tracksA, const std::vector<Track> &tracksB)
 {
     std::vector<SyncMatch> matches;
-    for (const auto &[trackA, trackB] : matchTracks(tracksA, tracksB)) {
+    // Two catalogs of one stick: see MatchScope::OneStick.
+    for (const auto &[trackA, trackB] : matchTracks(tracksA, tracksB, MatchScope::OneStick)) {
         matches.push_back({*trackA, *trackB});
     }
     return matches;
