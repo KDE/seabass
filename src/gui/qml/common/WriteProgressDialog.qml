@@ -54,14 +54,21 @@ SeabassDialog {
         Layout.fillWidth: true
         spacing: 12
 
+        // One line, always: the phase ("Backing up", "Committing changes
+        // to the stick") or the track being written. It used to wrap to a
+        // second line for a long title, and the whole dialog jumped up and
+        // down as a save went from track to track. The preferred width of
+        // 1 keeps a long title from widening the dialog instead: the
+        // layout gives the label the dialog's width and the text elides.
         Label {
             objectName: "writeLabel"
             color: Theme.text
             Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            elide: Text.ElideMiddle
-            maximumLineCount: 2
-            text: dialog.hasSession ? dialog.session.writeLabel : ""
+            Layout.preferredWidth: 1
+            wrapMode: Text.NoWrap
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            text: dialog.hasSession && dialog.session.writeLabel.length > 0 ? dialog.session.writeLabel : " "
         }
         ProgressBar {
             id: bar
@@ -102,9 +109,11 @@ SeabassDialog {
         }
         Label {
             objectName: "countLabel"
-            visible: dialog.hasSession && dialog.session.writeTotal > 0
+            // Always there, empty during a phase with nothing to count, so
+            // the dialog keeps its height when the count comes and goes.
+            readonly property bool counting: dialog.hasSession && dialog.session.writeTotal > 0
             color: Theme.textMuted
-            text: dialog.hasSession ? dialog.session.writeCurrent + " / " + dialog.session.writeTotal : ""
+            text: counting ? dialog.session.writeCurrent + " / " + dialog.session.writeTotal : " "
         }
         StickWriteWarning {
             objectName: "stickWarning"

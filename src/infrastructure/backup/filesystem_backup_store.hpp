@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <filesystem>
 #include <cstdint>
 #include <map>
@@ -51,6 +52,12 @@ public:
     //
     // Throws if `id` is not an archive record.
     application::BackupRecord addToArchive(const std::string &id, const std::vector<std::string> &filePaths);
+
+    // Called with the number of files a backup() or addToArchive() has
+    // dealt with so far, before each file and once more at the end, on
+    // the thread doing the backup. A save backing up hundreds of analysis
+    // files over USB takes long enough to need a moving bar.
+    void setFileProgress(std::function<void(std::size_t done)> onFile) { m_onFile = std::move(onFile); }
     std::vector<application::BackupRecord> list() override;
     application::PruneResult prune(size_t keepCount) override;
     // What prune(keepCount) removes, oldest first: the automatic backups
@@ -128,6 +135,7 @@ private:
     std::pair<std::vector<std::pair<std::string, std::string>>, std::uint64_t>
     writeArchiveEntries(const std::filesystem::path &dir, const std::vector<std::string> &filePaths);
     std::string recordedPathFor(const std::filesystem::path &source) const;
+    std::function<void(std::size_t done)> m_onFile;
     std::filesystem::path resolveRecordedPath(const std::string &recorded) const;
 
     std::filesystem::path m_baseDirectory;

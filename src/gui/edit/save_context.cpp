@@ -195,7 +195,7 @@ std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
     return sidecars;
 }
 
-void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
+void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool countFiles)
 {
     // Grouped by label, in first-seen order, because a save may hold
     // several kinds of change from one page and each keeps its own record.
@@ -233,6 +233,25 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
     // sit in Manage Backups taking space on a stick that has none. A
     // label that already had a record keeps it -- addToArchive() leaves
     // a record exactly as it was when it fails.
+    // Counted for the progress bar: a sync of a few hundred tracks backs
+    // up a few hundred analysis files over USB, which took long enough
+    // with a still bar to look like a hang.
+    size_t totalFiles = 0;
+    for (const std::string &label : labelOrder) {
+        totalFiles += byLabel[label].size();
+    }
+    size_t filesBefore = 0;
+    struct ClearFileProgress
+    {
+        infrastructure::backup::FilesystemBackupStore &store;
+        ~ClearFileProgress() { store.setFileProgress({}); }
+    } clearFileProgress{archiveStore()};
+    if (countFiles && totalFiles > 0) {
+        progress().start("Backing up", totalFiles);
+        archiveStore().setFileProgress(
+            [this, &filesBefore](std::size_t done) { progress().tick(filesBefore + done); });
+    }
+
     std::vector<std::string> madeHere;
     const size_t backupsBefore = m_backups.size();
     try {
@@ -253,6 +272,10 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
             log().record(label + ": backed up " + std::to_string(files.size()) + " file(s) -> " + record.path);
             for (const std::string &file : files) {
                 m_backedUp[application::normalizedPathKey(file)] = record.id;
+            }
+            filesBefore += files.size();
+            if (countFiles) {
+                progress().tick(filesBefore);
             }
         }
     } catch (...) {

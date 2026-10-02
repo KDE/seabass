@@ -62,6 +62,10 @@ public:
     virtual QString id() const = 0;
     // One human line for the pending list / tooltip.
     virtual QString description() const = 0;
+    // What the progress dialog names while this change is written: the
+    // thing being worked on, not the whole sentence. A track's name for a
+    // cue change. Defaults to the description.
+    virtual QString subject() const { return description(); }
     // Plural noun for the summary: "tracks", "settings", "groups", "cues".
     virtual QString unit() const = 0;
     // How many of that unit this change carries. One, for the changes

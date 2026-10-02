@@ -155,7 +155,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     if (!upfront.empty()) {
         ctx.status(QStringLiteral("Backing up"));
         try {
-            ctx.backupAllNow(upfront);
+            ctx.backupAllNow(upfront, /*countFiles=*/true);
         } catch (const std::exception &e) {
             // Nothing has been written yet, so refusing here costs the
             // user nothing and protects everything.
@@ -173,7 +173,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             result.cancelled = true;
             break;
         }
-        ctx.status(change->description());
+        ctx.status(change->subject());
         ChangeOutcome outcome;
         try {
             ctx.beginChange(declaredByChange[index]);
@@ -225,9 +225,15 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // "Mark as imported" in the same save carries the sequence from when
     // it was staged, and a repair later in the save may move the pdb past
     // it; the step below reads the sequence as the save left it.
+    // Said before the steps that follow, not after: levelling the import
+    // record backs Engine's database up again, and the finish hooks copy
+    // scratch databases back onto the stick. With every item ticked and
+    // the last track's name still showing, those seconds read as a hang.
+    // No count: none of it is countable, so the bar goes indeterminate.
+    ctx.status(QStringLiteral("Committing changes to the stick"));
+    ctx.progress().start("Committing changes to the stick", 0);
     QString importWarning = keepImportLevel(ctx, importLevelWanted);
 
-    ctx.status(QStringLiteral("Finishing"));
     // ok means "the whole batch went through"; a cancel or a failure hands
     // the hooks false so a scratch copy commits only what completed.
     const auto finish = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled);

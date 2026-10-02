@@ -79,6 +79,8 @@ TestCase {
         return null;
     }
 
+    Component { id: spyComponent; SignalSpy {} }
+
     function makeHost(feature) {
         var session = createTemporaryObject(sessionComponent, testCase);
         var registry = createTemporaryObject(registryComponent, testCase, {session: session});
@@ -87,6 +89,37 @@ TestCase {
                                           feature: feature});
         waitForRendering(host);
         return {session: session, host: host};
+    }
+
+    // A page that shows its own "done" (Sync Cue Points with an empty
+    // list) asks for no summary on a save that landed whole. Anything
+    // short of whole still opens it: that is news the page does not carry.
+    function test_aCleanSaveCanGoWithoutTheSummary() {
+        var t = makeHost("sync");
+        var summary = findChild(t.host, "summaryDialog");
+        var dismissed = createTemporaryObject(spyComponent, testCase, {target: t.host, signalName: "summaryDismissed"});
+        t.host.quietCleanSaves = true;
+        t.session.saveFinished({written: 12, total: 12, unit: "tracks", cancelled: false, error: ""});
+        wait(300);
+        verify(!summary.opened, "a save that landed whole opens nothing");
+        compare(dismissed.count, 1, "and the page is told as if the summary had been dismissed");
+
+        t.session.saveFinished({written: 5, total: 12, unit: "tracks", cancelled: true, error: ""});
+        tryCompare(summary, "opened", true, 2000);
+        summary.close();
+        tryCompare(summary, "opened", false, 2000);
+
+        t.session.saveFinished({written: 12, total: 12, unit: "tracks", cancelled: false, error: "",
+                                warning: "Engine could not be told"});
+        tryCompare(summary, "opened", true, 2000);
+        summary.close();
+        tryCompare(summary, "opened", false, 2000);
+
+        // Without the flag every save gets its summary, as before.
+        t.host.quietCleanSaves = false;
+        t.session.saveFinished({written: 12, total: 12, unit: "tracks", cancelled: false, error: ""});
+        tryCompare(summary, "opened", true, 2000);
+        summary.close();
     }
 
     function test_nothingStagedMeansNobodyIsBlocked() {

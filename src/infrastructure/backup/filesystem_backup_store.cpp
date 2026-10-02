@@ -451,7 +451,12 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
     {
         stick_backup::PosixArchiveFile file(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadWrite);
         stick_backup::Zip64Writer writer(file, carried);
+        std::size_t begun = 0;
         for (const auto &filePath : filePaths) {
+            if (m_onFile) {
+                m_onFile(begun);
+            }
+            ++begun;
             const fs::path source = pathFromUtf8(filePath);
             if (!fs::exists(source, ec)) {
                 continue;

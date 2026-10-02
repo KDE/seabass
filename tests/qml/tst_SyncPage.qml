@@ -280,6 +280,26 @@ TestCase {
         tryCompare(row, "visible", false, 2000);
     }
 
+    // After a save that left nothing to sync, the empty list says so,
+    // large: a checkmark and how many cues came across. Before any save
+    // it says there is nothing to sync, as it always did.
+    function test_theEmptyListSaysHowManyCuesWereSynced() {
+        var page = openPage(1100, 720);
+        var controller = findChild(page, "syncController");
+        verify(syncPageFixture.fillEmpty(controller));
+        var done = findChild(page, "syncedState");
+        var nothing = findChild(page, "nothingToSyncLabel");
+        tryCompare(nothing, "visible", true, 2000);
+        verify(!done.visible, "nothing was synced in this visit");
+
+        controller.noteSyncedForTesting(12);
+        tryCompare(done, "visible", true, 2000);
+        verify(!nothing.visible, "one message at a time");
+        compare(findChild(page, "syncedLabel").text, "12 cues synced");
+        controller.noteSyncedForTesting(1);
+        compare(findChild(page, "syncedLabel").text, "1 cue synced");
+    }
+
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(0);
