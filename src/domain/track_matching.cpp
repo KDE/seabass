@@ -62,7 +62,7 @@ std::optional<std::string> titleArtistKey(const Track &track)
 }
 
 std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vector<Track> &a,
-                                                                   const std::vector<Track> &b)
+                                                                   const std::vector<Track> &b, MatchScope scope)
 {
     std::map<std::string, const Track *> bByFilePath;
     std::map<std::string, std::vector<const Track *>> bByTitleArtist;
@@ -108,16 +108,19 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
             }
         }
 
-        // A row whose file is on the stick is that file, and the other
-        // catalog does not list it: nothing to match. Matching it by name
-        // instead paired an Engine-only third copy of "Too Little Too
-        // Late" (10_...) with OneLibrary's row for a different copy
-        // (28_...), and the sync wrote the one file's cues onto the other
-        // (WHALESHARK2, 2026-10-02). The name fallback below is for a row
-        // that cannot be found by its file: no path at all, or a path with
-        // no file behind it (the committed fixture has catalogs and no
-        // audio, which is how it matches at all).
-        if (!trackA.filePath.empty() && trackA.fileSizeBytes > 0) {
+        // Within one stick (MatchScope::OneStick), a row whose file is on
+        // the stick is that file, and the other catalog does not list it:
+        // nothing to match. Matching it by name instead paired an
+        // Engine-only third copy of "Too Little Too Late" (10_...) with
+        // OneLibrary's row for a different copy (28_...), and the sync
+        // wrote the one file's cues onto the other (WHALESHARK2,
+        // 2026-10-02). The name fallback below is then only for a row that
+        // cannot be found by its file: no path at all, or a path with no
+        // file behind it (the committed fixture has catalogs and no audio,
+        // which is how it matches at all). Across libraries the fallback
+        // is the whole point and stays as it was: applying this rule there
+        // halved what Metadata Restore could match from another stick.
+        if (scope == MatchScope::OneStick && !trackA.filePath.empty() && trackA.fileSizeBytes > 0) {
             continue;
         }
 

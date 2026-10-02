@@ -7,6 +7,7 @@
 
 #include "domain/matching_policy.hpp"
 #include "domain/sync_planning.hpp"
+#include "domain/track_matching.hpp"
 
 using namespace seabass::domain;
 using namespace std::chrono;
@@ -630,6 +631,15 @@ int main()
         noAudio.fileSizeBytes = 0;
         assert(TrackMatcher::match({noAudio}, {other}).size() == 1 && "no file behind the path: matched by name");
         std::cout << "case (a row whose file is on the stick is not matched to another file by name) OK\n";
+
+        // The same two rows across libraries are the same song under two
+        // paths, and must match: a track stored from one stick against
+        // another stick's copy is what Metadata Backup and Restore do, and
+        // is the matcher's default. afa3dbdb applied the one-stick rule
+        // here too and halved what Restore could match.
+        assert(matchTracks({engineOnly}, {other}).size() == 1 && "across libraries a name still matches");
+        assert(matchTracks({engineOnly}, {other}, MatchScope::OneStick).empty());
+        std::cout << "case (across libraries the same rows match by name) OK\n";
     }
 
     std::cout << "all cases passed\n";

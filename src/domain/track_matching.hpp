@@ -47,8 +47,20 @@ std::optional<std::string> titleArtistKey(const Track &track);
 // callers matching across formats (TrackMatcher) or against a local
 // cue backup (the restore path) both consume the result immediately,
 // well within that scope.
+// Whether a row that has its file may still be matched to another file by
+// name. Across sticks it must: a track stored from one stick is the same
+// song on another under a different path, which is what Metadata Backup
+// and Restore match (AcrossLibraries, the default). Within one stick it
+// must not: there a row whose file is present IS that file, and a catalog
+// that does not list it has nothing to match (OneStick, what Sync Cue
+// Points uses). Sync once paired an Engine-only third copy of a track
+// with OneLibrary's row for a different copy that way and wrote one
+// file's cues onto the other (WHALESHARK2, 2026-10-02).
+enum class MatchScope { AcrossLibraries, OneStick };
+
 std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vector<Track> &a,
-                                                                   const std::vector<Track> &b);
+                                                                   const std::vector<Track> &b,
+                                                                   MatchScope scope = MatchScope::AcrossLibraries);
 
 // True if two cue sets are the same, ignoring order and allowing a small
 // position tolerance (cross-format conversions can introduce sub-second
