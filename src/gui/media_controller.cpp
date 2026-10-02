@@ -57,7 +57,9 @@ MediaTaskResult runMediaTask(bool mount, QString devicePath)
         result.mountedHere = outcome.mountedHere;
         error = outcome.errorMessage;
     } else {
-        result.success = mounter->unmount(devicePath.toStdString(), error);
+        // Tried for a few seconds before it is called a failure: see
+        // unmountPersistently().
+        result.success = application::unmountPersistently(*mounter, devicePath.toStdString(), error);
     }
     if (!result.success) {
         result.errorMessage = QString::fromStdString(error);

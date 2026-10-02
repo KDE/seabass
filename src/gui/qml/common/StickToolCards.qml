@@ -301,7 +301,7 @@ Item {
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: "Copy cues between DeviceLibrary and Engine"
+                cardSubtitle: "Syncs cue points between Pioneer and Denon libraries"
                 cardIcon: "exchange-positions"
                 visible: root.group === "sync" && root.showSync
                 enabled: root.hasRekordbox && root.hasEngine
@@ -317,7 +317,7 @@ Item {
                 // ratings and comments in step with a copy on this
                 // computer, and the Backup group is about whole sticks.
                 cardTitle: "Metadata"
-                cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
+                cardSubtitle: "Keep a database of all your cues, ratings etc. on this computer"
                 cardIcon: "document-save"
                 // Not gated on the write lock: this only ever writes to
                 // the local store, so another session editing the library

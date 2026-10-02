@@ -67,6 +67,33 @@ TestCase {
         verifyIdleOnceNothingReads([controller]);
     }
 
+    // A backup ends when its bar reaches the end. The list is then worked
+    // out again, since the store just changed, and that re-read is marked
+    // as a refresh so the page does not show it as a second scan starting
+    // from nothing.
+    function test_theReReadAfterABackupIsARefreshNotAScan() {
+        const root = stick();
+        catalogGate.hold(3, true);
+        const controller = make();
+        controller.selectStick(root + "/PIONEER", "", "GATED");
+        tryVerify(() => catalogGate.waiting() === 1, 5000, "the read must reach the gate");
+        verify(!controller.refreshing, "a scan somebody asked for is a scan");
+        catalogGate.release();
+        tryVerify(() => !controller.busy, 10000, "the first read ended");
+        compare(controller.proposalCount, 3);
+
+        const seen = [];
+        const note = () => seen.push(controller.refreshing);
+        controller.busyChanged.connect(note);
+        controller.stageAllForAdd();
+        controller.save();
+        tryVerify(() => !controller.busy, 20000, "the backup and its re-read are over");
+        controller.busyChanged.disconnect(note);
+        verify(seen.indexOf(true) >= 0, "the re-read after the backup was marked as a refresh: " + seen);
+        verify(!controller.refreshing, "and is over");
+        verifyIdleOnceNothingReads([controller]);
+    }
+
     // Cancel is over at once for the page, even when the read cannot
     // look at its token. Before the rule, busy stayed on until the read
     // finished on its own, with Cancel pressed and nothing to show for it.

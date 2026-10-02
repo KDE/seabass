@@ -112,6 +112,47 @@ int main()
         assert(rig.mounter.mounts == 0);
     }
 
+    // Unmounting keeps trying before it reports a refusal: a stick busy
+    // for a moment unmounts on the third attempt and nothing is said.
+    {
+        struct FlakyMounter : seabass::application::RemovableMediaMounter
+        {
+            int refusals = 0;
+            int calls = 0;
+            std::optional<std::string> mount(const std::string &, std::string &) override { return std::nullopt; }
+            bool unmount(const std::string &, std::string &error) override
+            {
+                ++calls;
+                if (calls <= refusals) {
+                    error = "target is busy (attempt " + std::to_string(calls) + ")";
+                    return false;
+                }
+                return true;
+            }
+            bool release(const std::string &, std::string &) override { return true; }
+        };
+        int slept = 0;
+        const auto sleep = [&slept](std::chrono::milliseconds) { ++slept; };
+
+        FlakyMounter busyForAMoment;
+        busyForAMoment.refusals = 2;
+        std::string error = "stale";
+        assert(seabass::application::unmountPersistently(busyForAMoment, "/dev/disk4s1", error, 8,
+                                                         std::chrono::milliseconds(1), sleep));
+        assert(busyForAMoment.calls == 3 && slept == 2 && error.empty() && "the third attempt went through, quietly");
+
+        // Busy for good: every attempt is made, and the last refusal is
+        // the one reported.
+        FlakyMounter busyForGood;
+        busyForGood.refusals = 100;
+        slept = 0;
+        assert(!seabass::application::unmountPersistently(busyForGood, "/dev/disk4s1", error, 4,
+                                                          std::chrono::milliseconds(1), sleep));
+        assert(busyForGood.calls == 4 && slept == 3);
+        assert(error == "target is busy (attempt 4)");
+        std::cout << "case (unmounting tries again before it reports a refusal) OK\n";
+    }
+
     std::cout << "mount_unless_mounted_test: all passed\n";
     return 0;
 }

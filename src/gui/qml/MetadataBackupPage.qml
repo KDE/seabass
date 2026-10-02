@@ -550,8 +550,12 @@ Page {
             }
 
             ProgressReport {
+                objectName: "progressReport"
                 Layout.fillWidth: true
-                visible: controller.busy
+                // Not for the re-read that follows a backup: that bar ran
+                // to the end and the summary says so. See
+                // MetadataBackupController::refreshing.
+                visible: controller.busy && !controller.refreshing
                 phase: controller.currentPhase
                 unitsDone: controller.progressCurrent
                 unitsTotal: controller.progressTotal
