@@ -609,6 +609,29 @@ int main()
         std::cout << "case (a marker under a hot cue is in sync, not a sixth pad) OK\n";
     }
 
+    // WHALESHARK2, 2026-10-02: an Engine-only third copy of a track, with
+    // its file on the stick, matched OneLibrary's row for a different copy
+    // by title and artist, and the sync wrote one file's cues onto the
+    // other. A row whose file is present is that file: no name fallback.
+    {
+        Track engineOnly = makeTrack("e462", "10_song.mp3", 349.0, {CuePoint{CuePoint::Kind::Hot, 1, 30251.0, "", ""}},
+                                     "Too Little Too Late (feat. Underworld)", "Joris Voorn, Underworld");
+        engineOnly.filePath = "/stick/Contents/10_song.mp3";
+        engineOnly.fileSizeBytes = 9'000'000;
+        Track other = makeTrack("ol302", "28_song.mp3", 349.0, {}, "Too Little Too Late (feat. Underworld)",
+                                "Joris Voorn, Underworld");
+        other.filePath = "/stick/Contents/28_song.mp3";
+        other.fileSizeBytes = 9'100'000;
+        assert(TrackMatcher::match({engineOnly}, {other}).empty() && "a present file is never matched by name");
+
+        // The fallback stays for a row that cannot be found by its file:
+        // the committed fixture has catalogs and no audio.
+        Track noAudio = engineOnly;
+        noAudio.fileSizeBytes = 0;
+        assert(TrackMatcher::match({noAudio}, {other}).size() == 1 && "no file behind the path: matched by name");
+        std::cout << "case (a row whose file is on the stick is not matched to another file by name) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

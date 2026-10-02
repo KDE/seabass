@@ -131,7 +131,10 @@ import. Until the second is known, the table is written, not dropped.
   (OPUS-QUAD, OMNIS-DUO, XDJ-AZ, CDJ-3000X) that primarily reads the
   modern `inUsec`/`outUsec` fields, so this is expected to be a
   reasonable simplification rather than a functional gap, but wasn't
-  verified against real hardware. The OMNIS-DUO (OneLibrary only) was
+  verified against real hardware. **Measured 2026-10-02 on a CDJ-3000X:
+  it took its cues from DeviceLibrary (`export.pdb` and the ANLZ files),
+  not from `exportLibrary.db`: a OneLibrary row holding five pads showed
+  the one pad its ANLZ file had.** The OMNIS-DUO (OneLibrary only) was
   measured on 2026-10-03; see "Where a player takes cues from" below.
 - **`hotCueBankList`/`hotCueBankList_cue`** (the newer named-bank
   hot-cue-grouping UI feature) is left untouched. A cue's hot-cue-ness
