@@ -193,9 +193,13 @@ TestCase {
     // What the row says once a stick is unmounted: whether it may be pulled.
     function test_anUnmountedStickSaysItIsSafeToUnplug() {
         const row = makeRow(makeStick({mounted: false, safeToUnplug: true}));
-        const label = named(row, "unmountedLabel");
-        compare(label.visible, true);
-        compare(label.text, "OK to unplug");
+        // Green, and a badge like the library badges it replaces: it is
+        // the answer to "may I pull it out", not a remark in grey.
+        const badge = named(row, "okToUnplugBadge");
+        compare(badge.visible, true);
+        compare(badge.label, "OK to unplug");
+        verify(Qt.colorEqual(badge.badgeColor, Theme.good), "in the good colour");
+        compare(named(row, "unmountedLabel").visible, false, "one statement, not two");
         compare(named(row, "stickPathLabel").text, "/dev/sdb1", "an unmounted stick is named by its device");
         compare(named(row, "ejectButton").text, "Mount");
         compare(named(row, "deviceLibraryBadge").visible, false);

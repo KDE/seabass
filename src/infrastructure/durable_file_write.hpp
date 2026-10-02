@@ -54,4 +54,16 @@ bool copyFileDurablyAtomic(const std::string &sourcePath, const std::string &tar
 // cannot go through writeFileDurablyAtomic()'s in-memory buffer.
 void fsyncDirectoryContaining(const std::string &filePath);
 
+// Writes out everything still pending for the filesystem `path` is on, and
+// returns once it is on the device. The durable writes above each flush
+// their own file, but a save also writes things that are not worth an
+// fsync apiece and are megabytes together: the backup archive, the log,
+// the caches. Left to the kernel, those were written when the stick was
+// unmounted, which is where the DJ then waited, with no progress and no
+// idea why eject took half a minute. Asked for at the end of a save
+// instead, under "Committing changes to the stick". False where the
+// platform offers no such call (Windows without elevation) or it failed;
+// nothing depends on the answer.
+bool flushFilesystemOf(const std::string &path);
+
 }  // namespace seabass::infrastructure

@@ -56,6 +56,24 @@ TestCase {
 
     // A cover the stick does not have: the fallback where there is one,
     // and where there is none no square at all, not an empty one.
+    // The cover in the bar is the same cover as the ring on the detail
+    // pane: a click on it opens the same fullscreen view.
+    function test_theCoverOpensTheFullscreenRing() {
+        const controller = fakeController();
+        controller.artworkPath = browseFixture.presentArtworkUrl();
+        const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
+        verify(bar !== null);
+        const art = findChild(bar, "playerArtwork");
+        tryCompare(art, "visible", true, 3000);
+        const fullscreen = findChild(bar, "playerBarFullscreen");
+        verify(fullscreen !== null);
+        compare(fullscreen.visible, false);
+        mouseClick(art);
+        tryCompare(fullscreen, "visible", true, 3000);
+        fullscreen.close();
+        tryCompare(fullscreen, "visible", false, 3000);
+    }
+
     function test_aMissingCoverFallsBackOrLeavesNoGap() {
         const controller = fakeController();
         controller.artworkPath = browseFixture.missingArtworkUrl();

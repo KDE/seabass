@@ -247,7 +247,7 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
         ~ClearFileProgress() { store.setFileProgress({}); }
     } clearFileProgress{archiveStore()};
     if (countFiles && totalFiles > 0) {
-        progress().start("Backing up", totalFiles);
+        progress().start("Saving an undo copy", totalFiles);
         archiveStore().setFileProgress(
             [this, &filesBefore](std::size_t done) { progress().tick(filesBefore + done); });
     }

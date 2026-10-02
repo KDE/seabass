@@ -195,11 +195,17 @@ Rectangle {
                             // "OK to unplug" where that is provably true,
                             // the old description where it is not: the
                             // reader asks this right after pressing eject.
+                            StatusBadge {
+                                objectName: "okToUnplugBadge"
+                                visible: !root.mounted && root.safeToUnplug
+                                label: "OK to unplug"
+                                badgeColor: Theme.good
+                            }
                             Label {
                                 id: unmountedLabel
                                 objectName: "unmountedLabel"
-                                visible: !root.mounted
-                                text: root.safeToUnplug ? "OK to unplug" : "(not mounted)"
+                                visible: !root.mounted && !root.safeToUnplug
+                                text: "(not mounted)"
                                 color: Theme.textMuted
                             }
                             // Said, not left as an empty line, for a

@@ -250,6 +250,33 @@ TestCase {
         return c;
     }
 
+    // Check Now answers on the spot: a spinner on the button and
+    // "Checking…" beside it, for long enough to be seen even when the
+    // answer is instant, and then what came back.
+    function test_check_now_shows_it_is_checking_and_then_the_answer() {
+        const checker = fakeUpdateChecker({state: "upToDate", message: "Seabass 0.8.8 is the newest release on any channel."});
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const button = findChild(page, "checkForUpdatesNow");
+        const spinner = findChild(page, "checkForUpdatesSpinner");
+        const result = findChild(page, "updateCheckResult");
+        compare(spinner.visible, false);
+        compare(result.text, "Seabass 0.8.8 is the newest release on any channel.");
+
+        button.clicked();
+        compare(spinner.running, true, "the spinner is on the button at once");
+        compare(result.text, "Checking…");
+        compare(button.enabled, false, "and the button waits");
+        const buttonPos = button.mapToItem(page, 0, 0);
+        const resultPos = result.mapToItem(page, 0, 0);
+        verify(resultPos.x > buttonPos.x + button.width - 1, "the answer is beside the button");
+        verify(Math.abs((resultPos.y + result.height / 2) - (buttonPos.y + button.height / 2)) < button.height,
+               "on the same line");
+
+        tryCompare(spinner, "running", false, 3000);
+        compare(result.text, "Seabass 0.8.8 is the newest release on any channel.");
+        compare(button.enabled, true);
+    }
+
     function test_the_result_is_said_where_the_check_is_switched_on() {
         const checker = fakeUpdateChecker({updateAvailable: true, state: "updateAvailable", latestVersion: "0.8.1",
                                            latestChannel: "stable",

@@ -65,6 +65,8 @@ FocusScope {
                                                  / root.chipColumns)
 
     signal stickActivated(string key)
+    // The small eject glyph a mounted stick's row shows under the pointer.
+    signal stickEjectRequested(string devicePath)
     signal groupActivated(string group)
 
     // The tool groups, shared with the page (HomeModel.js).
@@ -183,6 +185,9 @@ FocusScope {
                 required property string devicePath
                 required property bool isSdCard
                 required property bool isFolder
+                // The row itself, for a role a model may not carry
+                // (`mounted`): asked for by name, a missing one is false.
+                required property var model
                 readonly property string key: mountPoint.length > 0 ? mountPoint : devicePath
                 // Every key this row has gone by (see noteKey).
                 property var ownKeys: []
@@ -194,6 +199,8 @@ FocusScope {
                 text: label
                 stickIsSdCard: isSdCard
                 stickIsFolder: isFolder
+                ejectable: model.mounted === true && !isFolder && !root.compact
+                onEjectRequested: root.stickEjectRequested(devicePath)
                 fontSize: Theme.fontSmall
                 verticalPadding: Theme.tightSpacing
                 selected: key === root.selectedStickKey
@@ -447,7 +454,10 @@ FocusScope {
         // needs from the rail is handed in.
         property bool compact: false
         property real columnWidth: 0
+        // A stick that can be ejected from its row: see railEject.
+        property bool ejectable: false
         signal activated()
+        signal ejectRequested()
 
         width: entry.columnWidth
         implicitWidth: content.implicitWidth + 2 * Theme.crumbTextInset
@@ -484,7 +494,10 @@ FocusScope {
         RowLayout {
             id: content
             x: Theme.crumbTextInset
-            width: entry.width - 2 * Theme.crumbTextInset
+            // Room kept for the eject glyph on every row that can show
+            // it, hovered or not, so a name does not re-elide as the
+            // pointer passes.
+            width: entry.width - 2 * Theme.crumbTextInset - (entry.ejectable ? railEject.width : 0)
             anchors.verticalCenter: parent.verticalCenter
             spacing: entry.isStick ? Theme.tightSpacing : Theme.rowSpacing
 
@@ -542,6 +555,35 @@ FocusScope {
             hoverEnabled: entry.interactive
             cursorShape: Qt.PointingHandCursor
             onClicked: entry.activated()
+        }
+
+        // Eject, from the row: there only while the pointer is on the row,
+        // so the rail stays a list of names. Above `pointer`, so a click on
+        // it ejects and does not select.
+        Item {
+            id: railEject
+            objectName: "railEject"
+            visible: entry.ejectable && (pointer.containsMouse || ejectArea.containsMouse)
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.tightSpacing
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.round(name.fontInfo.pixelSize * 1.6)
+            height: width
+            SeabassIcon {
+                anchors.centerIn: parent
+                iconName: "media-eject"
+                size: Math.round(name.fontInfo.pixelSize * 1.2)
+                color: ejectArea.containsMouse ? Theme.text : Theme.textMuted
+            }
+            MouseArea {
+                id: ejectArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: entry.ejectRequested()
+                ToolTip.visible: containsMouse
+                ToolTip.text: "Eject " + entry.text
+            }
         }
     }
 }

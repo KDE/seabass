@@ -186,6 +186,16 @@ int main()
         std::cout << "case 6b (a readable source still copies) OK\n";
     }
 
+    // The whole filesystem: what a save leaves for the kernel (the backup
+    // archive, the log) is written out on request, not at eject.
+#if !defined(_WIN32)
+    {
+        assert(seabass::infrastructure::flushFilesystemOf(seabass::pathToUtf8(root)));
+        assert(!seabass::infrastructure::flushFilesystemOf(seabass::pathToUtf8(root / "no" / "such" / "place")));
+        std::cout << "case 7 (the filesystem a path is on can be flushed, and a missing path says no) OK\n";
+    }
+#endif
+
     fs::remove_all(root);
     std::cout << "all cases passed\n";
     return 0;
