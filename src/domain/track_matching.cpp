@@ -108,6 +108,19 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
             }
         }
 
+        // A row whose file is on the stick is that file, and the other
+        // catalog does not list it: nothing to match. Matching it by name
+        // instead paired an Engine-only third copy of "Too Little Too
+        // Late" (10_...) with OneLibrary's row for a different copy
+        // (28_...), and the sync wrote the one file's cues onto the other
+        // (WHALESHARK2, 2026-10-02). The name fallback below is for a row
+        // that cannot be found by its file: no path at all, or a path with
+        // no file behind it (the committed fixture has catalogs and no
+        // audio, which is how it matches at all).
+        if (!trackA.filePath.empty() && trackA.fileSizeBytes > 0) {
+            continue;
+        }
+
         const std::vector<const Track *> *candidates = nullptr;
         // The key names exactly one track on each side. Only then may a
         // length that cannot be read stand aside -- see the loop below.

@@ -176,7 +176,27 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             addPairPlans(rekordboxTracks, engineTracks, rekordboxMtime, engineMtime);
         }
         if (hasEngine && hasOneLibrary) {
-            addPairPlans(engineTracks, oneLibraryTracks, engineMtime, oneLibraryMtime);
+            // Only the files DeviceLibrary does not list. A file it does
+            // list has its OneLibrary row written by the mirror of every
+            // DeviceLibrary write (see below), so a plan of OneLibrary's
+            // own against Engine could only disagree with the pair above:
+            // the two decide the same file twice, and whichever lands
+            // last leaves OneLibrary apart from DeviceLibrary. A OneLibrary
+            // row already apart from its DeviceLibrary half is Library
+            // Health's to level, not a sync's.
+            std::set<std::string> deviceLibraryKeys;
+            for (const auto &track : rekordboxTracks) {
+                if (!track.filePath.empty()) {
+                    deviceLibraryKeys.insert(application::normalizedPathKey(track.filePath));
+                }
+            }
+            std::vector<domain::Track> oneLibraryOnly;
+            for (const auto &track : oneLibraryTracks) {
+                if (track.filePath.empty() || !deviceLibraryKeys.count(application::normalizedPathKey(track.filePath))) {
+                    oneLibraryOnly.push_back(track);
+                }
+            }
+            addPairPlans(engineTracks, oneLibraryOnly, engineMtime, oneLibraryMtime);
         }
         // rekordbox <-> OneLibrary is deliberately NOT planned as a pair.
         // They are one library written in two formats, not two catalogs to
