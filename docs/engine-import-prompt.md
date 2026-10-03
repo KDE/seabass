@@ -68,6 +68,8 @@ tool and the script refuse those labels.
 
    This tars the stick's `Engine Library` and `PIONEER` folders into
    `<work dir>/pre-plant.tar`, plants the matrix below (`cases.tsv`),
+   (a stick planted before is refused unless `--again` is passed, which
+   a second round started from a restore needs),
    records the planted stick (`before.tsv`) and tars it again
    (`planted.tar`). The plant arms the prompt and prints both numbers
    before and after; it ends `PLANT RESULT: PASS` or `FAIL`.
@@ -141,6 +143,9 @@ tracks held before are replaced on both sides.
 | l | last played 2026-01-02 03:04:05 UTC, isPlayed 1 | unchanged | Seabass `setLastPlayedAt`, SQL for the flags |
 | m | a track the player has already analysed, untouched | unchanged | nothing written: observed |
 | n | a control track nobody touched | unchanged | nothing written: observed |
+| o | no row (removed) | hot 1 at 10 s, hot 3 at 40 s, memory cue at 25 s; in the shared playlist where possible | rekordbox cue writers; Engine row removed by SQL |
+| p | no row (removed) | no cues; exportLibrary.db rating 4 and comment "Seabass probe: rekordbox comment" | same; OneLibrary annotation writer |
+| q | no playlist of that name | a rekordbox playlist already on the stick | nothing written: observed, or not plantable |
 
 The shared playlist is "Seabass test A" on the rig sticks (or the first
 name both catalogs hold with three or more tracks).
@@ -168,13 +173,36 @@ stick (exactly what the app's cover repair fixes), rekordbox's own image
 for the track, or the `--cover` image given to `--plant` (the script
 passes `COVER` from its environment).
 
+Cases o and p are the case the import exists for: a track rekordbox has
+and Engine does not. Both start as tracks both catalogs hold, and the
+plant removes the Engine row. libdjinterop's `remove_track` is a single
+`DELETE FROM Track` that relies on `ON DELETE CASCADE` without turning
+foreign keys on, which would leave `PerformanceData` and `PlaylistEntity`
+rows behind, so the plant deletes in one SQL transaction: the track's
+`PlaylistEntity` rows (Engine's own trigger relinks each list's chain),
+`PreparelistEntity` rows, `PerformanceData` row, then the `Track` row.
+Case o is chosen from rekordbox's copy of the shared playlist where it can
+be, because export.pdb is never written and membership cannot be added.
+For p, the only rekordbox-side metadata writable at all is
+exportLibrary.db's rating and comment (export.pdb keeps its own values),
+so a rating or comment that reaches Engine there also says which catalog
+the player imported from. The record holds the OneLibrary side as section
+RO (rating and comment read straight from `content`), and the report shows
+it beside rekordbox's value wherever the two differ.
+
+Case q needs a rekordbox playlist with no Engine namesake; the plant
+cannot make one (export.pdb is never written), so it is watched when the
+stick already has one and reported as not plantable otherwise.
+
 Case m cannot be planted: the analysis is the player's to make. If the
 stick has no analysed track, the case is reported as not planted, and
 loading any track on the player once before planting makes one. The
 library-wide counts (tracks with `isAnalyzed = 1`, tracks without beat
 data) are in every report regardless.
 
-**Arming the prompt.** export.pdb is never written. With `--no-arm` the
+**Arming the prompt.** export.pdb is never written. `--arm` (also the
+default when neither flag is given) sets Engine's counter as below when
+the two numbers are level. With `--no-arm` the
 plant leaves Engine's counter alone and only reports both numbers: for a
 stick whose pdb sequence a real rekordbox export has already moved (on
 SHAKEDOWN8B, connecting it to rekordbox 7.2.18 moved it from 535 to 539
@@ -208,8 +236,10 @@ the import rebuilds still lines up (its `id` field then shows the change).
 - **RT, RP** the same for the rekordbox side, read through the app's own
   rekordbox reader (export.pdb plus the ANLZ cue files). The import is
   supposed to be one-way; the report says so when it was.
-- **M** the pdb sequence, Engine's counter, and whether the player would
-  ask.
+- **RO** the OneLibrary (exportLibrary.db) side: cues, title, key, BPM,
+  rating and comment.
+- **M** the pdb sequence, Engine's counter, whether the player would
+  ask, and when the record was taken.
 
 ## Reading the report
 
@@ -228,7 +258,12 @@ Under each case, "also changed on this track" lists every other field of
 that track that moved, which is where rebuilt rows, new `lastEditTime`s,
 `pdbImportKey` stamps and cleared analysis show up.
 
-"Everything else" covers the tracks outside the matrix (counted per
+"Everything else" also gives the clocks: the newest `Track.lastEditTime`
+the import wrote (Engine's triggers stamp it with `strftime('%s')` on the
+player, so it is the player's clock in Unix seconds), the newest rewritten
+file's modification time, and when the after record was taken on the
+computer. The gaps include the time between eject and recording, so they
+bound the player's clock offset rather than measure it. It also covers the tracks outside the matrix (counted per
 field, with examples), covers rewritten to `image://fileart//`, analysis
 counts, playlists added, removed or rebuilt, the Information row, files
 under Engine Library added, removed or rewritten, and the rekordbox side.

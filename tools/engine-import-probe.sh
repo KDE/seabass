@@ -12,7 +12,7 @@
 #       snapshot the stick as it is (pre-plant.tar), plant the matrix
 #       (cases.tsv), record it (before.tsv), snapshot again (planted.tar).
 #       Plant options go to engine_import_probe as given: --no-arm,
-#       --skip <path substring> (repeatable), --cover <image>.
+#       --skip <path substring> (repeatable), --cover <image>, --again, --arm.
 #
 #   (insert the stick into the player, accept the import, eject it)
 #

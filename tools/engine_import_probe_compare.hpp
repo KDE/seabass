@@ -20,6 +20,7 @@
 //   EF  one file under "Engine Library", keyed by its relative path
 //   RT  one rekordbox track, keyed the same way as ET
 //   RP  one rekordbox playlist, keyed the same way as EP
+//   RO  one OneLibrary (exportLibrary.db) track, keyed the same way as ET
 //
 // ET and RT share their field names wherever the two catalogs hold the
 // same thing (title, key, bpm, rating, comment, cue.hot.N, cue.loop.N,
@@ -381,6 +382,8 @@ struct ItemOutcome
     std::optional<std::string> before;
     std::optional<std::string> after;
     std::optional<std::string> rekordbox;
+    // The same field in exportLibrary.db, for ET items, when recorded.
+    std::optional<std::string> oneLibrary;
     Verdict verdict = Verdict::Kept;
 };
 
@@ -520,6 +523,9 @@ inline CompareResult compareRecords(const Record &before, const Record &after, c
             if (!item.rekordboxSection().empty()) {
                 io.rekordbox = itemValue(before, item, item.rekordboxSection());
             }
+            if (item.section == "ET") {
+                io.oneLibrary = itemValue(before, item, "RO");
+            }
             io.verdict = classify(io.before, io.after, io.rekordbox, item.isSet());
             outcome.items.push_back(std::move(io));
         }
@@ -587,6 +593,66 @@ inline CompareResult compareRecords(const Record &before, const Record &after, c
         }
         if (changed == 0) {
             out.push_back("  Information row: unchanged");
+        }
+    }
+
+    // The player's clock, where it left a mark: SQLite triggers stamp
+    // Track.lastEditTime with strftime('%s') on the player, which is Unix
+    // seconds by the player's own clock; files it rewrote carry a
+    // modification time (on FAT a local time the computer interprets).
+    // Both set against when the after record was taken on this computer.
+    {
+        long long newestEdit = 0;
+        std::string newestEditTrack;
+        for (const auto &path : after.entities("ET")) {
+            const auto a = after.get("ET", path, "col.lastEditTime");
+            if (!a || a == before.get("ET", path, "col.lastEditTime")) {
+                continue;
+            }
+            try {
+                const long long v = std::stoll(*a);
+                if (v > newestEdit) {
+                    newestEdit = v;
+                    newestEditTrack = path;
+                }
+            } catch (const std::exception &) {
+            }
+        }
+        long long newestFile = 0;
+        std::string newestFileName;
+        for (const auto &f : after.entities("EF")) {
+            const auto a = after.get("EF", f, "mtime.unix");
+            if (!a || after.get("EF", f, "mtime") == before.get("EF", f, "mtime")) {
+                continue;
+            }
+            try {
+                const long long v = std::stoll(*a);
+                if (v > newestFile) {
+                    newestFile = v;
+                    newestFileName = f;
+                }
+            } catch (const std::exception &) {
+            }
+        }
+        const auto recorded = after.get("M", "-", "recordedAt.unix");
+        long long recordedAt = 0;
+        if (recorded) {
+            try {
+                recordedAt = std::stoll(*recorded);
+            } catch (const std::exception &) {
+            }
+        }
+        out.push_back("Clocks (Unix seconds; the gaps include the time between eject and the after record):");
+        out.push_back("  after record taken on this computer: " + (recordedAt ? std::to_string(recordedAt) : std::string("not recorded")));
+        if (newestEdit) {
+            out.push_back("  newest Track.lastEditTime the import wrote (player clock): " + std::to_string(newestEdit) + " on "
+                          + newestEditTrack + (recordedAt ? ", " + std::to_string(recordedAt - newestEdit) + " s before the record" : ""));
+        } else {
+            out.push_back("  no Track.lastEditTime changed, so no player clock reading from the database");
+        }
+        if (newestFile) {
+            out.push_back("  newest rewritten file: " + newestFileName + " at " + std::to_string(newestFile)
+                          + (recordedAt ? ", " + std::to_string(recordedAt - newestFile) + " s before the record" : ""));
         }
     }
 
@@ -781,7 +847,7 @@ inline CompareResult compareRecords(const Record &before, const Record &after, c
     {
         std::map<std::string, detail::FieldChange> changes;
         int rows = 0;
-        for (const char *section : {"RT", "RP"}) {
+        for (const char *section : {"RT", "RP", "RO"}) {
             const auto b = before.entities(section);
             const auto a = after.entities(section);
             std::set<std::string> all(b.begin(), b.end());
@@ -848,6 +914,13 @@ inline void printCompare(std::ostream &out, const CompareResult &result)
                     << (io.after && io.after == io.rekordbox && io.verdict != Verdict::Kept ? ", Engine now matches it"
                                                                                            : "")
                     << "]";
+                if (io.oneLibrary && io.oneLibrary != io.rekordbox) {
+                    out << " [OneLibrary: " << shown(io.oneLibrary)
+                        << (io.after && io.after == io.oneLibrary && io.verdict != Verdict::Kept
+                                ? ", Engine now matches it"
+                                : "")
+                        << "]";
+                }
             }
             out << "\n";
         }
