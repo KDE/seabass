@@ -12,12 +12,15 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <stdexcept>
 
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
 namespace seabass::infrastructure::onelibrary
 {
@@ -79,6 +82,39 @@ std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPat
     return ids;
 }
 
+// The analysis files the rows `contentIds` name, each once, in the
+// catalog's own spelling ("/PIONEER/USBANLZ/.../ANLZ0000.DAT"). Rows of
+// one file usually name one analysis file, but nothing makes them, so a
+// write meant for the file reaches every one they name. Empty for a
+// database whose content table has no analysisDataFilePath column.
+std::vector<std::string> analysisFilesOf(SqlCipherDb &db, const std::vector<int64_t> &contentIds)
+{
+    bool hasColumn = false;
+    {
+        SqlCipherStatement columns(db, "PRAGMA table_info(content)");
+        while (columns.step()) {
+            if (columns.columnText(1) == "analysisDataFilePath") {
+                hasColumn = true;
+            }
+        }
+    }
+    std::vector<std::string> files;
+    if (!hasColumn) {
+        return files;
+    }
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement find(db, "SELECT analysisDataFilePath FROM content WHERE content_id = ?");
+        find.bindInt64(1, contentId);
+        if (find.step()) {
+            std::string file = find.columnText(0);
+            if (!file.empty() && std::find(files.begin(), files.end(), file) == files.end()) {
+                files.push_back(std::move(file));
+            }
+        }
+    }
+    return files;
+}
+
 }  // namespace
 
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
@@ -95,6 +131,18 @@ bool OneLibraryCueWriter::existsFor(const std::string &pioneerRoot)
 OneLibraryCueWriter::OneLibraryCueWriter(std::string pioneerRoot, std::optional<std::string> realStickRoot)
     : m_pioneerRoot(std::move(pioneerRoot))
 {
+    // The analysis files are the stick's own, whichever copy of the
+    // database this writer was pointed at: pioneerRoot itself when it sits
+    // on the stick (whatever the folder is called), the stick's PIONEER
+    // folder when the database is a copy somewhere else.
+    m_anlzRoot = m_pioneerRoot;
+    const auto folder = [](const std::string &path) {
+        fs::path normal = pathFromUtf8(path).lexically_normal();
+        return normal.has_filename() ? normal : normal.parent_path();  // "/stick/" names "/stick"
+    };
+    if (realStickRoot && folder(m_pioneerRoot).parent_path() != folder(*realStickRoot)) {
+        m_anlzRoot = pathToUtf8(pathFromUtf8(*realStickRoot) / "PIONEER");
+    }
     m_stickRoot = realStickRoot ? std::move(*realStickRoot) : pathToUtf8(pathFromUtf8(m_pioneerRoot).parent_path());
     m_dbPath = dbPathFor(m_pioneerRoot);
     m_dbFile = pathFromUtf8(m_dbPath);
@@ -195,6 +243,36 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
     SqlCipherDb &db = writeConnection();
     // Every row listing this file gets the same cues; see contentIdsAt().
     const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+
+    // The cues a player shows first: the analysis file each row names,
+    // through the writer DeviceLibrary's cues go through, with its
+    // read-back and its put-back on failure. Before the table, so a file
+    // that refuses the write leaves the table as it was too.
+    //
+    // OnlyIfChanged: when DeviceLibrary lists this file it names the same
+    // analysis file, and a save mirroring a DeviceLibrary write here finds
+    // the cues already in it. Rewriting 167 KB per track to change nothing
+    // is what that would otherwise cost on a stick.
+    {
+        rekordbox::RekordboxCueWriter fileWriter(m_anlzRoot);
+        for (const std::string &analysisFile : analysisFilesOf(db, contentIds)) {
+            std::error_code ec;
+            if (!fs::is_regular_file(pathFromUtf8(rekordbox::extAnlzPath(m_anlzRoot, analysisFile)), ec)) {
+                // Nothing analysed the track, or the file was lost. The
+                // table below is all there is to write, and no player is
+                // known to read it, so say so rather than pass in silence.
+                std::cerr << "warning: onelibrary: " << contentPath << " names analysis file " << analysisFile
+                          << ", which is not on the stick; its cues went into the cue table only\n";
+                continue;
+            }
+            if (m_beforeCueFileWrite) {
+                for (const std::string &file : rekordbox::rekordboxCueFilesFor(m_anlzRoot, analysisFile)) {
+                    m_beforeCueFileWrite(file);
+                }
+            }
+            fileWriter.writeCuesToAnalysisFile(analysisFile, cues, rekordbox::RekordboxCueWriter::Rewrite::OnlyIfChanged);
+        }
+    }
 
     // The colour index of every cue each row has now, by slot and
     // position: the domain model carries no OneLibrary colour, so a
@@ -312,6 +390,31 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
     // call after the first refuse itself, since the file legitimately
     // changed size/mtime due to this writer's *own* prior write.
     refreshStalenessBaseline();
+}
+
+std::vector<std::string> OneLibraryCueWriter::cueFilesForPath(const std::string &filePath)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    std::vector<std::string> files;
+    try {
+        for (const std::string &analysisFile : analysisFilesOf(db, contentIdsAt(db, toContentPath(m_stickRoot, filePath)))) {
+            for (std::string &file : rekordbox::rekordboxCueFilesFor(m_anlzRoot, analysisFile)) {
+                std::error_code ec;
+                if (fs::is_regular_file(pathFromUtf8(file), ec)) {
+                    files.push_back(std::move(file));
+                }
+            }
+        }
+    } catch (const OneLibraryRowMissing &) {
+        // No row, nothing writeCuesForPath() could write.
+    }
+    return files;
+}
+
+void OneLibraryCueWriter::setBeforeCueFileWrite(std::function<void(const std::string &file)> hook)
+{
+    m_beforeCueFileWrite = std::move(hook);
 }
 
 void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 #include <memory>
 #include <optional>
@@ -137,7 +138,31 @@ public:
     // Callers should treat any exception here as failure of a
     // *secondary*, best-effort write, never roll back a primary
     // export.pdb/m.db write that already succeeded because of it.
+    //
+    // Writes two places, the analysis file first. A OneLibrary player
+    // takes a track's cues from the analysis file its row names
+    // (content.analysisDataFilePath), not from the cue table (OMNIS-DUO,
+    // issue #59), so the file is written through RekordboxCueWriter, the
+    // writer DeviceLibrary's cues go through, with its read-back. A file
+    // that already holds these cues is left alone. The cue table is then
+    // kept in step for whatever else reads it (rekordbox desktop may;
+    // unverified), never as the source of truth. A row naming no
+    // analysis file on the stick gets the table only, with a warning.
+    //
+    // The analysis files are not exportLibrary.db, so a caller backing
+    // up before a save must cover them too: cueFilesForPath() names them,
+    // and setBeforeCueFileWrite() lets a save back each one up as it goes.
     void writeCuesForPath(const std::string &filePath, const std::vector<domain::CuePoint> &cues);
+
+    // Every analysis file (.EXT and .DAT, absolute) writeCuesForPath()
+    // may write for this file path. Empty when OneLibrary does not list
+    // the path or its rows name no analysis file on the stick.
+    std::vector<std::string> cueFilesForPath(const std::string &filePath);
+
+    // Called with each analysis file just before writeCuesForPath()
+    // writes it, so a save can back it up first. A hook that throws
+    // stops the write before anything was written. Empty to turn off.
+    void setBeforeCueFileWrite(std::function<void(const std::string &file)> hook);
 
     // Removes a track's row entirely, along with its dependent cue/
     // playlist-membership rows, for cleanup call sites that just
@@ -331,6 +356,10 @@ private:
 
     std::string m_pioneerRoot;
     std::string m_stickRoot;
+    // The stick's PIONEER folder, where the analysis files are: pioneerRoot
+    // itself, or realStickRoot/PIONEER when the database is a copy.
+    std::string m_anlzRoot;
+    std::function<void(const std::string &file)> m_beforeCueFileWrite;
     std::string m_dbPath;
     std::filesystem::path m_dbFile;  // m_dbPath, decoded once for the fs:: calls
     std::uintmax_t m_originalFileSize = 0;

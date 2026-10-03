@@ -15,6 +15,8 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/anlz_source_for_root.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/sqlite_pending_journal.hpp"
 
 namespace seabass::infrastructure::onelibrary
@@ -83,6 +85,59 @@ std::optional<size_t> OneLibraryReader::countTracks()
 }
 
 std::vector<Track> OneLibraryReader::readAll()
+{
+    // The catalog pass is a fraction of the analysis-file pass, so the
+    // one bar a caller of readAll() sees follows the files, under the
+    // label this reader always had. The catalog pass still checks the
+    // cancellation token per track.
+    auto tracks = readCatalog(application::NullProgressReporter::instance());
+    readAnalysis(tracks, *m_progress, "Reading OneLibrary");
+    return tracks;
+}
+
+std::vector<Track> OneLibraryReader::readTracks()
+{
+    return readCatalog(*m_progress);
+}
+
+void OneLibraryReader::fillCues(std::vector<Track> &tracks)
+{
+    readAnalysis(tracks, *m_progress, "Reading OneLibrary cues");
+}
+
+void OneLibraryReader::readAnalysis(std::vector<Track> &tracks, application::ProgressReporter &progress,
+                                    const std::string &label)
+{
+    // A browsed stick backup serves its analysis files out of the
+    // archive; the same resolution the DeviceLibrary reader makes.
+    const auto source = rekordbox::anlzSourceForPioneerRoot(m_pioneerRoot);
+    progress.start(label, tracks.size());
+    size_t done = 0;
+    for (auto &track : tracks) {
+        if (track.format == "onelibrary" && !track.analysisFile.empty()) {
+            // A track's cues are its analysis file's, never the cue table's:
+            // see the class comment. A file that is not there (nothing
+            // analysed the track) means no cues, which is also what a
+            // player has to go on.
+            try {
+                auto cues = rekordbox::readAnalysisFileCues(*source, track.analysisFile);
+                track.cues = cues ? std::move(*cues) : std::vector<CuePoint>{};
+            } catch (const std::exception &e) {
+                track.cues.clear();
+                m_progress->warn("content_id=" + track.sourceId + ": analysis file " + track.analysisFile
+                              + " unreadable, its cues were not read (" + e.what() + ")");
+            }
+            if (auto modified = rekordbox::analysisFileModifiedAt(m_pioneerRoot, track.analysisFile)) {
+                track.metadataModifiedAt = *modified;
+            }
+        }
+        progress.tick(++done);
+        m_cancel.throwIfCancelled();
+    }
+    progress.finish();
+}
+
+std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &progress)
 {
     if (!OneLibraryCueWriter::existsFor(m_pioneerRoot)) {
         throw std::runtime_error("no OneLibrary (exportLibrary.db) present for this stick");
@@ -160,35 +215,6 @@ std::vector<Track> OneLibraryReader::readAll()
         }
     }
 
-    // content_id -> cues. kind=0 is a memory cue, kind=1..8 a hot cue in
-    // that slot -- same encoding OneLibraryCueWriter writes (see its own
-    // doc comment on the confidence level of that mapping).
-    std::unordered_map<int64_t, std::vector<CuePoint>> cuesByContentId;
-    {
-        SqlCipherStatement stmt(db, "SELECT content_id, kind, inUsec, cueComment, isActiveLoop, outUsec FROM cue "
-                                    "ORDER BY content_id");
-        while (stmt.step()) {
-            m_cancel.throwIfCancelled();
-            int64_t contentId = stmt.columnInt64(0);
-            int64_t kind = stmt.columnInt64(1);
-            CuePoint cue;
-            cue.kind = kind == 0 ? CuePoint::Kind::Memory : CuePoint::Kind::Hot;
-            cue.hotCueNumber = kind == 0 ? 0 : static_cast<int>(kind);
-            cue.positionMs = static_cast<double>(stmt.columnInt64(2)) / 1000.0;
-            cue.comment = stmt.columnText(3);
-            // A loop is flagged and carries its out point; the writer
-            // mirrors this, so loops survive a OneLibrary round trip.
-            if (stmt.columnInt64(4) != 0 && stmt.columnInt64(5) > stmt.columnInt64(2)) {
-                cue.isLoop = true;
-                cue.loopEndMs = static_cast<double>(stmt.columnInt64(5)) / 1000.0;
-            }
-            // No color-lookup table exists anywhere in this schema (see
-            // OneLibraryCueWriter's own doc comment) -- left empty rather
-            // than fabricated, same honesty the writer already has.
-            cuesByContentId[contentId].push_back(std::move(cue));
-        }
-    }
-
     size_t total = 0;
     {
         SqlCipherStatement count(db, "SELECT count(*) FROM content");
@@ -196,7 +222,7 @@ std::vector<Track> OneLibraryReader::readAll()
             total = static_cast<size_t>(count.columnInt64(0));
         }
     }
-    m_progress->start("Reading OneLibrary", total);
+    progress.start("Reading OneLibrary", total);
 
     // The album table is optional. rekordbox has shipped several
     // exportLibrary.db schema versions (see the OneLibrary issues), and
@@ -211,15 +237,20 @@ std::vector<Track> OneLibraryReader::readAll()
     // album table present and content.album_id absent, which passed a
     // table-only check and then failed to prepare the query.
     bool hasAlbums = false;
+    bool hasAnalysisPath = false;
     {
+        bool hasAlbumTable = false;
         SqlCipherStatement table(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='album'");
         if (table.step() && table.columnInt64(0) > 0) {
-            SqlCipherStatement columns(db, "PRAGMA table_info(content)");
-            while (columns.step()) {
-                if (columns.columnText(1) == "album_id") {
-                    hasAlbums = true;
-                    break;
-                }
+            hasAlbumTable = true;
+        }
+        SqlCipherStatement columns(db, "PRAGMA table_info(content)");
+        while (columns.step()) {
+            const std::string column = columns.columnText(1);
+            if (column == "album_id") {
+                hasAlbums = hasAlbumTable;
+            } else if (column == "analysisDataFilePath") {
+                hasAnalysisPath = true;
             }
         }
     }
@@ -232,10 +263,13 @@ std::vector<Track> OneLibraryReader::readAll()
     // real stick says album_id.
     const std::string albumColumn = hasAlbums ? "al.name" : "NULL";
     const std::string albumJoin = hasAlbums ? " LEFT JOIN album al ON al.album_id = c.album_id" : "";
+    // Every real exportLibrary.db seen has the column; a database without
+    // it names no analysis files, so its tracks read with no cues.
+    const std::string analysisColumn = hasAnalysisPath ? "c.analysisDataFilePath" : "NULL";
     SqlCipherStatement stmt(db,
                              "SELECT c.content_id, c.title, a.name, c.bpmx100, c.length, c.path, c.fileName, "
                              "c.bitrate, c.fileSize, k.name, c.djPlayCount, i.path, " + albumColumn
-                                 + " FROM content c "
+                                 + ", " + analysisColumn + " FROM content c "
                              "LEFT JOIN artist a ON a.artist_id = c.artist_id_artist "
                              "LEFT JOIN key k ON k.key_id = c.key_id "
                              "LEFT JOIN image i ON i.image_id = c.image_id" + albumJoin);
@@ -316,20 +350,18 @@ std::vector<Track> OneLibraryReader::readAll()
             }
         }
 
-        auto cuesIt = cuesByContentId.find(contentId);
-        if (cuesIt != cuesByContentId.end()) {
-            track.cues = cuesIt->second;
-        }
+        // Column 13. Where the track's cues are: see readAnalysis().
+        track.analysisFile = stmt.columnText(13);
         auto playlistsIt = playlistsByContentId.find(contentId);
         if (playlistsIt != playlistsByContentId.end()) {
             track.playlists = playlistsIt->second;
         }
 
         tracks.push_back(std::move(track));
-        m_progress->tick(++done);
+        progress.tick(++done);
         m_cancel.throwIfCancelled();
     }
-    m_progress->finish();
+    progress.finish();
 
     return tracks;
 }

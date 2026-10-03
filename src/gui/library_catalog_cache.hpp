@@ -231,8 +231,10 @@ public:
     // path that also best-effort mirrors cues into OneLibrary's
     // exportLibrary.db needs (Clean Up, Local Cue restore, Add Cue), so
     // that mirrored cache entry doesn't go stale even though it's never
-    // the format actually being edited. A no-op mirror invalidation for
-    // any other format.
+    // the format actually being edited. And "rekordbox" when format ==
+    // "onelibrary": a OneLibrary cue write lands in the analysis file
+    // DeviceLibrary reads its cues from too (#59). A no-op mirror
+    // invalidation for Engine.
     void invalidateWithOneLibraryMirror(const std::string &format, const std::string &path);
 
     // Every catalog on one stick at once, for a write that replaced files

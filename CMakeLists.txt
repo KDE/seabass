@@ -2203,10 +2203,16 @@ seabass_cli_test(cli_scan_no_stick EXIT 1 ARGS scan --rekordbox
 # 28, not the 213 of before: 185 of those were a rekordbox memory cue at
 # 0:00 offered to Engine, which "Ignore cues at 0:00" (on by default)
 # now keeps out of the comparison.
+#
+# Since #59 OneLibrary's cues are its analysis files', and Engine is paired
+# only with the OneLibrary rows no DeviceLibrary row speaks for (the app's
+# rule; the CLI used to pair every row). So 1383 matched, not 2427; 1 copy
+# to OneLibrary, not the 28 its cue table made up; and 30 to Engine, not 28,
+# with the OneLibrary-only rows now offering what their files hold.
 seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469\\n" "onelibrary tracks: 1644\\n"
-           "matched tracks:    2427\\n" "Would copy cues to Engine for 28 track\\(s\\)"
-           "Would copy cues to rekordbox for 9 track\\(s\\)" "Would copy cues to OneLibrary for 28 track\\(s\\)"
+           "matched tracks:    1383\\n" "Would copy cues to Engine for 30 track\\(s\\)"
+           "Would copy cues to rekordbox for 9 track\\(s\\)" "Would copy cues to OneLibrary for 1 track\\(s\\)"
            "--dry-run: no changes made."
     FORBID "Apply the" "backed up")
 seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
@@ -3227,6 +3233,19 @@ target_link_libraries(pending_deletion_resolver_test PRIVATE seabass_core_testin
 target_include_directories(pending_deletion_resolver_test PRIVATE src)
 add_test(NAME pending_deletion_resolver_test COMMAND pending_deletion_resolver_test)
 
+# OneLibrary's cues live in the analysis files its rows name (#59), read
+# and written by the DeviceLibrary code, so a test that lists its own
+# OneLibrary sources lists that code too.
+set(SEABASS_ONELIBRARY_ANLZ_SOURCES
+    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
+    src/infrastructure/rekordbox/anlz_byte_source.cpp
+    src/infrastructure/rekordbox/anlz_source_for_root.cpp
+    src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/stick_backup/zip64_reader.cpp
+    src/infrastructure/stick_backup/zip_format.cpp
+    src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
+)
+
 # Cross-platform now, talks to libsqlcipher via runtime LoadLibrary/
 # dlopen, same as seabass_core's own onelibrary sources above. Needs
 # libsqlcipher's runtime library actually present on whichever machine
@@ -3236,6 +3255,7 @@ add_executable(onelibrary_cue_writer_test
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
+    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
     tests/onelibrary_cue_writer_test.cpp
 )
 target_link_libraries(onelibrary_cue_writer_test PRIVATE seabass_core_testing)
@@ -3251,6 +3271,7 @@ add_executable(onelibrary_cue_writer_adapter_test
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
+    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
     tests/onelibrary_cue_writer_adapter_test.cpp
 )
 target_link_libraries(onelibrary_cue_writer_adapter_test PRIVATE seabass_core_testing)
@@ -3268,6 +3289,7 @@ add_executable(onelibrary_reader_test
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
+    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
     tests/onelibrary_reader_test.cpp
 )
 target_link_libraries(onelibrary_reader_test PRIVATE seabass_core_testing)
@@ -3277,6 +3299,26 @@ if(NOT WIN32)
     target_link_libraries(onelibrary_reader_test PRIVATE ${CMAKE_DL_LIBS})
 endif()
 add_test(NAME onelibrary_reader_test COMMAND onelibrary_reader_test)
+
+# Issue #59: OneLibrary's cues are its analysis files', read, written and
+# paired for Sync as such, on a copy of the anonymized fixture.
+add_executable(onelibrary_anlz_cues_test
+    src/infrastructure/onelibrary/onelibrary_key.cpp
+    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
+    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
+    src/infrastructure/onelibrary/onelibrary_reader.cpp
+    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
+    tests/onelibrary_anlz_cues_test.cpp
+)
+target_link_libraries(onelibrary_anlz_cues_test PRIVATE seabass_core_testing)
+target_include_directories(onelibrary_anlz_cues_test PRIVATE src tests)
+target_link_libraries(onelibrary_anlz_cues_test PRIVATE ZLIB::ZLIB)
+if(NOT WIN32)
+    target_link_libraries(onelibrary_anlz_cues_test PRIVATE ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME onelibrary_anlz_cues_test COMMAND onelibrary_anlz_cues_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(onelibrary_anlz_cues_test PROPERTIES LABELS "integration")
 
 # --- Integration suite: the real use cases against whole real libraries ---
 # --- -- slower, and tagged with the CTest LABEL "integration" so they ---

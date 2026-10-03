@@ -186,9 +186,10 @@ size_t unitsOfStage(LibraryCatalogCache::Detail stage, const std::string &format
         // OneLibrary": one per row.
         return tracks;
     case LibraryCatalogCache::Detail::Cues:
-        // "Reading rekordbox cues": one per row; the other two catalogs
-        // hold their cues and announce nothing.
-        return format == "rekordbox" ? tracks : 0;
+        // "Reading rekordbox cues", "Reading OneLibrary cues": one per
+        // row, the analysis files; Engine holds its cues in m.db and
+        // announces nothing.
+        return format == "rekordbox" || format == "onelibrary" ? tracks : 0;
     case LibraryCatalogCache::Detail::Full:
         // completeTracks(): "Checking files" per row, and for the two
         // catalogs that name cover files, "Checking cover files" per row.
@@ -606,8 +607,12 @@ void LibraryCatalogCache::invalidateEveryCatalogOn(const std::string &stickRoot)
 void LibraryCatalogCache::invalidateWithOneLibraryMirror(const std::string &format, const std::string &path)
 {
     invalidate(format, path);
+    // Both ways: the two share their cues' analysis files (#59), so a
+    // OneLibrary cue write changes what DeviceLibrary reads as well.
     if (format == "rekordbox") {
         invalidate("onelibrary", path);
+    } else if (format == "onelibrary") {
+        invalidate("rekordbox", path);
     }
 }
 

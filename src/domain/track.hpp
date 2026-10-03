@@ -111,6 +111,16 @@ struct Track
     std::string filename;
     std::string filePath;     // best-effort resolved absolute path to the audio file on disk, empty if unresolved
     std::string artworkPath;  // best-effort resolved path to a cover art image file, empty if unavailable
+    // The analysis file this row names, exactly as its catalog spells it
+    // ("/PIONEER/USBANLZ/P06D/0001F5E1/ANLZ0000.DAT"): export.pdb's
+    // analyze_path, exportLibrary.db's content.analysisDataFilePath. Empty
+    // for Engine and for a row that names none.
+    //
+    // For both rekordbox catalogs this file, not the catalog, is where a
+    // player takes the track's cues from (an OMNIS-DUO, 2026-10-03, issue
+    // #59), and a DeviceLibrary row and a OneLibrary row naming the same
+    // file are therefore ONE cue source: writing one writes the other.
+    std::string analysisFile;
     // Non-empty (e.g. "TIDAL") if this track is a streaming-service link
     // rather than a local file, Engine only, set via a raw-SQL read of
     // Track.streamingSource (libdjinterop's public API doesn't expose

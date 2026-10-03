@@ -62,6 +62,22 @@ public:
     // a cue is junk that points nowhere in the track.
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
+    // The same write, for the analysis file a catalog row names
+    // ("/PIONEER/USBANLZ/.../ANLZ0000.DAT") rather than an export.pdb id.
+    // writeHotCues() is this after its lookup; OneLibrary's rows name
+    // their files through content.analysisDataFilePath, often the very
+    // file a DeviceLibrary row names, and their cues go through here so
+    // that both catalogs' cues are written by one writer.
+    //
+    // OnlyIfChanged leaves the files alone when the write would not
+    // change a byte of either, and returns false; for a caller that may
+    // be writing cues the file already holds (OneLibrary's half of a save
+    // whose DeviceLibrary half just wrote the same file). Throws, as
+    // writeHotCues() does, when the .EXT is not there.
+    enum class Rewrite { Always, OnlyIfChanged };
+    bool writeCuesToAnalysisFile(const std::string &analyzePath, const std::vector<domain::CuePoint> &cues,
+                                 Rewrite rewrite = Rewrite::Always);
+
     // Runs after each file is written, before it is read back, so a test
     // can damage a file there. Empty to turn it off.
     static void setAfterWriteForTesting(std::function<void(const std::string &path)> hook);

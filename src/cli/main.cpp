@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "application/use_cases/onelibrary_sync_rows.hpp"
 #include "application/path_key.hpp"
 #include "application/ports/backup_store.hpp"
 #include "application/ports/cue_writer.hpp"
@@ -1001,10 +1002,10 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     auto engineMtime = mtimeOrEpoch(engineDbFile);
     auto oneLibraryMtime = mtimeOrEpoch(oneLibraryDbFile);
 
-    // rekordbox <-> OneLibrary is deliberately NOT a pair: they are one
-    // library written in two formats, and every rekordbox write below
-    // mirrors into OneLibrary, so they cannot drift apart. See
-    // sync_controller.cpp, which makes the same choice for the same reason.
+    // rekordbox <-> OneLibrary is deliberately NOT a pair: for cues they
+    // are one source, the analysis file both rows name (#59), so there is
+    // nothing to compare. See sync_controller.cpp, which makes the same
+    // choice for the same reason.
     std::vector<SyncPlan> plans;
     auto addPair = [&plans](const std::vector<seabass::domain::Track> &a,
                             const std::vector<seabass::domain::Track> &b,
@@ -1018,7 +1019,12 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         addPair(rekordboxTracks, engineTracks, rekordboxMtime, engineMtime);
     }
     if (hasEngine && hasOneLibrary) {
-        addPair(engineTracks, oneLibraryTracks, engineMtime, oneLibraryMtime);
+        // Only the rows no DeviceLibrary row speaks for, as in the app: a
+        // row sharing a DeviceLibrary row's analysis file, or its audio
+        // file, is written by the rekordbox <-> Engine pair above.
+        addPair(engineTracks,
+                seabass::application::oneLibraryRowsToPairWithEngine(rekordboxTracks, oneLibraryTracks), engineMtime,
+                oneLibraryMtime);
     }
     // Hot cues that differ on both sides are the DJ's choice, made in the
     // app; this has no way to ask. The same function the app uses takes them
@@ -1207,6 +1213,24 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         }
         if (hasOneLibrary && (!toOneLibrary.empty() || !toRekordbox.empty())) {
             rekordboxFiles.insert(oneLibraryDbFile);  // written directly, or mirrored into
+            // And the analysis files its rows name, which is where a
+            // OneLibrary cue write lands first (#59). Usually the ones the
+            // rekordbox targets above already put in the set.
+            seabass::infrastructure::onelibrary::OneLibraryCueWriter files(*resolved.rekordboxPath);
+            for (const auto *plan : toOneLibrary) {
+                if (!targetOf(*plan)->filePath.empty()) {
+                    for (auto &file : files.cueFilesForPath(targetOf(*plan)->filePath)) {
+                        rekordboxFiles.insert(std::move(file));
+                    }
+                }
+            }
+            for (const auto *plan : toRekordbox) {
+                if (!targetOf(*plan)->filePath.empty()) {
+                    for (auto &file : files.cueFilesForPath(targetOf(*plan)->filePath)) {
+                        rekordboxFiles.insert(std::move(file));
+                    }
+                }
+            }
         }
 
         if (!rekordboxFiles.empty()) {

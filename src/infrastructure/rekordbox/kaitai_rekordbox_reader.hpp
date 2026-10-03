@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +28,24 @@ namespace seabass::infrastructure::rekordbox
 // uncolored rekordbox cue compare equal to an uncolored Engine cue in
 // domain::cueSetsEqual().
 std::string rekordboxCueColor(bool hasRgb, unsigned char r, unsigned char g, unsigned char b, int colorId);
+
+// One track's cues from its analysis files, keyed by the path a catalog
+// names for them rather than by a catalog's own row id: export.pdb's
+// analyze_path and exportLibrary.db's content.analysisDataFilePath are the
+// same kind of string ("/PIONEER/USBANLZ/P06D/0001F5E1/ANLZ0000.DAT") and
+// often name the same file. Reads the .EXT's lists and the .DAT's legacy
+// ones, exactly as KaitaiRekordboxReader::fillCues() does for its own rows.
+//
+// nullopt when there is no .EXT (a track nothing analysed). Throws when
+// the .EXT does not parse; a damaged legacy list is warned about and
+// skipped, as in the reader.
+std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
+                                                                 const std::string &analyzePath);
+
+// The .EXT's mtime in Unix seconds: the one file that moves when this
+// track's cues change and for no other track. nullopt when it cannot be
+// stat'd (no such file, or bytes served from an archive).
+std::optional<std::int64_t> analysisFileModifiedAt(const std::string &pioneerRoot, const std::string &analyzePath);
 
 // Reads a rekordbox USB export (PIONEER/rekordbox/export.pdb +
 // PIONEER/USBANLZ/**/ANLZ*.{DAT,EXT}) using the Kaitai-generated parser in

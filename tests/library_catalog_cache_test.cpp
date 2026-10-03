@@ -613,7 +613,7 @@ void stagedCases()
 
     // Stage 15 (#58): plannedUnits() is what the passes still to run
     // would announce, from the catalog's row count: a unit per row for
-    // the catalog read, for rekordbox's cue pass, and for Full's file
+    // the catalog read, for the two rekordbox catalogs' cue passes, and for Full's file
     // check (plus its cover check for the two catalogs that name cover
     // files); nothing for a stage the entry holds; unknown when the
     // catalog cannot be counted.
@@ -630,7 +630,8 @@ void stagedCases()
         assert(cache.plannedUnits("rekordbox", stick, Detail::Cues) == 20);
         assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 30);
         assert(cache.plannedUnits("engine", "/stick/Engine Library", Detail::Full) == 20 + 0 + 40);
-        assert(cache.plannedUnits("onelibrary", stick, Detail::Full) == 10 + 0 + 20);
+        // OneLibrary's cue pass reads its analysis files (#59): a unit a row.
+        assert(cache.plannedUnits("onelibrary", stick, Detail::Full) == 10 + 10 + 20);
         assert(!cache.plannedUnits("rekordbox", "/nocount/PIONEER", Detail::Full).has_value());
         assert(cache.countTracks("rekordbox", stick) == 10);
 
