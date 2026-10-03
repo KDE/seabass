@@ -173,10 +173,13 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         // there is anything to offer, and the store does not take those.
         const std::vector<CuePoint> stickCues = withoutJunkCues(stick.cues);
         const std::vector<CuePoint> storedCues = withoutJunkCues(stored->cues);
+        // Half a beat when both copies know the tempo, else the fallback;
+        // a loop only ever equals a loop (domain::sameCuePlace).
+        const double toleranceMs = cueToleranceMsFor(stick.bpm, stored->bpm);
         proposal.cuesFillAGap = storedCues.empty() && !stickCues.empty();
         proposal.cuesConflict =
-            !storedCues.empty() && !stickCues.empty() && !cueSetsEqual(storedCues, stickCues);
-        proposal.cuesOffered = takeIncomingCues(stickCues, storedCues, stickModifiedAt, storedAt);
+            !storedCues.empty() && !stickCues.empty() && !cueSetsEqual(storedCues, stickCues, toleranceMs);
+        proposal.cuesOffered = takeIncomingCues(stickCues, storedCues, stickModifiedAt, storedAt, toleranceMs);
 
         // ---- rating ----
         proposal.ratingConflict = stick.rating && stored->rating && *stick.rating != *stored->rating;
@@ -271,7 +274,7 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         const Track &copy = p.stickTrack;
         return std::any_of(rows->second.begin(), rows->second.end(), [&](const Track *row) {
             const bool holdsIt =
-                cueSetsEqual(row->cues, copy.cues) && row->rating == copy.rating && row->comment == copy.comment;
+                cueSetsEqual(row->cues, copy.cues, cueToleranceMsFor(row->bpm, copy.bpm)) && row->rating == copy.rating && row->comment == copy.comment;
             return holdsIt && (!copy.cues.empty() || row->durationSeconds <= 0.0);
         });
     };

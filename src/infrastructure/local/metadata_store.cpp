@@ -765,6 +765,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         std::string storedComment;
         std::string storedArtworkSha;
         std::int64_t storedModifiedAt = 0;
+        double storedBpm = 0.0;
         {
             // Two keys, so a row first stored under a filename is found
             // again once the DJ fixes the tags -- and a row stored with
@@ -789,10 +790,10 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             // therefore decisive even when it ends in no match.
             static constexpr const char *ByMatchKey =
                 "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at, "
-                "relative_path FROM tracks WHERE match_key = ? ORDER BY id";
+                "relative_path, bpm FROM tracks WHERE match_key = ? ORDER BY id";
             static constexpr const char *ByFallbackKey =
                 "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at, "
-                "relative_path FROM tracks WHERE fallback_key = ? ORDER BY id";
+                "relative_path, bpm FROM tracks WHERE fallback_key = ? ORDER BY id";
 
             struct Row
             {
@@ -804,6 +805,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 double durationSeconds = 0.0;
                 std::int64_t modifiedAt = 0;
                 std::string relativePath;
+                double bpm = 0.0;
             };
 
             // Returns whether the key named any row at all, and sets the
@@ -836,6 +838,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                     const std::string authored = find.columnText(6);
                     row.modifiedAt = epochFromIsoTimestamp(authored.empty() ? find.columnText(7) : authored);
                     row.relativePath = find.columnText(8);
+                    row.bpm = find.columnDouble(9);
                     rows.push_back(std::move(row));
                 }
                 const Row *chosen = nullptr;
@@ -877,6 +880,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                     storedPlayCount = chosen->playCount;
                     storedArtworkSha = chosen->artworkSha;
                     storedModifiedAt = chosen->modifiedAt;
+                    storedBpm = chosen->bpm;
                 }
                 return !rows.empty();
             };
@@ -907,8 +911,13 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // one; the restore path runs the same rule with the two the
         // other way round, which is the whole point of it living in the
         // domain rather than here.
-        const bool writeCues =
-            domain::takeIncomingCues(incomingCues, storedCues, source.catalogModifiedAt, storedModifiedAt);
+        //
+        // Cues compare within half a beat when the stick and the store
+        // agree on the tempo, else the fallback, and a loop only ever
+        // equals a loop: the same comparison Sync makes.
+        const double cueToleranceMs = domain::cueToleranceMsFor(track.bpm, storedBpm);
+        const bool writeCues = domain::takeIncomingCues(incomingCues, storedCues, source.catalogModifiedAt,
+                                                        storedModifiedAt, cueToleranceMs);
         const bool writeRating =
             domain::takeIncomingRating(track.rating, storedRating, source.catalogModifiedAt, storedModifiedAt);
         const bool writeComment =
@@ -921,7 +930,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // stick offered something, the store already had something else,
         // and what was stored won.
         const bool cuesConflict = !storedCues.empty() && !incomingCues.empty() &&
-                                   !domain::cueSetsEqual(storedCues, incomingCues);
+                                   !domain::cueSetsEqual(storedCues, incomingCues, cueToleranceMs);
         const bool ratingConflict = storedRating.has_value() && track.rating.has_value() &&
                                      *storedRating != *track.rating;
         const bool commentConflict = !storedComment.empty() && !track.comment.empty() &&

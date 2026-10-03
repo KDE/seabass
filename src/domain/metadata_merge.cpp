@@ -41,7 +41,7 @@ bool takeIncomingField(bool incomingHasContent, bool existingHasContent, bool va
 }
 
 bool takeIncomingCues(const std::vector<CuePoint> &incoming, const std::vector<CuePoint> &existing,
-                       std::int64_t incomingModifiedAt, std::int64_t existingModifiedAt)
+                       std::int64_t incomingModifiedAt, std::int64_t existingModifiedAt, double toleranceMs)
 {
     if (incoming.empty()) {
         return false;
@@ -50,10 +50,12 @@ bool takeIncomingCues(const std::vector<CuePoint> &incoming, const std::vector<C
         return true;
     }
     // cueSetsEqual, not operator==: it ignores ordering and allows the
-    // sub-second drift a cross-format conversion introduces, so two
+    // drift a cross-format conversion introduces, so two
     // spellings of one cue set do not read as a conflict and get
-    // rewritten on every single run.
-    if (cueSetsEqual(incoming, existing)) {
+    // rewritten on every single run. Loop-aware: a loop that read as the
+    // cue at its start made this return false, and the loop never reached
+    // the store (or, restored, the stick).
+    if (cueSetsEqual(incoming, existing, toleranceMs)) {
         return false;
     }
     if (incoming.size() != existing.size()) {

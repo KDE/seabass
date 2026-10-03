@@ -225,5 +225,35 @@ int main()
     }
 
     std::cout << "all cases passed\n";
+    // A loop is never the cue at its start: two copies, pad 1 a loop on
+    // one and a cue on the other, are a conflict, not "already
+    // consistent". The same for a loop whose out point differs.
+    {
+        const CuePoint cue{CuePoint::Kind::Hot, 1, 1000.0, "", ""};
+        const CuePoint loop{CuePoint::Kind::Hot, 1, 1000.0, "", "", true, 5000.0};
+        const CuePoint longer{CuePoint::Kind::Hot, 1, 1000.0, "", "", true, 9000.0};
+        for (const CuePoint &other : {cue, longer}) {
+            std::vector<Track> tracks = {
+                makeTrack("1", "song.mp3", 200.0, {loop}, "Song", "Artist"),
+                makeTrack("2", "song.mp3", 200.0, {other}, "Song", "Artist"),
+            };
+            auto groups = DuplicateTrackFinder::find(tracks);
+            assert(groups.size() == 1);
+            assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::Conflict);
+        }
+        // Half a beat when the copies agree on a tempo.
+        std::vector<Track> tracks = {
+            makeTrack("1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""}}, "Song", "Artist"),
+            makeTrack("2", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1100.0, "", ""}}, "Song", "Artist"),
+        };
+        tracks[0].bpm = tracks[1].bpm = 128.0;
+        auto groups = DuplicateTrackFinder::find(tracks);
+        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::AlreadyConsistent);
+        tracks[1].bpm = 0.0;
+        groups = DuplicateTrackFinder::find(tracks);
+        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::Conflict);
+        std::cout << "case loop (a loop is never the cue at its start; half a beat with a tempo) OK\n";
+    }
+
     return 0;
 }

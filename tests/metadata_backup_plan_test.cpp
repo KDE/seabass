@@ -502,5 +502,49 @@ int main()
     }
 
     std::cout << "metadata_backup_plan_test: all cases passed\n";
+    // ---- a loop is never the cue at its start ---------------------------
+    // The stick turned pad 2 into a loop since the last backup. Taken for
+    // the stored cue at its start, it was never offered, and the store
+    // kept a cue the stick no longer has.
+    {
+        Track stick = stickTrack("Zwielicht");
+        CuePoint loop = hotCue(2, 2000.0);
+        loop.isLoop = true;
+        loop.loopEndMs = 6000.0;
+        stick.cues = {hotCue(1, 1000.0), loop};
+        Track stored = storedTrack("Zwielicht");
+        stored.cues = {hotCue(1, 1000.0), hotCue(2, 2000.0)};
+
+        const auto &p = only(planMetadataBackup({stick}, {stored}, StickWrittenRecently));
+        assert(p.cuesConflict && "a loop where the store has a cue is a difference");
+        assert(p.cuesOffered && "and the newer stick's loop is offered");
+
+        // A loop made longer on the stick, the same way.
+        stored.cues = {hotCue(1, 1000.0), loop};
+        CuePoint longer = loop;
+        longer.loopEndMs = 9000.0;
+        stick.cues = {hotCue(1, 1000.0), longer};
+        const auto &q = only(planMetadataBackup({stick}, {stored}, StickWrittenRecently));
+        assert(q.cuesConflict && q.cuesOffered && "a loop whose out point moved is another loop");
+        std::cout << "case loop (a loop on the stick is offered, its out point too) OK\n";
+    }
+
+    // ---- half a beat when both copies know the tempo ----------------------
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.bpm = 128.0;
+        stick.cues = {hotCue(1, 1100.0)};
+        Track stored = storedTrack("Zwielicht");
+        stored.bpm = 128.0;
+        stored.cues = {hotCue(1, 1000.0)};
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenRecently);
+        assert((plan.proposals.empty() || !plan.proposals.front().cuesConflict)
+               && "100 ms is within half a beat at 128 BPM: the same cue");
+        stored.bpm = 0.0;
+        assert(only(planMetadataBackup({stick}, {stored}, StickWrittenRecently)).cuesConflict
+               && "without a tempo the 60 ms fallback holds");
+        std::cout << "case tempo (half a beat of the agreed tempo, else 60 ms) OK\n";
+    }
+
     return 0;
 }

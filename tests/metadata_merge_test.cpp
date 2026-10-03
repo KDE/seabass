@@ -148,10 +148,39 @@ void takeIncomingFieldOrdersItsThreeSteps()
     assert(!takeIncomingField(true, true, true, Older, Newer));
 }
 
+// The loop drop the review of 42eb4c0f flagged: cueSetsEqual took a loop
+// for the cue at its start, so a newer copy whose pad 2 had become a loop
+// read as "the same cues" and the loop never reached the store (backup) or
+// the stick (restore). A loop whose out point moved was dropped the same
+// way.
+void aLoopIsNeverTheCueAtItsStart()
+{
+    CuePoint loop = hotCue(2, 2000.0);
+    loop.isLoop = true;
+    loop.loopEndMs = 6000.0;
+    const std::vector<CuePoint> withLoop = {hotCue(1, 1000.0), loop};
+    const std::vector<CuePoint> withCue = {hotCue(1, 1000.0), hotCue(2, 2000.0)};
+    assert(takeIncomingCues(withLoop, withCue, Newer, Older) && "a newer loop replaces the cue on its pad");
+    assert(takeIncomingCues(withCue, withLoop, Newer, Older) && "and a newer cue the loop");
+
+    CuePoint longer = loop;
+    longer.loopEndMs = 10000.0;
+    const std::vector<CuePoint> withLongerLoop = {hotCue(1, 1000.0), longer};
+    assert(takeIncomingCues(withLongerLoop, withLoop, Newer, Older) && "a loop made longer is a change");
+    assert(!takeIncomingCues(withLongerLoop, withLoop, Older, Newer) && "and the merge rule still decides it");
+
+    // Half a beat when the caller passes the tempo's: 100 ms of drift is
+    // one cue at 128 BPM, two under the 60 ms fallback.
+    const std::vector<CuePoint> drifted = {hotCue(1, 1100.0), loop};
+    assert(!takeIncomingCues(drifted, withLoop, Newer, Older, seabass::domain::halfBeatMs(128.0)));
+    assert(takeIncomingCues(drifted, withLoop, Newer, Older));
+}
+
 }  // namespace
 
 int main()
 {
+    aLoopIsNeverTheCueAtItsStart();
     fillsABlankWhicheverSideIsNewer();
     neverReplacesAValueWithNothing();
     agreementIsNotAWrite();

@@ -65,10 +65,13 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         // back with the rest.
         const std::vector<CuePoint> storedCues = withoutJunkCues(stored->cues);
         const std::vector<CuePoint> stickCues = withoutJunkCues(stick->cues);
+        // Half a beat when both copies know the tempo, else the fallback;
+        // a loop only ever equals a loop (domain::sameCuePlace).
+        const double toleranceMs = cueToleranceMsFor(stick->bpm, stored->bpm);
         proposal.cuesFillAGap = stickCues.empty() && !storedCues.empty();
         proposal.cuesConflict =
-            !stickCues.empty() && !storedCues.empty() && !cueSetsEqual(stickCues, storedCues);
-        if (takeIncomingCues(storedCues, stickCues, storedAt, stickModifiedAt)) {
+            !stickCues.empty() && !storedCues.empty() && !cueSetsEqual(stickCues, storedCues, toleranceMs);
+        if (takeIncomingCues(storedCues, stickCues, storedAt, stickModifiedAt, toleranceMs)) {
             proposal.cuesOffered = true;
             proposal.cues = storedCues;
         }

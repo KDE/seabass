@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "domain/track.hpp"
+
 namespace seabass::domain
 {
 
@@ -102,6 +104,30 @@ inline CueTolerance cueToleranceFor(double bpmA, double bpmB)
         tolerance.unsureUpToMs = unknownTempoHalfBeatMs();
     }
     return tolerance;
+}
+
+// Two cues at the same place, kind and pad aside: a loop only against a
+// loop, its start and its end each less than `toleranceMs` apart; a cue
+// against a cue at its position. A loop whose out point moved is a
+// different loop, as a cue that moved is a different cue. Sync, metadata
+// backup and restore, their merge rule and duplicate consolidation all
+// compare through this (LocalRestorePlanner::mergeCues makes the same
+// comparison, inclusive as it always was), so a loop never passes for a
+// cue at the same position.
+inline bool sameCuePlace(const CuePoint &a, const CuePoint &b, double toleranceMs)
+{
+    if (a.isLoop != b.isLoop || std::abs(a.positionMs - b.positionMs) >= toleranceMs) {
+        return false;
+    }
+    return !a.isLoop || std::abs(a.loopEndMs - b.loopEndMs) < toleranceMs;
+}
+
+// The tolerance for two tracks' cues: half a beat when both tracks have a
+// tempo and agree on it, the fallback otherwise. For the comparisons
+// outside Sync, which have no one to ask about a tempo they are unsure of.
+inline double cueToleranceMsFor(double bpmA, double bpmB)
+{
+    return cueToleranceFor(bpmA, bpmB).ms;
 }
 
 }  // namespace seabass::domain

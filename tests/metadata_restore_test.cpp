@@ -613,5 +613,49 @@ int main()
     }
 
     std::cout << "all metadata_restore_test cases passed\n";
+    // ---- a loop is never the cue at its start ---------------------------
+    // The store holds pad 2 as a loop, the stick as a cue at the loop's
+    // start. cueSetsEqual called those the same, so the restore offered
+    // nothing and the loop never came back. Compared as Sync compares now.
+    {
+        Track stick = stickTrack("Erste");
+        stick.cues = {hotCue(1, 32000.0), hotCue(2, 48000.0)};
+        Track stored = storedTrack("Erste");
+        CuePoint loop = hotCue(2, 48000.0);
+        loop.isLoop = true;
+        loop.loopEndMs = 52000.0;
+        stored.cues = {hotCue(1, 32000.0), loop};
+
+        const auto proposals = planMetadataRestore({stick}, {stored}, StickWrittenLongAgo);
+        assert(proposals.size() == 1 && "the loop is a difference to offer");
+        assert(proposals[0].cuesConflict);
+        assert(proposals[0].cuesOffered && proposals[0].cues.size() == 2 && proposals[0].cues[1].isLoop);
+
+        // And the loop's out point counts too.
+        Track stickWithLoop = stick;
+        CuePoint shorter = loop;
+        shorter.loopEndMs = 50000.0;
+        stickWithLoop.cues = {hotCue(1, 32000.0), shorter};
+        const auto again = planMetadataRestore({stickWithLoop}, {stored}, StickWrittenLongAgo);
+        assert(again.size() == 1 && again[0].cuesConflict && "a loop whose out point moved is another loop");
+        std::cout << "case loop (a loop on one side is a difference, its out point too) OK\n";
+    }
+
+    // ---- half a beat when both copies know the tempo ----------------------
+    {
+        Track stick = stickTrack("Erste");
+        stick.bpm = 128.0;
+        stick.cues = {hotCue(1, 32000.0)};
+        Track stored = storedTrack("Erste");
+        stored.bpm = 128.0;
+        stored.cues = {hotCue(1, 32100.0)};
+        assert(planMetadataRestore({stick}, {stored}, StickWrittenLongAgo).empty()
+               && "100 ms is within half a beat at 128 BPM: the same cue");
+        stored.bpm = 0.0;
+        const auto noTempo = planMetadataRestore({stick}, {stored}, StickWrittenLongAgo);
+        assert(noTempo.size() == 1 && noTempo[0].cuesConflict && "without a tempo the 60 ms fallback holds");
+        std::cout << "case tempo (half a beat of the agreed tempo, else 60 ms) OK\n";
+    }
+
     return 0;
 }

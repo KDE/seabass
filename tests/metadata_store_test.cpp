@@ -342,6 +342,44 @@ int main()
         std::cout << "case 3c (more cues wins, whichever side was written last) OK\n";
     }
 
+    // ---- case 3d: a loop is never the cue at its start ----------------
+    //
+    // The stick made pad 1 a loop since the backup. Compared as one cue,
+    // the newer loop was "unchanged" and never stored; the store kept the
+    // cue. Compared as Sync compares now, and its out point counts too.
+    // And within half a beat when the stick and the store agree on a
+    // tempo, the 60 ms fallback otherwise.
+    {
+        const fs::path loopDb = root / "loops" / "metadata.db";
+        MetadataStore metadata(loopDb);
+        Track before = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        before.bpm = 128.0;
+        before.cues = {memoryCue(12'000.0), hotCue(1, 32000.0)};
+        store(metadata, {before}, sourceFor(stick, "RV2", CatalogOld));
+
+        Track looped = before;
+        CuePoint loop = hotCue(1, 32000.0);
+        loop.isLoop = true;
+        loop.loopEndMs = 36000.0;
+        looped.cues = {memoryCue(12'000.0), loop};
+        const auto taken = store(metadata, {looped}, sourceFor(stick, "RV2", CatalogNew));
+        assert(taken.tracksUpdated == 1 && "the loop is a change, not the stored cue");
+        auto cues = metadata.cuesFor(metadata.browse("Erste", 10, 0)[0].id);
+        assert(cues.size() == 2 && (cues[0].isLoop || cues[1].isLoop));
+
+        Track longer = looped;
+        longer.cues[1].loopEndMs = 40000.0;
+        // Edited after the loop was stored: the later edit wins a tie.
+        assert(store(metadata, {longer}, sourceFor(stick, "RV2", CatalogNew + 3600)).tracksUpdated == 1
+               && "a loop whose out point moved is another loop");
+
+        Track drifted = longer;
+        drifted.cues[0].positionMs = 12'100.0;
+        assert(store(metadata, {drifted}, sourceFor(stick, "RV2", CatalogNew + 7200)).tracksUnchanged == 1
+               && "100 ms is within half a beat at 128 BPM");
+        std::cout << "case 3d (a loop is never the cue at its start; half a beat with a tempo) OK\n";
+    }
+
     // ---- case 4: filling a blank is not a conflict ------------------
     {
         MetadataStore metadata(db);

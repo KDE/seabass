@@ -79,12 +79,47 @@ int main()
         CuePoint nearDuplicate{CuePoint::Kind::Memory, 0, 10200.0, "", "verse (rescanned)"};
         CuePoint genuinelyNew{CuePoint::Kind::Memory, 0, 60000.0, "", "chorus"};
         Track localTrack = makeTrack("l1", 200.0, {nearDuplicate, genuinelyNew});
+        // Half a beat at 128 BPM is 234 ms: 200 ms off is the same cue.
+        stickTrack.bpm = localTrack.bpm = 128.0;
         std::vector<std::pair<const Track *, const Track *>> matches = {{&stickTrack, &localTrack}};
 
         auto candidates = LocalRestorePlanner::plan(matches);
         assert(candidates.size() == 1);
         assert(candidates[0].mergedCues.size() == 2);  // existing + genuinelyNew, nearDuplicate skipped
         std::cout << "case 4 (memory cues merge by position tolerance) OK\n";
+    }
+
+    // Without a tempo both sides agree on, the tolerance is the 60 ms
+    // fallback, as in Sync: 200 ms apart are two cues.
+    {
+        CuePoint existingMemory{CuePoint::Kind::Memory, 0, 10000.0, "", "verse"};
+        Track stickTrack = makeTrack("s1", 200.0, {existingMemory});
+        CuePoint twoHundredOff{CuePoint::Kind::Memory, 0, 10200.0, "", ""};
+        Track localTrack = makeTrack("l1", 200.0, {twoHundredOff});
+        std::vector<std::pair<const Track *, const Track *>> matches = {{&stickTrack, &localTrack}};
+        auto candidates = LocalRestorePlanner::plan(matches);
+        assert(candidates.size() == 1 && candidates[0].mergedCues.size() == 2);
+        std::cout << "case 4b (no tempo: the 60 ms fallback) OK\n";
+    }
+
+    // A memory loop is never the memory cue at its start, nor a loop with
+    // another out point: the local backup's loop is added, not dropped as
+    // "already there".
+    {
+        CuePoint existingCue{CuePoint::Kind::Memory, 0, 10000.0, "", ""};
+        CuePoint existingLoop{CuePoint::Kind::Memory, 0, 30000.0, "", "", true, 34000.0};
+        Track stickTrack = makeTrack("s1", 200.0, {existingCue, existingLoop});
+        CuePoint loopAtTheCue{CuePoint::Kind::Memory, 0, 10000.0, "", "", true, 14000.0};
+        CuePoint longerLoop{CuePoint::Kind::Memory, 0, 30000.0, "", "", true, 38000.0};
+        Track localTrack = makeTrack("l1", 200.0, {loopAtTheCue, longerLoop});
+        std::vector<std::pair<const Track *, const Track *>> matches = {{&stickTrack, &localTrack}};
+        auto candidates = LocalRestorePlanner::plan(matches);
+        assert(candidates.size() == 1);
+        assert(candidates[0].mergedCues.size() == 4 && "both loops are cues of their own");
+        // mergeCues() keeps its own half second for its other callers,
+        // loop-aware all the same.
+        assert(LocalRestorePlanner::mergeCues({existingCue}, {loopAtTheCue}).size() == 2);
+        std::cout << "case 4c (a memory loop is its own cue, its out point included) OK\n";
     }
 
     // Neither side has cues -> nothing to propose.

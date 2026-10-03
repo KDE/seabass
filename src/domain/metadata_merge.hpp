@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/cue_tolerance.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -56,8 +57,14 @@ bool takeIncomingField(bool incomingHasContent, bool existingHasContent, bool va
 // The same three steps for a cue set, with step 2 in play. Returns false
 // when the two sets are equal: there is nothing to write and rewriting
 // them would only churn the file.
+//
+// Equal is domain::cueSetsEqual within `toleranceMs`: pass
+// cueToleranceMsFor() of the two copies' tempos. A loop is never equal to
+// a cue, nor to a loop with another out point, so a loop on one side is a
+// difference to weigh rather than a match that keeps the other side's cue.
 bool takeIncomingCues(const std::vector<CuePoint> &incoming, const std::vector<CuePoint> &existing,
-                       std::int64_t incomingModifiedAt, std::int64_t existingModifiedAt);
+                       std::int64_t incomingModifiedAt, std::int64_t existingModifiedAt,
+                       double toleranceMs = CueFallbackToleranceMs);
 
 // Convenience wrappers so call sites read as the rule rather than as
 // three bools in the right order.
