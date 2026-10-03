@@ -46,11 +46,11 @@ bool samePosition(const CuePoint &a, const CuePoint &b, double toleranceMs)
     return std::abs(a.positionMs - b.positionMs) < toleranceMs;
 }
 
-// The same memory cue: a cue against a cue or a loop against a loop, at
-// the same place.
+// The same memory cue: a cue against a cue or a loop against a loop
+// that starts and ends at the same place (domain::sameCuePlace).
 bool samePlace(const CuePoint &a, const CuePoint &b, double toleranceMs)
 {
-    return a.isLoop == b.isLoop && samePosition(a, b, toleranceMs);
+    return sameCuePlace(a, b, toleranceMs);
 }
 
 // How a cue in one list finds its counterpart in another. Engine holds a
@@ -93,12 +93,43 @@ std::vector<CuePoint> loopsOrNot(const std::vector<CuePoint> &cues, bool loops)
 }
 
 // Two lists of memory cues hold the same cues: as many of each kind, each
-// at the same place. cueSetsEqual() alone does not tell a loop from a cue,
-// so it is asked about each kind apart.
+// at the same place, a loop ending where the other does.
 bool memorySetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
 {
-    return cueSetsEqual(loopsOrNot(a, false), loopsOrNot(b, false), toleranceMs)
-        && cueSetsEqual(loopsOrNot(a, true), loopsOrNot(b, true), toleranceMs);
+    return cueSetsEqual(a, b, toleranceMs);
+}
+
+// A memory loop on each side that starts at the same place and ends
+// elsewhere, neither side holding the other's loop: the loop's length was
+// changed on one side. The first such pair, A's first, or nothing.
+std::optional<std::pair<CuePoint, CuePoint>> memoryLoopEndsDiffer(const std::vector<CuePoint> &memoryA,
+                                                                  const std::vector<CuePoint> &memoryB,
+                                                                  double toleranceMs)
+{
+    const auto holds = [&](const std::vector<CuePoint> &list, const CuePoint &cue) {
+        return std::any_of(list.begin(), list.end(),
+                           [&](const CuePoint &other) { return samePlace(other, cue, toleranceMs); });
+    };
+    for (const CuePoint &a : memoryA) {
+        if (!a.isLoop || holds(memoryB, a)) {
+            continue;
+        }
+        for (const CuePoint &b : memoryB) {
+            if (b.isLoop && samePosition(a, b, toleranceMs) && !holds(memoryA, b)) {
+                return std::make_pair(a, b);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// "Pad 2 loop ends differ: rekordbox 0:23.265, Engine 0:24.000", or for a
+// memory loop "Memory loop at 0:10.000 ends differ: ...".
+std::string describeLoopEnds(const std::string &subject, const CuePoint &a, const CuePoint &b,
+                             const std::string &labelA, const std::string &labelB)
+{
+    return subject + " ends differ: " + labelA + " " + formatCuePosition(a.loopEndMs) + ", " + labelB + " "
+        + formatCuePosition(b.loopEndMs);
 }
 
 // True when every cue in `sub` has one at the same position in `super`,
@@ -175,17 +206,18 @@ struct PadPair
     bool bHasPad = false;
 };
 
-// How two hot cue sets differ, pad by pad. Equal when all three lists are
+// How two hot cue sets differ, pad by pad. Equal when all four lists are
 // empty: the same pads, each holding the same kinds (a cue, a loop or
-// both, as Engine can), each within the tolerance. Colour and comment
-// never count (see cueSetsEqual).
+// both, as Engine can), each within the tolerance, a loop ending where the
+// other does. Colour and comment never count (see cueSetsEqual).
 struct HotDifference
 {
     std::vector<PadPair> differ;     // a cue or loop on one side only, or a second or more apart
     std::vector<PadPair> apart;      // on both, beyond the tolerance, under a second
     std::vector<PadPair> loopVsCue;  // a loop on one side and only a cue on the other
+    std::vector<PadPair> loopEnds;   // one loop starting at one place, ending beyond the tolerance apart
 
-    bool any() const { return !differ.empty() || !apart.empty() || !loopVsCue.empty(); }
+    bool any() const { return !differ.empty() || !apart.empty() || !loopVsCue.empty() || !loopEnds.empty(); }
 };
 
 HotDifference compareHotCues(const std::vector<CuePoint> &hotA, const std::vector<CuePoint> &hotB,
@@ -274,6 +306,13 @@ HotDifference compareHotCues(const std::vector<CuePoint> &hotA, const std::vecto
                     differs = true;
                     break;
                 }
+                // The same loop with its out point moved: its length was
+                // changed on one side, and nothing says which.
+                if (loops && std::abs(onA->loopEndMs - onB->loopEndMs) >= toleranceMs) {
+                    result.loopEnds.push_back(pair);
+                    differs = true;
+                    break;
+                }
             }
         }
     }
@@ -288,7 +327,8 @@ std::pair<SyncPlan::Reason, std::string> describeHotDifference(const HotDifferen
 {
     // Every pad that differs, however: the first reason's pad is named, the
     // rest counted.
-    const std::size_t total = difference.apart.size() + difference.loopVsCue.size() + difference.differ.size();
+    const std::size_t total = difference.apart.size() + difference.loopVsCue.size() + difference.loopEnds.size()
+        + difference.differ.size();
     const auto position = [](const CuePoint &cue) {
         return (cue.isLoop ? "loop " : "") + formatCuePosition(cue.positionMs);
     };
@@ -323,6 +363,15 @@ std::pair<SyncPlan::Reason, std::string> describeHotDifference(const HotDifferen
             text += ", and " + pluralPads(total - 1);
         }
         return {SyncPlan::Reason::LoopVsCue, text};
+    }
+    if (!difference.loopEnds.empty()) {
+        const PadPair &first = difference.loopEnds.front();
+        std::string text = describeLoopEnds("Pad " + std::to_string(first.pad) + " loop", *first.a, *first.b,
+                                            labelA, labelB);
+        if (total > 1) {
+            text += ", and " + pluralPads(total - 1);
+        }
+        return {SyncPlan::Reason::LoopEndsDiffer, text};
     }
     const auto side = [&](const std::string &label, const CuePoint *cue, bool hasPad, const CuePoint *other) {
         if (cue != nullptr) {
@@ -502,7 +551,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     const bool memoryAgrees = engineHoldsMemory && !xLacksMain;
     const HotDifference hotDifference = compareHotCues(hotX, seen.hotCues, toleranceMs);
 
-    if (!hotDifference.any() && memoryAgrees && seen.uncertain.empty()) {
+    if (!hotDifference.any() && memoryAgrees && seen.uncertain.empty() && seen.loopEnds.empty()) {
         result.kind = SyncPlan::Kind::AlreadyConsistent;
         return result;
     }
@@ -534,6 +583,44 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
         result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
         result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
         makeChoice(result, SyncPlan::Reason::EngineMemoryOrHotCue, describeUncertainPads(seen.uncertain, catalogDisplayName(x.format)));
+        return result;
+    }
+    // A saved loop at one of X's memory loops, ending elsewhere: the loop's
+    // length was changed on one side. X's way writes X's loop onto that
+    // pad; Engine's way gives X's memory loop Engine's end.
+    if (!seen.loopEnds.empty()) {
+        std::vector<CuePoint> withEngineEnds = memoryX;
+        std::vector<CuePoint> seenWithEngineEnds = seen.memoryCues;
+        for (const auto &loop : seen.loopEnds) {
+            for (auto *list : {&withEngineEnds, &seenWithEngineEnds}) {
+                for (CuePoint &cue : *list) {
+                    if (cue.isLoop && cue.positionMs == loop.memory.positionMs
+                        && cue.loopEndMs == loop.memory.loopEndMs) {
+                        cue.loopEndMs = loop.pad.loopEndMs;
+                    }
+                }
+            }
+        }
+        std::vector<CuePoint> cues = seen.hotCues;
+        for (const CuePoint &cue : unionByPosition(withEngineEnds, seenWithEngineEnds, toleranceMs)) {
+            cues.push_back(cue);
+        }
+        ifEWins = keepExistingColours(std::move(cues), x.cues, toleranceMs);
+        result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
+        result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
+        const auto &first = seen.loopEnds.front();
+        const CuePoint &onA = aIsEngine ? first.pad : first.memory;
+        const CuePoint &onB = aIsEngine ? first.memory : first.pad;
+        std::string text = describeLoopEnds("Pad " + std::to_string(first.pad.hotCueNumber) + " loop", onA, onB,
+                                            catalogDisplayName(match.trackA.format),
+                                            catalogDisplayName(match.trackB.format));
+        // Any hot cue difference rides along: one choice settles the pair.
+        const std::size_t more = seen.loopEnds.size() - 1 + hotDifference.apart.size()
+            + hotDifference.loopVsCue.size() + hotDifference.loopEnds.size() + hotDifference.differ.size();
+        if (more > 0) {
+            text += ", and " + pluralPads(more);
+        }
+        makeChoice(result, SyncPlan::Reason::LoopEndsDiffer, std::move(text));
         return result;
     }
     result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
@@ -647,6 +734,15 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
         // either way, and what is being chosen is whose edit stands.
         result.cuesIfAWins = keepExistingColours(match.trackA.cues, match.trackB.cues, toleranceMs);
         result.cuesIfBWins = keepExistingColours(match.trackB.cues, match.trackA.cues, toleranceMs);
+        // A memory loop whose length changed on one side is named as such:
+        // the DJ chooses a loop, not "both sides".
+        if (const auto loops = memoryLoopEndsDiffer(memoryA, memoryB, toleranceMs)) {
+            makeChoice(result, SyncPlan::Reason::LoopEndsDiffer,
+                       describeLoopEnds("Memory loop at " + formatCuePosition(loops->first.positionMs),
+                                        loops->first, loops->second, catalogDisplayName(match.trackA.format),
+                                        catalogDisplayName(match.trackB.format)));
+            return result;
+        }
         makeChoice(result, SyncPlan::Reason::BothChanged,
                    "Changed on both sides; the stick's clocks cannot say which is newer");
         return result;
@@ -757,9 +853,10 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
 namespace
 {
 
+// A loop is kept only as a loop ending where it did.
 bool sameCue(const CuePoint &a, const CuePoint &b, double toleranceMs)
 {
-    return a.kind == b.kind && samePosition(a, b, toleranceMs)
+    return a.kind == b.kind && sameCuePlace(a, b, toleranceMs)
         && (a.kind != CuePoint::Kind::Hot || a.hotCueNumber == b.hotCueNumber);
 }
 

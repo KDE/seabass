@@ -69,7 +69,9 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues,
 // a second pad for a memory cue already under a hot cue) could as well be
 // a hot cue the DJ set there on the player. It is still read as the
 // translation, so counts stay as they were, and listed in `uncertain` for
-// the planner to ask about rather than assume.
+// the planner to ask about rather than assume. A saved loop is matched to
+// a memory loop by its start; one that ends elsewhere is listed in
+// `loopEnds`.
 struct CuesFromEngine
 {
     std::vector<CuePoint> hotCues;     // Engine's own hot cues and loops
@@ -80,6 +82,12 @@ struct CuesFromEngine
         CuePoint memory;  // the memory cue it sits at
     };
     std::vector<Uncertain> uncertain;
+    // A saved loop at the start of one of the catalog's memory loops,
+    // ending elsewhere: read as that memory loop's translation, whose
+    // length was changed on one side. Listed for the planner to ask about
+    // (SyncPlan::Reason::LoopEndsDiffer); memoryCues holds the catalog's
+    // own loop, so nothing else counts it as different.
+    std::vector<Uncertain> loopEnds;
 };
 
 CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues,

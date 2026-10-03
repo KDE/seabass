@@ -71,6 +71,10 @@ struct SyncPlan
         SamePadApart,
         // Same pad, a loop on one side and a plain cue on the other.
         LoopVsCue,
+        // The same loop on both sides, starting at the same place, ending
+        // more than the tolerance apart: its length was changed on one
+        // side. A pad's loop, or a memory loop.
+        LoopEndsDiffer,
         // An Engine pad sits at one of the other side's memory cues, on a
         // pad Engine DJ's import would not have given that memory cue.
         EngineMemoryOrHotCue,
@@ -118,8 +122,8 @@ struct SyncPlan
 std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut);
 
 // The same cues the way the planner compares them: the same pads, each a
-// cue or a loop alike, the same memory cues and loops, positions within
-// `toleranceMs`. Unlike cueSetsEqual() a loop is never a cue.
+// cue or a loop alike, the same memory cues and loops, positions and loop
+// ends within `toleranceMs` (domain::sameCuePlace).
 bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs);
 
 // A cue position the way reasons spell it: m:ss.mmm.
