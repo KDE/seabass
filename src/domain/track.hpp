@@ -117,8 +117,8 @@ struct Track
     // for Engine and for a row that names none.
     //
     // For both rekordbox catalogs this file, not the catalog, is where a
-    // player takes the track's cues from (an OMNIS-DUO, 2026-10-03, issue
-    // #59), and a DeviceLibrary row and a OneLibrary row naming the same
+    // player takes the track's cues from (a CDJ-3000X read it, an OMNIS-DUO
+    // wrote it, 2026-10-01 to 03, issue #59), and a DeviceLibrary row and a OneLibrary row naming the same
     // file are therefore ONE cue source: writing one writes the other.
     std::string analysisFile;
     // Non-empty (e.g. "TIDAL") if this track is a streaming-service link
