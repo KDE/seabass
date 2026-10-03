@@ -753,7 +753,7 @@ TestCase {
 
         // Not "Reading cover images": this fixture keeps its covers as
         // files, so that pass has no rows (engine_artwork_test counts it).
-        const steps = ["Checking memory cue lists", "Looking for Clean Up leftovers", "Checking cover art",
+        const steps = ["Checking cue lists", "Looking for Clean Up leftovers", "Checking cover art",
                        "Counting tracks the player will analyse", "Checking sample rates"];
         for (const step of steps) {
             const entry = seen[step];
@@ -780,8 +780,11 @@ TestCase {
     // #55. A stick with one track's memory list in the shape of 5282555e
     // and a hung player's ANLZ0001.DAT beside it: the real check finds
     // exactly that track, the card says so, and the repair stages from
-    // the controller. Nothing else on the fixture is reported, which is
-    // the half of the check that keeps a healthy stick quiet.
+    // the controller. No other memory list on the fixture is reported,
+    // which is the half of the check that keeps a healthy stick quiet.
+    // (The fixture's own tracks do carry #60 disagreements, written by a
+    // Seabass of that window; the card counts those as well, and
+    // cue_list_health_test pins how many.)
     function test_aStaleMemoryListIsFoundByTheRealCheck() {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");
@@ -807,9 +810,22 @@ TestCase {
 
         const card = findByObjectName(page, "memoryCueListCard");
         verify(card !== null && card.visible, "the card is on the hub");
-        compare(card.foundCount, 1);
+        compare(card.foundCount, controller.cueListFindingCount);
+        verify(controller.cueListFindingCount >= 1, "at least the planted track");
+        // Pinned: 1161 files export.pdb names and 290 only OneLibrary
+        // names (the #8 leftovers), each examined once. 203 + 17 of them
+        // disagree, as an independent Python reading of the fixture
+        // finds, and the planted track makes 221: its legacy memory list
+        // now holds a cue its PCO2 does not.
+        compare(controller.cueListCounts.examined, 1451, "every analysis file either catalog names");
+        compare(controller.cueListCounts.unreadable, 0);
+        compare(controller.cueListCounts.disagree, 221);
+        compare(controller.cueListCounts.legacyHeader, 1, "one stale header, the planted one");
+        compare(controller.cueListCounts.strayFiles, 1);
+        compare(controller.cueListDisagreementCount, controller.cueListCounts.disagree);
         compare(card.ok, false);
 
+        compare(controller.keepPlayerCueLists, true, "what the player shows is kept unless the user says otherwise");
         controller.repairLegacyMemoryLists();
         compare(controller.legacyMemoryListFixStaged, true, "the repair stages");
         controller.unstageLegacyMemoryListFix();

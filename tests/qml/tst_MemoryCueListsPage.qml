@@ -7,7 +7,7 @@ import QtTest
 import SeabassGui
 import "Breadcrumb.js" as Breadcrumb
 
-// Library Health's "Memory Cue Lists" page (#55), driven by a stand-in
+// Library Health's "Cue Lists" page (#55, #60), driven by a stand-in
 // controller.
 TestCase {
     id: testCase
@@ -32,6 +32,15 @@ TestCase {
             property int legacyMemoryListDebrisCount: 0
             property bool legacyMemoryListFixStaged: false
             property var legacyMemoryListTracks: []
+            property int cueListDisagreementCount: 0
+            property int cueListDisagreementFixableCount: 0
+            property var cueListDisagreementTracks: []
+            property int cueListMalformedCount: 0
+            property var cueListUnreadableTracks: []
+            property int cueListFindingCount: legacyMemoryListCount + cueListDisagreementCount
+            property int cueListFixableCount: legacyMemoryListFixableCount + cueListDisagreementFixableCount
+            property var cueListCounts: ({examined: 12, unreadable: 0})
+            property bool keepPlayerCueLists: true
             function repairLegacyMemoryLists() { legacyMemoryListFixStaged = true; }
             function unstageLegacyMemoryListFix() { legacyMemoryListFixStaged = false; }
             property string errorMessage: ""
@@ -124,7 +133,7 @@ TestCase {
 
         var crumb = findCrumb(page.header);
         verify(crumb !== null, "the header has a breadcrumb");
-        compare(crumb.title, "Memory Cue Lists");
+        compare(crumb.title, "Cue Lists");
         compare(crumb.middleLabel, "Library Health", "one level up is the hub");
         // And the stick before it, on screen, as every hub page's children do.
         compare(Breadcrumb.read(page.header).stick, "TESTSTICK");
@@ -203,6 +212,89 @@ TestCase {
         compare(error.visible, true, "the leg's error is shown");
         compare(error.text, "export.pdb could not be opened");
 
+        page.destroy();
+        wait(0);
+    }
+
+    // #60. Tracks whose two lists disagree are named with what the player
+    // shows and what Seabass reads; the choice defaults to the player's,
+    // says so, and is held while a repair is staged.
+    function test_disagreeingListsAreNamedAndTheChoiceDefaultsToThePlayer() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        controller.legacyMemoryListsChecked = true;
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        const summary = findChild(page, "cueListDisagreementSummary");
+        const choice = findChild(page, "cueListChoice");
+        const keepPlayer = findChild(page, "keepPlayerCueListsButton");
+        const keepSeabass = findChild(page, "keepSeabassCueListsButton");
+        const button = findChild(page, "repairMemoryCueListsButton");
+        verify(summary !== null && choice !== null && keepPlayer !== null && keepSeabass !== null);
+        verify(summary.text.indexOf("the player and Seabass read the same cues") >= 0, summary.text);
+        compare(choice.visible, false, "nothing to choose between");
+
+        controller.cueListDisagreementCount = 1;
+        controller.cueListDisagreementFixableCount = 1;
+        controller.cueListDisagreementTracks = [
+            {title: "Too Little Too Late", artist: "", fixable: true,
+             what: "the player shows 1 pad (A 0:30.8); Seabass reads 5 pads (A 0:30.3, B 1:07.8, C 1:15.3, D 2:00.3, E 2:15.3)"}
+        ];
+        verify(summary.text.indexOf("1 track shows different cues on the player than in Seabass") === 0, summary.text);
+        verify(summary.text.indexOf("\u2014") < 0 && summary.text.indexOf("--") < 0, "no dashes on screen");
+        compare(choice.visible, true);
+        compare(keepPlayer.checked, true, "the player's list is the default");
+        verify(keepPlayer.text.indexOf("the default") >= 0, keepPlayer.text);
+        compare(keepSeabass.checked, false);
+        compare(button.visible, true, "a disagreement alone is something to repair");
+        const tracks = findChild(page, "cueListDisagreementTracks");
+        compare(tracks.count, 1);
+        verify(tracks.itemAt(0).text.indexOf("the player shows 1 pad") >= 0, tracks.itemAt(0).text);
+
+        keepSeabass.toggle();
+        keepSeabass.toggled();
+        compare(controller.keepPlayerCueLists, false, "the choice reaches the controller");
+        button.clicked();
+        compare(controller.legacyMemoryListFixStaged, true);
+        compare(keepPlayer.enabled, false, "held while staged");
+
+        if (screenshotDir) {
+            page.width = 900;
+            page.height = 700;
+            waitForRendering(page);
+            wait(100);
+            grabImage(page).save(screenshotDir + "/CueListsPage-disagreement.png");
+        }
+        page.destroy();
+        wait(0);
+    }
+
+    // Never a clean bill over nothing: a check that examined no file
+    // says so, and the sentences that would claim all is well are not
+    // shown.
+    function test_nothingExaminedIsNotClean() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        controller.legacyMemoryListsChecked = true;
+        controller.cueListCounts = {examined: 0, unreadable: 3};
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        const counts = findChild(page, "cueListCounts");
+        verify(counts.visible);
+        verify(counts.text.indexOf("no cue list was checked") >= 0 && counts.text.indexOf("3 are missing") >= 0,
+               counts.text);
+        compare(findChild(page, "memoryCueListsSummary").visible, false);
+        compare(findChild(page, "cueListDisagreementSummary").visible, false);
+
+        controller.cueListCounts = {examined: 40, unreadable: 1};
+        controller.cueListUnreadableTracks = [{title: "Codec", artist: "", what: "could not be read: ANLZ0000.EXT is missing"}];
+        verify(counts.text.indexOf("Checked 40 analysis files. 1 could not be read") === 0, counts.text);
+        const unreadable = findChild(page, "cueListUnreadableTracks");
+        compare(unreadable.count, 1, "the file that could not be read is named");
+        verify(unreadable.itemAt(0).text.indexOf("ANLZ0000.EXT is missing") >= 0, unreadable.itemAt(0).text);
+
+        // A memory list found from the .DAT while its .EXT is missing:
+        // nothing examined, and still the finding is said.
+        controller.cueListCounts = {examined: 0, unreadable: 1};
+        controller.legacyMemoryListCount = 1;
+        controller.legacyMemoryListFixableCount = 1;
+        compare(findChild(page, "memoryCueListsSummary").visible, true, "a finding is said even when nothing was examined");
         page.destroy();
         wait(0);
     }

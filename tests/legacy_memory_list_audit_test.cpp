@@ -19,6 +19,7 @@
 #include <string>
 
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/anlz_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
@@ -254,8 +255,31 @@ TrackDir plant(const fs::path &stick, const fs::path &fixtureDat, const std::str
         }
     }
     file.writeRaw(pathToUtf8(t.dir / "ANLZ0000.DAT"));
-    // The siblings a track has, so the audit must tell them from debris.
-    fs::copy_file(fixtureDat, t.dir / "ANLZ0000.EXT");
+    // The siblings a track has, so the audit must tell them from debris:
+    // the fixture's own .EXT, its modern memory list made to hold what
+    // the planted legacy one holds. A Seabass of that window wrote both
+    // from the same cues, and the RX2 adds its own entry to both, so
+    // the two generations agree here and only the memory list's shape
+    // is wrong (the #60 disagreement has a test of its own).
+    AnlzFile ext = AnlzFile::readRaw(pathToUtf8(fixtureDat.parent_path() / "ANLZ0000.EXT"));
+    std::vector<RawHotCueEntry> modern;
+    if (memoryList.size() >= 24 && memoryList.compare(0, 4, "PCOB") == 0) {
+        const uint16_t count = readU16BE(memoryList, 18);
+        for (uint16_t i = 0; i < count && 24 + 56 * (i + 1) <= memoryList.size(); ++i) {
+            const size_t at = 24 + 56 * i;
+            RawHotCueEntry entry;
+            entry.timeMs = readU32BE(memoryList, at + 32);
+            entry.isLoop = static_cast<unsigned char>(memoryList[at + 28]) == 2;
+            entry.loopEndMs = entry.isLoop ? readU32BE(memoryList, at + 36) : 0;
+            modern.push_back(entry);
+        }
+    }
+    for (auto &section : ext.sections) {
+        if (section.fourcc == 0x50434f32 && readU32BE(section.rawBytes, 12) == CueListTypeMemory) {
+            section.rawBytes = AnlzCueCodec::encodeHotCues(modern, CueListTypeMemory);
+        }
+    }
+    ext.writeRaw(pathToUtf8(t.dir / "ANLZ0000.EXT"));
     fs::copy_file(fixtureDat, t.dir / "ANLZ0000.2EX");
     return t;
 }

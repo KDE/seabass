@@ -6,9 +6,18 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
 #include <stdexcept>
 
+#include "application/path_key.hpp"
+#include "domain/local_restore.hpp"
+#include "domain/track.hpp"
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
@@ -16,6 +25,7 @@
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -29,6 +39,8 @@ namespace
 // in its header for where each comes from.
 constexpr uint32_t PcobFourcc = 0x50434f42;  // "PCOB"
 constexpr uint32_t PcptFourcc = 0x50435054;  // "PCPT"
+constexpr uint32_t Pco2Fourcc = 0x50434f32;  // "PCO2"
+constexpr uint32_t PmaiFourcc = 0x504d4149;  // "PMAI"
 constexpr size_t SectionHeaderSize = 24;
 constexpr size_t EntrySize = 56;
 constexpr uint16_t OrderSentinel = 0xFFFF;
@@ -99,6 +111,313 @@ bool isDatAnalysisName(const std::string &name)
         return false;
     }
     return std::all_of(name.begin() + 4, name.end() - 4, [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
+// The cue lists of one analysis file and nothing else, read by seeking
+// from section header to section header. A real .EXT is some 167 KB of
+// which the lists are a few hundred bytes, mostly waveforms after them;
+// reading every track's whole file over USB would make this check the
+// slowest on the hub. Throws when the file is missing, is not an ANLZ
+// file, or a section length points outside it.
+std::vector<AnlzRawSection> readCueSections(const std::string &path)
+{
+    std::ifstream in(pathFromUtf8(path), std::ios::binary);
+    if (!in.is_open()) {
+        throw std::runtime_error(path + " could not be opened");
+    }
+    in.seekg(0, std::ios::end);
+    const auto end = static_cast<uint64_t>(in.tellg());
+    auto readAt = [&in, &path](uint64_t offset, size_t length) {
+        std::string bytes(length, '\0');
+        in.seekg(static_cast<std::streamoff>(offset));
+        in.read(bytes.data(), static_cast<std::streamsize>(length));
+        if (static_cast<size_t>(in.gcount()) != length) {
+            throw std::runtime_error(path + " ends inside a section");
+        }
+        return bytes;
+    };
+    if (end < 12) {
+        throw std::runtime_error(path + " is too short to be an analysis file");
+    }
+    const std::string header = readAt(0, 12);
+    if (readU32BE(header, 0) != PmaiFourcc) {
+        throw std::runtime_error(path + " is not an analysis file (no PMAI header)");
+    }
+    const uint64_t lenHeader = readU32BE(header, 4);
+    const uint64_t lenFile = std::min<uint64_t>(readU32BE(header, 8), end);
+    std::vector<AnlzRawSection> out;
+    uint64_t pos = lenHeader;
+    while (pos + 12 <= lenFile) {
+        const std::string sectionHeader = readAt(pos, 12);
+        const uint32_t fourcc = readU32BE(sectionHeader, 0);
+        const uint32_t lenTag = readU32BE(sectionHeader, 8);
+        if (lenTag < 12 || pos + lenTag > lenFile) {
+            throw std::runtime_error(path + ": the section at offset " + std::to_string(pos)
+                                     + " has an impossible length");
+        }
+        if (fourcc == PcobFourcc || fourcc == Pco2Fourcc) {
+            out.push_back({fourcc, readAt(pos, lenTag)});
+        }
+        pos += lenTag;
+    }
+    return out;
+}
+
+bool isMemoryPcob(const AnlzRawSection &section)
+{
+    return section.fourcc == PcobFourcc && section.rawBytes.size() >= SectionHeaderSize
+           && readU32BE(section.rawBytes, 12) == CueListTypeMemory;
+}
+
+ListedCue listed(uint32_t pad, uint32_t timeMs, bool isLoop, uint32_t loopEndMs)
+{
+    ListedCue cue;
+    cue.pad = pad;
+    cue.timeMs = timeMs;
+    cue.isLoop = isLoop;
+    cue.loopEndMs = isLoop ? loopEndMs : 0;
+    return cue;
+}
+
+// The lists out of both files' sections. Throws, naming the list, when
+// one does not decode; a memory PCOB is read leniently when
+// auditLegacyMemoryList() can read it, so a stale header or the RX2's
+// zero slot is compared by its real entries.
+TrackCueLists listsOf(const std::vector<AnlzRawSection> &dat, const std::vector<AnlzRawSection> &ext,
+                      const std::string &datPath, const std::string &extPath)
+{
+    TrackCueLists lists;
+    auto legacy = [&lists](const AnlzRawSection &section, const std::string &path, bool inExt) {
+        const uint32_t type = section.rawBytes.size() >= 16 ? readU32BE(section.rawBytes, 12) : 0xFFFFFFFFu;
+        if (type == CueListTypeMemory) {
+            const LegacyMemoryListShape shape = auditLegacyMemoryList(section.rawBytes);
+            if (!shape.malformed.empty()) {
+                throw std::runtime_error(path + ": legacy memory list: " + shape.malformed);
+            }
+            for (const auto &entry : entriesOf(section.rawBytes, shape.entries)) {
+                lists.legacyMemory.push_back(listed(0, entry.timeMs, entry.isLoop, entry.loopEndMs));
+                if (inExt) {
+                    ++lists.extLegacyMemory;
+                }
+            }
+            return;
+        }
+        if (type != CueListTypeHot) {
+            throw std::runtime_error(path + ": a legacy cue list of type " + std::to_string(type));
+        }
+        try {
+            for (const auto &entry : AnlzLegacyCueCodec::decodeCues(section.rawBytes)) {
+                lists.legacyHot.push_back(listed(entry.hotCueNumber, entry.timeMs, entry.isLoop, entry.loopEndMs));
+            }
+        } catch (const std::exception &e) {
+            throw std::runtime_error(path + ": legacy hot cue list: " + e.what());
+        }
+    };
+    for (const auto &section : dat) {
+        if (section.fourcc == PcobFourcc) {
+            legacy(section, datPath, false);
+        }
+    }
+    for (const auto &section : ext) {
+        if (section.fourcc == PcobFourcc) {
+            legacy(section, extPath, true);
+            continue;
+        }
+        if (section.fourcc != Pco2Fourcc || section.rawBytes.size() < 16) {
+            continue;
+        }
+        const uint32_t type = readU32BE(section.rawBytes, 12);
+        if (type != CueListTypeHot && type != CueListTypeMemory) {
+            throw std::runtime_error(extPath + ": a cue list of type " + std::to_string(type));
+        }
+        try {
+            for (const auto &entry : AnlzCueCodec::decodeHotCues(section.rawBytes, type)) {
+                ListedCue cue = listed(type == CueListTypeHot ? entry.hotCueNumber : 0, entry.timeMs, entry.isLoop,
+                                       entry.loopEndMs);
+                cue.color = entry.color;
+                (type == CueListTypeHot ? lists.modernHot : lists.modernMemory).push_back(cue);
+            }
+        } catch (const std::exception &e) {
+            throw std::runtime_error(extPath + ": cue list: " + e.what());
+        }
+    }
+    return lists;
+}
+
+// The reader's "same cue" (kaitai_rekordbox_reader.cpp): positions within
+// the restore planner's tolerance, a loop matching only a loop that ends
+// within it too. The pad is the caller's to compare.
+bool sameCue(const ListedCue &a, const ListedCue &b)
+{
+    const double tolerance = domain::LocalRestorePlanner::PositionToleranceMs;
+    if (std::abs(double(a.timeMs) - double(b.timeMs)) > tolerance || a.isLoop != b.isLoop) {
+        return false;
+    }
+    return !a.isLoop || std::abs(double(a.loopEndMs) - double(b.loopEndMs)) <= tolerance;
+}
+
+// Whether every cue of one list has its own partner in the other, cues
+// paired in order of pad, kind (a loop pairs only with a loop) and
+// position. Within one pad and kind the positions lie on a line, where
+// pairing in sorted order is the pairing whose largest gap is smallest,
+// so no pairing another order would find within the tolerance is missed.
+bool listsMatch(std::vector<ListedCue> a, std::vector<ListedCue> b, bool byPad)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    const auto order = [byPad](const ListedCue &x, const ListedCue &y) {
+        if (byPad && x.pad != y.pad) {
+            return x.pad < y.pad;
+        }
+        if (x.isLoop != y.isLoop) {
+            return y.isLoop;
+        }
+        return x.timeMs < y.timeMs;
+    };
+    std::stable_sort(a.begin(), a.end(), order);
+    std::stable_sort(b.begin(), b.end(), order);
+    for (size_t i = 0; i < a.size(); ++i) {
+        if ((byPad && a[i].pad != b[i].pad) || !sameCue(a[i], b[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// What Seabass shows: the modern list, and every legacy cue it does not
+// already hold, merged exactly as appendLegacyCues() merges them: a hot
+// cue is known when its pad is taken, a memory cue when any cue already
+// in the list (a legacy one appended before it included) sits within
+// the tolerance, loop or not.
+std::vector<ListedCue> seabassViewOf(const std::vector<ListedCue> &modern, const std::vector<ListedCue> &legacy,
+                                     bool hot)
+{
+    const double tolerance = domain::LocalRestorePlanner::PositionToleranceMs;
+    std::vector<ListedCue> out = modern;
+    for (const auto &cue : legacy) {
+        const bool known = std::any_of(out.begin(), out.end(), [&](const ListedCue &have) {
+            return hot ? have.pad == cue.pad
+                       : std::abs(double(have.timeMs) - double(cue.timeMs)) <= tolerance;
+        });
+        if (!known) {
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
+// The PCO2 entry that is the same cue as `cue`, for its colour.
+const ListedCue *partnerOf(const ListedCue &cue, const std::vector<ListedCue> &in, bool byPad)
+{
+    const ListedCue *best = nullptr;
+    for (const auto &other : in) {
+        if ((byPad && other.pad != cue.pad) || !sameCue(cue, other)) {
+            continue;
+        }
+        if (!best || std::abs(double(other.timeMs) - double(cue.timeMs))
+                         < std::abs(double(best->timeMs) - double(cue.timeMs))) {
+            best = &other;
+        }
+    }
+    return best;
+}
+
+std::string colorText(const std::optional<std::tuple<uint8_t, uint8_t, uint8_t>> &color)
+{
+    if (!color) {
+        return {};
+    }
+    char text[8];
+    std::snprintf(text, sizeof text, "#%02X%02X%02X", std::get<0>(*color), std::get<1>(*color),
+                  std::get<2>(*color));
+    return text;
+}
+
+domain::CuePoint cuePoint(const ListedCue &listedCue, bool hot)
+{
+    domain::CuePoint cue;
+    cue.kind = hot ? domain::CuePoint::Kind::Hot : domain::CuePoint::Kind::Memory;
+    cue.hotCueNumber = hot ? static_cast<int>(listedCue.pad) : 0;
+    cue.positionMs = listedCue.timeMs;
+    cue.isLoop = listedCue.isLoop;
+    cue.loopEndMs = listedCue.isLoop ? listedCue.loopEndMs : 0;
+    cue.color = colorText(listedCue.color);
+    return cue;
+}
+
+// The cues both generations of list are rewritten from. Player: the
+// legacy lists, each cue taking the colour of the PCO2 entry that is the
+// same cue (RekordboxCueWriter then carries that entry's bytes over,
+// comment and all, when the position is the same to the millisecond).
+// Seabass: what Seabass shows, the PCO2 lists with the legacy cues they
+// lack.
+std::vector<domain::CuePoint> cuesToKeep(const TrackCueLists &lists, KeepCueList keep)
+{
+    std::vector<domain::CuePoint> cues;
+    auto add = [&cues](std::vector<ListedCue> from, bool hot, const std::vector<ListedCue> *colours) {
+        if (hot) {
+            std::stable_sort(from.begin(), from.end(), [](const ListedCue &a, const ListedCue &b) {
+                return a.pad < b.pad;
+            });
+        }
+        for (ListedCue cue : from) {
+            if (colours) {
+                if (const ListedCue *partner = partnerOf(cue, *colours, hot)) {
+                    cue.color = partner->color;
+                }
+            }
+            cues.push_back(cuePoint(cue, hot));
+        }
+    };
+    if (keep == KeepCueList::Player) {
+        add(lists.legacyHot, true, &lists.modernHot);
+        add(lists.legacyMemory, false, &lists.modernMemory);
+    } else {
+        add(seabassViewOf(lists.modernHot, lists.legacyHot, true), true, nullptr);
+        add(seabassViewOf(lists.modernMemory, lists.legacyMemory, false), false, nullptr);
+    }
+    return cues;
+}
+
+TrackCueLists readListsOf(const std::string &datPath, const std::string &extPath)
+{
+    return listsOf(readCueSections(datPath), readCueSections(extPath), datPath, extPath);
+}
+
+// The file as written, read back: the same bytes, and every legacy list
+// in it one the codec's strict check passes. Puts `before` back and
+// throws when not, as RekordboxCueWriter does for its own writes.
+void readBackOrRestore(const std::string &path, const std::string &intended, const std::string &before)
+{
+    std::string problem;
+    {
+        std::ifstream in(pathFromUtf8(path), std::ios::binary);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!in.good() && !in.eof()) {
+            problem = "it could not be read again";
+        } else if (onDisk != intended) {
+            problem = "it reads back as " + std::to_string(onDisk.size()) + " bytes that differ from the "
+                      + std::to_string(intended.size()) + " written";
+        } else {
+            try {
+                for (const auto &section : readCueSections(path)) {
+                    if (section.fourcc == PcobFourcc) {
+                        AnlzLegacyCueCodec::checkSection(section.rawBytes);
+                    }
+                }
+            } catch (const std::exception &e) {
+                problem = e.what();
+            }
+        }
+    }
+    if (problem.empty()) {
+        return;
+    }
+    const bool restored = writeFileDurablyAtomic(path, before);
+    throw std::runtime_error(path + " failed its check after writing (" + problem + "); "
+                             + (restored ? "it was put back as it was"
+                                         : "it could NOT be put back and needs restoring from the backup"));
 }
 
 }  // namespace
@@ -179,28 +498,92 @@ std::string repairLegacyMemoryList(const std::string &s)
     return AnlzLegacyCueCodec::encodeCues(entriesOf(s, shape.entries), CueListTypeMemory);
 }
 
-std::optional<LegacyMemoryListFinding> auditTrackAnalysis(const std::string &pioneerRoot,
-                                                          const std::string &analyzePath,
-                                                          const std::function<bool(const std::string &)> &named)
+TrackCueLists readTrackCueLists(const std::string &pioneerRoot, const std::string &analyzePath)
+{
+    return readListsOf(datAnlzPath(pioneerRoot, analyzePath), extAnlzPath(pioneerRoot, analyzePath));
+}
+
+std::optional<CueListDisagreement> compareCueLists(const TrackCueLists &lists)
+{
+    CueListDisagreement d;
+    d.hot = !listsMatch(lists.legacyHot, lists.modernHot, /*byPad=*/true);
+    d.memory = !listsMatch(lists.legacyMemory, lists.modernMemory, /*byPad=*/false);
+    if (!d.any()) {
+        return std::nullopt;
+    }
+    for (const auto *list : {&lists.legacyHot, &lists.modernHot}) {
+        for (const auto &cue : *list) {
+            if (cue.pad < 1 || cue.pad > 8) {
+                d.unrepairable = "a hot cue on pad " + std::to_string(cue.pad) + ", which the lists cannot both hold";
+            }
+        }
+    }
+    d.seabassHot = seabassViewOf(lists.modernHot, lists.legacyHot, true);
+    d.seabassMemory = seabassViewOf(lists.modernMemory, lists.legacyMemory, false);
+    d.viewsAgree = listsMatch(lists.legacyHot, d.seabassHot, true) && listsMatch(lists.legacyMemory, d.seabassMemory, false);
+    if (lists.extLegacyMemory > 0) {
+        d.unrepairable = "memory cues in the .EXT's legacy list, where no writer puts them";
+    }
+    d.lists = lists;
+    return d;
+}
+
+LegacyMemoryListFinding examineTrackAnalysis(const std::string &pioneerRoot, const std::string &analyzePath,
+                                             const std::function<bool(const std::string &)> &named)
 {
     LegacyMemoryListFinding finding;
+    finding.pioneerRoot = pioneerRoot;
+    finding.analyzePath = analyzePath;
     const std::string dat = datAnlzPath(pioneerRoot, analyzePath);
+    const std::string ext = extAnlzPath(pioneerRoot, analyzePath);
     const fs::path datFs = pathFromUtf8(dat);
     std::error_code ec;
     if (fs::is_regular_file(datFs, ec)) {
         finding.datPath = dat;
+    }
+    // The .DAT's memory list first, on its own: an RX2 hangs on it
+    // whatever state the .EXT is in.
+    std::vector<AnlzRawSection> datSections;
+    bool datRead = false;
+    if (finding.datPath.empty()) {
+        finding.unreadable = dat + " is missing";
+    } else {
         try {
-            const AnlzFile file = AnlzFile::readRaw(dat);
-            for (const auto &section : file.sections) {
-                if (section.fourcc != PcobFourcc || section.rawBytes.size() < SectionHeaderSize
-                    || readU32BE(section.rawBytes, 12) != CueListTypeMemory) {
-                    continue;
-                }
+            datSections = readCueSections(dat);
+            datRead = true;
+        } catch (const std::exception &e) {
+            finding.unreadable = e.what();
+        }
+    }
+    if (datRead) {
+        for (const auto &section : datSections) {
+            if (isMemoryPcob(section)) {
                 finding.shape = auditLegacyMemoryList(section.rawBytes);
                 break;
             }
-        } catch (const std::exception &e) {
-            finding.shape.malformed = e.what();
+        }
+    }
+    // Then the two generations compared, which needs the .EXT too.
+    if (datRead) {
+        std::vector<AnlzRawSection> extSections;
+        if (!fs::is_regular_file(pathFromUtf8(ext), ec)) {
+            finding.unreadable = ext + " is missing";
+        } else {
+            try {
+                extSections = readCueSections(ext);
+                finding.examined = true;
+            } catch (const std::exception &e) {
+                finding.unreadable = e.what();
+            }
+        }
+        // A memory list this cannot read is reported as such, and the
+        // lists are not compared: there is no telling what it holds.
+        if (finding.examined && finding.shape.malformed.empty()) {
+            try {
+                finding.disagreement = compareCueLists(listsOf(datSections, extSections, dat, ext));
+            } catch (const std::exception &e) {
+                finding.listsMalformed = e.what();
+            }
         }
     }
 
@@ -222,8 +605,8 @@ std::optional<LegacyMemoryListFinding> auditTrackAnalysis(const std::string &pio
             if (named(rowDir + name)) {
                 continue;
             }
-            const fs::path ext = entry.path().parent_path() / (name.substr(0, name.size() - 4) + ".EXT");
-            if (fs::exists(ext, ec)) {
+            const fs::path extFile = entry.path().parent_path() / (name.substr(0, name.size() - 4) + ".EXT");
+            if (fs::exists(extFile, ec)) {
                 continue;
             }
             if (!isSkeleton(pathToUtf8(entry.path()))) {
@@ -233,22 +616,90 @@ std::optional<LegacyMemoryListFinding> auditTrackAnalysis(const std::string &pio
         }
         std::sort(finding.debris.begin(), finding.debris.end());
     }
+    return finding;
+}
 
+std::optional<LegacyMemoryListFinding> auditTrackAnalysis(const std::string &pioneerRoot,
+                                                          const std::string &analyzePath,
+                                                          const std::function<bool(const std::string &)> &named)
+{
+    LegacyMemoryListFinding finding = examineTrackAnalysis(pioneerRoot, analyzePath, named);
     if (!finding.anything()) {
         return std::nullopt;
     }
     return finding;
 }
 
-std::string repairTrackAnalysis(const LegacyMemoryListFinding &finding)
+void CueListTally::add(const LegacyMemoryListFinding &finding)
+{
+    if (finding.examined) {
+        ++examined;
+    } else {
+        ++unreadable;
+    }
+    if (finding.shape.headerStale || finding.shape.unlinked) {
+        ++legacyHeader;
+    }
+    if (finding.shape.zeroSlots) {
+        ++playerRewritten;
+    }
+    if (finding.disagreement && finding.disagreement->any()) {
+        ++disagree;
+    }
+    strayFiles += finding.debris.size();
+}
+
+CueListTally &CueListTally::operator+=(const CueListTally &other)
+{
+    examined += other.examined;
+    unreadable += other.unreadable;
+    legacyHeader += other.legacyHeader;
+    playerRewritten += other.playerRewritten;
+    disagree += other.disagree;
+    strayFiles += other.strayFiles;
+    return *this;
+}
+
+CueListScan scanCueLists(const std::string &pioneerRoot, const std::vector<std::string> &analyzePaths,
+                         const std::function<bool(const std::string &)> &named, const std::function<void()> &each)
+{
+    CueListScan scan;
+    std::set<std::string> seen;
+    std::set<std::string> seenDebris;
+    for (const auto &analyzePath : analyzePaths) {
+        if (each) {
+            each();
+        }
+        if (analyzePath.empty() || !seen.insert(application::normalizedPathKey(analyzePath)).second) {
+            continue;
+        }
+        LegacyMemoryListFinding finding = examineTrackAnalysis(pioneerRoot, analyzePath, named);
+        // Two tracks analysed into one directory would each report the
+        // same stray file; it is one file, reported and removed once.
+        auto &debris = finding.debris;
+        debris.erase(std::remove_if(debris.begin(), debris.end(),
+                                    [&seenDebris](const std::string &file) {
+                                        return !seenDebris.insert(application::normalizedPathKey(file)).second;
+                                    }),
+                     debris.end());
+        scan.tally.add(finding);
+        if (finding.anything() || !finding.unreadable.empty()) {
+            scan.findings.push_back(std::move(finding));
+        }
+    }
+    return scan;
+}
+
+std::string repairTrackAnalysis(const LegacyMemoryListFinding &finding, KeepCueList keep)
 {
     std::string account;
+    auto say = [&account](const std::string &what) { account += (account.empty() ? "" : "; ") + what; };
     if (finding.shape.repairable()) {
         AnlzFile file = AnlzFile::readRaw(finding.datPath);
+        const std::string before = file.toBytes();
         bool replaced = false;
         for (auto &section : file.sections) {
-            if (section.fourcc != PcobFourcc || section.rawBytes.size() < SectionHeaderSize
-                || readU32BE(section.rawBytes, 12) != CueListTypeMemory) {
+            if (!isMemoryPcob(section)) {
                 continue;
             }
             // Audited again from the bytes on disk now, not from the
@@ -263,10 +714,34 @@ std::string repairTrackAnalysis(const LegacyMemoryListFinding &finding)
         }
         if (replaced) {
             file.writeRaw(finding.datPath);
-            account += "rebuilt the memory list of " + finding.datPath + " (" + std::to_string(finding.shape.entries)
-                       + " entries kept)";
+            readBackOrRestore(finding.datPath, file.toBytes(), before);
+            say("rebuilt the memory list of " + finding.datPath + " (" + std::to_string(finding.shape.entries)
+                + " entries kept)");
         } else {
-            account += "memory list of " + finding.datPath + " was already in shape";
+            say("memory list of " + finding.datPath + " was already in shape");
+        }
+    }
+    if (finding.listsFixable()) {
+        // From the files as they are now, the memory list just repaired
+        // included, so the player's own entries are what the writer
+        // carries over.
+        const TrackCueLists now = readTrackCueLists(finding.pioneerRoot, finding.analyzePath);
+        const auto disagreement = compareCueLists(now);
+        if (!disagreement) {
+            say("cue lists of " + finding.analyzePath + " already agree");
+        } else if (!disagreement->unrepairable.empty()) {
+            say("cue lists of " + finding.analyzePath + " left alone: " + disagreement->unrepairable);
+        } else {
+            const std::vector<domain::CuePoint> cues = cuesToKeep(now, keep);
+            RekordboxCueWriter writer(finding.pioneerRoot);
+            writer.writeCuesToAnalysisFile(finding.analyzePath, cues, RekordboxCueWriter::Rewrite::OnlyIfChanged);
+            if (compareCueLists(readTrackCueLists(finding.pioneerRoot, finding.analyzePath))) {
+                throw std::runtime_error("the cue lists of " + finding.analyzePath
+                                         + " still disagree after writing them from one list");
+            }
+            say("rewrote the cue lists of " + finding.analyzePath + " from "
+                + (keep == KeepCueList::Player ? "the player's" : "Seabass's") + " list ("
+                + std::to_string(cues.size()) + " cues)");
         }
     }
     for (const auto &debris : finding.debris) {
@@ -274,7 +749,7 @@ std::string repairTrackAnalysis(const LegacyMemoryListFinding &finding)
         if (!removeEntry(pathFromUtf8(debris), failure)) {
             throw std::runtime_error("could not remove " + debris + ": " + failure);
         }
-        account += (account.empty() ? "" : "; ") + std::string("removed ") + debris;
+        say("removed " + debris);
     }
     return account;
 }

@@ -245,11 +245,21 @@ struct LibraryConsistencyScanResult
     // Engine only: pads the player hides (domain::HiddenEngineCues).
     std::vector<domain::HiddenEngineCues> hiddenEngineCues;
     bool hiddenCuesChecked = false;
-    // rekordbox only: legacy memory cue lists a player chokes on, and the
-    // analysis debris a hung one left (#55).
+    // rekordbox and OneLibrary: legacy memory cue lists a player chokes
+    // on, the analysis debris a hung one left (#55), and legacy and
+    // modern cue lists that disagree (#60). The rekordbox leg checks the
+    // files export.pdb names; the OneLibrary leg adds the ones only
+    // OneLibrary names, and appends (cueListsAppend) rather than
+    // replacing what the rekordbox leg found.
     std::vector<LegacyMemoryListIssue> legacyMemoryLists;
     bool legacyMemoryListsChecked = false;
     std::string legacyMemoryListsError;
+    infrastructure::rekordbox::CueListTally cueListTally;
+    bool cueListsAppend = false;
+    // OneLibrary leg: the analysis files its rows name (normalizedPathKey),
+    // so a file the rekordbox leg took for debris is not, when this
+    // catalog names it.
+    std::set<std::string> oneLibraryAnalysisKeys;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -413,6 +423,34 @@ private:
     Q_PROPERTY(QString legacyMemoryListError READ legacyMemoryListError NOTIFY legacyMemoryListsChanged)
     // Each {title, artist, what}: the tracks, with what is wrong in words.
     Q_PROPERTY(QVariantList legacyMemoryListTracks READ legacyMemoryListTracks NOTIFY legacyMemoryListsChanged)
+    // #60, the same check's other half: tracks whose legacy cue lists
+    // (what an XDJ-RX2 or CDJ-3000X shows) and modern ones (what Seabass
+    // reads first) disagree. Each {title, artist, what, player, seabass}.
+    // The count is of lists compared and found to differ; a list that
+    // could not be read is in the tracks, not the count.
+    Q_PROPERTY(int cueListDisagreementCount READ cueListDisagreementCount NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(int cueListDisagreementFixableCount READ cueListDisagreementFixableCount
+                   NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(QVariantList cueListDisagreementTracks READ cueListDisagreementTracks NOTIFY legacyMemoryListsChanged)
+    // Tracks whose hot or modern list does not decode: named, not
+    // compared, not repaired.
+    Q_PROPERTY(int cueListMalformedCount READ cueListMalformedCount NOTIFY legacyMemoryListsChanged)
+    // Each {title, artist, what}: the analysis files that could not be
+    // read, with why, so "3 could not be read" can say which.
+    Q_PROPERTY(QVariantList cueListUnreadableTracks READ cueListUnreadableTracks NOTIFY legacyMemoryListsChanged)
+    // Files with anything to report, and with anything the repair does.
+    Q_PROPERTY(int cueListFindingCount READ cueListFindingCount NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(int cueListFixableCount READ cueListFixableCount NOTIFY legacyMemoryListsChanged)
+    // {examined, unreadable, legacyHeader, playerRewritten, disagree,
+    // strayFiles}: what the check looked at and found, counted
+    // (infrastructure::rekordbox::CueListTally). examined 0 means
+    // nothing was checked, never that all is well.
+    Q_PROPERTY(QVariantMap cueListCounts READ cueListCounts NOTIFY legacyMemoryListsChanged)
+    // Which list wins where the two disagree: true keeps what the player
+    // shows (the default), false what Seabass wrote. One choice per
+    // stick, read when the repair is staged.
+    Q_PROPERTY(bool keepPlayerCueLists READ keepPlayerCueLists WRITE setKeepPlayerCueLists
+                   NOTIFY legacyMemoryListsChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -540,12 +578,22 @@ public:
     bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
     QVariantList hiddenCueTracks() const;
     bool legacyMemoryListsChecked() const { return m_legacyMemoryListsChecked; }
-    int legacyMemoryListCount() const { return static_cast<int>(m_legacyMemoryLists.size()); }
+    int legacyMemoryListCount() const;
     int legacyMemoryListFixableCount() const;
     int legacyMemoryListDebrisCount() const;
     bool legacyMemoryListFixStaged() const { return m_legacyMemoryListFixStaged; }
     QString legacyMemoryListError() const { return m_legacyMemoryListsError; }
     QVariantList legacyMemoryListTracks() const;
+    int cueListDisagreementCount() const;
+    int cueListDisagreementFixableCount() const;
+    QVariantList cueListDisagreementTracks() const;
+    int cueListFindingCount() const;
+    int cueListMalformedCount() const;
+    QVariantList cueListUnreadableTracks() const;
+    int cueListFixableCount() const;
+    QVariantMap cueListCounts() const;
+    bool keepPlayerCueLists() const { return m_keepPlayerCueLists; }
+    void setKeepPlayerCueLists(bool keepPlayer);
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -601,8 +649,9 @@ public:
     Q_INVOKABLE void recolourHiddenCues();
     Q_INVOKABLE void unstageHiddenCueFix();
     // Stages one RepairLegacyMemoryListChange per track that has a
-    // repairable list or debris; a list this cannot read is named and
-    // left alone.
+    // repairable memory list, debris, or lists that disagree (resolved
+    // the way keepPlayerCueLists says); a list this cannot read is named
+    // and left alone.
     Q_INVOKABLE void repairLegacyMemoryLists();
     Q_INVOKABLE void unstageLegacyMemoryListFix();
     // Stages telling Engine the rekordbox library is already imported.
@@ -731,6 +780,8 @@ private:
     QString m_legacyMemoryListsError;
     std::set<QString> m_stagedLegacyMemoryListFixes;
     bool m_legacyMemoryListFixStaged = false;
+    infrastructure::rekordbox::CueListTally m_cueListTally;
+    bool m_keepPlayerCueLists = true;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
