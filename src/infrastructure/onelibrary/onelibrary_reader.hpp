@@ -33,8 +33,15 @@ namespace seabass::infrastructure::onelibrary
 // What is still missing is listed in docs/onelibrary-format.md; the
 // short version is that nothing can *create* a row here (see the
 // export.pdb row-insertion issue for the same gap on the other side),
-// hot loops are refused because the cue table has never been confirmed
-// to round-trip them, and colorTableIndex has no known mapping.
+// and colorTableIndex has no known mapping.
+//
+// Cues come from the track's analysis file, not from the database's cue
+// table. content.analysisDataFilePath names the same kind of file
+// export.pdb's analyze_path does, usually the very same file, and that
+// file is what a OneLibrary player shows and writes: an OMNIS-DUO
+// (2026-10-01 to 03, issue #59) stored pads only in the file, left the
+// cue table alone, and where the two disagreed showed the file. The cue
+// table is read by nothing here; OneLibraryCueWriter keeps it in step.
 class OneLibraryReader : public application::LibraryReader
 {
 public:
@@ -44,14 +51,25 @@ public:
     // existsFor() first, same convention as the writer.
     explicit OneLibraryReader(std::string pioneerRoot);
 
-    // The cues are in the catalog, so readTracks() is this and fillCues()
-    // has nothing to add (the LibraryReader defaults). Reads exportLibrary.db
-    // alone: no audio file is stat'd for its size (application::
-    // fillFileSizes) and no artwork file for its existence; artworkPath is
-    // what the catalog names, whether or not the file is still there.
+    // readTracks() + fillCues(). No audio file is stat'd for its size
+    // (application::fillFileSizes) and no artwork file for its existence;
+    // artworkPath is what the catalog names, whether or not the file is
+    // still there.
     std::vector<domain::Track> readAll() override;
+    // exportLibrary.db alone: every field but the cues and
+    // metadataModifiedAt, with each track's analysisFile named.
+    std::vector<domain::Track> readTracks() override;
+    // The analysis-file pass: each OneLibrary track's cues from the file
+    // its analysisFile names (the .EXT and the .DAT, read exactly as the
+    // DeviceLibrary reader reads them), and metadataModifiedAt from the
+    // .EXT's mtime. A track with no file keeps no cues.
+    void fillCues(std::vector<domain::Track> &tracks) override;
 
 private:
+    std::vector<domain::Track> readCatalog(application::ProgressReporter &progress);
+    void readAnalysis(std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+                      const std::string &label);
+
     std::string m_pioneerRoot;
 };
 

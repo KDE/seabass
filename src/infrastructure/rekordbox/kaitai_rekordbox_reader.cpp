@@ -5,6 +5,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -252,6 +253,37 @@ std::string playlistPath(uint32_t id, const std::unordered_map<uint32_t, Playlis
 }
 
 }  // namespace
+
+std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
+                                                                 const std::string &analyzePath)
+{
+    auto bytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/true));
+    if (!bytes) {
+        return std::nullopt;
+    }
+    // The .DAT as well: hot cues 1-3 live only in its legacy list, and a
+    // save writes that list back from what was read here. It is the small
+    // one of the pair (8 KB against 167 KB on a real track), and a missing
+    // one just yields nothing.
+    auto datBytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/false));
+    return readCues(*bytes, datBytes ? *datBytes : std::string());
+}
+
+std::optional<std::int64_t> analysisFileModifiedAt(const std::string &pioneerRoot, const std::string &analyzePath)
+{
+    // The conversion is spelled out here rather than borrowed from
+    // stick_tree_walker's toUnixSeconds: this reader is compiled into
+    // narrow test targets that list their own sources, and the walker
+    // would drag its directory reader in with it.
+    std::error_code ec;
+    const auto written = std::filesystem::last_write_time(
+        pathFromUtf8(pioneerRoot) / pathFromUtf8(anlzRelativePath(analyzePath, /*wantExt=*/true)), ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    const auto asSystem = infrastructure::toSystemClock(written);
+    return std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
+}
 
 // Resolves the analysis-file source from the root itself rather than
 // taking one: a browsed stick backup's extracted catalogs carry a marker
@@ -582,6 +614,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
                     // here: one folder per track, fifty times this pass.
                     std::string analyzePath = sqlText(rowTrack->analyze_path());
                     if (!analyzePath.empty()) {
+                        track.analysisFile = analyzePath;
                         m_analyzePathBySourceId[track.sourceId] = std::move(analyzePath);
                     }
                     tracks.push_back(std::move(track));
@@ -652,27 +685,20 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
                                                   : m_analyzePathBySourceId.end();
         if (pathIt != m_analyzePathBySourceId.end()) {
             const std::string &analyzePath = pathIt->second;
-            const std::string extRelative = anlzRelativePath(analyzePath, /*wantExt=*/true);
-            auto bytes = m_anlzSource->read(extRelative);
-            if (bytes) {
-                // The .DAT as well: hot cues 1-3 live only in its legacy
-                // list, and a save writes that list back from what was
-                // read here. It is the small one of the pair (8 KB against
-                // 167 KB on a real track), and a missing one just yields
-                // nothing.
-                const std::string datRelative = anlzRelativePath(analyzePath, /*wantExt=*/false);
-                auto datBytes = m_anlzSource->read(datRelative);
-                // One track's analysis file that does not parse is that
-                // track's problem: its cues are not read and the warning
-                // names it. It used to abort the read of every other
-                // track in the library.
-                try {
-                    track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
-                } catch (const std::exception &e) {
-                    track.cues.clear();
-                    std::cerr << "warning: rekordbox track id=" << track.sourceId << ": analysis file " << extRelative
-                              << " unreadable, its cues were not read: " << e.what() << "\n";
+            track.analysisFile = analyzePath;
+            // One track's analysis file that does not parse is that
+            // track's problem: its cues are not read and the warning
+            // names it. It used to abort the read of every other track in
+            // the library.
+            try {
+                if (auto cues = readAnalysisFileCues(*m_anlzSource, analyzePath)) {
+                    track.cues = std::move(*cues);
                 }
+            } catch (const std::exception &e) {
+                track.cues.clear();
+                std::cerr << "warning: rekordbox track id=" << track.sourceId << ": analysis file "
+                          << anlzRelativePath(analyzePath, /*wantExt=*/true)
+                          << " unreadable, its cues were not read: " << e.what() << "\n";
             }
             // The track's own edit time: rekordbox keeps a track's cues in
             // its ANLZ .EXT file, so that file's mtime moves when this
@@ -684,17 +710,8 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
             // on disk -- a browsed backup reads them out of an archive,
             // where there is no mtime to take -- and Sync then falls back
             // to the catalog dates for this track.
-            // The conversion is spelled out here rather than borrowed from
-            // stick_tree_walker's toUnixSeconds: this reader is compiled
-            // into narrow test targets that list their own sources, and
-            // the walker would drag its directory reader in with it.
-            std::error_code ec;
-            const auto written =
-                std::filesystem::last_write_time(pathFromUtf8(m_pioneerRoot) / pathFromUtf8(extRelative), ec);
-            if (!ec) {
-                const auto asSystem = infrastructure::toSystemClock(written);
-                track.metadataModifiedAt =
-                    std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
+            if (auto modified = analysisFileModifiedAt(m_pioneerRoot, analyzePath)) {
+                track.metadataModifiedAt = *modified;
             }
         }
         progress.tick(++processed);

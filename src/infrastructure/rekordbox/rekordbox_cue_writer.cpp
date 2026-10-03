@@ -289,14 +289,20 @@ std::optional<std::string> RekordboxCueWriter::analyzePathFor(uint32_t trackId) 
 
 void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &requested)
 {
-    const std::vector<domain::CuePoint> cues = writableCues(requested);
     uint32_t trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
 
     auto analyzePath = analyzePathFor(trackId);
     if (!analyzePath) {
         throw std::runtime_error("no rekordbox track with id=" + trackSourceId + " (or it has no analysis file)");
     }
-    std::string extPath = extAnlzPath(m_pioneerRoot, *analyzePath);
+    writeCuesToAnalysisFile(*analyzePath, requested, Rewrite::Always);
+}
+
+bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
+                                                 const std::vector<domain::CuePoint> &requested, Rewrite rewrite)
+{
+    const std::vector<domain::CuePoint> cues = writableCues(requested);
+    std::string extPath = extAnlzPath(m_pioneerRoot, analyzePath);
 
     auto file = AnlzFile::readRaw(extPath);
     const std::string extBefore = file.toBytes();
@@ -420,7 +426,7 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
     // Both files are built before either is written, so a list the codec
     // refuses to encode stops the track with nothing on the stick
     // changed, instead of leaving an .EXT that disagrees with its .DAT.
-    const std::string datPath = datAnlzPath(m_pioneerRoot, *analyzePath);
+    const std::string datPath = datAnlzPath(m_pioneerRoot, analyzePath);
     std::optional<AnlzFile> datFile;
     std::string datBefore;
     if (std::filesystem::exists(pathFromUtf8(datPath))) {
@@ -465,6 +471,9 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
     // What this cannot see: the read comes through the page cache, so it
     // proves the bytes the kernel holds, not the bytes the medium does.
     const std::string extAfter = file.toBytes();
+    if (rewrite == Rewrite::OnlyIfChanged && extAfter == extBefore && !datFile) {
+        return false;
+    }
     file.writeRaw(extPath);
     if (auto problem = readBackProblem(extPath, extAfter)) {
         throw std::runtime_error(restoreAfterFailedReadBack({{extPath, extBefore}}, extPath, *problem));
@@ -486,6 +495,7 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
                 restoreAfterFailedReadBack({{datPath, datBefore}, {extPath, extBefore}}, datPath, *problem));
         }
     }
+    return true;
 }
 
 void RekordboxCueWriter::setAfterWriteForTesting(std::function<void(const std::string &path)> hook)

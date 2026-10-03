@@ -75,7 +75,12 @@ struct LocalCueWriterContext
             writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");
-            writer = std::make_unique<OneLibraryCueWriterAdapter>(root, std::move(oneLibraryPaths));
+            auto adapter = std::make_unique<OneLibraryCueWriterAdapter>(root, std::move(oneLibraryPaths));
+            // The save's shared writer, which backs up each analysis file
+            // before its cues are written there (#59); a writer of the
+            // adapter's own would write them with no backup behind them.
+            adapter->useSharedWriter(sharedOneLibraryWriter(ctx, root));
+            writer = std::move(adapter);
         }
     }
 

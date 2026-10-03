@@ -145,27 +145,11 @@ int main()
         assert(t->playCount.has_value() && *t->playCount == 5);
         assert(t->artworkPath == seabass::pathToUtf8(artFile));
 
-        assert(t->cues.size() == 3);
-        bool sawHot = false, sawMemory = false, sawLoop = false;
-        for (const auto &c : t->cues) {
-            if (c.kind == CuePoint::Kind::Hot && c.hotCueNumber == 2) {
-                // A loop row: flagged, and its out point carried.
-                assert(c.isLoop && c.loopEndMs == 4000.0 && c.positionMs == 2000.0);
-                sawLoop = true;
-            } else if (c.kind == CuePoint::Kind::Hot) {
-                assert(c.hotCueNumber == 1);
-                assert(c.positionMs == 1000.0);  // 1,000,000us -> 1000.0ms
-                assert(c.comment == "drop");
-                assert(!c.isLoop);
-                sawHot = true;
-            } else {
-                assert(c.hotCueNumber == 0);
-                assert(c.positionMs == 12345.0);  // 12,345,000us -> 12345.0ms
-                assert(c.comment == "breakdown");
-                sawMemory = true;
-            }
-        }
-        assert(sawHot && sawMemory && sawLoop);
+        // The three cue-table rows planted above are NOT this track's
+        // cues: a OneLibrary player takes cues from the analysis file the
+        // row names (#59), and this schema names none. So the track reads
+        // with no cues; onelibrary_anlz_cues_test covers the file side.
+        assert(t->cues.empty());
 
         assert(t->playlists.size() == 1);
         assert(t->playlists[0].name == "Techno/Peak Time");

@@ -81,6 +81,44 @@ against [pyrekordbox](https://github.com/dylanljones/pyrekordbox)'s source
   `CuePoint::color`'s hex string. Cosmetic only - doesn't affect cue
   position/hot-cue-number correctness.
 
+## Where a player takes cues from (2026-10-03, issue #59)
+
+Measured on an OMNIS-DUO with WHALESHARK2, 1 to 3 October 2026 (evidence
+in `project/evidence/omnis-cue-source-2026-10-01/`):
+
+- **Playlists and track identity come from `exportLibrary.db`.** The
+  player listed the playlists exactly as OneLibrary stores them, including
+  a track DeviceLibrary's copy of that playlist lacks.
+- **Cues come from the track's analysis file**, the one
+  `content.analysisDataFilePath` names (for example
+  `/PIONEER/USBANLZ/P06D/0001F5E1/ANLZ0000.DAT`, with its `.EXT`). That
+  is the same file `export.pdb`'s `analyze_path` names when DeviceLibrary
+  holds the track. Where the `cue` table and the file disagreed (five pads
+  against one), the player showed the file; a track with no `cue` rows
+  showed the file's cues.
+- **Pads stored on the player went into the analysis file only.** The
+  `cue` table was left alone and `content.cueUpdateCount` did not move;
+  the database gained only play history (`history`, `history_content`).
+
+What Seabass does with this:
+
+- `OneLibraryReader` reads a track's cues from that analysis file, with
+  the same code DeviceLibrary's reader uses (`readAnalysisFileCues()`),
+  and never from the `cue` table.
+- `OneLibraryCueWriter::writeCuesForPath()` writes the analysis file
+  first, through `RekordboxCueWriter` (PCOB in the .DAT, PCOB and PCO2 in
+  the .EXT, with its read-back), leaving a file that already holds the
+  cues alone, and then keeps the `cue` table in step. The table is never
+  read back as a source.
+- A DeviceLibrary row and a OneLibrary row naming the same analysis file
+  are one cue source. Sync pairs Engine with OneLibrary only for the rows
+  no DeviceLibrary row speaks for (`oneLibraryRowsToPairWithEngine()`).
+
+Still unverified: whether a CDJ-3000X reads a OneLibrary-only track's
+cues from its analysis file or from the `cue` table (the pad-1-as-loop
+check in #59), and what rekordbox desktop does with the `cue` table on
+import. Until the second is known, the table is written, not dropped.
+
 ## What's NOT handled (deliberately out of scope this pass)
 
 - **Legacy frame-addressing columns** on `cue`
@@ -93,7 +131,8 @@ against [pyrekordbox](https://github.com/dylanljones/pyrekordbox)'s source
   (OPUS-QUAD, OMNIS-DUO, XDJ-AZ, CDJ-3000X) that primarily reads the
   modern `inUsec`/`outUsec` fields, so this is expected to be a
   reasonable simplification rather than a functional gap, but wasn't
-  verified against real hardware.
+  verified against real hardware. The OMNIS-DUO (OneLibrary only) was
+  measured on 2026-10-03; see "Where a player takes cues from" below.
 - **`hotCueBankList`/`hotCueBankList_cue`** (the newer named-bank
   hot-cue-grouping UI feature) is left untouched. A cue's hot-cue-ness
   and slot number live entirely in `cue.kind` per the above; bank

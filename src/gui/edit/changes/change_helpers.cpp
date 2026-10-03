@@ -205,6 +205,13 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
         return std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(pioneerRoot, realStickRoot);
     });
     if (created) {
+        // Its cue writes land in the stick's analysis files as well as in
+        // exportLibrary.db (#59), and those files are not the database a
+        // caller backs up before it writes. Each is backed up here, once
+        // per save, just before the writer first touches it, so Undo and
+        // a rolled-back change put it back with the rest. A file a
+        // DeviceLibrary write already covered is not copied twice.
+        writer.setBeforeCueFileWrite([&ctx](const std::string &file) { ctx.backupOnce(file, "onelibrary-cues"); });
         // So a rolled-back save folds THIS database, whatever the change
         // that failed happened to touch.
         ctx.noteWalDatabase(

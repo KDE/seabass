@@ -17,6 +17,7 @@
 #include <optional>
 #include <set>
 
+#include "application/use_cases/onelibrary_sync_rows.hpp"
 #include "application/path_key.hpp"
 #include "application/ports/backup_store.hpp"
 #include "application/use_cases/scan_library.hpp"
@@ -170,25 +171,25 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             addPairPlans(rekordboxTracks, engineTracks, rekordboxMtime, engineMtime);
         }
         if (hasEngine && hasOneLibrary) {
-            addPairPlans(engineTracks, oneLibraryTracks, engineMtime, oneLibraryMtime);
+            // Only the OneLibrary rows no DeviceLibrary row speaks for: a
+            // row naming the same analysis file has the same cues (that
+            // file is where a OneLibrary player takes them from, #59), and
+            // a row at a path DeviceLibrary lists gets every DeviceLibrary
+            // write mirrored into it. Planning those against Engine too
+            // would decide one file twice, and whichever write landed last
+            // would win. See oneLibraryRowsToPairWithEngine().
+            addPairPlans(engineTracks, application::oneLibraryRowsToPairWithEngine(rekordboxTracks, oneLibraryTracks),
+                         engineMtime, oneLibraryMtime);
         }
         // rekordbox <-> OneLibrary is deliberately NOT planned as a pair.
-        // They are one library written in two formats, not two catalogs to
-        // reconcile: every write to rekordbox already mirrors into
-        // OneLibrary (see SyncPlanChange::apply and the three other
-        // cue-writing workflows), so they cannot drift apart, and there is
-        // nothing for a pair plan to do.
+        // For cues they are one source, not two: a OneLibrary row's cues
+        // are read from, and written to, the analysis file its row names
+        // (#59), which is the file the DeviceLibrary row for that track
+        // names too. Comparing the two would compare a file with itself.
         //
-        // Worse, a pair plan would be computed from the state before the
-        // save and applied after it, so it could write pre-mirror data back
-        // over what the mirror had just written -- order-dependent, and
-        // silent, because every write succeeds.
-        //
-        // This does mean a library whose two halves ALREADY disagree is not
-        // repaired here. That is a one-off reconciliation and belongs with
-        // Library Health, which is where cross-catalog disagreement is
-        // reported; sync's job is to keep formats level, not to fix a
-        // library that arrived crooked.
+        // Where they name different files (a re-analysed copy), or one
+        // lists a track the other does not, that is a library that arrived
+        // crooked: Library Health's to report and level, not a sync's.
 
         // Two different pairs can independently target the same third
         // catalog's track (e.g. both rekordbox and Engine have cues

@@ -521,8 +521,12 @@ void LibraryCatalogCache::invalidateEveryCatalogOn(const std::string &stickRoot)
 void LibraryCatalogCache::invalidateWithOneLibraryMirror(const std::string &format, const std::string &path)
 {
     invalidate(format, path);
+    // Both ways: the two share their cues' analysis files (#59), so a
+    // OneLibrary cue write changes what DeviceLibrary reads as well.
     if (format == "rekordbox") {
         invalidate("onelibrary", path);
+    } else if (format == "onelibrary") {
+        invalidate("rekordbox", path);
     }
 }
 

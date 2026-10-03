@@ -85,6 +85,7 @@ std::string firstDifference(const Track &a, const Track &b)
     if (a.filename != b.filename) return "filename";
     if (a.filePath != b.filePath) return "filePath";
     if (a.artworkPath != b.artworkPath) return "artworkPath";
+    if (a.analysisFile != b.analysisFile) return "analysisFile";
     if (a.streamingSource != b.streamingSource) return "streamingSource";
     if (a.fileSizeBytes != b.fileSizeBytes) return "fileSizeBytes";
     if (a.bitrate != b.bitrate) return "bitrate";
@@ -152,7 +153,9 @@ struct CountingProgress : seabass::application::ProgressReporter
 
 // The base commit's readAll() digests over this fixture (see the header).
 const std::string RekordboxDigest = "b5b7775ec3990ee5a7e9b6e4d4597082347a18e592dbf219382ada1cc8fdce65";
-const std::string OneLibraryDigest = "d8c5556ad1e4e18bbd08bcb89dc9dbadf112dbfc40aa52e637e2c7423161bd76";
+// OneLibrary's changed with #59: its cues are its analysis files' now, not
+// its cue table's (17 rows with table cues before, 264 with file cues).
+const std::string OneLibraryDigest = "1b0059a8d7d507a6fbbee924b054d1503bea151b3bf8298ba11d378bff94c5dc";
 const std::string EngineDigest = "70ee572caca6bd8c04e524289b54f1c9a306130befde89b824e5fd1b882d2373";
 
 // What the base commit's readers returned over the same planting: rows
@@ -161,7 +164,7 @@ constexpr int RekordboxRowsSized = 770;
 constexpr int EngineRowsSized = 1043;
 constexpr int OneLibraryRowsSized = 1644;  // all from the catalog, no stat
 constexpr int RekordboxRowsWithCues = 222;
-constexpr int OneLibraryRowsWithCues = 17;
+constexpr int OneLibraryRowsWithCues = 264;
 constexpr int EngineRowsWithCues = 125;
 // Rows whose catalog names artwork, whether or not the file is there.
 constexpr int EngineRowsWithArtwork = 1467;
@@ -320,21 +323,25 @@ int main(int argc, char **argv)
         check(threw && cancelling.ticks == 10, "rekordbox fillCues stops at the track it was cancelled on");
     }
 
-    // OneLibrary: cues are in the catalog; sizes come from the catalog too.
+    // OneLibrary: cues are in the analysis files its rows name (#59), read
+    // by fillCues(); sizes come from the catalog.
     {
         using seabass::infrastructure::onelibrary::OneLibraryReader;
         OneLibraryReader reader(pioneerUtf8);
         auto tracks = reader.readTracks();
-        const auto catalogSizes = tracks;
+        check(countIf(tracks, withCues) == 0, "onelibrary readTracks reads no analysis file");
         reader.fillCues(tracks);
+        const auto catalogSizes = tracks;
         seabass::application::fillFileSizes(tracks);
         auto reference = OneLibraryReader(pioneerUtf8).readAll();
         seabass::application::fillFileSizes(reference);
         checkSameLibrary(tracks, reference, "onelibrary stages vs readAll");
         checkSameLibrary(tracks, catalogSizes, "onelibrary sizes are the catalog's, kept by fillFileSizes");
-        check(seabass::application::catalogDigest(tracks) == OneLibraryDigest, "onelibrary digest equals the base commit's");
+        check(seabass::application::catalogDigest(tracks) == OneLibraryDigest,
+              "onelibrary digest equals the pinned one, got " + seabass::application::catalogDigest(tracks));
         check(countIf(tracks, sized) == OneLibraryRowsSized, "onelibrary rows sized");
-        check(countIf(tracks, withCues) == OneLibraryRowsWithCues, "onelibrary rows with cues");
+        check(countIf(tracks, withCues) == OneLibraryRowsWithCues,
+              "onelibrary rows with cues: " + std::to_string(countIf(tracks, withCues)));
     }
 
     // Engine: cues in the catalog, no stat of audio or artwork.
