@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <chrono>
 #include <string>
 #include <iostream>
 
@@ -430,5 +431,45 @@ int main()
     }
 
     std::cout << "All cross_source_sync_conflict_test cases passed.\n";
+    // The CLI's sync runs the detector too (takeSourceConflicts), so the
+    // SourcesDisagree reason reaches it, not only the app. Planned the way
+    // the CLI plans: rekordbox and OneLibrary each against one Engine
+    // track that has no cues, proposing different cues. The committed
+    // fixture holds no such track, so cli_sync_dry_run cannot show it;
+    // this is that path at the planner level.
+    {
+        const CuePoint early{CuePoint::Kind::Hot, 1, 1000.0, "", ""};
+        const CuePoint late{CuePoint::Kind::Hot, 1, 9000.0, "", ""};
+        const Track engine = makeTrack("engine", "e1", "/stick/Contents/song.mp3", {});
+        const Track rekordbox = makeTrack("rekordbox", "r1", "/stick/Contents/song.mp3", {early});
+        const Track oneLibrary = makeTrack("onelibrary", "o1", "/stick/Contents/song.mp3", {late});
+        const Track other = makeTrack("rekordbox", "r2", "/stick/Contents/other.mp3", {early});
+        const Track otherEngine = makeTrack("engine", "e2", "/stick/Contents/other.mp3", {});
+        const auto now = std::chrono::system_clock::now();
+        std::vector<SyncPlan> plans{
+            SyncPlanner::plan(SyncMatch{other, otherEngine}, now, now),
+            SyncPlanner::plan(SyncMatch{rekordbox, engine}, now, now),
+            SyncPlanner::plan(SyncMatch{engine, oneLibrary}, now, now),
+            SyncPlanner::plan(SyncMatch{rekordbox, rekordbox}, now, now),  // consistent: writes nothing
+        };
+        assert(plans[1].direction == SyncPlan::Direction::ToB && plans[2].direction == SyncPlan::Direction::ToA);
+        const auto conflicts = CrossSourceConflictDetector::takeSourceConflicts(plans);
+        assert(conflicts.size() == 1);
+        assert(conflicts[0].reason == SyncPlan::Reason::SourcesDisagree);
+        assert(conflicts[0].reasonText == "rekordbox and OneLibrary would write different cues onto Engine");
+        assert(plans.size() == 2 && "the two proposals left; the other plans stay");
+        assert(plans[0].match.trackA.sourceId == "r2" && plans[1].match.trackB.sourceId == "r1"
+               && "in the order the pairs planned them");
+
+        // Two proposals that agree stay as one plan.
+        std::vector<SyncPlan> agreeing{SyncPlanner::plan(SyncMatch{rekordbox, engine}, now, now),
+                                       SyncPlanner::plan(SyncMatch{engine, makeTrack("onelibrary", "o1",
+                                                                                     "/stick/Contents/song.mp3",
+                                                                                     {early})},
+                                                         now, now)};
+        assert(CrossSourceConflictDetector::takeSourceConflicts(agreeing).empty() && agreeing.size() == 1);
+        std::cout << "case (the CLI's sync splits out two catalogs disagreeing about a third) OK\n";
+    }
+
     return 0;
 }

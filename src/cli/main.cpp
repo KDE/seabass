@@ -1038,6 +1038,13 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     const std::size_t matchedCount = plans.size();
     const std::vector<seabass::domain::CrossSourceSyncConflict> hotCueChoices =
         seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans, seabass::application::normalizedPathKey);
+    // Two pairs proposing different cues for one track of the third
+    // catalog: neither pair can see it, and applying both would leave
+    // whichever wrote last. The app's analysis runs the same detector over
+    // the same plans; what it splits out is a choice here too, listed with
+    // its reason and never written.
+    const std::vector<seabass::domain::CrossSourceSyncConflict> sourceConflicts =
+        seabass::domain::CrossSourceConflictDetector::takeSourceConflicts(plans);
     if (!hasEngine) {
         // The only two catalogs here are rekordbox and OneLibrary, which is
         // one library in two formats. They are kept level by mirroring on
@@ -1102,6 +1109,17 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             }
         }
     }
+    if (!sourceConflicts.empty()) {
+        Console::info("");
+        Console::warn("Two catalogs would write different cues onto " + std::to_string(sourceConflicts.size())
+                      + " track(s). Not changed: choose a side in the Seabass app's Sync page.");
+        for (const auto &conflict : sourceConflicts) {
+            Console::info("  \"" + conflict.target.filename + "\" (" + conflict.target.format + "): "
+                          + conflict.sourceA.format + " " + describeCues(conflict.cuesFromA) + "  vs  "
+                          + conflict.sourceB.format + " " + describeCues(conflict.cuesFromB));
+            Console::info("  why: " + conflict.reasonText);
+        }
+    }
 
     // Cues Engine has no free pad for. Never written and never counted as
     // missing, the way Engine DJ's own import leaves them; said here, so a
@@ -1125,10 +1143,11 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // "Consistent" only when it is. Tracks waiting on a hot cue choice
         // are not consistent -- they were just listed as disagreeing -- and a
         // last line saying otherwise is what a reader, or a script, keeps.
-        if (hotCueChoices.empty()) {
+        const std::size_t choices = hotCueChoices.size() + sourceConflicts.size();
+        if (choices == 0) {
             Console::info("  nothing to sync: matched tracks' cues are already consistent (or empty on both sides).");
         } else {
-            Console::info("  nothing else to sync. " + std::to_string(hotCueChoices.size())
+            Console::info("  nothing else to sync. " + std::to_string(choices)
                           + " track(s) above still disagree and need a choice in the app.");
         }
         return 0;

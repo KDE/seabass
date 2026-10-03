@@ -220,4 +220,31 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
     return choices;
 }
 
+std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeSourceConflicts(std::vector<SyncPlan> &plans)
+{
+    // detect() groups by target, which reorders; what it passes through is
+    // put back where the pairs planned it. A pair names each plan: one
+    // plan per pair of rows.
+    const auto identity = [](const SyncPlan &plan) {
+        return plan.match.trackA.format + '\n' + plan.match.trackA.sourceId + '\n' + plan.match.trackB.format + '\n'
+            + plan.match.trackB.sourceId;
+    };
+    std::map<std::string, std::size_t> order;
+    std::vector<SyncPlan> actionable;
+    std::vector<SyncPlan> kept;
+    for (auto &plan : plans) {
+        order.emplace(identity(plan), order.size());
+        (plan.direction != SyncPlan::Direction::None ? actionable : kept).push_back(std::move(plan));
+    }
+    CrossSourceConflictSplit split = detect(actionable);
+    for (auto &plan : split.nonConflicting) {
+        kept.push_back(std::move(plan));
+    }
+    std::stable_sort(kept.begin(), kept.end(), [&](const SyncPlan &a, const SyncPlan &b) {
+        return order.at(identity(a)) < order.at(identity(b));
+    });
+    plans = std::move(kept);
+    return std::move(split.conflicts);
+}
+
 }  // namespace seabass::domain

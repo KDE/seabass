@@ -99,6 +99,14 @@ public:
     // comparison.
     static CrossSourceConflictSplit detect(const std::vector<SyncPlan> &actionablePlans);
 
+    // detect() over the plans in `plans` that would write something,
+    // done in place: the conflicts are returned, the plans they came from
+    // leave `plans`, a pair of agreeing proposals stays as one, and every
+    // other plan (those writing nothing included) keeps its place. For a
+    // caller that lists the plans in the order the pairs made them, as
+    // the CLI's sync does. Run after takeHotCueChoices(), as in the app.
+    static std::vector<CrossSourceSyncConflict> takeSourceConflicts(std::vector<SyncPlan> &plans);
+
     // Moves every plan that needs the DJ's choice out of `plans` and
     // returns one samePair conflict for each file. A choice for the DJ,
     // never a plan to apply: see SyncPlan::needsChoice. Run
