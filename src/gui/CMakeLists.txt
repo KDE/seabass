@@ -131,6 +131,7 @@ set(SEABASS_GUI_QML_FILES
     qml/ImportPromptPage.qml
     qml/SampleRatesPage.qml
     qml/OneLibraryLeftoversPage.qml
+    qml/HiddenCuesPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/StickPerformancePage.qml

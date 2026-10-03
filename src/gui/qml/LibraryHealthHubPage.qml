@@ -300,6 +300,21 @@ Page {
 
     // #8. Only ever shown once the check has run: a stick without
     // OneLibrary has nothing it could report.
+    // Pads the player hides: see HiddenCuesPage. Only once the Engine leg
+    // has run, since only Engine has them.
+    readonly property bool hiddenCuesShown: healthController.hiddenCuesChecked
+    readonly property int hiddenCueCount: healthController.hiddenCueCount
+    readonly property int hiddenCueTrackCount: healthController.hiddenCueTrackCount
+    readonly property string hiddenCueSummary: {
+        if (root.hiddenCueCount === 0) {
+            return "Every hot cue and saved loop in the Engine library has a colour, so the player shows them all.";
+        }
+        return root.hiddenCueCount + (root.hiddenCueCount === 1 ? " cue" : " cues") + " on "
+            + root.hiddenCueTrackCount + (root.hiddenCueTrackCount === 1 ? " track" : " tracks")
+            + " in the Engine library " + (root.hiddenCueCount === 1 ? "has" : "have") + " no colour, and a Denon "
+            + "player does not show a pad without one. Seabass can give them the player's own colour for the pad.";
+    }
+
     readonly property bool cleanupLeftoversShown: healthController.cleanupLeftoversChecked
         || healthController.cleanupLeftoverError.length > 0
     readonly property int cleanupLeftoverCount: healthController.cleanupLeftoverCount
@@ -568,6 +583,21 @@ Page {
             // export.pdb row is evidence the rekordbox half removed the
             // file. The rest of the comparison is still not built, and
             // is still not shown as a card that always says "not checked".
+            HealthCheckCard {
+                objectName: "hiddenCueCard"
+                visible: root.hiddenCuesShown
+                fixableCount: root.hiddenCueCount
+                foundCount: root.hiddenCueCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Cues the player hides"
+                summary: root.hiddenCueSummary
+                running: root.scanning
+                ok: root.hiddenCueCount === 0
+                actionLabel: root.hiddenCueCount > 0 ? "Review cues" : ""
+                onActionRequested: root.detailRequested("hiddencues")
+            }
+
             HealthCheckCard {
                 objectName: "cleanupLeftoverCard"
                 visible: root.cleanupLeftoversShown

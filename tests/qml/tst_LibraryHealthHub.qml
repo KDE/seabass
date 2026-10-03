@@ -170,6 +170,7 @@ TestCase {
             {card: "sampleRateCard", section: "samplerates"},
             {card: "coverArtCard", section: "artwork"},
             {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
+            {card: "hiddenCueCard", section: "hiddencues"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);
@@ -493,7 +494,7 @@ TestCase {
         // picture is what makes "that card is out" checkable instead of a
         // feeling.
         var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
-                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard"];
+                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard", "hiddenCueCard"];
         for (var i = 0; i < names.length; ++i) {
             var card = findByObjectName(page, names[i]);
             if (card) {

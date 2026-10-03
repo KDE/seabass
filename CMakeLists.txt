@@ -360,6 +360,7 @@ add_library(seabass_core STATIC
     src/domain/beat_grid.cpp
     src/domain/camelot_key.cpp
     src/domain/cleanup_leftovers.cpp
+    src/domain/hidden_engine_cues.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -543,6 +544,7 @@ add_library(seabass_core_testing STATIC
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
+    src/domain/hidden_engine_cues.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
@@ -885,6 +887,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/delete_orphan_change.cpp
         src/gui/edit/changes/finish_cleanup_change.hpp
         src/gui/edit/changes/finish_cleanup_change.cpp
+        src/gui/edit/changes/recolour_engine_cues_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp
@@ -1809,6 +1812,11 @@ target_link_libraries(engine_cue_translation_test PRIVATE seabass_core_testing)
 target_include_directories(engine_cue_translation_test PRIVATE src)
 add_test(NAME engine_cue_translation_test COMMAND engine_cue_translation_test)
 
+add_executable(hidden_engine_cues_test tests/hidden_engine_cues_test.cpp)
+target_link_libraries(hidden_engine_cues_test PRIVATE seabass_core_testing)
+target_include_directories(hidden_engine_cues_test PRIVATE src)
+add_test(NAME hidden_engine_cues_test COMMAND hidden_engine_cues_test)
+
 add_executable(format_usb_stick_test
     tests/format_usb_stick_test.cpp
 )
@@ -2546,6 +2554,14 @@ if(TARGET seabass_edit)
         target_link_libraries(finish_cleanup_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME finish_cleanup_change_test COMMAND finish_cleanup_change_test)
+
+    add_executable(recolour_engine_cues_change_test tests/recolour_engine_cues_change_test.cpp)
+    target_include_directories(recolour_engine_cues_change_test PRIVATE src)
+    target_link_libraries(recolour_engine_cues_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(recolour_engine_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME recolour_engine_cues_change_test COMMAND recolour_engine_cues_change_test)
 
     add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
     target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)

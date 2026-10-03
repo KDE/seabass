@@ -21,6 +21,7 @@
 #include "application/ports/cancellation_token.hpp"
 #include "gui/async_request.hpp"
 #include "domain/cleanup_leftovers.hpp"
+#include "domain/hidden_engine_cues.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -211,6 +212,9 @@ struct LibraryConsistencyScanResult
     std::vector<domain::CleanupLeftover> cleanupLeftovers;
     bool cleanupLeftoversChecked = false;
     std::string cleanupLeftoversError;
+    // Engine only: pads the player hides (domain::HiddenEngineCues).
+    std::vector<domain::HiddenEngineCues> hiddenEngineCues;
+    bool hiddenCuesChecked = false;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -353,6 +357,14 @@ private:
     // The ones left alone, each {title, artist, reason}: few, and each one
     // is a decision the DJ may want to make by hand.
     Q_PROPERTY(QVariantList cleanupLeftoversHeldBack READ cleanupLeftoversHeldBack NOTIFY cleanupLeftoversChanged)
+    // Engine pads the player hides: a cue or loop written without a colour
+    // by a build before 05d71bbd (domain::HiddenEngineCues). Checked by
+    // the Engine leg of a full scan.
+    Q_PROPERTY(bool hiddenCuesChecked READ hiddenCuesChecked NOTIFY hiddenCuesChanged)
+    Q_PROPERTY(int hiddenCueTrackCount READ hiddenCueTrackCount NOTIFY hiddenCuesChanged)
+    Q_PROPERTY(int hiddenCueCount READ hiddenCueCount NOTIFY hiddenCuesChanged)
+    Q_PROPERTY(bool hiddenCueFixStaged READ hiddenCueFixStaged NOTIFY hiddenCuesChanged)
+    Q_PROPERTY(QVariantList hiddenCueTracks READ hiddenCueTracks NOTIFY hiddenCuesChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -474,6 +486,11 @@ public:
     bool cleanupLeftoverFixStaged() const { return m_cleanupLeftoverFixStaged; }
     QString cleanupLeftoverError() const { return m_cleanupLeftoversError; }
     QVariantList cleanupLeftoversHeldBack() const;
+    bool hiddenCuesChecked() const { return m_hiddenCuesChecked; }
+    int hiddenCueTrackCount() const { return static_cast<int>(m_hiddenEngineCues.size()); }
+    int hiddenCueCount() const;
+    bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
+    QVariantList hiddenCueTracks() const;
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -523,6 +540,11 @@ public:
     // Stages finishing every repairable Clean Up leftover. Staging only.
     Q_INVOKABLE void finishCleanupLeftovers();
     Q_INVOKABLE void unstageCleanupLeftoverFix();
+    // Stages one RecolourEngineCuesChange per track with hidden pads; Save
+    // writes them. The whole set at once: a pad the player hides is never
+    // something to keep hidden.
+    Q_INVOKABLE void recolourHiddenCues();
+    Q_INVOKABLE void unstageHiddenCueFix();
     // Stages telling Engine the rekordbox library is already imported.
     Q_INVOKABLE void markRekordboxImported();
     Q_INVOKABLE void unstageRekordboxImportMark();
@@ -561,6 +583,7 @@ signals:
     void analysisStateChanged();
     void sampleRatesChanged();
     void cleanupLeftoversChanged();
+    void hiddenCuesChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -638,6 +661,10 @@ private:
     QString m_cleanupLeftoversError;
     std::set<QString> m_stagedCleanupLeftovers;
     bool m_cleanupLeftoverFixStaged = false;
+    std::vector<domain::HiddenEngineCues> m_hiddenEngineCues;
+    bool m_hiddenCuesChecked = false;
+    std::set<QString> m_stagedHiddenCueFixes;
+    bool m_hiddenCueFixStaged = false;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
