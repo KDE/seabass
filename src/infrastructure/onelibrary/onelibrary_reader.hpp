@@ -40,9 +40,10 @@ namespace seabass::infrastructure::onelibrary
 // table. content.analysisDataFilePath names the same kind of file
 // export.pdb's analyze_path does, usually the very same file, and that
 // file is what a OneLibrary player shows and writes: an OMNIS-DUO
-// (2026-10-01 to 03, issue #59) stored pads only in the file, left the
-// cue table alone, and where the two disagreed showed the file. The cue
-// table is read by nothing here; OneLibraryCueWriter keeps it in step.
+// (2026-10-01, issue #59) stored pads only in the file and left the cue
+// table alone, and a CDJ-3000X (2026-10-03) showed the file where the two
+// disagreed. The cue table is read by nothing here; OneLibraryCueWriter
+// keeps it in step.
 class OneLibraryReader : public application::LibraryReader
 {
 public:

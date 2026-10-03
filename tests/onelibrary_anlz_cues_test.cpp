@@ -4,8 +4,8 @@
 
 // Issue #59: a OneLibrary track's cues are the ones in the analysis file
 // its row names (content.analysisDataFilePath), not the rows of
-// exportLibrary.db's cue table. An OMNIS-DUO showed the file where the two
-// disagreed and wrote its own pads into the file alone. Checked here on a
+// exportLibrary.db's cue table. A CDJ-3000X showed the file where the two
+// disagreed, and an OMNIS-DUO wrote its own pads into the file alone. Checked here on a
 // copy of the anonymized fixture, whose exportLibrary.db names an analysis
 // file for every row:
 //

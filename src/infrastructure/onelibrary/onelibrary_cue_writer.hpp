@@ -141,8 +141,8 @@ public:
     //
     // Writes two places, the analysis file first. A OneLibrary player
     // takes a track's cues from the analysis file its row names
-    // (content.analysisDataFilePath), not from the cue table (OMNIS-DUO,
-    // issue #59), so the file is written through RekordboxCueWriter, the
+    // (content.analysisDataFilePath), not from the cue table (CDJ-3000X read,
+    // OMNIS-DUO write, issue #59), so the file is written through RekordboxCueWriter, the
     // writer DeviceLibrary's cues go through, with its read-back. A file
     // that already holds these cues is left alone. The cue table is then
     // kept in step for whatever else reads it (rekordbox desktop may;
