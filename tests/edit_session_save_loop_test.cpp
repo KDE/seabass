@@ -9,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -97,6 +98,43 @@ struct Counter
 {
     int created = 0;
     int uses = 0;
+};
+
+// Every announcement a save makes, for #58: one operation, one bar.
+class RecordingReporter : public seabass::application::ProgressReporter
+{
+public:
+    std::vector<std::pair<std::string, size_t>> starts;
+    std::vector<size_t> ticks;
+    int finishes = 0;
+    void start(const std::string &label, size_t total) override { starts.emplace_back(label, total); }
+    void tick(size_t current) override { ticks.push_back(current); }
+    void finish() override { ++finishes; }
+    void warn(const std::string &) override {}
+};
+
+// A change that names files for the up-front backup.
+class BacksUpFiles : public PendingChange
+{
+public:
+    BacksUpFiles(QString id, std::vector<std::string> files) : m_id(std::move(id)), m_files(std::move(files)) {}
+    QString id() const override { return m_id; }
+    QString description() const override { return "apply " + m_id; }
+    QString unit() const override { return "tracks"; }
+    QStringList formatsTouched() const override { return {"rekordbox"}; }
+    std::vector<BackupTarget> filesToBackup(SaveContext &) const override
+    {
+        std::vector<BackupTarget> targets;
+        for (const auto &file : m_files) {
+            targets.push_back({file, "test"});
+        }
+        return targets;
+    }
+    ChangeOutcome apply(SaveContext &) override { return ChangeOutcome::success(); }
+
+private:
+    QString m_id;
+    std::vector<std::string> m_files;
 };
 
 fs::path makeStick(const fs::path &root)
@@ -217,6 +255,42 @@ int main()
         assert(hookRan && hookOk);
         assert(log.statuses.contains("apply b"));
         std::cout << "case 1 (all applied) OK\n";
+    }
+
+    // 1b. #58: one save, one bar. Three changes backing up three files
+    //     between them (one of them twice, counted once) announce ONE
+    //     bar whose total is files + items + the commit, and tick it
+    //     forward, never back, to exactly that total. Three
+    //     announcements used to make the bar fill, empty and fill again.
+    {
+        Log log;
+        CancellationToken token;
+        RecordingReporter progress;
+        const std::string pdb = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        const std::string other = pathToUtf8(pioneer / "rekordbox" / "exportExt.pdb");
+        std::ofstream(pathFromUtf8(other)) << "ext-bytes";
+        SaveContext ctx(token, progress, [&](const QString &s) { log.statuses << s; }, rb, {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<BacksUpFiles>("a", std::vector<std::string>{pdb}),
+            std::make_shared<BacksUpFiles>("b", std::vector<std::string>{pdb, other}),
+            std::make_shared<FakeChange>("c", Behavior::Ok, log),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.error.isEmpty() && result.appliedIds.size() == 3);
+        assert(progress.starts.size() == 1 && "one operation, one announcement");
+        const size_t total = 2 + 3 + 1;
+        assert(progress.starts[0].second == total && "files + items + commit");
+        assert(progress.finishes == 1);
+        assert(!progress.ticks.empty() && progress.ticks.back() == total && "the bar reaches its end");
+        for (size_t i = 1; i < progress.ticks.size(); ++i) {
+            assert(progress.ticks[i] >= progress.ticks[i - 1] && "and only ever moves forward");
+        }
+        assert(progress.ticks.front() <= 2 && "the undo copy is the first stretch");
+        assert(std::find(progress.ticks.begin(), progress.ticks.end(), size_t(5)) != progress.ticks.end()
+               && "the items tick past the files");
+        assert(log.statuses.contains("Saving an undo copy") && log.statuses.contains("Committing changes to the stick")
+               && "the label names the stretch");
+        std::cout << "case 1b (one save, one bar: files + items + commit) OK\n";
     }
 
     // 2. Cancel lands between changes: the change that was running when

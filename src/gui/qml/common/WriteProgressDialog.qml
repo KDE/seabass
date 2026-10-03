@@ -113,7 +113,11 @@ SeabassDialog {
             // the dialog keeps its height when the count comes and goes.
             readonly property bool counting: dialog.hasSession && dialog.session.writeTotal > 0
             color: Theme.textMuted
-            text: counting ? dialog.session.writeCurrent + " / " + dialog.session.writeTotal : " "
+            // A percentage, not "5 / 31": the one bar counts files backed
+            // up, items written and the commit together (#58), so its
+            // units are mixed and a count would name nothing the user
+            // recognises.
+            text: counting ? Math.floor(100 * dialog.session.writeCurrent / dialog.session.writeTotal) + "%" : " "
         }
         StickWriteWarning {
             objectName: "stickWarning"

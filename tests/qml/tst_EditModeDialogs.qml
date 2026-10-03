@@ -125,7 +125,7 @@ TestCase {
         session.writeTotal = 31;
         tryCompare(dialog, "opened", true);
         compare(findByObjectName(dialog, "writeLabel").text, "Writing cues for Track 7");
-        compare(findByObjectName(dialog, "countLabel").text, "5 / 31");
+        compare(findByObjectName(dialog, "countLabel").text, "16%", "mixed units, so a percentage (#58)");
         verify(findByObjectName(dialog, "stickWarning").visible);
         shot(testCase, "write-progress-dialog");
         var cancel = findByObjectName(dialog, "cancelButton");

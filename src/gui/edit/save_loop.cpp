@@ -154,6 +154,19 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             upfront.push_back(target);
         }
     }
+
+    // One save, one bar (#58): announced once, with everything it will
+    // do in its total, and ticked through to the end. The three stretches
+    // used to be three announcements, and a bar that fills, empties and
+    // fills again reads as the save starting over, or as the first bar
+    // having lied. The stretches are the undo copy (one unit per file,
+    // known before the first copy), the items (one each), and the commit
+    // at the end, which has no count of its own and is one unit the bar
+    // sits just short of while it runs. The label says which stretch,
+    // through ctx.status().
+    const size_t backupUnits = ctx.countBackupFiles(upfront);
+    const size_t total = backupUnits + changes.size() + 1;
+    ctx.progress().start("Saving changes", total);
     if (!upfront.empty()) {
         // Not "Backing up": on Restore Metadata that read as the page doing
         // the opposite of what was asked. It is the copy Undo Last Save
@@ -170,7 +183,6 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         }
     }
 
-    ctx.progress().start("Saving changes", changes.size());
     size_t done = 0;
     for (size_t index = 0; index < changes.size(); ++index) {
         const auto &change = changes[index];
@@ -221,7 +233,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         if (outcome.skipped) {
             result.skippedIds << change->id();
         }
-        ctx.progress().tick(++done);
+        ctx.progress().tick(backupUnits + ++done);
     }
 
     // After a cancel or a failure too: the changes that did land are
@@ -234,9 +246,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // record backs Engine's database up again, and the finish hooks copy
     // scratch databases back onto the stick. With every item ticked and
     // the last track's name still showing, those seconds read as a hang.
-    // No count: none of it is countable, so the bar goes indeterminate.
+    // No count of its own: it is the last unit of the one bar, which
+    // stays one short of full until the stick is committed.
     ctx.status(QStringLiteral("Committing changes to the stick"));
-    ctx.progress().start("Committing changes to the stick", 0);
+    ctx.progress().tick(backupUnits + changes.size());
     QString importWarning = keepImportLevel(ctx, importLevelWanted);
 
     // ok means "the whole batch went through"; a cancel or a failure hands
@@ -289,6 +302,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         result.bytesReleased = ctx.releaseAutomaticBackupsIfTight();
     }
 
+    ctx.progress().tick(total);
     ctx.progress().finish();
     result.backups = ctx.takeBackups();
     return result;

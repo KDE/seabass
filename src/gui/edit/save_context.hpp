@@ -149,10 +149,17 @@ public:
     // file, so a 201-cue save pays one durable write instead of 201 -- and
     // the whole backup is on the stick before the first live file is
     // touched, which the per-item path could not promise.
-    // `countFiles`: announce the files as a counted phase on progress().
-    // Only the save loop's up-front backup asks for it; a backup made in
-    // the middle of the item loop must not replace the items' own count.
+    // `countFiles`: tick progress() once per file, from 0, as the first
+    // stretch of the save's one bar (#58); the save loop announces the
+    // bar, with countBackupFiles() in its total, before calling this. A
+    // backup made in the middle of the item loop must not tick at all,
+    // or the items' own count would move under it.
     void backupAllNow(const std::vector<BackupTarget> &targets, bool countFiles = false);
+    // How many files backupAllNow(targets) would copy: the targets and
+    // their WAL sidecars, each file once, less what this save already
+    // backed up. The same rule backupAllNow() applies, so the progress
+    // total announced from this is the count it ticks to.
+    size_t countBackupFiles(const std::vector<BackupTarget> &targets) const;
     // Throws away the records this save took, for the one case where
     // they are certainly not wanted: nothing was applied and the
     // rollback put everything back, so they are backups of a stick that
@@ -272,6 +279,14 @@ private:
     // hold bytes: backed up with the main file so a restore cannot go
     // back to an older state than the stick actually had.
     static std::vector<std::string> walSidecarsOf(const std::string &file);
+    // What backupAllNow() copies, see planBackup() in the .cpp.
+    struct BackupPlan
+    {
+        std::vector<std::string> labelOrder;
+        std::map<std::string, std::vector<std::string>> byLabel;
+        size_t files() const;
+    };
+    BackupPlan planBackup(const std::vector<BackupTarget> &targets) const;
 
     application::CancellationToken m_cancel;
     application::ProgressReporter &m_progress;
