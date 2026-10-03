@@ -266,7 +266,11 @@ std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource
     // one of the pair (8 KB against 167 KB on a real track), and a missing
     // one just yields nothing.
     auto datBytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/false));
-    return readCues(*bytes, datBytes ? *datBytes : std::string());
+    try {
+        return readCues(*bytes, datBytes ? *datBytes : std::string());
+    } catch (const std::exception &e) {
+        throw AnalysisFileUnreadable(e.what());
+    }
 }
 
 std::optional<std::int64_t> analysisFileModifiedAt(const std::string &pioneerRoot, const std::string &analyzePath)
@@ -719,7 +723,7 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
                 if (auto cues = readAnalysisFileCues(*m_anlzSource, analyzePath)) {
                     track.cues = std::move(*cues);
                 }
-            } catch (const std::exception &e) {
+            } catch (const AnalysisFileUnreadable &e) {
                 track.cues.clear();
                 std::cerr << "warning: rekordbox track id=" << track.sourceId << ": analysis file "
                           << anlzRelativePath(analyzePath, /*wantExt=*/true)

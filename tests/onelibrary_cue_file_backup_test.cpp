@@ -5,15 +5,13 @@
 // A OneLibrary cue write lands in the track's analysis file first (#59),
 // and that file is not the exportLibrary.db a change declares for its
 // backup. The save's shared OneLibrary writer backs each analysis file up
-// just before writing it; this checks that through a whole save:
+// just before writing it; this checks that through whole saves:
 //
-// - a change that writes a OneLibrary-only track's analysis file and then
-//   fails on the cue table is rolled back, the analysis file included,
-//   byte for byte;
-// - the same change, not sabotaged, lands its cue in the analysis file.
-//
-// Without the backup, the failed change would leave the analysis file
-// rewritten while the save reported the change as not applied.
+// - a save that wrote a OneLibrary-only track's analysis file is undone,
+//   the analysis file included, byte for byte (Undo Last Save restores
+//   what the save backed up, so a file it never backed up stays changed);
+// - a change that writes the analysis file and then fails on the cue table
+//   leaves the analysis file as it was.
 
 #include <QString>
 
@@ -31,6 +29,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
 #include "gui/edit/changes/add_cue_change.hpp"
+#include "gui/edit/changes/restore_backups_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/library_catalog_cache.hpp"
@@ -180,11 +179,16 @@ int main()
         std::cout << "a failed OneLibrary cue write puts its analysis file back\n";
     }
 
-    // 2. The same change, not sabotaged, lands in the analysis file.
+    // 2. The same change, not sabotaged, lands in the analysis file, and
+    //    Undo Last Save puts the file back from the save's own backup.
     {
         const fs::path pioneer = freshStick("seabass_onelibrary_cue_file_backup_ok");
         const std::string root = seabass::pathToUtf8(pioneer);
         const Target target = findTarget(root);
+        const fs::path ext = seabass::pathFromUtf8(rekordbox::extAnlzPath(root, target.track.analysisFile));
+        const fs::path dat = seabass::pathFromUtf8(rekordbox::datAnlzPath(root, target.track.analysisFile));
+        const std::string extBefore = bytesOf(ext);
+        const std::string datBefore = bytesOf(dat);
         const auto result = addCue(pioneer, target);
         check(result.error.isEmpty(), "the save succeeds: " + result.error.toStdString());
         rekordbox::FilesystemAnlzSource source(root);
@@ -195,8 +199,22 @@ int main()
                               && cue.positionMs == 4321.0);
         }
         check(found, "the added cue is in the analysis file a OneLibrary player reads");
+        check(bytesOf(ext) != extBefore, "the save changed the .EXT");
+
+        {
+            auto &noProgress = seabass::application::NullProgressReporter::instance();
+            seabass::application::CancellationToken token;
+            const QString qroot = seabass::gui::pathToQString(pioneer);
+            seabass::gui::SaveContext ctx(token, noProgress, {}, qroot, {});
+            std::vector<std::shared_ptr<seabass::gui::PendingChange>> undo = {
+                std::make_shared<seabass::gui::RestoreBackupsChange>(result.backups)};
+            const auto undone = seabass::gui::runSaveLoop(undo, ctx);
+            check(undone.error.isEmpty(), "the undo succeeds: " + undone.error.toStdString());
+        }
+        check(bytesOf(ext) == extBefore, "Undo Last Save put the .EXT back from the save's backup");
+        check(bytesOf(dat) == datBefore, "Undo Last Save left the .DAT as it was before the save");
         seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(pioneer.parent_path()));
-        std::cout << "a OneLibrary cue write lands in the analysis file\n";
+        std::cout << "a OneLibrary cue write lands in the analysis file, and its undo takes it back out\n";
     }
 
     std::error_code ec;

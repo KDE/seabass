@@ -69,14 +69,21 @@ public:
     // file a DeviceLibrary row names, and their cues go through here so
     // that both catalogs' cues are written by one writer.
     //
-    // OnlyIfChanged leaves the files alone when the write would not
-    // change a byte of either, and returns false; for a caller that may
-    // be writing cues the file already holds (OneLibrary's half of a save
-    // whose DeviceLibrary half just wrote the same file). Throws, as
+    // OnlyIfChanged writes each file only when its bytes change, and
+    // returns false when neither does; for a caller that may be writing
+    // cues the file already holds (OneLibrary's half of a save whose
+    // DeviceLibrary half just wrote the same file). Throws, as
     // writeHotCues() does, when the .EXT is not there.
+    //
+    // beforeWrite, when set, is called once with the files about to be
+    // written (absolute paths), after nothing is left to decide and before
+    // the first byte goes out: where a caller backs them up, or keeps
+    // their bytes to put back should its own later step fail. A throw
+    // from it stops the write with nothing written.
     enum class Rewrite { Always, OnlyIfChanged };
+    using BeforeWrite = std::function<void(const std::vector<std::string> &files)>;
     bool writeCuesToAnalysisFile(const std::string &analyzePath, const std::vector<domain::CuePoint> &cues,
-                                 Rewrite rewrite = Rewrite::Always);
+                                 Rewrite rewrite = Rewrite::Always, const BeforeWrite &beforeWrite = {});
 
     // Runs after each file is written, before it is read back, so a test
     // can damage a file there. Empty to turn it off.

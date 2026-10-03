@@ -160,8 +160,10 @@ public:
     std::vector<std::string> cueFilesForPath(const std::string &filePath);
 
     // Called with each analysis file just before writeCuesForPath()
-    // writes it, so a save can back it up first. A hook that throws
-    // stops the write before anything was written. Empty to turn off.
+    // writes it, and only when it is about to change, so a save can back
+    // it up first. A hook that throws stops the write before that file
+    // was written (and puts back any written before it). Empty to turn
+    // off.
     void setBeforeCueFileWrite(std::function<void(const std::string &file)> hook);
 
     // Removes a track's row entirely, along with its dependent cue/
@@ -304,6 +306,14 @@ private:
     // own duration.
     SqlCipherDb &writeConnection();
     SqlCipherDb &verifyConnection();
+
+    // writeCuesForPath()'s second half: the cue table, in one
+    // transaction, read back through the verify connection.
+    void writeCueRows(SqlCipherDb &db, const std::vector<int64_t> &contentIds,
+                      const std::vector<domain::CuePoint> &cues);
+    // Whether content has analysisDataFilePath; asked once per writer.
+    bool hasAnalysisPathColumn(SqlCipherDb &db);
+    std::optional<bool> m_hasAnalysisPathColumn;
 
     // Set once finishWriting() has folded and closed: the baseline this
     // writer holds no longer describes the file.

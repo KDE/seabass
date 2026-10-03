@@ -121,8 +121,14 @@ void OneLibraryReader::readAnalysis(std::vector<Track> &tracks, application::Pro
             // player has to go on.
             try {
                 auto cues = rekordbox::readAnalysisFileCues(*source, track.analysisFile);
+                if (!cues) {
+                    // Said, not passed over: the row names a file that is
+                    // not there, so no player has its cues either.
+                    m_progress->warn("content_id=" + track.sourceId + ": analysis file " + track.analysisFile
+                                     + " is not on the stick, so the track has no cues a player reads");
+                }
                 track.cues = cues ? std::move(*cues) : std::vector<CuePoint>{};
-            } catch (const std::exception &e) {
+            } catch (const rekordbox::AnalysisFileUnreadable &e) {
                 track.cues.clear();
                 m_progress->warn("content_id=" + track.sourceId + ": analysis file " + track.analysisFile
                               + " unreadable, its cues were not read (" + e.what() + ")");

@@ -299,7 +299,8 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
 }
 
 bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
-                                                 const std::vector<domain::CuePoint> &requested, Rewrite rewrite)
+                                                 const std::vector<domain::CuePoint> &requested, Rewrite rewrite,
+                                                 const BeforeWrite &beforeWrite)
 {
     const std::vector<domain::CuePoint> cues = writableCues(requested);
     std::string extPath = extAnlzPath(m_pioneerRoot, analyzePath);
@@ -471,18 +472,36 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
     // What this cannot see: the read comes through the page cache, so it
     // proves the bytes the kernel holds, not the bytes the medium does.
     const std::string extAfter = file.toBytes();
-    if (rewrite == Rewrite::OnlyIfChanged && extAfter == extBefore && !datFile) {
+    // OnlyIfChanged: each file is written only when its bytes change, so
+    // a .DAT-only change leaves the 167 KB .EXT alone too.
+    const bool writeExt = rewrite == Rewrite::Always || extAfter != extBefore;
+    if (!writeExt && !datFile) {
         return false;
     }
-    file.writeRaw(extPath);
-    if (auto problem = readBackProblem(extPath, extAfter)) {
-        throw std::runtime_error(restoreAfterFailedReadBack({{extPath, extBefore}}, extPath, *problem));
+    if (beforeWrite) {
+        std::vector<std::string> files;
+        if (writeExt) {
+            files.push_back(extPath);
+        }
+        if (datFile) {
+            files.push_back(datPath);
+        }
+        beforeWrite(files);
+    }
+    if (writeExt) {
+        file.writeRaw(extPath);
+        if (auto problem = readBackProblem(extPath, extAfter)) {
+            throw std::runtime_error(restoreAfterFailedReadBack({{extPath, extBefore}}, extPath, *problem));
+        }
     }
     if (datFile) {
         const std::string datAfter = datFile->toBytes();
         try {
             datFile->writeRaw(datPath);
         } catch (const std::exception &e) {
+            if (!writeExt) {
+                throw;
+            }
             // The .DAT is untouched (or someone else's); the .EXT is ours,
             // and put back so the two lists do not disagree.
             const bool restored = infrastructure::writeFileDurablyAtomic(extPath, extBefore);
@@ -491,8 +510,11 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
                                                  : " could NOT be put back and needs restoring from the backup"));
         }
         if (auto problem = readBackProblem(datPath, datAfter)) {
-            throw std::runtime_error(
-                restoreAfterFailedReadBack({{datPath, datBefore}, {extPath, extBefore}}, datPath, *problem));
+            std::vector<std::pair<std::string, std::string>> originals{{datPath, datBefore}};
+            if (writeExt) {
+                originals.push_back({extPath, extBefore});
+            }
+            throw std::runtime_error(restoreAfterFailedReadBack(originals, datPath, *problem));
         }
     }
     return true;

@@ -1217,17 +1217,12 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             // OneLibrary cue write lands first (#59). Usually the ones the
             // rekordbox targets above already put in the set.
             seabass::infrastructure::onelibrary::OneLibraryCueWriter files(*resolved.rekordboxPath);
-            for (const auto *plan : toOneLibrary) {
-                if (!targetOf(*plan)->filePath.empty()) {
-                    for (auto &file : files.cueFilesForPath(targetOf(*plan)->filePath)) {
-                        rekordboxFiles.insert(std::move(file));
-                    }
-                }
-            }
-            for (const auto *plan : toRekordbox) {
-                if (!targetOf(*plan)->filePath.empty()) {
-                    for (auto &file : files.cueFilesForPath(targetOf(*plan)->filePath)) {
-                        rekordboxFiles.insert(std::move(file));
+            for (const auto *targets : {&toOneLibrary, &toRekordbox}) {
+                for (const auto *plan : *targets) {
+                    if (!targetOf(*plan)->filePath.empty()) {
+                        for (auto &file : files.cueFilesForPath(targetOf(*plan)->filePath)) {
+                            rekordboxFiles.insert(std::move(file));
+                        }
                     }
                 }
             }

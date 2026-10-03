@@ -20,7 +20,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <string>
@@ -232,7 +234,8 @@ int main(int argc, char **argv)
         deviceRow.format = "rekordbox";
         deviceRow.sourceId = "1";
         deviceRow.filePath = "/elsewhere/another-copy.mp3";
-        deviceRow.analysisFile = "/PIONEER/USBANLZ/P001/00000001/ANLZ0000.DAT";
+        // Padded, as export.pdb's fixed-length strings arrive.
+        deviceRow.analysisFile = "/PIONEER/USBANLZ/P001/00000001/ANLZ0000.DAT   ";
         Track sharing;
         sharing.format = "onelibrary";
         sharing.sourceId = "11";
@@ -249,7 +252,13 @@ int main(int argc, char **argv)
         own.sourceId = "13";
         own.filePath = "/stick/Contents/three.mp3";
         own.analysisFile = "/PIONEER/USBANLZ/P003/00000003/ANLZ0000.DAT";
-        const auto rows = seabass::application::oneLibraryRowsToPairWithEngine({deviceRow}, {sharing, samePath, own});
+        Track noFile;
+        noFile.format = "onelibrary";
+        noFile.sourceId = "14";
+        noFile.filePath = "/stick/Contents/four.mp3";
+        // Names no analysis file: nothing a player reads to sync.
+        const auto rows =
+            seabass::application::oneLibraryRowsToPairWithEngine({deviceRow}, {sharing, samePath, own, noFile});
         check(rows.size() == 1 && rows.front().sourceId == "13",
               "only the row no DeviceLibrary row speaks for is paired, got " + std::to_string(rows.size()));
 
@@ -322,6 +331,37 @@ int main(int argc, char **argv)
             }
         }
         check(sawShared, "DeviceLibrary lists the shared analysis file");
+        // The table fails after the file was written: the writer puts the
+        // file back itself, for a caller with no backup to restore from
+        // (the command line's mirror goes on after a failure).
+        {
+            const std::string ext = rekordbox::extAnlzPath(root, ownRow.analysisFile);
+            std::ifstream in(seabass::pathFromUtf8(ext), std::ios::binary);
+            const std::string before((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            bool sabotaged = false;
+            rekordbox::RekordboxCueWriter::setAfterWriteForTesting([&](const std::string &path) {
+                if (sabotaged || path != ext) {
+                    return;
+                }
+                sabotaged = true;
+                onelibrary::SqlCipherLibrary lib;
+                onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(root), /*readOnly=*/false);
+                db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+                db.exec("DROP TABLE cue;");
+            });
+            bool threw = false;
+            try {
+                onelibrary::OneLibraryCueWriter writer(root);
+                writer.writeCuesForPath(ownRow.filePath, {hot(5, 7000.0)});
+            } catch (const std::exception &) {
+                threw = true;
+            }
+            rekordbox::RekordboxCueWriter::setAfterWriteForTesting({});
+            std::ifstream after(seabass::pathFromUtf8(ext), std::ios::binary);
+            const std::string now((std::istreambuf_iterator<char>(after)), std::istreambuf_iterator<char>());
+            check(sabotaged && threw, "the cue table failed after the analysis file was written");
+            check(now == before, "the writer put the analysis file back when the table failed");
+        }
         std::cout << "writer: the analysis file first, the table in step\n";
     }
 
