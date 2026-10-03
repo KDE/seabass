@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -35,9 +37,17 @@ std::string rekordboxCueColor(bool hasRgb, unsigned char r, unsigned char g, uns
 // often name the same file. Reads the .EXT's lists and the .DAT's legacy
 // ones, exactly as KaitaiRekordboxReader::fillCues() does for its own rows.
 //
-// nullopt when there is no .EXT (a track nothing analysed). Throws when
-// the .EXT does not parse; a damaged legacy list is warned about and
-// skipped, as in the reader.
+// nullopt when there is no .EXT (a track nothing analysed). Throws
+// AnalysisFileUnreadable when the .EXT does not parse, which is that one
+// track's problem; a damaged legacy list is warned about and skipped, as
+// in the reader. Anything the byte source itself throws (a browsed
+// backup's archive that cannot be read) passes through as it is: that is
+// the whole read's problem, not one track's.
+class AnalysisFileUnreadable : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
 std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
                                                                  const std::string &analyzePath);
 

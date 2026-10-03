@@ -27,23 +27,20 @@ namespace seabass::application
 // is mirrored into the OneLibrary rows at that path (and their analysis
 // files), so those rows are spoken for too.
 //
+// A row that names no analysis file is left out too: a OneLibrary player
+// takes its cues from that file, so for such a row there is nothing a
+// player reads to compare or to write, only the cue table.
+//
 // What is left are the tracks only OneLibrary holds (about 480 of 1644 on
 // WHALESHARK2), which keep their own pairing with Engine, through their
 // own analysis file.
 //
-// Analysis paths compare without regard to ASCII case: both rekordbox
-// catalogs spell them, and the stick's FAT/exFAT does not distinguish.
+// Analysis paths compare by normalizedPathKey, as audio paths do: both
+// rekordbox catalogs spell them, export.pdb pads its strings, and the
+// stick's filesystem does not tell case apart.
 inline std::vector<domain::Track> oneLibraryRowsToPairWithEngine(const std::vector<domain::Track> &deviceLibrary,
                                                                  const std::vector<domain::Track> &oneLibrary)
 {
-    const auto analysisKey = [](std::string path) {
-        for (char &c : path) {
-            if (c >= 'A' && c <= 'Z') {
-                c = static_cast<char>(c - 'A' + 'a');
-            }
-        }
-        return path;
-    };
     std::set<std::string> deviceLibraryPaths;
     std::set<std::string> deviceLibraryAnalysisFiles;
     for (const auto &track : deviceLibrary) {
@@ -51,7 +48,7 @@ inline std::vector<domain::Track> oneLibraryRowsToPairWithEngine(const std::vect
             deviceLibraryPaths.insert(normalizedPathKey(track.filePath));
         }
         if (!track.analysisFile.empty()) {
-            deviceLibraryAnalysisFiles.insert(analysisKey(track.analysisFile));
+            deviceLibraryAnalysisFiles.insert(normalizedPathKey(track.analysisFile));
         }
     }
     std::vector<domain::Track> rows;
@@ -59,7 +56,7 @@ inline std::vector<domain::Track> oneLibraryRowsToPairWithEngine(const std::vect
         if (!track.filePath.empty() && deviceLibraryPaths.count(normalizedPathKey(track.filePath))) {
             continue;
         }
-        if (!track.analysisFile.empty() && deviceLibraryAnalysisFiles.count(analysisKey(track.analysisFile))) {
+        if (track.analysisFile.empty() || deviceLibraryAnalysisFiles.count(normalizedPathKey(track.analysisFile))) {
             continue;
         }
         rows.push_back(track);

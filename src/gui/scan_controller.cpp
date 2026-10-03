@@ -273,7 +273,8 @@ std::shared_ptr<const FallbackArtwork> borrowRekordboxArt(const std::vector<doma
 // Runs entirely on a background thread (see ScanController::scan()) - no
 // access to the controller itself, so everything it needs travels in by
 // value and its results travel back out: the Tracks result through the
-// relay, then as the task's own result the Cues result for rekordbox, or
+// relay, then as the task's own result the Cues result for rekordbox and
+// OneLibrary, or
 // a cancelled or failed result in place of whichever did not happen.
 ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QString path,
                            QString siblingRekordboxPath, std::shared_ptr<QtProgressReporter> reporter,
@@ -291,10 +292,11 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
     // DetectedStick field.
     const std::string catalog =
         format == "rekordbox" ? "rekordbox" : (format == "engine" ? "engine" : "onelibrary");
-    // Engine and OneLibrary carry their cues in the catalog itself, so
-    // their Tracks stage already has them; only rekordbox reads its cues
-    // from a file per track, and only rekordbox has a second phase.
-    const bool cuesOutsideCatalog = catalog == "rekordbox";
+    // Engine carries its cues in the catalog itself, so its Tracks stage
+    // already has them. Both rekordbox catalogs read theirs from an
+    // analysis file per track (OneLibrary too, since #59), so they have a
+    // second phase.
+    const bool cuesOutsideCatalog = catalog != "engine";
     bool tracksPublished = false;
     try {
         ScanTaskResult tracksResult;
