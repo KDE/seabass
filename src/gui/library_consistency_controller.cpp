@@ -45,6 +45,7 @@
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
 #include "gui/edit/changes/finish_cleanup_change.hpp"
+#include "gui/edit/changes/recolour_engine_cues_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -470,6 +471,12 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
         }
 
         if (full && format == QStringLiteral("engine")) {
+            // Pads the player hides: no catalog but Engine has them, and
+            // the finder needs nothing beyond the rows just read.
+            result.hiddenEngineCues = domain::HiddenEngineCueFinder::find(tracks);
+            result.hiddenCuesChecked = true;
+        }
+        if (full && format == QStringLiteral("engine")) {
             // Cover art, checked while this format's library is open
             // anyway: one read of Track/AlbumArt and a stat per image,
             // nothing next to the scan itself.
@@ -763,6 +770,9 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_cleanupLeftoversChecked = false;
     m_cleanupLeftoversError.clear();
     emit cleanupLeftoversChanged();
+    m_hiddenEngineCues.clear();
+    m_hiddenCuesChecked = false;
+    emit hiddenCuesChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
     // though: it may wait for another thread's recovery of m.db, or copy a
@@ -929,6 +939,11 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_cleanupLeftoversError = QString::fromStdString(result.cleanupLeftoversError);
             emit cleanupLeftoversChanged();
         }
+        if (result.hiddenCuesChecked) {
+            m_hiddenEngineCues = std::move(result.hiddenEngineCues);
+            m_hiddenCuesChecked = true;
+            emit hiddenCuesChanged();
+        }
         // Same rule as the two above: a leg that read nothing must not
         // wipe what a leg that did read left behind. hasColumn is part
         // of the test because an Engine 1.x library legitimately reports
@@ -1068,6 +1083,21 @@ void LibraryConsistencyController::attachSession()
                     emit importStateChanged();
                     return;
                 }
+                if (auto staged = m_stagedHiddenCueFixes.find(changeId); staged != m_stagedHiddenCueFixes.end()) {
+                    // The track's pads are coloured now: off the list, and
+                    // the Engine leg is read again after the save like the
+                    // others, so the count is what the database says.
+                    m_stagedHiddenCueFixes.erase(staged);
+                    m_hiddenCueFixStaged = !m_stagedHiddenCueFixes.empty();
+                    m_hiddenEngineCues.erase(
+                        std::remove_if(m_hiddenEngineCues.begin(), m_hiddenEngineCues.end(),
+                                       [&](const auto &h) { return RecolourEngineCuesChange::idFor(h.track.sourceId) == changeId; }),
+                        m_hiddenEngineCues.end());
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit hiddenCuesChanged();
+                    return;
+                }
                 if (auto staged = m_stagedCleanupLeftovers.find(changeId);
                     staged != m_stagedCleanupLeftovers.end()) {
                     // Re-read after the save, like the others: what is
@@ -1157,6 +1187,9 @@ void LibraryConsistencyController::attachSession()
                 m_stagedCleanupLeftovers.clear();
                 m_cleanupLeftoverFixStaged = false;
                 emit cleanupLeftoversChanged();
+                m_stagedHiddenCueFixes.clear();
+                m_hiddenCueFixStaged = false;
+                emit hiddenCuesChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
                 emit sampleRatesChanged();
@@ -1688,6 +1721,75 @@ void LibraryConsistencyController::finishCleanupLeftovers()
                                .arg(repairable.size()));
 }
 
+int LibraryConsistencyController::hiddenCueCount() const
+{
+    int count = 0;
+    for (const auto &hidden : m_hiddenEngineCues) {
+        count += hidden.hidden();
+    }
+    return count;
+}
+
+QVariantList LibraryConsistencyController::hiddenCueTracks() const
+{
+    QVariantList list;
+    for (const auto &hidden : m_hiddenEngineCues) {
+        QVariantMap m;
+        m["title"] = QString::fromStdString(hidden.track.title);
+        m["artist"] = QString::fromStdString(hidden.track.artist);
+        m["hotCues"] = hidden.hotCues;
+        m["loops"] = hidden.loops;
+        list << m;
+    }
+    return list;
+}
+
+void LibraryConsistencyController::recolourHiddenCues()
+{
+    if (busy() || m_hiddenCueFixStaged || m_hiddenEngineCues.empty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    const int count = static_cast<int>(m_hiddenEngineCues.size());
+    std::set<QString> ids;
+    for (const auto &hidden : m_hiddenEngineCues) {
+        if (!m_session->stage(std::make_unique<RecolourEngineCuesChange>(m_enginePath, hidden, count))) {
+            // Refused (the lock): what was staged before stays staged and
+            // marked; the session has reported why.
+            break;
+        }
+        ids.insert(RecolourEngineCuesChange::idFor(hidden.track.sourceId));
+    }
+    if (ids.empty()) {
+        return;
+    }
+    m_stagedHiddenCueFixes = std::move(ids);
+    m_hiddenCueFixStaged = true;
+    emit hiddenCuesChanged();
+    setStagedStatusMessage(QStringLiteral("Staged a colour for the hidden cues on %1 track(s). Press Save to write it.")
+                               .arg(static_cast<int>(m_stagedHiddenCueFixes.size())));
+}
+
+void LibraryConsistencyController::unstageHiddenCueFix()
+{
+    if (!m_hiddenCueFixStaged) {
+        return;
+    }
+    if (m_session) {
+        for (const QString &id : m_stagedHiddenCueFixes) {
+            m_session->unstage(id);
+        }
+    }
+    m_stagedHiddenCueFixes.clear();
+    m_hiddenCueFixStaged = false;
+    emit hiddenCuesChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::unstageCleanupLeftoverFix()
 {
     if (!m_cleanupLeftoverFixStaged) {
@@ -1837,7 +1939,7 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged && !m_cleanupLeftoverFixStaged && !m_importMarkStaged) {
+        && !m_sampleRateFillStaged && !m_cleanupLeftoverFixStaged && !m_hiddenCueFixStaged && !m_importMarkStaged) {
         setStatusMessage({});
     }
 }
