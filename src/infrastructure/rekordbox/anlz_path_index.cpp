@@ -46,12 +46,18 @@ AnlzPathIndex::AnlzPathIndex(const std::string &pioneerRoot)
                     }
                     std::string analyzePath = sqlText(rowTrack->analyze_path());
                     if (!analyzePath.empty()) {
+                        m_paths.insert(analyzePath);
                         m_pathById.emplace(rowTrack->id(), std::move(analyzePath));
                     }
                 }
             }
         });
     }
+}
+
+bool AnlzPathIndex::names(const std::string &analyzePath) const
+{
+    return m_paths.count(analyzePath) > 0;
 }
 
 std::optional<std::string> AnlzPathIndex::pathFor(uint32_t trackId) const

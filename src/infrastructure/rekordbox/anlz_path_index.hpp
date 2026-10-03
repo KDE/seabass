@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -35,10 +36,17 @@ public:
     // none or is not in the database.
     std::optional<std::string> pathFor(uint32_t trackId) const;
 
+    // Whether any row names this analyze_path, spelled as the rows spell
+    // it. A directory can hold two tracks' analyses (rekordbox numbers
+    // the second ANLZ0001), so "the file this track's row names" and
+    // "a file no row names" are different questions.
+    bool names(const std::string &analyzePath) const;
+
     size_t size() const { return m_pathById.size(); }
 
 private:
     std::unordered_map<uint32_t, std::string> m_pathById;
+    std::unordered_set<std::string> m_paths;
 };
 
 }  // namespace seabass::infrastructure::rekordbox

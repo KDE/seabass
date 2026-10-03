@@ -22,6 +22,7 @@
 #include "gui/async_request.hpp"
 #include "domain/cleanup_leftovers.hpp"
 #include "domain/hidden_engine_cues.hpp"
+#include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -174,6 +175,14 @@ private:
 // Result of a background scan task for one format, see
 // LibraryConsistencyController::scanNextPendingFormat(). Built entirely
 // on a worker thread, no access to the controller.
+// One rekordbox track whose legacy memory list, or whose analysis
+// directory, needs a hand (infrastructure::rekordbox::LegacyMemoryListFinding).
+struct LegacyMemoryListIssue
+{
+    domain::Track track;
+    infrastructure::rekordbox::LegacyMemoryListFinding finding;
+};
+
 struct LibraryConsistencyScanResult
 {
     std::vector<domain::LibraryConsistencyIssue> issues;
@@ -215,6 +224,11 @@ struct LibraryConsistencyScanResult
     // Engine only: pads the player hides (domain::HiddenEngineCues).
     std::vector<domain::HiddenEngineCues> hiddenEngineCues;
     bool hiddenCuesChecked = false;
+    // rekordbox only: legacy memory cue lists a player chokes on, and the
+    // analysis debris a hung one left (#55).
+    std::vector<LegacyMemoryListIssue> legacyMemoryLists;
+    bool legacyMemoryListsChecked = false;
+    std::string legacyMemoryListsError;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -365,6 +379,19 @@ private:
     Q_PROPERTY(int hiddenCueCount READ hiddenCueCount NOTIFY hiddenCuesChanged)
     Q_PROPERTY(bool hiddenCueFixStaged READ hiddenCueFixStaged NOTIFY hiddenCuesChanged)
     Q_PROPERTY(QVariantList hiddenCueTracks READ hiddenCueTracks NOTIFY hiddenCuesChanged)
+    // rekordbox legacy memory cue lists in a shape an XDJ-RX2 hangs on,
+    // written by a build between 5282555e and 6e0f1c09 or rewritten by
+    // the player since, plus the analysis file a hung player leaves
+    // behind (infrastructure::rekordbox::LegacyMemoryListFinding, #55).
+    // Checked by the rekordbox leg of a full scan.
+    Q_PROPERTY(bool legacyMemoryListsChecked READ legacyMemoryListsChecked NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(int legacyMemoryListCount READ legacyMemoryListCount NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(int legacyMemoryListFixableCount READ legacyMemoryListFixableCount NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(int legacyMemoryListDebrisCount READ legacyMemoryListDebrisCount NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(bool legacyMemoryListFixStaged READ legacyMemoryListFixStaged NOTIFY legacyMemoryListsChanged)
+    Q_PROPERTY(QString legacyMemoryListError READ legacyMemoryListError NOTIFY legacyMemoryListsChanged)
+    // Each {title, artist, what}: the tracks, with what is wrong in words.
+    Q_PROPERTY(QVariantList legacyMemoryListTracks READ legacyMemoryListTracks NOTIFY legacyMemoryListsChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -491,6 +518,13 @@ public:
     int hiddenCueCount() const;
     bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
     QVariantList hiddenCueTracks() const;
+    bool legacyMemoryListsChecked() const { return m_legacyMemoryListsChecked; }
+    int legacyMemoryListCount() const { return static_cast<int>(m_legacyMemoryLists.size()); }
+    int legacyMemoryListFixableCount() const;
+    int legacyMemoryListDebrisCount() const;
+    bool legacyMemoryListFixStaged() const { return m_legacyMemoryListFixStaged; }
+    QString legacyMemoryListError() const { return m_legacyMemoryListsError; }
+    QVariantList legacyMemoryListTracks() const;
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -545,6 +579,11 @@ public:
     // something to keep hidden.
     Q_INVOKABLE void recolourHiddenCues();
     Q_INVOKABLE void unstageHiddenCueFix();
+    // Stages one RepairLegacyMemoryListChange per track that has a
+    // repairable list or debris; a list this cannot read is named and
+    // left alone.
+    Q_INVOKABLE void repairLegacyMemoryLists();
+    Q_INVOKABLE void unstageLegacyMemoryListFix();
     // Stages telling Engine the rekordbox library is already imported.
     Q_INVOKABLE void markRekordboxImported();
     Q_INVOKABLE void unstageRekordboxImportMark();
@@ -584,6 +623,7 @@ signals:
     void sampleRatesChanged();
     void cleanupLeftoversChanged();
     void hiddenCuesChanged();
+    void legacyMemoryListsChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -665,6 +705,11 @@ private:
     bool m_hiddenCuesChecked = false;
     std::set<QString> m_stagedHiddenCueFixes;
     bool m_hiddenCueFixStaged = false;
+    std::vector<LegacyMemoryListIssue> m_legacyMemoryLists;
+    bool m_legacyMemoryListsChecked = false;
+    QString m_legacyMemoryListsError;
+    std::set<QString> m_stagedLegacyMemoryListFixes;
+    bool m_legacyMemoryListFixStaged = false;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
