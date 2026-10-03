@@ -112,6 +112,24 @@ TestCase {
         }
     }
 
+    // The plan of the scan's one bar (#58) opens each catalog to count
+    // it, OneLibrary through its uninterruptible key derivation. It
+    // counted each twice and never looked at the token, so a stop early
+    // in the rekordbox leg waited out two derivations. Once each now,
+    // and a stop during the first count makes no other.
+    function test_thePlanCountsEachCatalogOnceAndStopsBetweenCounts() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const whole = controllerFixture.planCounts(stick, false);
+        compare(whole.counts.rekordbox, 1, "rekordbox counted once");
+        compare(whole.counts.engine, 1, "Engine counted once");
+        compare(whole.counts.onelibrary, 1, "OneLibrary counted once");
+        const stopped = controllerFixture.planCounts(stick, true);
+        compare(stopped.tasksAfter, 0, "the stop ended the leg");
+        compare(Object.keys(stopped.counts).length, 1,
+                "a stop during the first count makes no other: " + JSON.stringify(stopped.counts));
+    }
+
     // A filesystem repair unmounts and remounts the stick and cannot be
     // stopped: the controller waits for it rather than abandon it.
     function test_leavingMidRepairWaitsForTheRepair() {

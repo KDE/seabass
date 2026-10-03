@@ -101,6 +101,9 @@ TestCase {
     }
 
     function cleanup() {
+        // A test that failed while it held a repair lets it end here, or
+        // the controller's destructor would wait out the stand-in.
+        controllerFixture.restoreFilesystemRepair();
         catalogGate.restore();
         browseFixture.waitForScans();
     }

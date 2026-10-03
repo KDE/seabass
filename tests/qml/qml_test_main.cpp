@@ -854,8 +854,8 @@ public:
     // called: a test starts a scan while it runs and ends it when that
     // scan is where the test wants it. A fixed delay raced the scan's own
     // count of the stick (#58), which on a slow machine outlasted it.
-    // Ends by itself after 30 s so a test that never finishes it cannot
-    // hang the suite.
+    // Gives up after 30 s so a test that never finishes it cannot hang
+    // the suite, and then reports a failed repair, so the omission shows.
     Q_INVOKABLE void makeFilesystemRepairSucceedWhenFinished()
     {
         finishFilesystemRepair();
@@ -868,8 +868,8 @@ public:
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 seabass::infrastructure::media::FilesystemRepairResult result;
-                result.repaired = true;
-                result.message = "Repaired.";
+                result.repaired = mayFinish->load();
+                result.message = result.repaired ? "Repaired." : "The test never finished the repair.";
                 return result;
             });
     }
@@ -1112,6 +1112,89 @@ public:
             return -1.0;
         }
         return static_cast<double>(clock.nsecsElapsed()) / 1e6;
+    }
+
+    // Which catalogs the first leg of a Library Health scan counts while
+    // it plans the scan's one bar (#58), and how often, with a stop
+    // landing during the first count when `stopDuringFirstCount`. A count
+    // can open OneLibrary, whose key derivation no token interrupts, so
+    // the plan counts each catalog once and looks at its token before
+    // each one: a stop waits for one count at most.
+    //
+    // {counts: {format: calls}, endedMs, tasksAfter}. The counts are the
+    // real readers' (a plain cache answers them); the cache the scan
+    // reads through is a fresh one, so nothing is served from before.
+    Q_INVOKABLE QVariantMap planCounts(const QString &stickRoot, bool stopDuringFirstCount)
+    {
+        using seabass::gui::LibraryCatalogCache;
+        struct Held
+        {
+            std::mutex mutex;
+            std::map<std::string, int> calls;
+            std::atomic<bool> holdFirst{false};
+            std::atomic<bool> inFirst{false};
+            std::atomic<bool> release{false};
+        };
+        auto held = std::make_shared<Held>();
+        held->holdFirst = stopDuringFirstCount;
+        auto plain = std::make_shared<LibraryCatalogCache>(LibraryCatalogCache::realStageForTesting(),
+                                                           LibraryCatalogCache::realMtimeForTesting());
+        auto counting = std::make_unique<LibraryCatalogCache>(LibraryCatalogCache::realStageForTesting(),
+                                                              LibraryCatalogCache::realMtimeForTesting());
+        counting->setCountFnForTesting([held, plain](const std::string &format, const std::string &path) {
+            bool first = false;
+            {
+                std::lock_guard<std::mutex> lock(held->mutex);
+                first = held->calls.empty();
+                ++held->calls[format];
+            }
+            if (first && held->holdFirst) {
+                held->inFirst = true;
+                const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                while (!held->release && std::chrono::steady_clock::now() < until) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+            }
+            return plain->countTracks(format, path);
+        });
+        LibraryCatalogCache::setInstanceForTesting(counting.get());
+        QVariantMap answer;
+        {
+            seabass::gui::LibraryConsistencyController controller;
+            controller.scan(stickRoot + QStringLiteral("/PIONEER"), stickRoot + QStringLiteral("/Engine Library"));
+            QElapsedTimer clock;
+            clock.start();
+            if (stopDuringFirstCount) {
+                while (!held->inFirst && clock.elapsed() < 30000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+                }
+                controller.cancelScan();
+                held->release = true;
+                while (seabass::gui::LibraryConsistencyController::runningScanTasksForTesting() > 0
+                       && clock.elapsed() < 60000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+                }
+            } else {
+                while (controller.busy() && clock.elapsed() < 180000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                }
+            }
+            answer[QStringLiteral("tasksAfter")] =
+                seabass::gui::LibraryConsistencyController::runningScanTasksForTesting();
+        }
+        held->release = true;
+        seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
+        QThreadPool::globalInstance()->waitForDone(30000);
+        LibraryCatalogCache::setInstanceForTesting(nullptr);
+        QVariantMap counts;
+        {
+            std::lock_guard<std::mutex> lock(held->mutex);
+            for (const auto &[format, calls] : held->calls) {
+                counts[QString::fromStdString(format)] = calls;
+            }
+        }
+        answer[QStringLiteral("counts")] = counts;
+        return answer;
     }
 
     // How long the whole scan of a stick copy takes, uninterrupted: what a
