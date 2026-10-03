@@ -48,8 +48,13 @@ class AnalysisFileUnreadable : public std::runtime_error
 public:
     using std::runtime_error::runtime_error;
 };
+//
+// With `cueLists`, also compares the two generations of cue list in the
+// bytes just read, the way Library Health's Cue lists check does
+// (compareCueSections), and says what it found there: no file read twice.
 std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
-                                                                 const std::string &analyzePath);
+                                                                 const std::string &analyzePath,
+                                                                 domain::Track::CueListsCheck *cueLists = nullptr);
 
 // The .EXT's mtime in Unix seconds: the one file that moves when this
 // track's cues change and for no other track. nullopt when it cannot be

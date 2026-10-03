@@ -18,6 +18,7 @@
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
+#include "infrastructure/rekordbox/cue_list_check.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -255,10 +256,15 @@ std::string playlistPath(uint32_t id, const std::unordered_map<uint32_t, Playlis
 }  // namespace
 
 std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
-                                                                 const std::string &analyzePath)
+                                                                 const std::string &analyzePath,
+                                                                 domain::Track::CueListsCheck *cueLists)
 {
+    using CueListsCheck = domain::Track::CueListsCheck;
     auto bytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/true));
     if (!bytes) {
+        if (cueLists) {
+            *cueLists = CueListsCheck::Unreadable;
+        }
         return std::nullopt;
     }
     // The .DAT as well: hot cues 1-3 live only in its legacy list, and a
@@ -266,6 +272,24 @@ std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource
     // one of the pair (8 KB against 167 KB on a real track), and a missing
     // one just yields nothing.
     auto datBytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/false));
+    if (cueLists) {
+        // The Cue lists check's own comparison, of the bytes in hand. A
+        // file missing or not an analysis file is unreadable there too.
+        *cueLists = CueListsCheck::Unreadable;
+        if (datBytes) {
+            try {
+                const std::string datLabel = anlzRelativePath(analyzePath, /*wantExt=*/false);
+                const std::string extLabel = anlzRelativePath(analyzePath, /*wantExt=*/true);
+                const CueListsCompared compared = compareCueSections(cueSectionsOfBytes(*datBytes, datLabel),
+                                                                     cueSectionsOfBytes(*bytes, extLabel), datLabel,
+                                                                     extLabel);
+                *cueLists = compared.disagreement && compared.disagreement->any() ? CueListsCheck::Disagree
+                                                                                   : CueListsCheck::Examined;
+            } catch (const std::exception &) {
+                // Left Unreadable.
+            }
+        }
+    }
     try {
         return readCues(*bytes, datBytes ? *datBytes : std::string());
     } catch (const std::exception &e) {
@@ -720,7 +744,7 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
             // names it. It used to abort the read of every other track in
             // the library.
             try {
-                if (auto cues = readAnalysisFileCues(*m_anlzSource, analyzePath)) {
+                if (auto cues = readAnalysisFileCues(*m_anlzSource, analyzePath, &track.cueLists)) {
                     track.cues = std::move(*cues);
                 }
             } catch (const AnalysisFileUnreadable &e) {

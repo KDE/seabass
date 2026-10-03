@@ -31,6 +31,7 @@
 #include <tuple>
 #include <vector>
 
+#include "domain/cue_list_count.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
@@ -38,6 +39,7 @@
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "scratch_path.hpp"
@@ -424,6 +426,59 @@ void findingsAndRepairs(const fs::path &stick)
         }
         check(unreadableListed == 1, "the missing file is listed with why");
     }
+    // The same files read the way the readers' cue pass reads them
+    // (readAnalysisFileCues): each row's cue lists are compared in the
+    // bytes read for its cues, with no second pass, and the stick summary
+    // counts what the Cue lists check counts (#60).
+    {
+        const std::string missing = "/PIONEER/USBANLZ/P001/0000FFFF/ANLZ0000.DAT";
+        FilesystemAnlzSource source(root);
+        std::vector<seabass::domain::Track> rows;
+        for (const std::string &path : {clean.analyzePath, stale.analyzePath, zeroSlot.analyzePath,
+                                        disagree.analyzePath, debris.analyzePath, stale.analyzePath, missing}) {
+            seabass::domain::Track row;
+            row.analysisFile = path;
+            try {
+                readAnalysisFileCues(source, path, &row.cueLists);
+            } catch (const std::exception &) {
+                // A file the cue reader cannot parse is that track's
+                // problem; its lists were looked at first.
+            }
+            rows.push_back(row);
+        }
+        using Check = seabass::domain::Track::CueListsCheck;
+        check(rows[3].cueLists == Check::Disagree, "the disagreeing pair reads as Disagree");
+        check(rows[0].cueLists == Check::Examined && rows[1].cueLists == Check::Examined
+                  && rows[2].cueLists == Check::Examined && rows[4].cueLists == Check::Examined,
+              "the others as Examined, a damaged memory list included");
+        check(rows[6].cueLists == Check::Unreadable, "the missing file as Unreadable");
+        const seabass::domain::CueListCount count = seabass::domain::countCueLists(rows);
+        check(count.files == 6 && count.examined == 5 && count.disagree == 1 && count.unreadable == 1,
+              "the summary counts each file once, as the scan does: " + std::to_string(count.files) + " files, "
+                  + std::to_string(count.examined) + " examined, " + std::to_string(count.disagree) + " disagree, "
+                  + std::to_string(count.unreadable) + " unreadable");
+        check(count.examined == static_cast<int>(scanCueLists(root, {clean.analyzePath, stale.analyzePath,
+                                                                     zeroSlot.analyzePath, disagree.analyzePath,
+                                                                     debris.analyzePath, stale.analyzePath, missing},
+                                                              names).tally.examined),
+              "and examines exactly the files the Cue lists check examines");
+        check(seabass::domain::describeCueListCount(count) == "1 analysis file could not be read",
+              "with a file unread, the summary says so and gives no count of disagreements: "
+                  + seabass::domain::describeCueListCount(count));
+        rows.pop_back();
+        check(seabass::domain::describeCueListCount(seabass::domain::countCueLists(rows)) == "1 cue list disagrees",
+              "every file examined: the count of disagreements");
+        rows.erase(rows.begin() + 3);
+        check(seabass::domain::describeCueListCount(seabass::domain::countCueLists(rows)).empty()
+                  && seabass::domain::describeCueListCount(seabass::domain::countCueLists(rows), true)
+                         == "Cue lists agree in all 4 analysis files",
+              "all agreeing: nothing on the card, the statistics page says so");
+        seabass::domain::Track notRead;
+        notRead.analysisFile = clean.analyzePath;
+        check(seabass::domain::describeCueListCount(seabass::domain::countCueLists({notRead})).empty(),
+              "cues not read yet: nothing said");
+    }
+
     // Nothing there: nothing examined, and never a clean bill.
     {
         const CueListScan none = scanCueLists(pathToUtf8(stick / "NOT-MOUNTED" / "PIONEER"),

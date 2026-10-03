@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "domain/cue_list_count.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -62,6 +63,12 @@ struct LibraryFingerprint
     // is written down always knows its cues, so this is never serialized
     // and parse() always answers true.
     bool cuesKnown = true;
+    // Not part of the fingerprint: the analysis files whose two
+    // generations of cue list disagree (#60), counted from the same tracks
+    // while they are in hand, so the stick card can say so without
+    // another read (BackupAdvisorController). Never serialized, never
+    // compared; all zero when the cues are not known.
+    CueListCount cueLists;
 
     bool empty() const { return trackCount == 0; }
 

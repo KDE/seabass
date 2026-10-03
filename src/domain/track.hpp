@@ -121,6 +121,18 @@ struct Track
     // wrote it, 2026-10-01 to 03, issue #59), and a DeviceLibrary row and a OneLibrary row naming the same
     // file are therefore ONE cue source: writing one writes the other.
     std::string analysisFile;
+    // What the reader found comparing that file's two generations of cue
+    // list (#60) while it read the track's cues: the legacy lists a
+    // player of the XDJ-RX2's generation shows, the modern ones Seabass
+    // reads first. The comparison Library Health's Cue lists check makes
+    // (infrastructure/rekordbox/cue_list_check.hpp), of the bytes already
+    // read for the cues, so the stick's summary counts the files that
+    // disagree without a second pass over them (domain::countCueLists).
+    // NotChecked until the cues were read, and for a row naming no
+    // analysis file; Unreadable when a file is missing or not an analysis
+    // file, which is counted, never passed as agreeing.
+    enum class CueListsCheck { NotChecked, Examined, Disagree, Unreadable };
+    CueListsCheck cueLists = CueListsCheck::NotChecked;
     // Non-empty (e.g. "TIDAL") if this track is a streaming-service link
     // rather than a local file, Engine only, set via a raw-SQL read of
     // Track.streamingSource (libdjinterop's public API doesn't expose
