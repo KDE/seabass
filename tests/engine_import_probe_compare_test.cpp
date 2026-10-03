@@ -136,6 +136,54 @@ int main()
     check(contains("added: Database2/hm.db"), "a file the import added is reported");
     check(contains("rekordbox side: unchanged"), "an untouched rekordbox side says so");
 
+    // The OneLibrary column: a value only exportLibrary.db holds, which
+    // Engine takes on, is shown beside rekordbox's and credited.
+    {
+        Record b;
+        Record a;
+        for (Record *r : {&b, &a}) {
+            r->set("RT", "Contents/p.mp3", "rating", "NULL");
+            r->set("RO", "Contents/p.mp3", "rating", "4");
+        }
+        a.set("ET", "Contents/p.mp3", "rating", "4");
+        // Clocks: one stamp that parses and one that does not, on tracks
+        // and on files, and the time the after record was taken.
+        a.set("M", "-", "recordedAt.unix", "1700000200");
+        b.set("ET", "Contents/x.mp3", "col.lastEditTime", "1600000000");
+        a.set("ET", "Contents/x.mp3", "col.lastEditTime", "1700000100");
+        b.set("ET", "Contents/y.mp3", "col.lastEditTime", "1600000000");
+        a.set("ET", "Contents/y.mp3", "col.lastEditTime", "not a number");
+        b.set("EF", "Database2/m.db", "mtime", "1");
+        a.set("EF", "Database2/m.db", "mtime", "2");
+        a.set("EF", "Database2/m.db", "mtime.unix", "1700000050");
+        b.set("EF", "Database2/hm.db", "mtime", "1");
+        a.set("EF", "Database2/hm.db", "mtime", "2");
+        a.set("EF", "Database2/hm.db", "mtime.unix", "unreadable: gone");
+        // Older, and listed after m.db: the newest must win, not the last.
+        b.set("EF", "Database2/stm.db", "mtime", "1");
+        a.set("EF", "Database2/stm.db", "mtime", "2");
+        a.set("EF", "Database2/stm.db", "mtime.unix", "1699999000");
+        // A OneLibrary change counts as a change to the rekordbox side.
+        b.set("RO", "Contents/z.mp3", "comment", "before");
+        a.set("RO", "Contents/z.mp3", "comment", "after");
+        const std::vector<Case> oneCase = {
+            {"p", "planted", "rekordbox-only rating", "Contents/p.mp3", "", "", "", {Item{"ET", "Contents/p.mp3", "rating", "value"}}}};
+        std::ostringstream out;
+        printCompare(out, compareRecords(b, a, oneCase));
+        const std::string t = out.str();
+        const auto has = [&t](const std::string &needle) { return t.find(needle) != std::string::npos; };
+        check(has("[rekordbox: NULL] [OneLibrary: 4, Engine now matches it]"),
+              "a value only OneLibrary held is shown and credited when Engine takes it");
+        check(has("newest Track.lastEditTime the import wrote (player clock): 1700000100 on Contents/x.mp3, 100 s before the record"),
+              "the player's clock is read from the newest parsable lastEditTime");
+        check(has("newest rewritten file: Database2/m.db at 1700000050, 150 s before the record"),
+              "the newest parsable file time is reported against the record time");
+        check(has("rekordbox side: CHANGED") && has("RO comment"), "a OneLibrary change shows as a rekordbox-side change");
+        if (failures > 0) {
+            std::cerr << t;
+        }
+    }
+
     if (failures > 0) {
         std::cerr << text;
         std::cerr << failures << " check(s) failed\n";
