@@ -6,6 +6,7 @@
 // library" prompt does to the Engine side of a stick when the DJ says yes.
 //
 //   engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]
+//                       [--no-arm] [--skip <path substring>]...
 //   engine_import_probe --record <stick root> --out <record.tsv>
 //   engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]
 //
@@ -674,6 +675,12 @@ struct PlantOptions
     fs::path root;
     fs::path out;
     fs::path cover;
+    // Leave Engine's import counter alone: for a stick whose pdb sequence
+    // a real rekordbox export has already moved.
+    bool noArm = false;
+    // Never pick a track whose stick-relative audio path contains any of
+    // these, for any case: tracks that carry other evidence.
+    std::vector<std::string> skip;
 };
 
 int plant(const PlantOptions &options)
@@ -724,13 +731,22 @@ int plant(const PlantOptions &options)
             rekordboxByPath[rekordboxKey(root, t)] = t;
         }
     }
+    const auto skipped = [&options](const std::string &path) {
+        return std::any_of(options.skip.begin(), options.skip.end(),
+                           [&path](const std::string &part) { return path.find(part) != std::string::npos; });
+    };
     std::vector<Pair> pairs;
     std::vector<domain::Track> engineOnly;
+    int skippedTracks = 0;
     for (const auto &t : tracks.engine) {
         if (t.filePath.empty() || !t.streamingSource.empty()) {
             continue;
         }
         const std::string path = tracks.engineKey(t);
+        if (skipped(path) || skipped(stickPath(root, t.filePath))) {
+            ++skippedTracks;
+            continue;
+        }
         const auto it = rekordboxByPath.find(path);
         if (it == rekordboxByPath.end()) {
             engineOnly.push_back(t);
@@ -752,6 +768,8 @@ int plant(const PlantOptions &options)
                   << " Engine rows matched to rekordbox by file name, their paths disagreeing";
     }
     std::cout << "\n";
+    std::cout << "skipped: " << skippedTracks << " Engine tracks whose path matches one of " << options.skip.size()
+              << " skip patterns, never planted on or observed\n";
     if (pairs.size() < 24) {
         std::cerr << "refusing: the matrix needs 24 tracks that both catalogs list, and this stick has "
                   << pairs.size() << "\n";
@@ -1064,7 +1082,9 @@ int plant(const PlantOptions &options)
     // what a rekordbox export after the last import looks like from the
     // player's side; the pdb itself stays byte for byte what it was.
     const auto stateMid = infrastructure::engine::readRekordboxImportState(enginePath, pioneerPath);
-    if (!stateMid.playerWillOfferImport()) {
+    if (options.noArm) {
+        std::cout << "not arming: Engine's import counter left as it was (no-arm)\n";
+    } else if (!stateMid.playerWillOfferImport()) {
         const std::uint64_t armed = stateMid.librarySequence > 0 ? stateMid.librarySequence - 1 : 1;
         std::string error;
         if (!infrastructure::engine::markRekordboxLibraryImported(enginePath, armed, &error)) {
@@ -1073,7 +1093,7 @@ int plant(const PlantOptions &options)
     }
     const auto stateAfter = infrastructure::engine::readRekordboxImportState(enginePath, pioneerPath);
     describeImportState("after planting", stateAfter);
-    if (!stateAfter.playerWillOfferImport()) {
+    if (!stateAfter.playerWillOfferImport() && !options.noArm) {
         failures.push_back("the prompt is not armed: the two numbers are level");
     }
 
@@ -1198,6 +1218,44 @@ int plant(const PlantOptions &options)
         std::cout << "  how:       " << cc.how << "\n";
     }
     std::cout << "\ncases written to " << pathToUtf8(options.out) << "\n";
+
+    // Every track this plant wrote to, per side, so exactly those can be
+    // snapshotted. Engine rows live in m.db; rekordbox cues in each
+    // track's ANLZ .EXT and .DAT, and in exportLibrary.db when present.
+    std::cout << "\nTracks written (side, stick path):\n";
+    std::vector<std::pair<std::string, std::string>> written;
+    for (const CueCase &cc : cueCases) {
+        written.push_back({"engine", cc.pair->path});
+        written.push_back({"rekordbox", cc.pair->path});
+    }
+    for (const Pair *p : {j1, j2, j3, j4, j5, l, h1a, h1b}) {
+        written.push_back({"engine", p->path});
+    }
+    for (const Pair *p : {h2, h3}) {
+        if (p) {
+            written.push_back({"engine", p->path});
+        }
+    }
+    if (k && kStatus == "planted") {
+        written.push_back({"engine", k->path});
+    }
+    if (iStatus == "planted" && !iPath.empty()) {
+        written.push_back({"engine", iPath});
+    }
+    std::sort(written.begin(), written.end(),
+              [](const auto &x, const auto &y) { return x.second != y.second ? x.second < y.second : x.first < y.first; });
+    for (const auto &[side, path] : written) {
+        std::cout << side << "\t" << path << "\n";
+    }
+    std::cout << "catalog files written: Engine Library/Database2/m.db"
+              << (k && kStatus == "planted" ? ", a new image under Engine Library/Artwork/" : "")
+              << (iStatus == "planted" && !iPath.empty() ? ", " + iPath : std::string())
+              << ", the ANLZ .EXT and .DAT of each rekordbox track above"
+              << (probe::hasOneLibrary(pioneerPath) ? ", PIONEER/rekordbox/exportLibrary.db" : "") << "\n";
+    if (options.noArm && !stateAfter.playerWillOfferImport()) {
+        std::cout << "note: not armed and the numbers are level, so the player will not ask\n";
+    }
+
     for (const auto &failure : failures) {
         std::cout << "FAILED: " << failure << "\n";
     }
@@ -1207,7 +1265,8 @@ int plant(const PlantOptions &options)
 
 void usage()
 {
-    std::cerr << "usage: engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]\n"
+    std::cerr << "usage: engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>] [--no-arm]\n"
+              << "                           [--skip <path substring>]...\n"
               << "       engine_import_probe --record <stick root> --out <record.tsv>\n"
               << "       engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]\n";
 }
@@ -1231,6 +1290,10 @@ int main(int argc, char **argv)
                     options.out = pathFromUtf8(args[++i]);
                 } else if (args[i] == "--cover" && i + 1 < args.size() && mode == "--plant") {
                     options.cover = pathFromUtf8(args[++i]);
+                } else if (args[i] == "--no-arm" && mode == "--plant") {
+                    options.noArm = true;
+                } else if (args[i] == "--skip" && i + 1 < args.size() && mode == "--plant") {
+                    options.skip.push_back(args[++i]);
                 } else {
                     std::cerr << "unknown argument: " << args[i] << "\n";
                     usage();

@@ -8,9 +8,11 @@
 # The protocol, and what is measured versus guessed, is in
 # docs/engine-import-prompt.md.
 #
-#   engine-import-probe.sh plant   <stick root> <work dir>
+#   engine-import-probe.sh plant   <stick root> <work dir> [plant options]
 #       snapshot the stick as it is (pre-plant.tar), plant the matrix
-#       (cases.tsv), record it (before.tsv), snapshot again (planted.tar)
+#       (cases.tsv), record it (before.tsv), snapshot again (planted.tar).
+#       Plant options go to engine_import_probe as given: --no-arm,
+#       --skip <path substring> (repeatable), --cover <image>.
 #
 #   (insert the stick into the player, accept the import, eject it)
 #
@@ -73,14 +75,14 @@ step="$1"
 
 case "$step" in
 plant)
-    [ $# -eq 3 ] || fail "usage: $0 plant <stick root> <work dir>"
-    stick="$2"; work="$3"
+    [ $# -ge 3 ] || fail "usage: $0 plant <stick root> <work dir> [plant options]"
+    stick="$2"; work="$3"; shift 3
     check_stick "$stick"
     probe="$(probe_binary)"
     [ -e "$work/cases.tsv" ] && fail "$work already holds a planted round; use a new work dir"
     mkdir -p "$work" || fail "could not create $work"
     snapshot "$stick" "$work/pre-plant.tar"
-    "$probe" --plant "$stick" --out "$work/cases.tsv" ${COVER:+--cover "$COVER"} | tee "$work/plant.log"
+    "$probe" --plant "$stick" --out "$work/cases.tsv" ${COVER:+--cover "$COVER"} "$@" | tee "$work/plant.log"
     [ "${PIPESTATUS[0]}" -eq 0 ] || fail "planting failed; the stick can be put back with: $0 restore '$stick' '$work'"
     "$probe" --record "$stick" --out "$work/before.tsv" | tee "$work/record-before.log"
     [ "${PIPESTATUS[0]}" -eq 0 ] || fail "recording the planted stick failed"
