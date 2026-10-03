@@ -6,7 +6,7 @@
 // library" prompt does to the Engine side of a stick when the DJ says yes.
 //
 //   engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]
-//                       [--no-arm] [--skip <path substring>]...
+//                       [--arm | --no-arm] [--again] [--skip <path substring>]...
 //   engine_import_probe --record <stick root> --out <record.tsv>
 //   engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]
 //
@@ -361,6 +361,10 @@ Record recordStick(const fs::path &root)
     record.set("M", "-", "pdb.sequence", state.hasRekordboxLibrary ? std::to_string(state.librarySequence) : "NULL");
     record.set("M", "-", "engine.counter", state.hasEngineLibrary ? std::to_string(state.engineCounter) : "NULL");
     record.set("M", "-", "prompt", state.playerWillOfferImport() ? "the player would ask" : "the player would say nothing");
+    record.set("M", "-", "recordedAt.unix",
+               std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count()));
 
     const StickTracks tracks = readTracks(root);
     record.set("M", "-", "engine.pairedByFilename", std::to_string(tracks.pairedByFilename));
@@ -373,6 +377,8 @@ Record recordStick(const fs::path &root)
         record.set("ET", path, "row", "present");
         record.set("ET", path, "id", t.sourceId);
         record.set("ET", path, "title", t.title);
+        record.set("ET", path, "artist", t.artist);
+        record.set("ET", path, "album", t.album);
         record.set("ET", path, "key", t.key);
         record.set("ET", path, "rating", formatRating(t.rating));
         record.set("ET", path, "bpm", formatBpm(t.bpm));
@@ -537,8 +543,14 @@ Record recordStick(const fs::path &root)
         }
         const std::string relative = pathToGenericUtf8(it->path().lexically_relative(engineLibraryOf(root)));
         record.set("EF", relative, "size", std::to_string(it->file_size(ec)));
-        record.set("EF", relative, "mtime",
-                   std::to_string(it->last_write_time(ec).time_since_epoch().count()));
+        const auto written = it->last_write_time(ec);
+        record.set("EF", relative, "mtime", std::to_string(written.time_since_epoch().count()));
+        // The same instant in Unix seconds, for the clock comparison in
+        // --compare. file_clock's epoch is the library's own, so the
+        // offset is taken from the two clocks now.
+        const auto unixSeconds = std::chrono::duration_cast<std::chrono::seconds>(
+            (written - fs::file_time_type::clock::now() + std::chrono::system_clock::now()).time_since_epoch());
+        record.set("EF", relative, "mtime.unix", std::to_string(unixSeconds.count()));
     }
     if (ec) {
         throw std::runtime_error("could not list Engine Library: " + ec.message());
@@ -551,6 +563,8 @@ Record recordStick(const fs::path &root)
         record.set("RT", path, "row", "present");
         record.set("RT", path, "id", t.sourceId);
         record.set("RT", path, "title", t.title);
+        record.set("RT", path, "artist", t.artist);
+        record.set("RT", path, "album", t.album);
         record.set("RT", path, "key", t.key);
         record.set("RT", path, "rating", formatRating(t.rating));
         record.set("RT", path, "bpm", formatBpm(t.bpm));
@@ -563,6 +577,25 @@ Record recordStick(const fs::path &root)
             rekordboxLists[p.name].push_back({p.position, path});
         }
     }
+    // OneLibrary (exportLibrary.db): the second rekordbox catalog, which
+    // the player may be the one importing from. Section RO, same field
+    // names, so a value that reaches Engine can be traced to the catalog
+    // it came from (case p sets a rating and comment here alone).
+    for (const auto &t : probe::readOneLibraryTracks(pathToUtf8(pioneerOf(root)))) {
+        const std::string path = t.filePath.empty() ? "onelibrary id:" + t.sourceId : stickPath(root, t.filePath);
+        record.set("RO", path, "row", "present");
+        record.set("RO", path, "title", t.title);
+        record.set("RO", path, "bpm", formatBpm(t.bpm));
+        record.set("RO", path, "key", t.key);
+        recordCues(record, "RO", path, t.cues);
+    }
+    // The reader leaves rating and comment out; the table has them.
+    for (const auto &a : probe::readOneLibraryAnnotations(pathToUtf8(pioneerOf(root)))) {
+        const std::string path = !a.path.empty() && a.path.front() == '/' ? a.path.substr(1) : a.path;
+        record.set("RO", path, "rating", a.rating);
+        record.set("RO", path, "comment", a.comment == "NULL" ? std::string() : a.comment);
+    }
+
     for (auto &[name, members] : rekordboxLists) {
         std::stable_sort(members.begin(), members.end(),
                          [](const auto &a, const auto &b) { return a.first < b.first; });
@@ -678,6 +711,10 @@ struct PlantOptions
     // Leave Engine's import counter alone: for a stick whose pdb sequence
     // a real rekordbox export has already moved.
     bool noArm = false;
+    // --arm given explicitly; arming is also the default when neither is.
+    bool arm = false;
+    // Plant on a stick that has been planted before.
+    bool again = false;
     // Never pick a track whose stick-relative audio path contains any of
     // these, for any case: tracks that carry other evidence.
     std::vector<std::string> skip;
@@ -717,9 +754,10 @@ int plant(const PlantOptions &options)
     describeImportState("before planting", stateBefore);
 
     const Record before = recordStick(root);
-    if (before.entities("EP").count(EngineOnlyPlaylist) > 0) {
+    if (before.entities("EP").count(EngineOnlyPlaylist) > 0 && !options.again) {
         std::cerr << "refusing: the Engine library already has a playlist called \"" << EngineOnlyPlaylist
-                  << "\", so this stick has been planted before. Restore it from its snapshot first.\n";
+                  << "\", so this stick has been planted before. Restore it from its snapshot first, or pass "
+                  << "--again to plant over it.\n";
         return 2;
     }
     const StickTracks tracks = readTracks(root);
@@ -770,8 +808,8 @@ int plant(const PlantOptions &options)
     std::cout << "\n";
     std::cout << "skipped: " << skippedTracks << " Engine tracks whose path matches one of " << options.skip.size()
               << " skip patterns, never planted on or observed\n";
-    if (pairs.size() < 24) {
-        std::cerr << "refusing: the matrix needs 24 tracks that both catalogs list, and this stick has "
+    if (pairs.size() < 26) {
+        std::cerr << "refusing: the matrix needs 26 tracks that both catalogs list, and this stick has "
                   << pairs.size() << "\n";
         return 1;
     }
@@ -827,6 +865,24 @@ int plant(const PlantOptions &options)
     if (!shared.empty()) {
         h3 = take([&](const Pair &p) { return inSet("RP", shared, p.path) && inSet("EP", shared, p.path); });
         h2 = take([&](const Pair &p) { return !inSet("RP", shared, p.path) && !inSet("EP", shared, p.path); });
+    }
+    // (o) and (p): tracks that will be rekordbox-only, made so by removing
+    // their Engine rows. (o) prefers a member of rekordbox's shared
+    // playlist: export.pdb is never written, so membership cannot be
+    // added, only chosen.
+    const Pair *o = shared.empty() ? nullptr : take([&](const Pair &p) { return inSet("RP", shared, p.path); });
+    const bool oInShared = o != nullptr;
+    if (!o) {
+        o = take(any);
+    }
+    const Pair *pOnly = take(any);
+    // (q): a rekordbox playlist Engine has no playlist of that name for.
+    std::string rekordboxOnlyList;
+    for (const auto &name : before.entities("RP")) {
+        if (before.entities("EP").count(name) == 0) {
+            rekordboxOnlyList = name;
+            break;
+        }
     }
     const Pair *h1a = take(any);
     const Pair *h1b = take(any);
@@ -964,7 +1020,13 @@ int plant(const PlantOptions &options)
             track->set_title(std::string("Seabass probe Engine title"));
         }
         // (h1) a playlist only Engine has.
-        auto list = db.create_root_playlist(EngineOnlyPlaylist);
+        // With --again it may be there from the last plant: emptied and
+        // filled again rather than made a second time.
+        std::optional<djinterop::playlist> existing = db.root_playlist_by_name(EngineOnlyPlaylist);
+        if (existing) {
+            existing->clear_tracks();
+        }
+        auto list = existing ? *existing : db.create_root_playlist(EngineOnlyPlaylist);
         for (const Pair *p : {h1a, h1b}) {
             if (auto track = db.track_by_id(std::stoll(p->engine.sourceId))) {
                 list.add_track_back(*track);
@@ -1041,6 +1103,21 @@ int plant(const PlantOptions &options)
         db.exec("UPDATE Track SET isPlayed = 1, playedIndicator = (SELECT currentPlayedIndiciator FROM Information "
                 "ORDER BY id LIMIT 1) WHERE id = "
                 + l->engine.sourceId + ";");
+        // (o) and (p): the Engine row goes, with everything that names it.
+        // libdjinterop's remove_track is one "DELETE FROM Track" that
+        // relies on ON DELETE CASCADE, and it never turns foreign keys
+        // on, so PerformanceData and PlaylistEntity rows would be left
+        // pointing at nothing. Deleted here explicitly instead, in this
+        // one transaction: the playlist entries first (Engine's own
+        // trigger relinks each list's nextEntityId chain around them), the
+        // prepare-list entries, the performance data, then the row.
+        for (const Pair *gone : {o, pOnly}) {
+            const std::string id = gone->engine.sourceId;
+            db.exec("DELETE FROM PlaylistEntity WHERE trackId = " + id + ";");
+            db.exec("DELETE FROM PreparelistEntity WHERE trackId = " + id + ";");
+            db.exec("DELETE FROM PerformanceData WHERE trackId = " + id + ";");
+            db.exec("DELETE FROM Track WHERE id = " + id + ";");
+        }
         db.exec("COMMIT;");
     }
 
@@ -1074,6 +1151,23 @@ int plant(const PlantOptions &options)
                 }
             }
         }
+        // (o): hot cues 1 and 3 and a memory cue, on rekordbox only.
+        // (p): no cues at all on rekordbox; the only metadata a rekordbox
+        // catalog here can take is exportLibrary.db's rating and comment
+        // (export.pdb is never written), so those are set when it exists.
+        const std::vector<domain::CuePoint> oCues = {hot(1, 10000.0), hot(3, 40000.0), memoryCue(25000.0)};
+        writer.writeHotCues(o->rekordbox.sourceId, oCues);
+        writer.writeHotCues(pOnly->rekordbox.sourceId, {});
+        if (oneLibrary) {
+            try {
+                probe::writeOneLibraryCues(pioneerPath, o->rekordbox.filePath, oCues);
+                probe::writeOneLibraryCues(pioneerPath, pOnly->rekordbox.filePath, {});
+                probe::writeOneLibraryAnnotation(pioneerPath, pOnly->rekordbox.filePath, 4,
+                                                 std::string("Seabass probe: rekordbox comment"));
+            } catch (const std::exception &ex) {
+                failures.push_back("OneLibrary writes for (o) or (p): " + std::string(ex.what()));
+            }
+        }
         std::cout << "rekordbox cues written to the ANLZ files" << (oneLibrary ? " and to exportLibrary.db" : "")
                   << "\n";
     }
@@ -1084,7 +1178,11 @@ int plant(const PlantOptions &options)
     const auto stateMid = infrastructure::engine::readRekordboxImportState(enginePath, pioneerPath);
     if (options.noArm) {
         std::cout << "not arming: Engine's import counter left as it was (no-arm)\n";
-    } else if (!stateMid.playerWillOfferImport()) {
+    } else {
+        std::cout << "arming" << (options.arm ? "" : " (the default, as with --arm)")
+                  << ": Engine's import counter set one behind export.pdb's sequence if the two are level\n";
+    }
+    if (!options.noArm && !stateMid.playerWillOfferImport()) {
         const std::uint64_t armed = stateMid.librarySequence > 0 ? stateMid.librarySequence - 1 : 1;
         std::string error;
         if (!infrastructure::engine::markRekordboxLibraryImported(enginePath, armed, &error)) {
@@ -1178,6 +1276,44 @@ int plant(const PlantOptions &options)
                 "planting and it becomes one (the library-wide analysis count is reported either way)",
                 {});
     }
+    {
+        const auto rekordboxOnlyItems = [&](const std::string &path) {
+            std::vector<probe::Item> items = {et(path, "row")};
+            for (const char *field : {"cue.hot.1", "cue.hot.3", "cue.main", "title", "artist", "album", "key", "bpm",
+                                      "rating", "comment", "art", "col.isAnalyzed", "col.pdbImportKey"}) {
+                items.push_back(et(path, field));
+            }
+            return items;
+        };
+        std::vector<probe::Item> oItems = rekordboxOnlyItems(o->path);
+        if (!shared.empty()) {
+            oItems.insert(oItems.begin() + 1, probe::Item{"EP", shared, "entries", "member:" + o->path});
+        }
+        addCase("o", "planted", "a track only rekordbox has, with cues (hot 1 at 10 s, hot 3 at 40 s, memory at 25 s)",
+                o->path,
+                "rekordbox cues through RekordboxCueWriter" + std::string(probe::hasOneLibrary(pioneerPath) ? " and OneLibraryCueWriter" : "")
+                    + "; Engine row " + o->engine.sourceId
+                    + " removed by SQL with its PlaylistEntity, PreparelistEntity and PerformanceData rows"
+                    + (oInShared ? "; in rekordbox's \"" + shared + "\" already"
+                                 : "; not in a shared rekordbox playlist, which export.pdb being read only cannot change"),
+                oItems);
+        addCase("p", "planted", "a track only rekordbox has, no cues", pOnly->path,
+                std::string("rekordbox cues cleared")
+                    + (probe::hasOneLibrary(pioneerPath)
+                           ? "; exportLibrary.db rating 4 and comment \"Seabass probe: rekordbox comment\" (export.pdb "
+                             "keeps its own values)"
+                           : "; no rekordbox metadata writable (no exportLibrary.db, export.pdb read only)")
+                    + "; Engine row " + pOnly->engine.sourceId + " removed as in (o)",
+                rekordboxOnlyItems(pOnly->path));
+        if (!rekordboxOnlyList.empty()) {
+            addCase("q", "existing", "a rekordbox playlist Engine has no playlist of that name for", rekordboxOnlyList,
+                    "already on the stick; nothing written",
+                    {probe::Item{"EP", rekordboxOnlyList, "entries", "set"}});
+        } else {
+            addCase("q", "not planted", "a rekordbox playlist Engine lacks", "",
+                    "not plantable: every rekordbox playlist has an Engine namesake, and export.pdb is never written", {});
+        }
+    }
     addCase("n", "observed", "control: a track nobody touched", n->path, "nothing written",
             {et(n->path, "content"), et(n->path, "col.lastEditTime")});
 
@@ -1236,6 +1372,10 @@ int plant(const PlantOptions &options)
             written.push_back({"engine", p->path});
         }
     }
+    for (const Pair *p : {o, pOnly}) {
+        written.push_back({"engine (row removed)", p->path});
+        written.push_back({"rekordbox", p->path});
+    }
     if (k && kStatus == "planted") {
         written.push_back({"engine", k->path});
     }
@@ -1265,7 +1405,8 @@ int plant(const PlantOptions &options)
 
 void usage()
 {
-    std::cerr << "usage: engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>] [--no-arm]\n"
+    std::cerr << "usage: engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]\n"
+              << "                           [--arm | --no-arm] [--again]\n"
               << "                           [--skip <path substring>]...\n"
               << "       engine_import_probe --record <stick root> --out <record.tsv>\n"
               << "       engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]\n";
@@ -1292,6 +1433,10 @@ int main(int argc, char **argv)
                     options.cover = pathFromUtf8(args[++i]);
                 } else if (args[i] == "--no-arm" && mode == "--plant") {
                     options.noArm = true;
+                } else if (args[i] == "--arm" && mode == "--plant") {
+                    options.arm = true;
+                } else if (args[i] == "--again" && mode == "--plant") {
+                    options.again = true;
                 } else if (args[i] == "--skip" && i + 1 < args.size() && mode == "--plant") {
                     options.skip.push_back(args[++i]);
                 } else {
@@ -1299,6 +1444,10 @@ int main(int argc, char **argv)
                     usage();
                     return 2;
                 }
+            }
+            if (options.arm && options.noArm) {
+                std::cerr << "--arm and --no-arm contradict each other\n";
+                return 2;
             }
             if (options.out.empty()) {
                 usage();
