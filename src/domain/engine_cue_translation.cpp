@@ -133,8 +133,20 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
 {
     CuesFromEngine result;
     // The pads Engine DJ's own import gives the memory cues: free pads in
-    // time order, nothing Engine had before taken into account.
-    const std::vector<CuePoint> imported = translateCuesForEngine(cues, {}, toleranceMs).cues;
+    // time order, nothing Engine had before taken into account. Worked out
+    // only once a pad is found at a memory cue.
+    std::optional<std::vector<CuePoint>> imported;
+    const auto importPadOf = [&](const CuePoint &memory) {
+        if (!imported) {
+            imported = translateCuesForEngine(cues, {}, toleranceMs).cues;
+        }
+        for (const CuePoint &pad : *imported) {
+            if (isHot(pad) && pad.positionMs == memory.positionMs && pad.isLoop == memory.isLoop) {
+                return pad.hotCueNumber;
+            }
+        }
+        return 0;
+    };
     for (const CuePoint &cue : engineCues) {
         if (!isHot(cue)) {
             result.memoryCues.push_back(cue);
@@ -143,20 +155,36 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
         const bool isOwnHotCue = std::any_of(cues.begin(), cues.end(), [&](const CuePoint &own) {
             return isHot(own) && own.hotCueNumber == cue.hotCueNumber && samePlace(own, cue, toleranceMs);
         });
-        const auto translationOf = std::find_if(cues.begin(), cues.end(), [&](const CuePoint &memory) {
-            return memory.kind == CuePoint::Kind::Memory && samePlace(memory, cue, toleranceMs);
-        });
-        if (isOwnHotCue || translationOf == cues.end()) {
+        if (isOwnHotCue) {
+            result.hotCues.push_back(cue);
+            continue;
+        }
+        // The memory cue this pad translates. Of several within the
+        // tolerance (two markers half a beat apart), the one the import
+        // put on this very pad, else the nearest.
+        const CuePoint *translationOf = nullptr;
+        bool onImportsPad = false;
+        for (const CuePoint &memory : cues) {
+            if (memory.kind != CuePoint::Kind::Memory || !samePlace(memory, cue, toleranceMs)) {
+                continue;
+            }
+            if (importPadOf(memory) == cue.hotCueNumber) {
+                translationOf = &memory;
+                onImportsPad = true;
+                break;
+            }
+            if (translationOf == nullptr
+                || std::abs(memory.positionMs - cue.positionMs) < std::abs(translationOf->positionMs - cue.positionMs)) {
+                translationOf = &memory;
+            }
+        }
+        if (translationOf == nullptr) {
             result.hotCues.push_back(cue);
             continue;
         }
         // The memory cue it translates, as that catalog knows it, so a
         // write back carries that catalog's own colour and comment.
         result.memoryCues.push_back(*translationOf);
-        const bool onImportsPad = std::any_of(imported.begin(), imported.end(), [&](const CuePoint &pad) {
-            return isHot(pad) && pad.hotCueNumber == cue.hotCueNumber
-                && pad.positionMs == translationOf->positionMs && pad.isLoop == translationOf->isLoop;
-        });
         if (!onImportsPad) {
             result.uncertain.push_back({cue, *translationOf});
         }

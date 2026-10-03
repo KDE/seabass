@@ -41,13 +41,17 @@ int main()
         std::cout << "case 3 (cueSetsEqual size mismatch -> false) OK\n";
     }
 
-    // cueSetsEqual: position tolerance is inclusive at 1000ms, exclusive past it.
+    // cueSetsEqual: the default tolerance is the 60 ms fallback of
+    // domain/cue_tolerance.hpp, exclusive: the measured 52 ms decoder delay
+    // is the same cue, 60 ms apart is two. A caller with a tempo passes
+    // half a beat.
     {
         std::vector<CuePoint> a = {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}};
-        std::vector<CuePoint> withinTolerance = {CuePoint{CuePoint::Kind::Hot, 1, 2000.0, "#FF0000", ""}};
-        std::vector<CuePoint> pastTolerance = {CuePoint{CuePoint::Kind::Hot, 1, 2000.1, "#FF0000", ""}};
+        std::vector<CuePoint> withinTolerance = {CuePoint{CuePoint::Kind::Hot, 1, 1052.0, "#FF0000", ""}};
+        std::vector<CuePoint> pastTolerance = {CuePoint{CuePoint::Kind::Hot, 1, 1060.0, "#FF0000", ""}};
         assert(cueSetsEqual(a, withinTolerance));
         assert(!cueSetsEqual(a, pastTolerance));
+        assert(cueSetsEqual(a, pastTolerance, halfBeatMs(128.0)) && "60 ms is within half a beat at 128 BPM");
         std::cout << "case 4 (cueSetsEqual position tolerance boundary) OK\n";
     }
 
@@ -93,7 +97,7 @@ int main()
         const std::vector<CuePoint> incoming = {
             CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""},          // silent: inherits red
             CuePoint{CuePoint::Kind::Hot, 2, 5000.0, "#FFFF00", ""},   // brings its own
-            CuePoint{CuePoint::Kind::Memory, 0, 7400.0, "", ""},       // same cue, 400 ms off
+            CuePoint{CuePoint::Kind::Memory, 0, 7052.0, "", ""},       // same cue, 52 ms off
             CuePoint{CuePoint::Kind::Hot, 3, 9000.0, "", ""},          // nothing to inherit
         };
         const auto kept = keepExistingColours(incoming, existing);

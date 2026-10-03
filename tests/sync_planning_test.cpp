@@ -680,8 +680,10 @@ int main()
                                        now, now);
         assert(sixty.kind == SyncPlan::Kind::Conflict && sixty.needsChoice);
         assert(sixty.reason == SyncPlan::Reason::TempoUnsure);
+        // The pad and the distance stay in front of the tempo's reason.
         assert(sixty.reasonText
-               == "Tempos differ (128.0 vs 126.0), so cues within half a beat cannot be matched; 60 ms was used");
+               == "Pad 1 is 60 ms apart: rekordbox 0:30.000, Engine 0:30.060. Tempos differ (128.0 vs 126.0), so cues "
+                  "within half a beat cannot be matched; 60 ms was used");
         assert(sixty.direction == SyncPlan::Direction::None && !sixty.cuesIfAWins.empty() && !sixty.cuesIfBWins.empty());
 
         auto noTempo = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
@@ -689,12 +691,20 @@ int main()
                                          now, now);
         assert(noTempo.reason == SyncPlan::Reason::TempoUnsure);
         assert(noTempo.reasonText
-               == "rekordbox has no tempo for this track, so cues within half a beat cannot be matched; 60 ms was used");
+               == "Pad 1 is 100 ms apart: rekordbox 0:30.000, Engine 0:30.100. rekordbox has no tempo for this track, "
+                  "so cues within half a beat cannot be matched; 60 ms was used");
         auto neither = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
                                                    side("engine", 0.0, {hot(1, 30100.0)})},
                                          now, now);
         assert(neither.reasonText
-               == "Neither side has a tempo for this track, so cues within half a beat cannot be matched; 60 ms was used");
+               == "Pad 1 is 100 ms apart: rekordbox 0:30.000, Engine 0:30.100. Neither side has a tempo for this "
+                  "track, so cues within half a beat cannot be matched; 60 ms was used");
+        // A tempo no track has is no tempo: two sides "agreeing" on 1 BPM
+        // would make half a beat 30 seconds.
+        auto garbage = SyncPlanner::plan(SyncMatch{side("rekordbox", 1.0, {hot(1, 30000.0)}),
+                                                   side("engine", 1.0, {hot(1, 40000.0)})},
+                                         now, now);
+        assert(garbage.positionToleranceMs == CueFallbackToleranceMs && garbage.needsChoice);
 
         // Where no half beat could have mattered the reason is the
         // difference itself, not the tempo: 700 ms is more than half a
@@ -753,6 +763,34 @@ int main()
             now, now);
         assert(roam.needsChoice && roam.reason == SyncPlan::Reason::PadsDiffer);
         assert(roam.reasonText == "Pad 1: Engine loop 0:23.051, OneLibrary no loop");
+
+        // A loop and a cue at different starts name both.
+        CuePoint lateLoop = hot(2, 30040.0);
+        lateLoop.isLoop = true;
+        auto both = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(2, 30000.0)}),
+                                                side("engine", 124.0, {lateLoop})},
+                                      now, now);
+        assert(both.reasonText == "Pad 2 is a loop on Engine and a cue on rekordbox (rekordbox 0:30.000, Engine 0:30.040)");
+
+        // A second cue on a pad is compared too, not hidden behind the
+        // first: two cues on pad 1 against one is a difference.
+        auto doubled = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 10000.0), hot(1, 40000.0)}),
+                                                   side("onelibrary", 124.0, {hot(1, 10000.0)})},
+                                         now, now);
+        assert(doubled.kind == SyncPlan::Kind::Conflict && doubled.needsChoice);
+        assert(doubled.reasonText == "Pad 1: rekordbox 0:40.000, OneLibrary no cue");
+
+        // A memory loop is not the memory cue at its start: the side
+        // lacking the loop receives it, and one write settles the pair.
+        CuePoint memoryLoop = memory(10000.0);
+        memoryLoop.isLoop = true;
+        Track withLoop = side("rekordbox", 124.0, {hot(1, 1000.0), memory(10000.0), memoryLoop});
+        Track withoutLoop = side("onelibrary", 124.0, {hot(1, 1000.0), memory(10000.0)});
+        auto gainsLoop = SyncPlanner::plan(SyncMatch{withLoop, withoutLoop}, now, now);
+        assert(gainsLoop.direction == SyncPlan::Direction::ToB);
+        withoutLoop.cues = gainsLoop.cuesToApply;
+        assert(SyncPlanner::plan(SyncMatch{withLoop, withoutLoop}, now, now).kind == SyncPlan::Kind::AlreadyConsistent
+               && "the write carried the loop; no write that changes nothing");
         std::cout << "case (a loop against a cue on one pad is a choice) OK\n";
     }
 
@@ -820,6 +858,14 @@ int main()
             e2.cues = next.cuesToApply;
         }
         assert(SyncPlanner::plan(SyncMatch{r2After, e2}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+
+        // Two memory cues closer than half a beat: the import gives the
+        // earlier one pad 1 (and the later none, as "on a pad already").
+        // Engine's pad 1 between them is that translation, whichever of
+        // the two rekordbox lists first; nothing to ask.
+        Track close = side("rekordbox", 128.0, {memory(60150.0), memory(60000.0)});
+        Track closeE = side("engine", 128.0, {hot(1, 60100.0), memory(60000.0)});
+        assert(SyncPlanner::plan(SyncMatch{close, closeE}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
 
         // A second pad for the marker under hot cue 3 ("Voices In My Head"
         // with the duplicate the old translation made): asked, not taken.

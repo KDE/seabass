@@ -81,7 +81,10 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
 
         const SyncPlan &planA = *plans[0];
         const SyncPlan &planB = *plans[1];
-        if (cueSetsEqual(planA.cuesToApply, planB.cuesToApply)) {
+        // Compared the way the planners compared: loops apart from cues,
+        // within the tighter of the two pairs' tolerances.
+        const double tolerance = std::min(planA.positionToleranceMs, planB.positionToleranceMs);
+        if (sameCuesForSync(planA.cuesToApply, planB.cuesToApply, tolerance)) {
             result.nonConflicting.push_back(planA);
             continue;
         }
@@ -99,7 +102,7 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
         conflict.reason = SyncPlan::Reason::SourcesDisagree;
         conflict.reasonText = sourcesDisagreeText(conflict.sourceA.format, conflict.sourceB.format,
                                                   conflict.target.format);
-        conflict.positionToleranceMs = std::min(planA.positionToleranceMs, planB.positionToleranceMs);
+        conflict.positionToleranceMs = tolerance;
         result.conflicts.push_back(std::move(conflict));
     }
 

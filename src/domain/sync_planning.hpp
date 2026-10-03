@@ -117,6 +117,11 @@ struct SyncPlan
 // or empty for none.
 std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut);
 
+// The same cues the way the planner compares them: the same pads, each a
+// cue or a loop alike, the same memory cues and loops, positions within
+// `toleranceMs`. Unlike cueSetsEqual() a loop is never a cue.
+bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs);
+
 // A cue position the way reasons spell it: m:ss.mmm.
 std::string formatCuePosition(double positionMs);
 
