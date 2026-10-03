@@ -816,6 +816,81 @@ int main()
         std::cout << "case (a loop against a cue on one pad is a choice) OK\n";
     }
 
+    // A loop's out point is compared too (#60 follow-up). The same loop
+    // on one pad, its end moved on one side by more than half a beat: its
+    // length changed, nothing says which side is right, and it is a choice
+    // with its own reason. It used to be neither synced nor flagged.
+    {
+        const auto loopOn = [&](int pad, double start, double end) {
+            CuePoint cue = hot(pad, start);
+            cue.isLoop = true;
+            cue.loopEndMs = end;
+            return cue;
+        };
+        auto plan = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), loopOn(2, 15000.0, 23265.0)}),
+                                                side("engine", 124.0, {hot(1, 1000.0), loopOn(2, 15000.0, 24000.0)})},
+                                      now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict && plan.needsChoice);
+        assert(plan.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(plan.reasonText == "Pad 2 loop ends differ: rekordbox 0:23.265, Engine 0:24.000");
+        assert(plan.direction == SyncPlan::Direction::None && plan.cuesToApply.empty());
+
+        // In the pair's own order, Engine first, and between two catalogs
+        // that both hold pads.
+        auto engineFirst = SyncPlanner::plan(SyncMatch{side("engine", 124.0, {loopOn(2, 15000.0, 24000.0)}),
+                                                       side("rekordbox", 124.0, {loopOn(2, 15000.0, 23265.0)})},
+                                             now, now);
+        assert(engineFirst.reasonText == "Pad 2 loop ends differ: Engine 0:24.000, rekordbox 0:23.265");
+        auto twoCatalogs = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {loopOn(2, 15000.0, 23265.0)}),
+                                                       side("onelibrary", 124.0, {loopOn(2, 15000.0, 24000.0)})},
+                                             now, now);
+        assert(twoCatalogs.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(twoCatalogs.reasonText == "Pad 2 loop ends differ: rekordbox 0:23.265, OneLibrary 0:24.000");
+
+        // Within half a beat (242 ms at 124 BPM) it is the same loop.
+        auto rounded = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {loopOn(2, 15000.0, 23265.0)}),
+                                                   side("engine", 124.0, {loopOn(2, 15001.0, 23317.0)})},
+                                         now, now);
+        assert(rounded.kind == SyncPlan::Kind::AlreadyConsistent);
+
+        // A memory loop between two catalogs that hold memory cues: named,
+        // not "changed on both sides".
+        CuePoint memoryLoop = memory(10000.0);
+        memoryLoop.isLoop = true;
+        memoryLoop.loopEndMs = 14000.0;
+        CuePoint longerMemoryLoop = memoryLoop;
+        longerMemoryLoop.loopEndMs = 18000.0;
+        auto memoryPlan = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), memoryLoop}),
+                                                      side("onelibrary", 124.0, {hot(1, 1000.0), longerMemoryLoop})},
+                                            now, now);
+        assert(memoryPlan.needsChoice && memoryPlan.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(memoryPlan.reasonText == "Memory loop at 0:10.000 ends differ: rekordbox 0:14.000, OneLibrary 0:18.000");
+
+        // Engine holds that memory loop as a saved loop on the pad its
+        // import gives it. Its end moved there: a choice, and each option
+        // carries its own side's end.
+        auto enginePlan = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {memoryLoop}),
+                                                      side("engine", 124.0, {loopOn(1, 10000.0, 18000.0)})},
+                                            now, now);
+        assert(enginePlan.needsChoice && enginePlan.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(enginePlan.reasonText == "Pad 1 loop ends differ: rekordbox 0:14.000, Engine 0:18.000");
+        const auto endOf = [](const std::vector<CuePoint> &cues) {
+            for (const CuePoint &cue : cues) {
+                if (cue.isLoop) {
+                    return cue.loopEndMs;
+                }
+            }
+            return -1.0;
+        };
+        assert(endOf(enginePlan.cuesIfAWins) == 14000.0 && "rekordbox's way writes its end onto Engine's pad");
+        assert(endOf(enginePlan.cuesIfBWins) == 18000.0 && "Engine's way gives rekordbox's memory loop Engine's end");
+        // No string literal of a reason holds a dash (the UI's rule).
+        for (const auto *text : {&plan.reasonText, &memoryPlan.reasonText, &enginePlan.reasonText}) {
+            assert(text->find(std::string(2, '-')) == std::string::npos && text->find("\xE2\x80\x94") == std::string::npos);
+        }
+        std::cout << "case (a loop whose out point moved is a choice, with its reason) OK\n";
+    }
+
     // Both sides changed: each has a memory cue the other lacks. An
     // addition here or a removal there; only a clock could say, and none
     // is asked, whichever way the times point.

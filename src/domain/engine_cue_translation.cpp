@@ -188,6 +188,9 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
         if (!onImportsPad) {
             result.uncertain.push_back({cue, *translationOf});
         }
+        if (cue.isLoop && std::abs(cue.loopEndMs - translationOf->loopEndMs) >= toleranceMs) {
+            result.loopEnds.push_back({cue, *translationOf});
+        }
     }
     return result;
 }
