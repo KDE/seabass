@@ -535,7 +535,7 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         // -- deleting it on one catalog's say-so is unrecoverable.
         // One bar (#58): the catalog reads the cache still has to make,
         // then one unit per file to delete.
-        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString());
+        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString(), cancel);
         application::PhasedProgress progress(*reporter, "Deleting files",
                                              readUnits ? *readUnits + selected.size() : 0);
         auto stickCatalogs = readAllStickCatalogs(path.toStdString(), progress, cancel);
@@ -643,7 +643,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         // One bar (#58): every catalog on the stick the cache still has to
         // read. This page's own is among them, and is a cache hit by the
         // time readAllStickCatalogs() comes to it.
-        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString());
+        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString(), cancel);
         application::PhasedProgress progress(*reporter, "Looking for duplicates", readUnits.value_or(0));
         std::vector<domain::Track> tracks =
             LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
@@ -839,7 +839,7 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
     try {
         auto &cache = LibraryCatalogCache::instance();
         const auto readUnits =
-            cache.plannedUnits(format.toStdString(), path.toStdString(), LibraryCatalogCache::Detail::Full);
+            cache.plannedUnits(format.toStdString(), path.toStdString(), LibraryCatalogCache::Detail::Full, cancel);
         application::PhasedProgress progress(*reporter, "Reading the library", readUnits.value_or(0));
         std::vector<domain::Track> tracks = cache.tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 

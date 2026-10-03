@@ -63,8 +63,11 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
 // What readAllStickCatalogs(libraryPath) would announce now, in the
 // units its reads tick (LibraryCatalogCache::plannedUnits() per catalog
 // present), for a caller announcing one bar before the first read
-// (#58). Nothing when a catalog cannot be counted.
-std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath);
+// (#58). Nothing when a catalog cannot be counted. Throws
+// application::OperationCancelled when `cancel` is set before a count.
+std::optional<size_t> plannedUnitsForAllStickCatalogs(
+    const std::string &libraryPath,
+    const application::CancellationToken &cancel = application::CancellationToken::none());
 
 // When this stick's catalogs were last written, in seconds since the
 // epoch, newest wins; 0 when none of them can be read.

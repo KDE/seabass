@@ -23,6 +23,7 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/rekordbox/anlz_byte_source.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
@@ -54,6 +55,63 @@ fs::path freshnessFile(const std::string &format, const std::string &path)
 std::chrono::system_clock::time_point realMtime(const std::string &format, const std::string &path)
 {
     return infrastructure::toSystemClock(fs::last_write_time(freshnessFile(format, path)));
+}
+
+// The analysis files a cue pass over `tracks` reads: each row's .DAT and
+// .EXT under the PIONEER root, the ones a player rewrites when the DJ
+// stores a pad (XDJ-RX2, OMNIS-DUO, CDJ-3000X; see
+// docs/onelibrary-format.md). Null for Engine, whose cues are in m.db.
+std::shared_ptr<const std::vector<std::string>> analysisFilesOf(const std::string &format, const std::string &path,
+                                                                const std::vector<domain::Track> &tracks)
+{
+    if (format != "rekordbox" && format != "onelibrary") {
+        return nullptr;
+    }
+    auto files = std::make_shared<std::vector<std::string>>();
+    files->reserve(2 * tracks.size());
+    const fs::path root = pathFromUtf8(path);
+    for (const domain::Track &track : tracks) {
+        if (track.analysisFile.empty()) {
+            continue;
+        }
+        for (const bool ext : {false, true}) {
+            files->push_back(
+                pathToUtf8(root / pathFromUtf8(infrastructure::rekordbox::anlzRelativePath(track.analysisFile, ext))));
+        }
+    }
+    // A DeviceLibrary row and a OneLibrary row can name one file; once is
+    // enough.
+    std::sort(files->begin(), files->end());
+    files->erase(std::unique(files->begin(), files->end()), files->end());
+    return files;
+}
+
+// The state of those files, as one number that moves when any of them is
+// rewritten, replaced, created or removed: each file's mtime and size,
+// or that it is missing, folded in order. A stat per file, no directory
+// read: a file rewritten in place does not move its directory's mtime
+// (checked on a fixture copy: neither a touch nor an in-place write moved
+// the track folder's or the P folder's; only a replace by rename moved
+// the track folder's), so the directories cannot stand in for the files.
+// About 2300 stats on the 1161-track fixture.
+std::uint64_t analysisStateOf(const std::vector<std::string> &files)
+{
+    std::uint64_t state = 1469598103934665603ULL;
+    const auto fold = [&state](std::uint64_t value) {
+        state ^= value + 0x9e3779b97f4a7c15ULL + (state << 6) + (state >> 2);
+    };
+    for (const std::string &file : files) {
+        std::error_code ec;
+        const auto written = fs::last_write_time(pathFromUtf8(file), ec);
+        if (ec) {
+            fold(0);
+            continue;
+        }
+        const auto size = fs::file_size(pathFromUtf8(file), ec);
+        fold(static_cast<std::uint64_t>(written.time_since_epoch().count()));
+        fold(ec ? 0 : static_cast<std::uint64_t>(size));
+    }
+    return state;
 }
 
 std::unique_ptr<application::LibraryReader> makeReader(const std::string &format, const std::string &path)
@@ -271,25 +329,43 @@ void LibraryCatalogCache::setCountFnForTesting(CountFn countFn)
     m_countFn = std::move(countFn);
 }
 
-std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format, const std::string &path)
+std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format, const std::string &path,
+                                                       application::CancellationToken cancel)
 {
+    const std::string key = keyFor(format, path);
+    std::optional<std::chrono::system_clock::time_point> mtime;
+    try {
+        mtime = m_mtimeFn(format, path);
+    } catch (const std::exception &) {
+        // No catalog file to date the count by: count, remember nothing.
+    }
     CountFn count;
+    std::uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        generation = m_generation[key];
+        const auto found = m_counts.find(key);
+        if (mtime && found != m_counts.end() && found->second.mtime == *mtime
+            && found->second.generation == generation) {
+            return found->second.rows;
+        }
         count = m_countFn;
     }
-    return count(format, path);
+    cancel.throwIfCancelled();
+    const std::optional<size_t> rows = count(format, path);
+    if (rows && mtime) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        // Not when an invalidation landed during the count: it may have
+        // counted the catalog from before the write.
+        if (m_generation[key] == generation) {
+            m_counts[key] = RememberedCount{*mtime, generation, *rows};
+        }
+    }
+    return rows;
 }
 
 std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &format, const std::string &path,
-                                                        Detail detail)
-{
-    return plannedUnits(format, path, detail, [this, &format, &path] { return countTracks(format, path); });
-}
-
-std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &format, const std::string &path,
-                                                        Detail detail,
-                                                        const std::function<std::optional<size_t>()> &countRows)
+                                                        Detail detail, application::CancellationToken cancel)
 {
     const int wanted = stageNumber(detail);
     const std::string key = keyFor(format, path);
@@ -300,6 +376,8 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
         return std::nullopt;
     }
     int have = 0;
+    std::shared_ptr<const std::vector<std::string>> analysisFiles;
+    std::uint64_t analysisState = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_entries.find(key);
@@ -307,12 +385,18 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
             // A pass another thread is in counts as had: tracksFor() waits
             // for it and is served from it, announcing nothing of its own.
             have = std::max(it->second.stage, it->second.passInFlight);
+            analysisFiles = it->second.analysisFiles;
+            analysisState = it->second.analysisState;
         }
+    }
+    if (analysisFiles && analysisStateOf(*analysisFiles) != analysisState) {
+        // A player rewrote an analysis file: tracksFor() reads it all again.
+        have = 0;
     }
     if (have >= wanted) {
         return 0;
     }
-    const std::optional<size_t> tracks = countRows();
+    const std::optional<size_t> tracks = countTracks(format, path, std::move(cancel));
     if (!tracks) {
         return std::nullopt;
     }
@@ -393,9 +477,26 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     // wants or an earlier one (passes run in order, so a later stage can
     // only start once that one lands), rather than starting a second read
     // of the same files.
+    // The analysis files' state, checked against the entry's whenever the
+    // entry holds cues read from them; taken outside the lock (a stat per
+    // file), so the loop takes it again if the entry changed meanwhile.
+    std::shared_ptr<const std::vector<std::string>> checkedFiles;
+    std::uint64_t checkedState = 0;
     for (;;) {
         Entry &entry = m_entries[key];
-        const bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
+        bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
+        if (fresh && entry.analysisFiles) {
+            if (checkedFiles != entry.analysisFiles) {
+                const auto files = entry.analysisFiles;
+                lock.unlock();
+                const std::uint64_t state = analysisStateOf(*files);
+                lock.lock();
+                checkedFiles = files;
+                checkedState = state;
+                continue;
+            }
+            fresh = checkedState == entry.analysisState;
+        }
         if (fresh && entry.stage >= wanted) {
             // The stage with the tracks, under this one lock.
             return {entry.tracks, detailOf(entry.stage)};
@@ -408,6 +509,8 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                 entry.notes = {};
                 entry.stage = 0;
                 entry.mtime = currentMtime;
+                entry.analysisFiles = nullptr;
+                entry.analysisState = 0;
             }
             break;
         }
@@ -448,6 +551,17 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
         }
         lock.unlock();
 
+        // Before the cue pass reads them, so a file rewritten while it
+        // runs leaves the entry stale rather than fresh with the old cues.
+        std::shared_ptr<const std::vector<std::string>> analysisFiles;
+        std::uint64_t analysisState = 0;
+        if (detailOf(next) == Detail::Cues) {
+            analysisFiles = analysisFilesOf(format, path, work);
+            if (analysisFiles) {
+                analysisState = analysisStateOf(*analysisFiles);
+            }
+        }
+
         std::exception_ptr error;
         try {
             cancel.throwIfCancelled();
@@ -469,6 +583,10 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                     entry.notes = notes;
                     entry.stage = next;
                     entry.mtime = currentMtime;
+                    if (detailOf(next) == Detail::Cues) {
+                        entry.analysisFiles = analysisFiles;
+                        entry.analysisState = analysisState;
+                    }
                 }
             } else {
                 // Invalidated mid pass: the entry this pass claimed is
@@ -572,6 +690,7 @@ void LibraryCatalogCache::invalidateLocked(const std::string &key)
     // safe to cache its result -- see tracksFor()'s own comment.
     ++m_generation[key];
     m_entries.erase(key);
+    m_counts.erase(key);
     // A caller waiting on the pass this erased would otherwise wait for a
     // result the cache is no longer going to keep.
     m_cv.notify_all();

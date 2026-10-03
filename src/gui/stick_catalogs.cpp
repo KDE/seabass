@@ -56,7 +56,8 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
     return result;
 }
 
-std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath)
+std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath,
+                                                      const application::CancellationToken &cancel)
 {
     if (libraryPath.empty()) {
         return 0;
@@ -66,7 +67,7 @@ std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &library
     auto &cache = LibraryCatalogCache::instance();
     std::optional<size_t> total = 0;
     auto add = [&](const char *format, const std::string &path) {
-        const auto units = cache.plannedUnits(format, path, LibraryCatalogCache::Detail::Full);
+        const auto units = cache.plannedUnits(format, path, LibraryCatalogCache::Detail::Full, cancel);
         if (total && units) {
             *total += *units;
         } else {

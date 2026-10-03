@@ -127,7 +127,11 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // has to make, then "Comparing cues" per pair, which is at most
         // one tick per track of the smaller catalog. Counted from the
         // catalogs' row counts before the first read; a catalog that
-        // cannot be counted leaves the bar sweeping.
+        // cannot be counted leaves the bar sweeping. Each catalog is
+        // counted once: the cache remembers its count for plannedUnits()
+        // and the countTracks() after it, and looks at the token before
+        // each count it makes (a OneLibrary count is a key derivation no
+        // token interrupts).
         std::optional<size_t> planned = 0;
         std::optional<size_t> rekordboxRows, engineRows, oneLibraryRows;
         const auto addUnits = [&planned](std::optional<size_t> units) {
@@ -138,16 +142,19 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             }
         };
         if (hasRekordbox) {
-            addUnits(catalogCache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full));
-            rekordboxRows = catalogCache.countTracks("rekordbox", rekordboxPath.toStdString());
+            addUnits(catalogCache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full,
+                                               cancel));
+            rekordboxRows = catalogCache.countTracks("rekordbox", rekordboxPath.toStdString(), cancel);
         }
         if (hasEngine) {
-            addUnits(catalogCache.plannedUnits("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full));
-            engineRows = catalogCache.countTracks("engine", enginePath.toStdString());
+            addUnits(
+                catalogCache.plannedUnits("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full, cancel));
+            engineRows = catalogCache.countTracks("engine", enginePath.toStdString(), cancel);
         }
         if (hasOneLibrary) {
-            addUnits(catalogCache.plannedUnits("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full));
-            oneLibraryRows = catalogCache.countTracks("onelibrary", rekordboxPath.toStdString());
+            addUnits(catalogCache.plannedUnits("onelibrary", rekordboxPath.toStdString(),
+                                               LibraryCatalogCache::Detail::Full, cancel));
+            oneLibraryRows = catalogCache.countTracks("onelibrary", rekordboxPath.toStdString(), cancel);
         }
         if (hasRekordbox && hasEngine) {
             addUnits(rekordboxRows && engineRows ? std::optional<size_t>(std::min(*rekordboxRows, *engineRows))

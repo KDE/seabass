@@ -130,6 +130,51 @@ TestCase {
                 "a stop during the first count makes no other: " + JSON.stringify(stopped.counts));
     }
 
+    // A rescan of an unchanged stick plans from the counts the cache
+    // remembered: the first leg of a Full scan used to count every
+    // catalog again for its per-row checks, OneLibrary's count a key
+    // derivation.
+    function test_aRescanOfAnUnchangedStickCountsNothing() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const twice = controllerFixture.countsDuring("health", stick, false, 2);
+        compare(twice.runs.length, 2, "both scans ran");
+        compare(JSON.stringify(twice.runs[0]), JSON.stringify({engine: 1, onelibrary: 1, rekordbox: 1}),
+                "the first scan counts each catalog once");
+        compare(JSON.stringify(twice.runs[1]), "{}", "the rescan counts nothing");
+    }
+
+    // Every other operation that plans one bar from the catalogs' counts
+    // (#58) counts each catalog once, and a stop during its first count
+    // makes no other: Sync counted each catalog twice, Create Engine
+    // Library rekordbox twice, and neither they nor Clean Up looked at
+    // the token between counts.
+    function test_everyPlannerCountsEachCatalogOnceAndStopsBetweenCounts_data() {
+        return [
+            {tag: "sync", expected: {engine: 1, onelibrary: 1, rekordbox: 1}},
+            {tag: "createEngine", expected: {rekordbox: 1}},
+            {tag: "duplicates", expected: {onelibrary: 1}},
+            {tag: "cleanup", expected: {engine: 1, onelibrary: 1, rekordbox: 1}}
+        ];
+    }
+    function test_everyPlannerCountsEachCatalogOnceAndStopsBetweenCounts(data) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const whole = controllerFixture.countsDuring(data.tag, stick, false, 1);
+        verify(whole.known, "the fixture knows the operation");
+        compare(JSON.stringify(whole.counts), JSON.stringify(data.expected),
+                data.tag + " counts each catalog once");
+        compare(whole.busyAfter, false, "and ended");
+        const again = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(again.length > 0, "the fixture must copy");
+        const stopped = controllerFixture.countsDuring(data.tag, again, true, 1);
+        compare(stopped.busyAfter, false, "the stop ended " + data.tag);
+        compare(Object.keys(stopped.counts).length, 1,
+                "a stop during the first count makes no other: " + JSON.stringify(stopped.counts));
+        compare(stopped.counts[Object.keys(stopped.counts)[0]], 1,
+                "not even the same one again: " + JSON.stringify(stopped.counts));
+    }
+
     // A filesystem repair unmounts and remounts the stick and cannot be
     // stopped: the controller waits for it rather than abandon it.
     function test_leavingMidRepairWaitsForTheRepair() {

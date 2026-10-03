@@ -54,12 +54,16 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
     // unit per track created, and the copy to the stick. The playlists
     // stretch is a few dozen units nobody can count before the read and
     // is left out of the plan; it runs the bar a moment early.
+    // The plan counts rekordbox once (the cache remembers the count for
+    // the countTracks() after plannedUnits()) and looks at the token
+    // first, so a stop before the read ends here as cancelled.
     auto &cache = LibraryCatalogCache::instance();
-    const auto readUnits = cache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full);
-    const auto rows = cache.countTracks("rekordbox", rekordboxPath.toStdString());
-    application::PhasedProgress progress(*reporter, "Creating the Engine library",
-                                         readUnits && rows ? *readUnits + *rows + 1 : 0);
     try {
+        const auto readUnits =
+            cache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full, cancel);
+        const auto rows = cache.countTracks("rekordbox", rekordboxPath.toStdString(), cancel);
+        application::PhasedProgress progress(*reporter, "Creating the Engine library",
+                                             readUnits && rows ? *readUnits + *rows + 1 : 0);
         auto tracks = cache.tracksFor("rekordbox", rekordboxPath.toStdString(), progress, cancel);
 
         std::string engineLibraryPath =

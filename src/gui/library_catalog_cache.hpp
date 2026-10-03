@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -43,10 +44,14 @@ namespace seabass::gui
 // a redundant one.
 //
 // Freshness is checked by comparing the catalog's own database file's
-// mtime against what was cached; a write elsewhere (Sync's apply(), Clean
-// Up, ...) should call invalidate() explicitly right after, rather than
-// relying purely on the next mtime check, so a caller never has to wait
-// out a filesystem timestamp granularity window to see its own write.
+// mtime against what was cached and, for an entry that holds cues read
+// from analysis files (rekordbox and OneLibrary), the state of those
+// files: a player that stores a pad writes the track's ANLZ .DAT/.EXT and
+// leaves both catalog files alone. A write elsewhere (Sync's apply(),
+// Clean Up, ...) should call invalidate() explicitly right after, rather
+// than relying purely on the next freshness check, so a caller never has
+// to wait out a filesystem timestamp granularity window to see its own
+// write.
 //
 // progress is only ever touched on a cache miss (a hit returns instantly,
 // nothing to report) -- passed in per-call rather than held as cache
@@ -180,24 +185,31 @@ public:
     // How much progress a tracksFor(format, path, detail) made now would
     // announce, in the units its passes tick: one per track for each
     // stage the entry does not yet hold (the catalog read, rekordbox's
-    // cue pass, and the file and cover checks of Full), nothing for a
-    // stage it has or that another thread is reading. From the reader's
-    // own count (LibraryReader::countTracks(), a page-header sum or a
-    // count(*)), so a caller can announce one bar for a whole scan
-    // before the first read begins (#58). Nothing when the catalog
-    // cannot be counted, which the caller treats as "size unknown".
-    std::optional<size_t> plannedUnits(const std::string &format, const std::string &path, Detail detail);
-    // The same, with the row count taken from `countRows` when one is
-    // needed: for a caller that counts each catalog once for a whole
-    // plan, and checks its token between the counts.
+    // and OneLibrary's cue pass, and the file and cover checks of Full),
+    // nothing for a stage it has or that another thread is reading. From
+    // countTracks(), so a caller can announce one bar for a whole scan
+    // before the first read begins (#58). Nothing when the catalog cannot
+    // be counted, which the caller treats as "size unknown". Throws
+    // application::OperationCancelled when `cancel` is set before a count
+    // it has to make.
     std::optional<size_t> plannedUnits(const std::string &format, const std::string &path, Detail detail,
-                                       const std::function<std::optional<size_t>()> &countRows);
-    // The catalog's row count, the way plannedUnits() gets it, for a
-    // caller sizing its own per-row stretch on the same bar.
-    std::optional<size_t> countTracks(const std::string &format, const std::string &path);
-    // Test seam: the count countTracks() makes, and so the one
-    // plannedUnits() without `countRows` works from, in place of the
-    // real reader's.
+                                       application::CancellationToken cancel = application::CancellationToken::none());
+    // The catalog's row count (LibraryReader::countTracks(): a page-header
+    // sum, a count(*)), for a caller sizing its own per-row stretch on the
+    // same bar. Counted once per state of the catalog file and remembered:
+    // a count opens the catalog, and for OneLibrary that is SQLCipher's key
+    // derivation, one call no token can interrupt (about 0.1 s here,
+    // 0.4 s on the CI runner). Every planner asks for the same catalogs
+    // more than once, so the first ask pays and the rest are free; a
+    // rescan of an unchanged stick pays nothing. Forgotten when the
+    // catalog file's mtime moves and by every invalidation. `cancel` is
+    // checked before a count is made (a remembered one is returned
+    // regardless), so a stop waits for one count at most; it throws
+    // application::OperationCancelled. A failed count is not remembered.
+    std::optional<size_t> countTracks(const std::string &format, const std::string &path,
+                                      application::CancellationToken cancel = application::CancellationToken::none());
+    // Test seam: the count countTracks() makes when it has none
+    // remembered, in place of the real reader's.
     using CountFn = std::function<std::optional<size_t>(const std::string &format, const std::string &path)>;
     void setCountFnForTesting(CountFn countFn);
 
@@ -262,11 +274,25 @@ private:
         std::vector<domain::Track> tracks;
         StageNotes notes;
         std::chrono::system_clock::time_point mtime;
+        // The analysis files the cue pass read (each row's .DAT and .EXT),
+        // and their state just before it read them. Null until the entry
+        // holds cues from analysis files; Engine never has them.
+        std::shared_ptr<const std::vector<std::string>> analysisFiles;
+        std::uint64_t analysisState = 0;
         // 0 = nothing read yet, else 1 + Detail of the last stage read.
         int stage = 0;
         // 0 = no pass running, else 1 + Detail of the pass another
         // thread is running for this key right now. Always stage + 1.
         int passInFlight = 0;
+    };
+
+    // A remembered countTracks(): valid while the catalog file keeps
+    // `mtime` and nothing invalidated the key since (`generation`).
+    struct RememberedCount
+    {
+        std::chrono::system_clock::time_point mtime;
+        std::uint64_t generation = 0;
+        size_t rows = 0;
     };
 
     struct PrefetchJob
@@ -289,6 +315,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::unordered_map<std::string, Entry> m_entries;
+    std::unordered_map<std::string, RememberedCount> m_counts;
     // Per-key invalidation counter, incremented by invalidate() and never
     // erased (unlike m_entries) -- lets a pass detect an invalidate()
     // that landed while it was still running, so it doesn't write a

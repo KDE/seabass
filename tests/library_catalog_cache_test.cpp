@@ -647,9 +647,144 @@ void stagedCases()
     }
 }
 
+// Counts are remembered (#58): a count opens the catalog, and for
+// OneLibrary that is a key derivation no token interrupts, so a planner
+// asking for one catalog twice, or a rescan of an unchanged stick, must
+// not open it twice. Forgotten when the catalog file's mtime moves and
+// by an invalidation; the token is looked at before a count is made.
+void rememberedCountCases()
+{
+    const std::string stick = "/stick/PIONEER";
+    FakeReader reader;
+    std::chrono::system_clock::time_point mtime{};
+    LibraryCatalogCache cache(reader.stageFn(), [&](const std::string &, const std::string &) { return mtime; });
+    std::map<std::string, int> counted;
+    bool failNext = false;
+    cache.setCountFnForTesting([&](const std::string &format, const std::string &) -> std::optional<size_t> {
+        ++counted[format];
+        if (failNext) {
+            failNext = false;
+            return std::nullopt;
+        }
+        return 10;
+    });
+
+    // What every planner does: plannedUnits(), then the rows on top.
+    assert(cache.plannedUnits("onelibrary", stick, Detail::Full) == 40);
+    assert(cache.countTracks("onelibrary", stick) == 10);
+    assert(cache.countTracks("onelibrary", "/stick/PIONEER/") == 10 && "every spelling is one count");
+    assert(counted["onelibrary"] == 1);
+    // A rescan of the same catalog file plans from the remembered count.
+    cache.tracksFor("onelibrary", stick, Detail::Full);
+    assert(cache.plannedUnits("onelibrary", stick, Detail::Full) == 0);
+    assert(cache.countTracks("onelibrary", stick) == 10);
+    assert(counted["onelibrary"] == 1 && "a rescan of an unchanged catalog counts nothing");
+
+    // A remembered count is returned under a stopped token; a new one is
+    // not made.
+    CancellationToken stopped;
+    stopped.cancel();
+    assert(cache.countTracks("onelibrary", stick, stopped) == 10);
+    bool threw = false;
+    try {
+        cache.countTracks("engine", "/stick/Engine Library", stopped);
+    } catch (const OperationCancelled &) {
+        threw = true;
+    }
+    assert(threw && counted["engine"] == 0 && "a stop is seen before a count is made");
+    threw = false;
+    try {
+        cache.plannedUnits("rekordbox", stick, Detail::Full, stopped);
+    } catch (const OperationCancelled &) {
+        threw = true;
+    }
+    assert(threw && counted["rekordbox"] == 0);
+
+    // The catalog file changed: counted again, once.
+    mtime += 1s;
+    assert(cache.countTracks("onelibrary", stick) == 10);
+    assert(cache.countTracks("onelibrary", stick) == 10);
+    assert(counted["onelibrary"] == 2);
+    // An invalidation forgets it too, and its mirror.
+    cache.invalidateWithOneLibraryMirror("rekordbox", stick);
+    cache.countTracks("onelibrary", stick);
+    assert(counted["onelibrary"] == 3);
+    // A failed count is not remembered.
+    failNext = true;
+    assert(!cache.countTracks("rekordbox", stick).has_value());
+    assert(cache.countTracks("rekordbox", stick) == 10);
+    assert(cache.countTracks("rekordbox", stick) == 10);
+    assert(counted["rekordbox"] == 2);
+    std::cout << "stage 16 (a count is made once per catalog state, after a look at the token) OK\n";
+}
+
+// A player that stores a pad writes the track's analysis file and
+// neither catalog file (XDJ-RX2, OMNIS-DUO, CDJ-3000X; see
+// docs/onelibrary-format.md). An entry holding cues read from those
+// files is stale once one of them moves, for rekordbox and OneLibrary
+// both. Over a real copy of the fixture (no hard links: the touch must
+// not reach the committed files).
+void analysisFileFreshnessCases(const std::filesystem::path &fixture)
+{
+    namespace fs = std::filesystem;
+    const fs::path root = seabass::testing::scratchRoot() / "library_catalog_cache_test_analysis";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    fs::copy(fixture / "rekordbox", root / "PIONEER", fs::copy_options::recursive);
+    const std::string pioneer = seabass::pathToUtf8(root / "PIONEER");
+
+    std::map<std::string, int> catalogReads;
+    std::mutex readsMutex;
+    const auto realStage = LibraryCatalogCache::realStageForTesting();
+    LibraryCatalogCache cache(
+        [&](Detail stage, const std::string &format, const std::string &path, std::vector<seabass::domain::Track> &tracks,
+            LibraryCatalogCache::StageNotes &notes, seabass::application::ProgressReporter &progress,
+            CancellationToken cancel) {
+            if (stage == Detail::Tracks) {
+                std::lock_guard<std::mutex> lock(readsMutex);
+                ++catalogReads[format];
+            }
+            realStage(stage, format, path, tracks, notes, progress, std::move(cancel));
+        },
+        LibraryCatalogCache::realMtimeForTesting());
+
+    for (const std::string format : {"rekordbox", "onelibrary"}) {
+        const auto tracks = cache.tracksFor(format, pioneer, Detail::Cues);
+        assert(!tracks.empty());
+        const auto named = std::find_if(tracks.begin(), tracks.end(),
+                                        [](const seabass::domain::Track &t) { return !t.analysisFile.empty(); });
+        assert(named != tracks.end());
+        assert(catalogReads[format] == 1);
+
+        // Fresh: nothing to plan, nothing read again. Timed: this is the
+        // check every request for the entry makes.
+        const auto before = std::chrono::steady_clock::now();
+        assert(cache.plannedUnits(format, pioneer, Detail::Cues) == 0);
+        const auto took = std::chrono::steady_clock::now() - before;
+        cache.tracksFor(format, pioneer, Detail::Cues);
+        assert(catalogReads[format] == 1 && "an unchanged stick is served from the cache");
+
+        // One analysis file moves, as a player's pad store moves it. The
+        // track's .DAT: the legacy list a player reads hot cues from.
+        const std::string rel = named->analysisFile.substr(named->analysisFile.find("/USBANLZ/") + 1);
+        const fs::path dat = root / "PIONEER" / seabass::pathFromUtf8(rel);
+        assert(fs::exists(dat));
+        fs::last_write_time(dat, fs::last_write_time(dat) + 1min);
+        const auto planned = cache.plannedUnits(format, pioneer, Detail::Cues);
+        assert(planned.has_value() && *planned > 0 && "a moved analysis file makes the entry stale");
+        cache.tracksFor(format, pioneer, Detail::Cues);
+        assert(catalogReads[format] == 2 && "and the next request reads the catalog and its cues again");
+        assert(cache.plannedUnits(format, pioneer, Detail::Cues) == 0 && "and is fresh after that");
+        std::cout << "stage 17 (" << format << ": a moved analysis file makes the entry stale; the freshness "
+                  << "check took " << std::chrono::duration_cast<std::chrono::microseconds>(took).count()
+                  << " us over " << tracks.size() << " rows) OK\n";
+    }
+    fs::remove_all(root);
+}
+
 }  // namespace
 
-int main()
+int main(int argc, char **argv)
 {
     // Case 1: a second call for the same (format, path), unchanged mtime,
     // is served from the cache -- the scan function runs exactly once.
@@ -917,6 +1052,13 @@ int main()
     }
 
     stagedCases();
+    rememberedCountCases();
+    if (argc > 1) {
+        analysisFileFreshnessCases(seabass::pathFromUtf8(argv[1]));
+    } else {
+        std::cerr << "no fixture given: the analysis-file freshness case did not run\n";
+        return 1;
+    }
 
     std::cout << "All library_catalog_cache tests passed.\n";
     return 0;
