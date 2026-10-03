@@ -274,8 +274,12 @@ TestCase {
     function test_aMemoryCueOnAPadIsStillOneMemoryCue() {
         var page = openPage(1100, 720);
         var list = listOf(page);
+        // The last row: a ListView only creates the delegates in view, and
+        // on the CI runner's fonts the list is taller than the window, so
+        // scroll there first rather than count on it being on screen.
+        list.positionViewAtIndex(list.count - 1, ListView.Contain);
+        tryVerify(() => list.itemAtIndex(list.count - 1) !== null, 2000, "the last row is on screen");
         var row = list.itemAtIndex(list.count - 1);
-        verify(row !== null);
         row.expanded = true;
         waitForRendering(page);
         compare(findChild(row, "panelSentence").text,
