@@ -262,6 +262,51 @@ int main(int argc, char **argv)
         check(rows.size() == 1 && rows.front().sourceId == "13",
               "only the row no DeviceLibrary row speaks for is paired, got " + std::to_string(rows.size()));
 
+        // Matched against every row, then narrowed. Three Engine copies of
+        // one song: two have OneLibrary rows DeviceLibrary speaks for, one
+        // has a row only OneLibrary holds. No audio on the stick (sizes 0),
+        // so a copy whose own row was taken out before matching fell back
+        // to the name and landed on the OneLibrary-only row: three plans
+        // onto one file (WHALESHARK2 copy, 2026-10-03).
+        {
+            const auto song = [](const std::string &format, const std::string &id, const std::string &path,
+                                 const std::string &anlz) {
+                Track t;
+                t.format = format;
+                t.sourceId = id;
+                t.title = "Reflection";
+                t.artist = "Someone";
+                t.durationSeconds = 300;
+                t.filePath = path;
+                t.filename = path.substr(path.rfind('/') + 1);
+                t.analysisFile = anlz;
+                return t;
+            };
+            std::vector<Track> device = {song("rekordbox", "1", "/s/Contents/14_r.mp3", "/PIONEER/USBANLZ/P1/A/ANLZ0000.DAT"),
+                                         song("rekordbox", "2", "/s/Contents/200_r.mp3", "/PIONEER/USBANLZ/P2/A/ANLZ0000.DAT")};
+            std::vector<Track> one = {song("onelibrary", "10", "/s/Contents/14_r.mp3", "/PIONEER/USBANLZ/P1/A/ANLZ0000.DAT"),
+                                      song("onelibrary", "11", "/s/Contents/200_r.mp3", "/PIONEER/USBANLZ/P2/A/ANLZ0000.DAT"),
+                                      song("onelibrary", "12", "/s/Contents/055_r.mp3", "/PIONEER/USBANLZ/P3/A/ANLZ0000.DAT")};
+            std::vector<Track> engineCopies = {song("engine", "100", "/s/Contents/14_r.mp3", ""),
+                                               song("engine", "101", "/s/Contents/200_r.mp3", ""),
+                                               song("engine", "102", "/s/Contents/055_r.mp3", "")};
+            for (auto &t : engineCopies) {
+                t.cues = {hot(1, 1000.0), hot(2, 2000.0), hot(3, 3000.0)};
+            }
+            int ontoTheOnlyRow = 0;
+            for (const auto &plan :
+                 seabass::application::planEngineWithOneLibrary(engineCopies, one, device, {}, {})) {
+                if (plan.match.trackB.sourceId == "12" && plan.direction != seabass::domain::SyncPlan::Direction::None) {
+                    ++ontoTheOnlyRow;
+                    check(plan.match.trackA.sourceId == "102",
+                          "only the Engine copy of the same file plans onto the OneLibrary-only row, not "
+                              + plan.match.trackA.filename);
+                }
+                check(plan.match.trackB.sourceId == "12", "no plan onto a OneLibrary row DeviceLibrary speaks for");
+            }
+            check(ontoTheOnlyRow == 1, "one plan onto the OneLibrary-only row, got " + std::to_string(ontoTheOnlyRow));
+        }
+
         // On the fixture: the shared row is never offered to the Engine pair.
         const std::vector<Track> tracks = onelibrary::OneLibraryReader(root).readTracks();
         const auto fixtureRows = seabass::application::oneLibraryRowsToPairWithEngine(deviceLibrary, tracks);

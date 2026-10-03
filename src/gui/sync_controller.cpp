@@ -171,15 +171,20 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             addPairPlans(rekordboxTracks, engineTracks, rekordboxMtime, engineMtime);
         }
         if (hasEngine && hasOneLibrary) {
-            // Only the OneLibrary rows no DeviceLibrary row speaks for: a
+            // Only for the OneLibrary rows no DeviceLibrary row speaks for: a
             // row naming the same analysis file has the same cues (that
             // file is where a OneLibrary player takes them from, #59), and
             // a row at a path DeviceLibrary lists gets every DeviceLibrary
             // write mirrored into it. Planning those against Engine too
             // would decide one file twice, and whichever write landed last
-            // would win. See oneLibraryRowsToPairWithEngine().
-            addPairPlans(engineTracks, application::oneLibraryRowsToPairWithEngine(rekordboxTracks, oneLibraryTracks),
-                         engineMtime, oneLibraryMtime);
+            // would win. Matched against every row first, then narrowed:
+            // see planEngineWithOneLibrary().
+            for (auto &plan : application::planEngineWithOneLibrary(engineTracks, oneLibraryTracks, rekordboxTracks,
+                                                                    engineMtime, oneLibraryMtime)) {
+                if (plan.direction != SyncPlan::Direction::None) {
+                    actionable.push_back(std::move(plan));
+                }
+            }
         }
         // rekordbox <-> OneLibrary is deliberately NOT planned as a pair.
         // For cues they are one source, not two: a OneLibrary row's cues

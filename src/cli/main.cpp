@@ -1022,9 +1022,10 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // Only the rows no DeviceLibrary row speaks for, as in the app: a
         // row sharing a DeviceLibrary row's analysis file, or its audio
         // file, is written by the rekordbox <-> Engine pair above.
-        addPair(engineTracks,
-                seabass::application::oneLibraryRowsToPairWithEngine(rekordboxTracks, oneLibraryTracks), engineMtime,
-                oneLibraryMtime);
+        for (auto &plan : seabass::application::planEngineWithOneLibrary(engineTracks, oneLibraryTracks,
+                                                                         rekordboxTracks, engineMtime, oneLibraryMtime)) {
+            plans.push_back(std::move(plan));
+        }
     }
     // Hot cues that differ on both sides are the DJ's choice, made in the
     // app; this has no way to ask. The same function the app uses takes them

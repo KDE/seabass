@@ -4,11 +4,13 @@
 
 #pragma once
 
+#include <chrono>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "application/path_key.hpp"
+#include "application/use_cases/sync_libraries.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::application
@@ -38,30 +40,73 @@ namespace seabass::application
 // Analysis paths compare by normalizedPathKey, as audio paths do: both
 // rekordbox catalogs spell them, export.pdb pads its strings, and the
 // stick's filesystem does not tell case apart.
+class OneLibraryRowsSpokenFor
+{
+public:
+    explicit OneLibraryRowsSpokenFor(const std::vector<domain::Track> &deviceLibrary)
+    {
+        for (const auto &track : deviceLibrary) {
+            if (!track.filePath.empty()) {
+                m_paths.insert(normalizedPathKey(track.filePath));
+            }
+            if (!track.analysisFile.empty()) {
+                m_analysisFiles.insert(normalizedPathKey(track.analysisFile));
+            }
+        }
+    }
+
+    // True when Sync must leave this OneLibrary row out of its own pair
+    // with Engine: see oneLibraryRowsToPairWithEngine().
+    bool operator()(const domain::Track &row) const
+    {
+        if (!row.filePath.empty() && m_paths.count(normalizedPathKey(row.filePath))) {
+            return true;
+        }
+        return row.analysisFile.empty() || m_analysisFiles.count(normalizedPathKey(row.analysisFile));
+    }
+
+private:
+    std::set<std::string> m_paths;
+    std::set<std::string> m_analysisFiles;
+};
+
 inline std::vector<domain::Track> oneLibraryRowsToPairWithEngine(const std::vector<domain::Track> &deviceLibrary,
                                                                  const std::vector<domain::Track> &oneLibrary)
 {
-    std::set<std::string> deviceLibraryPaths;
-    std::set<std::string> deviceLibraryAnalysisFiles;
-    for (const auto &track : deviceLibrary) {
-        if (!track.filePath.empty()) {
-            deviceLibraryPaths.insert(normalizedPathKey(track.filePath));
-        }
-        if (!track.analysisFile.empty()) {
-            deviceLibraryAnalysisFiles.insert(normalizedPathKey(track.analysisFile));
-        }
-    }
+    const OneLibraryRowsSpokenFor spokenFor(deviceLibrary);
     std::vector<domain::Track> rows;
     for (const auto &track : oneLibrary) {
-        if (!track.filePath.empty() && deviceLibraryPaths.count(normalizedPathKey(track.filePath))) {
-            continue;
+        if (!spokenFor(track)) {
+            rows.push_back(track);
         }
-        if (track.analysisFile.empty() || deviceLibraryAnalysisFiles.count(normalizedPathKey(track.analysisFile))) {
-            continue;
-        }
-        rows.push_back(track);
     }
     return rows;
+}
+
+// The Engine <-> OneLibrary pair's plans, for the rows above only.
+//
+// Matched against EVERY OneLibrary row, and only then narrowed: taking the
+// spoken-for rows out before matching changes what the rest match. An
+// Engine copy whose own OneLibrary row was taken out falls through to the
+// name fallback and lands on another copy of the song that only OneLibrary
+// holds; on a WHALESHARK2 copy (2026-10-03) three Engine copies of one
+// title were planned onto one OneLibrary-only row that way, one file's
+// cues three times over. Matched first, each Engine copy finds its own row
+// by path, and the plan for a spoken-for row is then simply dropped.
+inline std::vector<domain::SyncPlan> planEngineWithOneLibrary(const std::vector<domain::Track> &engine,
+                                                              const std::vector<domain::Track> &oneLibrary,
+                                                              const std::vector<domain::Track> &deviceLibrary,
+                                                              std::chrono::system_clock::time_point engineMtime,
+                                                              std::chrono::system_clock::time_point oneLibraryMtime)
+{
+    const OneLibraryRowsSpokenFor spokenFor(deviceLibrary);
+    std::vector<domain::SyncPlan> plans;
+    for (auto &plan : SyncLibraries().execute(engine, oneLibrary, engineMtime, oneLibraryMtime)) {
+        if (!spokenFor(plan.match.trackB)) {
+            plans.push_back(std::move(plan));
+        }
+    }
+    return plans;
 }
 
 }  // namespace seabass::application
