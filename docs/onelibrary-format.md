@@ -126,6 +126,48 @@ OMNIS-DUO writes the file), and what rekordbox desktop does with the
 `cue` table on import. Until the second is known, the table is written,
 not dropped.
 
+## Library Health: Cue lists (2026-10-03, issues #55 and #60)
+
+An analysis file holds every cue twice: in the legacy PCOB lists (hot
+cues 1-3 and the memory cues in the `.DAT`, 4-8 in the `.EXT`) and in the
+modern PCO2 lists in the `.EXT`. Measured 2026-09-30 to 2026-10-03, the
+XDJ-RX2 (firmware 1.43) and the CDJ-3000X show the legacy lists while
+Seabass reads PCO2 first, and an RX2 that saves a memory loop onto a
+legacy memory list whose header says "empty" hangs and has to be powered
+off.
+
+The "Cue lists" check on the Library Health hub (`MemoryCueListsPage`,
+`legacy_memory_list_audit.hpp`) walks every analysis file `export.pdb`
+or a OneLibrary row names, each once, and reports four findings:
+
+1. **Legacy memory list header**: entries under a header that is not the
+   last entry's index, or entries not linked to each other. Written by
+   Seabass from `5282555e` (2026-09-18) to `6e0f1c09` (2026-09-30).
+2. **Player-rewritten memory list**: the RX2's rewrite of such a list,
+   sized for one more entry than it holds, the extra slot zero.
+3. **Lists disagree**: the legacy and modern lists hold different cues
+   (a hot cue compared by pad, a memory cue by position, within the
+   reader's 500 ms tolerance, since rekordbox itself stores one cue 1 or
+   52 ms apart in the two). Written by Seabass from 2026-09-02 to
+   `5282555e`, which wrote PCO2 alone.
+4. **Stray analysis file**: an `ANLZ000N.DAT` beside the track's that no
+   catalog names, with no `.EXT` and an empty beat grid and waveform: what
+   a hung RX2 leaves.
+
+It counts what it examined and what it could not read, and a scan that
+examined nothing, or could not read some files, says so rather than
+reporting a clean stick. The repair re-encodes a damaged memory list
+with its entries kept (the player's own included), rewrites both lists
+where they disagree from the side the user chooses for the stick (what
+the player shows, the default, or what Seabass shows: PCO2 plus the
+legacy cues it lacks) through `RekordboxCueWriter` with its read-back,
+refreshes OneLibrary's `cue` table for that file, and removes the stray
+files. Every file is backed up first, and a file whose lists agree is
+not written. Both lists are written from one value per cue, so a PCO2
+comment survives only where its entry is kept to the millisecond. Still
+owed on hardware: an RX2 memory-loop save on a repaired frozen track
+(#55), and a player showing the chosen list after a repair (#60).
+
 ## What's NOT handled (deliberately out of scope this pass)
 
 - **Legacy frame-addressing columns** on `cue`
