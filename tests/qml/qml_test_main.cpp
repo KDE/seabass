@@ -496,7 +496,9 @@ public:
                 }
                 return;
             }
-            if (detail == Detail::Cues && format == "rekordbox") {
+            // Both rekordbox catalogs read their cues from the analysis
+            // files in a pass of their own (OneLibrary since #59).
+            if (detail == Detail::Cues && format != "engine") {
                 ++gate->cuePasses;
                 ++gate->waiting;
                 {

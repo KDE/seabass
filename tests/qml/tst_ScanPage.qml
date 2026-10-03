@@ -486,6 +486,25 @@ TestCase {
         compare(controller.tracks.trackAt(4).cueCount, 4);
     }
 
+    // OneLibrary reads its cues from the analysis files too (#59), so its
+    // scan publishes the list with the cues still on their way, then the
+    // cues, like rekordbox's. It once published the list as final.
+    function test_aOneLibraryScanPublishesItsCuesToo() {
+        browseFixture.holdCues(12);
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const published = createTemporaryObject(signalSpyComponent, testCase,
+                                                {target: controller, signalName: "tracksPublished"});
+        controller.scan("onelibrary", "/nonexistent/HELD/PIONEER");
+        tryCompare(published, "count", 1);
+        compare(published.signalArguments[0][0], false, "the list first");
+        compare(controller.cuesPending, true, "the cues are on their way");
+        browseFixture.releaseCues();
+        tryCompare(published, "count", 2);
+        compare(published.signalArguments[1][0], true, "then its cues");
+        compare(controller.cuesPending, false);
+        compare(controller.tracks.trackAt(4).cueCount, 4);
+    }
+
     // And a third publish, with no bar and no note: the Full stage's
     // lengths and sizes land in the rows where they stand, after the
     // cues, and it is not a third cue publish.
