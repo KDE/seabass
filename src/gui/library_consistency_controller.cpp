@@ -376,7 +376,8 @@ public:
 
     std::optional<size_t> rows(const std::string &format, const std::string &path)
     {
-        const std::string key = format + '\n' + path;
+        // Every spelling of one catalog is one count, as in the cache.
+        const std::string key = format + '\n' + application::normalizedPathKey(path);
         const auto found = m_rows.find(key);
         if (found != m_rows.end()) {
             return found->second;

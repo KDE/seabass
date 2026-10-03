@@ -195,7 +195,8 @@ public:
     // The catalog's row count, the way plannedUnits() gets it, for a
     // caller sizing its own per-row stretch on the same bar.
     std::optional<size_t> countTracks(const std::string &format, const std::string &path);
-    // Test seam: the count plannedUnits() works from, in place of the
+    // Test seam: the count countTracks() makes, and so the one
+    // plannedUnits() without `countRows` works from, in place of the
     // real reader's.
     using CountFn = std::function<std::optional<size_t>(const std::string &format, const std::string &path)>;
     void setCountFnForTesting(CountFn countFn);
