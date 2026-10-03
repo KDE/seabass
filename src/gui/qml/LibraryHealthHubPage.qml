@@ -315,26 +315,58 @@ Page {
             + "player does not show a pad without one. Seabass can give them the player's own colour for the pad.";
     }
 
-    // #55. Memory cue lists an XDJ-RX2 hangs on: see MemoryCueListsPage.
-    // Only once the rekordbox leg has run.
+    // #55 and #60. Cue lists in the analysis files: memory lists an
+    // XDJ-RX2 hangs on, the files a hung one leaves, and older and newer
+    // lists that disagree. See MemoryCueListsPage. Only once the
+    // rekordbox leg has run.
     readonly property bool memoryCueListsShown: healthController.legacyMemoryListsChecked
         || healthController.legacyMemoryListError.length > 0
-    readonly property int memoryCueListCount: healthController.legacyMemoryListCount
-    readonly property int memoryCueListFixableCount: healthController.legacyMemoryListFixableCount
+    readonly property int memoryCueListCount: healthController.cueListFindingCount
+    readonly property int memoryCueListFixableCount: healthController.cueListFixableCount
+    readonly property int cueListsExamined: healthController.cueListCounts.examined ?? 0
+    readonly property int cueListsUnreadable: healthController.cueListCounts.unreadable ?? 0
     readonly property string memoryCueListSummary: {
         if (healthController.legacyMemoryListError.length > 0) {
             return healthController.legacyMemoryListError;
         }
-        if (root.memoryCueListCount === 0) {
-            return "Every memory cue list in the rekordbox analysis files is in the shape a player reads.";
+        // Never "all is well" over nothing: a stick whose analysis files
+        // could not be read has had nothing checked, and one with files
+        // it could not read is not clean either.
+        if (root.cueListsExamined === 0 && root.memoryCueListCount === 0) {
+            return root.cueListsUnreadable === 0
+                ? "No track names an analysis file, so there were no cue lists to check."
+                : "No analysis file could be read (" + root.cueListsUnreadable
+                  + (root.cueListsUnreadable === 1 ? " is" : " are") + " missing or damaged), so no cue list was checked.";
         }
-        let text = root.memoryCueListCount + (root.memoryCueListCount === 1 ? " track has" : " tracks have")
-            + " a memory cue list in a shape an XDJ-RX2 can hang on, or an analysis file a hung player left behind.";
+        const files = root.cueListsExamined + (root.cueListsExamined === 1 ? " analysis file" : " analysis files");
+        const malformed = healthController.cueListMalformedCount;
+        const unread = root.cueListsUnreadable === 0 ? ""
+            : " " + root.cueListsUnreadable + (root.cueListsUnreadable === 1 ? " other is" : " others are")
+              + " missing or damaged and could not be checked.";
+        if (root.memoryCueListCount === 0) {
+            return "Checked " + files + ": the player and Seabass read the same cues, and every memory cue list is "
+                + "in the shape a player reads." + unread;
+        }
+        const memory = healthController.legacyMemoryListCount;
+        const disagree = healthController.cueListDisagreementCount;
+        const parts = [];
+        if (disagree > 0) {
+            parts.push(disagree + (disagree === 1 ? " track shows" : " tracks show")
+                       + " different cues on the player than in Seabass");
+        }
+        if (memory > 0) {
+            parts.push(memory + (memory === 1 ? " track has" : " tracks have")
+                       + " a memory cue list an XDJ-RX2 can hang on, or a file a hung player left behind");
+        }
+        if (malformed > 0) {
+            parts.push(malformed + (malformed === 1 ? " track has" : " tracks have")
+                       + " cue lists Seabass cannot read, left alone");
+        }
+        let text = "Checked " + files + ". " + parts.join("; ") + "." + unread;
         if (root.memoryCueListFixableCount > 0) {
             text += " Seabass can repair " + (root.memoryCueListFixableCount === root.memoryCueListCount
                                               ? (root.memoryCueListCount === 1 ? "it" : "them")
-                                              : root.memoryCueListFixableCount + " of them")
-                + ", every cue kept.";
+                                              : root.memoryCueListFixableCount + " of them") + ".";
         }
         return text;
     }
@@ -629,12 +661,13 @@ Page {
                 foundCount: root.memoryCueListCount
                 actionEnabled: !healthController.stickReadOnly
                 actionDisabledReason: root.blockedByReadOnly
-                title: "Memory cue lists a player hangs on"
+                title: "Cue lists"
                 summary: root.memoryCueListSummary
                 running: root.scanning
-                ok: root.memoryCueListCount === 0 && healthController.legacyMemoryListError.length === 0
+                ok: root.memoryCueListCount === 0 && root.cueListsExamined > 0 && root.cueListsUnreadable === 0
+                    && healthController.legacyMemoryListError.length === 0
                 failed: healthController.legacyMemoryListError.length > 0
-                actionLabel: root.memoryCueListCount > 0 ? "Review lists" : ""
+                actionLabel: root.memoryCueListCount > 0 || root.cueListsUnreadable > 0 ? "Review lists" : ""
                 onActionRequested: root.detailRequested("memorycuelists")
             }
 

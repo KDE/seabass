@@ -581,6 +581,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
+    src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
     src/infrastructure/stick_backup/archive_compactor.cpp
     src/infrastructure/stick_backup/backup_manifest.cpp
     src/infrastructure/stick_backup/posix_archive_file.cpp
@@ -1989,6 +1990,14 @@ add_executable(legacy_memory_list_audit_test
 target_link_libraries(legacy_memory_list_audit_test PRIVATE seabass_core_testing)
 target_include_directories(legacy_memory_list_audit_test PRIVATE src tests)
 add_test(NAME legacy_memory_list_audit_test COMMAND legacy_memory_list_audit_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+
+add_executable(cue_list_health_test
+    tests/cue_list_health_test.cpp
+)
+target_link_libraries(cue_list_health_test PRIVATE seabass_core_testing)
+target_include_directories(cue_list_health_test PRIVATE src tests)
+add_test(NAME cue_list_health_test COMMAND cue_list_health_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
 # Reads the raw bytes of all three cue lists after a write, so a writer

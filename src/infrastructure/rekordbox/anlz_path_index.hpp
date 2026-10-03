@@ -41,6 +41,8 @@ public:
     // the second ANLZ0001), so "the file this track's row names" and
     // "a file no row names" are different questions.
     bool names(const std::string &analyzePath) const;
+    // Every analyze_path a row names, spelled as the rows spell it.
+    const std::unordered_set<std::string> &paths() const { return m_paths; }
 
     size_t size() const { return m_pathById.size(); }
 
