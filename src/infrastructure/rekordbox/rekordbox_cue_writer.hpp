@@ -96,4 +96,12 @@ private:
     const AnlzPathIndex *m_pathIndex = nullptr;
 };
 
+// Why the analysis file at `path` is not what was just written to it, or
+// nothing when it is: the same bytes, every section's length inside the
+// file, and every legacy cue list one the codec's strict check passes.
+// The check every write of an analysis file ends with, the writer's own
+// and Library Health's repair alike. Runs the hook
+// RekordboxCueWriter::setAfterWriteForTesting() set first.
+std::optional<std::string> analysisFileReadBackProblem(const std::string &path, const std::string &intended);
+
 }  // namespace seabass::infrastructure::rekordbox

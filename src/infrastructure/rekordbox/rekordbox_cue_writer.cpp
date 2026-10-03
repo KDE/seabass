@@ -187,8 +187,9 @@ std::function<void(const std::string &)> &afterWriteHook()
     return hook;
 }
 
-// Why the file at `path` is not what was written, or nothing when it is.
-std::optional<std::string> readBackProblem(const std::string &path, const std::string &intended)
+}  // namespace
+
+std::optional<std::string> analysisFileReadBackProblem(const std::string &path, const std::string &intended)
 {
     if (afterWriteHook()) {
         afterWriteHook()(path);
@@ -219,6 +220,9 @@ std::optional<std::string> readBackProblem(const std::string &path, const std::s
     }
     return std::nullopt;
 }
+
+namespace
+{
 
 // Puts each file back as it was read and says what happened, for the
 // exception that fails the track.
@@ -490,7 +494,7 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
     }
     if (writeExt) {
         file.writeRaw(extPath);
-        if (auto problem = readBackProblem(extPath, extAfter)) {
+        if (auto problem = analysisFileReadBackProblem(extPath, extAfter)) {
             throw std::runtime_error(restoreAfterFailedReadBack({{extPath, extBefore}}, extPath, *problem));
         }
     }
@@ -509,7 +513,7 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
                                      + (restored ? " was put back as it was"
                                                  : " could NOT be put back and needs restoring from the backup"));
         }
-        if (auto problem = readBackProblem(datPath, datAfter)) {
+        if (auto problem = analysisFileReadBackProblem(datPath, datAfter)) {
             std::vector<std::pair<std::string, std::string>> originals{{datPath, datBefore}};
             if (writeExt) {
                 originals.push_back({extPath, extBefore});
