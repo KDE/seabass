@@ -18,6 +18,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
@@ -49,9 +50,17 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
                                                application::CancellationToken cancel)
 {
     EngineLibraryCreationTaskResult result;
+    // One bar (#58): the rekordbox read the cache still has to make, one
+    // unit per track created, and the copy to the stick. The playlists
+    // stretch is a few dozen units nobody can count before the read and
+    // is left out of the plan; it runs the bar a moment early.
+    auto &cache = LibraryCatalogCache::instance();
+    const auto readUnits = cache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full);
+    const auto rows = cache.countTracks("rekordbox", rekordboxPath.toStdString());
+    application::PhasedProgress progress(*reporter, "Creating the Engine library",
+                                         readUnits && rows ? *readUnits + *rows + 1 : 0);
     try {
-        auto tracks =
-            LibraryCatalogCache::instance().tracksFor("rekordbox", rekordboxPath.toStdString(), *reporter, cancel);
+        auto tracks = cache.tracksFor("rekordbox", rekordboxPath.toStdString(), progress, cancel);
 
         std::string engineLibraryPath =
             pathToUtf8(pathFromQString(rekordboxPath).parent_path() / "Engine Library");
@@ -61,16 +70,12 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
         // library that once lived here (and was since deleted) must not
         // keep being served either way.
         LibraryCatalogCache::instance().invalidate("engine", engineLibraryPath);
-        // Same reporter as the scan above -- a second start()/tick() run
-        // for this second phase, same idiom SyncController's own analyze
-        // task uses, rather than leaving the bar looking stalled once the
-        // scan's own 100% has already been reported.
         // The sequence of the export the tracks came from, recorded in
         // the new library so a player does not offer to import it all
         // over again on first insert (issue #42).
         const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, rekordboxPath.toStdString());
         auto creation = EngineLibraryCreator::create(
-            engineLibraryPath, tracks, schemaFromInt(schemaGeneration), *reporter, cancel,
+            engineLibraryPath, tracks, schemaFromInt(schemaGeneration), progress, cancel,
             rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
 
         result.tracksCreated = creation.tracksCreated;
@@ -121,21 +126,21 @@ EngineLibraryCreatorController::EngineLibraryCreatorController(QObject *parent) 
 std::shared_ptr<QtProgressReporter> EngineLibraryCreatorController::makeReporter()
 {
     auto reporter = makeMainThreadShared<QtProgressReporter>();
-    // Scan, then create, then copy-to-stick each used to call
-    // setScanProgress(0, total) here, so the bar visibly restarted from 0%
-    // at every phase boundary -- looked like the operation kept resetting,
-    // not progressing. Folding each finished phase's total into a running
-    // baseline (only ever grows, reset just once in create()) keeps the
-    // bar moving forward through every phase as one continuous run.
+    // One announcement for the whole creation (#58): the task folds the
+    // scan, the create and the copy onto one bar (application::
+    // PhasedProgress), names each stretch as a phase, and the count only
+    // ever goes up. The copy's phase is what cancellable() keys off.
     connect(reporter.get(), &QtProgressReporter::started, this, [this](const QString &label, int total) {
         setCurrentPhase(label);
         emit cancellableChanged();
-        m_phaseBaseline += m_currentPhaseTotal;
-        m_currentPhaseTotal = total;
-        setScanProgress(m_phaseBaseline, m_phaseBaseline + total);
+        setScanProgress(0, total);
+    });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this](const QString &label) {
+        setCurrentPhase(label);
+        emit cancellableChanged();
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setScanProgress(m_phaseBaseline + current, m_scanTotal); });
+            [this](int current) { setScanProgress(current, m_scanTotal); });
     return reporter;
 }
 
@@ -170,8 +175,6 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
     }
     setErrorMessage({});
     setStatusMessage({});
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
     setScanProgress(0, 0);
     m_cancel = application::CancellationToken();
     setBusy(true);

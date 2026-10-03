@@ -344,9 +344,10 @@ Page {
                 Layout.topMargin: Theme.tightSpacing
                 visible: controller.busy
                 phase: controller.currentPhase
+                currentItem: controller.currentPhase
                 unitsDone: controller.progressCurrent
                 unitsTotal: controller.progressTotal
-                unitName: "tracks"
+                unitName: ""
                 cancellable: true
                 onCancelRequested: controller.cancelScan()
             }

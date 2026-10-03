@@ -26,6 +26,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/onelibrary_cue_writer_adapter.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -222,8 +223,15 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
 {
     DuplicatesTaskResult result;
     try {
+        // One bar (#58): the read the cache still has to make, then the
+        // grouping, which has no count and is one unit at the end.
+        auto &cache = LibraryCatalogCache::instance();
+        const auto readUnits = cache.plannedUnits(format.toStdString(), path.toStdString(),
+                                                  LibraryCatalogCache::Detail::Full);
+        application::PhasedProgress progress(*reporter, "Looking for duplicates",
+                                             readUnits ? *readUnits + 1 : 0);
         std::vector<domain::Track> tracks =
-            LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), *reporter, cancel);
+            cache.tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
         // Streaming tracks (Engine/TIDAL) have no real local file.
         // Never propose "syncing" cues onto/from one. See
@@ -237,7 +245,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // it, the progress bar sat frozen at 100% -- the raw file scan's
         // own end state -- for however long grouping took on a real
         // library, with nothing telling the user it was still working.
-        reporter->start("Finding duplicates...", 0);
+        progress.start("Finding duplicates...", 0);
         // Same probe Clean Up Duplicates builds, so the two pages group
         // by one rule rather than two. Null when the user left no window
         // for comparing audio or this build has no decoder, which is the

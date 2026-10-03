@@ -30,6 +30,7 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -114,24 +115,60 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
     try {
         bool hasRekordbox = !rekordboxPath.isEmpty();
         bool hasEngine = !enginePath.isEmpty();
-        bool hasOneLibrary = false;
+        bool hasOneLibrary = hasRekordbox
+            && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString());
 
         std::vector<domain::Track> rekordboxTracks, engineTracks, oneLibraryTracks;
         std::chrono::system_clock::time_point rekordboxMtime, engineMtime, oneLibraryMtime;
 
         auto &catalogCache = LibraryCatalogCache::instance();
 
+        // One bar for the whole analysis (#58): the reads the cache still
+        // has to make, then "Comparing cues" per pair, which is at most
+        // one tick per track of the smaller catalog. Counted from the
+        // catalogs' row counts before the first read; a catalog that
+        // cannot be counted leaves the bar sweeping.
+        std::optional<size_t> planned = 0;
+        std::optional<size_t> rekordboxRows, engineRows, oneLibraryRows;
+        const auto addUnits = [&planned](std::optional<size_t> units) {
+            if (planned && units) {
+                *planned += *units;
+            } else {
+                planned = std::nullopt;
+            }
+        };
+        if (hasRekordbox) {
+            addUnits(catalogCache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full));
+            rekordboxRows = catalogCache.countTracks("rekordbox", rekordboxPath.toStdString());
+        }
+        if (hasEngine) {
+            addUnits(catalogCache.plannedUnits("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full));
+            engineRows = catalogCache.countTracks("engine", enginePath.toStdString());
+        }
+        if (hasOneLibrary) {
+            addUnits(catalogCache.plannedUnits("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full));
+            oneLibraryRows = catalogCache.countTracks("onelibrary", rekordboxPath.toStdString());
+        }
+        if (hasRekordbox && hasEngine) {
+            addUnits(rekordboxRows && engineRows ? std::optional<size_t>(std::min(*rekordboxRows, *engineRows))
+                                                 : std::nullopt);
+        }
+        if (hasEngine && hasOneLibrary) {
+            addUnits(engineRows && oneLibraryRows ? std::optional<size_t>(std::min(*engineRows, *oneLibraryRows))
+                                                  : std::nullopt);
+        }
+        application::PhasedProgress progress(*reporter, "Comparing the libraries", planned.value_or(0));
+
         if (hasRekordbox) {
             // Full, not Cues: matching refuses to pair two tracks of one
             // name while either length is unknown, and the lengths a
             // catalog leaves out are probed in the Full stage.
             rekordboxTracks = catalogCache.tracksFor("rekordbox", rekordboxPath.toStdString(),
-                                                     LibraryCatalogCache::Detail::Full, *reporter, cancel);
+                                                     LibraryCatalogCache::Detail::Full, progress, cancel);
             rekordboxMtime = fileMtime(pathToUtf8(pathFromQString(rekordboxPath) / "rekordbox" / "export.pdb"));
-            hasOneLibrary = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString());
         }
         if (hasEngine) {
-            engineTracks = catalogCache.tracksFor("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full, *reporter, cancel);
+            engineTracks = catalogCache.tracksFor("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full, progress, cancel);
             // Streaming tracks (TIDAL) have no real local file. Never
             // sync cues onto/from one. See domain::Track::streamingSource's
             // own doc comment.
@@ -141,7 +178,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             engineMtime = fileMtime(pathToUtf8(pathFromQString(enginePath) / "Database2" / "m.db"));
         }
         if (hasOneLibrary) {
-            oneLibraryTracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full, *reporter, cancel);
+            oneLibraryTracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full, progress, cancel);
             oneLibraryMtime =
                 fileMtime(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(rekordboxPath.toStdString()));
         }
@@ -167,7 +204,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         auto addPairPlans = [&](const std::vector<domain::Track> &tracksA, const std::vector<domain::Track> &tracksB,
                                  std::chrono::system_clock::time_point mtimeA,
                                  std::chrono::system_clock::time_point mtimeB) {
-            for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB, *reporter)) {
+            for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB, progress)) {
                 if (plan.direction != SyncPlan::Direction::None) {
                     actionable.push_back(std::move(plan));
                 }

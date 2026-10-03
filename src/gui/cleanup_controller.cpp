@@ -42,6 +42,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "gui/onelibrary_cue_writer_adapter.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
@@ -532,7 +533,12 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         // Engine and OneLibrary at once, and a file orphaned by a
         // cleanup in one of them can still be played from the other two
         // -- deleting it on one catalog's say-so is unrecoverable.
-        auto stickCatalogs = readAllStickCatalogs(path.toStdString(), *reporter, cancel);
+        // One bar (#58): the catalog reads the cache still has to make,
+        // then one unit per file to delete.
+        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString());
+        application::PhasedProgress progress(*reporter, "Deleting files",
+                                             readUnits ? *readUnits + selected.size() : 0);
+        auto stickCatalogs = readAllStickCatalogs(path.toStdString(), progress, cancel);
         if (!stickCatalogs.failed.empty()) {
             result.errorMessage =
                 QString("Can't safely delete: this stick has a %1 library that could not be read, so there is no "
@@ -552,12 +558,12 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         // permanently destroys real audio file content) lives in
         // infrastructure/cleanup/pending_deletion_applier.cpp, Qt-free
         // and unit-tested there -- this just logs/formats its result.
-        reporter->start("Deleting files", resolution.safeToDelete.size());
+        progress.start("Deleting files", resolution.safeToDelete.size());
         std::string manifestNotUpdated;
         auto outcomes = infrastructure::cleanup::applyPendingDeletions(
-            resolution.safeToDelete, deletionRoot, manifest, cancel, [&reporter](size_t done) { reporter->tick(done); },
+            resolution.safeToDelete, deletionRoot, manifest, cancel, [&progress](size_t done) { progress.tick(done); },
             &manifestNotUpdated);
-        reporter->finish();
+        progress.finish();
         result.cancelled = cancel.cancelled() && outcomes.size() < resolution.safeToDelete.size();
 
         int deleted = 0;
@@ -634,8 +640,13 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
 {
     CleanupTaskResult result;
     try {
+        // One bar (#58): every catalog on the stick the cache still has to
+        // read. This page's own is among them, and is a cache hit by the
+        // time readAllStickCatalogs() comes to it.
+        const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString());
+        application::PhasedProgress progress(*reporter, "Looking for duplicates", readUnits.value_or(0));
         std::vector<domain::Track> tracks =
-            LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), *reporter, cancel);
+            LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
         // Streaming tracks (Engine/TIDAL) have no real local file.
         // Never let duplicate detection consider one, whether as
@@ -656,7 +667,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         // works in: a file rekordbox has forgotten can still be playable
         // from Engine, and on a real stick that difference was 307
         // files. See readAllStickCatalogs()'s own comment.
-        auto stickCatalogs = readAllStickCatalogs(path.toStdString(), *reporter, cancel);
+        auto stickCatalogs = readAllStickCatalogs(path.toStdString(), progress, cancel);
 
         // A file, not a row, is the unit of duplication: the same audio is
         // listed by rekordbox, Engine and OneLibrary at once, and removing
@@ -826,8 +837,11 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
 {
     CleanupTaskResult result;
     try {
-        std::vector<domain::Track> tracks =
-            LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), *reporter, cancel);
+        auto &cache = LibraryCatalogCache::instance();
+        const auto readUnits =
+            cache.plannedUnits(format.toStdString(), path.toStdString(), LibraryCatalogCache::Detail::Full);
+        application::PhasedProgress progress(*reporter, "Reading the library", readUnits.value_or(0));
+        std::vector<domain::Track> tracks = cache.tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
         std::string idA = sourceIdA.toStdString();
         std::string idB = sourceIdB.toStdString();

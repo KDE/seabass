@@ -78,6 +78,9 @@ public:
     // readTracks() + fillCues(), with one progress pass over the tracks
     // under the label this reader always used.
     std::vector<domain::Track> readAll() override;
+    // The rows of export.pdb's tracks table, summed from its page
+    // headers: the same count readTracks() announces.
+    std::optional<size_t> countTracks() override;
 
     // export.pdb alone: every field but the cues and metadataModifiedAt,
     // which live in the per-track ANLZ files. No audio file is stat'd

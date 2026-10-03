@@ -66,6 +66,24 @@ std::string playlistPath(int64_t id, const std::unordered_map<int64_t, PlaylistI
 
 OneLibraryReader::OneLibraryReader(std::string pioneerRoot) : m_pioneerRoot(std::move(pioneerRoot)) {}
 
+std::optional<size_t> OneLibraryReader::countTracks()
+{
+    if (!OneLibraryCueWriter::existsFor(m_pioneerRoot)) {
+        return std::nullopt;
+    }
+    try {
+        SqlCipherLibrary lib;
+        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(m_pioneerRoot), /*readOnly=*/true);
+        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        SqlCipherStatement count(db, "SELECT count(*) FROM content");
+        if (count.step()) {
+            return static_cast<size_t>(count.columnInt64(0));
+        }
+    } catch (const std::exception &) {
+    }
+    return std::nullopt;
+}
+
 std::vector<Track> OneLibraryReader::readAll()
 {
     // The catalog pass is a fraction of the analysis-file pass, so the

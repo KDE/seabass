@@ -22,6 +22,7 @@
 #include "domain/metadata_merge.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -51,12 +52,23 @@ std::function<void()> &storeGate()
 // Reads every catalog on the stick, folds them into files, and works out
 // what storing them would change. Runs entirely on a background thread --
 // no access to the controller.
+//
+// One bar (#58): every catalog read the cache still has to make, then
+// the store read. After a backup it is the backup's own bar, continued
+// from where the store left it (`continuing`), so the page sees one bar
+// from "Storing" to the refreshed list.
 MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProgressReporter> reporter,
-                                      application::CancellationToken cancel)
+                                      application::CancellationToken cancel,
+                                      std::optional<ContinuedBar> continuing)
 {
     MetadataBackupScanResult result;
     try {
-        const auto read = readAllStickCatalogs(libraryPath.toStdString(), *reporter, cancel);
+        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString());
+        const size_t ownUnits = readUnits ? *readUnits + 1 : 0;
+        const size_t total = continuing ? continuing->total : ownUnits;
+        application::PhasedProgress progress(*reporter, "Reading this stick", readUnits ? total : 0,
+                                             continuing ? continuing->at : 0, /*announce=*/!continuing);
+        const auto read = readAllStickCatalogs(libraryPath.toStdString(), progress, cancel);
         for (const auto &name : read.catalogs.present()) {
             result.catalogsRead << QString::fromStdString(name);
         }
@@ -107,14 +119,14 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
             result.playlistTrackCounts.insert(QString::fromStdString(name), count);
         }
 
-        reporter->start("Reading the metadata store", 0);
+        progress.start("Reading the metadata store", 0);
         MetadataStore store;
         const auto storedTracks = store.readAll();
         // For display only, and fetched separately rather than carried
         // on domain::Track so nothing in the matching or merging can
         // reach for it.
         const auto stickLabels = store.stickLabelsByTrackId();
-        reporter->finish();
+        progress.finish();
         result.storedTrackCount = static_cast<int>(storedTracks.size());
 
         if (cancel.cancelled()) {
@@ -164,12 +176,20 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
 // by the scan the user has been looking at, and reading again would let
 // the list they ticked and the write they authorised disagree about a
 // stick edited in between.
+//
+// Its bar (#58) has the re-read that follows planned in as its last
+// stretch: the store writes nothing to the stick, so that read is the
+// catalogs the cache still has to read (none, as a rule) plus the store
+// itself. The result carries the bar for the re-read to continue.
 MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, std::vector<domain::Track> wholeStick,
                                        QString libraryPath, QString libraryId, QString stickLabel,
                                        std::shared_ptr<QtProgressReporter> reporter,
                                        application::CancellationToken cancel)
 {
     MetadataBackupTaskResult result;
+    const auto refreshUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString());
+    const size_t total = refreshUnits ? tracks.size() + *refreshUnits + 1 : 0;
+    application::PhasedProgress progress(*reporter, "Storing", total, 0, true, /*endsOperation=*/false);
     try {
         MetadataSource source;
         source.stickRoot = pathFromQString(libraryPath).parent_path();
@@ -183,13 +203,17 @@ MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, std::ve
         source.wholeStick = std::move(wholeStick);
 
         MetadataStore store;
-        result.summary = store.store(tracks, source, *reporter, cancel);
+        result.summary = store.store(tracks, source, progress, cancel);
         result.succeeded = true;
     } catch (const application::OperationCancelled &) {
         result.succeeded = true;
         result.summary.cancelled = true;
     } catch (const std::exception &e) {
         result.errorMessage = QString::fromUtf8(e.what());
+    }
+    progress.finish();
+    if (total > 0) {
+        result.bar = ContinuedBar{total, progress.position()};
     }
     return result;
 }
@@ -515,7 +539,7 @@ void MetadataBackupController::discardStagingAndSelectStick(const QString &libra
 }
 
 void MetadataBackupController::startScan(const QString &libraryPath, const QString &libraryId,
-                                          const QString &stickLabel)
+                                          const QString &stickLabel, std::optional<ContinuedBar> continuing)
 {
     m_refreshingAfterSave = false;
     // A save is writing the store: the stick is read once it is over,
@@ -558,9 +582,9 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     emit analysisChanged();
     emit selectionChanged();
 
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
-    setProgress(0, 0);
+    if (!continuing) {
+        setProgress(0, 0);
+    }
     setCurrentPhase(QStringLiteral("Reading this stick"));
     // Any other read still outstanding is superseded by this one: its
     // worker is told to stop and whatever it returns is dropped, so a
@@ -569,8 +593,8 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     const QString stickRoot = stickRootOf(libraryPath);
     m_scan.start(
         libraryPath, stickRoot,
-        [libraryPath, reporter](application::CancellationToken cancel) {
-            return runScanTask(libraryPath, reporter, cancel);
+        [libraryPath, reporter, continuing](application::CancellationToken cancel) {
+            return runScanTask(libraryPath, reporter, cancel, continuing);
         },
         {
             [this](MetadataBackupScanResult &&result) { onScanFinished(std::move(result)); },
@@ -772,10 +796,9 @@ void MetadataBackupController::beginSave()
         return;
     }
 
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Storing"));
+    m_storeBar.reset();
     m_cancel = application::CancellationToken();
     setSaving(true);
     setWriting(true);
@@ -877,7 +900,7 @@ void MetadataBackupController::onSaveFinished()
         // make. Restored after the call, which onScanFinished() then
         // applies when the new proposals arrive.
         const QString playlist = m_playlist;
-        startScan(m_sourceLibraryPath, m_sourceLibraryId, m_sourceStickLabel);
+        startScan(m_sourceLibraryPath, m_sourceLibraryId, m_sourceStickLabel, result.bar);
         m_playlist = playlist;
         // After startScan(), which clears it: this read is the refresh of
         // a backup that is over, not a scan anyone asked for.
@@ -1047,25 +1070,25 @@ std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter(std::
     // A scan's reporter speaks only while its scan is the current one.
     const auto current = [speaks = std::move(speaks)]() { return !speaks || speaks(); };
     auto reporter = makeMainThreadShared<QtProgressReporter>();
-    // Each phase (one per catalog read, then the store write) reports
-    // its own 0..N. Adding the previous phases' totals as a baseline
-    // keeps one bar moving forward instead of several restarting, which
-    // is the only shape that reads as progress.
+    // One announcement per operation (#58): the task folds its reads
+    // and the store onto one bar (application::PhasedProgress), names
+    // each stretch as a phase, and the count only ever goes up.
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
-        if (!current()) {
-            return;
+        if (current()) {
+            setCurrentPhase(label);
+            setProgress(0, total);
         }
-        m_phaseBaseline += m_currentPhaseTotal;
-        m_currentPhaseTotal = total;
-        setCurrentPhase(label);
-        setProgress(m_phaseBaseline, m_phaseBaseline + total);
     });
-    connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this, current](int done) {
-                if (current()) {
-                    setProgress(m_phaseBaseline + done, m_phaseBaseline + m_currentPhaseTotal);
-                }
-            });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this, current](const QString &label) {
+        if (current()) {
+            setCurrentPhase(label);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
+        if (current()) {
+            setProgress(done, m_progressTotal);
+        }
+    });
     return reporter;
 }
 

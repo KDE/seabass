@@ -12,6 +12,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -608,6 +609,41 @@ void stagedCases()
         std::cout << "stage 14 (a stick pulled mid Full stops the prefetch within one file: " << stattedBeforeStop
                   << " stats ran, " << fileCount << " named) OK\n";
         fs::remove_all(root);
+    }
+
+    // Stage 15 (#58): plannedUnits() is what the passes still to run
+    // would announce, from the catalog's row count: a unit per row for
+    // the catalog read, for the two rekordbox catalogs' cue passes, and for Full's file
+    // check (plus its cover check for the two catalogs that name cover
+    // files); nothing for a stage the entry holds; unknown when the
+    // catalog cannot be counted.
+    {
+        FakeReader reader;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        cache.setCountFnForTesting([](const std::string &format, const std::string &path) -> std::optional<size_t> {
+            if (path == "/nocount/PIONEER") {
+                return std::nullopt;
+            }
+            return format == "engine" ? 20 : 10;
+        });
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Tracks) == 10);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Cues) == 20);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 30);
+        assert(cache.plannedUnits("engine", "/stick/Engine Library", Detail::Full) == 20 + 0 + 40);
+        // OneLibrary's cue pass reads its analysis files (#59): a unit a row.
+        assert(cache.plannedUnits("onelibrary", stick, Detail::Full) == 10 + 10 + 20);
+        assert(!cache.plannedUnits("rekordbox", "/nocount/PIONEER", Detail::Full).has_value());
+        assert(cache.countTracks("rekordbox", stick) == 10);
+
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Tracks) == 0 && "a stage the entry holds costs nothing");
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Cues) == 0);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 10 && "only the file check is left");
+        cache.tracksFor("rekordbox", stick, Detail::Full);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 0);
+        cache.invalidate("rekordbox", stick);
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 30 && "an invalidated entry is read again");
+        std::cout << "stage 15 (plannedUnits counts the passes still to run) OK\n";
     }
 }
 

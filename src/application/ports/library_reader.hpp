@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
@@ -41,6 +43,13 @@ public:
     // the last stage, so neither the list nor its cues wait for them, and
     // only by a caller that shows covers: readAll() leaves them out.
     virtual void fillArtwork(std::vector<domain::Track> &) {}
+
+    // How many tracks readTracks() would return, from the catalog's own
+    // bookkeeping and nothing per row: a page-header sum or a count(*),
+    // milliseconds against a read of seconds. For sizing a progress bar
+    // before the read begins (#58). Nothing when the catalog cannot say,
+    // which the caller treats as "size unknown", never as zero.
+    virtual std::optional<size_t> countTracks() { return std::nullopt; }
 
     void setProgressReporter(ProgressReporter &reporter) { m_progress = &reporter; }
     // Readers check the token once per track, next to their progress

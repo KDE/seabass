@@ -1018,13 +1018,17 @@ public:
             QElapsedTimer clock;
             clock.start();
             // "engine:audits" is the Engine leg once its catalog has been
-            // read, which is where the audits run: the reader has ticked
-            // its last track.
+            // read, which is where the audits run: the step under the bar
+            // is one of theirs. (The count no longer says it: one bar
+            // covers the whole scan, #58.)
             const bool afterRead = format.endsWith(QStringLiteral(":audits"));
             const QString leg = afterRead ? format.section(QLatin1Char(':'), 0, 0) : format;
+            static const QStringList auditSteps{
+                QStringLiteral("Reading cover images"), QStringLiteral("Checking cover art"),
+                QStringLiteral("Counting tracks the player will analyse"), QStringLiteral("Checking sample rates")};
             const auto reached = [&]() {
                 return controller->scanningFormat() == leg
-                    && (!afterRead || (controller->scanTotal() > 0 && controller->scanCurrent() >= controller->scanTotal()));
+                    && (!afterRead || auditSteps.contains(controller->scanPhase()));
             };
             while (controller->busy() && !reached() && clock.elapsed() < 120000) {
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 1);

@@ -23,6 +23,11 @@ public:
     virtual void start(const std::string &label, size_t total) = 0;
     virtual void tick(size_t current) = 0;
     virtual void finish() = 0;
+    // The stretch of the operation now under way, when one bar covers
+    // several: a label change with no new total and no reset of the
+    // count. PhasedProgress (phased_progress.hpp) sends one per phase it
+    // folds; a reporter that shows one bar per start() can ignore it.
+    virtual void phase(const std::string &) {}
 
     // Prints a warning without corrupting an in-progress bar (safe to call
     // between start() and finish()). Adapters must route warnings through

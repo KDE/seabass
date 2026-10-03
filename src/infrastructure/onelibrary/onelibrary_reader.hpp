@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "application/ports/library_reader.hpp"
@@ -64,6 +65,9 @@ public:
     // DeviceLibrary reader reads them), and metadataModifiedAt from the
     // .EXT's mtime. A track with no file keeps no cues.
     void fillCues(std::vector<domain::Track> &tracks) override;
+    // count(*) of the content table over a read-only open, no journal
+    // recovery. Nothing when there is no OneLibrary or it cannot be read.
+    std::optional<size_t> countTracks() override;
 
 private:
     std::vector<domain::Track> readCatalog(application::ProgressReporter &progress);

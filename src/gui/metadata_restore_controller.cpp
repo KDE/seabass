@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "application/phased_progress.hpp"
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_merge.hpp"
 #include "gui/stick_path.hpp"
@@ -41,7 +42,11 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
     MetadataRestoreTaskResult result;
     result.libraryPath = libraryPath;
     try {
-        const auto read = readAllStickCatalogs(libraryPath.toStdString(), *reporter, cancel);
+        // One bar (#58): the catalog reads the cache still has to make,
+        // then the store read.
+        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString());
+        application::PhasedProgress progress(*reporter, "Reading this stick", readUnits ? *readUnits + 1 : 0);
+        const auto read = readAllStickCatalogs(libraryPath.toStdString(), progress, cancel);
         if (read.catalogs.present().empty()) {
             result.errorMessage = QStringLiteral("No rekordbox or Engine library was found on this stick.");
             return result;
@@ -59,7 +64,7 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
         const auto stickTracks = application::collapseCatalogRows(rows);
         result.stickTrackCount = static_cast<int>(stickTracks.size());
 
-        reporter->start("Reading the metadata store", 0);
+        progress.start("Reading the metadata store", 0);
         MetadataStore store;
         const auto storedTracks = store.readAll();
         // For display and for the stick picker only, and fetched here
@@ -71,7 +76,7 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
                 result.recordedIdsByLabel[source.stickLabel].insert(source.libraryId);
             }
         }
-        reporter->finish();
+        progress.finish();
         result.storedTrackCount = static_cast<int>(storedTracks.size());
 
         if (cancel.cancelled()) {
@@ -173,8 +178,6 @@ void MetadataRestoreController::scan(const QString &libraryPath)
     }
     m_libraryPath = libraryPath;
     setErrorMessage({});
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Reading this stick"));
     auto reporter = makeReporter(m_scan.speaksForNext());
@@ -676,21 +679,25 @@ std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter(std:
     // Only the scan outstanding moves the bar: a superseded or cancelled
     // one reports until its worker notices.
     const auto current = [speaks = std::move(speaks)]() { return speaks(); };
+    // One announcement per scan (#58): the task folds its reads onto one
+    // bar (application::PhasedProgress), names each stretch as a phase,
+    // and the count only ever goes up.
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
-        if (!current()) {
-            return;
+        if (current()) {
+            setCurrentPhase(label);
+            setProgress(0, total);
         }
-        m_phaseBaseline += m_currentPhaseTotal;
-        m_currentPhaseTotal = total;
-        setCurrentPhase(label);
-        setProgress(m_phaseBaseline, m_phaseBaseline + total);
     });
-    connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this, current](int done) {
-                if (current()) {
-                    setProgress(m_phaseBaseline + done, m_phaseBaseline + m_currentPhaseTotal);
-                }
-            });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this, current](const QString &label) {
+        if (current()) {
+            setCurrentPhase(label);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
+        if (current()) {
+            setProgress(done, m_progressTotal);
+        }
+    });
     return reporter;
 }
 

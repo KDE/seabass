@@ -719,13 +719,26 @@ TestCase {
         const report = findChild(page, "healthScanProgress");
         verify(report !== null, "the hub shows the check's progress");
         const seen = {};
+        // #58: one check, one bar. Every total announced and every count
+        // shown, in order, so the test can say the total never changed
+        // and the count never went back.
+        const totals = [];
+        const counts = [];
         const record = () => {
+            // Where the bar stood before this step's first tick: the
+            // count the step before it reached (a one-unit step ticks
+            // once, so its own first tick is already its last).
+            const before = counts.length > 0 ? counts[counts.length - 1] : 0;
+            if (controller.scanTotal > 0) {
+                totals.push(controller.scanTotal);
+                counts.push(controller.scanCurrent);
+            }
             if (controller.scanPhase.length === 0 || controller.scanTotal <= 0) {
                 return;
             }
-            const entry = seen[controller.scanPhase] ?? {total: 0, highest: 0, counted: false, shown: false};
-            entry.total = controller.scanTotal;
-            entry.highest = Math.max(entry.highest, controller.scanCurrent);
+            const entry = seen[controller.scanPhase] ?? {counted: false, shown: false, first: before,
+                                                         last: controller.scanCurrent};
+            entry.last = Math.max(entry.last, controller.scanCurrent);
             entry.counted = entry.counted || (report.visible && !report.indeterminate
                                               && report.unitsTotal === controller.scanTotal);
             entry.shown = entry.shown || findChild(report, "currentItemLabel").text === controller.scanPhase;
@@ -744,11 +757,19 @@ TestCase {
                        "Counting tracks the player will analyse", "Checking sample rates"];
         for (const step of steps) {
             const entry = seen[step];
-            verify(entry !== undefined, "\"" + step + "\" reported a total; seen: " + JSON.stringify(seen));
-            verify(entry.highest === entry.total, "\"" + step + "\" counted to its total: " + JSON.stringify(entry));
+            verify(entry !== undefined, "\"" + step + "\" was a step of the bar; seen: " + JSON.stringify(seen));
+            verify(entry.last > entry.first, "\"" + step + "\" moved the bar: " + JSON.stringify(entry));
             verify(entry.counted, "\"" + step + "\" showed a counted bar, not a sweeping one");
             verify(entry.shown, "\"" + step + "\" was named under the bar");
         }
+        verify(totals.length > 0, "the bar had a total");
+        for (const total of totals) {
+            compare(total, totals[0], "one total for the whole check, never replaced");
+        }
+        for (let i = 1; i < counts.length; ++i) {
+            verify(counts[i] >= counts[i - 1], "the count never goes back: " + JSON.stringify(counts));
+        }
+        compare(counts[counts.length - 1], totals[0], "and reaches the end");
     }
 
     Component {
@@ -795,32 +816,46 @@ TestCase {
         compare(controller.legacyMemoryListFixStaged, false);
     }
 
-    // A new catalog's leg starts from nothing counted. It used to inherit
-    // the last leg's step and counts, and a leg whose reader answered from
-    // the catalog cache (the second check of the same stick) never
-    // replaced them: OneLibrary was shown under "Checking sample rates",
-    // at the Engine audit's full count.
-    function test_eachCatalogStartsWithNothingCounted() {
+    // The legs, one per catalog, share the one bar (#58): a leg begins
+    // with the chain's total and the count the legs before it reached,
+    // and a leg answered from the catalog cache (the second check of the
+    // same stick) does not reset either. Only the step is its own: the
+    // last leg's step is not shown over the next one's first read.
+    function test_eachCatalogContinuesTheOneBar() {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");
         const controller = createTemporaryObject(bareControllerComponent, testCase);
         controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
         tryVerify(() => !controller.busy, 300000, "the first check finishes");
 
-        const legs = [];
-        const record = () => legs.push({format: controller.scanningFormat, phase: controller.scanPhase,
-                                        current: controller.scanCurrent, total: controller.scanTotal});
-        controller.scanningFormatChanged.connect(record);
-        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
-        tryVerify(() => !controller.busy, 300000, "the second check finishes");
-        controller.scanningFormatChanged.disconnect(record);
+        {
+            const run = "warm";
+            const legs = [];
+            const record = () => legs.push({format: controller.scanningFormat, phase: controller.scanPhase,
+                                            current: controller.scanCurrent, total: controller.scanTotal});
+            controller.scanningFormatChanged.connect(record);
+            controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+            tryVerify(() => !controller.busy, 300000, "the " + run + " check finishes");
+            controller.scanningFormatChanged.disconnect(record);
 
-        const started = legs.filter((leg) => leg.format.length > 0);
-        compare(started.map((leg) => leg.format), ["rekordbox", "engine", "onelibrary"], "precondition: every leg ran");
-        for (const leg of started) {
-            compare(leg.phase, "", leg.format + " starts with no step of its own yet: " + JSON.stringify(leg));
-            compare(leg.total, 0, leg.format + " starts with nothing counted: " + JSON.stringify(leg));
+            const started = legs.filter((leg) => leg.format.length > 0);
+            compare(started.map((leg) => leg.format), ["rekordbox", "engine", "onelibrary"],
+                    run + ": precondition: every leg ran");
+            // The first leg counts the chain on its own thread, so at its
+            // start the total is not known yet; every leg after it begins
+            // with the chain's total and the count so far.
+            for (let i = 0; i < started.length; ++i) {
+                const leg = started[i];
+                compare(leg.phase, "", run + ": " + leg.format + " starts with no step of its own yet: " + JSON.stringify(leg));
+                if (i > 0) {
+                    verify(leg.total > 0, run + ": " + leg.format + " begins with the chain's total: " + JSON.stringify(leg));
+                    compare(leg.total, started[started.length - 1].total, run + ": " + leg.format + " keeps the chain's total");
+                    verify(leg.current >= started[i - 1].current,
+                           run + ": " + leg.format + " continues the count: " + JSON.stringify(started));
+                }
+            }
+            compare(controller.scanTotal, started[started.length - 1].total, run + ": one total to the end");
+            compare(controller.scanPhase, "", run + ": nothing is left standing once the check is done");
         }
-        compare(controller.scanPhase, "", "and nothing is left standing once the check is done");
     }
 }

@@ -677,6 +677,27 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
     }
 }
 
+std::optional<size_t> LibdjinteropEngineReader::countTracks()
+{
+    const std::string dbPath = pathToUtf8(pathFromUtf8(m_engineLibraryPath) / "Database2" / "m.db");
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(dbPath.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        if (handle != nullptr) {
+            sqlite3_close(handle);
+        }
+        return std::nullopt;
+    }
+    std::optional<size_t> count;
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle, "SELECT count(*) FROM Track;", -1, &stmt, nullptr) == SQLITE_OK
+        && sqlite3_step(stmt) == SQLITE_ROW) {
+        count = static_cast<size_t>(sqlite3_column_int64(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    return count;
+}
+
 std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 {
     // Before anything opens a database here, database_exists() included:

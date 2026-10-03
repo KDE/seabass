@@ -256,7 +256,9 @@ TestCase {
     // that scan's progress bar stays its own. It froze at 0 of 0: the
     // second request reset the bar and took over its reporter before
     // finding out it was served, so the running scan's reports went
-    // nowhere.
+    // nowhere. The total is the scan's whole plan (#58), counted from
+    // the fixture's catalogs, so it is only known to be positive here;
+    // what matters is that the second request leaves it as it was.
     function test_aServedRequestLeavesTheBarMoving_data() {
         return kindRows().filter(row => row.kind.progress === true);
     }
@@ -266,11 +268,13 @@ TestCase {
         const controller = make(data.kind);
         data.kind.read(controller, root);
         tryVerify(() => catalogGate.waiting() === 1, 5000, "the read must reach the gate");
-        tryVerify(() => controller.scanTotal === 10, 2000, "the bar shows the read's progress");
+        tryVerify(() => controller.scanTotal > 0 && controller.scanCurrent > 0, 2000,
+                  "the bar shows the read's progress");
+        const total = controller.scanTotal;
         data.kind.read(controller, root);
         wait(50);
         compare(catalogGate.passes(), 1, "served by the running read");
-        compare(controller.scanTotal, 10, "and the bar still shows that read's progress");
+        compare(controller.scanTotal, total, "and the bar still shows that read's progress");
         catalogGate.release();
         tryVerify(() => !controller.busy, 10000);
         verifyIdleOnceNothingReads([controller]);
