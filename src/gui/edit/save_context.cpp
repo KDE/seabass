@@ -195,30 +195,29 @@ std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
     return sidecars;
 }
 
-void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool countFiles)
+// The files backupAllNow() copies for `targets`, grouped by label in
+// first-seen order, because a save may hold several kinds of change from
+// one page and each keeps its own record.
+//
+// Deduplicated (both here and against what the save already backed up)
+// by normalizedPathKey(), not the raw string: two call sites can spell
+// the same file differently (one built with fs::path's native
+// separators, another by plain string concatenation with a literal '/')
+// and did, on Windows -- the raw-string dedup let export.pdb through
+// twice, backed up under two "different" keys for the one real file.
+SaveContext::BackupPlan SaveContext::planBackup(const std::vector<BackupTarget> &targets) const
 {
-    // Grouped by label, in first-seen order, because a save may hold
-    // several kinds of change from one page and each keeps its own record.
-    //
-    // Deduplicated (both here and against m_backedUp) by
-    // normalizedPathKey(), not the raw string: two call sites can spell
-    // the same file differently (one built with fs::path's native
-    // separators, another by plain string concatenation with a literal
-    // '/') and did, on Windows -- the raw-string dedup let export.pdb
-    // through twice, backed up under two "different" keys for the one
-    // real file.
-    std::vector<std::string> labelOrder;
-    std::map<std::string, std::vector<std::string>> byLabel;
+    BackupPlan plan;
     std::set<std::string> seen;
     auto add = [&](const std::string &file, const std::string &label) {
         if (file.empty() || m_backedUp.contains(application::normalizedPathKey(file))
             || !seen.insert(application::normalizedPathKey(file)).second) {
             return;
         }
-        if (!byLabel.contains(label)) {
-            labelOrder.push_back(label);
+        if (!plan.byLabel.contains(label)) {
+            plan.labelOrder.push_back(label);
         }
-        byLabel[label].push_back(file);
+        plan.byLabel[label].push_back(file);
     };
     for (const auto &target : targets) {
         for (const std::string &sidecar : walSidecarsOf(target.file)) {
@@ -226,6 +225,28 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
         }
         add(target.file, target.label);
     }
+    return plan;
+}
+
+size_t SaveContext::BackupPlan::files() const
+{
+    size_t total = 0;
+    for (const auto &entry : byLabel) {
+        total += entry.second.size();
+    }
+    return total;
+}
+
+size_t SaveContext::countBackupFiles(const std::vector<BackupTarget> &targets) const
+{
+    return planBackup(targets).files();
+}
+
+void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool countFiles)
+{
+    BackupPlan plan = planBackup(targets);
+    std::vector<std::string> &labelOrder = plan.labelOrder;
+    std::map<std::string, std::vector<std::string>> &byLabel = plan.byLabel;
 
     // The records this call makes, so that when a later label's backup
     // fails (the stick filled up) the earlier ones go with it: the save
@@ -233,13 +254,12 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
     // sit in Manage Backups taking space on a stick that has none. A
     // label that already had a record keeps it -- addToArchive() leaves
     // a record exactly as it was when it fails.
-    // Counted for the progress bar: a sync of a few hundred tracks backs
+    // Ticked for the progress bar: a sync of a few hundred tracks backs
     // up a few hundred analysis files over USB, which took long enough
-    // with a still bar to look like a hang.
-    size_t totalFiles = 0;
-    for (const std::string &label : labelOrder) {
-        totalFiles += byLabel[label].size();
-    }
+    // with a still bar to look like a hang. Not announced here: the save
+    // loop announced its one bar already, with countBackupFiles() as the
+    // first stretch of the total (#58).
+    const size_t totalFiles = plan.files();
     size_t filesBefore = 0;
     struct ClearFileProgress
     {
@@ -247,7 +267,6 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
         ~ClearFileProgress() { store.setFileProgress({}); }
     } clearFileProgress{archiveStore()};
     if (countFiles && totalFiles > 0) {
-        progress().start("Saving an undo copy", totalFiles);
         archiveStore().setFileProgress(
             [this, &filesBefore](std::size_t done) { progress().tick(filesBefore + done); });
     }

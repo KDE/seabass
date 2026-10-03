@@ -435,9 +435,10 @@ void LibraryEditSession::save()
     m_savingVerb = m_changes.front()->verb();
     m_writeCancel = application::CancellationToken();
     m_cancelRequested = false;
-    // In units, like the summary that follows: a bar that runs to 173
-    // under a dialog saying 185 is two answers to one question.
-    setWriteProgress(QStringLiteral("Preparing"), 0, pendingUnits());
+    // No total yet: the save loop announces its one bar, with the undo
+    // copy, the items and the commit in one total (#58), as soon as it
+    // knows the count, and until then the bar sweeps.
+    setWriteProgress(QStringLiteral("Preparing"), 0, 0);
     setWriting(true);
 
     auto bridge = makeMainThreadShared<SaveProgressBridge>();
