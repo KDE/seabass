@@ -205,7 +205,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
                                  std::chrono::system_clock::time_point mtimeA,
                                  std::chrono::system_clock::time_point mtimeB) {
             for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB, progress)) {
-                if (plan.direction != SyncPlan::Direction::None) {
+                if (plan.direction != SyncPlan::Direction::None || plan.needsChoice) {
                     actionable.push_back(std::move(plan));
                 }
             }
@@ -224,7 +224,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             // see planEngineWithOneLibrary().
             for (auto &plan : application::planEngineWithOneLibrary(engineTracks, oneLibraryTracks, rekordboxTracks,
                                                                     engineMtime, oneLibraryMtime, progress)) {
-                if (plan.direction != SyncPlan::Direction::None) {
+                if (plan.direction != SyncPlan::Direction::None || plan.needsChoice) {
                     actionable.push_back(std::move(plan));
                 }
             }
@@ -247,10 +247,10 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // SyncController::resolveConflict()) before anything below
         // treats `actionable` as safe to apply directly.
         //
-        // First, though, every plan whose two sides have different hot cues.
-        // Those are not plans at all but choices: no clock can say whose hot
-        // cues the DJ meant (see SyncPlan::hotCuesNeedChoice), so they are
-        // listed for a pick and never staged until one is made.
+        // First, though, every plan the planner could not settle. Those are
+        // not plans at all but choices, each with its reason (see
+        // SyncPlan::needsChoice), listed for a pick and never staged until
+        // one is made.
         auto hotCueChoices = domain::CrossSourceConflictDetector::takeHotCueChoices(actionable,
                                                                                     application::normalizedPathKey);
         auto conflictSplit = domain::CrossSourceConflictDetector::detect(actionable);
@@ -592,6 +592,7 @@ void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
         plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
     }
     plan.cuesLeftOut = conflict.cuesLeftOut;
+    plan.positionToleranceMs = conflict.positionToleranceMs;
     m_model.removeConflictAt(conflictIndex);
     m_model.addPlan(std::move(plan));
     // The decision is the edit: staged right away, Save writes it.

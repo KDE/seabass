@@ -67,6 +67,10 @@ Rectangle {
     // the whole row (the restore page: what a restore writes). Empty shows
     // nothing.
     property string titleTooltip: ""
+    // A line or two under the artist, for what a page needs said about
+    // this row before it is opened (Sync Cue Points: why a decision is
+    // needed). Hidden when empty.
+    property string note: ""
     property string playlistNames: ""
 
     // ---- where it came from ------------------------------------------
@@ -263,6 +267,17 @@ Rectangle {
                     font.pointSize: Theme.fontSmall
                     elide: Text.ElideRight
                     font.strikeout: delegate.markedForRemoval
+                }
+                Label {
+                    objectName: "rowNote"
+                    Layout.fillWidth: true
+                    visible: delegate.note.length > 0
+                    text: delegate.note
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontSmall
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
                 }
             }
 

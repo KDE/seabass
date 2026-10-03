@@ -1027,7 +1027,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             plans.push_back(std::move(plan));
         }
     }
-    // Hot cues that differ on both sides are the DJ's choice, made in the
+    // Plans the planner could not settle are the DJ's choice, made in the
     // app; this has no way to ask. The same function the app uses takes them
     // out -- one choice per file -- and holds back every other plan naming a
     // file with an open choice, so neither pair writes a track the DJ has
@@ -1089,12 +1089,35 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 
     if (!hotCueChoices.empty()) {
         Console::info("");
-        Console::warn("Hot cues differ on both sides for " + std::to_string(hotCueChoices.size())
-                      + " track(s). Not changed: choose a side in the Seabass app's Sync page.");
+        Console::warn("Cues differ on both sides for " + std::to_string(hotCueChoices.size())
+                      + " track(s) in a way sync cannot settle. Not changed: choose a side in the Seabass app's Sync page.");
         for (const auto &choice : hotCueChoices) {
             Console::info("  \"" + choice.sourceA.filename + "\": " + choice.sourceA.format + " "
                           + describeCues(choice.sourceA.cues) + "  vs  " + choice.sourceB.format + " "
                           + describeCues(choice.sourceB.cues));
+            Console::info("  why: " + choice.reasonText);
+            const std::string leftOut = seabass::domain::describeCuesLeftOut(choice.cuesLeftOut);
+            if (!leftOut.empty()) {
+                Console::info("  note: " + leftOut);
+            }
+        }
+    }
+
+    // Cues Engine has no free pad for. Never written and never counted as
+    // missing, the way Engine DJ's own import leaves them; said here, so a
+    // DJ knows which of rekordbox's memory cues the player will not show.
+    std::vector<const SyncPlan *> withLeftOut;
+    for (const auto &plan : plans) {
+        if (!plan.cuesLeftOut.empty()) {
+            withLeftOut.push_back(&plan);
+        }
+    }
+    if (!withLeftOut.empty()) {
+        Console::info("");
+        Console::info("Engine's eight pads are full for " + std::to_string(withLeftOut.size()) + " track(s):");
+        for (const auto *plan : withLeftOut) {
+            const auto &named = plan->match.trackA.format == "engine" ? plan->match.trackB : plan->match.trackA;
+            Console::info("  \"" + named.filename + "\": " + seabass::domain::describeCuesLeftOut(plan->cuesLeftOut));
         }
     }
 

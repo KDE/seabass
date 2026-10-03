@@ -128,10 +128,17 @@ int main()
         std::cout << "case 6 (Engine's cues read back in rekordbox's terms) OK\n";
     }
 
-    // Within half a second is the same place, as everywhere else.
+    // Within the tolerance is the same place, as everywhere else
+    // (domain/cue_tolerance.hpp): the 52 ms an older Engine import shifted
+    // MP3s by is within the 60 ms fallback, 400 ms is not; at 128 BPM half
+    // a beat (234 ms) holds 230 ms.
     {
-        auto seen = cuesFromEngine({hot(1, 60400.0)}, {memory(60000.0)});
+        auto seen = cuesFromEngine({hot(1, 60052.0)}, {memory(60000.0)});
         assert(seen.hotCues.empty() && seen.memoryCues.size() == 1);
+        auto far = cuesFromEngine({hot(1, 60400.0)}, {memory(60000.0)});
+        assert(far.hotCues.size() == 1 && "400 ms is another cue at the fallback");
+        auto halfBeat = cuesFromEngine({hot(1, 60230.0)}, {memory(60000.0)}, halfBeatMs(128.0));
+        assert(halfBeat.hotCues.empty() && halfBeat.memoryCues.size() == 1);
         std::cout << "case 7 (a rounding drift is still the same cue) OK\n";
     }
 

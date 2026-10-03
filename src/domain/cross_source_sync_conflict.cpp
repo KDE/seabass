@@ -40,6 +40,11 @@ bool hasJunkCue(const std::vector<CuePoint> &cues)
     return false;
 }
 
+std::string sourcesDisagreeText(const std::string &a, const std::string &b, const std::string &target)
+{
+    return catalogDisplayName(a) + " and " + catalogDisplayName(b) + " would write different cues onto " + catalogDisplayName(target);
+}
+
 }  // namespace
 
 CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<SyncPlan> &actionablePlans)
@@ -91,6 +96,10 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
         conflict.sourceB = *b.source;
         conflict.cuesFromB = planB.cuesToApply;
         conflict.sourceBHasJunkCue = hasJunkCue(conflict.cuesFromB);
+        conflict.reason = SyncPlan::Reason::SourcesDisagree;
+        conflict.reasonText = sourcesDisagreeText(conflict.sourceA.format, conflict.sourceB.format,
+                                                  conflict.target.format);
+        conflict.positionToleranceMs = std::min(planA.positionToleranceMs, planB.positionToleranceMs);
         result.conflicts.push_back(std::move(conflict));
     }
 
@@ -135,7 +144,7 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
     std::vector<std::pair<const SyncPlan *, std::string>> choicePlans;
     std::vector<const SyncPlan *> choicesWithoutFile;
     for (const auto &plan : plans) {
-        if (!plan.hotCuesNeedChoice) {
+        if (!plan.needsChoice) {
             continue;
         }
         const std::vector<std::string> keys = keysOf(plan);
@@ -174,6 +183,9 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
         choice.cuesFromB = plan.cuesIfBWins;
         choice.sourceBHasJunkCue = hasJunkCue(plan.match.trackB.cues);
         choice.cuesLeftOut = plan.cuesLeftOut;
+        choice.reason = plan.reason;
+        choice.reasonText = plan.reasonText;
+        choice.positionToleranceMs = plan.positionToleranceMs;
         return choice;
     };
 
@@ -190,7 +202,7 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
     std::vector<SyncPlan> rest;
     rest.reserve(plans.size());
     for (auto &plan : plans) {
-        if (plan.hotCuesNeedChoice) {
+        if (plan.needsChoice) {
             continue;
         }
         const std::vector<std::string> keys = keysOf(plan);

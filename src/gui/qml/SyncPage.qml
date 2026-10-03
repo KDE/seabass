@@ -150,7 +150,7 @@ Page {
     function panelSentence(row) {
         if (row.needsDecision) {
             if (row.samePair) {
-                return "Whichever side you pick is staged onto the other copy, replacing its hot cues. "
+                return "Whichever side you pick is staged onto the other copy, replacing its cues. "
                     + "Nothing is written until Save.";
             }
             return root.formatLabel(row.targetFormat) + " needs cues, but "
@@ -833,7 +833,7 @@ Page {
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
                         text: sectionHeader.decisions
-                            ? "Both sides have their own hot cues. Pick the side that should be on both."
+                            ? "Seabass cannot tell which side is right. Pick the side that should be on both."
                             : "One side has cues the other lacks. Staging copies them across."
                     }
                 }
@@ -853,6 +853,7 @@ Page {
                 required property string cueSummary
                 required property var cueChange
                 required property var junkCues
+                required property string reason
                 required property bool included
                 required property bool staged
                 required property string stagedDescription
@@ -868,6 +869,7 @@ Page {
                 // Narrow, the catalog and cue columns fold into this line.
                 artist: root.wide ? shown.artist : shown.artist + " · " + directionText + " · " + cueSummary
                 artworkUrl: shown.artworkPath
+                note: reason
                 selectable: !needsDecision
                 reserveSelectionSpace: true
                 selected: included
@@ -935,8 +937,8 @@ Page {
                             tooltipText: row.samePair
                                 ? root.formatLabel(row.tracks[0].side) + " (" + root.describeCues(row.tracks[0].cues)
                                   + ") and " + root.formatLabel(row.tracks[1].side) + " ("
-                                  + root.describeCues(row.tracks[1].cues) + ") have different hot cues for this "
-                                  + "track. Choose the side whose hot cues should be on both."
+                                  + root.describeCues(row.tracks[1].cues) + ") disagree about this track. "
+                                  + "Choose the side whose cues should be on both."
                                 : root.formatLabel(row.targetFormat) + " needs cues, but "
                                   + root.formatLabel(row.tracks[0].side) + " and "
                                   + root.formatLabel(row.tracks[1].side) + " disagree."
@@ -1049,7 +1051,7 @@ Page {
                                         cueText: root.sideCueText(row, index)
                                         actionText: row.needsDecision ? "Use These Cues" : ""
                                         actionTooltip: row.samePair
-                                            ? "Stage these hot cues onto the other catalog's copy of this track, "
+                                            ? "Stage these cues onto the other catalog's copy of this track, "
                                               + "replacing its own; Save writes it"
                                             : "Stage copying these cue points onto the "
                                               + root.formatLabel(row.targetFormat) + " copy; Save writes it"

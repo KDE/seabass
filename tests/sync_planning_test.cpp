@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 #include "domain/matching_policy.hpp"
@@ -112,29 +113,20 @@ int main()
         std::cout << "case 5 (already consistent) OK\n";
     }
 
-    // Conflict resolved by mtime: rekordbox file newer -> wins, propagates to engine.
-    {
+    // No clock decides a conflict (2026-10-04): the catalog files' mtimes
+    // used to pick the side, newer one way and then the other. Both ways
+    // round it is the DJ's choice now, and nothing is applied meanwhile.
+    for (const bool rekordboxNewer : {true, false}) {
         SyncMatch m{makeTrack("r1", "song.mp3", 200.0,
                               {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"}}),
                     makeTrack("e1", "song.mp3", 200.0,
                               {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#00FF00", "intro"}})};
-        auto plan = SyncPlanner::plan(m, now, now - hours(1));
+        auto plan = rekordboxNewer ? SyncPlanner::plan(m, now, now - hours(1)) : SyncPlanner::plan(m, now - hours(1), now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToB);
-        std::cout << "case 6 (conflict, rekordbox newer -> to engine) OK\n";
+        assert(plan.needsChoice);
+        assert(plan.direction == SyncPlan::Direction::None && plan.cuesToApply.empty());
     }
-
-    // Conflict resolved by mtime: engine file newer -> wins, propagates to rekordbox.
-    {
-        SyncMatch m{makeTrack("r1", "song.mp3", 200.0,
-                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"}}),
-                    makeTrack("e1", "song.mp3", 200.0,
-                              {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#00FF00", "intro"}})};
-        auto plan = SyncPlanner::plan(m, now - hours(1), now);
-        assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToA);
-        std::cout << "case 7 (conflict, engine newer -> to rekordbox) OK\n";
-    }
+    std::cout << "case 6/7 (a conflict is never settled by the catalog files' mtimes) OK\n";
 
     // The wipe this planner used to do. rekordbox has three memory cues,
     // Engine can only hold one, and after a sync Engine holds the first of
@@ -192,51 +184,44 @@ int main()
         e.format = "engine";
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToA);
+        assert(plan.needsChoice && plan.direction == SyncPlan::Direction::None);
         int hot = 0;
         int memory = 0;
-        for (const auto &cue : plan.cuesToApply) {
+        for (const auto &cue : plan.cuesIfBWins) {
             if (cue.kind == CuePoint::Kind::Hot) {
                 hot++;
-                assert(cue.positionMs == 9000.0);  // the newer side's hot cue
+                assert(cue.positionMs == 9000.0);  // Engine's hot cue, if Engine is picked
             } else {
                 memory++;
             }
         }
         assert(hot == 1);
         assert(memory == 3);  // none of rekordbox's memory cues is taken away
-        std::cout << "case 9 (a hot cue conflict keeps every memory cue) OK\n";
+        std::cout << "case 9 (picking Engine's hot cues keeps every memory cue) OK\n";
     }
 
-    // Per-track clocks outrank the catalog files. The catalogs say Engine is
-    // newer (m.db was written an hour ago for some other track), but this
-    // track was last edited on the rekordbox side.
-    {
-        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
-        r.format = "rekordbox";
-        r.metadataModifiedAt = 1'800'000'000;
-        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
-        e.format = "engine";
-        e.metadataModifiedAt = 1'700'000'000;
-        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
-        assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToB);
-        std::cout << "case 10 (each track's own edit time outranks the catalog file's) OK\n";
+    // Nor by each track's own edit time. The stick's clocks are not to be
+    // trusted: an XDJ-RX2 was measured stamping 2017, a Prime 4 two hours
+    // off, and FAT times move with the time zone. rekordbox edited "in
+    // 2017" and Engine "in 2026", and the reverse, catalog files either
+    // way: always a choice, never a write.
+    for (const bool rekordboxIn2017 : {true, false}) {
+        for (const bool rekordboxFileNewer : {true, false}) {
+            Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
+            r.format = "rekordbox";
+            r.metadataModifiedAt = rekordboxIn2017 ? 1'500'000'000 : 1'790'000'000;  // 2017-07 / 2026-09
+            Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
+            e.format = "engine";
+            e.metadataModifiedAt = rekordboxIn2017 ? 1'790'000'000 : 1'500'000'000;
+            auto plan = rekordboxFileNewer ? SyncPlanner::plan(SyncMatch{r, e}, now, now - hours(1))
+                                           : SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
+            assert(plan.kind == SyncPlan::Kind::Conflict);
+            assert(plan.needsChoice && plan.direction == SyncPlan::Direction::None && plan.cuesToApply.empty());
+            assert(plan.reason == SyncPlan::Reason::PadsDiffer);
+            assert(plan.reasonText == "Pad 1: rekordbox 0:01.000, Engine 0:05.000");
+        }
     }
-
-    // A side that cannot date its own track falls back to the catalog files
-    // for both, rather than comparing a real date against zero.
-    {
-        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
-        r.format = "rekordbox";
-        r.metadataModifiedAt = 1'800'000'000;
-        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
-        e.format = "engine";
-        e.metadataModifiedAt = 0;  // unknown
-        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
-        assert(plan.direction == SyncPlan::Direction::ToA);  // catalogs: Engine newer
-        std::cout << "case 11 (an undatable track falls back to the catalog files) OK\n";
-    }
+    std::cout << "case 10/11 (edit times decide nothing, whatever they say) OK\n";
 
     // The review finding: Engine's only memory cue destroyed. rekordbox has
     // memory cues at 10s and 20s, Engine one at 15s, and rekordbox is newer
@@ -257,10 +242,10 @@ int main()
         e.metadataModifiedAt = 1'700'000'000;
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToB);  // onto Engine: rekordbox's hot cue is newer
+        assert(plan.needsChoice);
         std::vector<double> memory;
         std::vector<double> pads;
-        for (const auto &cue : plan.cuesToApply) {
+        for (const auto &cue : plan.cuesIfAWins) {  // picking rekordbox writes Engine
             if (cue.kind == CuePoint::Kind::Hot) {
                 pads.push_back(cue.positionMs);
             } else {
@@ -269,7 +254,7 @@ int main()
         }
         assert((pads == std::vector<double>{1000.0, 10000.0, 20000.0}) && "rekordbox's hot cue, then its memory cues on pads");
         assert(memory.size() == 1 && memory[0] == 15000.0 && "Engine keeps its own memory cue");
-        std::cout << "case 12 (a hot cue sync onto Engine keeps Engine's only memory cue) OK\n";
+        std::cout << "case 12 (picking rekordbox's hot cues keeps Engine's only memory cue) OK\n";
     }
 
     // ...and the next sync carries it across. Hot cues now agree, Engine's
@@ -364,12 +349,13 @@ int main()
         e.metadataModifiedAt = 1'800'000'000;  // e.g. rated in Engine DJ after the rekordbox cue edit
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.hotCuesNeedChoice && "both sides have different hot cues: the DJ chooses");
+        assert(plan.needsChoice && "both sides have different hot cues: the DJ chooses");
         // Both choices are ready to write, each with its own hot cues.
         assert(!plan.cuesIfAWins.empty() && plan.cuesIfAWins.front().positionMs == 1000.0);
         assert(!plan.cuesIfBWins.empty() && plan.cuesIfBWins.front().positionMs == 5000.0);
-        // The suggestion is still the newer side, for display only.
-        assert(plan.direction == SyncPlan::Direction::ToA);
+        // No suggestion: the newer side used to be one, and a caller that
+        // ignored the flag wrote it.
+        assert(plan.direction == SyncPlan::Direction::None && plan.cuesToApply.empty());
         std::cout << "case 15 (differing hot cues on both sides need a choice, with both options prepared) OK\n";
     }
 
@@ -386,7 +372,7 @@ int main()
         e.metadataModifiedAt = 1'800'000'000;
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(!plan.hotCuesNeedChoice);
+        assert(!plan.needsChoice);
         assert(plan.direction == SyncPlan::Direction::ToB && "the side with hot cues wins; none are erased");
         std::cout << "case 16 (hot cues on one side only are copied across without asking) OK\n";
     }
@@ -412,7 +398,7 @@ int main()
         std::vector<CuePoint> current = {CuePoint{CuePoint::Kind::Hot, 2, 5000.0, "", ""},
                                          CuePoint{CuePoint::Kind::Memory, 0, 9000.0, "", ""}};
         std::vector<CuePoint> written = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""},
-                                         CuePoint{CuePoint::Kind::Memory, 0, 9400.0, "", ""}};
+                                         CuePoint{CuePoint::Kind::Memory, 0, 9001.0, "", ""}};
         CueChange change = describeCueChange(current, written);
         assert(change.gainedHot == 1 && change.droppedHot == 1 && change.keptHot == 0);
         assert(change.keptMemory == 1 && change.gainedMemory == 0 && change.droppedMemory == 0);
@@ -431,7 +417,7 @@ int main()
         auto plan = SyncPlanner::plan(m, now, now);
         assert(plan.kind == SyncPlan::Kind::AlreadyConsistent);
         assert(plan.direction == SyncPlan::Direction::None);
-        assert(!plan.hotCuesNeedChoice);
+        assert(!plan.needsChoice);
         std::cout << "case (a colour difference is not a disagreement) OK\n";
     }
 
@@ -447,7 +433,7 @@ int main()
         auto plan = SyncPlanner::plan(m, now, now);
         assert(plan.kind == SyncPlan::Kind::AlreadyConsistent);
         assert(plan.direction == SyncPlan::Direction::None);
-        assert(!plan.hotCuesNeedChoice);
+        assert(!plan.needsChoice);
         std::cout << "case (a colour on one side only is not a disagreement either) OK\n";
     }
 
@@ -464,7 +450,7 @@ int main()
                               {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""},
                                CuePoint{CuePoint::Kind::Hot, 3, 9000.0, "", ""}})};
         auto plan = SyncPlanner::plan(m, now, now);
-        assert(plan.hotCuesNeedChoice && "the slots really differ, which is a choice");
+        assert(plan.needsChoice && "the slots really differ, which is a choice");
         // Whichever way the user goes, a colour the target holds survives.
         for (const CuePoint &cue : plan.cuesIfBWins) {
             if (cue.kind == CuePoint::Kind::Hot && cue.hotCueNumber == 1) {
@@ -640,6 +626,224 @@ int main()
         assert(matchTracks({engineOnly}, {other}).size() == 1 && "across libraries a name still matches");
         assert(matchTracks({engineOnly}, {other}, MatchScope::OneStick).empty());
         std::cout << "case (across libraries the same rows match by name) OK\n";
+    }
+
+    // ---- Every conflict says why (2026-10-04) -------------------------
+    const auto hot = [](int pad, double ms) { return CuePoint{CuePoint::Kind::Hot, pad, ms, "", ""}; };
+    const auto memory = [](double ms) { return CuePoint{CuePoint::Kind::Memory, 0, ms, "", ""}; };
+    const auto side = [](const char *format, double bpm, std::vector<CuePoint> cues) {
+        Track t = makeTrack(std::string(format) + "1", "song.mp3", 300.0, std::move(cues));
+        t.format = format;
+        t.bpm = bpm;
+        return t;
+    };
+
+    // The tolerance is half a beat: 234 ms at 128 BPM. 230 ms apart is one
+    // cue on one beat; 240 ms is nearer the next beat, and the DJ is shown
+    // the offset.
+    {
+        auto same = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
+                                                side("engine", 128.0, {hot(1, 30230.0)})},
+                                      now, now);
+        assert(same.kind == SyncPlan::Kind::AlreadyConsistent && "230 ms at 128 BPM is one cue");
+        assert(std::abs(same.positionToleranceMs - 30000.0 / 128.0) < 1e-9);
+        auto apart = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
+                                                 side("engine", 128.0, {hot(1, 30240.0)})},
+                                       now, now);
+        assert(apart.needsChoice && apart.reason == SyncPlan::Reason::SamePadApart);
+        assert(apart.reasonText
+               == "Pad 1 is 240 ms apart (more than half a beat at 128 BPM): rekordbox 0:30.000, Engine 0:30.240");
+        // The brief's own example, at 124 BPM.
+        auto example = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 30765.0)}),
+                                                   side("engine", 124.0, {hot(1, 30251.0)})},
+                                         now, now);
+        assert(example.reasonText
+               == "Pad 1 is 514 ms apart (more than half a beat at 124 BPM): rekordbox 0:30.765, Engine 0:30.251");
+        std::cout << "case (230 ms at 128 BPM is the same cue, 240 ms is a choice that shows the offset) OK\n";
+    }
+
+    // Without a tempo both sides agree on, the fallback is 60 ms, which
+    // still holds every measured rounding: 1 ms (Engine's sample offsets)
+    // and 52 ms (two MP3 frames of decoder delay) are the same cue. 60 ms
+    // is two cues there, but half a beat of either tempo would have made
+    // it one, so it is a choice that says why.
+    {
+        for (const double offset : {1.0, 52.0}) {
+            auto plan = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
+                                                    side("engine", 126.0, {hot(1, 30000.0 + offset)})},
+                                          now, now);
+            assert(plan.kind == SyncPlan::Kind::AlreadyConsistent && "a measured rounding is the same cue");
+            assert(plan.positionToleranceMs == CueFallbackToleranceMs);
+        }
+        auto sixty = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
+                                                 side("engine", 126.0, {hot(1, 30060.0)})},
+                                       now, now);
+        assert(sixty.kind == SyncPlan::Kind::Conflict && sixty.needsChoice);
+        assert(sixty.reason == SyncPlan::Reason::TempoUnsure);
+        assert(sixty.reasonText
+               == "Tempos differ (128.0 vs 126.0), so cues within half a beat cannot be matched; 60 ms was used");
+        assert(sixty.direction == SyncPlan::Direction::None && !sixty.cuesIfAWins.empty() && !sixty.cuesIfBWins.empty());
+
+        auto noTempo = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
+                                                   side("engine", 126.0, {hot(1, 30100.0)})},
+                                         now, now);
+        assert(noTempo.reason == SyncPlan::Reason::TempoUnsure);
+        assert(noTempo.reasonText
+               == "rekordbox has no tempo for this track, so cues within half a beat cannot be matched; 60 ms was used");
+        auto neither = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
+                                                   side("engine", 0.0, {hot(1, 30100.0)})},
+                                         now, now);
+        assert(neither.reasonText
+               == "Neither side has a tempo for this track, so cues within half a beat cannot be matched; 60 ms was used");
+
+        // Where no half beat could have mattered the reason is the
+        // difference itself, not the tempo: 700 ms is more than half a
+        // beat at any tempo either side names, and a pad 4 s away is
+        // another cue.
+        auto far = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
+                                               side("engine", 0.0, {hot(1, 30700.0)})},
+                                     now, now);
+        assert(far.reason == SyncPlan::Reason::SamePadApart);
+        assert(far.reasonText == "Pad 1 is 700 ms apart: rekordbox 0:30.000, Engine 0:30.700");
+        auto other = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
+                                                 side("engine", 126.0, {hot(1, 34000.0)})},
+                                       now, now);
+        assert(other.reason == SyncPlan::Reason::PadsDiffer);
+        std::cout << "case (no agreed tempo: 1 and 52 ms are one cue, 60 ms is a choice saying why) OK\n";
+    }
+
+    // Pads differ: one line naming the pads, three at most, then a count.
+    {
+        auto plan = SyncPlanner::plan(
+            SyncMatch{side("rekordbox", 124.0, {hot(1, 10000.0), hot(2, 20000.0), hot(3, 67751.0), hot(4, 90000.0)}),
+                      side("engine", 124.0, {hot(1, 15000.0), hot(3, 30251.0), hot(4, 95000.0), hot(5, 120000.0)})},
+            now, now);
+        assert(plan.reason == SyncPlan::Reason::PadsDiffer);
+        assert(plan.reasonText
+               == "Pad 1: rekordbox 0:10.000, Engine 0:15.000; Pad 2: rekordbox 0:20.000, Engine empty; "
+                  "Pad 3: rekordbox 1:07.751, Engine 0:30.251; and 2 more pads differ");
+        auto one = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(3, 67751.0)}),
+                                               side("engine", 124.0, {hot(3, 30251.0)})},
+                                     now, now);
+        assert(one.reasonText == "Pad 3: rekordbox 1:07.751, Engine 0:30.251");
+        std::cout << "case (pads that differ are named, with both positions) OK\n";
+    }
+
+    // Loop vs cue: the same pad and place, a loop on one side. It used to
+    // read as the same cue.
+    {
+        CuePoint loop = hot(2, 30000.0);
+        loop.isLoop = true;
+        loop.loopEndMs = 37742.0;
+        auto plan = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), hot(2, 30000.0)}),
+                                                side("engine", 124.0, {hot(1, 1000.0), loop})},
+                                      now, now);
+        assert(plan.needsChoice && plan.reason == SyncPlan::Reason::LoopVsCue);
+        assert(plan.reasonText == "Pad 2 is a loop on Engine and a cue on rekordbox (0:30.000)");
+
+        // WHALESHARK2, "Roam Zwei": Engine's pad 1 holds a cue and a loop,
+        // OneLibrary's only the cue, 52 ms off. The cue is the same cue;
+        // what differs is the loop, and the reason says so rather than
+        // showing two cues 52 ms apart.
+        CuePoint engineLoop = hot(1, 23051.0);
+        engineLoop.isLoop = true;
+        auto roam = SyncPlanner::plan(
+            SyncMatch{side("engine", 132.0, {hot(1, 49486.0), engineLoop, hot(2, 56545.0)}),
+                      side("onelibrary", 132.0, {hot(1, 49538.0), hot(2, 56545.0)})},
+            now, now);
+        assert(roam.needsChoice && roam.reason == SyncPlan::Reason::PadsDiffer);
+        assert(roam.reasonText == "Pad 1: Engine loop 0:23.051, OneLibrary no loop");
+        std::cout << "case (a loop against a cue on one pad is a choice) OK\n";
+    }
+
+    // Both sides changed: each has a memory cue the other lacks. An
+    // addition here or a removal there; only a clock could say, and none
+    // is asked, whichever way the times point.
+    for (const bool aIn2017 : {true, false}) {
+        Track a = side("rekordbox", 124.0, {hot(1, 1000.0), memory(10000.0), memory(20000.0)});
+        Track b = side("onelibrary", 124.0, {hot(1, 1000.0), memory(10000.0), memory(30000.0)});
+        a.metadataModifiedAt = aIn2017 ? 1'500'000'000 : 1'790'000'000;
+        b.metadataModifiedAt = aIn2017 ? 1'790'000'000 : 1'500'000'000;
+        auto plan = aIn2017 ? SyncPlanner::plan(SyncMatch{a, b}, now - hours(24 * 365 * 9), now)
+                            : SyncPlanner::plan(SyncMatch{a, b}, now, now - hours(24 * 365 * 9));
+        assert(plan.kind == SyncPlan::Kind::Conflict && plan.needsChoice);
+        assert(plan.direction == SyncPlan::Direction::None && plan.cuesToApply.empty());
+        assert(plan.reason == SyncPlan::Reason::BothChanged);
+        assert(plan.reasonText == "Changed on both sides; the stick's clocks cannot say which is newer");
+        // A side that only lacks something still just receives it.
+        Track c = side("onelibrary", 124.0, {hot(1, 1000.0), memory(10000.0)});
+        auto gains = SyncPlanner::plan(SyncMatch{a, c}, now, now);
+        assert(!gains.needsChoice && gains.direction == SyncPlan::Direction::ToB);
+    }
+    std::cout << "case (memory cues changed on both sides are a choice, whatever the clocks say) OK\n";
+
+    // Engine pads at rekordbox's memory cues. Engine DJ's older import put
+    // them on the free pads in time order, and on WHALESHARK2 shifted MP3s
+    // by 52 ms ("Desire"): that measured shape is the memory cues, in sync.
+    {
+        Track r = side("rekordbox", 124.0, {hot(1, 1000.0), hot(2, 20000.0), memory(60000.0), memory(90000.0)});
+        Track e = side("engine", 124.0, {hot(1, 1052.0), hot(2, 20052.0), hot(3, 60052.0), hot(4, 90052.0),
+                                         memory(60052.0)});
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent && "the import's own pads, 52 ms late, are in sync");
+
+        // The same pads swapped: not what the import does. A translation,
+        // or two hot cues the DJ set there? Asked.
+        Track swapped = side("engine", 124.0, {hot(1, 1000.0), hot(2, 20000.0), hot(4, 60000.0), hot(3, 90000.0),
+                                               memory(60000.0)});
+        auto asked = SyncPlanner::plan(SyncMatch{r, swapped}, now, now);
+        assert(asked.needsChoice && asked.reason == SyncPlan::Reason::EngineMemoryOrHotCue);
+        assert(asked.reasonText
+               == "Engine pads 4 and 3 sit where rekordbox has memory cues (1:00.000, 1:30.000); "
+                  "translated memory cues or new hot cues?");
+
+        // An Engine pad at a memory cue on a pad rekordbox's own hot cue
+        // holds elsewhere: the brief's case.
+        Track r2 = side("rekordbox", 123.0, {hot(1, 1000.0), hot(2, 140000.0), memory(9904.0)});
+        Track e2 = side("engine", 123.0, {hot(1, 1000.0), hot(2, 9904.0), memory(9904.0)});
+        auto pad2 = SyncPlanner::plan(SyncMatch{r2, e2}, now, now);
+        assert(pad2.needsChoice && pad2.reason == SyncPlan::Reason::EngineMemoryOrHotCue);
+        assert(pad2.reasonText
+               == "Engine pad 2 sits where rekordbox has a memory cue (0:09.904); a translated memory cue or a new "
+                  "hot cue?");
+        // Either answer settles it: rekordbox's puts the memory cue on the
+        // import's pad and pad 2 back; Engine's makes pad 2 a hot cue on
+        // rekordbox too, and the next sync is a plain copy.
+        Track e2After = e2;
+        e2After.cues = pad2.cuesIfAWins;
+        assert(SyncPlanner::plan(SyncMatch{r2, e2After}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+        Track r2After = r2;
+        r2After.cues = pad2.cuesIfBWins;
+        auto next = SyncPlanner::plan(SyncMatch{r2After, e2}, now, now);
+        assert(!next.needsChoice);
+        if (next.direction != SyncPlan::Direction::None) {
+            e2.cues = next.cuesToApply;
+        }
+        assert(SyncPlanner::plan(SyncMatch{r2After, e2}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+
+        // A second pad for the marker under hot cue 3 ("Voices In My Head"
+        // with the duplicate the old translation made): asked, not taken.
+        Track voicesR = side("rekordbox", 124.0, {hot(3, 52583.0), memory(52583.0)});
+        Track voicesE = side("engine", 124.0, {hot(3, 52583.0), hot(6, 52583.0), memory(52583.0)});
+        auto voices = SyncPlanner::plan(SyncMatch{voicesR, voicesE}, now, now);
+        assert(voices.needsChoice && voices.reason == SyncPlan::Reason::EngineMemoryOrHotCue);
+        std::cout << "case (Engine pads at memory cues: the import's shape is in sync, any other is asked) OK\n";
+    }
+
+    // Cues Engine has no pad for are said, not silent.
+    {
+        std::vector<CuePoint> cues;
+        for (int pad = 1; pad <= 8; ++pad) {
+            cues.push_back(hot(pad, pad * 10000.0));
+        }
+        cues.push_back(memory(100000.0));
+        cues.push_back(memory(130500.0));
+        auto plan = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, cues), side("engine", 124.0, {})}, now, now);
+        assert(plan.cuesLeftOut.size() == 2);
+        assert(describeCuesLeftOut(plan.cuesLeftOut)
+               == "2 cues stay off Engine: its eight pads are full (1:40.000, 2:10.500)");
+        assert(describeCuesLeftOut({}).empty());
+        std::cout << "case (cues left off Engine are described) OK\n";
     }
 
     std::cout << "all cases passed\n";

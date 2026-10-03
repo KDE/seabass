@@ -17,7 +17,6 @@ namespace seabass::domain
 namespace
 {
 
-constexpr double PositionToleranceMs = 1000.0;
 // Preferences -> Music -> "Same duration within N sec is considered
 // an exact match". 2 s unless the user says otherwise.
 double durationToleranceSeconds()
@@ -188,7 +187,8 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
     return matches;
 }
 
-std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const std::vector<CuePoint> &existing)
+std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const std::vector<CuePoint> &existing,
+                                          double toleranceMs)
 {
     for (CuePoint &cue : incoming) {
         if (!cue.color.empty()) {
@@ -204,7 +204,7 @@ std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const 
             const bool sameCue = had.isLoop == cue.isLoop
                 && (cue.kind == CuePoint::Kind::Hot
                         ? had.hotCueNumber == cue.hotCueNumber
-                        : std::abs(had.positionMs - cue.positionMs) <= PositionToleranceMs);
+                        : std::abs(had.positionMs - cue.positionMs) < toleranceMs);
             if (sameCue) {
                 cue.color = had.color;
                 break;
@@ -214,7 +214,7 @@ std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const 
     return incoming;
 }
 
-bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b)
+bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
 {
     if (a.size() != b.size()) {
         return false;
@@ -248,7 +248,7 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
         if (x.kind != y.kind || x.hotCueNumber != y.hotCueNumber) {
             return false;
         }
-        if (std::abs(x.positionMs - y.positionMs) > PositionToleranceMs) {
+        if (std::abs(x.positionMs - y.positionMs) >= toleranceMs) {
             return false;
         }
     }

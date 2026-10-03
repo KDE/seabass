@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "domain/cue_tolerance.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -63,9 +64,12 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
                                                                    MatchScope scope = MatchScope::AcrossLibraries);
 
 // True if two cue sets are the same, ignoring order and allowing a small
-// position tolerance (cross-format conversions can introduce sub-second
-// rounding). Slot, kind and position decide; comment and colour never do.
-bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b);
+// position tolerance (cross-format conversions round, see
+// domain/cue_tolerance.hpp). Slot, kind and position decide; comment and
+// colour never do. Sync Cue Points passes half a beat of the track's
+// tempo; callers without a tempo get the fallback.
+bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
+                  double toleranceMs = CueFallbackToleranceMs);
 
 // The same cues, with any colour the target already had put back where
 // the incoming cue has none.
@@ -80,6 +84,7 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
 // Matched the way cueSetsEqual matches: hot cues by slot, memory cues by
 // position within the same tolerance.
 std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming,
-                                          const std::vector<CuePoint> &existing);
+                                          const std::vector<CuePoint> &existing,
+                                          double toleranceMs = CueFallbackToleranceMs);
 
 }  // namespace seabass::domain
