@@ -107,7 +107,11 @@ reports that agree are a finding; two that differ are a better one.
 ## The planted matrix
 
 Every case has a track of its own, so whatever happens to it is
-attributable. Tracks are chosen from those both catalogs list, in path
+attributable. `--skip <substring>` (repeatable) keeps every track whose
+stick-relative path contains the substring out of every case, observed
+ones included, for tracks that carry other evidence. The plant ends by
+listing every track it wrote to, per side, so exactly those can be
+snapshotted. Tracks are chosen from those both catalogs list, in path
 order, 90 seconds or longer.
 
 The cue cases (a to g) write BOTH sides' complete cue sets: hot cue 1 at
@@ -170,13 +174,17 @@ loading any track on the player once before planting makes one. The
 library-wide counts (tracks with `isAnalyzed = 1`, tracks without beat
 data) are in every report regardless.
 
-**Arming the prompt.** export.pdb is never written. The plant sets
+**Arming the prompt.** export.pdb is never written. With `--no-arm` the
+plant leaves Engine's counter alone and only reports both numbers: for a
+stick whose pdb sequence a real rekordbox export has already moved (on
+SHAKEDOWN8B, connecting it to rekordbox 7.2.18 moved it from 535 to 539
+by itself), which is the realistic arming. Otherwise the plant sets
 Engine's `lastRekordBoxLibraryImportReadCounter` to one less than the
 pdb's sequence, which is what a rekordbox export made after the last
 import looks like from the player's side. Whether the import behaves
-differently when the pdb sequence itself moved (a real re-export) is not
-tested here; if it matters, a run after a real rekordbox export answers
-it with the same `record` and `compare` steps.
+differently between the two kinds of arming is itself untested; a
+`--no-arm` run on a stick rekordbox has written answers the realistic
+case.
 
 ## What a record holds
 
