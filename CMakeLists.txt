@@ -1411,6 +1411,10 @@ target_include_directories(metadata_store_test PRIVATE src)
 target_link_libraries(metadata_store_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME metadata_store_test COMMAND metadata_store_test)
 
+add_executable(engine_import_probe_compare_test tests/engine_import_probe_compare_test.cpp)
+target_include_directories(engine_import_probe_compare_test PRIVATE tools)
+add_test(NAME engine_import_probe_compare_test COMMAND engine_import_probe_compare_test)
+
 add_executable(no_em_dashes_test tests/no_em_dashes_test.cpp)
 target_compile_definitions(no_em_dashes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_em_dashes_test COMMAND no_em_dashes_test)
@@ -3433,6 +3437,15 @@ endif()
 add_executable(rig_import_prompt tools/rig_import_prompt.cpp)
 target_include_directories(rig_import_prompt PRIVATE src)
 target_link_libraries(rig_import_prompt PRIVATE seabass_core)
+
+# Hardware probe: what a Denon player's "update the Rekordbox library"
+# prompt does to the Engine side when accepted. Plants a matrix of
+# differences, records a stick, compares two records; see
+# docs/engine-import-prompt.md. SQLite::SQLite3 for the direct
+# #include <sqlite3.h>, as make_engine_library.
+add_executable(engine_import_probe tools/engine_import_probe.cpp tools/engine_import_probe_onelibrary.cpp)
+target_include_directories(engine_import_probe PRIVATE src tools)
+target_link_libraries(engine_import_probe PRIVATE seabass_core SQLite::SQLite3)
 
 add_executable(rig_format tools/rig_format.cpp)
 target_include_directories(rig_format PRIVATE src)
