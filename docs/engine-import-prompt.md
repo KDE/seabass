@@ -68,8 +68,9 @@ tool and the script refuse those labels.
 
    This tars the stick's `Engine Library` and `PIONEER` folders into
    `<work dir>/pre-plant.tar`, plants the matrix below (`cases.tsv`),
-   (a stick planted before is refused unless `--again` is passed, which
-   a second round started from a restore needs),
+   (a stick that still carries an earlier plant is refused unless
+   `--again` is passed; a restored stick does not need it, because
+   pre-plant.tar has no probe playlist),
    records the planted stick (`before.tsv`) and tars it again
    (`planted.tar`). The plant arms the prompt and prints both numbers
    before and after; it ends `PLANT RESULT: PASS` or `FAIL`.
@@ -180,7 +181,9 @@ plant removes the Engine row. libdjinterop's `remove_track` is a single
 foreign keys on, which would leave `PerformanceData` and `PlaylistEntity`
 rows behind, so the plant deletes in one SQL transaction: the track's
 `PlaylistEntity` rows (Engine's own trigger relinks each list's chain),
-`PreparelistEntity` rows, `PerformanceData` row, then the `Track` row.
+`PreparelistEntity` rows, `PerformanceData` row, `ChangeLog` rows where
+the schema has a ChangeLog table (Engine 2.18 to 2.20; later ones make it
+a view), then the `Track` row. The case's how-text lists the tables.
 Case o is chosen from rekordbox's copy of the shared playlist where it can
 be, because export.pdb is never written and membership cannot be added.
 For p, the only rekordbox-side metadata writable at all is
@@ -202,7 +205,9 @@ data) are in every report regardless.
 
 **Arming the prompt.** export.pdb is never written. `--arm` (also the
 default when neither flag is given) sets Engine's counter as below when
-the two numbers are level. With `--no-arm` the
+the two numbers are level. A plant that leaves the two level (the player
+will not ask) ends `PLANT RESULT: FAIL` unless `--allow-level` is passed.
+With `--no-arm` the
 plant leaves Engine's counter alone and only reports both numbers: for a
 stick whose pdb sequence a real rekordbox export has already moved (on
 SHAKEDOWN8B, connecting it to rekordbox 7.2.18 moved it from 535 to 539
@@ -237,7 +242,9 @@ the import rebuilds still lines up (its `id` field then shows the change).
   rekordbox reader (export.pdb plus the ANLZ cue files). The import is
   supposed to be one-way; the report says so when it was.
 - **RO** the OneLibrary (exportLibrary.db) side: cues, title, key, BPM,
-  rating and comment.
+  rating (unrated, stored as 0, is written NULL as in ET and RT) and
+  comment. Optional: when it cannot be read, the record says why in
+  `M onelibrary` and carries on.
 - **M** the pdb sequence, Engine's counter, whether the player would
   ask, and when the record was taken.
 

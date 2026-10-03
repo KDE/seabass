@@ -6,7 +6,8 @@
 // library" prompt does to the Engine side of a stick when the DJ says yes.
 //
 //   engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]
-//                       [--arm | --no-arm] [--again] [--skip <path substring>]...
+//                       [--arm | --no-arm] [--allow-level] [--again]
+//                       [--skip <path substring>]...
 //   engine_import_probe --record <stick root> --out <record.tsv>
 //   engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]
 //
@@ -542,8 +543,19 @@ Record recordStick(const fs::path &root)
             continue;
         }
         const std::string relative = pathToGenericUtf8(it->path().lexically_relative(engineLibraryOf(root)));
-        record.set("EF", relative, "size", std::to_string(it->file_size(ec)));
-        const auto written = it->last_write_time(ec);
+        // Per file: a size or time that cannot be read is recorded as
+        // such, not taken for the listing failing, and a failed
+        // last_write_time (file_time_type::min()) never reaches the
+        // arithmetic below.
+        std::error_code fileEc;
+        const auto size = it->file_size(fileEc);
+        record.set("EF", relative, "size", fileEc ? "unreadable: " + fileEc.message() : std::to_string(size));
+        fileEc.clear();
+        const auto written = it->last_write_time(fileEc);
+        if (fileEc) {
+            record.set("EF", relative, "mtime", "unreadable: " + fileEc.message());
+            continue;
+        }
         record.set("EF", relative, "mtime", std::to_string(written.time_since_epoch().count()));
         // The same instant in Unix seconds, for the clock comparison in
         // --compare. file_clock's epoch is the library's own, so the
@@ -581,19 +593,49 @@ Record recordStick(const fs::path &root)
     // the player may be the one importing from. Section RO, same field
     // names, so a value that reaches Engine can be traced to the catalog
     // it came from (case p sets a rating and comment here alone).
-    for (const auto &t : probe::readOneLibraryTracks(pathToUtf8(pioneerOf(root)))) {
-        const std::string path = t.filePath.empty() ? "onelibrary id:" + t.sourceId : stickPath(root, t.filePath);
-        record.set("RO", path, "row", "present");
-        record.set("RO", path, "title", t.title);
-        record.set("RO", path, "bpm", formatBpm(t.bpm));
-        record.set("RO", path, "key", t.key);
-        recordCues(record, "RO", path, t.cues);
-    }
-    // The reader leaves rating and comment out; the table has them.
-    for (const auto &a : probe::readOneLibraryAnnotations(pathToUtf8(pioneerOf(root)))) {
-        const std::string path = !a.path.empty() && a.path.front() == '/' ? a.path.substr(1) : a.path;
-        record.set("RO", path, "rating", a.rating);
-        record.set("RO", path, "comment", a.comment == "NULL" ? std::string() : a.comment);
+    // Optional evidence: a OneLibrary that cannot be read (no SQLCipher
+    // library, a key that does not open it, a damaged file) leaves RO out
+    // and says why in M onelibrary, rather than costing the whole record.
+    const std::string pioneer = pathToUtf8(pioneerOf(root));
+    if (!probe::hasOneLibrary(pioneer)) {
+        record.set("M", "-", "onelibrary", "absent: no exportLibrary.db on this stick");
+    } else {
+        try {
+            Record oneLibrary;
+            for (const auto &t : probe::readOneLibraryTracks(pioneer)) {
+                const std::string path =
+                    t.filePath.empty() ? "onelibrary id:" + t.sourceId : stickPath(root, t.filePath);
+                oneLibrary.set("RO", path, "row", "present");
+                oneLibrary.set("RO", path, "title", t.title);
+                oneLibrary.set("RO", path, "bpm", formatBpm(t.bpm));
+                oneLibrary.set("RO", path, "key", t.key);
+                recordCues(oneLibrary, "RO", path, t.cues);
+            }
+            // The reader leaves rating and comment out; the table has
+            // them. content.path is stick-relative with a leading slash,
+            // and goes through stickPath() like every other key so the
+            // two halves of one track's RO entity meet. A row without a
+            // path names no file and is left out.
+            for (const auto &a : probe::readOneLibraryAnnotations(pioneer)) {
+                std::string relative = a.path;
+                while (!relative.empty() && (relative.front() == '/' || relative.front() == '\\')) {
+                    relative.erase(0, 1);
+                }
+                if (relative.empty()) {
+                    continue;
+                }
+                const std::string path = stickPath(root, pathToUtf8(root / pathFromUtf8(relative)));
+                // OneLibrary stores "unrated" as 0; ET and RT say NULL for
+                // it, so 0 is spelled NULL here and the three compare.
+                oneLibrary.set("RO", path, "rating", a.rating == "0" ? std::string("NULL") : a.rating);
+                oneLibrary.set("RO", path, "comment", a.comment == "NULL" ? std::string() : a.comment);
+            }
+            record.values.insert(oneLibrary.values.begin(), oneLibrary.values.end());
+            record.set("M", "-", "onelibrary", "read");
+        } catch (const std::exception &ex) {
+            record.set("M", "-", "onelibrary", std::string("absent: could not be read: ") + ex.what());
+            std::cerr << "warning: OneLibrary not recorded: " << ex.what() << "\n";
+        }
     }
 
     for (auto &[name, members] : rekordboxLists) {
@@ -715,6 +757,8 @@ struct PlantOptions
     bool arm = false;
     // Plant on a stick that has been planted before.
     bool again = false;
+    // Pass the plant even when the player will not ask.
+    bool allowLevel = false;
     // Never pick a track whose stick-relative audio path contains any of
     // these, for any case: tracks that carry other evidence.
     std::vector<std::string> skip;
@@ -1081,6 +1125,7 @@ int plant(const PlantOptions &options)
     }
 
     // Plain SQL, where libdjinterop would write more than the field.
+    std::vector<std::string> removalTables;
     {
         Database db(mdbOf(root), true);
         db.exec("BEGIN;");
@@ -1111,12 +1156,30 @@ int plant(const PlantOptions &options)
         // one transaction: the playlist entries first (Engine's own
         // trigger relinks each list's nextEntityId chain around them), the
         // prepare-list entries, the performance data, then the row.
+        // Engine 2.18 to 2.20 also keep a ChangeLog table whose trackId
+        // references Track; later schemas make ChangeLog a view, which has
+        // no rows to delete. Every table that names the track by trackId,
+        // in this order, Track last.
+        for (const char *table : {"PlaylistEntity", "PreparelistEntity", "PerformanceData", "ChangeLog"}) {
+            bool isTable = false;
+            db.each(std::string("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '") + table + "';",
+                    [&isTable](sqlite3_stmt *) { isTable = true; });
+            bool hasTrackId = false;
+            if (isTable) {
+                db.each(std::string("PRAGMA table_info(") + table + ");", [&hasTrackId](sqlite3_stmt *stmt) {
+                    hasTrackId = hasTrackId || text(stmt, 1) == "trackId";
+                });
+            }
+            if (hasTrackId) {
+                removalTables.push_back(table);
+            }
+        }
+        removalTables.push_back("Track");
         for (const Pair *gone : {o, pOnly}) {
             const std::string id = gone->engine.sourceId;
-            db.exec("DELETE FROM PlaylistEntity WHERE trackId = " + id + ";");
-            db.exec("DELETE FROM PreparelistEntity WHERE trackId = " + id + ";");
-            db.exec("DELETE FROM PerformanceData WHERE trackId = " + id + ";");
-            db.exec("DELETE FROM Track WHERE id = " + id + ";");
+            for (const std::string &table : removalTables) {
+                db.exec("DELETE FROM " + table + " WHERE " + (table == "Track" ? "id" : "trackId") + " = " + id + ";");
+            }
         }
         db.exec("COMMIT;");
     }
@@ -1191,8 +1254,11 @@ int plant(const PlantOptions &options)
     }
     const auto stateAfter = infrastructure::engine::readRekordboxImportState(enginePath, pioneerPath);
     describeImportState("after planting", stateAfter);
-    if (!stateAfter.playerWillOfferImport() && !options.noArm) {
-        failures.push_back("the prompt is not armed: the two numbers are level");
+    // A round whose player will not ask can show nothing, so a level pair
+    // fails the plant, armed or not, unless asked for in so many words.
+    if (!stateAfter.playerWillOfferImport() && !options.allowLevel) {
+        failures.push_back("the prompt is not armed: the two numbers are level, so the player will not ask "
+                           "(pass --allow-level to plant regardless)");
     }
 
     // The case list, with what each side reads back as now.
@@ -1286,14 +1352,20 @@ int plant(const PlantOptions &options)
             return items;
         };
         std::vector<probe::Item> oItems = rekordboxOnlyItems(o->path);
-        if (!shared.empty()) {
+        if (oInShared) {
             oItems.insert(oItems.begin() + 1, probe::Item{"EP", shared, "entries", "member:" + o->path});
         }
         addCase("o", "planted", "a track only rekordbox has, with cues (hot 1 at 10 s, hot 3 at 40 s, memory at 25 s)",
                 o->path,
                 "rekordbox cues through RekordboxCueWriter" + std::string(probe::hasOneLibrary(pioneerPath) ? " and OneLibraryCueWriter" : "")
                     + "; Engine row " + o->engine.sourceId
-                    + " removed by SQL with its PlaylistEntity, PreparelistEntity and PerformanceData rows"
+                    + " removed by SQL in one transaction, deleting its rows from " + [&removalTables] {
+                          std::string list;
+                          for (const auto &table : removalTables) {
+                              list += (list.empty() ? "" : ", ") + table;
+                          }
+                          return list;
+                      }()
                     + (oInShared ? "; in rekordbox's \"" + shared + "\" already"
                                  : "; not in a shared rekordbox playlist, which export.pdb being read only cannot change"),
                 oItems);
@@ -1392,8 +1464,8 @@ int plant(const PlantOptions &options)
               << (iStatus == "planted" && !iPath.empty() ? ", " + iPath : std::string())
               << ", the ANLZ .EXT and .DAT of each rekordbox track above"
               << (probe::hasOneLibrary(pioneerPath) ? ", PIONEER/rekordbox/exportLibrary.db" : "") << "\n";
-    if (options.noArm && !stateAfter.playerWillOfferImport()) {
-        std::cout << "note: not armed and the numbers are level, so the player will not ask\n";
+    if (options.allowLevel && !stateAfter.playerWillOfferImport()) {
+        std::cout << "note: the numbers are level, so the player will not ask (allowed by --allow-level)\n";
     }
 
     for (const auto &failure : failures) {
@@ -1406,7 +1478,7 @@ int plant(const PlantOptions &options)
 void usage()
 {
     std::cerr << "usage: engine_import_probe --plant <stick root> --out <cases.tsv> [--cover <image>]\n"
-              << "                           [--arm | --no-arm] [--again]\n"
+              << "                           [--arm | --no-arm] [--allow-level] [--again]\n"
               << "                           [--skip <path substring>]...\n"
               << "       engine_import_probe --record <stick root> --out <record.tsv>\n"
               << "       engine_import_probe --compare <before.tsv> <after.tsv> [--cases <cases.tsv>]\n";
@@ -1437,6 +1509,8 @@ int main(int argc, char **argv)
                     options.arm = true;
                 } else if (args[i] == "--again" && mode == "--plant") {
                     options.again = true;
+                } else if (args[i] == "--allow-level" && mode == "--plant") {
+                    options.allowLevel = true;
                 } else if (args[i] == "--skip" && i + 1 < args.size() && mode == "--plant") {
                     options.skip.push_back(args[++i]);
                 } else {

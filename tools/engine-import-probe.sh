@@ -12,7 +12,8 @@
 #       snapshot the stick as it is (pre-plant.tar), plant the matrix
 #       (cases.tsv), record it (before.tsv), snapshot again (planted.tar).
 #       Plant options go to engine_import_probe as given: --no-arm,
-#       --skip <path substring> (repeatable), --cover <image>, --again, --arm.
+#       --skip <path substring> (repeatable), --cover <image>, --again, --arm,
+#       --allow-level.
 #
 #   (insert the stick into the player, accept the import, eject it)
 #
@@ -70,7 +71,9 @@ snapshot() {  # <stick root> <tar file>
     echo "snapshot: $2 ($(du -h "$2" | cut -f1))"
 }
 
-[ $# -ge 2 ] || { sed -n '7,30p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+# Help: the comment block above, from its first line to the first line
+# that is not a comment.
+[ $# -ge 2 ] || { awk 'NR > 5 && !/^#/ { exit } NR > 5' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 step="$1"
 
 case "$step" in
