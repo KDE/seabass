@@ -713,6 +713,10 @@ ApplicationWindow {
         id: hiddenCuesPageComponent
         HiddenCuesPage {}
     }
+    Component {
+        id: memoryCueListsPageComponent
+        MemoryCueListsPage {}
+    }
 
     // Library Health opens on its hub: every check run once, each
     // reporting in a sentence. Each card's check has a page of its own,
@@ -731,6 +735,7 @@ ApplicationWindow {
         case "artwork": return coverArtPageComponent;
         case "cleanupleftovers": return oneLibraryLeftoversPageComponent;
         case "hiddencues": return hiddenCuesPageComponent;
+        case "memorycuelists": return memoryCueListsPageComponent;
         }
         console.warn("Library Health: no page for the check \"" + section + "\"");
         return null;

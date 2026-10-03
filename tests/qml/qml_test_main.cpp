@@ -16,6 +16,12 @@
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/anlz_file.hpp"
+#include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
+#include "infrastructure/rekordbox/anlz_cue_codec.hpp"
+#include "infrastructure/rekordbox/big_endian.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/work_counters.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
@@ -359,6 +365,59 @@ public:
     }
 
     Q_INVOKABLE bool exists(const QString &file) const { return QFile::exists(file); }
+
+    // #55: gives one rekordbox track the legacy memory list a Seabass
+    // between 5282555e and 6e0f1c09 wrote (one entry under a header that
+    // says "empty") and the ANLZ0001.DAT a hung XDJ-RX2 leaves beside it.
+    // Returns the track's .DAT, or empty when the track has no analysis.
+    Q_INVOKABLE QString plantStaleMemoryList(const QString &pioneerRoot, const QString &trackId)
+    {
+        namespace fs = std::filesystem;
+        namespace rb = seabass::infrastructure::rekordbox;
+        try {
+            const rb::AnlzPathIndex index(pioneerRoot.toStdString());
+            const auto analyzePath = index.pathFor(static_cast<uint32_t>(trackId.toUInt()));
+            if (!analyzePath) {
+                return {};
+            }
+            const std::string dat = rb::datAnlzPath(pioneerRoot.toStdString(), *analyzePath);
+            rb::AnlzFile file = rb::AnlzFile::readRaw(dat);
+            bool planted = false;
+            for (auto &section : file.sections) {
+                if (section.fourcc != 0x50434f42 || section.rawBytes.size() < 24
+                    || rb::readU32BE(section.rawBytes, 12) != rb::CueListTypeMemory) {
+                    continue;
+                }
+                rb::LegacyCueEntry entry;
+                entry.timeMs = 149;
+                std::string list = rb::AnlzLegacyCueCodec::encodeCues({entry}, rb::CueListTypeMemory);
+                list.replace(20, 4, "\xff\xff\xff\xff", 4);
+                section.rawBytes = list;
+                planted = true;
+                break;
+            }
+            if (!planted) {
+                return {};
+            }
+            file.writeRaw(dat);
+            // The RX2's skeleton beside it: the same file with its beat
+            // grid and waveforms emptied, as the player leaves it.
+            const fs::path datPath = seabass::pathFromUtf8(dat);
+            rb::AnlzFile skeleton = rb::AnlzFile::readRaw(dat);
+            for (auto &section : skeleton.sections) {
+                if (section.fourcc == 0x5051545A) {
+                    section.rawBytes = std::string("PQTZ\x00\x00\x00\x18\x00\x00\x00\x18", 12) + std::string(12, '\0');
+                } else if (section.fourcc == 0x50574156 || section.fourcc == 0x50575632) {
+                    section.rawBytes = section.rawBytes.substr(0, 4) + std::string("\x00\x00\x00\x14\x00\x00\x00\x14", 8)
+                                       + std::string(8, '\0');
+                }
+            }
+            skeleton.writeRaw(seabass::pathToUtf8(datPath.parent_path() / "ANLZ0001.DAT"));
+            return QString::fromStdString(dat);
+        } catch (const std::exception &) {
+            return {};
+        }
+    }
 
     Q_INVOKABLE bool makeDirectory(const QString &directory)
     {

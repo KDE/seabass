@@ -406,6 +406,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cleanup_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
@@ -575,6 +576,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/stick_backup/archive_compactor.cpp
@@ -888,6 +890,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/finish_cleanup_change.hpp
         src/gui/edit/changes/finish_cleanup_change.cpp
         src/gui/edit/changes/recolour_engine_cues_change.cpp
+        src/gui/edit/changes/repair_legacy_memory_list_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp
@@ -1970,6 +1973,14 @@ add_test(NAME anlz_legacy_cue_codec_test COMMAND anlz_legacy_cue_codec_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(anlz_legacy_cue_codec_test PROPERTIES LABELS "integration")
 
+add_executable(legacy_memory_list_audit_test
+    tests/legacy_memory_list_audit_test.cpp
+)
+target_link_libraries(legacy_memory_list_audit_test PRIVATE seabass_core_testing)
+target_include_directories(legacy_memory_list_audit_test PRIVATE src tests)
+add_test(NAME legacy_memory_list_audit_test COMMAND legacy_memory_list_audit_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+
 # Reads the raw bytes of all three cue lists after a write, so a writer
 # that keeps only one of them up to date fails here. See the file's own
 # comment: this is the test issue #33 did not have.
@@ -2562,6 +2573,15 @@ if(TARGET seabass_edit)
         target_link_libraries(recolour_engine_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME recolour_engine_cues_change_test COMMAND recolour_engine_cues_change_test)
+
+    add_executable(repair_legacy_memory_list_change_test tests/repair_legacy_memory_list_change_test.cpp)
+    target_include_directories(repair_legacy_memory_list_change_test PRIVATE src tests)
+    target_link_libraries(repair_legacy_memory_list_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(repair_legacy_memory_list_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME repair_legacy_memory_list_change_test COMMAND repair_legacy_memory_list_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
     add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
     target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)

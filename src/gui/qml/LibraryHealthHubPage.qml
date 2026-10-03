@@ -315,6 +315,30 @@ Page {
             + "player does not show a pad without one. Seabass can give them the player's own colour for the pad.";
     }
 
+    // #55. Memory cue lists an XDJ-RX2 hangs on: see MemoryCueListsPage.
+    // Only once the rekordbox leg has run.
+    readonly property bool memoryCueListsShown: healthController.legacyMemoryListsChecked
+        || healthController.legacyMemoryListError.length > 0
+    readonly property int memoryCueListCount: healthController.legacyMemoryListCount
+    readonly property int memoryCueListFixableCount: healthController.legacyMemoryListFixableCount
+    readonly property string memoryCueListSummary: {
+        if (healthController.legacyMemoryListError.length > 0) {
+            return healthController.legacyMemoryListError;
+        }
+        if (root.memoryCueListCount === 0) {
+            return "Every memory cue list in the rekordbox analysis files is in the shape a player reads.";
+        }
+        let text = root.memoryCueListCount + (root.memoryCueListCount === 1 ? " track has" : " tracks have")
+            + " a memory cue list in a shape an XDJ-RX2 can hang on, or an analysis file a hung player left behind.";
+        if (root.memoryCueListFixableCount > 0) {
+            text += " Seabass can repair " + (root.memoryCueListFixableCount === root.memoryCueListCount
+                                              ? (root.memoryCueListCount === 1 ? "it" : "them")
+                                              : root.memoryCueListFixableCount + " of them")
+                + ", every cue kept.";
+        }
+        return text;
+    }
+
     readonly property bool cleanupLeftoversShown: healthController.cleanupLeftoversChecked
         || healthController.cleanupLeftoverError.length > 0
     readonly property int cleanupLeftoverCount: healthController.cleanupLeftoverCount
@@ -596,6 +620,22 @@ Page {
                 ok: root.hiddenCueCount === 0
                 actionLabel: root.hiddenCueCount > 0 ? "Review cues" : ""
                 onActionRequested: root.detailRequested("hiddencues")
+            }
+
+            HealthCheckCard {
+                objectName: "memoryCueListCard"
+                visible: root.memoryCueListsShown
+                fixableCount: root.memoryCueListFixableCount
+                foundCount: root.memoryCueListCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Memory cue lists a player hangs on"
+                summary: root.memoryCueListSummary
+                running: root.scanning
+                ok: root.memoryCueListCount === 0 && healthController.legacyMemoryListError.length === 0
+                failed: healthController.legacyMemoryListError.length > 0
+                actionLabel: root.memoryCueListCount > 0 ? "Review lists" : ""
+                onActionRequested: root.detailRequested("memorycuelists")
             }
 
             HealthCheckCard {

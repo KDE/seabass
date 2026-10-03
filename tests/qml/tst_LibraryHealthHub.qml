@@ -171,6 +171,7 @@ TestCase {
             {card: "coverArtCard", section: "artwork"},
             {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
             {card: "hiddenCueCard", section: "hiddencues"},
+            {card: "memoryCueListCard", section: "memorycuelists"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);
@@ -494,7 +495,8 @@ TestCase {
         // picture is what makes "that card is out" checkable instead of a
         // feeling.
         var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
-                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard", "hiddenCueCard"];
+                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard", "hiddenCueCard",
+                     "memoryCueListCard"];
         for (var i = 0; i < names.length; ++i) {
             var card = findByObjectName(page, names[i]);
             if (card) {
@@ -738,7 +740,7 @@ TestCase {
 
         // Not "Reading cover images": this fixture keeps its covers as
         // files, so that pass has no rows (engine_artwork_test counts it).
-        const steps = ["Looking for Clean Up leftovers", "Checking cover art",
+        const steps = ["Checking memory cue lists", "Looking for Clean Up leftovers", "Checking cover art",
                        "Counting tracks the player will analyse", "Checking sample rates"];
         for (const step of steps) {
             const entry = seen[step];
@@ -752,6 +754,45 @@ TestCase {
     Component {
         id: bareControllerComponent
         LibraryConsistencyController {}
+    }
+
+    // #55. A stick with one track's memory list in the shape of 5282555e
+    // and a hung player's ANLZ0001.DAT beside it: the real check finds
+    // exactly that track, the card says so, and the repair stages from
+    // the controller. Nothing else on the fixture is reported, which is
+    // the half of the check that keeps a healthy stick quiet.
+    function test_aStaleMemoryListIsFoundByTheRealCheck() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const ids = stickFixture.rekordboxTrackIds(stick + "/PIONEER", 3);
+        compare(ids.length, 3, "the fixture has tracks");
+        const dat = stickFixture.plantStaleMemoryList(stick + "/PIONEER", ids[2]);
+        verify(dat.length > 0, "the stale list is planted on " + ids[2]);
+
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        compare(controller.errorMessage, "", "the check read everything");
+        compare(controller.legacyMemoryListError, "", "and the lists were read");
+        compare(controller.legacyMemoryListsChecked, true);
+        compare(controller.legacyMemoryListCount, 1, "the one planted track, and nothing else on the fixture");
+        compare(controller.legacyMemoryListFixableCount, 1);
+        compare(controller.legacyMemoryListDebrisCount, 1, "the ANLZ0001.DAT beside it");
+        const tracks = controller.legacyMemoryListTracks;
+        compare(tracks.length, 1);
+        verify(tracks[0].what.indexOf("says it is empty") >= 0 && tracks[0].what.indexOf("ANLZ0001.DAT") >= 0,
+               tracks[0].what);
+
+        const card = findByObjectName(page, "memoryCueListCard");
+        verify(card !== null && card.visible, "the card is on the hub");
+        compare(card.foundCount, 1);
+        compare(card.ok, false);
+
+        controller.repairLegacyMemoryLists();
+        compare(controller.legacyMemoryListFixStaged, true, "the repair stages");
+        controller.unstageLegacyMemoryListFix();
+        compare(controller.legacyMemoryListFixStaged, false);
     }
 
     // A new catalog's leg starts from nothing counted. It used to inherit
