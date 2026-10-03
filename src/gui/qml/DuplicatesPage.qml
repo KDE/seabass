@@ -23,6 +23,9 @@ Page {
     // with ScanPage (see FormatToggle.qml's own comment), which does not
     // know what to do with "onelibrary" as a value.
     // Rekordbox/Engine still persist exactly as before.
+    // The suggestion this page makes before anything else: a copy of a
+    // track is a copy, and Clean Up Duplicates is the page that removes it.
+    signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
     property string localFormatOverride: ""
     readonly property string format: {
         if (root.localFormatOverride.length > 0) return root.localFormatOverride;
@@ -130,7 +133,7 @@ Page {
                     stack: root.StackView.view
                     stickLabel: root.stickLabel
                     middleLabel: "Housekeeping"
-                    title: "Match Duplicate Cues"
+                    title: "Cues on Duplicate Copies"
                     backEnabled: !duplicatesController.writing
                     onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                     onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
@@ -161,6 +164,31 @@ Page {
             // the page is for, with it. The labels are a Flow now, which
             // wraps, and the buttons keep their natural width beside it.
             // tst_DuplicatesPage measures it at 960, 700, 520 and 380.
+            // Why this page is the second choice. Levelling cues across
+            // copies keeps the copies; a DJ who wants one copy with its
+            // cues wants Clean Up Duplicates, and is told so here rather
+            // than after staging.
+            RowLayout {
+                objectName: "cleanupSuggestion"
+                visible: plansListView.count > 0
+                Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "These are copies of the same track. Clean Up Duplicates keeps one copy, with every cue "
+                        + "the copies hold, and removes the rest. This page keeps every copy and only levels their cues."
+                }
+                Button {
+                    objectName: "cleanUpInsteadButton"
+                    text: "Clean Up Duplicates Instead"
+                    enabled: !duplicatesController.busy && !duplicatesController.writing
+                    onClicked: editHost.requestLeave(() => root.cleanupRequested(root.stickLabel, root.rekordboxPath,
+                                                                                 root.enginePath))
+                }
+            }
+
             RowLayout {
                 id: summaryRow
                 objectName: "summaryRow"

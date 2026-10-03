@@ -1037,6 +1037,10 @@ Page {
                            ? ", " + run.artworkFilesAdded + " new cover "
                              + (run.artworkFilesAdded === 1 ? "image" : "images")
                            : "") + ".");
+            if (run.cuesAtStartLeftOut > 0) {
+                lines.push(run.cuesAtStartLeftOut + (run.cuesAtStartLeftOut === 1 ? " cue" : " cues")
+                           + " at 0:00 left out, as Preferences asks (Ignore cues at 0:00).");
+            }
             summaryDialog.show({
                 written: run.tracksAdded + run.tracksUpdated,
                 total: run.tracksSeen,

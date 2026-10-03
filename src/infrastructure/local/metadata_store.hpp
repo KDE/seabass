@@ -60,6 +60,9 @@ struct MetadataBackupSummary
     // stick. Not an error, and counted separately so the totals add up.
     int tracksWithoutIdentity = 0;
     int cuesStored = 0;
+    // Cues at 0:00 the preference ignores (domain::isJunkCue), left out of
+    // the store on the way in. Counted so the summary can say so.
+    int cuesAtStartLeftOut = 0;
     int artworkFilesAdded = 0;
     std::uint64_t artworkBytesAdded = 0;
     bool cancelled = false;

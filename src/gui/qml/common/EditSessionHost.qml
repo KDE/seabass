@@ -413,7 +413,7 @@ Item {
         case "sync": return "Sync Cue Points";
         case "library-health": return "Library Health";
         case "cleanup": return "Clean Up Duplicates";
-        case "dup": return "Match Duplicate Cues";
+        case "dup": return "Cues on Duplicate Copies";
         case "localcue": return "Local Cue Backup";
         case "addcue": return "Browse Library";
         default: return "another page";

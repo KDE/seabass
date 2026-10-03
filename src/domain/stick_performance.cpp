@@ -231,9 +231,14 @@ WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformance
 {
     WearAssessment w;
     if (check.filesRead == 0) {
+        // The check reads the files the stick holds and times each one;
+        // worn cells show in data that has sat in them. A stick with
+        // nothing on it has nothing to read, and writing filler to read
+        // back would time fresh cells, which is not the question.
         w.state = WearState::Unknown;
-        w.label = "Not checked";
-        w.summary = "Nothing was read.";
+        w.label = "Nothing to check";
+        w.summary = "The wear check reads the files on the stick, and this stick holds none. Put music on it "
+                    "first; wear shows in files that have been there a while.";
         return w;
     }
     std::ostringstream out;

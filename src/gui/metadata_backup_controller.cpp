@@ -823,6 +823,7 @@ void MetadataBackupController::onSaveFinished()
         {"tracksUnchanged", summary.tracksUnchanged},
         {"tracksWithoutIdentity", summary.tracksWithoutIdentity},
         {"cuesStored", summary.cuesStored},
+        {"cuesAtStartLeftOut", summary.cuesAtStartLeftOut},
         {"artworkFilesAdded", summary.artworkFilesAdded},
         {"artworkBytesAdded", static_cast<qint64>(summary.artworkBytesAdded)},
         {"cancelled", summary.cancelled},

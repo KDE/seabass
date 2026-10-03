@@ -38,7 +38,10 @@ Page {
     readonly property var dead: controller.deadSpace || ({})
     readonly property bool hasBackup: lastBackup.exists === true
     readonly property string blockedBy: root.conflictingSoftware.length > 0 ? root.conflictingSoftware : (controller.blockedBy || "")
-    readonly property bool canBackUp: !controller.busy && !controller.pendingCancelDecision && root.blockedBy.length === 0
+    // Not while the page is still working out what changed since the last
+    // backup: the plan Back Up Now would run is that answer.
+    readonly property bool canBackUp: !controller.busy && !controller.previewing && !controller.pendingCancelDecision
+        && root.blockedBy.length === 0
         && since.enoughFreeSpace !== false && !(lastBackup.error && lastBackup.error.length > 0)
 
     SeabassDialog {
@@ -162,7 +165,18 @@ Page {
                 onBackRequested: root.StackView.view.pop()
             }
             Item { Layout.fillWidth: true }
-            BusyIndicator { running: root.controller.previewing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
+            // Said, not only spun: a 20-pixel spinner at the far end of the
+            // header went unnoticed next to a Back Up Now that did nothing.
+            RowLayout {
+                objectName: "previewBanner"
+                visible: root.controller.previewing === true
+                spacing: Theme.tightSpacing
+                BusyIndicator { running: parent.visible; implicitWidth: Theme.scaled(24); implicitHeight: Theme.scaled(24) }
+                Label {
+                    text: "Checking what has changed since the last backup"
+                    color: Theme.text
+                }
+            }
         }
     }
 

@@ -899,6 +899,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // restore -- which would put back exactly what Library Health
         // had just cleaned off.
         const std::vector<CuePoint> incomingCues = domain::withoutJunkCues(track.cues);
+        summary.cuesAtStartLeftOut += static_cast<int>(track.cues.size() - incomingCues.size());
 
         // The shared merge rule, per authored field group: a blank is
         // filled, more cues wins, otherwise the later edit wins. The

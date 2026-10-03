@@ -1520,7 +1520,20 @@ int main()
             }
         }
         assert(asideCount == 1);
-        std::cout << "case 33 (a file that is not a database is moved aside, and a clean store opens) OK\n";
+        // A memory cue at 0:00 is left out on the way in (the preference's
+    // default), and the summary says how many were.
+    {
+        MetadataStore metadata(db);
+        writeFile(stick / "Contents" / "Kalte Nacht" / "Dritte.mp3", "audio");
+        Track track = sampleTrack(stick, "Contents/Kalte Nacht/Dritte.mp3", "Dritte");
+        track.cues = {memoryCue(0.0), memoryCue(45000.0), hotCue(1, 60000.0)};
+        const auto summary = store(metadata, {track}, sourceFor(stick));
+        assert(summary.cuesStored == 2 && "the two real cues");
+        assert(summary.cuesAtStartLeftOut == 1 && "and the one at 0:00 counted as left out");
+        std::cout << "case (a cue at 0:00 is left out of the store and counted) OK\n";
+    }
+
+    std::cout << "case 33 (a file that is not a database is moved aside, and a clean store opens) OK\n";
     }
 
     return 0;

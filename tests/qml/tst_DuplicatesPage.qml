@@ -70,6 +70,8 @@ TestCase {
         return findWhere(page.header, (item) => item.text === "Stage All Fixable" && item.clicked !== undefined);
     }
 
+    Component { id: spyComponent; SignalSpy {} }
+
     function makePage(pageWidth) {
         const page = createTemporaryObject(pageComponent, testCase, {width: pageWidth, height: 660});
         verify(page, "page did not instantiate");
@@ -80,6 +82,18 @@ TestCase {
                   5000, "the scan never reported the fixture's duplicate group");
         waitForRendering(page);
         return page;
+    }
+
+    // The page says what it is second to: a copy is a copy, and Clean Up
+    // Duplicates is the page that removes it. The button goes there.
+    function test_thePageSuggestsCleanUpInstead() {
+        const page = makePage(960);
+        const suggestion = findChild(page, "cleanupSuggestion");
+        verify(suggestion !== null && suggestion.visible, "said once there are groups");
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cleanupRequested"});
+        findChild(page, "cleanUpInsteadButton").clicked();
+        tryCompare(spy, "count", 1, 2000);
+        compare(spy.signalArguments[0][1], page.rekordboxPath);
     }
 
     function test_theActionRowStaysInsideThePage_data() {
