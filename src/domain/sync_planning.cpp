@@ -46,14 +46,44 @@ bool samePosition(const CuePoint &a, const CuePoint &b, double toleranceMs)
     return std::abs(a.positionMs - b.positionMs) < toleranceMs;
 }
 
-// Every cue in `sub` has one at the same position in `super`. True for an
+// The same memory cue: a cue against a cue or a loop against a loop, at
+// the same place.
+bool samePlace(const CuePoint &a, const CuePoint &b, double toleranceMs)
+{
+    return a.isLoop == b.isLoop && samePosition(a, b, toleranceMs);
+}
+
+// Every cue in `sub` has one at the same place in `super`. True for an
 // empty `sub`.
 bool allWithin(const std::vector<CuePoint> &sub, const std::vector<CuePoint> &super, double toleranceMs)
 {
     return std::all_of(sub.begin(), sub.end(), [&](const CuePoint &cue) {
         return std::any_of(super.begin(), super.end(),
-                           [&](const CuePoint &other) { return samePosition(cue, other, toleranceMs); });
+                           [&](const CuePoint &other) { return samePlace(cue, other, toleranceMs); });
     });
+}
+
+// Two lists of memory cues hold the same cues: as many of each kind, each
+// at the same place. cueSetsEqual() does not tell a loop from a cue.
+bool memorySetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    const auto sorted = [](std::vector<CuePoint> cues) {
+        std::sort(cues.begin(), cues.end(), [](const CuePoint &x, const CuePoint &y) {
+            return x.isLoop != y.isLoop ? !x.isLoop : x.positionMs < y.positionMs;
+        });
+        return cues;
+    };
+    const std::vector<CuePoint> x = sorted(a);
+    const std::vector<CuePoint> y = sorted(b);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        if (!samePlace(x[i], y[i], toleranceMs)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // True when every cue in `sub` has one at the same position in `super`,
@@ -71,14 +101,14 @@ bool positionsCoveredBy(const std::vector<CuePoint> &sub, const std::vector<CueP
 }
 
 // Every cue in `a`, then every cue in `b` not already at one of those
-// positions.
+// places.
 std::vector<CuePoint> unionByPosition(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
                                       double toleranceMs)
 {
     std::vector<CuePoint> out = a;
     for (const CuePoint &cue : b) {
         const bool present = std::any_of(out.begin(), out.end(), [&](const CuePoint &existing) {
-            return samePosition(cue, existing, toleranceMs);
+            return samePlace(cue, existing, toleranceMs);
         });
         if (!present) {
             out.push_back(cue);
@@ -141,52 +171,62 @@ struct HotDifference
 HotDifference compareHotCues(const std::vector<CuePoint> &hotA, const std::vector<CuePoint> &hotB,
                              double toleranceMs)
 {
+    // Per pad and side: its cues and its loops, each in time order.
     struct Pad
     {
-        const CuePoint *cue = nullptr;
-        const CuePoint *loop = nullptr;
-        int count = 0;
+        std::vector<const CuePoint *> cues;
+        std::vector<const CuePoint *> loops;
+        std::size_t count() const { return cues.size() + loops.size(); }
     };
     std::map<int, std::pair<Pad, Pad>> byPad;
-    const auto add = [](Pad &pad, const CuePoint &cue) {
-        const CuePoint *&slot = cue.isLoop ? pad.loop : pad.cue;
-        if (slot == nullptr) {
-            slot = &cue;
-        }
-        pad.count++;
-    };
     for (const CuePoint &cue : hotA) {
-        add(byPad[cue.hotCueNumber].first, cue);
+        Pad &pad = byPad[cue.hotCueNumber].first;
+        (cue.isLoop ? pad.loops : pad.cues).push_back(&cue);
     }
     for (const CuePoint &cue : hotB) {
-        add(byPad[cue.hotCueNumber].second, cue);
+        Pad &pad = byPad[cue.hotCueNumber].second;
+        (cue.isLoop ? pad.loops : pad.cues).push_back(&cue);
     }
+    const auto byPosition = [](const CuePoint *x, const CuePoint *y) { return x->positionMs < y->positionMs; };
     HotDifference result;
-    for (const auto &[pad, sides] : byPad) {
-        const Pad &a = sides.first;
-        const Pad &b = sides.second;
-        const bool aHas = a.count > 0;
-        const bool bHas = b.count > 0;
+    for (auto &[pad, sides] : byPad) {
+        Pad &a = sides.first;
+        Pad &b = sides.second;
+        const bool aHas = a.count() > 0;
+        const bool bHas = b.count() > 0;
         // A pad that is one thing on each side, a loop here and a cue there.
-        if (a.count == 1 && b.count == 1 && (a.loop != nullptr) != (b.loop != nullptr)) {
-            result.loopVsCue.push_back({pad, a.loop ? a.loop : a.cue, b.loop ? b.loop : b.cue, aHas, bHas});
+        if (a.count() == 1 && b.count() == 1 && a.loops.size() != b.loops.size()) {
+            result.loopVsCue.push_back({pad, a.loops.empty() ? a.cues.front() : a.loops.front(),
+                                        b.loops.empty() ? b.cues.front() : b.loops.front(), aHas, bHas});
             continue;
         }
-        // Else the cue against the cue and the loop against the loop; the
-        // first difference stands for the pad.
-        for (const auto &[x, y] : {std::pair{a.cue, b.cue}, std::pair{a.loop, b.loop}}) {
-            if (x == nullptr && y == nullptr) {
-                continue;
-            }
-            const PadPair pair{pad, x, y, aHas, bHas};
-            if (x == nullptr || y == nullptr) {
-                result.differ.push_back(pair);
+        // Else cues against cues and loops against loops, in time order;
+        // the first difference stands for the pad. One of each per pad is
+        // the rule, but a list with more is compared in full.
+        bool differs = false;
+        for (const bool loops : {false, true}) {
+            if (differs) {
                 break;
             }
-            const double distance = std::abs(x->positionMs - y->positionMs);
-            if (distance >= toleranceMs) {
-                (distance < DifferentCueMs ? result.apart : result.differ).push_back(pair);
-                break;
+            std::vector<const CuePoint *> &x = loops ? a.loops : a.cues;
+            std::vector<const CuePoint *> &y = loops ? b.loops : b.cues;
+            std::sort(x.begin(), x.end(), byPosition);
+            std::sort(y.begin(), y.end(), byPosition);
+            for (std::size_t i = 0; i < std::max(x.size(), y.size()); ++i) {
+                const CuePoint *onA = i < x.size() ? x[i] : nullptr;
+                const CuePoint *onB = i < y.size() ? y[i] : nullptr;
+                const PadPair pair{pad, onA, onB, aHas, bHas};
+                if (onA == nullptr || onB == nullptr) {
+                    result.differ.push_back(pair);
+                    differs = true;
+                    break;
+                }
+                const double distance = std::abs(onA->positionMs - onB->positionMs);
+                if (distance >= toleranceMs) {
+                    (distance < DifferentCueMs ? result.apart : result.differ).push_back(pair);
+                    differs = true;
+                    break;
+                }
             }
         }
     }
@@ -225,7 +265,13 @@ std::pair<SyncPlan::Reason, std::string> describeHotDifference(const HotDifferen
         const std::string &loopSide = first.a->isLoop ? labelA : labelB;
         const std::string &cueSide = first.a->isLoop ? labelB : labelA;
         std::string text = "Pad " + std::to_string(first.pad) + " is a loop on " + loopSide + " and a cue on "
-            + cueSide + " (" + formatCuePosition(first.a->positionMs) + ")";
+            + cueSide + " (";
+        if (std::llround(first.a->positionMs) == std::llround(first.b->positionMs)) {
+            text += formatCuePosition(first.a->positionMs) + ")";
+        } else {
+            text += labelA + " " + formatCuePosition(first.a->positionMs) + ", " + labelB + " "
+                + formatCuePosition(first.b->positionMs) + ")";
+        }
         if (total > 1) {
             text += ", and " + pluralPads(total - 1);
         }
@@ -504,7 +550,7 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
     const std::vector<CuePoint> memoryB = cuesOfKind(match.trackB.cues, CuePoint::Kind::Memory);
     const HotDifference hotDifference = compareHotCues(hotA, hotB, toleranceMs);
 
-    if (!hotDifference.any() && cueSetsEqual(memoryA, memoryB, toleranceMs)) {
+    if (!hotDifference.any() && memorySetsEqual(memoryA, memoryB, toleranceMs)) {
         result.kind = SyncPlan::Kind::AlreadyConsistent;
         return result;
     }
@@ -586,6 +632,12 @@ std::string formatCuePosition(double positionMs)
     return text;
 }
 
+bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
+{
+    return !compareHotCues(cuesOfKind(a, CuePoint::Kind::Hot), cuesOfKind(b, CuePoint::Kind::Hot), toleranceMs).any()
+        && memorySetsEqual(cuesOfKind(a, CuePoint::Kind::Memory), cuesOfKind(b, CuePoint::Kind::Memory), toleranceMs);
+}
+
 std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut)
 {
     if (cuesLeftOut.empty()) {
@@ -631,7 +683,13 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
         const bool decidedOtherwise = wide.kind != result.kind || wide.direction != result.direction
             || wide.needsChoice != result.needsChoice || wide.reason != result.reason;
         if (decidedOtherwise) {
-            makeChoice(result, SyncPlan::Reason::TempoUnsure, describeTempoUnsure(match.trackA, match.trackB));
+            // A choice already had its own reason: kept in front, so the DJ
+            // still sees which pad and how far.
+            std::string text = describeTempoUnsure(match.trackA, match.trackB);
+            if (!result.reasonText.empty()) {
+                text = result.reasonText + ". " + text;
+            }
+            makeChoice(result, SyncPlan::Reason::TempoUnsure, std::move(text));
         }
     }
     return result;

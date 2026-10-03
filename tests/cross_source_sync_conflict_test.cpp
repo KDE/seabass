@@ -115,6 +115,20 @@ int main()
         std::cout << "case b (genuine disagreement becomes a conflict, correct assignment) OK\n";
     }
 
+    // A loop and a cue at one pad's start are two different proposals,
+    // though cueSetsEqual() would call them the same.
+    {
+        Track oneLib = makeTrack("onelibrary", "ol1", targetPath, {});
+        Track rb = makeTrack("rekordbox", "rb1", targetPath, {});
+        Track engine = makeTrack("engine", "en1", targetPath, {});
+        CuePoint loop = hot(6, 3352.0);
+        loop.isLoop = true;
+        auto split = CrossSourceConflictDetector::detect(
+            {makePlan(rb, oneLib, {hot(6, 3352.0)}), makePlan(engine, oneLib, {loop})});
+        assert(split.conflicts.size() == 1 && split.nonConflicting.empty());
+        std::cout << "case b2 (a loop against a cue is a disagreement) OK\n";
+    }
+
     // Case c: a target appearing in only one pair's actionable plans
     // passes through untouched.
     {

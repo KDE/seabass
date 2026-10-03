@@ -67,9 +67,15 @@ struct CueTolerance
     double unsureUpToMs = CueFallbackToleranceMs;
 };
 
+// A tempo a track can have. Outside this a reader misread or a
+// placeholder is likelier than music, and half a beat of it would be no
+// tolerance at all (a second at 30 BPM, the old one, is the most allowed).
+constexpr double MinimumTempoBpm = 30.0;
+constexpr double MaximumTempoBpm = 300.0;
+
 inline bool isKnownTempo(double bpm)
 {
-    return std::isfinite(bpm) && bpm > 0.0;
+    return std::isfinite(bpm) && bpm >= MinimumTempoBpm && bpm <= MaximumTempoBpm;
 }
 
 inline CueTolerance cueToleranceFor(double bpmA, double bpmB)

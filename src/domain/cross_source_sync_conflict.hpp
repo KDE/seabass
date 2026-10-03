@@ -84,8 +84,8 @@ public:
     // track" here too.
     //
     // A group of size 1 passes through untouched. A group of size 2
-    // whose two proposals agree (domain::cueSetsEqual -- the same
-    // order/comment/color-tolerant comparison SyncPlanner itself already
+    // whose two proposals agree (domain::sameCuesForSync -- the same
+    // order/comment/color-tolerant comparison SyncPlanner itself
     // uses to avoid manufacturing a mismatch that could never resolve)
     // collapses to a single plan, since either proposal produces the
     // same result. A group of size 2 that genuinely disagrees becomes a
