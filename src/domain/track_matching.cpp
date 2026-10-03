@@ -33,6 +33,10 @@ std::vector<CuePoint> sortedCues(std::vector<CuePoint> cues)
         if (a.hotCueNumber != b.hotCueNumber) {
             return a.hotCueNumber < b.hotCueNumber;
         }
+        // Cues before loops, so a loop is paired with a loop.
+        if (a.isLoop != b.isLoop) {
+            return b.isLoop;
+        }
         return a.positionMs < b.positionMs;
     });
     return cues;
@@ -201,10 +205,12 @@ std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const 
             // Engine reads hot cues and hot loops into the same slot
             // numbers, so the slot alone would let a loop's colour land
             // on the cue that shares its number.
-            const bool sameCue = had.isLoop == cue.isLoop
-                && (cue.kind == CuePoint::Kind::Hot
-                        ? had.hotCueNumber == cue.hotCueNumber
-                        : std::abs(had.positionMs - cue.positionMs) < toleranceMs);
+            //
+            // A memory cue is its place: a loop whose out point moved is
+            // another loop, and takes no colour from this one.
+            const bool sameCue = cue.kind == CuePoint::Kind::Hot
+                ? had.isLoop == cue.isLoop && had.hotCueNumber == cue.hotCueNumber
+                : sameCuePlace(had, cue, toleranceMs);
             if (sameCue) {
                 cue.color = had.color;
                 break;
@@ -245,10 +251,15 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
         // Colours are still carried, just never compared: a cue written
         // for any other reason keeps or takes its colour
         // (keepExistingColours, and RekordboxCueWriter encoding a new one).
+        //
+        // A loop is only ever the same as a loop, and only when it ends
+        // where the other does: a loop and a cue on one pad, or two loops
+        // whose out points differ, used to pass here as one cue, so a
+        // backup, a restore or a merge kept one and dropped the other.
         if (x.kind != y.kind || x.hotCueNumber != y.hotCueNumber) {
             return false;
         }
-        if (std::abs(x.positionMs - y.positionMs) >= toleranceMs) {
+        if (!sameCuePlace(x, y, toleranceMs)) {
             return false;
         }
     }

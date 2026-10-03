@@ -65,9 +65,11 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
 
 // True if two cue sets are the same, ignoring order and allowing a small
 // position tolerance (cross-format conversions round, see
-// domain/cue_tolerance.hpp). Slot, kind and position decide; comment and
-// colour never do. Sync Cue Points passes half a beat of the track's
-// tempo; callers without a tempo get the fallback.
+// domain/cue_tolerance.hpp). Slot, kind and place decide (sameCuePlace: a
+// loop only equals a loop with the same in and out point); comment and
+// colour never do. Pass cueToleranceMsFor() of the two tracks' tempos:
+// half a beat when they agree on one, the fallback otherwise, which is
+// also the default for a caller with no tempo at all.
 bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
                   double toleranceMs = CueFallbackToleranceMs);
 
@@ -81,8 +83,8 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
 // one grey" -- it is silence, and silence must not overwrite what is
 // already there. A cue that does carry a colour brings it with it.
 //
-// Matched the way cueSetsEqual matches: hot cues by slot, memory cues by
-// position within the same tolerance.
+// Matched the way cueSetsEqual matches: hot cues by slot (a loop with a
+// loop), memory cues by place within the same tolerance (sameCuePlace).
 std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming,
                                           const std::vector<CuePoint> &existing,
                                           double toleranceMs = CueFallbackToleranceMs);

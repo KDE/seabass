@@ -6,11 +6,13 @@
 
 #include <cmath>
 
+#include "domain/cue_tolerance.hpp"
+
 namespace seabass::domain
 {
 
 std::vector<CuePoint> LocalRestorePlanner::mergeCues(const std::vector<CuePoint> &existing,
-                                                       const std::vector<CuePoint> &incoming)
+                                                       const std::vector<CuePoint> &incoming, double toleranceMs)
 {
     std::vector<CuePoint> merged = existing;
 
@@ -29,8 +31,14 @@ std::vector<CuePoint> LocalRestorePlanner::mergeCues(const std::vector<CuePoint>
         } else {
             bool nearExisting = false;
             for (const auto &have : existing) {
-                if (have.kind == CuePoint::Kind::Memory &&
-                    std::abs(have.positionMs - candidate.positionMs) <= PositionToleranceMs) {
+                // Inclusive, as it always was here. A loop is only ever
+                // the same as a loop with the same in and out point: a
+                // memory loop at a cue's place used to be dropped as that
+                // cue.
+                const bool samePlace = have.isLoop == candidate.isLoop
+                    && std::abs(have.positionMs - candidate.positionMs) <= toleranceMs
+                    && (!have.isLoop || std::abs(have.loopEndMs - candidate.loopEndMs) <= toleranceMs);
+                if (have.kind == CuePoint::Kind::Memory && samePlace) {
                     nearExisting = true;
                     break;
                 }
@@ -65,7 +73,8 @@ std::vector<RestoreCandidate> LocalRestorePlanner::plan(
             std::lround(stickTrack->durationSeconds) != std::lround(localTrack->durationSeconds)) {
             continue;
         }
-        auto merged = mergeCues(stickTrack->cues, localTrack->cues);
+        auto merged = mergeCues(stickTrack->cues, localTrack->cues,
+                                cueToleranceMsFor(stickTrack->bpm, localTrack->bpm));
         if (merged.size() > stickTrack->cues.size()) {
             candidates.push_back({*stickTrack, *localTrack, std::move(merged)});
         }

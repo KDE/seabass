@@ -337,5 +337,58 @@ int main()
     }
 
     std::cout << "all cases passed\n";
+    // A loop is only ever the same as a loop, with the same in AND out
+    // point, the way Sync compares (domain::sameCuePlace). cueSetsEqual
+    // took a loop on pad 2 and a cue at its start for one cue, and a loop
+    // whose out point moved for the same loop, so a backup, a restore or a
+    // merge kept one and dropped the other.
+    {
+        const CuePoint cue{CuePoint::Kind::Hot, 2, 23000.0, "", ""};
+        const CuePoint loop{CuePoint::Kind::Hot, 2, 23000.0, "", "", true, 27000.0};
+        const CuePoint longerLoop{CuePoint::Kind::Hot, 2, 23000.0, "", "", true, 31000.0};
+        const CuePoint sameLoopRounded{CuePoint::Kind::Hot, 2, 23001.0, "", "", true, 27052.0};
+        assert(!cueSetsEqual({cue}, {loop}) && "a loop is not the cue at its start");
+        assert(!cueSetsEqual({loop}, {cue}) && "either way round");
+        assert(!cueSetsEqual({loop}, {longerLoop}) && "a loop whose out point moved is another loop");
+        assert(cueSetsEqual({loop}, {sameLoopRounded}) && "the measured roundings still hold, at both ends");
+
+        const CuePoint memoryCue{CuePoint::Kind::Memory, 0, 52583.0, "", ""};
+        const CuePoint memoryLoop{CuePoint::Kind::Memory, 0, 52583.0, "", "", true, 60000.0};
+        assert(!cueSetsEqual({memoryCue}, {memoryLoop}) && "a memory loop is not a memory cue either");
+        // Two cues and a loop on each side, sorted so a loop pairs with
+        // a loop whatever the order.
+        assert(cueSetsEqual({memoryLoop, memoryCue}, {memoryCue, memoryLoop}));
+        std::cout << "case 5c (cueSetsEqual: a loop equals only a loop with the same in and out) OK\n";
+    }
+
+    // Half a beat when both tracks agree on a tempo, the fallback when not
+    // (cueToleranceMsFor), the way Sync chooses.
+    {
+        assert(cueToleranceMsFor(128.0, 128.4) == halfBeatMs(128.2));
+        assert(cueToleranceMsFor(128.0, 0.0) == CueFallbackToleranceMs && "one side without a tempo");
+        assert(cueToleranceMsFor(128.0, 140.0) == CueFallbackToleranceMs && "two tempos");
+        const CuePoint a{CuePoint::Kind::Hot, 1, 1000.0, "", ""};
+        const CuePoint b{CuePoint::Kind::Hot, 1, 1100.0, "", ""};
+        assert(cueSetsEqual({a}, {b}, cueToleranceMsFor(128.0, 128.0)) && "100 ms is within half a beat at 128");
+        assert(!cueSetsEqual({a}, {b}, cueToleranceMsFor(0.0, 0.0)) && "and beyond the 60 ms fallback");
+        std::cout << "case 5d (tempo-aware tolerance for the comparisons outside Sync) OK\n";
+    }
+
+    // keepExistingColours: a memory loop whose out point moved is another
+    // loop, and takes no colour from this one.
+    {
+        const std::vector<CuePoint> existing = {
+            CuePoint{CuePoint::Kind::Memory, 0, 7000.0, "#0000FF", "", true, 9000.0},
+        };
+        const std::vector<CuePoint> incoming = {
+            CuePoint{CuePoint::Kind::Memory, 0, 7000.0, "", "", true, 12000.0},
+            CuePoint{CuePoint::Kind::Memory, 0, 7000.0, "", "", true, 9001.0},
+        };
+        const auto kept = keepExistingColours(incoming, existing);
+        assert(kept[0].color.empty() && "another loop: no colour carried");
+        assert(kept[1].color == "#0000FF" && "the same loop: its colour carried");
+        std::cout << "case 5e (keepExistingColours: a loop is its in and out point) OK\n";
+    }
+
     return 0;
 }

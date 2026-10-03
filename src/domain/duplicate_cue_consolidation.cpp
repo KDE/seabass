@@ -257,7 +257,10 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
     }
 
     for (size_t i = 1; i < withCues.size(); ++i) {
-        if (!cueSetsEqual(withCues[0]->cues, withCues[i]->cues)) {
+        // Half a beat when the two copies agree on a tempo, else the
+        // fallback; a loop only ever equals a loop.
+        if (!cueSetsEqual(withCues[0]->cues, withCues[i]->cues,
+                          cueToleranceMsFor(withCues[0]->bpm, withCues[i]->bpm))) {
             result.kind = ConsolidationPlan::Kind::Conflict;
             return result;
         }

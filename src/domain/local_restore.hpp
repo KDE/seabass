@@ -35,10 +35,19 @@ struct RestoreCandidate
 //   - Hot cues are keyed by slot number (1-8): a local hot cue is added
 //     only if the stick has no hot cue in that slot yet.
 //   - Memory cues have no slot number, so two are treated as "the same"
-//     cue if their positions are within PositionToleranceMs of each other;
-//     a local memory cue is added only if no existing stick memory cue is
-//     that close to it (avoids near-duplicate clutter from cues that are
-//     really the same beat, off by a little due to source rounding).
+//     cue if their positions are within the tolerance of each other, a
+//     loop only with a loop that also ends within it; a local memory cue
+//     is added only if no existing stick memory cue is the same (avoids
+//     near-duplicate clutter from cues that are really the same beat, off
+//     by a little due to source rounding). A memory loop at a plain
+//     cue's place, or a loop whose out point moved, is a cue of its own.
+//
+// plan() compares within half a beat when the stick and the backup agree
+// on the track's tempo, else within the 60 ms fallback
+// (domain::cueToleranceMsFor). mergeCues() keeps PositionToleranceMs for
+// its other callers, which fold a reader's or a catalog's own lists
+// together: rekordbox stores one cue in its two lists up to half a second
+// apart (kaitai_rekordbox_reader.cpp).
 // A candidate is only proposed when merging would actually add at least
 // one cue -- a track already carrying everything the backup has to offer
 // is left alone.
@@ -48,7 +57,8 @@ public:
     static constexpr double PositionToleranceMs = 500.0;
 
     static std::vector<CuePoint> mergeCues(const std::vector<CuePoint> &existing,
-                                            const std::vector<CuePoint> &incoming);
+                                            const std::vector<CuePoint> &incoming,
+                                            double toleranceMs = PositionToleranceMs);
 
     static std::vector<RestoreCandidate> plan(
         const std::vector<std::pair<const Track *, const Track *>> &matches);
