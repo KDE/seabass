@@ -838,27 +838,47 @@ class ControllerFixture : public QObject
 {
     Q_OBJECT
     int m_stickCounter = 0;
+    // Set to let the held repair stand-in end.
+    std::shared_ptr<std::atomic<bool>> m_repairMayFinish;
 
 public:
     using QObject::QObject;
     ~ControllerFixture() override
     {
+        finishFilesystemRepair();
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
         seabass::gui::FormatUsbController::setFormatTaskForTesting({});
     }
 
-    // The next filesystem repair succeeds, after `ms`: long enough for a
-    // test to start a scan while it runs.
-    Q_INVOKABLE void makeFilesystemRepairSucceedAfter(int ms)
+    // The next filesystem repair succeeds once finishFilesystemRepair() is
+    // called: a test starts a scan while it runs and ends it when that
+    // scan is where the test wants it. A fixed delay raced the scan's own
+    // count of the stick (#58), which on a slow machine outlasted it.
+    // Ends by itself after 30 s so a test that never finishes it cannot
+    // hang the suite.
+    Q_INVOKABLE void makeFilesystemRepairSucceedWhenFinished()
     {
+        finishFilesystemRepair();
+        auto mayFinish = std::make_shared<std::atomic<bool>>(false);
+        m_repairMayFinish = mayFinish;
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting(
-            [ms](const std::string &) -> seabass::infrastructure::media::FilesystemRepairResult {
-                std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            [mayFinish](const std::string &) -> seabass::infrastructure::media::FilesystemRepairResult {
+                const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                while (!mayFinish->load() && std::chrono::steady_clock::now() < until) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
                 seabass::infrastructure::media::FilesystemRepairResult result;
                 result.repaired = true;
                 result.message = "Repaired.";
                 return result;
             });
+    }
+    Q_INVOKABLE void finishFilesystemRepair()
+    {
+        if (m_repairMayFinish) {
+            m_repairMayFinish->store(true);
+            m_repairMayFinish.reset();
+        }
     }
 
     // The next filesystem repair throws `message` from its worker thread.
@@ -872,6 +892,7 @@ public:
     }
     Q_INVOKABLE void restoreFilesystemRepair()
     {
+        finishFilesystemRepair();
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
     }
 
