@@ -53,6 +53,12 @@ LibraryFingerprint someLibrary(bool cuesKnown)
         track.title = "Title " + std::to_string(i);
         track.artist = "Artist";
         track.durationSeconds = 200 + i;
+        // As the cue pass leaves them (#60): three of the analysis files
+        // hold cue lists that disagree. The first step's read has not
+        // compared anything yet.
+        track.analysisFile = "/PIONEER/USBANLZ/P001/" + std::to_string(i) + "/ANLZ0000.DAT";
+        using Check = seabass::domain::Track::CueListsCheck;
+        track.cueLists = !cuesKnown ? Check::NotChecked : (i < 3 ? Check::Disagree : Check::Examined);
         tracks.push_back(track);
     }
     return seabass::domain::fingerprintLibrary(tracks, cuesKnown);
@@ -234,6 +240,33 @@ void forgetCancelsTheCuesStep(const fs::path &root)
     std::cout << "forget() cancels a running Cues step (" << elapsed << " ms to idle) OK\n";
 }
 
+// #60: the stick card's "N cue lists disagree" comes from the tracks the
+// cue pass read, counted with the fingerprint, and only once the cues are
+// known: the first step's advice says nothing about them.
+void cueListsReachTheStickCard(const fs::path &root)
+{
+    FakeReader fake;
+    BackupAdvisorController controller;
+    wire(controller, fake);
+    const Stick a = makeStick(root, "cue_lists_a");
+    const QString aCues = FakeReader::key(a.pioneer, FingerprintPass::Cues);
+    fake.held[aCues] = true;
+    controller.assess(QStringLiteral("A"), a.mountPoint, a.pioneer, QString());
+    QElapsedTimer timer;
+    timer.start();
+    while (!fake.hasEntered(aCues)) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        assert(timer.elapsed() < 10000 && "the Cues step started");
+    }
+    const QVariantMap first = controller.advice().value(a.mountPoint).toMap();
+    assert(first.value(QStringLiteral("cueListsText")).toString().isEmpty() && "nothing said before the cue pass");
+    fake.release(aCues);
+    waitUntilIdle(controller);
+    const QVariantMap after = controller.advice().value(a.mountPoint).toMap();
+    assert(after.value(QStringLiteral("cueListsText")).toString() == QStringLiteral("3 cue lists disagree"));
+    std::cout << "the stick card's cue list count arrives with the cue pass OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -245,6 +278,7 @@ int main(int argc, char **argv)
 
     forgetWhileFactsQueuedOrRunning(root);
     forgetCancelsTheCuesStep(root);
+    cueListsReachTheStickCard(root);
 
     seabass::gui::LibraryCatalogCache::instance().waitUntilPrefetchIdle();
     fs::remove_all(root);

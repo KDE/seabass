@@ -407,6 +407,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/cue_list_check.cpp
     src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cleanup_writer.cpp
@@ -578,6 +579,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/cue_list_check.cpp
     src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
@@ -1995,10 +1997,19 @@ target_include_directories(legacy_memory_list_audit_test PRIVATE src tests)
 add_test(NAME legacy_memory_list_audit_test COMMAND legacy_memory_list_audit_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
+# Also reads the planted files the way the readers' cue pass does
+# (readAnalysisFileCues), whose count the stick summary shows, so it lists
+# the reader's sources as cue_color_normalization_test does.
 add_executable(cue_list_health_test
     tests/cue_list_health_test.cpp
+    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
+    src/infrastructure/rekordbox/anlz_byte_source.cpp
+    src/infrastructure/rekordbox/anlz_source_for_root.cpp
+    src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/stick_backup/zip64_reader.cpp
+    src/infrastructure/stick_backup/zip_format.cpp
 )
-target_link_libraries(cue_list_health_test PRIVATE seabass_core_testing)
+target_link_libraries(cue_list_health_test PRIVATE seabass_core_testing kaitai_cpp_stl_runtime SQLite::SQLite3)
 target_include_directories(cue_list_health_test PRIVATE src tests)
 add_test(NAME cue_list_health_test COMMAND cue_list_health_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
@@ -2195,12 +2206,16 @@ seabass_cli_test(cli_no_command EXIT 1 ARGS --verbose EXPECT "Usage")
 seabass_cli_test(cli_unknown_command EXIT 1 ARGS frobnicate EXPECT "unknown command: frobnicate" "Usage")
 seabass_cli_test(cli_unknown_option EXIT 1 ARGS scan --bogus EXPECT "unknown option: --bogus")
 seabass_cli_test(cli_option_missing_value EXIT 1 ARGS scan --track EXPECT "--track requires a name to search for")
+# The summary counts the analysis files whose legacy and modern cue lists
+# disagree (#60), the fixture's 203 that cue_list_health_test's Cue lists
+# check counts too. Engine has no analysis files and says nothing.
 seabass_cli_test(cli_scan_rekordbox EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox}
-    EXPECT ${_cli_rekordbox_counts} "\\n9b55b1 Track \\(Artist 228\\) .503s."
+    EXPECT ${_cli_rekordbox_counts} "total cues:       317\\n  203 cue lists disagree\\n"
+           "\\n9b55b1 Track \\(Artist 228\\) .503s."
     FORBID "\\nengine\\n" "duplicate")
 seabass_cli_test(cli_scan_engine EXIT 0 ARGS scan --engine ${_cli_engine}
     EXPECT ${_cli_engine_counts} "\\n8f6acc Track \\(Artist 001\\) .332s." "1 warning\\(s\\) hidden"
-    FORBID "\\nrekordbox\\n" "duplicate")
+    FORBID "\\nrekordbox\\n" "duplicate" "cue list")
 # Verbose shows what the default hides: each track's id and file, and the
 # warning the Engine reader raised. No duplicate groups in this fixture.
 seabass_cli_test(cli_scan_verbose EXIT 0 ARGS scan --verbose --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}

@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "gui/library_catalog_cache.hpp"
+#include "domain/cue_list_count.hpp"
 #include "gui/library_fingerprint_reader.hpp"
 #include "gui/future_result.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
@@ -444,6 +445,13 @@ void BackupAdvisorController::recomputeAdvice()
         map["updateSource"] = sourceToVariant(result.updateSource);
         map["diverged"] = result.diverged;
         map["cuesPending"] = cuesPendingFor(input, result);
+        // #60, for the stick card: the analysis files whose legacy and
+        // modern cue lists disagree, counted from the tracks the cue pass
+        // just read (LibraryFingerprint::cueLists). Empty until the cues
+        // are known, and when there is nothing to say.
+        map["cueListsText"] = facts.fingerprint && facts.fingerprint->cuesKnown
+            ? QString::fromStdString(domain::describeCueListCount(facts.fingerprint->cueLists))
+            : QString();
         advice[it.key()] = map;
     }
     m_advice = std::move(advice);

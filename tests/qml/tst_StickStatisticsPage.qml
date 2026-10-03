@@ -169,6 +169,28 @@ TestCase {
         compare(pie.withoutCues, 327);
     }
 
+    // #60: the analysis files whose legacy and modern cue lists disagree,
+    // worded by the controller (domain::describeCueListCount): said once
+    // every file was examined, and how many could not be read otherwise.
+    function test_cueListsNoteSaysHowManyDisagree() {
+        const page = makePage(testCase.rekordboxCoverage);
+        const note = findOne(page, "cueListsNote");
+        compare(note.visible, false, "nothing counted: no line");
+
+        const withCount = Object.assign({}, page.controller.rekordboxStats,
+                                        {cueListsText: "3 cue lists disagree", cueListsDisagree: 3});
+        page.controller.rekordboxStats = withCount;
+        compare(note.visible, true);
+        compare(note.text, "3 cue lists disagree");
+        verify(Qt.colorEqual(note.color, Theme.warnText), "a disagreement in the warning colour");
+
+        const agreeing = Object.assign({}, withCount,
+                                       {cueListsText: "Cue lists agree in all 1240 analysis files", cueListsDisagree: 0});
+        page.controller.rekordboxStats = agreeing;
+        compare(note.text, "Cue lists agree in all 1240 analysis files");
+        verify(!Qt.colorEqual(note.color, Theme.warnText), "agreement is not a warning");
+    }
+
     // At full width and at one narrow enough that the legend's
     // explanation wraps, which makes the legend taller than the figures.
     function test_pieIsAsTallAsTheFigures_data() {

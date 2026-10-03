@@ -120,7 +120,7 @@ void OneLibraryReader::readAnalysis(std::vector<Track> &tracks, application::Pro
             // analysed the track) means no cues, which is also what a
             // player has to go on.
             try {
-                auto cues = rekordbox::readAnalysisFileCues(*source, track.analysisFile);
+                auto cues = rekordbox::readAnalysisFileCues(*source, track.analysisFile, &track.cueLists);
                 if (!cues) {
                     // Said, not passed over: the row names a file that is
                     // not there, so no player has its cues either.

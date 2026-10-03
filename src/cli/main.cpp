@@ -35,6 +35,7 @@
 #include "application/use_cases/sync_libraries.hpp"
 #include "cli/console.hpp"
 #include "cli/terminal_progress_reporter.hpp"
+#include "domain/cue_list_count.hpp"
 #include "domain/cross_source_sync_conflict.hpp"
 #include "domain/fuzzy_matcher.hpp"
 #include "domain/track_queries.hpp"
@@ -336,6 +337,14 @@ void printReport(const std::string &heading, const std::vector<Track> &tracks, c
     Console::info("  tracks:           " + std::to_string(tracks.size()));
     Console::info("  tracks with cues: " + std::to_string(tracksWithCues));
     Console::info("  total cues:       " + std::to_string(totalCues));
+    // #60: the analysis files whose legacy cue lists (what an XDJ-RX2
+    // shows) disagree with the modern ones, as the cue pass found them.
+    // Said only once every file was examined; otherwise how many could
+    // not be read. Nothing for a catalog without analysis files.
+    const std::string cueLists = seabass::domain::describeCueListCount(seabass::domain::countCueLists(tracks), true);
+    if (!cueLists.empty()) {
+        Console::info("  " + cueLists);
+    }
 
     if (!options.trackFilter && !options.needsCues) {
         int shown = 0;

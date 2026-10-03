@@ -59,6 +59,12 @@ Rectangle {
     readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
     readonly property bool hasOneLibrary: root.hasRow && root.row.hasOneLibrary === true
     readonly property bool syncNeeded: root.hasRow && root.row.syncNeeded === true
+    // #60: "3 cue lists disagree" once the cue pass has examined every
+    // analysis file, "2 analysis files could not be read" when it could
+    // not; empty otherwise. The backup advisor counts it from the tracks
+    // the cue pass read (BackupAdvisorController, advice.cueListsText).
+    readonly property string cueListsText: root.advice && root.advice.cueListsText
+        ? String(root.advice.cueListsText) : ""
     readonly property bool isSdCard: root.hasRow && root.row.isSdCard === true
     readonly property bool isFolder: root.hasRow && root.row.isFolder === true
     readonly property bool safeToUnplug: root.hasRow && root.row.safeToUnplug === true
@@ -235,6 +241,16 @@ Rectangle {
                                 visible: root.mounted && root.hasEngine
                                 label: "Engine"
                                 badgeColor: Theme.accent
+                            }
+                            StatusBadge {
+                                objectName: "cueListsBadge"
+                                visible: root.mounted && root.cueListsText.length > 0
+                                label: root.cueListsText
+                                badgeColor: Theme.warnIcon
+                                tooltipText: "Analysis files whose legacy cue lists, the ones an XDJ-RX2 or a "
+                                    + "CDJ-3000X shows, differ from the modern lists Seabass reads. A sync would "
+                                    + "write what Seabass shows. Library Health's Cue lists check names them "
+                                    + "and repairs them."
                             }
                             StatusBadge {
                                 objectName: "syncNeededBadge"

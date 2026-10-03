@@ -193,6 +193,9 @@ LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks, bool cue
     fingerprint.cueHashes = bottomK(std::move(cueHashes));
     fingerprint.playlistHashes = bottomK(std::move(playlistHashes));
     fingerprint.cuesKnown = cuesKnown;
+    if (cuesKnown) {
+        fingerprint.cueLists = countCueLists(tracks);
+    }
     return fingerprint;
 }
 
