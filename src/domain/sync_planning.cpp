@@ -53,37 +53,52 @@ bool samePlace(const CuePoint &a, const CuePoint &b, double toleranceMs)
     return a.isLoop == b.isLoop && samePosition(a, b, toleranceMs);
 }
 
+// How a cue in one list finds its counterpart in another. Engine holds a
+// memory cue twice over (a pad and the cue point) and drops one of two
+// memory cues closer than the tolerance, so there one cue may stand for
+// several. Between two catalogs that both hold memory cues each cue is its
+// own, and two cues half a beat apart are two cues to carry.
+enum class Matching { ManyToOne, OneToOne };
+
 // Every cue in `sub` has one at the same place in `super`. True for an
 // empty `sub`.
-bool allWithin(const std::vector<CuePoint> &sub, const std::vector<CuePoint> &super, double toleranceMs)
+bool allWithin(const std::vector<CuePoint> &sub, const std::vector<CuePoint> &super, double toleranceMs,
+               Matching matching = Matching::ManyToOne)
 {
-    return std::all_of(sub.begin(), sub.end(), [&](const CuePoint &cue) {
-        return std::any_of(super.begin(), super.end(),
-                           [&](const CuePoint &other) { return samePlace(cue, other, toleranceMs); });
-    });
-}
-
-// Two lists of memory cues hold the same cues: as many of each kind, each
-// at the same place. cueSetsEqual() does not tell a loop from a cue.
-bool memorySetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
-{
-    if (a.size() != b.size()) {
-        return false;
-    }
-    const auto sorted = [](std::vector<CuePoint> cues) {
-        std::sort(cues.begin(), cues.end(), [](const CuePoint &x, const CuePoint &y) {
-            return x.isLoop != y.isLoop ? !x.isLoop : x.positionMs < y.positionMs;
-        });
-        return cues;
-    };
-    const std::vector<CuePoint> x = sorted(a);
-    const std::vector<CuePoint> y = sorted(b);
-    for (std::size_t i = 0; i < x.size(); ++i) {
-        if (!samePlace(x[i], y[i], toleranceMs)) {
+    std::vector<bool> used(super.size(), false);
+    for (const CuePoint &cue : sub) {
+        bool found = false;
+        for (std::size_t i = 0; i < super.size() && !found; ++i) {
+            if ((matching == Matching::ManyToOne || !used[i]) && samePlace(cue, super[i], toleranceMs)) {
+                used[i] = true;
+                found = true;
+            }
+        }
+        if (!found) {
             return false;
         }
     }
     return true;
+}
+
+std::vector<CuePoint> loopsOrNot(const std::vector<CuePoint> &cues, bool loops)
+{
+    std::vector<CuePoint> out;
+    for (const CuePoint &cue : cues) {
+        if (cue.isLoop == loops) {
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
+// Two lists of memory cues hold the same cues: as many of each kind, each
+// at the same place. cueSetsEqual() alone does not tell a loop from a cue,
+// so it is asked about each kind apart.
+bool memorySetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
+{
+    return cueSetsEqual(loopsOrNot(a, false), loopsOrNot(b, false), toleranceMs)
+        && cueSetsEqual(loopsOrNot(a, true), loopsOrNot(b, true), toleranceMs);
 }
 
 // True when every cue in `sub` has one at the same position in `super`,
@@ -103,13 +118,18 @@ bool positionsCoveredBy(const std::vector<CuePoint> &sub, const std::vector<CueP
 // Every cue in `a`, then every cue in `b` not already at one of those
 // places.
 std::vector<CuePoint> unionByPosition(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
-                                      double toleranceMs)
+                                      double toleranceMs, Matching matching = Matching::ManyToOne)
 {
     std::vector<CuePoint> out = a;
+    std::vector<bool> used(a.size(), false);
     for (const CuePoint &cue : b) {
-        const bool present = std::any_of(out.begin(), out.end(), [&](const CuePoint &existing) {
-            return samePlace(cue, existing, toleranceMs);
-        });
+        bool present = false;
+        for (std::size_t i = 0; i < used.size() && !present; ++i) {
+            if ((matching == Matching::ManyToOne || !used[i]) && samePlace(cue, out[i], toleranceMs)) {
+                used[i] = true;
+                present = true;
+            }
+        }
         if (!present) {
             out.push_back(cue);
         }
@@ -212,15 +232,42 @@ HotDifference compareHotCues(const std::vector<CuePoint> &hotA, const std::vecto
             std::vector<const CuePoint *> &y = loops ? b.loops : b.cues;
             std::sort(x.begin(), x.end(), byPosition);
             std::sort(y.begin(), y.end(), byPosition);
-            for (std::size_t i = 0; i < std::max(x.size(), y.size()); ++i) {
-                const CuePoint *onA = i < x.size() ? x[i] : nullptr;
-                const CuePoint *onB = i < y.size() ? y[i] : nullptr;
-                const PadPair pair{pad, onA, onB, aHas, bHas};
-                if (onA == nullptr || onB == nullptr) {
-                    result.differ.push_back(pair);
-                    differs = true;
-                    break;
+            if (x.size() != y.size()) {
+                // One side has a cue more: named is a cue with no
+                // counterpart on the other side, not the neighbour it
+                // happens to share an index with.
+                std::vector<bool> usedY(y.size(), false);
+                const CuePoint *extraA = nullptr;
+                for (const CuePoint *cue : x) {
+                    bool found = false;
+                    for (std::size_t j = 0; j < y.size() && !found; ++j) {
+                        if (!usedY[j] && std::abs(cue->positionMs - y[j]->positionMs) < toleranceMs) {
+                            usedY[j] = true;
+                            found = true;
+                        }
+                    }
+                    if (!found && extraA == nullptr) {
+                        extraA = cue;
+                    }
                 }
+                const CuePoint *extraB = nullptr;
+                for (std::size_t j = 0; j < y.size() && extraB == nullptr; ++j) {
+                    if (!usedY[j]) {
+                        extraB = y[j];
+                    }
+                }
+                // The side with more cues has one left over, so at least
+                // one of the two is set.
+                result.differ.push_back(extraA != nullptr && (extraB == nullptr || extraA->positionMs <= extraB->positionMs)
+                                            ? PadPair{pad, extraA, nullptr, aHas, bHas}
+                                            : PadPair{pad, nullptr, extraB, aHas, bHas});
+                differs = true;
+                break;
+            }
+            for (std::size_t i = 0; i < x.size(); ++i) {
+                const CuePoint *onA = x[i];
+                const CuePoint *onB = y[i];
+                const PadPair pair{pad, onA, onB, aHas, bHas};
                 const double distance = std::abs(onA->positionMs - onB->positionMs);
                 if (distance >= toleranceMs) {
                     (distance < DifferentCueMs ? result.apart : result.differ).push_back(pair);
@@ -328,13 +375,24 @@ std::string describeTempoUnsure(const Track &a, const Track &b)
 {
     const bool knownA = isKnownTempo(a.bpm);
     const bool knownB = isKnownTempo(b.bpm);
+    // A side's tempo that cannot be used: none at all, or one no track has.
+    const auto unusable = [](const Track &track) {
+        const std::string label = catalogDisplayName(track.format);
+        if (std::isfinite(track.bpm) && track.bpm > 0.0) {
+            return label + "'s tempo (" + formatTempo(track.bpm) + ") is out of range";
+        }
+        return label + " has no tempo for this track";
+    };
+    const auto hasNone = [](const Track &track) { return !(std::isfinite(track.bpm) && track.bpm > 0.0); };
     std::string head;
     if (knownA && knownB) {
         head = "Tempos differ (" + formatTempo(a.bpm) + " vs " + formatTempo(b.bpm) + ")";
     } else if (knownA || knownB) {
-        head = catalogDisplayName(knownA ? b.format : a.format) + " has no tempo for this track";
-    } else {
+        head = unusable(knownA ? b : a);
+    } else if (hasNone(a) && hasNone(b)) {
         head = "Neither side has a tempo for this track";
+    } else {
+        head = unusable(a) + " and " + unusable(b);
     }
     return head + ", so cues within half a beat cannot be matched; "
         + std::to_string(static_cast<long long>(CueFallbackToleranceMs)) + " ms was used";
@@ -420,7 +478,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     std::vector<CuePoint> memoryXHeld;
     for (const CuePoint &cue : memoryX) {
         const bool leftOut = std::any_of(translation.leftOut.begin(), translation.leftOut.end(), [&](const CuePoint &out) {
-            return samePosition(out, cue, toleranceMs) && out.isLoop == cue.isLoop;
+            return samePlace(out, cue, toleranceMs);
         });
         if (!leftOut) {
             memoryXHeld.push_back(cue);
@@ -563,7 +621,7 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
     // silent rather than grey, and silence is not an instruction to erase.
     const auto writeOnto = [&](const Track &from, const Track &onto) {
         std::vector<CuePoint> cues = cuesOfKind(from.cues, CuePoint::Kind::Hot);
-        for (const CuePoint &cue : unionByPosition(memoryA, memoryB, toleranceMs)) {
+        for (const CuePoint &cue : unionByPosition(memoryA, memoryB, toleranceMs, Matching::OneToOne)) {
             cues.push_back(cue);
         }
         return keepExistingColours(std::move(cues), onto.cues, toleranceMs);
@@ -578,8 +636,8 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
         // an addition on one side or a removal on the other, and only a
         // clock could say which came last; no clock on a stick can.
         // The side written keeps its own hot cues.
-        const bool writeA = allWithin(memoryA, memoryB, toleranceMs);
-        if (writeA || allWithin(memoryB, memoryA, toleranceMs)) {
+        const bool writeA = allWithin(memoryA, memoryB, toleranceMs, Matching::OneToOne);
+        if (writeA || allWithin(memoryB, memoryA, toleranceMs, Matching::OneToOne)) {
             result.direction = writeA ? SyncPlan::Direction::ToA : SyncPlan::Direction::ToB;
             const Track &target = writeA ? match.trackA : match.trackB;
             result.cuesToApply = writeOnto(target, target);
@@ -687,7 +745,8 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
             // still sees which pad and how far.
             std::string text = describeTempoUnsure(match.trackA, match.trackB);
             if (!result.reasonText.empty()) {
-                text = result.reasonText + ". " + text;
+                const char last = result.reasonText.back();
+                text = result.reasonText + (last == '?' || last == '.' ? " " : ". ") + text;
             }
             makeChoice(result, SyncPlan::Reason::TempoUnsure, std::move(text));
         }
