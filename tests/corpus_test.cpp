@@ -1945,9 +1945,9 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         }
         // Not a plan the app ever applies. Both sides have different hot
         // cues, so the Sync page asks which side is meant and the CLI leaves
-        // the track alone (SyncPlan::hotCuesNeedChoice); applying the
+        // the track alone (SyncPlan::needsChoice); applying the
         // suggestion here would measure writes the product no longer makes.
-        if (plan.hotCuesNeedChoice) {
+        if (plan.needsChoice) {
             continue;
         }
         bool hasHot = false;
@@ -2014,7 +2014,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                            [](const auto &c) { return c.kind == domain::CuePoint::Kind::Hot; });
     };
     for (const auto &plan : plans) {
-        if (!plan.hotCuesNeedChoice && targetsEngine(plan) && carriesHot(plan) && !alreadyTaken(plan)) {
+        if (!plan.needsChoice && targetsEngine(plan) && carriesHot(plan) && !alreadyTaken(plan)) {
             withCues.push_back(plan);
             break;
         }
@@ -2023,7 +2023,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         if (withCues.size() >= Sample) {
             break;
         }
-        if (plan.cuesToApply.empty() || plan.hotCuesNeedChoice || alreadyTaken(plan)) {
+        if (plan.cuesToApply.empty() || plan.needsChoice || alreadyTaken(plan)) {
             continue;
         }
         const bool hasHot = std::any_of(plan.cuesToApply.begin(), plan.cuesToApply.end(), [](const auto &c) {

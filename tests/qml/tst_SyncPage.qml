@@ -177,6 +177,28 @@ TestCase {
         }
     }
 
+    // Every decision says why it is one, under the track, in the row's
+    // small type: the planner's own reason for the fixture's pair. A ready
+    // track has nothing to explain and shows no such line.
+    function test_aDecisionSaysWhy() {
+        const page = openPage(1100, 720);
+        const list = listOf(page);
+        const decision = list.itemAtIndex(0);
+        const note = findChild(decision, "rowNote");
+        verify(note !== null, "the decision row has no reason line");
+        verify(note.visible, "the reason line is hidden");
+        compare(note.text, "Pad 2: rekordbox 2:00.000, Engine 2:30.000; Pad 4: rekordbox 4:20.000, Engine 5:00.000; "
+                + "Pad 5: rekordbox 5:30.000, Engine empty");
+        compare(note.font.pointSize, Theme.fontSmall);
+        compare(note.maximumLineCount, 2);
+        const title = findChild(decision, "rowTitle");
+        verify(note.mapToItem(page, 0, 0).y > title.mapToItem(page, 0, 0).y, "the reason sits under the title");
+        compare(xIn(page, note), xIn(page, title), "and on the title's line");
+        compare(findChild(list.itemAtIndex(1), "rowNote").text, "Pad 2: Engine 2:20.000, rekordbox 2:12.000",
+                "named in the pair's own order, as the row lists the two sides");
+        compare(findChild(list.itemAtIndex(2), "rowNote").visible, false, "a ready track has no reason line");
+    }
+
     function test_theKeptCueIsCountedAsKept() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(2);

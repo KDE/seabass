@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "domain/cue_tolerance.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -47,8 +48,11 @@ struct EngineCueTranslation
 // A pad takes the memory cue's colour. rekordbox reports an uncoloured
 // memory cue as black ("#000000"); that is no colour, and the pad is
 // left to Engine's default rather than painted black.
+//
+// Positions compare within `toleranceMs` (domain/cue_tolerance.hpp).
 EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues,
-                                            const std::vector<CuePoint> &existing);
+                                            const std::vector<CuePoint> &existing,
+                                            double toleranceMs = CueFallbackToleranceMs);
 
 // Engine's cues read in the terms of a catalog with memory cues, `cues`
 // being that catalog's own. An Engine hot cue or loop on the same pad at
@@ -56,18 +60,36 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues,
 // place of one of its memory cues or loops is that memory cue's
 // translation and comes back as it; every other is Engine's own; the
 // main cue is a memory cue.
+//
+// Taking a pad at a memory cue's place for that memory cue's translation
+// is what Engine DJ's older rekordbox import measurably did, but only on
+// the pad that import gives it: the free pads in time order, the way
+// translateCuesForEngine() does with no existing cues. A pad at that place
+// with another number (one the catalog's own hot cue holds elsewhere, or
+// a second pad for a memory cue already under a hot cue) could as well be
+// a hot cue the DJ set there on the player. It is still read as the
+// translation, so counts stay as they were, and listed in `uncertain` for
+// the planner to ask about rather than assume.
 struct CuesFromEngine
 {
     std::vector<CuePoint> hotCues;     // Engine's own hot cues and loops
     std::vector<CuePoint> memoryCues;  // translations found on pads, as memory cues, and the main cue
+    struct Uncertain
+    {
+        CuePoint pad;     // the Engine pad
+        CuePoint memory;  // the memory cue it sits at
+    };
+    std::vector<Uncertain> uncertain;
 };
 
-CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues);
+CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues,
+                              double toleranceMs = CueFallbackToleranceMs);
 
 // cuesFromEngine() as one list, the way a page counts it: a memory cue
 // that is on a pad and is the cue point is one cue, not two. For saying
 // what a sync onto Engine does in the other side's own terms: "adds 1
 // memory cue", not "adds 1 hot cue and 1 memory cue".
-std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues);
+std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues,
+                                    double toleranceMs = CueFallbackToleranceMs);
 
 }  // namespace seabass::domain

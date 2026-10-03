@@ -24,13 +24,10 @@ namespace seabass::domain
 // a third pair independently wants to write something different to the
 // same target. See CrossSourceConflictDetector::detect().
 //
-// Deliberately distinct from SyncPlan::Kind::Conflict, which is a
-// different, already-existing concept: one pair's two sides disagreeing
-// with each other, auto-resolved by last-write-wins on file mtime (a
-// heuristic, but at least a real signal). This conflict has no such
-// signal to lean on -- two independent *sources* disagree about what a
-// third catalog should receive -- so it's surfaced for a manual pick
-// instead of guessed at.
+// Also carries one pair's own choice (samePair, from
+// SyncPlan::needsChoice), so the page lists every decision the same way.
+// Either way it is surfaced for a manual pick instead of guessed at, with
+// the reason a DJ is shown.
 struct CrossSourceSyncConflict
 {
     Track target;  // the shared target track, currently missing/behind on both proposals
@@ -50,7 +47,7 @@ struct CrossSourceSyncConflict
     bool sourceBHasJunkCue = false;
 
     // Not two catalogs disagreeing about a third, but one pair's own two
-    // sides having different hot cues (SyncPlan::hotCuesNeedChoice). Then
+    // sides the planner could not settle (SyncPlan::needsChoice). Then
     // sourceA and sourceB are the two tracks as they are, cuesFromA is what
     // choosing A writes onto B, cuesFromB what choosing B writes onto A, and
     // target is just sourceA, for the heading.
@@ -58,6 +55,14 @@ struct CrossSourceSyncConflict
     // SyncPlan::cuesLeftOut of the plan this came from: what a pick that
     // writes Engine leaves off it.
     std::vector<CuePoint> cuesLeftOut;
+
+    // Why this needs a pick: the plan's own reason for a samePair choice,
+    // SyncPlan::Reason::SourcesDisagree otherwise. reasonText is the line
+    // the page and the CLI show.
+    SyncPlan::Reason reason = SyncPlan::Reason::None;
+    std::string reasonText;
+    // The plan's SyncPlan::positionToleranceMs, for counting a pick's cues.
+    double positionToleranceMs = CueFallbackToleranceMs;
 };
 
 struct CrossSourceConflictSplit
@@ -94,9 +99,9 @@ public:
     // comparison.
     static CrossSourceConflictSplit detect(const std::vector<SyncPlan> &actionablePlans);
 
-    // Moves every plan whose two sides have different hot cues out of
-    // `plans` and returns one samePair conflict for each file. A choice for
-    // the DJ, never a plan to apply: see SyncPlan::hotCuesNeedChoice. Run
+    // Moves every plan that needs the DJ's choice out of `plans` and
+    // returns one samePair conflict for each file. A choice for the DJ,
+    // never a plan to apply: see SyncPlan::needsChoice. Run
     // before detect(), so a plan waiting on a choice cannot also be collapsed
     // or grouped with another pair's proposal.
     //

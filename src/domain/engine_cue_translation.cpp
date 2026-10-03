@@ -14,13 +14,11 @@ namespace seabass::domain
 namespace
 {
 
-// The tolerance cueSetsEqual() allows (track_matching.cpp), so a cue
+// Within the planner's tolerance (domain/cue_tolerance.hpp), so a cue
 // that drifted by a cross-format rounding is still the same cue.
-constexpr double PositionToleranceMs = 500.0;
-
-bool samePlace(const CuePoint &a, const CuePoint &b)
+bool samePlace(const CuePoint &a, const CuePoint &b, double toleranceMs)
 {
-    return a.isLoop == b.isLoop && std::abs(a.positionMs - b.positionMs) <= PositionToleranceMs;
+    return a.isLoop == b.isLoop && std::abs(a.positionMs - b.positionMs) < toleranceMs;
 }
 
 bool isHot(const CuePoint &cue)
@@ -35,7 +33,8 @@ bool padIsValid(int pad)
 
 }  // namespace
 
-EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, const std::vector<CuePoint> &existing)
+EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, const std::vector<CuePoint> &existing,
+                                            double toleranceMs)
 {
     EngineCueTranslation result;
     bool padTaken[EngineHotCuePads + 1] = {};
@@ -73,7 +72,7 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
     for (const CuePoint &cue : memory) {
         // Already on a pad: one of the hot cues sits here.
         const bool onAPad = std::any_of(result.cues.begin(), result.cues.end(), [&](const CuePoint &hot) {
-            return isHot(hot) && samePlace(hot, cue);
+            return isHot(hot) && samePlace(hot, cue, toleranceMs);
         });
         if (onAPad) {
             continue;
@@ -81,7 +80,7 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
         int pad = 0;
         // The pad Engine already holds this cue on, when it is still free.
         for (const CuePoint &had : existing) {
-            if (isHot(had) && padIsValid(had.hotCueNumber) && !padTaken[had.hotCueNumber] && samePlace(had, cue)) {
+            if (isHot(had) && padIsValid(had.hotCueNumber) && !padTaken[had.hotCueNumber] && samePlace(had, cue, toleranceMs)) {
                 pad = had.hotCueNumber;
                 break;
             }
@@ -129,19 +128,23 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
     return result;
 }
 
-CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues)
+CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues,
+                              double toleranceMs)
 {
     CuesFromEngine result;
+    // The pads Engine DJ's own import gives the memory cues: free pads in
+    // time order, nothing Engine had before taken into account.
+    const std::vector<CuePoint> imported = translateCuesForEngine(cues, {}, toleranceMs).cues;
     for (const CuePoint &cue : engineCues) {
         if (!isHot(cue)) {
             result.memoryCues.push_back(cue);
             continue;
         }
         const bool isOwnHotCue = std::any_of(cues.begin(), cues.end(), [&](const CuePoint &own) {
-            return isHot(own) && own.hotCueNumber == cue.hotCueNumber && samePlace(own, cue);
+            return isHot(own) && own.hotCueNumber == cue.hotCueNumber && samePlace(own, cue, toleranceMs);
         });
         const auto translationOf = std::find_if(cues.begin(), cues.end(), [&](const CuePoint &memory) {
-            return memory.kind == CuePoint::Kind::Memory && samePlace(memory, cue);
+            return memory.kind == CuePoint::Kind::Memory && samePlace(memory, cue, toleranceMs);
         });
         if (isOwnHotCue || translationOf == cues.end()) {
             result.hotCues.push_back(cue);
@@ -150,17 +153,25 @@ CuesFromEngine cuesFromEngine(const std::vector<CuePoint> &engineCues, const std
         // The memory cue it translates, as that catalog knows it, so a
         // write back carries that catalog's own colour and comment.
         result.memoryCues.push_back(*translationOf);
+        const bool onImportsPad = std::any_of(imported.begin(), imported.end(), [&](const CuePoint &pad) {
+            return isHot(pad) && pad.hotCueNumber == cue.hotCueNumber
+                && pad.positionMs == translationOf->positionMs && pad.isLoop == translationOf->isLoop;
+        });
+        if (!onImportsPad) {
+            result.uncertain.push_back({cue, *translationOf});
+        }
     }
     return result;
 }
 
-std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues)
+std::vector<CuePoint> cuesInTermsOf(const std::vector<CuePoint> &engineCues, const std::vector<CuePoint> &cues,
+                                    double toleranceMs)
 {
-    CuesFromEngine seen = cuesFromEngine(engineCues, cues);
+    CuesFromEngine seen = cuesFromEngine(engineCues, cues, toleranceMs);
     std::vector<CuePoint> out = std::move(seen.hotCues);
     for (const CuePoint &memory : seen.memoryCues) {
         const bool already = std::any_of(out.begin(), out.end(), [&](const CuePoint &have) {
-            return have.kind == CuePoint::Kind::Memory && samePlace(have, memory);
+            return have.kind == CuePoint::Kind::Memory && samePlace(have, memory, toleranceMs);
         });
         if (!already) {
             CuePoint cue = memory;

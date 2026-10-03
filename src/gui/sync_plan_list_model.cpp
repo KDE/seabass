@@ -146,6 +146,8 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
             return QVariantMap();
         case JunkCuesRole:
             return QVariantList{conflict.sourceAHasJunkCue, conflict.sourceBHasJunkCue};
+        case ReasonRole:
+            return reasonOf(conflict);
         case IncludedRole:
         case StagedRole:
             return false;
@@ -190,6 +192,8 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
     }
     case JunkCuesRole:
         return QVariantList{false, false};
+    case ReasonRole:
+        return QString();
     case IncludedRole:
         return static_cast<bool>(m_included[row.index]);
     case StagedRole:
@@ -216,6 +220,7 @@ QHash<int, QByteArray> SyncPlanListModel::roleNames() const
         {CueSummaryRole, "cueSummary"},
         {CueChangeRole, "cueChange"},
         {JunkCuesRole, "junkCues"},
+        {ReasonRole, "reason"},
         {IncludedRole, "included"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
@@ -434,11 +439,12 @@ domain::CueChange SyncPlanListModel::cueChangeOf(const domain::SyncPlan &plan)
 {
     const domain::Track &target = targetOf(plan);
     if (target.format != "engine") {
-        return domain::describeCueChange(target.cues, plan.cuesToApply);
+        return domain::describeCueChange(target.cues, plan.cuesToApply, plan.positionToleranceMs);
     }
     const std::vector<domain::CuePoint> &terms = sourceOf(plan).cues;
-    return domain::describeCueChange(domain::cuesInTermsOf(target.cues, terms),
-                                     domain::cuesInTermsOf(plan.cuesToApply, terms));
+    const double tolerance = plan.positionToleranceMs;
+    return domain::describeCueChange(domain::cuesInTermsOf(target.cues, terms, tolerance),
+                                     domain::cuesInTermsOf(plan.cuesToApply, terms, tolerance), tolerance);
 }
 
 QString SyncPlanListModel::cueSummary(const domain::SyncPlan &plan)
@@ -458,6 +464,16 @@ QString SyncPlanListModel::cueSummary(const domain::SyncPlan &plan)
         parts << QStringLiteral("replaces %1").arg(change.droppedHot + change.droppedMemory);
     }
     return parts.isEmpty() ? QStringLiteral("no change") : parts.join(QStringLiteral(", "));
+}
+
+QString SyncPlanListModel::reasonOf(const domain::CrossSourceSyncConflict &conflict)
+{
+    QString text = QString::fromStdString(conflict.reasonText);
+    const std::string leftOut = domain::describeCuesLeftOut(conflict.cuesLeftOut);
+    if (!leftOut.empty()) {
+        text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromStdString(leftOut);
+    }
+    return text;
 }
 
 QString SyncPlanListModel::choiceSummary(const domain::CrossSourceSyncConflict &conflict)

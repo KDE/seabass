@@ -1267,6 +1267,10 @@ public:
         const auto decision = [](Track a, Track b, bool junkOnB) {
             CrossSourceSyncConflict conflict;
             conflict.samePair = true;
+            // The reason the planner itself gives for this pair.
+            const SyncPlan plan = SyncPlanner::plan(SyncMatch{a, b}, {}, {});
+            conflict.reason = plan.reason;
+            conflict.reasonText = plan.reasonText;
             conflict.target = b;
             conflict.cuesFromA = a.cues;
             conflict.cuesFromB = b.cues;

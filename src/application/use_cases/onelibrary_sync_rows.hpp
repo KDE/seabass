@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "application/path_key.hpp"
+#include "application/ports/progress_reporter.hpp"
 #include "application/use_cases/sync_libraries.hpp"
 #include "domain/track.hpp"
 
@@ -97,11 +98,12 @@ inline std::vector<domain::SyncPlan> planEngineWithOneLibrary(const std::vector<
                                                               const std::vector<domain::Track> &oneLibrary,
                                                               const std::vector<domain::Track> &deviceLibrary,
                                                               std::chrono::system_clock::time_point engineMtime,
-                                                              std::chrono::system_clock::time_point oneLibraryMtime)
+                                                              std::chrono::system_clock::time_point oneLibraryMtime,
+                                                              ProgressReporter &progress = NullProgressReporter::instance())
 {
     const OneLibraryRowsSpokenFor spokenFor(deviceLibrary);
     std::vector<domain::SyncPlan> plans;
-    for (auto &plan : SyncLibraries().execute(engine, oneLibrary, engineMtime, oneLibraryMtime)) {
+    for (auto &plan : SyncLibraries().execute(engine, oneLibrary, engineMtime, oneLibraryMtime, progress)) {
         if (!spokenFor(plan.match.trackB)) {
             plans.push_back(std::move(plan));
         }

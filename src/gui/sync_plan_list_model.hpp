@@ -85,6 +85,10 @@ public:
         // This plan is staged in the edit session: what Save will write.
         StagedRole,
         StagedDescriptionRole,
+        // A decision: why it needs one (CrossSourceSyncConflict::reasonText),
+        // and on a second line the cues a pick writing Engine leaves off it.
+        // Empty on a ready track.
+        ReasonRole,
     };
 
     explicit SyncPlanListModel(QObject *parent = nullptr);
@@ -147,6 +151,7 @@ public:
     static QString cueSummary(const domain::SyncPlan &plan);
     static domain::CueChange cueChangeOf(const domain::SyncPlan &plan);
     static QString choiceSummary(const domain::CrossSourceSyncConflict &conflict);
+    static QString reasonOf(const domain::CrossSourceSyncConflict &conflict);
 
 signals:
     // Any count above may have moved. Emitted even when no row did: a

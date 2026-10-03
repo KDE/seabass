@@ -109,6 +109,9 @@ int main()
         assert(conflict.cuesFromB.size() == 2);
         assert(!conflict.sourceAHasJunkCue);
         assert(!conflict.sourceBHasJunkCue);
+        // And says why.
+        assert(conflict.reason == SyncPlan::Reason::SourcesDisagree);
+        assert(conflict.reasonText == "rekordbox and Engine would write different cues onto OneLibrary");
         std::cout << "case b (genuine disagreement becomes a conflict, correct assignment) OK\n";
     }
 
@@ -187,12 +190,13 @@ int main()
     {
         seabass::domain::SyncPlan choice;
         choice.kind = seabass::domain::SyncPlan::Kind::Conflict;
-        choice.hotCuesNeedChoice = true;
+        choice.needsChoice = true;
         choice.match.trackA.format = "rekordbox";
         choice.match.trackA.sourceId = "r1";
         choice.match.trackB.format = "engine";
         choice.match.trackB.sourceId = "e1";
-        choice.direction = seabass::domain::SyncPlan::Direction::ToA;  // the suggestion only
+        choice.reason = seabass::domain::SyncPlan::Reason::PadsDiffer;
+        choice.reasonText = "Pad 1: rekordbox 0:01.000, Engine 0:05.000";
         choice.cuesIfAWins = {seabass::domain::CuePoint{seabass::domain::CuePoint::Kind::Hot, 1, 1000.0, "", ""}};
         choice.cuesIfBWins = {seabass::domain::CuePoint{seabass::domain::CuePoint::Kind::Hot, 1, 5000.0, "", ""}};
 
@@ -209,6 +213,8 @@ int main()
         assert(choices[0].sourceA.sourceId == "r1" && choices[0].sourceB.sourceId == "e1");
         assert(choices[0].cuesFromA.front().positionMs == 1000.0 && "choosing A writes A's hot cues onto B");
         assert(choices[0].cuesFromB.front().positionMs == 5000.0 && "choosing B writes B's hot cues onto A");
+        assert(choices[0].reason == seabass::domain::SyncPlan::Reason::PadsDiffer
+               && choices[0].reasonText == "Pad 1: rekordbox 0:01.000, Engine 0:05.000" && "the reason travels");
         std::cout << "case hot-cue-choice (a same-pair hot cue conflict becomes a choice, not a plan) OK\n";
     }
 
@@ -231,7 +237,7 @@ int main()
         const auto choiceBetween = [&](const seabass::domain::Track &a, const seabass::domain::Track &b) {
             SyncPlan p;
             p.kind = SyncPlan::Kind::Conflict;
-            p.hotCuesNeedChoice = true;
+            p.needsChoice = true;
             p.match.trackA = a;
             p.match.trackB = b;
             p.direction = SyncPlan::Direction::ToB;
@@ -291,7 +297,7 @@ int main()
         const auto choiceBetween = [](const seabass::domain::Track &a, const seabass::domain::Track &b) {
             SyncPlan p;
             p.kind = SyncPlan::Kind::Conflict;
-            p.hotCuesNeedChoice = true;
+            p.needsChoice = true;
             p.match.trackA = a;
             p.match.trackB = b;
             p.direction = SyncPlan::Direction::ToB;
