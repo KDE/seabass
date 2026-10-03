@@ -50,10 +50,6 @@ constexpr double CueFallbackToleranceMs = 60.0;
 // grid.
 constexpr double TempoAgreementFraction = 0.01;
 
-// When neither side has a tempo, the widest half beat that might apply:
-// half a beat at 60 BPM. A pair of cues within this but beyond the
-// fallback could be one cue at some tempo, so it is not settled silently.
-constexpr double UnknownTempoHalfBeatMs = 500.0;
 
 struct CueTolerance
 {
@@ -78,6 +74,15 @@ inline bool isKnownTempo(double bpm)
     return std::isfinite(bpm) && bpm >= MinimumTempoBpm && bpm <= MaximumTempoBpm;
 }
 
+// When neither side has a tempo, the widest half beat that might apply:
+// half a beat at the slowest tempo there is. A pair of cues within this but
+// beyond the fallback could be one cue at some tempo, so it is not settled
+// silently.
+inline double unknownTempoHalfBeatMs()
+{
+    return halfBeatMs(MinimumTempoBpm);
+}
+
 inline CueTolerance cueToleranceFor(double bpmA, double bpmB)
 {
     CueTolerance tolerance;
@@ -94,7 +99,7 @@ inline CueTolerance cueToleranceFor(double bpmA, double bpmB)
         const double slowest = knownA && knownB ? std::min(bpmA, bpmB) : (knownA ? bpmA : bpmB);
         tolerance.unsureUpToMs = std::max(CueFallbackToleranceMs, halfBeatMs(slowest));
     } else {
-        tolerance.unsureUpToMs = UnknownTempoHalfBeatMs;
+        tolerance.unsureUpToMs = unknownTempoHalfBeatMs();
     }
     return tolerance;
 }

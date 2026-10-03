@@ -705,12 +705,19 @@ int main()
                                                    side("engine", 1.0, {hot(1, 40000.0)})},
                                          now, now);
         assert(garbage.positionToleranceMs == CueFallbackToleranceMs && garbage.needsChoice);
+        // And it is called out of range, not missing.
+        auto fast = SyncPlanner::plan(SyncMatch{side("rekordbox", 320.0, {hot(1, 30000.0)}),
+                                                side("engine", 0.0, {hot(1, 30100.0)})},
+                                      now, now);
+        assert(fast.reasonText
+               == "Pad 1 is 100 ms apart: rekordbox 0:30.000, Engine 0:30.100. rekordbox's tempo (320.0) is out of "
+                  "range and Engine has no tempo for this track, so cues within half a beat cannot be matched; 60 ms "
+                  "was used");
 
         // Where no half beat could have mattered the reason is the
         // difference itself, not the tempo: 700 ms is more than half a
-        // beat at any tempo either side names, and a pad 4 s away is
-        // another cue.
-        auto far = SyncPlanner::plan(SyncMatch{side("rekordbox", 0.0, {hot(1, 30000.0)}),
+        // beat at the one tempo named, and a pad 4 s away is another cue.
+        auto far = SyncPlanner::plan(SyncMatch{side("rekordbox", 128.0, {hot(1, 30000.0)}),
                                                side("engine", 0.0, {hot(1, 30700.0)})},
                                      now, now);
         assert(far.reason == SyncPlan::Reason::SamePadApart);
@@ -779,6 +786,12 @@ int main()
                                          now, now);
         assert(doubled.kind == SyncPlan::Kind::Conflict && doubled.needsChoice);
         assert(doubled.reasonText == "Pad 1: rekordbox 0:40.000, OneLibrary no cue");
+        // The cue named is the one without a counterpart, not the one that
+        // shares its index with the other side's.
+        auto extra = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 10000.0), hot(1, 40000.0)}),
+                                                 side("onelibrary", 124.0, {hot(1, 40000.0)})},
+                                       now, now);
+        assert(extra.reasonText == "Pad 1: rekordbox 0:10.000, OneLibrary no cue");
 
         // A memory loop is not the memory cue at its start: the side
         // lacking the loop receives it, and one write settles the pair.
@@ -791,6 +804,15 @@ int main()
         withoutLoop.cues = gainsLoop.cuesToApply;
         assert(SyncPlanner::plan(SyncMatch{withLoop, withoutLoop}, now, now).kind == SyncPlan::Kind::AlreadyConsistent
                && "the write carried the loop; no write that changes nothing");
+
+        // Two memory cues half a beat apart are two cues between catalogs
+        // that both hold memory cues: the side with one gains the other.
+        Track two = side("rekordbox", 128.0, {hot(1, 1000.0), memory(60000.0), memory(60100.0)});
+        Track one = side("onelibrary", 128.0, {hot(1, 1000.0), memory(60000.0)});
+        auto gainsSecond = SyncPlanner::plan(SyncMatch{two, one}, now, now);
+        assert(gainsSecond.direction == SyncPlan::Direction::ToB && "the side with one is written, not the one with both");
+        one.cues = gainsSecond.cuesToApply;
+        assert(SyncPlanner::plan(SyncMatch{two, one}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
         std::cout << "case (a loop against a cue on one pad is a choice) OK\n";
     }
 
