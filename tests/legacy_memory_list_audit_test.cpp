@@ -24,6 +24,7 @@
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -460,6 +461,43 @@ void files(const fs::path &fixtureDat)
         check(finding && finding->datPath.empty() && finding->debris.size() == 1, "debris without a .DAT is reported");
         check(!auditTrackAnalysis(pathToUtf8(t.pioneer), "/PIONEER/USBANLZ/P001/00000099/ANLZ0000.DAT", namesOnly("")).has_value(),
               "a directory that does not exist is nothing");
+    }
+    {
+        // export.pdb pads its strings with spaces. A row's analyze_path
+        // that arrives padded names the same files: examined, its own
+        // .DAT not taken for a stranger, and the debris rule's directory
+        // cut from the trimmed path.
+        const TrackDir t = plant(stick, fixtureDat, SeabassFixedOne, "00000009");
+        writeSkeleton(fixtureDat, t.dir / "ANLZ0001.DAT");
+        const std::string padded = t.analyzePath + "   ";
+        const auto finding = examineTrackAnalysis(pathToUtf8(t.pioneer), padded, namesOnly(t.analyzePath));
+        check(finding.examined && finding.unreadable.empty(),
+              "a padded analyze_path is examined: " + finding.unreadable);
+        check(finding.debris.size() == 1 && finding.debris[0] == pathToUtf8(t.dir / "ANLZ0001.DAT"),
+              "and only the skeleton is debris");
+    }
+    {
+        // The in-place repair is read back with the writer's own check
+        // (analysisFileReadBackProblem), the hook a test damages a file
+        // through included: a file that does not read back as written is
+        // put back as it was, and the repair fails.
+        const TrackDir t = plant(stick, fixtureDat, StaleHeaderOneEntry, "0000000A");
+        auto finding = auditTrackAnalysis(pathToUtf8(t.pioneer), t.analyzePath, namesOnly(t.analyzePath));
+        check(finding.has_value(), "the stale list is found");
+        if (finding) {
+            RekordboxCueWriter::setAfterWriteForTesting([](const std::string &path) {
+                std::ofstream(pathFromUtf8(path), std::ios::binary | std::ios::app) << '\0';
+            });
+            bool threw = false;
+            try {
+                repairTrackAnalysis(*finding);
+            } catch (const std::exception &e) {
+                threw = std::string(e.what()).find("failed its check after writing") != std::string::npos;
+            }
+            RekordboxCueWriter::setAfterWriteForTesting({});
+            check(threw, "a repair that does not read back fails");
+            check(memoryListOf(t.dir / "ANLZ0000.DAT") == StaleHeaderOneEntry, "and the file is put back as it was");
+        }
     }
     fs::remove_all(stick);
 }

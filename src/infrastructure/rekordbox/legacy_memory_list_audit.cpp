@@ -385,37 +385,17 @@ TrackCueLists readListsOf(const std::string &datPath, const std::string &extPath
     return listsOf(readCueSections(datPath), readCueSections(extPath), datPath, extPath);
 }
 
-// The file as written, read back: the same bytes, and every legacy list
-// in it one the codec's strict check passes. Puts `before` back and
-// throws when not, as RekordboxCueWriter does for its own writes.
+// The file as written, read back with the writer's own check
+// (analysisFileReadBackProblem). Puts `before` back and throws when it
+// fails, as RekordboxCueWriter does for its own writes.
 void readBackOrRestore(const std::string &path, const std::string &intended, const std::string &before)
 {
-    std::string problem;
-    {
-        std::ifstream in(pathFromUtf8(path), std::ios::binary);
-        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (!in.good() && !in.eof()) {
-            problem = "it could not be read again";
-        } else if (onDisk != intended) {
-            problem = "it reads back as " + std::to_string(onDisk.size()) + " bytes that differ from the "
-                      + std::to_string(intended.size()) + " written";
-        } else {
-            try {
-                for (const auto &section : readCueSections(path)) {
-                    if (section.fourcc == PcobFourcc) {
-                        AnlzLegacyCueCodec::checkSection(section.rawBytes);
-                    }
-                }
-            } catch (const std::exception &e) {
-                problem = e.what();
-            }
-        }
-    }
-    if (problem.empty()) {
+    const std::optional<std::string> problem = analysisFileReadBackProblem(path, intended);
+    if (!problem) {
         return;
     }
     const bool restored = writeFileDurablyAtomic(path, before);
-    throw std::runtime_error(path + " failed its check after writing (" + problem + "); "
+    throw std::runtime_error(path + " failed its check after writing (" + *problem + "); "
                              + (restored ? "it was put back as it was"
                                          : "it could NOT be put back and needs restoring from the backup"));
 }
@@ -528,9 +508,19 @@ std::optional<CueListDisagreement> compareCueLists(const TrackCueLists &lists)
     return d;
 }
 
-LegacyMemoryListFinding examineTrackAnalysis(const std::string &pioneerRoot, const std::string &analyzePath,
+LegacyMemoryListFinding examineTrackAnalysis(const std::string &pioneerRoot, const std::string &paddedAnalyzePath,
                                              const std::function<bool(const std::string &)> &named)
 {
+    // export.pdb keeps its strings in fixed-length fields padded with
+    // spaces (NULs in some), and the padding is no part of the name: the
+    // same trim normalizedPathKey() makes, which the #59 test needs for a
+    // row naming "ANLZ0000.DAT   ". Left on, the files were "missing" and
+    // the debris rule cut the row's directory out of the padded string.
+    std::string analyzePath = paddedAnalyzePath;
+    while (!analyzePath.empty()
+           && (analyzePath.back() == ' ' || analyzePath.back() == '\t' || analyzePath.back() == '\0')) {
+        analyzePath.pop_back();
+    }
     LegacyMemoryListFinding finding;
     finding.pioneerRoot = pioneerRoot;
     finding.analyzePath = analyzePath;
