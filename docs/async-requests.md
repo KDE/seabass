@@ -70,6 +70,24 @@ Some refinements:
   outstanding one: `AsyncRequest::speaksForNext()`, taken right before
   the request starts. A superseded or cancelled read reports until its
   worker notices, and must not move the bar.
+- One request, one bar (#58). The readers, the audits and the use cases
+  each announce their own stretch with `start(label, n)`, and a scan is
+  a dozen of those; shown one after another they make a bar that fills,
+  empties and fills again. So a task counts the whole request first
+  (`LibraryCatalogCache::plannedUnits()` for the reads it will still
+  make, `countTracks()` for its own per-row passes, both from the
+  catalogs' row counts and nothing per row), announces that total once
+  through `application::PhasedProgress`, and hands the fold to
+  everything below. Each stretch lands on the one bar end to end, its
+  label goes out as `phase()` (the controller's `phaseChanged`
+  handler), and the count only ever goes up. A request that could not be
+  counted passes its stretches through as before. Library Health's legs
+  share one bar across their tasks (`ScanChainPlan`), and Metadata
+  Backup's re-read after a store continues the store's bar
+  (`ContinuedBar`). A handler that reset the bar on `started` or kept a
+  baseline of the phases before is the old shape; the tests for it are
+  `phased_progress_test`, the save loop's case 1b, and
+  `tst_LibraryHealthHub`'s "one total, never replaced".
 - A read asked for while the page's own write runs is not started beside
   the write, and it is not dropped either. It runs once the write is
   over: Clean Up's `m_rescanAfterWrite`, Metadata Backup's

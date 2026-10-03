@@ -17,6 +17,7 @@
 #include <set>
 
 #include "application/path_key.hpp"
+#include "application/phased_progress.hpp"
 #include "application/track_file_presence.hpp"
 #include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
@@ -352,13 +353,69 @@ namespace
 {
 
 std::vector<domain::Track> scanTracks(const QString &format, const QString &path,
-                                       std::shared_ptr<QtProgressReporter> reporter,
+                                       application::ProgressReporter &progress,
                                        application::CancellationToken cancel = application::CancellationToken::none())
 {
     // No explicit format check here -- LibraryCatalogCache::tracksFor()
     // already throws for anything unrecognized (see its own realScan()),
     // caught by the same catch (const std::exception &) below either way.
-    return LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), *reporter, cancel);
+    return LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
+}
+
+// What one leg of the scan will announce, from the catalogs' row counts:
+// the cache's own passes, then the per-row checks this file runs on top
+// (see runScanTask). The Engine leg's "Reading cover images" has no
+// cheap count and is left out; a plan short by a few rows costs the bar
+// a moment at the end, not a restart.
+std::optional<size_t> planLeg(const QString &format, const QString &path, const QString &rekordboxPath,
+                              LibraryConsistencyController::ScanDepth depth)
+{
+    LibraryCatalogCache &cache = LibraryCatalogCache::instance();
+    const std::string fmt = format.toStdString();
+    const std::string at = path.toStdString();
+    const auto read = cache.plannedUnits(fmt, at, LibraryCatalogCache::Detail::Full);
+    if (!read) {
+        return std::nullopt;
+    }
+    size_t units = *read;
+    if (depth != LibraryConsistencyController::Full) {
+        return units;
+    }
+    const auto rows = cache.countTracks(fmt, at);
+    if (!rows) {
+        return std::nullopt;
+    }
+    if (format == QStringLiteral("rekordbox")) {
+        units += *rows;  // "Checking memory cue lists"
+    } else if (format == QStringLiteral("engine")) {
+        units += *rows;  // "Checking cover art"
+        units += 1;      // "Counting tracks the player will analyse"
+        units += *rows;  // "Checking sample rates"
+    } else if (format == QStringLiteral("onelibrary")) {
+        // "Looking for Clean Up leftovers": a key per rekordbox row and
+        // per OneLibrary row (its deleted-file list is not counted). The
+        // rekordbox read it makes first is a cache hit by then.
+        const auto rekordboxRows = cache.countTracks("rekordbox", rekordboxPath.toStdString());
+        units += *rows + rekordboxRows.value_or(0);
+    }
+    return units;
+}
+
+ScanChainPlan planChain(const QStringList &formats, const QString &rekordboxPath, const QString &enginePath,
+                        LibraryConsistencyController::ScanDepth depth)
+{
+    ScanChainPlan plan;
+    plan.formats = formats;
+    plan.known = true;
+    for (const QString &format : formats) {
+        const QString path = format == QStringLiteral("engine") ? enginePath : rekordboxPath;
+        const auto units = planLeg(format, path, rekordboxPath, depth);
+        plan.unitsPerLeg.push_back(units.value_or(0));
+        if (!units) {
+            plan.known = false;
+        }
+    }
+    return plan;
 }
 
 // This format's own playlist membership tally, unfiltered -- called on
@@ -383,6 +440,42 @@ void tallyPlaylists(const std::vector<domain::Track> &tracks, LibraryConsistency
     }
 }
 
+}  // namespace
+
+size_t ScanChainPlan::total() const
+{
+    size_t sum = 0;
+    for (size_t units : unitsPerLeg) {
+        sum += units;
+    }
+    return sum;
+}
+
+size_t ScanChainPlan::offsetOf(const QString &format) const
+{
+    size_t offset = 0;
+    for (qsizetype i = 0; i < formats.size() && i < static_cast<qsizetype>(unitsPerLeg.size()); ++i) {
+        if (formats[i] == format) {
+            return offset;
+        }
+        offset += unitsPerLeg[static_cast<size_t>(i)];
+    }
+    return offset;
+}
+
+size_t ScanChainPlan::unitsOf(const QString &format) const
+{
+    for (qsizetype i = 0; i < formats.size() && i < static_cast<qsizetype>(unitsPerLeg.size()); ++i) {
+        if (formats[i] == format) {
+            return unitsPerLeg[static_cast<size_t>(i)];
+        }
+    }
+    return 0;
+}
+
+namespace
+{
+
 // How many runScanTask calls are running right now, in any controller.
 // Read by the tests that check leaving a page leaves no scan behind.
 std::atomic_int &runningScanTasks()
@@ -400,12 +493,19 @@ std::atomic_int &runningScanTasks()
 // consistency check to just that playlist's tracks, via domain::TrackScope
 // -- same seam SyncController::runAnalyzeTask already uses. `depth`
 // CuesOnly stops at the stray-cue finders (see ScanDepth).
+//
+// `chain` is the whole scan's plan (ScanChainPlan): empty on the first
+// leg, which counts it here, on this thread, and hands it back in the
+// result; the legs after it get it from the controller and continue the
+// one bar at their own offset. `chainFormats`, `rekordboxPath` and
+// `enginePath` are for that count.
 LibraryConsistencyScanResult runScanTask(QString format, QString path, QString playlistName,
                                           LibraryConsistencyController::ScanDepth depth,
                                           std::shared_ptr<QtProgressReporter> reporter,
                                           application::CancellationToken cancel,
                                           infrastructure::engine::ArtworkSourceByTrackFile artSources,
-                                          QString backupDirectory)
+                                          QString backupDirectory, ScanChainPlan chain, QStringList chainFormats,
+                                          QString rekordboxPath, QString enginePath)
 {
     runningScanTasks().fetch_add(1);
     struct Running
@@ -413,8 +513,21 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
         ~Running() { runningScanTasks().fetch_sub(1); }
     } running;
     LibraryConsistencyScanResult result;
+    // One bar for the chain (#58): announced by the first leg with the
+    // whole scan's total, continued by the rest from where the leg
+    // before left it. Every stretch below, the cache's passes included,
+    // lands on it end to end with its own label.
+    const bool firstLeg = chain.empty();
+    if (firstLeg) {
+        chain = planChain(chainFormats, rekordboxPath, enginePath, depth);
+        result.plan = chain;
+    }
+    const size_t total = chain.known ? chain.total() : 0;
+    const bool lastLeg = !chain.formats.isEmpty() && chain.formats.last() == format;
+    application::PhasedProgress progress(*reporter, "Checking the library", total, chain.offsetOf(format),
+                                         /*announce=*/firstLeg, /*endsOperation=*/lastLeg);
     try {
-        auto tracks = scanTracks(format, path, reporter, cancel);
+        auto tracks = scanTracks(format, path, progress, cancel);
         cancel.throwIfCancelled();
 
         tallyPlaylists(tracks, result);
@@ -429,7 +542,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // rekordbox leg just filled. No audio probe: a pair only the
             // decoded audio would tie together is reported, not repaired.
             try {
-                const auto rekordboxTracks = scanTracks(QStringLiteral("rekordbox"), path, reporter, cancel);
+                const auto rekordboxTracks = scanTracks(QStringLiteral("rekordbox"), path, progress, cancel);
                 const auto deleted = infrastructure::rekordbox::deletedTrackFilePaths(path.toStdString());
                 cancel.throwIfCancelled();
                 // The token rides in on the key: spelling every path of
@@ -440,12 +553,12 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 // then a few more for the rows it pairs up, which the
                 // count holds at the total rather than running past it.
                 const size_t keysExpected = deleted.size() + rekordboxTracks.size() + tracks.size();
-                reporter->start("Looking for Clean Up leftovers", keysExpected);
+                progress.start("Looking for Clean Up leftovers", keysExpected);
                 size_t keysSpelled = 0;
-                const auto keyOrStop = [&cancel, &reporter, &keysSpelled, keysExpected](const std::string &file) {
+                const auto keyOrStop = [&cancel, &progress, &keysSpelled, keysExpected](const std::string &file) {
                     cancel.throwIfCancelled();
                     if (keysSpelled < keysExpected) {
-                        reporter->tick(++keysSpelled);
+                        progress.tick(++keysSpelled);
                     }
                     return application::normalizedPathKey(file);
                 };
@@ -478,11 +591,11 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // the rest of this leg still reports.
             try {
                 const infrastructure::rekordbox::AnlzPathIndex analysisPaths(path.toStdString());
-                reporter->start("Checking memory cue lists", tracks.size());
+                progress.start("Checking memory cue lists", tracks.size());
                 size_t checked = 0;
                 for (const domain::Track &track : tracks) {
                     cancel.throwIfCancelled();
-                    reporter->tick(++checked);
+                    progress.tick(++checked);
                     if (track.sourceId.empty()
                         || !std::all_of(track.sourceId.begin(), track.sourceId.end(),
                                         [](unsigned char c) { return std::isdigit(c) != 0; })) {
@@ -526,7 +639,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 backupDirectory.toStdString(),
                 pathToUtf8(pathFromQString(path).parent_path()));
             result.artwork = infrastructure::engine::auditArtwork(path.toStdString(), artSources,
-                                                                  result.rescue->probe(), cancel, *reporter);
+                                                                  result.rescue->probe(), cancel, progress);
             cancel.throwIfCancelled();
             // The same pass asks each row for its sample rate, and each
             // file whose row cannot say. A library where nothing is
@@ -540,9 +653,9 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // costs nothing next to the two audits around it. Reported as
             // one step all the same, so the phase the page shows is this
             // one and not the audit before it.
-            reporter->start("Counting tracks the player will analyse", 1);
+            progress.start("Counting tracks the player will analyse", 1);
             result.analysisState = infrastructure::engine::auditAnalysisState(path.toStdString());
-            reporter->tick(1);
+            progress.tick(1);
             cancel.throwIfCancelled();
             result.sampleRates = infrastructure::engine::auditSampleRates(
                 path.toStdString(), [](const std::string &audioFile) -> double {
@@ -555,7 +668,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                     return 0.0;
 #endif
                 },
-                cancel, *reporter);
+                cancel, progress);
             cancel.throwIfCancelled();
         }
 
@@ -693,10 +806,16 @@ std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
     // the one outstanding: a superseded leg reports until it notices.
     auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = m_scan.speaksForNext();
-    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
+    // One announcement for the whole chain, from its first leg; the
+    // phases name the stretch, and the count only ever goes up.
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
+        if (current()) {
+            setScanProgress(0, total);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this, current](const QString &label) {
         if (current()) {
             setScanPhase(label);
-            setScanProgress(0, total);
         }
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
@@ -878,6 +997,12 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
         infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString())) {
         m_pendingScanFormats.push_back("onelibrary");
     }
+    // The chain's bar is counted by its first leg (see runScanTask).
+    m_chainPlan = {};
+    m_chainFormats.clear();
+    for (const QString &format : m_pendingScanFormats) {
+        m_chainFormats << format;
+    }
 
     // A scan still running for another scope is superseded by the first
     // leg of this one; its answer, whenever it comes, is dropped.
@@ -891,11 +1016,12 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
         setScanPhase({});
         return;
     }
-    // A new leg has counted nothing yet. Left standing, the last leg's
-    // phase and counts were shown over this one until its reader started
-    // (and for good, when the reader answered from its cache).
+    // The bar carries over from the leg before: it is the chain's, and
+    // this leg continues it from where that one stopped (#58). The
+    // phase does not: the last leg's step would otherwise be shown over
+    // this one until its first stretch begins (and for good, when the
+    // reader answers from its cache).
     setScanPhase({});
-    setScanProgress(0, 0);
     QString format = m_pendingScanFormats.front();
     m_pendingScanFormats.erase(m_pendingScanFormats.begin());
     setScanningFormat(format);
@@ -905,9 +1031,15 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
     const QString backupDirectory = m_backupDirectory;
     const ScanDepth depth = m_chainDepth;
     auto reporter = makeReporter();
+    const ScanChainPlan chain = m_chainPlan;
+    const QStringList chainFormats = m_chainFormats;
+    const QString rekordboxPath = m_rekordboxPath;
+    const QString enginePath = m_enginePath;
     AsyncRequest<LibraryConsistencyScanResult>::Work work =
-        [format, path, playlist, depth, reporter, artSources, backupDirectory](application::CancellationToken cancel) {
-            return runScanTask(format, path, playlist, depth, reporter, cancel, artSources, backupDirectory);
+        [format, path, playlist, depth, reporter, artSources, backupDirectory, chain, chainFormats, rekordboxPath,
+         enginePath](application::CancellationToken cancel) {
+            return runScanTask(format, path, playlist, depth, reporter, cancel, artSources, backupDirectory, chain,
+                               chainFormats, rekordboxPath, enginePath);
         };
     AsyncRequest<LibraryConsistencyScanResult>::Ending ending{
         [this](LibraryConsistencyScanResult &&result) { onScanFinished(std::move(result)); },
@@ -949,6 +1081,9 @@ void LibraryConsistencyController::endScanCancelled()
 
 void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &&result)
 {
+    if (!result.plan.empty()) {
+        m_chainPlan = result.plan;
+    }
     if (result.cancelled) {
         endScanCancelled();
         return;

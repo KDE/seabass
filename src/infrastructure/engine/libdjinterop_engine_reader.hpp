@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,10 @@ public:
     // is readTracks() alone, as the checks and tools that call it want.
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
+    // count(*) of m.db's Track table over a read-only connection: no
+    // journal recovery, no libdjinterop. Nothing when m.db is not there
+    // or cannot be read.
+    std::optional<size_t> countTracks() override;
     void fillArtwork(std::vector<domain::Track> &tracks) override;
 
     // The filesystem identity of the stick the library is on, when the

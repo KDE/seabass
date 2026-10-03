@@ -23,6 +23,7 @@
 #include "domain/track_scope.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
@@ -297,10 +298,22 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
     const bool cuesOutsideCatalog = catalog == "rekordbox";
     bool tracksPublished = false;
     try {
+        // One bar for what the page waits on (#58): this catalog's own
+        // read and, for Engine, the rekordbox read its covers are
+        // borrowed from. The cue and Full passes below run behind the
+        // list and announce nothing.
+        std::optional<size_t> planned =
+            catalogCache->plannedUnits(catalog, path.toStdString(), LibraryCatalogCache::Detail::Tracks);
+        if (planned && catalog == "engine" && !siblingRekordboxPath.isEmpty()) {
+            const auto sibling = catalogCache->plannedUnits("rekordbox", siblingRekordboxPath.toStdString(),
+                                                            LibraryCatalogCache::Detail::Tracks);
+            planned = sibling ? std::optional<size_t>(*planned + *sibling) : std::nullopt;
+        }
+        application::PhasedProgress progress(*reporter, "Reading the library", planned.value_or(0));
         ScanTaskResult tracksResult;
         tracksResult.phase = ScanTaskResult::Phase::Tracks;
         tracksResult.tracks =
-            catalogCache->tracksFor(catalog, path.toStdString(), LibraryCatalogCache::Detail::Tracks, *reporter, cancel);
+            catalogCache->tracksFor(catalog, path.toStdString(), LibraryCatalogCache::Detail::Tracks, progress, cancel);
 
         if (catalog == "engine" && !siblingRekordboxPath.isEmpty()) {
             try {
@@ -309,7 +322,7 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
                 // not sit at 100% while it runs. The catalog alone: the
                 // art is named there, and the cues are no use here.
                 const auto rbTracks = catalogCache->tracksFor("rekordbox", siblingRekordboxPath.toStdString(),
-                                                              LibraryCatalogCache::Detail::Tracks, *reporter, cancel);
+                                                              LibraryCatalogCache::Detail::Tracks, progress, cancel);
                 tracksResult.fallbackArtwork = borrowRekordboxArt(tracksResult.tracks, rbTracks);
             } catch (const application::OperationCancelled &) {
                 throw;  // a cancel is a cancel, even during the nice-to-have part

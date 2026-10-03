@@ -4,6 +4,8 @@
 
 #include "gui/staged_cue_edit_controller.hpp"
 
+#include <algorithm>
+
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
@@ -41,10 +43,18 @@ std::shared_ptr<QtProgressReporter> StagedCueEditController::makeReporter()
 {
     auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = m_scan.speaksForNext();
+    // One announcement per scan (#58): the task folds its reads and its
+    // own passes onto one bar (application::PhasedProgress), names each
+    // stretch as a phase, and the count only ever goes up.
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
         if (current()) {
             setScanLabel(label);
             setScanProgress(0, total);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this, current](const QString &label) {
+        if (current()) {
+            setScanLabel(label);
         }
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {

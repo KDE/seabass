@@ -177,6 +177,24 @@ public:
                                  application::ProgressReporter &progress = application::NullProgressReporter::instance(),
                                  application::CancellationToken cancel = application::CancellationToken::none());
 
+    // How much progress a tracksFor(format, path, detail) made now would
+    // announce, in the units its passes tick: one per track for each
+    // stage the entry does not yet hold (the catalog read, rekordbox's
+    // cue pass, and the file and cover checks of Full), nothing for a
+    // stage it has or that another thread is reading. From the reader's
+    // own count (LibraryReader::countTracks(), a page-header sum or a
+    // count(*)), so a caller can announce one bar for a whole scan
+    // before the first read begins (#58). Nothing when the catalog
+    // cannot be counted, which the caller treats as "size unknown".
+    std::optional<size_t> plannedUnits(const std::string &format, const std::string &path, Detail detail);
+    // The catalog's row count, the way plannedUnits() gets it, for a
+    // caller sizing its own per-row stretch on the same bar.
+    std::optional<size_t> countTracks(const std::string &format, const std::string &path);
+    // Test seam: the count plannedUnits() works from, in place of the
+    // real reader's.
+    using CountFn = std::function<std::optional<size_t>(const std::string &format, const std::string &path)>;
+    void setCountFnForTesting(CountFn countFn);
+
     // Reads the rest of this library in the background, up to Full, one
     // catalog at a time on one worker thread for the whole cache (the FAT
     // driver and the USB queue serialise every read anyway): the prefetch
@@ -259,6 +277,7 @@ private:
 
     StageFn m_stageFn;
     MtimeFn m_mtimeFn;
+    CountFn m_countFn;
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::unordered_map<std::string, Entry> m_entries;

@@ -14,7 +14,10 @@
 #include <system_error>
 
 #include "application/use_cases/anonymize_library.hpp"
+#include "application/phased_progress.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace seabass::gui
 {
@@ -47,8 +50,27 @@ AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString engin
         options.hardware = hardware.toStdString();
         options.notes = notes.toStdString();
 
+        // One bar (#58): a unit per rekordbox row, then per Engine row,
+        // from the catalogs' own counts. The readers are the right
+        // counters here, not the catalog cache: this reads the stick
+        // afresh and never through the cache.
+        std::optional<size_t> planned = 0;
+        const auto add = [&planned](std::optional<size_t> units) {
+            if (planned && units) {
+                *planned += *units;
+            } else {
+                planned = std::nullopt;
+            }
+        };
+        if (rekordboxRoot) {
+            add(infrastructure::rekordbox::KaitaiRekordboxReader(*rekordboxRoot).countTracks());
+        }
+        if (engineRoot) {
+            add(infrastructure::engine::LibdjinteropEngineReader(*engineRoot).countTracks());
+        }
+        application::PhasedProgress progress(*reporter, "Anonymizing the library", planned.value_or(0));
         application::AnonymizeLibrary useCase;
-        auto summary = useCase.execute(rekordboxRoot, engineRoot, outDir.toStdString(), options, *reporter);
+        auto summary = useCase.execute(rekordboxRoot, engineRoot, outDir.toStdString(), options, progress);
 
         result.succeeded = summary.succeeded();
         result.outputZipPath = QString::fromStdString(summary.outputZipPath);
@@ -118,20 +140,18 @@ AnonymizeLibraryController::AnonymizeLibraryController(QObject *parent) : QObjec
 std::shared_ptr<QtProgressReporter> AnonymizeLibraryController::makeReporter()
 {
     auto reporter = makeMainThreadShared<QtProgressReporter>();
-    // Two sequential phases (rekordbox, then Engine) previously each called
-    // setProgress(0, total) here, so the bar visibly restarted from 0% at
-    // the halfway point -- looked like the whole operation had reset, not
-    // like phase two beginning. Folding the previous phase's total into a
-    // running baseline (only ever grows, reset just once in run()) keeps
-    // the bar moving forward through both phases as one continuous run.
+    // One announcement for the whole run (#58): the task folds the two
+    // anonymizers onto one bar (application::PhasedProgress), names each
+    // as a phase, and the count only ever goes up.
     connect(reporter.get(), &QtProgressReporter::started, this, [this](const QString &label, int total) {
         setCurrentPhase(label);
-        m_phaseBaseline += m_currentPhaseTotal;
-        m_currentPhaseTotal = total;
-        setProgress(m_phaseBaseline, m_phaseBaseline + total);
+        setProgress(0, total);
+    });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this](const QString &label) {
+        setCurrentPhase(label);
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setProgress(m_phaseBaseline + current, m_progressTotal); });
+            [this](int current) { setProgress(current, m_progressTotal); });
     return reporter;
 }
 
@@ -163,8 +183,6 @@ void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString
     m_manifestText.clear();
     m_outputZipPath.clear();
     emit resultChanged();
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setBusy(true);
     m_watcher.setFuture(

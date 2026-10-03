@@ -252,8 +252,6 @@ private:
     bool m_hasScanned = false;
     int m_progressCurrent = 0;
     int m_progressTotal = 0;
-    int m_phaseBaseline = 0;
-    int m_currentPhaseTotal = 0;
     int m_stickTrackCount = 0;
     int m_storedTrackCount = 0;
     int m_conflictCount = 0;

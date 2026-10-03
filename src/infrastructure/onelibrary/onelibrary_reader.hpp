@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "application/ports/library_reader.hpp"
@@ -50,6 +51,9 @@ public:
     // fillFileSizes) and no artwork file for its existence; artworkPath is
     // what the catalog names, whether or not the file is still there.
     std::vector<domain::Track> readAll() override;
+    // count(*) of the content table over a read-only open, no journal
+    // recovery. Nothing when there is no OneLibrary or it cannot be read.
+    std::optional<size_t> countTracks() override;
 
 private:
     std::string m_pioneerRoot;

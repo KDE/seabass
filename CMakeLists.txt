@@ -366,6 +366,7 @@ add_library(seabass_core STATIC
     src/domain/duplicate_cleanup.cpp
     src/domain/library_fingerprint.cpp
     src/application/catalog_digest.cpp
+    src/application/phased_progress.cpp
     src/application/use_cases/advise_stick_backup.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/filesystem_compatibility.cpp
@@ -532,6 +533,7 @@ target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB 
 add_library(seabass_core_testing STATIC
     src/application/path_key.cpp
     src/application/ports/progress_reporter.cpp
+    src/application/phased_progress.cpp
     src/application/use_cases/backup_stick.cpp
     src/application/use_cases/clean_up_recordings.cpp
     src/application/use_cases/fill_file_sizes.cpp
@@ -1814,6 +1816,10 @@ add_executable(engine_cue_translation_test
 target_link_libraries(engine_cue_translation_test PRIVATE seabass_core_testing)
 target_include_directories(engine_cue_translation_test PRIVATE src)
 add_test(NAME engine_cue_translation_test COMMAND engine_cue_translation_test)
+
+add_executable(phased_progress_test tests/phased_progress_test.cpp src/application/phased_progress.cpp src/application/ports/progress_reporter.cpp)
+target_include_directories(phased_progress_test PRIVATE src)
+add_test(NAME phased_progress_test COMMAND phased_progress_test)
 
 add_executable(hidden_engine_cues_test tests/hidden_engine_cues_test.cpp)
 target_link_libraries(hidden_engine_cues_test PRIVATE seabass_core_testing)

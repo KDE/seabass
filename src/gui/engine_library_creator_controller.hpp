@@ -129,8 +129,6 @@ private:
     // Scan, then create, then copy-to-stick share one continuous bar
     // rather than each restarting from 0 -- see makeReporter()'s own
     // comment. Reset to 0 at the start of create(), not per phase.
-    int m_phaseBaseline = 0;
-    int m_currentPhaseTotal = 0;
     QString m_currentPhase;
     QString m_errorMessage;
     QString m_statusMessage;

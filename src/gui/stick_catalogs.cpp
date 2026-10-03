@@ -56,6 +56,36 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
     return result;
 }
 
+std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath)
+{
+    if (libraryPath.empty()) {
+        return 0;
+    }
+    const fs::path root = pathFromUtf8(libraryPath).parent_path();
+    const fs::path pioneerRoot = root / "PIONEER";
+    auto &cache = LibraryCatalogCache::instance();
+    std::optional<size_t> total = 0;
+    auto add = [&](const char *format, const std::string &path) {
+        const auto units = cache.plannedUnits(format, path, LibraryCatalogCache::Detail::Full);
+        if (total && units) {
+            *total += *units;
+        } else {
+            total = std::nullopt;
+        }
+    };
+    std::error_code ec;
+    if (fs::exists(pioneerRoot / "rekordbox" / "export.pdb", ec)) {
+        add("rekordbox", pathToUtf8(pioneerRoot));
+    }
+    if (fs::exists(infrastructure::engine::engineMainDatabasePath(root), ec)) {
+        add("engine", pathToUtf8(infrastructure::engine::engineLibraryPath(root)));
+    }
+    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(pioneerRoot))) {
+        add("onelibrary", pathToUtf8(pioneerRoot));
+    }
+    return total;
+}
+
 std::string catalogPathForFormat(const std::string &libraryPath, const std::string &format)
 {
     const fs::path stickRoot = pathFromUtf8(libraryPath).parent_path();

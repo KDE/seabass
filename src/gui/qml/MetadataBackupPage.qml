@@ -552,14 +552,15 @@ Page {
             ProgressReport {
                 objectName: "progressReport"
                 Layout.fillWidth: true
-                // Not for the re-read that follows a backup: that bar ran
-                // to the end and the summary says so. See
-                // MetadataBackupController::refreshing.
-                visible: controller.busy && !controller.refreshing
+                // Through the re-read that follows a backup too: it is the
+                // last stretch of the backup's own bar (#58), which the
+                // controller carries over from the store.
+                visible: controller.busy
                 phase: controller.currentPhase
+                currentItem: controller.currentPhase
                 unitsDone: controller.progressCurrent
                 unitsTotal: controller.progressTotal
-                unitName: "tracks"
+                unitName: ""
                 cancellable: true
                 onCancelRequested: controller.cancel()
             }

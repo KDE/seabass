@@ -282,6 +282,31 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
     return tracks;
 }
 
+std::optional<size_t> KaitaiRekordboxReader::countTracks()
+{
+    const std::filesystem::path pdbPath = pathFromUtf8(m_pioneerRoot) / "rekordbox" / "export.pdb";
+    std::ifstream ifs(pdbPath, std::ifstream::binary);
+    if (!ifs.is_open()) {
+        return std::nullopt;
+    }
+    try {
+        kaitai::kstream ks(&ifs);
+        Pdb pdb(false, &ks);
+        // The same pre-pass readCatalog() makes before it announces:
+        // page headers only, no row parsed.
+        size_t totalRows = 0;
+        for (const auto &table : *pdb.tables()) {
+            if (table->type() != Pdb::PAGE_TYPE_TRACKS) {
+                continue;
+            }
+            forEachDataPage(*table, [&totalRows](Pdb::page_t *page) { totalRows += page->num_rows(); });
+        }
+        return totalRows;
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
 std::vector<domain::Track> KaitaiRekordboxReader::readTracks()
 {
     return readCatalog(*m_progress);

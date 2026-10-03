@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,12 @@ struct StickCatalogRead
 // a superset on this one stick; nothing guarantees that on the next.
 StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, application::ProgressReporter &progress,
                                         const application::CancellationToken &cancel);
+
+// What readAllStickCatalogs(libraryPath) would announce now, in the
+// units its reads tick (LibraryCatalogCache::plannedUnits() per catalog
+// present), for a caller announcing one bar before the first read
+// (#58). Nothing when a catalog cannot be counted.
+std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath);
 
 // When this stick's catalogs were last written, in seconds since the
 // epoch, newest wins; 0 when none of them can be read.

@@ -111,11 +111,21 @@ private:
 };
 
 // What one backup run did. Built entirely on a worker thread.
+// A bar one task leaves for the next to continue (#58): its total and
+// where it stood.
+struct ContinuedBar
+{
+    size_t total = 0;
+    size_t at = 0;
+};
+
 struct MetadataBackupTaskResult
 {
     bool succeeded = false;
     QString errorMessage;
     infrastructure::local::MetadataBackupSummary summary;
+    // The store's bar, for the re-read that follows to continue.
+    std::optional<ContinuedBar> bar;
     // Catalogs that were read, and catalogs present but unreadable. A
     // run that only saw one of three says so: this is a backup, so a
     // partial read costs coverage rather than correctness, but a user
@@ -404,7 +414,11 @@ signals:
     void saveCompleted();
 
 private:
-    void startScan(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
+    // The re-read after a backup continues the backup's own bar (#58):
+    // `continuing` carries that bar's total and where it stood when the
+    // store finished, and the read then runs it to the end.
+    void startScan(const QString &libraryPath, const QString &libraryId, const QString &stickLabel,
+                   std::optional<ContinuedBar> continuing = std::nullopt);
     void beginSave();
     void onScanFinished(MetadataBackupScanResult &&result);
     void endScanWithoutAPlan(const QString &errorMessage);
@@ -441,10 +455,8 @@ private:
     bool m_refreshingAfterSave = false;
     int m_progressCurrent = 0;
     int m_progressTotal = 0;
-    // The stick read and the store write share one continuous bar rather
-    // than each restarting from zero.
-    int m_phaseBaseline = 0;
-    int m_currentPhaseTotal = 0;
+    // The backup's bar, so the re-read after it can continue it.
+    std::optional<ContinuedBar> m_storeBar;
     int m_storedTrackCount = 0;
     int m_matchCount = 0;
     int m_tracksSeen = 0;

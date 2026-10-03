@@ -183,8 +183,29 @@ struct LegacyMemoryListIssue
     infrastructure::rekordbox::LegacyMemoryListFinding finding;
 };
 
+// One bar for the whole scan (#58): what each leg will announce, counted
+// before the first read from the catalogs' own row counts
+// (LibraryCatalogCache::plannedUnits() for the reads, the audits' own
+// per-row loops on top). The first leg counts it and hands it back in
+// its result; the legs after it continue the same bar at their offset.
+// `known` is false when a catalog could not be counted, and the bar is
+// then indeterminate for the whole scan rather than wrong.
+struct ScanChainPlan
+{
+    QStringList formats;
+    std::vector<size_t> unitsPerLeg;
+    bool known = false;
+
+    size_t total() const;
+    size_t offsetOf(const QString &format) const;
+    size_t unitsOf(const QString &format) const;
+    bool empty() const { return formats.isEmpty(); }
+};
+
 struct LibraryConsistencyScanResult
 {
+    // Filled by the first leg, which counts for the chain; empty after.
+    ScanChainPlan plan;
     std::vector<domain::LibraryConsistencyIssue> issues;
     std::vector<domain::JunkCueIssue> junkCues;
     // This format's own playlist membership tally, unfiltered by
@@ -726,6 +747,9 @@ private:
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
     std::vector<QString> m_pendingScanFormats;
+    // The chain's one bar: counted by its first leg, carried to the rest.
+    ScanChainPlan m_chainPlan;
+    QStringList m_chainFormats;
     // Carried from the rekordbox pass to the Engine pass of the same scan.
     infrastructure::engine::ArtworkSourceByTrackFile m_artSources;
     std::shared_ptr<ArtworkRescueSources> m_rescue;

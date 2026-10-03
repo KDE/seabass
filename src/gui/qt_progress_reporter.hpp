@@ -39,12 +39,16 @@ public:
     }
     void tick(size_t current) override { emit progressed(static_cast<int>(current)); }
     void finish() override { emit finishedScanning(); }
+    void phase(const std::string &label) override { emit phaseChanged(QString::fromStdString(label)); }
     void warn(const std::string &message) override { emit warningRaised(QString::fromStdString(message)); }
 
 signals:
     void started(const QString &label, int total);
     void progressed(int current);
     void finishedScanning();
+    // The stretch now under way of a bar announced once (#58): the label
+    // changes, the count and total do not.
+    void phaseChanged(const QString &label);
     void warningRaised(const QString &message);
 };
 

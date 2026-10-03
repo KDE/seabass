@@ -166,6 +166,38 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
     }
 }
 
+std::optional<size_t> realCount(const std::string &format, const std::string &path)
+{
+    try {
+        return makeReader(format, path)->countTracks();
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+// What realStage() announces for one stage of one catalog of `tracks`
+// rows, in ticks. Kept next to realStage() so a stage that gains or
+// loses an announcement changes this line too.
+size_t unitsOfStage(LibraryCatalogCache::Detail stage, const std::string &format, size_t tracks)
+{
+    switch (stage) {
+    case LibraryCatalogCache::Detail::Tracks:
+        // "Scanning rekordbox tracks", "Scanning Engine tracks", "Reading
+        // OneLibrary": one per row.
+        return tracks;
+    case LibraryCatalogCache::Detail::Cues:
+        // "Reading rekordbox cues": one per row; the other two catalogs
+        // hold their cues and announce nothing.
+        return format == "rekordbox" ? tracks : 0;
+    case LibraryCatalogCache::Detail::Full:
+        // completeTracks(): "Checking files" per row, and for the two
+        // catalogs that name cover files, "Checking cover files" per row.
+        // The duration passes announce nothing.
+        return format == "rekordbox" ? tracks : 2 * tracks;
+    }
+    return 0;
+}
+
 int stageNumber(LibraryCatalogCache::Detail detail)
 {
     return static_cast<int>(detail) + 1;
@@ -197,7 +229,7 @@ void LibraryCatalogCache::setInstanceForTesting(LibraryCatalogCache *cache)
     s_instanceForTesting.store(cache);
 }
 
-LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime)
+LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime), m_countFn(realCount)
 {
     stopWhenTheProcessEnds();
 }
@@ -213,7 +245,7 @@ LibraryCatalogCache::MtimeFn LibraryCatalogCache::realMtimeForTesting()
 }
 
 LibraryCatalogCache::LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn)
-    : m_stageFn(std::move(stageFn)), m_mtimeFn(std::move(mtimeFn))
+    : m_stageFn(std::move(stageFn)), m_mtimeFn(std::move(mtimeFn)), m_countFn(realCount)
 {
     stopWhenTheProcessEnds();
 }
@@ -227,9 +259,62 @@ LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
               tracks = scan(format, path, progress, std::move(cancel));
           }
       }),
-      m_mtimeFn(std::move(mtimeFn))
+      m_mtimeFn(std::move(mtimeFn)), m_countFn(realCount)
 {
     stopWhenTheProcessEnds();
+}
+
+void LibraryCatalogCache::setCountFnForTesting(CountFn countFn)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_countFn = std::move(countFn);
+}
+
+std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format, const std::string &path)
+{
+    CountFn count;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        count = m_countFn;
+    }
+    return count(format, path);
+}
+
+std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &format, const std::string &path,
+                                                        Detail detail)
+{
+    const int wanted = stageNumber(detail);
+    const std::string key = keyFor(format, path);
+    std::chrono::system_clock::time_point currentMtime;
+    try {
+        currentMtime = m_mtimeFn(format, path);
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+    int have = 0;
+    CountFn count;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_entries.find(key);
+        if (it != m_entries.end() && it->second.mtime == currentMtime) {
+            // A pass another thread is in counts as had: tracksFor() waits
+            // for it and is served from it, announcing nothing of its own.
+            have = std::max(it->second.stage, it->second.passInFlight);
+        }
+        count = m_countFn;
+    }
+    if (have >= wanted) {
+        return 0;
+    }
+    const std::optional<size_t> tracks = count(format, path);
+    if (!tracks) {
+        return std::nullopt;
+    }
+    size_t units = 0;
+    for (int stage = have + 1; stage <= wanted; ++stage) {
+        units += unitsOfStage(detailOf(stage), format, *tracks);
+    }
+    return units;
 }
 
 // A pass in progress when the process begins to end is cancelled there
