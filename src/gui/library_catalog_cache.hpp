@@ -187,6 +187,11 @@ public:
     // before the first read begins (#58). Nothing when the catalog
     // cannot be counted, which the caller treats as "size unknown".
     std::optional<size_t> plannedUnits(const std::string &format, const std::string &path, Detail detail);
+    // The same, with the row count taken from `countRows` when one is
+    // needed: for a caller that counts each catalog once for a whole
+    // plan, and checks its token between the counts.
+    std::optional<size_t> plannedUnits(const std::string &format, const std::string &path, Detail detail,
+                                       const std::function<std::optional<size_t>()> &countRows);
     // The catalog's row count, the way plannedUnits() gets it, for a
     // caller sizing its own per-row stretch on the same bar.
     std::optional<size_t> countTracks(const std::string &format, const std::string &path);
