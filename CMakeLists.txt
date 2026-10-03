@@ -2672,6 +2672,19 @@ if(TARGET seabass_edit)
         target_link_libraries(onelibrary_wal_checkpoint_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME onelibrary_wal_checkpoint_test COMMAND onelibrary_wal_checkpoint_test)
+
+    # A OneLibrary cue write lands in the analysis file first (#59); a
+    # change that then fails must put that file back too.
+    add_executable(onelibrary_cue_file_backup_test tests/onelibrary_cue_file_backup_test.cpp)
+    target_include_directories(onelibrary_cue_file_backup_test PRIVATE src tests)
+    target_compile_definitions(onelibrary_cue_file_backup_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(onelibrary_cue_file_backup_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(onelibrary_cue_file_backup_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME onelibrary_cue_file_backup_test COMMAND onelibrary_cue_file_backup_test)
+    set_tests_properties(onelibrary_cue_file_backup_test PROPERTIES LABELS "integration")
 endif()
 
 add_executable(rekordbox_process_detector_test
