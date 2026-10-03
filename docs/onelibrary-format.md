@@ -83,20 +83,27 @@ against [pyrekordbox](https://github.com/dylanljones/pyrekordbox)'s source
 
 ## Where a player takes cues from (2026-10-03, issue #59)
 
-Measured on an OMNIS-DUO with WHALESHARK2, 1 to 3 October 2026 (evidence
-in `project/evidence/omnis-cue-source-2026-10-01/`):
+Measured with WHALESHARK2: the reads on a CDJ-3000X (3 October 2026), the
+write on an OMNIS-DUO (1 October 2026). Evidence in
+`project/evidence/omnis-cue-source-2026-10-01/`. The reads were first
+written up as OMNIS-DUO results; that was wrong, the player was the 3000X.
 
-- **Playlists and track identity come from `exportLibrary.db`.** The
-  player listed the playlists exactly as OneLibrary stores them, including
-  a track DeviceLibrary's copy of that playlist lacks.
-- **Cues come from the track's analysis file**, the one
+- **Playlists and track identity come from `exportLibrary.db`** (CDJ-3000X).
+  The player listed the playlists exactly as OneLibrary stores them,
+  including a track DeviceLibrary's copy of that playlist lacks.
+- **Cues come from the track's analysis file** (CDJ-3000X), the one
   `content.analysisDataFilePath` names (for example
   `/PIONEER/USBANLZ/P06D/0001F5E1/ANLZ0000.DAT`, with its `.EXT`). That
   is the same file `export.pdb`'s `analyze_path` names when DeviceLibrary
-  holds the track. Where the `cue` table and the file disagreed (five pads
-  against one), the player showed the file; a track with no `cue` rows
-  showed the file's cues.
-- **Pads stored on the player went into the analysis file only.** The
+  holds the track. Where the `cue` table and the file disagreed, the
+  player showed the file; a track with no `cue` rows showed the file's
+  cues. And it showed the file's **legacy `PCOB` list**: on a file whose
+  PCOB hot list held one pad and whose PCO2 list (and `cue` table) held
+  five, the 3000X showed one, like the XDJ-RX2 (#33) and rekordbox 7
+  (which showed the file in both of its library branches). See #60 for
+  files whose two lists disagree.
+- **Pads stored on the player went into the analysis file only** (OMNIS-DUO,
+  1 October; the 3000X's write side is not measured yet). The
   `cue` table was left alone and `content.cueUpdateCount` did not move;
   the database gained only play history (`history`, `history_content`).
 
@@ -114,10 +121,10 @@ What Seabass does with this:
   are one cue source. Sync pairs Engine with OneLibrary only for the rows
   no DeviceLibrary row speaks for (`oneLibraryRowsToPairWithEngine()`).
 
-Still unverified: whether a CDJ-3000X reads a OneLibrary-only track's
-cues from its analysis file or from the `cue` table (the pad-1-as-loop
-check in #59), and what rekordbox desktop does with the `cue` table on
-import. Until the second is known, the table is written, not dropped.
+Still unverified: where a CDJ-3000X writes a pad the DJ stores (the
+OMNIS-DUO writes the file), and what rekordbox desktop does with the
+`cue` table on import. Until the second is known, the table is written,
+not dropped.
 
 ## What's NOT handled (deliberately out of scope this pass)
 
@@ -134,8 +141,8 @@ import. Until the second is known, the table is written, not dropped.
   verified against real hardware. **Measured 2026-10-02 on a CDJ-3000X:
   it took its cues from DeviceLibrary (`export.pdb` and the ANLZ files),
   not from `exportLibrary.db`: a OneLibrary row holding five pads showed
-  the one pad its ANLZ file had.** The OMNIS-DUO (OneLibrary only) was
-  measured on 2026-10-03; see "Where a player takes cues from" below.
+  the one pad its ANLZ file had.** See "Where a player takes cues from" above
+  for the full 3000X read-side result and the OMNIS-DUO's write.
 - **`hotCueBankList`/`hotCueBankList_cue`** (the newer named-bank
   hot-cue-grouping UI feature) is left untouched. A cue's hot-cue-ness
   and slot number live entirely in `cue.kind` per the above; bank
