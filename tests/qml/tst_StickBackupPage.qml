@@ -96,6 +96,17 @@ TestCase {
 
     // Backing up and restoring both graduated from experimental
     // (2026-09-17), so this page offers both with the flag off.
+    // While the page is still working out what changed since the last
+    // backup, Back Up Now waits, and the wait is said rather than only spun.
+    function test_backUpNowWaitsForThePreview() {
+        var page = makePage({previewing: true});
+        compare(findChild(page, "backUpButton").enabled, false, "no backing up before the plan is known");
+        compare(findChild(page, "previewBanner").visible, true);
+        var done = makePage({previewing: false});
+        compare(findChild(done, "backUpButton").enabled, true);
+        compare(findChild(done, "previewBanner").visible, false);
+    }
+
     function test_backupAndRestoreAreOfferedWithoutTheExperimentalFlag() {
         var page = makePage({}, false);
         compare(findChild(page, "backUpFrame").visible, true);

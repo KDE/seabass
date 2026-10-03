@@ -643,6 +643,12 @@ ApplicationWindow {
         DuplicatesPage {
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
+            // The same push the hub makes: this page's own suggestion.
+            onCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(cleanupPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
         }
     }
 

@@ -230,6 +230,16 @@ int main()
         std::cout << "case 8 (write workload estimates) OK\n";
     }
 
+    // A stick with nothing on it has nothing to read, and says why.
+    {
+        StickSurfaceCheck empty;
+        auto nothing = assessWear(empty, healthyOldStick());
+        assert(nothing.state == WearState::Unknown);
+        assert(nothing.label == "Nothing to check");
+        assert(nothing.summary.find("holds none") != std::string::npos);
+        assert(nothing.summary.find("Put music on it first") != std::string::npos);
+    }
+
     // Case 9: wear is read from symptoms. Nothing failing, nothing slow:
     // healthy; slow files: watch; unreadable files: failing.
     {

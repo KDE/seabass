@@ -161,8 +161,9 @@ Page {
         spacing: 12
 
         ActionCard {
-            cardTitle: "Match Duplicate Cues"
-            cardSubtitle: "Give every copy of a track the same cues, and see the space they waste"
+            cardTitle: "Cues on Duplicate Copies"
+            cardSubtitle: "Copies of a track whose cues differ. Clean Up Duplicates is usually the answer; "
+                + "this page levels the cues and keeps every copy"
             cardIcon: "edit-duplicate"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.duplicatesStatsRequested(root.stickLabel, root.rekordboxPath, root.enginePath)

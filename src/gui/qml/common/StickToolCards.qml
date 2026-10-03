@@ -513,7 +513,7 @@ Item {
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: "Duplicate stats, copy cues between copies, clean up files and recordings"
+                cardSubtitle: "Clean up duplicate copies, level their cues, clean up files and recordings"
                 cardIcon: "edit-clear-all"
                 visible: root.group === "maintain" && root.showHousekeeping
                 enabled: root.hasRekordbox || root.hasEngine

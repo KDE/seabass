@@ -56,7 +56,7 @@ TestCase {
 
     function test_breadcrumb_data() {
         return [
-            {tag: "duplicates", page: duplicatesComponent, title: "Match Duplicate Cues"},
+            {tag: "duplicates", page: duplicatesComponent, title: "Cues on Duplicate Copies"},
             {tag: "pending", page: pendingComponent, title: "Delete Orphaned Files"},
         ];
     }
