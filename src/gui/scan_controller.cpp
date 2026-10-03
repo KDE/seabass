@@ -305,10 +305,10 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
         // borrowed from. The cue and Full passes below run behind the
         // list and announce nothing.
         std::optional<size_t> planned =
-            catalogCache->plannedUnits(catalog, path.toStdString(), LibraryCatalogCache::Detail::Tracks);
+            catalogCache->plannedUnits(catalog, path.toStdString(), LibraryCatalogCache::Detail::Tracks, cancel);
         if (planned && catalog == "engine" && !siblingRekordboxPath.isEmpty()) {
             const auto sibling = catalogCache->plannedUnits("rekordbox", siblingRekordboxPath.toStdString(),
-                                                            LibraryCatalogCache::Detail::Tracks);
+                                                            LibraryCatalogCache::Detail::Tracks, cancel);
             planned = sibling ? std::optional<size_t>(*planned + *sibling) : std::nullopt;
         }
         application::PhasedProgress progress(*reporter, "Reading the library", planned.value_or(0));

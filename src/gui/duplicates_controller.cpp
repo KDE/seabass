@@ -227,7 +227,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // grouping, which has no count and is one unit at the end.
         auto &cache = LibraryCatalogCache::instance();
         const auto readUnits = cache.plannedUnits(format.toStdString(), path.toStdString(),
-                                                  LibraryCatalogCache::Detail::Full);
+                                                  LibraryCatalogCache::Detail::Full, cancel);
         application::PhasedProgress progress(*reporter, "Looking for duplicates",
                                              readUnits ? *readUnits + 1 : 0);
         std::vector<domain::Track> tracks =

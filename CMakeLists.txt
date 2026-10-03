@@ -1869,7 +1869,10 @@ add_executable(library_catalog_cache_test
 )
 target_include_directories(library_catalog_cache_test PRIVATE src)
 target_link_libraries(library_catalog_cache_test PRIVATE seabass_core Threads::Threads)
-add_test(NAME library_catalog_cache_test COMMAND library_catalog_cache_test)
+# The fixture for the analysis-file freshness case (a pad stored on a
+# player moves an ANLZ file and neither catalog file).
+add_test(NAME library_catalog_cache_test COMMAND library_catalog_cache_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
 # catalogPathForFormat() answers in the forward-slash form a QString path
 # has. Compiles stick_catalogs.cpp and the catalog cache it reads through,

@@ -44,7 +44,7 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
     try {
         // One bar (#58): the catalog reads the cache still has to make,
         // then the store read.
-        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString());
+        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString(), cancel);
         application::PhasedProgress progress(*reporter, "Reading this stick", readUnits ? *readUnits + 1 : 0);
         const auto read = readAllStickCatalogs(libraryPath.toStdString(), progress, cancel);
         if (read.catalogs.present().empty()) {

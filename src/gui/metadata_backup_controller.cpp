@@ -63,7 +63,7 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
 {
     MetadataBackupScanResult result;
     try {
-        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString());
+        const auto readUnits = plannedUnitsForAllStickCatalogs(libraryPath.toStdString(), cancel);
         const size_t ownUnits = readUnits ? *readUnits + 1 : 0;
         const size_t total = continuing ? continuing->total : ownUnits;
         application::PhasedProgress progress(*reporter, "Reading this stick", readUnits ? total : 0,

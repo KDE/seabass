@@ -36,6 +36,9 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
+#include "gui/cleanup_controller.hpp"
+#include "gui/duplicates_controller.hpp"
+#include "gui/engine_library_creator_controller.hpp"
 #include "gui/metadata_backup_controller.hpp"
 #include "gui/metadata_restore_controller.hpp"
 #include "gui/stick_catalogs.hpp"
@@ -1114,17 +1117,26 @@ public:
         return static_cast<double>(clock.nsecsElapsed()) / 1e6;
     }
 
-    // Which catalogs the first leg of a Library Health scan counts while
-    // it plans the scan's one bar (#58), and how often, with a stop
-    // landing during the first count when `stopDuringFirstCount`. A count
-    // can open OneLibrary, whose key derivation no token interrupts, so
-    // the plan counts each catalog once and looks at its token before
-    // each one: a stop waits for one count at most.
+    // Which catalogs an operation counts while it plans its one bar
+    // (#58), and how often, with a stop landing during the first count
+    // when `stopDuringFirstCount`. A count can open OneLibrary, whose key
+    // derivation no token interrupts, so each catalog is counted once
+    // (the cache remembers the count) and the token is looked at before
+    // each count: a stop waits for one count at most.
     //
-    // {counts: {format: calls}, endedMs, tasksAfter}. The counts are the
-    // real readers' (a plain cache answers them); the cache the scan
+    // `operation`: "health" (a Library Health scan), "sync" (Sync's
+    // analysis), "createEngine" (Create Engine Library), "duplicates"
+    // (the Duplicates page on OneLibrary), "cleanup" (Clean Up's scan of
+    // rekordbox, which plans every catalog on the stick). `runs` runs it
+    // that many times in a row on one cache, as a rescan of an unchanged
+    // stick does.
+    //
+    // {counts: {format: calls} over every run, runs: [{format: calls}]
+    // per run, tasksAfter (health) or busyAfter}. The counts are the real
+    // readers' (a plain cache answers them); the cache the operation
     // reads through is a fresh one, so nothing is served from before.
-    Q_INVOKABLE QVariantMap planCounts(const QString &stickRoot, bool stopDuringFirstCount)
+    Q_INVOKABLE QVariantMap countsDuring(const QString &operation, const QString &stickRoot,
+                                         bool stopDuringFirstCount, int runs)
     {
         using seabass::gui::LibraryCatalogCache;
         struct Held
@@ -1157,44 +1169,86 @@ public:
             }
             return plain->countTracks(format, path);
         });
+        const auto snapshot = [held] {
+            QVariantMap counts;
+            std::lock_guard<std::mutex> lock(held->mutex);
+            for (const auto &[format, calls] : held->calls) {
+                counts[QString::fromStdString(format)] = calls;
+            }
+            return counts;
+        };
+        const QString pioneer = stickRoot + QStringLiteral("/PIONEER");
+        const QString engine = stickRoot + QStringLiteral("/Engine Library");
         LibraryCatalogCache::setInstanceForTesting(counting.get());
         QVariantMap answer;
-        {
-            seabass::gui::LibraryConsistencyController controller;
-            controller.scan(stickRoot + QStringLiteral("/PIONEER"), stickRoot + QStringLiteral("/Engine Library"));
+        QVariantList perRun;
+        bool known = true;
+        // Starts the operation on `controller`, then either lets it run to
+        // its end or stops it while the first count is held.
+        const auto drive = [&](auto &controller, const auto &start, const auto &stop) {
+            start();
             QElapsedTimer clock;
             clock.start();
             if (stopDuringFirstCount) {
                 while (!held->inFirst && clock.elapsed() < 30000) {
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
                 }
-                controller.cancelScan();
+                stop();
                 held->release = true;
-                while (seabass::gui::LibraryConsistencyController::runningScanTasksForTesting() > 0
-                       && clock.elapsed() < 60000) {
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
-                }
+            }
+            while (controller.busy() && clock.elapsed() < 180000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            }
+            seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(60));
+            QThreadPool::globalInstance()->waitForDone(60000);
+            answer[QStringLiteral("busyAfter")] = controller.busy();
+        };
+        for (int run = 0; run < runs && known; ++run) {
+            const QVariantMap before = snapshot();
+            if (operation == QStringLiteral("health")) {
+                seabass::gui::LibraryConsistencyController controller;
+                drive(controller, [&] { controller.scan(pioneer, engine); }, [&] { controller.cancelScan(); });
+                answer[QStringLiteral("tasksAfter")] =
+                    seabass::gui::LibraryConsistencyController::runningScanTasksForTesting();
+            } else if (operation == QStringLiteral("sync")) {
+                seabass::gui::SyncController controller;
+                drive(controller, [&] { controller.analyze(pioneer, engine); }, [&] { controller.cancelScan(); });
+            } else if (operation == QStringLiteral("createEngine")) {
+                seabass::gui::EngineLibraryCreatorController controller;
+                drive(controller, [&] { controller.create(pioneer, 1); }, [&] { controller.cancelWrite(); });
+            } else if (operation == QStringLiteral("duplicates")) {
+                seabass::gui::DuplicatesController controller;
+                drive(controller, [&] { controller.scan(QStringLiteral("onelibrary"), pioneer); },
+                      [&] { controller.cancelScan(); });
+            } else if (operation == QStringLiteral("cleanup")) {
+                seabass::gui::CleanupController controller;
+                drive(controller, [&] { controller.scan(QStringLiteral("rekordbox"), pioneer); },
+                      [&] { controller.cancelScan(); });
             } else {
-                while (controller.busy() && clock.elapsed() < 180000) {
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                known = false;
+            }
+            const QVariantMap after = snapshot();
+            QVariantMap thisRun;
+            for (auto it = after.begin(); it != after.end(); ++it) {
+                const int made = it.value().toInt() - before.value(it.key()).toInt();
+                if (made > 0) {
+                    thisRun[it.key()] = made;
                 }
             }
-            answer[QStringLiteral("tasksAfter")] =
-                seabass::gui::LibraryConsistencyController::runningScanTasksForTesting();
+            perRun.append(thisRun);
         }
         held->release = true;
         seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
         QThreadPool::globalInstance()->waitForDone(30000);
         LibraryCatalogCache::setInstanceForTesting(nullptr);
-        QVariantMap counts;
-        {
-            std::lock_guard<std::mutex> lock(held->mutex);
-            for (const auto &[format, calls] : held->calls) {
-                counts[QString::fromStdString(format)] = calls;
-            }
-        }
-        answer[QStringLiteral("counts")] = counts;
+        answer[QStringLiteral("known")] = known;
+        answer[QStringLiteral("counts")] = snapshot();
+        answer[QStringLiteral("runs")] = perRun;
         return answer;
+    }
+    Q_INVOKABLE QVariantMap planCounts(const QString &stickRoot, bool stopDuringFirstCount)
+    {
+        return countsDuring(QStringLiteral("health"), stickRoot, stopDuringFirstCount, 1);
     }
 
     // How long the whole scan of a stick copy takes, uninterrupted: what a
