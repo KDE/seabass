@@ -238,12 +238,20 @@ TestCase {
         catalogGate.release();
         tryVerify(() => !controller.busy, 10000, "the first scan must end");
 
-        controllerFixture.makeFilesystemRepairSucceedAfter(400);
+        controllerFixture.makeFilesystemRepairSucceedWhenFinished();
         controller.repairStickFilesystem();
         // A scan asked for while the repair runs, held at a fresh gate.
+        // The repair ends only once that scan has reached the gate: a
+        // scan counts the stick before it reads (#58), and a repair that
+        // ended first was answered by a rescan that superseded the scan
+        // before its read, so the gate saw one pass and this could not
+        // tell a rescan from none.
         catalogGate.hold(3, true);
         controller.scan(root + "/PIONEER", root + "/Engine Library", "");
         tryVerify(() => catalogGate.waiting() === 1, 5000, "the scan during the repair must reach the gate");
+        compare(catalogGate.passes(), 1, "the scan during the repair is the one at the gate");
+        verify(controller.repairingFilesystem, "and the repair is still running");
+        controllerFixture.finishFilesystemRepair();
         tryVerify(() => catalogGate.passes() === 2, 5000,
                   "the repair's rescan must read the stick again, not be dropped behind the running scan");
         catalogGate.release();
