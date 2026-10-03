@@ -284,6 +284,13 @@ std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format
 std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &format, const std::string &path,
                                                         Detail detail)
 {
+    return plannedUnits(format, path, detail, [this, &format, &path] { return countTracks(format, path); });
+}
+
+std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &format, const std::string &path,
+                                                        Detail detail,
+                                                        const std::function<std::optional<size_t>()> &countRows)
+{
     const int wanted = stageNumber(detail);
     const std::string key = keyFor(format, path);
     std::chrono::system_clock::time_point currentMtime;
@@ -293,7 +300,6 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
         return std::nullopt;
     }
     int have = 0;
-    CountFn count;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_entries.find(key);
@@ -302,12 +308,11 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
             // for it and is served from it, announcing nothing of its own.
             have = std::max(it->second.stage, it->second.passInFlight);
         }
-        count = m_countFn;
     }
     if (have >= wanted) {
         return 0;
     }
-    const std::optional<size_t> tracks = count(format, path);
+    const std::optional<size_t> tracks = countRows();
     if (!tracks) {
         return std::nullopt;
     }

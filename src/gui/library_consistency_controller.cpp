@@ -362,18 +362,49 @@ std::vector<domain::Track> scanTracks(const QString &format, const QString &path
     return LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 }
 
+// Each catalog's row count, read once for the whole plan and only on
+// demand. A count opens the catalog: a pdb page-header walk, a count(*)
+// on m.db, and for OneLibrary SQLCipher's key derivation, which no token
+// can cut short. Asking each catalog twice (once for the read, once for
+// the checks on top) cost the first leg two derivations before it
+// looked at its token, so a stop there waited out both (#58). The token
+// is checked before every count instead: a stop waits for one at most.
+class PlanCounts
+{
+public:
+    explicit PlanCounts(application::CancellationToken cancel) : m_cancel(std::move(cancel)) {}
+
+    std::optional<size_t> rows(const std::string &format, const std::string &path)
+    {
+        const std::string key = format + '\n' + path;
+        const auto found = m_rows.find(key);
+        if (found != m_rows.end()) {
+            return found->second;
+        }
+        m_cancel.throwIfCancelled();
+        const auto counted = LibraryCatalogCache::instance().countTracks(format, path);
+        m_rows.emplace(key, counted);
+        return counted;
+    }
+
+private:
+    application::CancellationToken m_cancel;
+    std::map<std::string, std::optional<size_t>> m_rows;
+};
+
 // What one leg of the scan will announce, from the catalogs' row counts:
 // the cache's own passes, then the per-row checks this file runs on top
 // (see runScanTask). The Engine leg's "Reading cover images" has no
 // cheap count and is left out; a plan short by a few rows costs the bar
 // a moment at the end, not a restart.
 std::optional<size_t> planLeg(const QString &format, const QString &path, const QString &rekordboxPath,
-                              LibraryConsistencyController::ScanDepth depth)
+                              LibraryConsistencyController::ScanDepth depth, PlanCounts &counts)
 {
     LibraryCatalogCache &cache = LibraryCatalogCache::instance();
     const std::string fmt = format.toStdString();
     const std::string at = path.toStdString();
-    const auto read = cache.plannedUnits(fmt, at, LibraryCatalogCache::Detail::Full);
+    const auto read =
+        cache.plannedUnits(fmt, at, LibraryCatalogCache::Detail::Full, [&] { return counts.rows(fmt, at); });
     if (!read) {
         return std::nullopt;
     }
@@ -381,7 +412,7 @@ std::optional<size_t> planLeg(const QString &format, const QString &path, const 
     if (depth != LibraryConsistencyController::Full) {
         return units;
     }
-    const auto rows = cache.countTracks(fmt, at);
+    const auto rows = counts.rows(fmt, at);
     if (!rows) {
         return std::nullopt;
     }
@@ -395,22 +426,25 @@ std::optional<size_t> planLeg(const QString &format, const QString &path, const 
         // "Looking for Clean Up leftovers": a key per rekordbox row and
         // per OneLibrary row (its deleted-file list is not counted). The
         // rekordbox read it makes first is a cache hit by then.
-        const auto rekordboxRows = cache.countTracks("rekordbox", rekordboxPath.toStdString());
+        const auto rekordboxRows = counts.rows("rekordbox", rekordboxPath.toStdString());
         units += *rows + rekordboxRows.value_or(0);
         units += *rows;  // "Checking cue lists"
     }
     return units;
 }
 
+// Throws application::OperationCancelled when `cancel` is set between
+// two counts.
 ScanChainPlan planChain(const QStringList &formats, const QString &rekordboxPath, const QString &enginePath,
-                        LibraryConsistencyController::ScanDepth depth)
+                        LibraryConsistencyController::ScanDepth depth, application::CancellationToken cancel)
 {
     ScanChainPlan plan;
     plan.formats = formats;
     plan.known = true;
+    PlanCounts counts(std::move(cancel));
     for (const QString &format : formats) {
         const QString path = format == QStringLiteral("engine") ? enginePath : rekordboxPath;
-        const auto units = planLeg(format, path, rekordboxPath, depth);
+        const auto units = planLeg(format, path, rekordboxPath, depth, counts);
         plan.unitsPerLeg.push_back(units.value_or(0));
         if (!units) {
             plan.known = false;
@@ -520,7 +554,12 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
     // lands on it end to end with its own label.
     const bool firstLeg = chain.empty();
     if (firstLeg) {
-        chain = planChain(chainFormats, rekordboxPath, enginePath, depth);
+        try {
+            chain = planChain(chainFormats, rekordboxPath, enginePath, depth, cancel);
+        } catch (const application::OperationCancelled &) {
+            result.cancelled = true;
+            return result;
+        }
         result.plan = chain;
     }
     const size_t total = chain.known ? chain.total() : 0;
