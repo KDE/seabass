@@ -1,6 +1,6 @@
 rekordbox's own export.pdb at three moments, for issue #62 (how rekordbox
 starts a new playlist_entries page and how it takes a track out of a
-playlist). Written by rekordbox on the MacBook, 2026-10-04, onto a stick
+playlist). Written by rekordbox 7.2.18 on the MacBook, 2026-10-04, onto a stick
 formatted for the purpose, from 34 generated tone tracks (pdb reference
 kit: a01..d10, nothing anyone owns). Only export.pdb is kept.
 

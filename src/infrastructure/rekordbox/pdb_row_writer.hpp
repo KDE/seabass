@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <functional>
 #include <stdexcept>
@@ -312,6 +313,45 @@ public:
     // many rows were added.
     size_t appendPlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
 
+    // The playlist tree as export.pdb holds it now: every playlist and
+    // folder, with its parent (0 for the top level) and its place there.
+    struct PlaylistTreeNode
+    {
+        uint32_t id = 0;
+        uint32_t parentId = 0;
+        uint32_t sortOrder = 0;
+        bool isFolder = false;
+        std::string name;
+    };
+    std::vector<PlaylistTreeNode> playlistTree() const;
+
+    // Adds a playlist (or a folder) named `name` under parentId (0: the
+    // top level; otherwise a folder), at `position` among its siblings
+    // (default: last). Done the way rekordbox does it (#62's reference
+    // export): every row of that level is deleted and written again,
+    // sort_order 0 on, the new one among them; its id is one above any
+    // the tree has had, so a removed playlist's id is never reused. The
+    // name is encoded as rekordbox encodes it (short ASCII up to 126
+    // bytes, long ASCII, or UTF-16). Throws std::invalid_argument for an
+    // empty name or a parent that is not a folder, PdbPageFull when the
+    // rows cannot be placed; nothing changes then. Returns the new id.
+    uint32_t createPlaylist(uint32_t parentId, const std::string &name, bool isFolder,
+                            std::optional<size_t> position = std::nullopt);
+
+    // Deletes a playlist, or a folder with everything in it: the tree
+    // rows of the node and its descendants, every entry of each playlist
+    // among them, and the rest of its level written again, sort_order 0
+    // on, as rekordbox did when deleting Q1 and the folder F1. Returns how
+    // many playlists and folders went (0 when there is no such id).
+    size_t deletePlaylist(uint32_t id);
+
+    // Puts playlistId's entries in the order of trackIds, which must hold
+    // exactly the tracks it has (std::invalid_argument otherwise): the
+    // entries are deleted and added again, entry_index 1 on, as rekordbox
+    // did moving a05 to the top of Q1. Returns false, writing nothing,
+    // when the order is already that.
+    bool reorderPlaylist(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
+
     // Bumps the sequence number for every page touched this session
     // (page.sequence <- the header's current sequence; then the header's
     // own sequence is incremented -- matching the order the format's own
@@ -352,25 +392,36 @@ private:
     // the page was also appended to (appendPlaylistEntries writes its own).
     std::map<uint32_t, std::set<uint32_t>> m_deletedRowsByPage;
     std::set<uint32_t> m_appendedPages;
-    // Where placePlaylistRows() put `count` new playlist rows: how many on
-    // the table's last page, or how many new pages and rows per page.
-    struct PlaylistRowPlacement
+    // Where placeRows() puts new rows of one table: how many on its last
+    // page, or how many on each new page.
+    struct RowPlacement
     {
         size_t tableEntry = 0;
+        uint32_t tableType = 0;
         uint32_t lastPage = 0;
         size_t onLastPage = 0;
-        size_t newPages = 0;
-        size_t perNewPage = 0;
+        std::vector<size_t> perNewPage;
     };
-    PlaylistRowPlacement placePlaylistRows(size_t count) const;
-    static size_t playlistRowsFitting(uint32_t numRowOffsets, uint16_t freeSize, size_t wanted);
-    void writePlaylistRows(const PlaylistRowPlacement &placement, uint32_t playlistId, const std::vector<uint32_t> &trackIds,
-                           uint32_t firstEntryIndex);
-    uint32_t startPlaylistEntriesPage(size_t tableEntry);
-    void appendPlaylistRowsToPage(uint32_t pageIndex, uint32_t playlistId, const std::vector<uint32_t> &trackIds, size_t &next,
-                                  size_t count, uint32_t &entryIndex);
-    // Lists a playlist page this session deleted rows from on the table's
-    // index page, as rekordbox does; called by commit().
+    // One playlist_tree row to write: sort_order is its place in the level.
+    struct TreeRowSlot
+    {
+        uint32_t id = 0;
+        uint32_t parentId = 0;
+        bool isFolder = false;
+        std::string nameBytes;
+    };
+    RowPlacement placeRows(uint32_t tableType, const std::vector<std::string> &rows) const;
+    static size_t rowsFitting(uint32_t numRowOffsets, uint16_t freeSize, const std::vector<std::string> &rows, size_t from);
+    void writeRows(const RowPlacement &placement, const std::vector<std::string> &rows);
+    uint32_t startPage(size_t tableEntry, uint32_t tableType);
+    void appendRowsToPage(uint32_t pageIndex, const std::vector<std::string> &rows, size_t &next, size_t count);
+    void rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
+    void rewriteTreeLevel(uint32_t parentId, const std::vector<TreeRowSlot> &level);
+    static std::vector<TreeRowSlot> siblingsOf(const std::string &buffer, uint32_t parentId);
+    static std::string treeRowBytes(const TreeRowSlot &slot, uint32_t sortOrder);
+    // Lists a playlist or playlist-tree page this session deleted rows
+    // from on its table's index page, as rekordbox does; called by
+    // commit().
     void listDeletionInTableIndex(uint32_t pageIndex);
     // Clears one row's presence bit with rekordbox's bookkeeping (#62):
     // num_rows one lower and page_flags' 0x10 ("this page has deleted
