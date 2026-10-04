@@ -3439,6 +3439,12 @@ target_link_libraries(rig_restore PRIVATE seabass_core)
 
 # Release rig: the read-only paths on a restored test stick -- catalog counts,
 # Library Health, stray cues and duplicates, timed -- without writing to it.
+# #62 hardware check: edits TESTRIG's export.pdb playlists with
+# PdbRowWriter so a player can show the result.
+add_executable(pdb_playlist_edit tools/pdb_playlist_edit.cpp)
+target_include_directories(pdb_playlist_edit PRIVATE src)
+target_link_libraries(pdb_playlist_edit PRIVATE seabass_core rekordbox_format)
+
 add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
