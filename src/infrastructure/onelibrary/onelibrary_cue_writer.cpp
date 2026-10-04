@@ -15,6 +15,8 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <set>
 #include <stdexcept>
 
 #include "infrastructure/durable_file_write.hpp"
@@ -745,6 +747,79 @@ int64_t membershipRows(SqlCipherDb &db, int64_t playlistId, const std::vector<in
     return rows;
 }
 
+// sequenceNo 1, 2, 3... in the playlist's current order, as rekordbox
+// leaves a playlist after taking an entry out.
+void renumberPlaylistContent(SqlCipherDb &db, int64_t playlistId)
+{
+    std::vector<int64_t> rowids;
+    {
+        SqlCipherStatement read(db, "SELECT rowid FROM playlist_content WHERE playlist_id = ? ORDER BY sequenceNo, rowid");
+        read.bindInt64(1, playlistId);
+        while (read.step()) {
+            rowids.push_back(read.columnInt64(0));
+        }
+    }
+    for (size_t i = 0; i < rowids.size(); ++i) {
+        SqlCipherStatement update(db, "UPDATE playlist_content SET sequenceNo = ? WHERE rowid = ?");
+        update.bindInt64(1, static_cast<int64_t>(i + 1));
+        update.bindInt64(2, rowids[i]);
+        update.run();
+    }
+}
+
+// One level of the tree in the order given, sequenceNo from 0.
+void numberPlaylistLevel(SqlCipherDb &db, const std::vector<int64_t> &ids)
+{
+    for (size_t i = 0; i < ids.size(); ++i) {
+        SqlCipherStatement update(db, "UPDATE playlist SET sequenceNo = ? WHERE playlist_id = ?");
+        update.bindInt64(1, static_cast<int64_t>(i));
+        update.bindInt64(2, ids[i]);
+        update.run();
+    }
+}
+
+struct PlaylistRow
+{
+    int64_t id = 0;
+    int64_t parentId = 0;
+    int64_t sequenceNo = 0;
+    bool isFolder = false;
+    std::string name;
+};
+
+std::vector<PlaylistRow> playlistRows(SqlCipherDb &db)
+{
+    std::vector<PlaylistRow> rows;
+    SqlCipherStatement read(db, "SELECT playlist_id, coalesce(playlist_id_parent, 0), coalesce(sequenceNo, 0), "
+                                "coalesce(attribute, 0), coalesce(name, '') FROM playlist ORDER BY playlist_id_parent, sequenceNo, playlist_id");
+    while (read.step()) {
+        rows.push_back({read.columnInt64(0), read.columnInt64(1), read.columnInt64(2), read.columnInt64(3) == 1, read.columnText(4)});
+    }
+    return rows;
+}
+
+std::vector<int64_t> levelIds(const std::vector<PlaylistRow> &rows, int64_t parentId)
+{
+    std::vector<int64_t> ids;
+    for (const auto &r : rows) {
+        if (r.parentId == parentId) {
+            ids.push_back(r.id);
+        }
+    }
+    return ids;
+}
+
+std::vector<int64_t> contentOrder(SqlCipherDb &db, int64_t playlistId)
+{
+    std::vector<int64_t> ids;
+    SqlCipherStatement read(db, "SELECT content_id FROM playlist_content WHERE playlist_id = ? ORDER BY sequenceNo, rowid");
+    read.bindInt64(1, playlistId);
+    while (read.step()) {
+        ids.push_back(read.columnInt64(0));
+    }
+    return ids;
+}
+
 }  // namespace
 
 bool OneLibraryCueWriter::addToPlaylist(const std::string &playlistPath, const std::string &filePath)
@@ -817,6 +892,7 @@ bool OneLibraryCueWriter::removeFromPlaylist(const std::string &playlistPath, co
             del.bindInt64(2, contentId);
             del.run();
         }
+        renumberPlaylistContent(db, *playlistId);
         db.exec("COMMIT;");
     } catch (...) {
         try {
@@ -828,6 +904,207 @@ bool OneLibraryCueWriter::removeFromPlaylist(const std::string &playlistPath, co
     if (membershipRows(verifyConnection(), *playlistId, contentIds) != 0) {
         throw std::runtime_error("onelibrary: post-write verification failed, " + filePath + " is still in \""
                                  + playlistPath + "\"");
+    }
+    refreshStalenessBaseline();
+    return true;
+}
+
+std::vector<OneLibraryCueWriter::PlaylistNode> OneLibraryCueWriter::playlistTree()
+{
+    std::vector<PlaylistNode> nodes;
+    for (const auto &r : playlistRows(verifyConnection())) {
+        nodes.push_back({r.id, r.parentId, r.sequenceNo, r.isFolder, r.name});
+    }
+    return nodes;
+}
+
+std::vector<std::pair<int64_t, int64_t>> OneLibraryCueWriter::playlistContent(const std::string &playlistPath)
+{
+    SqlCipherDb &db = verifyConnection();
+    const auto id = playlistIdAtPath(db, playlistPath);
+    if (!id) {
+        throw std::runtime_error("onelibrary: no playlist \"" + playlistPath + "\"");
+    }
+    std::vector<std::pair<int64_t, int64_t>> rows;
+    SqlCipherStatement read(db, "SELECT content_id, sequenceNo FROM playlist_content WHERE playlist_id = ? ORDER BY sequenceNo, rowid");
+    read.bindInt64(1, *id);
+    while (read.step()) {
+        rows.emplace_back(read.columnInt64(0), read.columnInt64(1));
+    }
+    return rows;
+}
+
+int64_t OneLibraryCueWriter::playlistContentRowsWithoutPlaylist()
+{
+    SqlCipherStatement count(verifyConnection(),
+                             "SELECT count(*) FROM playlist_content WHERE playlist_id NOT IN (SELECT playlist_id FROM playlist)");
+    count.step();
+    return count.columnInt64(0);
+}
+
+int64_t OneLibraryCueWriter::createPlaylist(const std::string &parentPath, const std::string &name, bool isFolder,
+                                            std::optional<size_t> position)
+{
+    if (name.empty() || name.find('/') != std::string::npos) {
+        throw std::invalid_argument("onelibrary: a playlist name must be non-empty and hold no '/'");
+    }
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto rows = playlistRows(db);
+    int64_t parentId = 0;
+    if (!parentPath.empty()) {
+        const auto parent = playlistIdAtPath(db, parentPath);
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return parent && r.id == *parent; });
+        if (row == rows.end() || !row->isFolder) {
+            throw std::invalid_argument("onelibrary: no folder \"" + parentPath + "\"");
+        }
+        parentId = *parent;
+    }
+    for (const auto &r : rows) {
+        if (r.parentId == parentId && r.name == name) {
+            throw std::invalid_argument("onelibrary: \"" + name + "\" is already there");
+        }
+    }
+    int64_t id = 1;
+    for (const auto &r : rows) {
+        id = std::max(id, r.id + 1);
+    }
+    std::vector<int64_t> level = levelIds(rows, parentId);
+    level.insert(level.begin() + static_cast<std::ptrdiff_t>(std::min(position.value_or(level.size()), level.size())), id);
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        SqlCipherStatement insert(db, "INSERT INTO playlist (playlist_id, sequenceNo, name, image_id, attribute, playlist_id_parent) "
+                                      "VALUES (?, 0, ?, NULL, ?, ?)");
+        insert.bindInt64(1, id);
+        insert.bindText(2, name);
+        insert.bindInt64(3, isFolder ? 1 : 0);
+        insert.bindInt64(4, parentId);
+        insert.run();
+        numberPlaylistLevel(db, level);
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    const std::string path = parentPath.empty() ? name : parentPath + "/" + name;
+    if (playlistIdAtPath(verifyConnection(), path) != id) {
+        throw std::runtime_error("onelibrary: post-write verification failed, \"" + path + "\" is not there");
+    }
+    refreshStalenessBaseline();
+    return id;
+}
+
+size_t OneLibraryCueWriter::deletePlaylist(const std::string &path)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto id = playlistIdAtPath(db, path);
+    if (!id) {
+        return 0;
+    }
+    const auto rows = playlistRows(db);
+    std::set<int64_t> doomed{*id};
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto &r : rows) {
+            if (doomed.count(r.parentId) && doomed.insert(r.id).second) {
+                grew = true;
+            }
+        }
+    }
+    int64_t parentId = 0;
+    for (const auto &r : rows) {
+        if (r.id == *id) {
+            parentId = r.parentId;
+        }
+    }
+    std::vector<int64_t> level;
+    for (const int64_t sibling : levelIds(rows, parentId)) {
+        if (sibling != *id) {
+            level.push_back(sibling);
+        }
+    }
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (const int64_t gone : doomed) {
+            SqlCipherStatement content(db, "DELETE FROM playlist_content WHERE playlist_id = ?");
+            content.bindInt64(1, gone);
+            content.run();
+            SqlCipherStatement row(db, "DELETE FROM playlist WHERE playlist_id = ?");
+            row.bindInt64(1, gone);
+            row.run();
+        }
+        numberPlaylistLevel(db, level);
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    if (playlistIdAtPath(verifyConnection(), path)) {
+        throw std::runtime_error("onelibrary: post-write verification failed, \"" + path + "\" is still there");
+    }
+    refreshStalenessBaseline();
+    return doomed.size();
+}
+
+bool OneLibraryCueWriter::reorderPlaylist(const std::string &playlistPath, const std::vector<std::string> &filePaths)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto id = playlistIdAtPath(db, playlistPath);
+    if (!id) {
+        throw std::runtime_error("onelibrary: no playlist \"" + playlistPath + "\"");
+    }
+    const std::vector<int64_t> now = contentOrder(db, *id);
+    std::vector<int64_t> wanted;
+    for (const auto &file : filePaths) {
+        const std::vector<int64_t> ids = contentIdsAt(db, toContentPath(m_stickRoot, file));
+        const auto member = std::find_if(ids.begin(), ids.end(), [&](int64_t c) {
+            return std::find(now.begin(), now.end(), c) != now.end();
+        });
+        if (member == ids.end()) {
+            throw std::invalid_argument("onelibrary: " + file + " is not in \"" + playlistPath + "\"");
+        }
+        wanted.push_back(*member);
+    }
+    if (wanted == now) {
+        return false;
+    }
+    std::vector<int64_t> a = now;
+    std::vector<int64_t> b = wanted;
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    if (a != b) {
+        throw std::invalid_argument("onelibrary: a new order must hold the playlist's files, each as often as now");
+    }
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        SqlCipherStatement clear(db, "DELETE FROM playlist_content WHERE playlist_id = ?");
+        clear.bindInt64(1, *id);
+        clear.run();
+        for (size_t i = 0; i < wanted.size(); ++i) {
+            SqlCipherStatement insert(db, "INSERT INTO playlist_content (playlist_id, content_id, sequenceNo) VALUES (?, ?, ?)");
+            insert.bindInt64(1, *id);
+            insert.bindInt64(2, wanted[i]);
+            insert.bindInt64(3, static_cast<int64_t>(i + 1));
+            insert.run();
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    if (contentOrder(verifyConnection(), *id) != wanted) {
+        throw std::runtime_error("onelibrary: post-write verification failed, \"" + playlistPath + "\" is not in the new order");
     }
     refreshStalenessBaseline();
     return true;

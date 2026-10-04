@@ -237,11 +237,52 @@ public:
     // as the reader spells it) and the file's path. Add appends the file
     // at the end of the playlist (sequenceNo one past the last) unless it
     // is already a member; remove takes every row of that file out of
-    // that playlist. Both verify on a fresh connection, and throw when
+    // that playlist and numbers the rest from 1 again, as rekordbox does
+    // (#62's reference export). Both verify on a fresh connection, and throw when
     // the playlist does not exist or no content row lists the file.
     // Return whether anything changed.
     bool addToPlaylist(const std::string &playlistPath, const std::string &filePath);
     bool removeFromPlaylist(const std::string &playlistPath, const std::string &filePath);
+
+    // The playlist tree (#62), as the playlist table holds it: every
+    // playlist and folder with its parent (0: top level) and its place
+    // in that level (sequenceNo, from 0).
+    struct PlaylistNode
+    {
+        int64_t id = 0;
+        int64_t parentId = 0;
+        int64_t sequenceNo = 0;
+        bool isFolder = false;
+        std::string name;
+    };
+    std::vector<PlaylistNode> playlistTree();
+    // A playlist's rows in its order, as (content_id, sequenceNo); throws
+    // when there is no such playlist.
+    std::vector<std::pair<int64_t, int64_t>> playlistContent(const std::string &playlistPath);
+    // playlist_content rows whose playlist does not exist: what deleting a
+    // playlist must never leave behind.
+    int64_t playlistContentRowsWithoutPlaylist();
+
+    // Creates a playlist (or folder) named `name` in the folder at
+    // parentPath ("" for the top level), at `position` in that level
+    // (default: last), the rest of the level renumbered from 0 as
+    // rekordbox does (#62's reference export). Its id is one above the
+    // highest. Throws std::invalid_argument when the parent is not a
+    // folder or the level already has that name (playlists are matched
+    // by path across the libraries). Verified on a fresh connection.
+    // Returns the new playlist_id.
+    int64_t createPlaylist(const std::string &parentPath, const std::string &name, bool isFolder,
+                           std::optional<size_t> position = std::nullopt);
+    // Deletes the playlist or folder at `path` with everything under it
+    // and every playlist_content row of those playlists; the level closes
+    // up. Tracks stay: rekordbox also deletes tracks no other playlist
+    // holds when a playlist is deleted on a device, and Seabass does not.
+    // Returns how many playlists and folders went (0 when there is none).
+    size_t deletePlaylist(const std::string &path);
+    // Puts the playlist's rows in the order of filePaths, which must be
+    // exactly the files it holds; sequenceNo from 1. Returns false when
+    // the order is already that.
+    bool reorderPlaylist(const std::string &playlistPath, const std::vector<std::string> &filePaths);
 
     // Fills in a Clean Up survivor's missing bpm/key/artwork from
     // another copy in its duplicate group (see domain::

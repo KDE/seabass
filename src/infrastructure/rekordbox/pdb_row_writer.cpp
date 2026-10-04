@@ -2007,10 +2007,17 @@ uint32_t PdbRowWriter::createPlaylist(uint32_t parentId, const std::string &name
     if (m_format != Format::Export) {
         throw std::logic_error("playlists live in export.pdb");
     }
-    if (name.empty()) {
-        throw std::invalid_argument("a playlist needs a name");
+    if (name.empty() || name.find('/') != std::string::npos) {
+        throw std::invalid_argument("a playlist name must be non-empty and hold no '/'");
     }
     const auto tree = treeRowsOf(m_buffer);
+    // Playlists are matched by path across the three libraries, so a level
+    // holds a name once.
+    for (const auto &r : tree) {
+        if (r.parentId == parentId && r.name == name) {
+            throw std::invalid_argument("\"" + name + "\" is already there");
+        }
+    }
     if (parentId != 0) {
         const auto parent = std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.id == parentId; });
         if (parent == tree.end() || !parent->isFolder) {
