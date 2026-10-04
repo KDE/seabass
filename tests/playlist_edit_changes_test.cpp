@@ -32,6 +32,7 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
@@ -203,27 +204,25 @@ int main(int argc, char **argv)
     //    is put on the pending-deletions list; a01 is left alone.
     {
         const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
-        const auto rowsFor = [&](const File &f) {
+        // As the scan hands them over: every library's row with its own
+        // path. The rekordbox row's id is deliberately stale (a01's), as
+        // after a re-export: the change must go by the path.
+        const auto rowsFor = [&](const File &f, const std::string &rekordboxId) {
             std::vector<domain::Track> rows;
-            for (const uint32_t id : infrastructure::rekordbox::PdbRowWriter(pdbPath).trackIdsWithFilePath("/Contents/" + std::string(f.relative))) {
+            for (const char *format : {"rekordbox", "onelibrary", "engine"}) {
                 domain::Track t;
-                t.format = "rekordbox";
-                t.sourceId = std::to_string(id);
+                t.format = format;
+                t.filePath = file(f);
+                t.sourceId = std::string(format) == "engine" ? std::to_string(engineId[f.relative])
+                             : std::string(format) == "rekordbox" ? rekordboxId : "x";
                 rows.push_back(t);
             }
-            domain::Track one;
-            one.format = "onelibrary";
-            one.sourceId = "x";
-            rows.push_back(one);
-            domain::Track eng;
-            eng.format = "engine";
-            eng.sourceId = std::to_string(engineId[f.relative]);
-            rows.push_back(eng);
             return rows;
         };
-        assert(rowsFor(A10).size() == 3 && "a10 is in all three libraries");
-        std::vector<DeleteTracksChange::Entry> entries = {{file(A10), "Tone A10", "Tone Artist 05", rowsFor(A10)},
-                                                          {file(A01), "Tone A01", "Tone Artist 01", rowsFor(A01)}};
+        const std::string a01Id = std::to_string(infrastructure::rekordbox::PdbRowWriter(pdbPath)
+                                                     .trackIdsWithFilePath("/Contents/" + std::string(A01.relative)).front());
+        std::vector<DeleteTracksChange::Entry> entries = {{file(A10), "Tone A10", "Tone Artist 05", rowsFor(A10, a01Id)},
+                                                          {file(A01), "Tone A01", "Tone Artist 01", rowsFor(A01, a01Id)}};
         const auto result = save(std::make_shared<DeleteTracksChange>(pioneerQ, libraryQ, entries));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
 
@@ -249,6 +248,41 @@ int main(int argc, char **argv)
         assert(lines.str().find("a01.mp3") == std::string::npos && "a01's file does not");
     }
     std::cout << "case 4 (tracks in no playlist deleted from all three, the file queued, a listed one kept) OK\n";
+
+    // 5. Engine tracks found by path from a copy of the library (as a save
+    //    writing through a scratch copy sees them), relative to the
+    //    stick's real library folder.
+    {
+        const fs::path copy = testing::scratchRoot() / "seabass_playlist_edit_changes_scratch" / "Engine Library";
+        fs::remove_all(copy.parent_path());
+        fs::create_directories(copy.parent_path());
+        fs::copy(library, copy, fs::copy_options::recursive);
+        const auto ids = infrastructure::engine::engineTrackIdsForFile(pathToUtf8(copy), pathToUtf8(library), file(A02));
+        assert(ids.size() == 1 && ids[0] == engineId[A02.relative] && "found from the copy, by the real folder's path");
+        assert(infrastructure::engine::engineTrackIdsForFile(pathToUtf8(copy), pathToUtf8(copy), file(A02)).empty()
+               && "relative to the copy itself, nothing matches");
+        fs::remove_all(copy.parent_path());
+    }
+    std::cout << "case 5 (Engine tracks by path from a scratch copy) OK\n";
+
+    // 6. A playlist called "AC/DC" beside a folder "AC" holding "DC": the
+    //    path names two, so Browse refuses and a staged change fails
+    //    rather than guess.
+    {
+        {
+            auto db = djinterop::engine::load_database(pathToUtf8(library));
+            db.create_root_playlist("AC/DC");
+            db.create_root_playlist("AC").create_sub_playlist("DC");
+        }
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "AC/DC") == 2);
+        assert(librariesWithSeveralPlaylists(pioneerQ, libraryQ, "AC/DC") == QStringList{QStringLiteral("engine")});
+        SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+        const SaveLoopResult result =
+            runSaveLoop({std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "AC/DC", QStringList{QStringLiteral("engine")})}, ctx);
+        assert(!result.error.isEmpty() && "an ambiguous path fails, it does not pick one");
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "AC/DC") == 2 && "both still there");
+    }
+    std::cout << "case 6 (an ambiguous playlist path is refused) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

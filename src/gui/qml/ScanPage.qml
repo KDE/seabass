@@ -78,8 +78,10 @@ Page {
     // staged into the same session as an added cue, written by the same
     // Save into every library on the stick that has the playlist.
     readonly property bool playlistEditing: root.appSettingsController.experimentalFeaturesEnabled === true
-    property string shownPlaylist: root.selectedPlaylistIndex > 0
-        ? (scanController.playlistNames[root.selectedPlaylistIndex - 1] ?? "") : ""
+    // The playlist the list is showing, by name: set where the selection
+    // is made, since the row number is the FILTERED list's when the
+    // playlist search is in use.
+    property string shownPlaylist: ""
     property var playlistEditController: PlaylistEditController {}
     Connections {
         target: ("objectName" in root.playlistEditController) ? root.playlistEditController : null
@@ -202,6 +204,7 @@ Page {
     // forget a playlist because this library happens not to have it.
     function selectPlaylist(index, name, remember) {
         root.selectedPlaylistIndex = index;
+        root.shownPlaylist = index === 0 ? "" : name;
         scanController.filterByPlaylist(index === 0 ? "" : name);
         if (remember !== false) {
             root.appSettingsController.lastPlaylistName = index === 0 ? "" : name;
@@ -387,6 +390,7 @@ Page {
 
     function rescan() {
         selectedPlaylistIndex = 0;
+        root.shownPlaylist = "";
         // Until the scan is done the list still holds the OLD library's
         // rows. A queue offered now would put this library's name on
         // them, and a track ending meanwhile would load the old

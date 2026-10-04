@@ -918,6 +918,25 @@ std::vector<OneLibraryCueWriter::PlaylistNode> OneLibraryCueWriter::playlistTree
     return nodes;
 }
 
+int OneLibraryCueWriter::playlistCountAtPath(const std::string &path)
+{
+    const auto rows = playlistRows(verifyConnection());
+    std::map<int64_t, const PlaylistRow *> byId;
+    for (const auto &r : rows) {
+        byId[r.id] = &r;
+    }
+    int count = 0;
+    for (const auto &r : rows) {
+        std::string spelled = r.name;
+        int guard = 0;
+        for (int64_t p = r.parentId; p != 0 && byId.count(p) && guard < 64; p = byId.at(p)->parentId, ++guard) {
+            spelled = byId.at(p)->name + "/" + spelled;
+        }
+        count += spelled == path ? 1 : 0;
+    }
+    return count;
+}
+
 std::vector<std::pair<int64_t, int64_t>> OneLibraryCueWriter::playlistContent(const std::string &playlistPath)
 {
     SqlCipherDb &db = verifyConnection();

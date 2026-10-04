@@ -13,6 +13,22 @@
 namespace seabass::gui
 {
 
+namespace
+{
+
+QString displayNames(const QStringList &libraries)
+{
+    QStringList names;
+    for (const QString &l : libraries) {
+        names << (l == QLatin1String("onelibrary") ? QStringLiteral("OneLibrary")
+                  : l == QLatin1String("engine")   ? QStringLiteral("Engine")
+                                                   : QStringLiteral("rekordbox"));
+    }
+    return names.join(QStringLiteral(", "));
+}
+
+}  // namespace
+
 PlaylistEditController::PlaylistEditController(QObject *parent) : QObject(parent) {}
 
 bool PlaylistEditController::attachSession(const QString &rekordboxPath, const QString &enginePath)
@@ -70,6 +86,12 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
         setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
         return false;
     }
+    if (const QStringList several = librariesWithSeveralPlaylists(rekordboxPath, enginePath, name); !several.isEmpty()) {
+        setErrorMessage(QStringLiteral("More than one playlist is called \"%1\" (in %2), so Seabass cannot tell which "
+                                       "one you mean. Rename one of them first.")
+                            .arg(playlist, displayNames(several)));
+        return false;
+    }
     if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, libraries))) {
         return false;  // the session reported why (another page's edits)
     }
@@ -90,6 +112,12 @@ bool PlaylistEditController::removeFromPlaylist(const QString &rekordboxPath, co
     const QStringList libraries = librariesWithPlaylist(rekordboxPath, enginePath, name);
     if (libraries.isEmpty()) {
         setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+        return false;
+    }
+    if (const QStringList several = librariesWithSeveralPlaylists(rekordboxPath, enginePath, name); !several.isEmpty()) {
+        setErrorMessage(QStringLiteral("More than one playlist is called \"%1\" (in %2), so Seabass cannot tell which "
+                                       "one you mean. Rename one of them first.")
+                            .arg(playlist, displayNames(several)));
         return false;
     }
     const std::string file = filePath.toStdString();

@@ -6,6 +6,8 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
+#include <stdexcept>
 #include <set>
 
 #include "gui/edit/changes/change_helpers.hpp"
@@ -35,24 +37,55 @@ std::string engineDbOf(const std::string &enginePath)
     return pathToUtf8(pathFromUtf8(enginePath) / "Database2" / "m.db");
 }
 
-// export.pdb's playlist (or folder) at a full path, by walking its tree.
-std::optional<uint32_t> pdbPlaylistId(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
+// export.pdb's playlists (and folders) spelling a full path, by walking
+// its tree. Two when a folder holds two of one name, or a name holds a
+// "/" that reads as a folder.
+std::vector<uint32_t> pdbPlaylistIds(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
 {
     const auto tree = rows.playlistTree();
     std::map<uint32_t, const infrastructure::rekordbox::PdbRowWriter::PlaylistTreeNode *> byId;
     for (const auto &n : tree) {
         byId[n.id] = &n;
     }
+    std::vector<uint32_t> ids;
     for (const auto &n : tree) {
         std::string spelled = n.name;
-        for (uint32_t p = n.parentId; p != 0 && byId.count(p); p = byId.at(p)->parentId) {
+        int guard = 0;
+        for (uint32_t p = n.parentId; p != 0 && byId.count(p) && guard < 64; p = byId.at(p)->parentId, ++guard) {
             spelled = byId.at(p)->name + "/" + spelled;
         }
         if (spelled == path) {
-            return n.id;
+            ids.push_back(n.id);
         }
     }
-    return std::nullopt;
+    return ids;
+}
+
+// The one playlist at `path`, or nothing when there is none; throws when
+// there are several, since editing by path would have to guess.
+std::optional<uint32_t> pdbPlaylistId(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
+{
+    const auto ids = pdbPlaylistIds(rows, path);
+    if (ids.size() > 1) {
+        throw std::runtime_error("rekordbox has " + std::to_string(ids.size()) + " playlists named \"" + path + "\"");
+    }
+    return ids.empty() ? std::nullopt : std::optional<uint32_t>(ids.front());
+}
+
+void requireOneEnginePlaylist(const std::string &library, const std::string &path)
+{
+    const int n = infrastructure::engine::enginePlaylistCountAtPath(library, path);
+    if (n > 1) {
+        throw std::runtime_error("Engine has " + std::to_string(n) + " playlists named \"" + path + "\"");
+    }
+}
+
+void requireOneOneLibraryPlaylist(infrastructure::onelibrary::OneLibraryCueWriter &w, const std::string &path)
+{
+    const int n = w.playlistCountAtPath(path);
+    if (n > 1) {
+        throw std::runtime_error("OneLibrary has " + std::to_string(n) + " playlists named \"" + path + "\"");
+    }
 }
 
 bool oneLibraryHas(const std::string &pioneer, const std::string &path)
@@ -62,8 +95,7 @@ bool oneLibraryHas(const std::string &pioneer, const std::string &path)
     }
     try {
         infrastructure::onelibrary::OneLibraryCueWriter w(pioneer);
-        w.playlistContent(path);
-        return true;
+        return w.playlistCountAtPath(path) > 0;
     } catch (const std::exception &) {
         return false;
     }
@@ -107,7 +139,7 @@ QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &eng
     if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
         try {
             const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
-            if (pdbPlaylistId(rows, playlist)) {
+            if (!pdbPlaylistIds(rows, playlist).empty()) {
                 libraries << QStringLiteral("rekordbox");
             }
         } catch (const std::exception &) {
@@ -118,8 +150,31 @@ QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &eng
     }
     const std::string engine = enginePath.toStdString();
     if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))
-        && infrastructure::engine::enginePlaylistExists(engine, playlist)) {
+        && infrastructure::engine::enginePlaylistCountAtPath(engine, playlist) > 0) {
         libraries << QStringLiteral("engine");
+    }
+    return libraries;
+}
+
+QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist)
+{
+    QStringList libraries;
+    const std::string pioneer = pioneerRoot.toStdString();
+    try {
+        if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))
+            && pdbPlaylistIds(infrastructure::rekordbox::PdbRowWriter(exportPdbOf(pioneer)), playlist).size() > 1) {
+            libraries << QStringLiteral("rekordbox");
+        }
+        if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)
+            && infrastructure::onelibrary::OneLibraryCueWriter(pioneer).playlistCountAtPath(playlist) > 1) {
+            libraries << QStringLiteral("onelibrary");
+        }
+        const std::string engine = enginePath.toStdString();
+        if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))
+            && infrastructure::engine::enginePlaylistCountAtPath(engine, playlist) > 1) {
+            libraries << QStringLiteral("engine");
+        }
+    } catch (const std::exception &) {
     }
     return libraries;
 }
@@ -195,6 +250,7 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         }
         if (m_libraries.contains(QStringLiteral("onelibrary"))) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), DeleteLabel);
+            requireOneOneLibraryPlaylist(sharedOneLibraryWriter(ctx, pioneer), m_playlist);
             if (sharedOneLibraryWriter(ctx, pioneer).deletePlaylist(m_playlist) > 0) {
                 ++deleted;
             }
@@ -202,6 +258,7 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         if (m_libraries.contains(QStringLiteral("engine"))) {
             FormatWriteSession &session =
                 sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), 1, DeleteLabel);
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
             if (infrastructure::engine::deleteEnginePlaylist(session.writeRoot(), m_playlist) > 0) {
                 session.noteItemApplied();
                 ++deleted;
@@ -294,6 +351,7 @@ ChangeOutcome RemoveFromPlaylistChange::apply(SaveContext &ctx)
         }
         if (m_libraries.contains(QStringLiteral("onelibrary"))) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), RemoveLabel);
+            requireOneOneLibraryPlaylist(sharedOneLibraryWriter(ctx, pioneer), m_playlist);
             try {
                 removed += sharedOneLibraryWriter(ctx, pioneer).removeFromPlaylist(m_playlist, m_filePath) ? 1 : 0;
             } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
@@ -303,7 +361,11 @@ ChangeOutcome RemoveFromPlaylistChange::apply(SaveContext &ctx)
         if (m_libraries.contains(QStringLiteral("engine"))) {
             const std::string engine = m_enginePath.toStdString();
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", engine, 1, RemoveLabel);
-            for (const std::int64_t id : infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), m_filePath)) {
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
+            // Relative to the stick's library folder, not the write root:
+            // a save may write Engine through a scratch copy elsewhere.
+            for (const std::int64_t id :
+                 infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), session.realRoot(), m_filePath)) {
                 if (infrastructure::engine::removeFromEnginePlaylist(session.writeRoot(), m_playlist, id)) {
                     session.noteItemApplied();
                     ++removed;
