@@ -55,14 +55,17 @@ constexpr size_t HeaderNextUnusedPageOffset = 12;
 constexpr size_t TablesOffset = 28;
 constexpr size_t TableEntrySize = 16;
 constexpr uint32_t PlaylistEntriesTableType = 8;
-constexpr size_t PlaylistPageHeaderSize = 40;
-constexpr size_t PlaylistRowSize = 12;
+constexpr uint32_t PlaylistTreeTableType = 7;
+constexpr size_t PageHeaderSize = 40;
 
 // An index page (page_flags 0x40, a table's first page), past its 32-byte
 // page header: how many entries it can hold, the next slot, the entry
 // count, the first freed slot (0x1fff: none), then the entries, unused
 // ones 0x1ffffff8.
 constexpr size_t IndexCapacityOffset = 36;
+// The index page's own next_page: the table's first data page, 0x3ffffff
+// while the table has none.
+constexpr size_t IndexFirstDataPageOffset = 44;
 constexpr size_t IndexNextOffsetOffset = 38;
 constexpr size_t IndexNumEntriesOffset = 56;
 constexpr size_t IndexFirstEmptyOffset = 58;
@@ -621,6 +624,193 @@ std::vector<PlaylistEntryRow> playlistEntriesOf(const std::string &buffer, uint3
     }
     std::stable_sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) { return a.entryIndex < b.entryIndex; });
     return rows;
+}
+
+// Rows take whole multiples of four bytes of a page's heap: a 23-byte
+// playlist-tree row is followed by one byte of padding (#62's reference
+// export).
+size_t paddedRowSize(size_t bytes)
+{
+    return (bytes + 3) & ~size_t(3);
+}
+
+void appendU32(std::string &out, uint32_t v)
+{
+    for (int i = 0; i < 4; ++i) {
+        out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+    }
+}
+
+std::string playlistEntryRowBytes(uint32_t entryIndex, uint32_t trackId, uint32_t playlistId)
+{
+    std::string row;
+    appendU32(row, entryIndex);
+    appendU32(row, trackId);
+    appendU32(row, playlistId);
+    return row;
+}
+
+// UTF-8 to UTF-16 code units; a malformed byte becomes U+FFFD.
+std::u16string utf16Of(const std::string &utf8)
+{
+    std::u16string out;
+    for (size_t i = 0; i < utf8.size();) {
+        const auto c = static_cast<unsigned char>(utf8[i]);
+        uint32_t cp = 0xFFFD;
+        size_t len = 1;
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c >> 5) == 0x6 && i + 1 < utf8.size()) {
+            cp = ((c & 0x1Fu) << 6) | (static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu);
+            len = 2;
+        } else if ((c >> 4) == 0xE && i + 2 < utf8.size()) {
+            cp = ((c & 0x0Fu) << 12) | ((static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu) << 6)
+                 | (static_cast<unsigned char>(utf8[i + 2]) & 0x3Fu);
+            len = 3;
+        } else if ((c >> 3) == 0x1E && i + 3 < utf8.size()) {
+            cp = ((c & 0x07u) << 18) | ((static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu) << 12)
+                 | ((static_cast<unsigned char>(utf8[i + 2]) & 0x3Fu) << 6) | (static_cast<unsigned char>(utf8[i + 3]) & 0x3Fu);
+            len = 4;
+        }
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+        } else {
+            out.push_back(static_cast<char16_t>(cp));
+        }
+        i += len;
+    }
+    return out;
+}
+
+// A DeviceSQL string as rekordbox writes it: plain ASCII up to 126 bytes
+// as a short string (one byte: (length + 1) * 2 + 1), longer ASCII as a
+// long one (0x40, a 16-bit total length, a zero byte), anything else as
+// UTF-16LE (0x90, the same header). "Q1" and a 137-character Unicode
+// playlist name in #62's reference export are byte for byte this.
+std::string encodeDeviceSqlString(const std::string &text)
+{
+    std::string out;
+    if (isPlainAscii(text) && text.size() <= 126) {
+        out.push_back(static_cast<char>(((text.size() + 1) << 1) | 1));
+        out += text;
+        return out;
+    }
+    std::string body;
+    char kind = 0x40;
+    if (isPlainAscii(text)) {
+        body = text;
+    } else {
+        kind = static_cast<char>(0x90);
+        for (const char16_t unit : utf16Of(text)) {
+            body.push_back(static_cast<char>(unit & 0xFF));
+            body.push_back(static_cast<char>(unit >> 8));
+        }
+    }
+    const size_t total = 4 + body.size();
+    if (total > 0xFFFF) {
+        throw std::invalid_argument("a name that long does not fit a DeviceSQL string");
+    }
+    out.push_back(kind);
+    out.push_back(static_cast<char>(total & 0xFF));
+    out.push_back(static_cast<char>(total >> 8));
+    out.push_back('\0');
+    out += body;
+    return out;
+}
+
+// One present playlist_tree row, its fields and its encoded name as they
+// are on the page, and where it is.
+struct TreeRow
+{
+    uint32_t parentId = 0;
+    uint32_t sortOrder = 0;
+    uint32_t id = 0;
+    bool isFolder = false;
+    std::string name;
+    std::string nameBytes;
+    FoundRow row;
+};
+
+constexpr size_t TreeRowNameOffset = 20;
+
+std::vector<TreeRow> treeRowsOf(const std::string &buffer)
+{
+    std::vector<TreeRow> rows;
+    std::istringstream iss(buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_PLAYLIST_TREE) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (!row->present()) {
+                        continue;
+                    }
+                    auto *t = dynamic_cast<Pdb::playlist_tree_row_t *>(row->body());
+                    if (!t) {
+                        continue;
+                    }
+                    TreeRow r;
+                    r.parentId = t->parent_id();
+                    r.sortOrder = t->sort_order();
+                    r.id = t->id();
+                    r.isFolder = t->is_folder();
+                    r.name = sqlText(t->name());
+                    r.row.pageIndex = page->page_index();
+                    r.row.presentFlagsOffset =
+                        static_cast<size_t>(pdb.len_page()) * page->page_index() + static_cast<size_t>(group->base()) - 4;
+                    r.row.rowIndexBit = row->row_index();
+                    r.row.rowBodyOffset =
+                        static_cast<size_t>(pdb.len_page()) * page->page_index() + static_cast<size_t>(row->row_base());
+                    const size_t nameAt = r.row.rowBodyOffset + TreeRowNameOffset;
+                    r.nameBytes = buffer.substr(nameAt, readDeviceSqlStringSpan(buffer, nameAt).totalBytes);
+                    rows.push_back(r);
+                }
+            }
+        });
+    }
+    return rows;
+}
+
+// The highest id any playlist_tree row has had, deleted rows included, so
+// a new playlist never takes the id of one removed earlier.
+uint32_t highestPlaylistTreeId(const std::string &buffer)
+{
+    uint32_t highest = 0;
+    const size_t lenPage = readU32LE(buffer, HeaderLenPageOffset);
+    const uint32_t numTables = readU32LE(buffer, HeaderNumTablesOffset);
+    for (uint32_t t = 0; t < numTables; ++t) {
+        const size_t entry = TablesOffset + TableEntrySize * t;
+        if (readU32LE(buffer, entry) != PlaylistTreeTableType) {
+            continue;
+        }
+        const uint32_t lastPage = readU32LE(buffer, entry + 12);
+        uint32_t page = readU32LE(buffer, entry + 8);
+        for (size_t guard = 0; guard < 100000; ++guard) {
+            const size_t base = lenPage * page;
+            if (base + lenPage > buffer.size()) {
+                break;
+            }
+            if ((static_cast<unsigned char>(buffer[base + 27]) & 0x40) == 0) {
+                const uint32_t numRowOffsets = readU32LE(buffer, base + 24) & 0x1FFFu;
+                for (uint32_t i = 0; i < numRowOffsets; ++i) {
+                    const size_t groupBase = base + lenPage - (i / 16) * RowGroupSizeBytes;
+                    const size_t heap = readU16LE(buffer, groupBase - 6 - 2 * (i % 16));
+                    highest = std::max(highest, readU32LE(buffer, base + PageHeaderSize + heap + 12));
+                }
+            }
+            if (page == lastPage) {
+                break;
+            }
+            page = readU32LE(buffer, base + 12);
+        }
+    }
+    return highest;
 }
 
 // The byte ranges a row actually uses: its fixed header, and each
@@ -1562,13 +1752,7 @@ size_t PdbRowWriter::removePlaylistEntries(uint32_t playlistId, const std::set<u
     if (removed == 0) {
         return 0;
     }
-    // Where the survivors go is settled before anything is deleted, so a
-    // refusal leaves the buffer as it was.
-    const auto placement = placePlaylistRows(keep.size());
-    for (const auto &e : rows) {
-        deleteRowAt(e.row.pageIndex, e.row.presentFlagsOffset, e.row.rowIndexBit);
-    }
-    writePlaylistRows(placement, playlistId, keep, 1);
+    rewritePlaylistEntries(playlistId, keep);
     return removed;
 }
 
@@ -1589,51 +1773,66 @@ size_t PdbRowWriter::appendPlaylistEntries(uint32_t playlistId, const std::vecto
     if (adding.empty()) {
         return 0;
     }
-    writePlaylistRows(placePlaylistRows(adding.size()), playlistId, adding, highestIndex + 1);
+    std::vector<std::string> rows;
+    for (size_t i = 0; i < adding.size(); ++i) {
+        rows.push_back(playlistEntryRowBytes(highestIndex + 1 + static_cast<uint32_t>(i), adding[i], playlistId));
+    }
+    writeRows(placeRows(PlaylistEntriesTableType, rows), rows);
     return adding.size();
 }
 
-PdbRowWriter::PlaylistRowPlacement PdbRowWriter::placePlaylistRows(size_t count) const
+PdbRowWriter::RowPlacement PdbRowWriter::placeRows(uint32_t tableType, const std::vector<std::string> &rows) const
 {
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
     const uint32_t numTables = readU32LE(m_buffer, HeaderNumTablesOffset);
     std::optional<size_t> tableEntry;
     for (uint32_t t = 0; t < numTables; ++t) {
         const size_t entry = TablesOffset + TableEntrySize * t;
-        if (readU32LE(m_buffer, entry) == PlaylistEntriesTableType) {
+        if (readU32LE(m_buffer, entry) == tableType) {
             tableEntry = entry;
         }
     }
     if (!tableEntry) {
-        throw std::runtime_error("export.pdb has no playlist_entries table");
+        throw std::runtime_error("export.pdb has no table of type " + std::to_string(tableType));
     }
-    PlaylistRowPlacement placement;
+    RowPlacement placement;
     placement.tableEntry = *tableEntry;
+    placement.tableType = tableType;
     placement.lastPage = readU32LE(m_buffer, *tableEntry + 12);
     const size_t base = lenPage * placement.lastPage;
-    if (base + lenPage > m_buffer.size() || readU32LE(m_buffer, base + 8) != PlaylistEntriesTableType
-        || (static_cast<unsigned char>(m_buffer[base + 27]) & 0x40) != 0) {
-        throw std::runtime_error("export.pdb's last playlist_entries page is not a data page of that table");
+    if (base + lenPage > m_buffer.size() || readU32LE(m_buffer, base + 8) != tableType) {
+        throw std::runtime_error("export.pdb's last page of table " + std::to_string(tableType) + " is not a page of that table");
     }
-    if (count == 0) {
+    if (rows.empty()) {
         return placement;
     }
-    const uint32_t numRowOffsets = readU32LE(m_buffer, base + 24) & 0x1FFFu;
-    const uint16_t freeSize = readU16LE(m_buffer, base + 28);
-    if (playlistRowsFitting(numRowOffsets, freeSize, count) == count) {
-        placement.onLastPage = count;
-        return placement;
+    // A table holding no rows yet ends at its index page, which takes none.
+    const bool lastIsDataPage = (static_cast<unsigned char>(m_buffer[base + 27]) & 0x40) == 0;
+    if (lastIsDataPage) {
+        const uint32_t numRowOffsets = readU32LE(m_buffer, base + 24) & 0x1FFFu;
+        const uint16_t freeSize = readU16LE(m_buffer, base + 28);
+        if (rowsFitting(numRowOffsets, freeSize, rows, 0) == rows.size()) {
+            placement.onLastPage = rows.size();
+            return placement;
+        }
     }
     // rekordbox starts a new page for rows that do not all fit on the
     // last one, even when some would: given 34 entries and a last page
     // with room for 12, it put all 34 on a new page (#62's reference
     // export). Each new page is filled before the next is started.
-    const size_t perPage = playlistRowsFitting(0, static_cast<uint16_t>(lenPage - PlaylistPageHeaderSize), SIZE_MAX);
-    placement.newPages = (count + perPage - 1) / perPage;
-    placement.perNewPage = perPage;
+    const uint16_t freshFree = static_cast<uint16_t>(lenPage - PageHeaderSize);
+    for (size_t next = 0; next < rows.size();) {
+        const size_t fit = rowsFitting(0, freshFree, rows, next);
+        if (fit == 0) {
+            throw PdbPageFull("export.pdb: a row of " + std::to_string(rows[next].size()) + " bytes does not fit on a page");
+        }
+        placement.perNewPage.push_back(fit);
+        next += fit;
+    }
     const uint32_t candidate = readU32LE(m_buffer, *tableEntry + 4);
     if (readU32LE(m_buffer, base + 12) != candidate) {
-        throw PdbPageFull("export.pdb's last playlist page does not lead to the table's empty candidate page ("
+        throw PdbPageFull("export.pdb's last page of table " + std::to_string(tableType)
+                          + " does not lead to the table's empty candidate page ("
                           + std::to_string(readU32LE(m_buffer, base + 12)) + " vs " + std::to_string(candidate)
                           + "); not starting a new page there");
     }
@@ -1645,18 +1844,18 @@ PdbRowWriter::PlaylistRowPlacement PdbRowWriter::placePlaylistRows(size_t count)
         const auto last = m_buffer.begin() + static_cast<std::ptrdiff_t>(std::min(candidateBase + lenPage, m_buffer.size()));
         if (std::any_of(first, last, [](char c) { return c != '\0'; })) {
             throw PdbPageFull("export.pdb's empty candidate page " + std::to_string(candidate)
-                              + " is not empty; not starting a new playlist page there");
+                              + " is not empty; not starting a new page there");
         }
     }
     return placement;
 }
 
-size_t PdbRowWriter::playlistRowsFitting(uint32_t numRowOffsets, uint16_t freeSize, size_t wanted)
+size_t PdbRowWriter::rowsFitting(uint32_t numRowOffsets, uint16_t freeSize, const std::vector<std::string> &rows, size_t from)
 {
     size_t fit = 0;
     size_t used = 0;
-    while (fit < wanted && numRowOffsets + fit < 0x7FFu) {
-        const size_t cost = PlaylistRowSize + 2 + ((numRowOffsets + fit) % 16 == 0 ? 4 : 0);
+    while (from + fit < rows.size() && numRowOffsets + fit < 0x7FFu) {
+        const size_t cost = paddedRowSize(rows[from + fit].size()) + 2 + ((numRowOffsets + fit) % 16 == 0 ? 4 : 0);
         if (used + cost > freeSize) {
             break;
         }
@@ -1666,28 +1865,27 @@ size_t PdbRowWriter::playlistRowsFitting(uint32_t numRowOffsets, uint16_t freeSi
     return fit;
 }
 
-void PdbRowWriter::writePlaylistRows(const PlaylistRowPlacement &placement, uint32_t playlistId,
-                                     const std::vector<uint32_t> &trackIds, uint32_t firstEntryIndex)
+void PdbRowWriter::writeRows(const RowPlacement &placement, const std::vector<std::string> &rows)
 {
-    uint32_t entryIndex = firstEntryIndex;
     size_t next = 0;
     if (placement.onLastPage > 0) {
-        appendPlaylistRowsToPage(placement.lastPage, playlistId, trackIds, next, placement.onLastPage, entryIndex);
+        appendRowsToPage(placement.lastPage, rows, next, placement.onLastPage);
     }
-    for (size_t p = 0; p < placement.newPages; ++p) {
-        const uint32_t page = startPlaylistEntriesPage(placement.tableEntry);
-        appendPlaylistRowsToPage(page, playlistId, trackIds, next, std::min(placement.perNewPage, trackIds.size() - next),
-                                 entryIndex);
+    for (const size_t count : placement.perNewPage) {
+        appendRowsToPage(startPage(placement.tableEntry, placement.tableType), rows, next, count);
     }
 }
 
-uint32_t PdbRowWriter::startPlaylistEntriesPage(size_t tableEntry)
+uint32_t PdbRowWriter::startPage(size_t tableEntry, uint32_t tableType)
 {
     // As rekordbox started page 54 in #62's reference export: the table's
     // empty candidate becomes its last page, pointing at the file's next
     // unused page, which becomes the new candidate; next_unused_page moves
-    // one on. The old last page already points at the candidate.
+    // one on. The old last page already points at the candidate. When the
+    // old last page is the table's index page (a table with no rows yet),
+    // the index page also names the new page as its first data page.
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const uint32_t oldLast = readU32LE(m_buffer, tableEntry + 12);
     const uint32_t page = readU32LE(m_buffer, tableEntry + 4);
     const uint32_t nextUnused = readU32LE(m_buffer, HeaderNextUnusedPageOffset);
     const size_t base = lenPage * page;
@@ -1697,20 +1895,23 @@ uint32_t PdbRowWriter::startPlaylistEntriesPage(size_t tableEntry)
         m_buffer.resize(base + lenPage, '\0');
     }
     writeU32LE(m_buffer, base + 4, page);
-    writeU32LE(m_buffer, base + 8, PlaylistEntriesTableType);
+    writeU32LE(m_buffer, base + 8, tableType);
     writeU32LE(m_buffer, base + 12, nextUnused);
     writeU32LE(m_buffer, base + 24, 0x24u << 24);
-    writeU16LE(m_buffer, base + 28, static_cast<uint16_t>(lenPage - PlaylistPageHeaderSize));
+    writeU16LE(m_buffer, base + 28, static_cast<uint16_t>(lenPage - PageHeaderSize));
     writeU16LE(m_buffer, base + 30, 0);
     writeU32LE(m_buffer, tableEntry + 4, nextUnused);
     writeU32LE(m_buffer, tableEntry + 12, page);
     writeU32LE(m_buffer, HeaderNextUnusedPageOffset, nextUnused + 1);
+    const size_t oldBase = lenPage * oldLast;
+    if ((static_cast<unsigned char>(m_buffer[oldBase + 27]) & 0x40) != 0) {
+        writeU32LE(m_buffer, oldBase + IndexFirstDataPageOffset, page);
+    }
     m_editedPageIndices.insert(page);
     return page;
 }
 
-void PdbRowWriter::appendPlaylistRowsToPage(uint32_t pageIndex, uint32_t playlistId, const std::vector<uint32_t> &trackIds,
-                                            size_t &next, size_t count, uint32_t &entryIndex)
+void PdbRowWriter::appendRowsToPage(uint32_t pageIndex, const std::vector<std::string> &rows, size_t &next, size_t count)
 {
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
     const size_t base = lenPage * pageIndex;
@@ -1736,14 +1937,15 @@ void PdbRowWriter::appendPlaylistRowsToPage(uint32_t pageIndex, uint32_t playlis
             writeU16LE(m_buffer, groupBase - 2, 0);
         }
         const size_t heapOffset = usedSize;
-        const size_t rowAt = base + PlaylistPageHeaderSize + heapOffset;
-        writeU32LE(m_buffer, rowAt, entryIndex++);
-        writeU32LE(m_buffer, rowAt + 4, trackIds[next]);
-        writeU32LE(m_buffer, rowAt + 8, playlistId);
+        const std::string &row = rows[next];
+        const size_t size = paddedRowSize(row.size());
+        std::copy(row.begin(), row.end(), m_buffer.begin() + static_cast<std::ptrdiff_t>(base + PageHeaderSize + heapOffset));
+        std::fill_n(m_buffer.begin() + static_cast<std::ptrdiff_t>(base + PageHeaderSize + heapOffset + row.size()),
+                    size - row.size(), '\0');
         writeU16LE(m_buffer, groupBase - 6 - 2 * r, static_cast<uint16_t>(heapOffset));
         writeU16LE(m_buffer, groupBase - 4, static_cast<uint16_t>(readU16LE(m_buffer, groupBase - 4) | (1u << r)));
-        freeSize = static_cast<uint16_t>(freeSize - (PlaylistRowSize + 2 + (r == 0 ? 4 : 0)));
-        usedSize = static_cast<uint16_t>(usedSize + PlaylistRowSize);
+        freeSize = static_cast<uint16_t>(freeSize - (size + 2 + (r == 0 ? 4 : 0)));
+        usedSize = static_cast<uint16_t>(usedSize + size);
         ++numRowOffsets;
         ++numRows;
     }
@@ -1762,24 +1964,194 @@ void PdbRowWriter::appendPlaylistRowsToPage(uint32_t pageIndex, uint32_t playlis
     m_appendedPages.insert(pageIndex);
 }
 
+std::vector<PdbRowWriter::TreeRowSlot> PdbRowWriter::siblingsOf(const std::string &buffer, uint32_t parentId)
+{
+    std::vector<TreeRow> level;
+    for (const auto &r : treeRowsOf(buffer)) {
+        if (r.parentId == parentId) {
+            level.push_back(r);
+        }
+    }
+    std::stable_sort(level.begin(), level.end(), [](const auto &a, const auto &b) { return a.sortOrder < b.sortOrder; });
+    std::vector<TreeRowSlot> slots;
+    for (const auto &r : level) {
+        slots.push_back({r.id, r.parentId, r.isFolder, r.nameBytes});
+    }
+    return slots;
+}
+
+std::string PdbRowWriter::treeRowBytes(const TreeRowSlot &slot, uint32_t sortOrder)
+{
+    // parent_id, a field rekordbox always leaves 0, sort_order, id,
+    // is_folder, then the name.
+    std::string row;
+    appendU32(row, slot.parentId);
+    appendU32(row, 0);
+    appendU32(row, sortOrder);
+    appendU32(row, slot.id);
+    appendU32(row, slot.isFolder ? 1 : 0);
+    return row + slot.nameBytes;
+}
+
+std::vector<PdbRowWriter::PlaylistTreeNode> PdbRowWriter::playlistTree() const
+{
+    std::vector<PlaylistTreeNode> nodes;
+    for (const auto &r : treeRowsOf(m_buffer)) {
+        nodes.push_back({r.id, r.parentId, r.sortOrder, r.isFolder, r.name});
+    }
+    return nodes;
+}
+
+uint32_t PdbRowWriter::createPlaylist(uint32_t parentId, const std::string &name, bool isFolder, std::optional<size_t> position)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("playlists live in export.pdb");
+    }
+    if (name.empty()) {
+        throw std::invalid_argument("a playlist needs a name");
+    }
+    const auto tree = treeRowsOf(m_buffer);
+    if (parentId != 0) {
+        const auto parent = std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.id == parentId; });
+        if (parent == tree.end() || !parent->isFolder) {
+            throw std::invalid_argument("export.pdb has no folder " + std::to_string(parentId));
+        }
+    }
+    const uint32_t id = highestPlaylistTreeId(m_buffer) + 1;
+    std::vector<TreeRowSlot> level = siblingsOf(m_buffer, parentId);
+    TreeRowSlot added;
+    added.id = id;
+    added.parentId = parentId;
+    added.isFolder = isFolder;
+    added.nameBytes = encodeDeviceSqlString(name);
+    const size_t at = std::min(position.value_or(level.size()), level.size());
+    level.insert(level.begin() + static_cast<std::ptrdiff_t>(at), added);
+    rewriteTreeLevel(parentId, level);
+    return id;
+}
+
+size_t PdbRowWriter::deletePlaylist(uint32_t id)
+{
+    const auto tree = treeRowsOf(m_buffer);
+    const auto node = std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.id == id; });
+    if (node == tree.end()) {
+        return 0;
+    }
+    // The node and everything under it, folders included.
+    std::set<uint32_t> doomed{id};
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto &r : tree) {
+            if (doomed.count(r.parentId) && doomed.insert(r.id).second) {
+                grew = true;
+            }
+        }
+    }
+    std::vector<TreeRowSlot> level;
+    for (auto &slot : siblingsOf(m_buffer, node->parentId)) {
+        if (slot.id != id) {
+            level.push_back(slot);
+        }
+    }
+    // Room for the rewritten level first, so a refusal changes nothing.
+    std::vector<std::string> rows;
+    for (size_t i = 0; i < level.size(); ++i) {
+        rows.push_back(treeRowBytes(level[i], static_cast<uint32_t>(i)));
+    }
+    const auto placement = placeRows(PlaylistTreeTableType, rows);
+    for (const auto &r : tree) {
+        if (doomed.count(r.id) && r.parentId != node->parentId) {
+            deleteRowAt(r.row.pageIndex, r.row.presentFlagsOffset, r.row.rowIndexBit);
+        }
+        if (doomed.count(r.id) && !r.isFolder) {
+            for (const auto &e : playlistEntriesOf(m_buffer, r.id)) {
+                deleteRowAt(e.row.pageIndex, e.row.presentFlagsOffset, e.row.rowIndexBit);
+            }
+        }
+    }
+    for (const auto &r : tree) {
+        if (r.parentId == node->parentId) {
+            deleteRowAt(r.row.pageIndex, r.row.presentFlagsOffset, r.row.rowIndexBit);
+        }
+    }
+    writeRows(placement, rows);
+    return doomed.size();
+}
+
+bool PdbRowWriter::reorderPlaylist(uint32_t playlistId, const std::vector<uint32_t> &trackIds)
+{
+    const auto entries = playlistEntriesOf(m_buffer, playlistId);
+    std::vector<uint32_t> now;
+    for (const auto &e : entries) {
+        now.push_back(e.trackId);
+    }
+    if (now == trackIds) {
+        return false;
+    }
+    std::vector<uint32_t> a = now;
+    std::vector<uint32_t> b = trackIds;
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    if (a != b) {
+        throw std::invalid_argument("a new order must hold the playlist's tracks, each as often as now");
+    }
+    rewritePlaylistEntries(playlistId, trackIds);
+    return true;
+}
+
+void PdbRowWriter::rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds)
+{
+    const auto old = playlistEntriesOf(m_buffer, playlistId);
+    std::vector<std::string> rows;
+    for (size_t i = 0; i < trackIds.size(); ++i) {
+        rows.push_back(playlistEntryRowBytes(static_cast<uint32_t>(i + 1), trackIds[i], playlistId));
+    }
+    const auto placement = placeRows(PlaylistEntriesTableType, rows);
+    for (const auto &e : old) {
+        deleteRowAt(e.row.pageIndex, e.row.presentFlagsOffset, e.row.rowIndexBit);
+    }
+    writeRows(placement, rows);
+}
+
+void PdbRowWriter::rewriteTreeLevel(uint32_t parentId, const std::vector<TreeRowSlot> &level)
+{
+    const auto tree = treeRowsOf(m_buffer);
+    // rekordbox changes one level of the tree by deleting all of its rows
+    // and adding them again, sort_order 0 on (#62's reference export:
+    // creating, reordering and deleting each rewrote the top level).
+    std::vector<std::string> rows;
+    for (size_t i = 0; i < level.size(); ++i) {
+        rows.push_back(treeRowBytes(level[i], static_cast<uint32_t>(i)));
+    }
+    const auto placement = placeRows(PlaylistTreeTableType, rows);
+    for (const auto &r : tree) {
+        if (r.parentId == parentId) {
+            deleteRowAt(r.row.pageIndex, r.row.presentFlagsOffset, r.row.rowIndexBit);
+        }
+    }
+    writeRows(placement, rows);
+}
+
 void PdbRowWriter::listDeletionInTableIndex(uint32_t pageIndex)
 {
-    // rekordbox lists a playlist page it deleted rows from on the table's
-    // index page (its first): the entry is the page index shifted left by
-    // three, num_entries and next_offset one higher (#62's reference
-    // export, page 17). Only the plain case is written, an index whose
+    // rekordbox lists a playlist or playlist-tree page it deleted rows
+    // from on the table's index page (its first): the entry is the page
+    // index shifted left by three, num_entries and next_offset one higher
+    // (#62's reference exports: page 17 for entries, 16 and 65 for the
+    // tree). Only the plain case is written, an index whose
     // entries are all in use with no free list (first_empty 0x1fff);
     // an index with freed slots is left as it is, as rekordbox itself
     // leaves some pages with deletions unlisted.
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
     const size_t pageBase = lenPage * pageIndex;
-    if (m_format != Format::Export || readU32LE(m_buffer, pageBase + 8) != PlaylistEntriesTableType) {
+    const uint32_t tableType = readU32LE(m_buffer, pageBase + 8);
+    if (m_format != Format::Export || (tableType != PlaylistEntriesTableType && tableType != PlaylistTreeTableType)) {
         return;
     }
     const uint32_t numTables = readU32LE(m_buffer, HeaderNumTablesOffset);
     for (uint32_t t = 0; t < numTables; ++t) {
         const size_t entry = TablesOffset + TableEntrySize * t;
-        if (readU32LE(m_buffer, entry) != PlaylistEntriesTableType) {
+        if (readU32LE(m_buffer, entry) != tableType) {
             continue;
         }
         const uint32_t indexPage = readU32LE(m_buffer, entry + 8);

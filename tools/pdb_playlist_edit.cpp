@@ -9,15 +9,20 @@
 //   pdb_playlist_edit <stick> show
 //   pdb_playlist_edit <stick> append <playlist> <file name>...
 //   pdb_playlist_edit <stick> remove <playlist> <file name>...
+//   pdb_playlist_edit <stick> reorder <playlist> <file name>...   (the new order, every track)
+//   pdb_playlist_edit <stick> create <name> [<folder>]           (a playlist, top level or in a folder)
+//   pdb_playlist_edit <stick> mkfolder <name>
+//   pdb_playlist_edit <stick> delete <playlist or folder>
 //
-// <stick> is the mount point; it must be a stick called TESTRIG, so the
-// reference sticks can never be written by mistake. Every edit prints the
+// <stick> is the mount point; it must be a test stick (TESTRIG or
+// TESTROWS), so the reference sticks can never be written by mistake. Every edit prints the
 // playlists and the playlist pages afterwards.
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -139,8 +144,8 @@ int main(int argc, char **argv)
         return 2;
     }
     const fs::path stick = seabass::pathFromUtf8(argv[1]);
-    if (stick.filename() != "TESTRIG") {
-        std::cerr << "refusing: only a stick mounted as TESTRIG is written\n";
+    if (stick.filename() != "TESTRIG" && stick.filename() != "TESTROWS") {
+        std::cerr << "refusing: only a stick mounted as TESTRIG or TESTROWS is written\n";
         return 2;
     }
     const fs::path pioneer = stick / "PIONEER";
@@ -149,7 +154,54 @@ int main(int argc, char **argv)
         show(pioneer);
         return 0;
     }
-    if ((verb != "append" && verb != "remove") || argc < 5) {
+    const fs::path pdbPath = pioneer / "rekordbox" / "export.pdb";
+    if (verb == "create" || verb == "mkfolder" || verb == "delete") {
+        if (argc < 4) {
+            std::cerr << "usage: see the top of tools/pdb_playlist_edit.cpp\n";
+            return 2;
+        }
+        rb::PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
+        const auto tree = writer.playlistTree();
+        const auto idOf = [&](const std::string &name) -> std::optional<uint32_t> {
+            for (const auto &n : tree) {
+                if (n.name == name) {
+                    return n.id;
+                }
+            }
+            return std::nullopt;
+        };
+        try {
+            if (verb == "delete") {
+                const auto id = idOf(argv[3]);
+                if (!id) {
+                    std::cerr << "no playlist or folder \"" << argv[3] << "\"\n";
+                    return 1;
+                }
+                std::cout << "deleted " << writer.deletePlaylist(*id) << " playlists and folders\n";
+            } else {
+                uint32_t parent = 0;
+                if (verb == "create" && argc > 4) {
+                    const auto id = idOf(argv[4]);
+                    if (!id) {
+                        std::cerr << "no folder \"" << argv[4] << "\"\n";
+                        return 1;
+                    }
+                    parent = *id;
+                }
+                std::cout << "created id " << writer.createPlaylist(parent, argv[3], verb == "mkfolder") << "\n";
+            }
+        } catch (const std::exception &e) {
+            std::cerr << "refused: " << e.what() << "\n";
+            return 1;
+        }
+        if (!writer.commit()) {
+            std::cerr << "commit failed, export.pdb untouched\n";
+            return 1;
+        }
+        show(pioneer);
+        return 0;
+    }
+    if ((verb != "append" && verb != "remove" && verb != "reorder") || argc < 5) {
         std::cerr << "usage: pdb_playlist_edit <stick> show | append <playlist> <file>... | remove <playlist> <file>...\n";
         return 2;
     }
@@ -173,9 +225,14 @@ int main(int argc, char **argv)
     rb::PdbRowWriter writer(seabass::pathToUtf8(pdbFile));
     size_t changed = 0;
     try {
-        changed = verb == "append" ? writer.appendPlaylistEntries(playlist->second, ids)
-                                   : writer.removePlaylistEntries(playlist->second, std::set<uint32_t>(ids.begin(), ids.end()));
-    } catch (const rb::PdbPageFull &e) {
+        if (verb == "append") {
+            changed = writer.appendPlaylistEntries(playlist->second, ids);
+        } else if (verb == "remove") {
+            changed = writer.removePlaylistEntries(playlist->second, std::set<uint32_t>(ids.begin(), ids.end()));
+        } else {
+            changed = writer.reorderPlaylist(playlist->second, ids) ? ids.size() : 0;
+        }
+    } catch (const std::exception &e) {
         std::cerr << "refused: " << e.what() << "\n";
         return 1;
     }
