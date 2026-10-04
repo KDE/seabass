@@ -24,7 +24,6 @@ namespace
 // The same constants anlz_legacy_cue_codec.cpp works from; see the survey
 // in its header for where each comes from.
 constexpr uint32_t PcobFourcc = 0x50434f42;  // "PCOB"
-constexpr uint32_t PcptFourcc = 0x50435054;  // "PCPT"
 constexpr uint32_t Pco2Fourcc = 0x50434f32;  // "PCO2"
 constexpr uint32_t PmaiFourcc = 0x504d4149;  // "PMAI"
 constexpr size_t SectionHeaderSize = 24;

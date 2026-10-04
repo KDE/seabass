@@ -130,7 +130,8 @@ struct Track
     // disagree without a second pass over them (domain::countCueLists).
     // NotChecked until the cues were read, and for a row naming no
     // analysis file; Unreadable when a file is missing or not an analysis
-    // file, which is counted, never passed as agreeing.
+    // file, or a list in it cannot be decoded (the check reports those as
+    // malformed), which is counted, never passed as agreeing.
     enum class CueListsCheck { NotChecked, Examined, Disagree, Unreadable };
     CueListsCheck cueLists = CueListsCheck::NotChecked;
     // Non-empty (e.g. "TIDAL") if this track is a streaming-service link

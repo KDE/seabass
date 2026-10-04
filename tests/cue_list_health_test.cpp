@@ -473,6 +473,23 @@ void findingsAndRepairs(const fs::path &stick)
                   && seabass::domain::describeCueListCount(seabass::domain::countCueLists(rows), true)
                          == "Cue lists agree in all 4 analysis files",
               "all agreeing: nothing on the card, the statistics page says so");
+        // A memory list the check cannot read (bytes past its last entry
+        // that are not zero) is not a list that agrees: Unreadable, as
+        // the check reports it malformed.
+        Pair junk = exactPair();
+        junk.datMemoryList = playerZeroSlot(16640);
+        junk.datMemoryList.back() = 0x7f;
+        const Track malformed = plant(pioneer, "00000020", junk);
+        seabass::domain::Track junkRow;
+        junkRow.analysisFile = malformed.analyzePath;
+        try {
+            readAnalysisFileCues(source, malformed.analyzePath, &junkRow.cueLists);
+        } catch (const std::exception &) {
+        }
+        check(!examineTrackAnalysis(root, malformed.analyzePath, names).shape.malformed.empty(),
+              "the check calls that memory list malformed");
+        check(junkRow.cueLists == Check::Unreadable, "and the summary does not count it as agreeing");
+        fs::remove_all(malformed.dir);
         seabass::domain::Track notRead;
         notRead.analysisFile = clean.analyzePath;
         check(seabass::domain::describeCueListCount(seabass::domain::countCueLists({notRead})).empty(),

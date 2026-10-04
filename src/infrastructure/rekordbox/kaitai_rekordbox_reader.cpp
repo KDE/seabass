@@ -283,8 +283,16 @@ std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource
                 const CueListsCompared compared = compareCueSections(cueSectionsOfBytes(*datBytes, datLabel),
                                                                      cueSectionsOfBytes(*bytes, extLabel), datLabel,
                                                                      extLabel);
-                *cueLists = compared.disagreement && compared.disagreement->any() ? CueListsCheck::Disagree
-                                                                                   : CueListsCheck::Examined;
+                // Lists the check could not compare (a memory list it
+                // cannot read, a list that does not decode) are not lists
+                // that agree: Library Health names them, and the summary
+                // counts them with the files it could not read.
+                if (!compared.shape.malformed.empty() || !compared.listsMalformed.empty()) {
+                    *cueLists = CueListsCheck::Unreadable;
+                } else {
+                    *cueLists = compared.disagreement && compared.disagreement->any() ? CueListsCheck::Disagree
+                                                                                       : CueListsCheck::Examined;
+                }
             } catch (const std::exception &) {
                 // Left Unreadable.
             }
