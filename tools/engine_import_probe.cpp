@@ -556,7 +556,12 @@ Record recordStick(const fs::path &root)
             record.set("EF", relative, "mtime", "unreadable: " + fileEc.message());
             continue;
         }
-        record.set("EF", relative, "mtime", std::to_string(written.time_since_epoch().count()));
+        // Narrowed deliberately: libc++ gives file_clock a 128-bit tick
+        // type, which std::to_string has no overload for (libstdc++'s is
+        // 64-bit, so this compiled there). Nanoseconds since the epoch
+        // need 61 bits for any date this will ever see.
+        record.set("EF", relative, "mtime",
+                   std::to_string(static_cast<long long>(written.time_since_epoch().count())));
         // The same instant in Unix seconds, for the clock comparison in
         // --compare. file_clock's epoch is the library's own, so the
         // offset is taken from the two clocks now.
