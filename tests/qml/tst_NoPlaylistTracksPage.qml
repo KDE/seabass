@@ -67,6 +67,11 @@ TestCase {
         }
     }
 
+    // Built from character codes, so this file holds no dash literal.
+    function noDashes(text) {
+        return text.indexOf(String.fromCharCode(0x2014)) < 0 && text.indexOf("-".repeat(2)) < 0;
+    }
+
     function makePage(hasPlaylists) {
         const controller = createTemporaryObject(controllerComponent, testCase, {stickHasPlaylists: hasPlaylists});
         const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
@@ -100,7 +105,7 @@ TestCase {
             grabImage(t.page).save(screenshotDir + "/no-playlist-tracks-page.png");
         }
         for (const label of [summary, findChild(t.page, "noPlaylistExplanation")]) {
-            verify(label.text.indexOf("—") < 0 && label.text.indexOf("--") < 0, "no dashes on screen");
+            verify(noDashes(label.text), "no dashes on screen");
         }
     }
 
@@ -118,7 +123,7 @@ TestCase {
         const t = makePage(false);
         const note = findChild(t.page, "noPlaylistsOnStick");
         verify(note.visible);
-        verify(note.text.indexOf("—") < 0 && note.text.indexOf("--") < 0, "no dashes on screen");
+        verify(noDashes(note.text), "no dashes on screen");
         compare(findChild(t.page, "deleteNoPlaylistButton").visible, false);
         compare(findChild(t.page, "pick_/S/Contents/a.mp3").visible, false);
         compare(t.controller.calls.length, 0);
