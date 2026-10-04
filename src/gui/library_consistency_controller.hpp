@@ -22,6 +22,7 @@
 #include "gui/async_request.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "domain/playlist_sync.hpp"
+#include "domain/tracks_in_no_playlist.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -250,6 +251,8 @@ struct LibraryConsistencyScanResult
     std::vector<infrastructure::engine::DanglingPlaylistEntries> danglingPlaylistEntries;
     bool playlistsChecked = false;
     std::string playlistsError;
+    // The same pass: files no library has in any playlist.
+    domain::NoPlaylistScan noPlaylist;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -401,6 +404,14 @@ private:
     // Each {playlist, entries}.
     Q_PROPERTY(QVariantList danglingPlaylists READ danglingPlaylists NOTIFY playlistsChanged)
     Q_PROPERTY(bool danglingFixStaged READ danglingFixStaged NOTIFY playlistsChanged)
+    // Files no library on the stick has in any playlist (domain::
+    // findTracksInNoPlaylist), checked with the playlists. Each {filePath,
+    // title, artist, libraries, staged}. stickHasPlaylists false means
+    // every track is listed, and nothing is offered for deletion.
+    Q_PROPERTY(int noPlaylistTrackCount READ noPlaylistTrackCount NOTIFY playlistsChanged)
+    Q_PROPERTY(QVariantList noPlaylistTracks READ noPlaylistTracks NOTIFY playlistsChanged)
+    Q_PROPERTY(bool stickHasPlaylists READ stickHasPlaylists NOTIFY playlistsChanged)
+    Q_PROPERTY(int noPlaylistStagedCount READ noPlaylistStagedCount NOTIFY playlistsChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -518,6 +529,10 @@ public:
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
     QString sampleRateError() const { return QString::fromStdString(m_sampleRates.error); }
     bool playlistsChecked() const { return m_playlistsChecked; }
+    int noPlaylistTrackCount() const { return static_cast<int>(m_noPlaylist.tracks.size()); }
+    QVariantList noPlaylistTracks() const;
+    bool stickHasPlaylists() const { return m_noPlaylist.stickHasPlaylists; }
+    int noPlaylistStagedCount() const { return static_cast<int>(m_stagedNoPlaylistFiles.size()); }
     QString playlistsError() const { return m_playlistsError; }
     int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
     QVariantList playlistDifferences() const;
@@ -581,6 +596,12 @@ public:
     // reference for the same playlist replaces the first.
     Q_INVOKABLE void alignPlaylist(const QString &playlist, const QString &reference);
     Q_INVOKABLE void unstagePlaylist(const QString &playlist);
+    // Stages deleting these files (by filePath, from noPlaylistTracks) the
+    // way Clean Up deletes a duplicate: out of every library, the file on
+    // the pending-deletions list. Replaces what was staged before. Refused
+    // on a stick with no playlists.
+    Q_INVOKABLE void deleteTracksInNoPlaylist(const QStringList &filePaths);
+    Q_INVOKABLE void unstageTracksInNoPlaylist();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
     // Stages telling Engine the rekordbox library is already imported.
@@ -699,6 +720,8 @@ private:
     QString m_playlistsError;
     std::map<QString, QString> m_stagedPlaylists;  // change id -> reference format
     bool m_danglingFixStaged = false;
+    domain::NoPlaylistScan m_noPlaylist;
+    std::set<std::string> m_stagedNoPlaylistFiles;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;

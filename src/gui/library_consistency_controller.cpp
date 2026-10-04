@@ -45,6 +45,7 @@
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
 #include "gui/edit/changes/align_playlist_change.hpp"
+#include "gui/edit/changes/delete_tracks_change.hpp"
 #include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
@@ -640,6 +641,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 if (!enginePath.isEmpty()) {
                     result.danglingPlaylistEntries = infrastructure::engine::danglingPlaylistEntries(enginePath.toStdString());
                 }
+                result.noPlaylist = domain::findTracksInNoPlaylist(catalogs, key);
                 result.playlistsChecked = true;
             } catch (const application::OperationCancelled &) {
                 throw;
@@ -960,6 +962,7 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_danglingPlaylistEntries.clear();
     m_playlistsChecked = false;
     m_playlistsError.clear();
+    m_noPlaylist = {};
     emit playlistsChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
@@ -1142,6 +1145,7 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_danglingPlaylistEntries = std::move(result.danglingPlaylistEntries);
             m_playlistsChecked = result.playlistsChecked;
             m_playlistsError = QString::fromStdString(result.playlistsError);
+            m_noPlaylist = std::move(result.noPlaylist);
             emit playlistsChanged();
         }
         // Same rule as the two above: a leg that read nothing must not
@@ -1290,6 +1294,13 @@ void LibraryConsistencyController::attachSession()
                     emit playlistsChanged();
                     return;
                 }
+                if (changeId == DeleteTracksChange::idFor()) {
+                    m_stagedNoPlaylistFiles.clear();
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit playlistsChanged();
+                    return;
+                }
                 if (changeId == RemoveDanglingPlaylistEntriesChange::idFor()) {
                     m_danglingFixStaged = false;
                     m_rescanAfterSave = true;
@@ -1374,6 +1385,7 @@ void LibraryConsistencyController::attachSession()
                 m_sampleRateFillStaged = false;
                 m_stagedPlaylists.clear();
                 m_danglingFixStaged = false;
+                m_stagedNoPlaylistFiles.clear();
                 emit playlistsChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
@@ -2025,6 +2037,76 @@ void LibraryConsistencyController::unstagePlaylist(const QString &playlist)
     clearStagedStatusIfNothingStaged();
 }
 
+QVariantList LibraryConsistencyController::noPlaylistTracks() const
+{
+    QVariantList out;
+    for (const auto &t : m_noPlaylist.tracks) {
+        QStringList libraries;
+        for (const auto &row : t.rows) {
+            const QString name = libraryNameOf(row.format);
+            if (!libraries.contains(name)) {
+                libraries << name;
+            }
+        }
+        QVariantMap m;
+        m["filePath"] = QString::fromStdString(t.filePath);
+        m["title"] = QString::fromStdString(t.title);
+        m["artist"] = QString::fromStdString(t.artist);
+        m["libraries"] = libraries.join(QStringLiteral(", "));
+        m["staged"] = m_stagedNoPlaylistFiles.count(t.filePath) > 0;
+        out << m;
+    }
+    return out;
+}
+
+void LibraryConsistencyController::deleteTracksInNoPlaylist(const QStringList &filePaths)
+{
+    if (busy() || !m_noPlaylist.stickHasPlaylists) {
+        return;
+    }
+    std::set<std::string> wanted;
+    for (const QString &f : filePaths) {
+        wanted.insert(f.toStdString());
+    }
+    std::vector<DeleteTracksChange::Entry> entries;
+    std::set<std::string> staged;
+    for (const auto &t : m_noPlaylist.tracks) {
+        if (wanted.count(t.filePath)) {
+            entries.push_back({t.filePath, t.title, t.artist, t.rows});
+            staged.insert(t.filePath);
+        }
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!m_stagedNoPlaylistFiles.empty()) {
+        unstageTracksInNoPlaylist();
+    }
+    if (entries.empty() || !ensureSessionForStaging()) {
+        return;
+    }
+    if (!m_session->stage(std::make_unique<DeleteTracksChange>(m_rekordboxPath, m_enginePath, std::move(entries)))) {
+        emit playlistsChanged();
+        return;
+    }
+    m_stagedNoPlaylistFiles = std::move(staged);
+    emit playlistsChanged();
+    setStagedStatusMessage(QStringLiteral("Staged deleting %1 track(s) that are in no playlist. Press Save to write it.")
+                               .arg(m_stagedNoPlaylistFiles.size()));
+}
+
+void LibraryConsistencyController::unstageTracksInNoPlaylist()
+{
+    if (m_stagedNoPlaylistFiles.empty()) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(DeleteTracksChange::idFor());
+    }
+    m_stagedNoPlaylistFiles.clear();
+    emit playlistsChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::removeDanglingPlaylistEntries()
 {
     const int count = danglingPlaylistEntryCount();
@@ -2190,7 +2272,8 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged) {
+        && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged
+        && m_stagedNoPlaylistFiles.empty()) {
         setStatusMessage({});
     }
 }

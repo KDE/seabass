@@ -158,6 +158,7 @@ TestCase {
             {card: "sampleRateCard", section: "samplerates"},
             {card: "coverArtCard", section: "artwork"},
             {card: "playlistSyncCard", section: "playlists"},
+            {card: "noPlaylistCard", section: "noplaylist"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);

@@ -310,6 +310,16 @@ Page {
     // leg has every catalog.
     readonly property bool playlistsShown: healthController.playlistsChecked
         || healthController.playlistsError.length > 0
+    readonly property int noPlaylistTrackCount: healthController.noPlaylistTrackCount
+    readonly property string noPlaylistSummary: {
+        if (root.noPlaylistTrackCount === 0) {
+            return "Every track is in at least one playlist.";
+        }
+        const counted = root.noPlaylistTrackCount === 1 ? "One track is" : root.noPlaylistTrackCount + " tracks are";
+        return healthController.stickHasPlaylists
+            ? counted + " in no playlist in any library. You can delete the ones you do not need."
+            : counted + " listed because this stick has no playlists at all.";
+    }
     readonly property int playlistDifferenceCount: healthController.playlistDifferenceCount
     readonly property int danglingPlaylistEntryCount: healthController.danglingPlaylistEntryCount
     readonly property string playlistSummary: {
@@ -599,6 +609,21 @@ Page {
                 actionLabel: root.playlistDifferenceCount > 0 || root.danglingPlaylistEntryCount > 0
                     ? "Review playlists" : ""
                 onActionRequested: root.detailRequested("playlists")
+            }
+
+            HealthCheckCard {
+                objectName: "noPlaylistCard"
+                visible: root.playlistsShown
+                fixableCount: healthController.stickHasPlaylists ? root.noPlaylistTrackCount : 0
+                foundCount: root.noPlaylistTrackCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Tracks not in any playlist"
+                summary: root.noPlaylistSummary
+                running: root.scanning
+                ok: root.noPlaylistTrackCount === 0
+                actionLabel: root.noPlaylistTrackCount > 0 ? "Review tracks" : ""
+                onActionRequested: root.detailRequested("noplaylist")
             }
 
             // Inset to the card TEXT, not to the card edge. These three
