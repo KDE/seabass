@@ -133,6 +133,7 @@ set(SEABASS_GUI_QML_FILES
     qml/OneLibraryLeftoversPage.qml
     qml/HiddenCuesPage.qml
     qml/MemoryCueListsPage.qml
+    qml/PlaylistSyncPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/StickPerformancePage.qml

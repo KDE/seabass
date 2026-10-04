@@ -689,6 +689,150 @@ void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, 
     refreshStalenessBaseline();
 }
 
+namespace
+{
+
+// The playlist (not folder) at a full path, walking parents the way the
+// reader builds names. Nothing when no playlist has that path.
+std::optional<int64_t> playlistIdAtPath(SqlCipherDb &db, const std::string &path)
+{
+    struct Node
+    {
+        std::string name;
+        int64_t parent = 0;
+        int attribute = 0;
+    };
+    std::map<int64_t, Node> nodes;
+    {
+        SqlCipherStatement read(db, "SELECT playlist_id, name, playlist_id_parent, attribute FROM playlist");
+        while (read.step()) {
+            nodes[read.columnInt64(0)] = Node{read.columnText(1), read.columnInt64(2),
+                                              static_cast<int>(read.columnInt64(3))};
+        }
+    }
+    for (const auto &[id, node] : nodes) {
+        std::vector<std::string> parts;
+        int64_t current = id;
+        for (int guard = 0; current != 0 && guard < 64; ++guard) {
+            const auto it = nodes.find(current);
+            if (it == nodes.end()) {
+                break;
+            }
+            parts.push_back(it->second.name);
+            current = it->second.parent;
+        }
+        std::string spelled;
+        for (auto part = parts.rbegin(); part != parts.rend(); ++part) {
+            spelled += (spelled.empty() ? "" : "/") + *part;
+        }
+        if (spelled == path) {
+            return id;
+        }
+    }
+    return std::nullopt;
+}
+
+int64_t membershipRows(SqlCipherDb &db, int64_t playlistId, const std::vector<int64_t> &contentIds)
+{
+    int64_t rows = 0;
+    for (const int64_t contentId : contentIds) {
+        SqlCipherStatement count(db, "SELECT count(*) FROM playlist_content WHERE playlist_id = ? AND content_id = ?");
+        count.bindInt64(1, playlistId);
+        count.bindInt64(2, contentId);
+        count.step();
+        rows += count.columnInt64(0);
+    }
+    return rows;
+}
+
+}  // namespace
+
+bool OneLibraryCueWriter::addToPlaylist(const std::string &playlistPath, const std::string &filePath)
+{
+    checkNotStale();
+    const std::string contentPath = toContentPath(m_stickRoot, filePath);
+    SqlCipherDb &db = writeConnection();
+    const auto playlistId = playlistIdAtPath(db, playlistPath);
+    if (!playlistId) {
+        throw std::runtime_error("onelibrary: no playlist \"" + playlistPath + "\"");
+    }
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+    if (contentIds.empty()) {
+        throw OneLibraryRowMissing("onelibrary: no content row lists " + filePath);
+    }
+    if (membershipRows(db, *playlistId, contentIds) > 0) {
+        return false;
+    }
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        int64_t next = 1;
+        {
+            SqlCipherStatement last(db, "SELECT coalesce(max(sequenceNo), 0) FROM playlist_content WHERE playlist_id = ?");
+            last.bindInt64(1, *playlistId);
+            last.step();
+            next = last.columnInt64(0) + 1;
+        }
+        SqlCipherStatement insert(db, "INSERT INTO playlist_content (playlist_id, content_id, sequenceNo) VALUES (?, ?, ?)");
+        insert.bindInt64(1, *playlistId);
+        insert.bindInt64(2, contentIds.front());
+        insert.bindInt64(3, next);
+        insert.run();
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    if (membershipRows(verifyConnection(), *playlistId, contentIds) == 0) {
+        throw std::runtime_error("onelibrary: post-write verification failed, " + filePath + " is not in \""
+                                 + playlistPath + "\"");
+    }
+    refreshStalenessBaseline();
+    return true;
+}
+
+bool OneLibraryCueWriter::removeFromPlaylist(const std::string &playlistPath, const std::string &filePath)
+{
+    checkNotStale();
+    const std::string contentPath = toContentPath(m_stickRoot, filePath);
+    SqlCipherDb &db = writeConnection();
+    const auto playlistId = playlistIdAtPath(db, playlistPath);
+    if (!playlistId) {
+        throw std::runtime_error("onelibrary: no playlist \"" + playlistPath + "\"");
+    }
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+    if (contentIds.empty()) {
+        throw OneLibraryRowMissing("onelibrary: no content row lists " + filePath);
+    }
+    if (membershipRows(db, *playlistId, contentIds) == 0) {
+        return false;
+    }
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (const int64_t contentId : contentIds) {
+            SqlCipherStatement del(db, "DELETE FROM playlist_content WHERE playlist_id = ? AND content_id = ?");
+            del.bindInt64(1, *playlistId);
+            del.bindInt64(2, contentId);
+            del.run();
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    if (membershipRows(verifyConnection(), *playlistId, contentIds) != 0) {
+        throw std::runtime_error("onelibrary: post-write verification failed, " + filePath + " is still in \""
+                                 + playlistPath + "\"");
+    }
+    refreshStalenessBaseline();
+    return true;
+}
+
 void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, const std::optional<int> &stars,
                                                    const std::optional<std::string> &comment)
 {

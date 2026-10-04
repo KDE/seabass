@@ -5,6 +5,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -780,6 +781,42 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
         m_cancel.throwIfCancelled();
     }
     progress.finish();
+}
+
+std::map<std::string, uint32_t> rekordboxPlaylistIdsByPath(const std::string &pioneerRoot)
+{
+    std::map<std::string, uint32_t> ids;
+    const std::filesystem::path pdbPath = pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
+    std::ifstream ifs(pdbPath, std::ifstream::binary);
+    if (!ifs.is_open()) {
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
+    }
+    kaitai::kstream ks(&ifs);
+    Pdb pdb(false, &ks);
+    std::unordered_map<uint32_t, PlaylistTreeInfo> tree;
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_PLAYLIST_TREE) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (!row->present()) {
+                        continue;
+                    }
+                    if (auto *p = dynamic_cast<Pdb::playlist_tree_row_t *>(row->body())) {
+                        tree[p->id()] = PlaylistTreeInfo{sqlText(p->name()), p->parent_id(), p->raw_is_folder() != 0};
+                    }
+                }
+            }
+        });
+    }
+    for (const auto &[id, info] : tree) {
+        if (!info.isFolder) {
+            ids.emplace(playlistPath(id, tree), id);
+        }
+    }
+    return ids;
 }
 
 }  // namespace seabass::infrastructure::rekordbox

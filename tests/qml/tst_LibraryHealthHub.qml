@@ -172,6 +172,7 @@ TestCase {
             {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
             {card: "hiddenCueCard", section: "hiddencues"},
             {card: "memoryCueListCard", section: "memorycuelists"},
+            {card: "playlistSyncCard", section: "playlists"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);
@@ -496,7 +497,7 @@ TestCase {
         // feeling.
         var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
                      "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard", "hiddenCueCard",
-                     "memoryCueListCard"];
+                     "memoryCueListCard", "playlistSyncCard"];
         for (var i = 0; i < names.length; ++i) {
             var card = findByObjectName(page, names[i]);
             if (card) {
@@ -775,6 +776,69 @@ TestCase {
     Component {
         id: bareControllerComponent
         LibraryConsistencyController {}
+    }
+
+    // #61. Playlists across the libraries: a real scan of a fixture copy
+    // finds playlists that differ, following one library stages a change
+    // that a real save writes, and the rescan finds that playlist in
+    // agreement. Following rekordbox writes OneLibrary; following
+    // OneLibrary takes entries out of export.pdb.
+    function test_aPlaylistFollowsTheLibraryPicked_data() {
+        // Not Engine: the fixture's Engine library was anonymized apart
+        // from the other two and shares no file path with them, so no
+        // playlist there can be compared. align_playlist_change_test
+        // covers Engine's writes on a library of its own.
+        return [{tag: "rekordbox", reference: "rekordbox"}, {tag: "onelibrary", reference: "onelibrary"}];
+    }
+    function test_aPlaylistFollowsTheLibraryPicked(data) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        compare(controller.playlistsError, "");
+        verify(controller.playlistsChecked, "the playlists were compared");
+        verify(controller.playlistDifferenceCount > 0, "precondition: the fixture's playlists differ");
+        const card = findByObjectName(page, "playlistSyncCard");
+        verify(card !== null && card.visible && !card.ok, "the hub says so");
+
+        // A playlist whose chosen library has something to hand the others.
+        // The name, copied: the list a property hands QML reads through to
+        // the controller's current one, so an element held across the save
+        // would read whichever playlist sits at its index afterwards.
+        let name = "";
+        for (const d of controller.playlistDifferences) {
+            const r = d.references.find((x) => x.format === data.reference && x.adds + x.removes + x.swaps > 0);
+            if (r && !d.missingSomewhere) {
+                name = String(d.name);
+                break;
+            }
+        }
+        if (name.length === 0) {
+            skip("the fixture has no playlist " + data.reference + " can hand the others");
+        }
+        controller.alignPlaylist(name, data.reference);
+        const staged = controller.playlistDifferences.find((d) => d.name === name);
+        compare(staged.staged, data.reference, "staged, and the page says which library");
+
+        const libraryId = EditSessionRegistry.libraryIdForPath(stick + "/PIONEER");
+        const session = EditSessionRegistry.sessionFor(libraryId, "TESTSTICK");
+        verify(session !== null && session.pendingCount === 1);
+        let summary = null;
+        session.saveFinished.connect((result) => { summary = result; });
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        compare(summary.error, "", "the save wrote it: " + JSON.stringify(summary));
+        tryVerify(() => !controller.busy && controller.playlistsChecked, 300000, "the rescan finishes");
+        const after = controller.playlistDifferences.find((d) => d.name === name);
+        if (after !== undefined) {
+            // What is left is only what cannot be written: additions to
+            // rekordbox (#62), and what OneLibrary keeps out to stay level.
+            const again = after.references.find((x) => x.format === data.reference);
+            verify(again === undefined || again.adds + again.removes + again.swaps === 0,
+                   "following " + data.reference + " again has nothing left to do: " + JSON.stringify(after));
+        }
     }
 
     // The stray-cue headline counts tracks, each audio file once, and

@@ -361,6 +361,7 @@ add_library(seabass_core STATIC
     src/domain/camelot_key.cpp
     src/domain/cleanup_leftovers.cpp
     src/domain/hidden_engine_cues.cpp
+    src/domain/playlist_sync.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -430,6 +431,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_anonymizer.cpp
     src/infrastructure/media/media_factory.cpp
@@ -549,6 +551,7 @@ add_library(seabass_core_testing STATIC
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
     src/domain/hidden_engine_cues.cpp
+    src/domain/playlist_sync.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
@@ -562,6 +565,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
@@ -896,6 +900,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/finish_cleanup_change.cpp
         src/gui/edit/changes/recolour_engine_cues_change.cpp
         src/gui/edit/changes/repair_legacy_memory_list_change.cpp
+        src/gui/edit/changes/align_playlist_change.cpp
+        src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp
@@ -1824,6 +1830,11 @@ target_link_libraries(engine_cue_translation_test PRIVATE seabass_core_testing)
 target_include_directories(engine_cue_translation_test PRIVATE src)
 add_test(NAME engine_cue_translation_test COMMAND engine_cue_translation_test)
 
+add_executable(playlist_sync_test tests/playlist_sync_test.cpp)
+target_link_libraries(playlist_sync_test PRIVATE seabass_core_testing)
+target_include_directories(playlist_sync_test PRIVATE src)
+add_test(NAME playlist_sync_test COMMAND playlist_sync_test)
+
 add_executable(phased_progress_test tests/phased_progress_test.cpp src/application/phased_progress.cpp src/application/ports/progress_reporter.cpp)
 target_include_directories(phased_progress_test PRIVATE src)
 add_test(NAME phased_progress_test COMMAND phased_progress_test)
@@ -2623,6 +2634,14 @@ if(TARGET seabass_edit)
         target_link_libraries(recolour_engine_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME recolour_engine_cues_change_test COMMAND recolour_engine_cues_change_test)
+
+    add_executable(align_playlist_change_test tests/align_playlist_change_test.cpp)
+    target_include_directories(align_playlist_change_test PRIVATE src tests)
+    target_link_libraries(align_playlist_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(align_playlist_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME align_playlist_change_test COMMAND align_playlist_change_test)
 
     add_executable(repair_legacy_memory_list_change_test tests/repair_legacy_memory_list_change_test.cpp)
     target_include_directories(repair_legacy_memory_list_change_test PRIVATE src tests)

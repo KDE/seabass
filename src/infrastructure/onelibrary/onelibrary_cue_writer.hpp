@@ -233,6 +233,16 @@ public:
     // trusted, like the annotation above.
     void writePlayCountForPath(const std::string &filePath, int playCount);
 
+    // A playlist's membership, by the playlist's full path ("Folder/List",
+    // as the reader spells it) and the file's path. Add appends the file
+    // at the end of the playlist (sequenceNo one past the last) unless it
+    // is already a member; remove takes every row of that file out of
+    // that playlist. Both verify on a fresh connection, and throw when
+    // the playlist does not exist or no content row lists the file.
+    // Return whether anything changed.
+    bool addToPlaylist(const std::string &playlistPath, const std::string &filePath);
+    bool removeFromPlaylist(const std::string &playlistPath, const std::string &filePath);
+
     // Fills in a Clean Up survivor's missing bpm/key/artwork from
     // another copy in its duplicate group (see domain::
     // DuplicateCleanupPlan). Copies the donor row's own already-valid

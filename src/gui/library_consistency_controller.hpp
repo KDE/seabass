@@ -23,6 +23,8 @@
 #include "domain/cleanup_leftovers.hpp"
 #include "domain/hidden_engine_cues.hpp"
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
+#include "domain/playlist_sync.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -179,6 +181,18 @@ private:
 // Result of a background scan task for one format, see
 // LibraryConsistencyController::scanNextPendingFormat(). Built entirely
 // on a worker thread, no access to the controller.
+// One playlist that differs between the libraries, with what matching it
+// to each library would do (domain::alignTo), already trimmed to what
+// can be written: no addition to export.pdb (#62), and no OneLibrary
+// addition that rekordbox's copy of the playlist would not also hold.
+struct PlaylistFinding
+{
+    domain::PlaylistDifference difference;
+    std::map<std::string, std::vector<domain::PlaylistAlignment>> byReference;
+    // Additions left out per reference, for the page to say so.
+    std::map<std::string, int> leftOutByReference;
+};
+
 // One rekordbox track whose legacy memory list, or whose analysis
 // directory, needs a hand (infrastructure::rekordbox::LegacyMemoryListFinding).
 struct LegacyMemoryListIssue
@@ -255,6 +269,13 @@ struct LibraryConsistencyScanResult
     // files export.pdb names; the OneLibrary leg adds the ones only
     // OneLibrary names, and appends (cueListsAppend) rather than
     // replacing what the rekordbox leg found.
+    // The last leg only, once every catalog is in the cache: playlists
+    // that differ between the libraries, and Engine entries naming no
+    // track (#61).
+    std::vector<PlaylistFinding> playlistFindings;
+    std::vector<infrastructure::engine::DanglingPlaylistEntries> danglingPlaylistEntries;
+    bool playlistsChecked = false;
+    std::string playlistsError;
     std::vector<LegacyMemoryListIssue> legacyMemoryLists;
     bool legacyMemoryListsChecked = false;
     std::string legacyMemoryListsError;
@@ -425,6 +446,21 @@ private:
     // the player since, plus the analysis file a hung player leaves
     // behind (infrastructure::rekordbox::LegacyMemoryListFinding, #55).
     // Checked by the rekordbox leg of a full scan.
+    // Playlists that do not hold the same tracks in every library on the
+    // stick (domain::findPlaylistDifferences), and Engine playlist entries
+    // naming no track. Checked by the last leg of a full scan.
+    Q_PROPERTY(bool playlistsChecked READ playlistsChecked NOTIFY playlistsChanged)
+    Q_PROPERTY(QString playlistsError READ playlistsError NOTIFY playlistsChanged)
+    Q_PROPERTY(int playlistDifferenceCount READ playlistDifferenceCount NOTIFY playlistsChanged)
+    // Each {name, missingSomewhere, sides: [{format, library, hasPlaylist,
+    // members, lacking: [titles], extra: [titles], notInEveryLibrary}],
+    // references: [{format, library, adds, removes, leftOut}], staged:
+    // reference format or ""}.
+    Q_PROPERTY(QVariantList playlistDifferences READ playlistDifferences NOTIFY playlistsChanged)
+    Q_PROPERTY(int danglingPlaylistEntryCount READ danglingPlaylistEntryCount NOTIFY playlistsChanged)
+    // Each {playlist, entries}.
+    Q_PROPERTY(QVariantList danglingPlaylists READ danglingPlaylists NOTIFY playlistsChanged)
+    Q_PROPERTY(bool danglingFixStaged READ danglingFixStaged NOTIFY playlistsChanged)
     Q_PROPERTY(bool legacyMemoryListsChecked READ legacyMemoryListsChecked NOTIFY legacyMemoryListsChanged)
     Q_PROPERTY(int legacyMemoryListCount READ legacyMemoryListCount NOTIFY legacyMemoryListsChanged)
     Q_PROPERTY(int legacyMemoryListFixableCount READ legacyMemoryListFixableCount NOTIFY legacyMemoryListsChanged)
@@ -588,6 +624,13 @@ public:
     int hiddenCueCount() const;
     bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
     QVariantList hiddenCueTracks() const;
+    bool playlistsChecked() const { return m_playlistsChecked; }
+    QString playlistsError() const { return m_playlistsError; }
+    int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
+    QVariantList playlistDifferences() const;
+    int danglingPlaylistEntryCount() const;
+    QVariantList danglingPlaylists() const;
+    bool danglingFixStaged() const { return m_danglingFixStaged; }
     bool legacyMemoryListsChecked() const { return m_legacyMemoryListsChecked; }
     int legacyMemoryListCount() const;
     int legacyMemoryListFixableCount() const;
@@ -668,6 +711,14 @@ public:
     // repairable memory list, debris, or lists that disagree (resolved
     // the way keepPlayerCueLists says); a list this cannot read is named
     // and left alone.
+    // Stages making `playlist` hold, in every other library, what it
+    // holds in `reference` ("rekordbox", "onelibrary", "engine"), within
+    // what can be written (see PlaylistFinding). Staging another
+    // reference for the same playlist replaces the first.
+    Q_INVOKABLE void alignPlaylist(const QString &playlist, const QString &reference);
+    Q_INVOKABLE void unstagePlaylist(const QString &playlist);
+    Q_INVOKABLE void removeDanglingPlaylistEntries();
+    Q_INVOKABLE void unstageDanglingPlaylistEntries();
     Q_INVOKABLE void repairLegacyMemoryLists();
     Q_INVOKABLE void unstageLegacyMemoryListFix();
     // Stages telling Engine the rekordbox library is already imported.
@@ -710,6 +761,7 @@ signals:
     void cleanupLeftoversChanged();
     void hiddenCuesChanged();
     void legacyMemoryListsChanged();
+    void playlistsChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -791,6 +843,12 @@ private:
     bool m_hiddenCuesChecked = false;
     std::set<QString> m_stagedHiddenCueFixes;
     bool m_hiddenCueFixStaged = false;
+    std::vector<PlaylistFinding> m_playlistFindings;
+    std::vector<infrastructure::engine::DanglingPlaylistEntries> m_danglingPlaylistEntries;
+    bool m_playlistsChecked = false;
+    QString m_playlistsError;
+    std::map<QString, QString> m_stagedPlaylists;  // change id -> reference format
+    bool m_danglingFixStaged = false;
     std::vector<LegacyMemoryListIssue> m_legacyMemoryLists;
     bool m_legacyMemoryListsChecked = false;
     QString m_legacyMemoryListsError;
