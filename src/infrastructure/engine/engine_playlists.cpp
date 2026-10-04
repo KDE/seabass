@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -183,6 +184,59 @@ std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibrary
         ids.push_back(t.id());
     }
     return ids;
+}
+
+namespace
+{
+
+void collectPlaylistTracks(const djinterop::playlist &pl, std::set<std::int64_t> &ids)
+{
+    for (const auto &t : pl.tracks()) {
+        ids.insert(t.id());
+    }
+    for (const auto &child : pl.children()) {
+        collectPlaylistTracks(child, ids);
+    }
+}
+
+std::set<std::int64_t> tracksInPlaylists(djinterop::database &db)
+{
+    std::set<std::int64_t> ids;
+    for (const auto &root : db.root_playlists()) {
+        collectPlaylistTracks(root, ids);
+    }
+    return ids;
+}
+
+}  // namespace
+
+std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLibraryPath)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    const auto ids = tracksInPlaylists(db);
+    return {ids.begin(), ids.end()};
+}
+
+int removeEngineTracks(const std::string &engineLibraryPath, const std::vector<std::int64_t> &trackIds)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    const auto listed = tracksInPlaylists(db);
+    int removed = 0;
+    for (const std::int64_t id : trackIds) {
+        if (listed.count(id)) {
+            throw std::runtime_error("engine: track id=" + std::to_string(id) + " is in a playlist; not removing it");
+        }
+        auto track = db.track_by_id(id);
+        if (!track) {
+            continue;
+        }
+        db.remove_track(*track);
+        if (db.track_by_id(id)) {
+            throw std::runtime_error("engine: track id=" + std::to_string(id) + " is still there after removing it");
+        }
+        ++removed;
+    }
+    return removed;
 }
 
 int deleteEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath)

@@ -317,6 +317,8 @@ public:
     // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
     // ignored. More than one when the file was imported twice.
     std::vector<uint32_t> trackIdsWithFilePath(const std::string &pathOnStick) const;
+    // Whether any playlist has an entry for the track.
+    bool trackInAnyPlaylist(uint32_t trackId) const;
 
     // The playlist tree as export.pdb holds it now: every playlist and
     // folder, with its parent (0 for the top level) and its place there.

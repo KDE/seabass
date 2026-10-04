@@ -47,6 +47,15 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
 // Engine stores relative to the library folder.
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibraryPath, const std::string &filePath);
 
+// The ids of every track some playlist in the library holds.
+std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLibraryPath);
+
+// Removes the tracks with these ids from the library (rows only; the
+// files are the caller's). A track still in a playlist is refused with a
+// throw, since removing it would leave the playlist pointing at nothing.
+// Returns how many were removed.
+int removeEngineTracks(const std::string &engineLibraryPath, const std::vector<std::int64_t> &trackIds);
+
 // Deletes the playlist at playlistPath ("Folder/List") with every playlist
 // below it, from the library at `engineLibraryPath` (a write root). Each
 // playlist's entries are cleared first: m.db only cascades them with

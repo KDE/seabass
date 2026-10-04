@@ -361,6 +361,7 @@ add_library(seabass_core STATIC
     src/domain/camelot_key.cpp
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
+    src/domain/tracks_in_no_playlist.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -551,6 +552,7 @@ add_library(seabass_core_testing STATIC
     src/domain/engine_cue_translation.cpp
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
+    src/domain/tracks_in_no_playlist.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
@@ -897,6 +899,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/delete_orphan_change.cpp
         src/gui/edit/changes/align_playlist_change.cpp
         src/gui/edit/changes/playlist_edit_changes.cpp
+        src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
@@ -1817,6 +1820,11 @@ add_executable(engine_cue_translation_test
 target_link_libraries(engine_cue_translation_test PRIVATE seabass_core_testing)
 target_include_directories(engine_cue_translation_test PRIVATE src)
 add_test(NAME engine_cue_translation_test COMMAND engine_cue_translation_test)
+
+add_executable(tracks_in_no_playlist_test tests/tracks_in_no_playlist_test.cpp)
+target_link_libraries(tracks_in_no_playlist_test PRIVATE seabass_core_testing)
+target_include_directories(tracks_in_no_playlist_test PRIVATE src)
+add_test(NAME tracks_in_no_playlist_test COMMAND tracks_in_no_playlist_test)
 
 add_executable(playlist_sync_test tests/playlist_sync_test.cpp)
 target_link_libraries(playlist_sync_test PRIVATE seabass_core_testing)
