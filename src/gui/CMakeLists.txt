@@ -134,6 +134,7 @@ set(SEABASS_GUI_QML_FILES
     qml/HiddenCuesPage.qml
     qml/MemoryCueListsPage.qml
     qml/PlaylistSyncPage.qml
+    qml/NoPlaylistTracksPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/StickPerformancePage.qml

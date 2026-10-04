@@ -173,6 +173,7 @@ TestCase {
             {card: "hiddenCueCard", section: "hiddencues"},
             {card: "memoryCueListCard", section: "memorycuelists"},
             {card: "playlistSyncCard", section: "playlists"},
+            {card: "noPlaylistCard", section: "noplaylist"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);

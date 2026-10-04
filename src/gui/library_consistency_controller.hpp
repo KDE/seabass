@@ -25,6 +25,7 @@
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "domain/playlist_sync.hpp"
+#include "domain/tracks_in_no_playlist.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -285,6 +286,9 @@ struct LibraryConsistencyScanResult
     // so a file the rekordbox leg took for debris is not, when this
     // catalog names it.
     std::set<std::string> oneLibraryAnalysisKeys;
+
+    // The same pass: files no library has in any playlist.
+    domain::NoPlaylistScan noPlaylist;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -497,6 +501,15 @@ private:
     // stick, read when the repair is staged.
     Q_PROPERTY(bool keepPlayerCueLists READ keepPlayerCueLists WRITE setKeepPlayerCueLists
                    NOTIFY legacyMemoryListsChanged)
+
+    // Files no library on the stick has in any playlist (domain::
+    // findTracksInNoPlaylist), checked with the playlists. Each {filePath,
+    // title, artist, libraries, staged}. stickHasPlaylists false means
+    // every track is listed, and nothing is offered for deletion.
+    Q_PROPERTY(int noPlaylistTrackCount READ noPlaylistTrackCount NOTIFY playlistsChanged)
+    Q_PROPERTY(QVariantList noPlaylistTracks READ noPlaylistTracks NOTIFY playlistsChanged)
+    Q_PROPERTY(bool stickHasPlaylists READ stickHasPlaylists NOTIFY playlistsChanged)
+    Q_PROPERTY(int noPlaylistStagedCount READ noPlaylistStagedCount NOTIFY playlistsChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -625,6 +638,10 @@ public:
     bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
     QVariantList hiddenCueTracks() const;
     bool playlistsChecked() const { return m_playlistsChecked; }
+    int noPlaylistTrackCount() const { return static_cast<int>(m_noPlaylist.tracks.size()); }
+    QVariantList noPlaylistTracks() const;
+    bool stickHasPlaylists() const { return m_noPlaylist.stickHasPlaylists; }
+    int noPlaylistStagedCount() const { return static_cast<int>(m_stagedNoPlaylistFiles.size()); }
     QString playlistsError() const { return m_playlistsError; }
     int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
     QVariantList playlistDifferences() const;
@@ -717,6 +734,12 @@ public:
     // reference for the same playlist replaces the first.
     Q_INVOKABLE void alignPlaylist(const QString &playlist, const QString &reference);
     Q_INVOKABLE void unstagePlaylist(const QString &playlist);
+    // Stages deleting these files (by filePath, from noPlaylistTracks) the
+    // way Clean Up deletes a duplicate: out of every library, the file on
+    // the pending-deletions list. Replaces what was staged before. Refused
+    // on a stick with no playlists.
+    Q_INVOKABLE void deleteTracksInNoPlaylist(const QStringList &filePaths);
+    Q_INVOKABLE void unstageTracksInNoPlaylist();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
     Q_INVOKABLE void repairLegacyMemoryLists();
@@ -856,6 +879,9 @@ private:
     bool m_legacyMemoryListFixStaged = false;
     infrastructure::rekordbox::CueListTally m_cueListTally;
     bool m_keepPlayerCueLists = true;
+
+    domain::NoPlaylistScan m_noPlaylist;
+    std::set<std::string> m_stagedNoPlaylistFiles;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
