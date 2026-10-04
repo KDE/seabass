@@ -3349,6 +3349,21 @@ if(NOT WIN32)
 endif()
 add_test(NAME onelibrary_cue_writer_test COMMAND onelibrary_cue_writer_test)
 
+add_executable(onelibrary_playlist_tree_test
+    src/infrastructure/onelibrary/onelibrary_key.cpp
+    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
+    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
+    src/infrastructure/onelibrary/onelibrary_reader.cpp
+    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
+    tests/onelibrary_playlist_tree_test.cpp
+)
+target_link_libraries(onelibrary_playlist_tree_test PRIVATE seabass_core_testing ZLIB::ZLIB)
+target_include_directories(onelibrary_playlist_tree_test PRIVATE src tests)
+if(NOT WIN32)
+    target_link_libraries(onelibrary_playlist_tree_test PRIVATE ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME onelibrary_playlist_tree_test COMMAND onelibrary_playlist_tree_test ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
+
 add_executable(onelibrary_cue_writer_adapter_test
     src/infrastructure/onelibrary/onelibrary_key.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp

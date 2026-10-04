@@ -333,7 +333,9 @@ public:
     // the tree has had, so a removed playlist's id is never reused. The
     // name is encoded as rekordbox encodes it (short ASCII up to 126
     // bytes, long ASCII, or UTF-16). Throws std::invalid_argument for an
-    // empty name or a parent that is not a folder, PdbPageFull when the
+    // empty name, a '/' in it, a name its level already has (playlists
+    // are matched by path across the libraries) or a parent that is not
+    // a folder, PdbPageFull when the
     // rows cannot be placed; nothing changes then. Returns the new id.
     uint32_t createPlaylist(uint32_t parentId, const std::string &name, bool isFolder,
                             std::optional<size_t> position = std::nullopt);
@@ -341,7 +343,9 @@ public:
     // Deletes a playlist, or a folder with everything in it: the tree
     // rows of the node and its descendants, every entry of each playlist
     // among them, and the rest of its level written again, sort_order 0
-    // on, as rekordbox did when deleting Q1 and the folder F1. Returns how
+    // on, as rekordbox did when deleting Q1 and the folder F1. Tracks
+    // stay: rekordbox also deleted the tracks no other playlist held, and
+    // Seabass does not delete music with a playlist. Returns how
     // many playlists and folders went (0 when there is no such id).
     size_t deletePlaylist(uint32_t id);
 

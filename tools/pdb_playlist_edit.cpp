@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// Hardware driver for #62: edits a test stick's export.pdb playlists with
-// PdbRowWriter, the code the playlist repair uses, so a player can show
-// what it made. Tracks are named by file name, playlists by name.
+// Hardware driver for #62: edits a test stick's playlists with the code the
+// app uses (PdbRowWriter for export.pdb, OneLibraryCueWriter for
+// exportLibrary.db), both halves by default, so a player and rekordbox can
+// show what it made. Tracks are named by file name, playlists by name.
+// --pdb-only or --onelibrary-only before the verb edits one half.
 //
 //   pdb_playlist_edit <stick> show
 //   pdb_playlist_edit <stick> append <playlist> <file name>...
@@ -29,6 +31,7 @@
 #include <vector>
 
 #include <kaitai/kaitaistream.h>
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -37,6 +40,7 @@
 
 namespace fs = std::filesystem;
 namespace rb = seabass::infrastructure::rekordbox;
+namespace ol = seabass::infrastructure::onelibrary;
 
 namespace
 {
@@ -61,6 +65,7 @@ struct Catalog
 {
     std::map<std::string, uint32_t> trackIdByFile;
     std::map<uint32_t, std::string> fileByTrackId;
+    std::map<std::string, std::string> pathByFile;  // "/Contents/..." as export.pdb spells it
     std::map<uint32_t, std::map<uint32_t, uint32_t>> entriesByPlaylist;  // entry_index -> track
     std::vector<std::string> pages;
 };
@@ -91,6 +96,7 @@ Catalog read(const fs::path &pdbFile)
                         const std::string name = trimmed(rb::sqlText(t->filename()));
                         c.trackIdByFile[name] = t->id();
                         c.fileByTrackId[t->id()] = name;
+                        c.pathByFile[name] = trimmed(rb::sqlText(t->file_path()));
                     } else {
                         auto *e = static_cast<rekordbox_pdb_t::playlist_entry_row_t *>(row->body());
                         c.entriesByPlaylist[e->playlist_id()][e->entry_index()] = e->track_id();
@@ -137,114 +143,157 @@ void show(const fs::path &pioneer)
 
 }  // namespace
 
+void showOneLibrary(const fs::path &pioneer)
+{
+    ol::OneLibraryCueWriter w(seabass::pathToUtf8(pioneer));
+    const auto tree = w.playlistTree();
+    std::map<int64_t, ol::OneLibraryCueWriter::PlaylistNode> byId;
+    for (const auto &n : tree) {
+        byId[n.id] = n;
+    }
+    std::map<std::pair<int64_t, int64_t>, std::string> ordered;
+    for (const auto &n : tree) {
+        std::string path = n.name;
+        for (int64_t p = n.parentId; p != 0; p = byId.at(p).parentId) {
+            path = byId.at(p).name + "/" + path;
+        }
+        std::string line = "onelibrary " + path + (n.isFolder ? " (folder)" : " (" + std::to_string(w.playlistContent(path).size()) + ")");
+        ordered[{n.parentId, n.sequenceNo}] = line;
+    }
+    for (const auto &[key, line] : ordered) {
+        std::cout << line << "\n";
+    }
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 3) {
-        std::cerr << "usage: pdb_playlist_edit <stick> show | append <playlist> <file>... | remove <playlist> <file>...\n";
+    std::vector<std::string> args(argv + 1, argv + argc);
+    bool pdb = true;
+    bool onelibrary = true;
+    for (auto it = args.begin(); it != args.end();) {
+        if (*it == "--pdb-only") {
+            onelibrary = false;
+            it = args.erase(it);
+        } else if (*it == "--onelibrary-only") {
+            pdb = false;
+            it = args.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (args.size() < 2) {
+        std::cerr << "usage: see the top of tools/pdb_playlist_edit.cpp\n";
         return 2;
     }
-    const fs::path stick = seabass::pathFromUtf8(argv[1]);
+    const fs::path stick = seabass::pathFromUtf8(args[0]);
     if (stick.filename() != "TESTRIG" && stick.filename() != "TESTROWS") {
         std::cerr << "refusing: only a stick mounted as TESTRIG or TESTROWS is written\n";
         return 2;
     }
     const fs::path pioneer = stick / "PIONEER";
-    const std::string verb = argv[2];
-    if (verb == "show") {
+    const fs::path pdbFile = pioneer / "rekordbox" / "export.pdb";
+    const std::string verb = args[1];
+    const auto showBoth = [&] {
         show(pioneer);
+        showOneLibrary(pioneer);
+    };
+    if (verb == "show") {
+        showBoth();
         return 0;
     }
-    const fs::path pdbPath = pioneer / "rekordbox" / "export.pdb";
-    if (verb == "create" || verb == "mkfolder" || verb == "delete") {
-        if (argc < 4) {
-            std::cerr << "usage: see the top of tools/pdb_playlist_edit.cpp\n";
-            return 2;
-        }
-        rb::PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
-        const auto tree = writer.playlistTree();
-        const auto idOf = [&](const std::string &name) -> std::optional<uint32_t> {
-            for (const auto &n : tree) {
-                if (n.name == name) {
-                    return n.id;
-                }
+    const bool treeVerb = verb == "create" || verb == "mkfolder" || verb == "delete";
+    const bool entryVerb = verb == "append" || verb == "remove" || verb == "reorder";
+    if ((!treeVerb && !entryVerb) || args.size() < (treeVerb ? 3u : 4u)) {
+        std::cerr << "usage: see the top of tools/pdb_playlist_edit.cpp\n";
+        return 2;
+    }
+    const std::string name = args[2];
+    const std::string folder = verb == "create" && args.size() > 3 ? args[3] : "";
+    const Catalog c = read(pdbFile);
+    std::vector<uint32_t> ids;
+    std::vector<std::string> files;
+    if (entryVerb) {
+        for (size_t i = 3; i < args.size(); ++i) {
+            const auto t = c.trackIdByFile.find(args[i]);
+            if (t == c.trackIdByFile.end()) {
+                std::cerr << "no track \"" << args[i] << "\"\n";
+                return 1;
             }
-            return std::nullopt;
-        };
-        try {
-            if (verb == "delete") {
-                const auto id = idOf(argv[3]);
-                if (!id) {
-                    std::cerr << "no playlist or folder \"" << argv[3] << "\"\n";
-                    return 1;
+            ids.push_back(t->second);
+            files.push_back(seabass::pathToUtf8(stick) + c.pathByFile.at(args[i]));
+        }
+    }
+    try {
+        if (pdb) {
+            rb::PdbRowWriter writer(seabass::pathToUtf8(pdbFile));
+            const auto tree = writer.playlistTree();
+            const auto idOf = [&](const std::string &n) -> std::optional<uint32_t> {
+                for (const auto &node : tree) {
+                    if (node.name == n) {
+                        return node.id;
+                    }
                 }
-                std::cout << "deleted " << writer.deletePlaylist(*id) << " playlists and folders\n";
-            } else {
+                return std::nullopt;
+            };
+            size_t changed = 0;
+            if (verb == "delete") {
+                const auto id = idOf(name);
+                changed = id ? writer.deletePlaylist(*id) : 0;
+            } else if (treeVerb) {
                 uint32_t parent = 0;
-                if (verb == "create" && argc > 4) {
-                    const auto id = idOf(argv[4]);
+                if (!folder.empty()) {
+                    const auto id = idOf(folder);
                     if (!id) {
-                        std::cerr << "no folder \"" << argv[4] << "\"\n";
-                        return 1;
+                        throw std::invalid_argument("no folder \"" + folder + "\"");
                     }
                     parent = *id;
                 }
-                std::cout << "created id " << writer.createPlaylist(parent, argv[3], verb == "mkfolder") << "\n";
+                writer.createPlaylist(parent, name, verb == "mkfolder");
+                changed = 1;
+            } else {
+                const auto playlists = rb::rekordboxPlaylistIdsByPath(seabass::pathToUtf8(pioneer));
+                const auto playlist = playlists.find(name);
+                if (playlist == playlists.end()) {
+                    throw std::invalid_argument("export.pdb has no playlist \"" + name + "\"");
+                }
+                if (verb == "append") {
+                    changed = writer.appendPlaylistEntries(playlist->second, ids);
+                } else if (verb == "remove") {
+                    changed = writer.removePlaylistEntries(playlist->second, std::set<uint32_t>(ids.begin(), ids.end()));
+                } else {
+                    changed = writer.reorderPlaylist(playlist->second, ids) ? ids.size() : 0;
+                }
             }
-        } catch (const std::exception &e) {
-            std::cerr << "refused: " << e.what() << "\n";
-            return 1;
+            if (changed > 0 && !writer.commit()) {
+                std::cerr << "export.pdb: commit failed, untouched\n";
+                return 1;
+            }
+            std::cout << "export.pdb: " << verb << " " << name << ": " << changed << "\n";
         }
-        if (!writer.commit()) {
-            std::cerr << "commit failed, export.pdb untouched\n";
-            return 1;
-        }
-        show(pioneer);
-        return 0;
-    }
-    if ((verb != "append" && verb != "remove" && verb != "reorder") || argc < 5) {
-        std::cerr << "usage: pdb_playlist_edit <stick> show | append <playlist> <file>... | remove <playlist> <file>...\n";
-        return 2;
-    }
-    const auto playlists = rb::rekordboxPlaylistIdsByPath(seabass::pathToUtf8(pioneer));
-    const auto playlist = playlists.find(argv[3]);
-    if (playlist == playlists.end()) {
-        std::cerr << "no playlist \"" << argv[3] << "\"\n";
-        return 1;
-    }
-    const fs::path pdbFile = pioneer / "rekordbox" / "export.pdb";
-    const Catalog c = read(pdbFile);
-    std::vector<uint32_t> ids;
-    for (int i = 4; i < argc; ++i) {
-        const auto t = c.trackIdByFile.find(argv[i]);
-        if (t == c.trackIdByFile.end()) {
-            std::cerr << "no track \"" << argv[i] << "\"\n";
-            return 1;
-        }
-        ids.push_back(t->second);
-    }
-    rb::PdbRowWriter writer(seabass::pathToUtf8(pdbFile));
-    size_t changed = 0;
-    try {
-        if (verb == "append") {
-            changed = writer.appendPlaylistEntries(playlist->second, ids);
-        } else if (verb == "remove") {
-            changed = writer.removePlaylistEntries(playlist->second, std::set<uint32_t>(ids.begin(), ids.end()));
-        } else {
-            changed = writer.reorderPlaylist(playlist->second, ids) ? ids.size() : 0;
+        if (onelibrary) {
+            ol::OneLibraryCueWriter w(seabass::pathToUtf8(pioneer));
+            size_t changed = 0;
+            if (verb == "delete") {
+                changed = w.deletePlaylist(name);
+            } else if (treeVerb) {
+                w.createPlaylist(folder, name, verb == "mkfolder");
+                changed = 1;
+            } else if (verb == "append") {
+                for (const auto &f : files) {
+                    changed += w.addToPlaylist(name, f) ? 1 : 0;
+                }
+            } else if (verb == "remove") {
+                for (const auto &f : files) {
+                    changed += w.removeFromPlaylist(name, f) ? 1 : 0;
+                }
+            } else {
+                changed = w.reorderPlaylist(name, files) ? files.size() : 0;
+            }
+            std::cout << "onelibrary: " << verb << " " << name << ": " << changed << "\n";
         }
     } catch (const std::exception &e) {
         std::cerr << "refused: " << e.what() << "\n";
         return 1;
     }
-    if (changed == 0) {
-        std::cout << "nothing to change\n";
-        return 0;
-    }
-    if (!writer.commit()) {
-        std::cerr << "commit failed, export.pdb untouched\n";
-        return 1;
-    }
-    std::cout << verb << ": " << changed << " entries in " << argv[3] << "\n";
-    show(pioneer);
     return 0;
 }
