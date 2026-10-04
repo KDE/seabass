@@ -23,6 +23,13 @@ ListView {
     property string searchQuery: ""
     property int selectedIndex: 0
     signal playlistPicked(int index, string name)
+    // A playlist row's context menu was asked for ("All tracks" never
+    // asks). Browse answers it only with Experimental on.
+    signal playlistContextRequested(string name, Item row)
+    // Whether a playlist is staged for deletion; re-read when
+    // pendingRevision moves.
+    property var isPendingDelete: name => false
+    property int pendingRevision: 0
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
@@ -46,6 +53,12 @@ ListView {
         count: index === 0 ? root.scanController.totalTrackCount
             : (root.scanController.playlistTrackCounts[modelData] ?? 0)
         isCurrent: ListView.isCurrentItem
+        pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         onPicked: root.playlistPicked(index, modelData)
+        onContextRequested: {
+            if (index > 0) {
+                root.playlistContextRequested(modelData, this);
+            }
+        }
     }
 }

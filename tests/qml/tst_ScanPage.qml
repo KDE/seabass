@@ -38,6 +38,127 @@ TestCase {
         return page;
     }
 
+    // ---- Playlist editing (Experimental): a stand-in controller records
+    // what the menus stage. ----
+
+    Component {
+        id: fakePlaylistEditComponent
+        QtObject {
+            property int pendingRevision: 0
+            property string errorMessage: ""
+            property var staged: ({})
+            property var calls: []
+            function deletePlaylist(rekordboxPath, enginePath, playlist) {
+                calls.push(["delete", rekordboxPath, enginePath, playlist]);
+                staged["p:" + playlist] = true;
+                pendingRevision++;
+                return true;
+            }
+            function removeFromPlaylist(rekordboxPath, enginePath, playlist, filePath, title) {
+                calls.push(["remove", playlist, filePath, title]);
+                staged["r:" + playlist + "|" + filePath] = true;
+                pendingRevision++;
+                return true;
+            }
+            function keepPlaylist(playlist) {
+                calls.push(["keep", playlist]);
+                delete staged["p:" + playlist];
+                pendingRevision++;
+            }
+            function keepInPlaylist(playlist, filePath) {
+                calls.push(["keepIn", playlist, filePath]);
+                delete staged["r:" + playlist + "|" + filePath];
+                pendingRevision++;
+            }
+            function isPlaylistStaged(playlist) { return staged["p:" + playlist] === true; }
+            function isRemovalStaged(playlist, filePath) { return staged["r:" + playlist + "|" + filePath] === true; }
+        }
+    }
+
+    function makeEditingPage(experimental) {
+        verify(realAppSettings.experimentalBuildSupported, "an experimental build");
+        realAppSettings.experimentalFeaturesEnabled = experimental;
+        const page = makePage();
+        page.playlistEditController = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        return page;
+    }
+
+    function cleanupExperimental() {
+        realAppSettings.experimentalFeaturesEnabled = false;
+    }
+
+    function test_withoutExperimentalNeitherMenuOpens() {
+        const page = makeEditingPage(false);
+        page.shownPlaylist = "Peak";
+        page.openPlaylistMenu("Peak", page);
+        page.openTrackMenu("/nonexistent/a.mp3", "A", page);
+        compare(findChild(page, "playlistMenu").opened, false);
+        compare(findChild(page, "trackMenu").opened, false);
+        compare(page.playlistEditController.calls.length, 0);
+        cleanupExperimental();
+    }
+
+    // Delete asks first, in the page; only OK stages, and the menu then
+    // offers Keep, which takes it back.
+    function test_deletingAPlaylistAsksThenStagesAndKeepTakesItBack() {
+        const page = makeEditingPage(true);
+        const menu = findChild(page, "playlistMenu");
+        const dialog = findChild(page, "deletePlaylistDialog");
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "deletePlaylistItem");
+        compare(item.text, "Delete playlist...");
+        item.triggered();
+        tryCompare(dialog, "opened", true);
+        compare(page.playlistEditController.calls.length, 0, "nothing staged before OK");
+        dialog.accept();
+        compare(JSON.stringify(page.playlistEditController.calls[0]),
+                JSON.stringify(["delete", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak"]));
+        menu.close();
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(item.text, "Keep this playlist");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[1]), JSON.stringify(["keep", "Peak"]));
+        cleanupExperimental();
+    }
+
+    // Remove from the playlist shown, and Keep; with "All tracks" shown
+    // there is no playlist to take a track out of, so no menu.
+    function test_removingATrackFromThePlaylistShownStagesAndKeeps() {
+        const page = makeEditingPage(true);
+        const menu = findChild(page, "trackMenu");
+        page.shownPlaylist = "";
+        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
+        compare(menu.opened, false, "no playlist shown, no menu");
+        page.shownPlaylist = "Peak";
+        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "removeFromPlaylistItem");
+        compare(item.text, "Remove from \"Peak\"");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[0]),
+                JSON.stringify(["remove", "Peak", "/nonexistent/a.mp3", "A Track"]));
+        menu.close();
+        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
+        tryCompare(menu, "opened", true);
+        compare(item.text, "Keep in \"Peak\"");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[1]), JSON.stringify(["keepIn", "Peak", "/nonexistent/a.mp3"]));
+        cleanupExperimental();
+    }
+
+    function test_cancellingTheDeleteDialogStagesNothing() {
+        const page = makeEditingPage(true);
+        page.openPlaylistMenu("Peak", page);
+        findChild(page, "deletePlaylistItem").triggered();
+        const dialog = findChild(page, "deletePlaylistDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.reject();
+        compare(page.playlistEditController.calls.length, 0);
+        cleanupExperimental();
+    }
+
     // The sort combo stands in the same page as the library picker, one
     // row down, and is as tall as it.
     function test_theSortComboIsAsTallAsTheLibraryPicker() {
