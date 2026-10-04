@@ -901,6 +901,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/recolour_engine_cues_change.cpp
         src/gui/edit/changes/repair_legacy_memory_list_change.cpp
         src/gui/edit/changes/align_playlist_change.cpp
+        src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
@@ -2651,6 +2652,15 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME repair_legacy_memory_list_change_test COMMAND repair_legacy_memory_list_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+
+    add_executable(playlist_edit_changes_test tests/playlist_edit_changes_test.cpp)
+    target_include_directories(playlist_edit_changes_test PRIVATE src tests)
+    target_link_libraries(playlist_edit_changes_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(playlist_edit_changes_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME playlist_edit_changes_test COMMAND playlist_edit_changes_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/pdb_playlist_tree ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
 
     add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
     target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)
