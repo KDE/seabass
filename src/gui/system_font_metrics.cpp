@@ -9,6 +9,7 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QScreen>
 
 namespace seabass::gui
 {
@@ -28,6 +29,28 @@ qreal SystemFontMetrics::generalPointSize() const
         return m_generalPointSizeOverride;
     }
     return QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF();
+}
+
+qreal SystemFontMetrics::generalPixelSize() const
+{
+    // Deliberately built on generalPointSize(), so the override above
+    // carries through: a test that stands the app up at another
+    // system's font size must still see every Theme.scaled() length
+    // grow with it, which is the whole reason that override exists.
+    const qreal points = generalPointSize();
+    if (points > 0) {
+        const QScreen *screen = QGuiApplication::primaryScreen();
+        // 96 rather than 72 when there is no screen yet: it is what the
+        // platforms that can run headless report, so an early read
+        // matches what the first real read will say.
+        const qreal dpi = screen != nullptr ? screen->logicalDotsPerInch() : 96.0;
+        return points * dpi / 72.0;
+    }
+    // A theme may set its fonts in pixels instead, which is what a
+    // point size of -1 means here; then the pixels are already the
+    // answer.
+    const int pixels = QFontDatabase::systemFont(QFontDatabase::GeneralFont).pixelSize();
+    return pixels > 0 ? pixels : 0;
 }
 
 qreal SystemFontMetrics::generalPointSizeOverride() const
