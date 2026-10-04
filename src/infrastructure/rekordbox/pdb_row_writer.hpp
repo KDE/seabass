@@ -7,9 +7,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <functional>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -49,6 +52,13 @@ namespace seabass::infrastructure::rekordbox
 //    the rename, so the edit is actually durable on the physical medium
 //    the moment commit() returns true, not just sitting in a write-back
 //    cache a pulled USB stick could lose.
+// appendPlaylistEntries() found no room on the table's last page.
+class PdbPageFull : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class PdbRowWriter
 {
 public:
@@ -263,6 +273,27 @@ public:
     // rows were cleared (0 when the track was not in the playlist).
     size_t removePlaylistEntry(uint32_t playlistId, uint32_t trackId);
 
+    // Adds trackIds to the end of playlistId (#62): one playlist_entry row
+    // each, entry_index continuing from the playlist's highest, laid out
+    // the way rekordbox itself appends, measured on four rekordbox-written
+    // exports (issue #62's comments):
+    //  - the row goes at heap offset used_size; offsets are row index * 12
+    //    and the heap is never compacted;
+    //  - its offset takes the next index slot, a new group of sixteen
+    //    starting with zeroed present and transaction flags;
+    //  - num_row_offsets and num_rows grow by one, used_size by 12, and
+    //    free_size shrinks by 12 + 2 (+ 4 for a new group): free_size is
+    //    len_page - 40 - used_size - (groups * 4 + num_row_offsets * 2);
+    //  - transaction_row_count/index name the rows added, and the
+    //    transaction flags mark exactly those rows, every other group's
+    //    cleared;
+    //  - the page's sequence and the header's, as commit() always does.
+    // Only into the table's last page, and only when it has room for all
+    // of them: allocating a page is not done yet, and the call then
+    // throws PdbPageFull, changing nothing. A track already in the
+    // playlist is not added twice. Returns how many rows were added.
+    size_t appendPlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
+
     // Bumps the sequence number for every page touched this session
     // (page.sequence <- the header's current sequence; then the header's
     // own sequence is incremented -- matching the order the format's own
@@ -297,6 +328,16 @@ private:
     std::string m_pdbPath;
     std::string m_buffer;
     std::set<uint32_t> m_editedPageIndices;
+    // Rows this session deleted, by page, as row indices: commit() records
+    // them as the page's last transaction, the way rekordbox does, unless
+    // the page was also appended to (appendPlaylistEntries writes its own).
+    std::map<uint32_t, std::set<uint32_t>> m_deletedRowsByPage;
+    std::set<uint32_t> m_appendedPages;
+    // Clears one row's presence bit with rekordbox's bookkeeping (#62):
+    // num_rows one lower and page_flags' 0x10 ("this page has deleted
+    // rows") set, as on every page rekordbox deleted from. A row already
+    // absent is left alone. `presentFlagsOffset` and `bit` locate it.
+    void deleteRowAt(uint32_t pageIndex, size_t presentFlagsOffset, uint16_t bit);
     std::uintmax_t m_originalFileSize = 0;
     std::filesystem::file_time_type m_originalMtime;
     // A whole-file CRC32 of m_buffer as originally read (before any

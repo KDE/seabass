@@ -833,8 +833,8 @@ TestCase {
         tryVerify(() => !controller.busy && controller.playlistsChecked, 300000, "the rescan finishes");
         const after = controller.playlistDifferences.find((d) => d.name === name);
         if (after !== undefined) {
-            // What is left is only what cannot be written: additions to
-            // rekordbox (#62), and what OneLibrary keeps out to stay level.
+            // What is left is only what OneLibrary keeps out to stay level
+            // with rekordbox.
             const again = after.references.find((x) => x.format === data.reference);
             verify(again === undefined || again.adds + again.removes + again.swaps === 0,
                    "following " + data.reference + " again has nothing left to do: " + JSON.stringify(after));

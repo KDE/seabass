@@ -16,10 +16,9 @@ namespace seabass::gui
 // Makes one playlist hold the same tracks in every library on the stick
 // as it does in the library the user chose (domain::alignTo): rows added
 // to and taken out of the others' copies of that playlist, each library
-// by its own writer. export.pdb only ever loses an entry here: adding a
-// row to it is #62, so the controller leaves additions to rekordbox, and
-// the OneLibrary additions that would part it from rekordbox, out of what
-// it stages.
+// by its own writer. export.pdb's entries are appended to its last page
+// (#62); a page without room refuses the whole change. OneLibrary gains
+// only what rekordbox's copy will hold, so the two stay level.
 class AlignPlaylistChange : public PendingChange
 {
 public:

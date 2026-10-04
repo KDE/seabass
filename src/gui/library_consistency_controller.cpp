@@ -609,11 +609,20 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                         }
                         int leftOut = 0;
                         std::vector<domain::PlaylistAlignment> kept;
-                        for (auto alignment : domain::alignTo(difference, side.format, index)) {
-                            if (alignment.format == "rekordbox") {
-                                leftOut += static_cast<int>(alignment.add.size());
-                                alignment.add.clear();
-                            } else if (alignment.format == "onelibrary" && rekordbox != nullptr) {
+                        auto alignments = domain::alignTo(difference, side.format, index);
+                        // What rekordbox's copy will hold after this repair:
+                        // what it holds, and what the repair adds to it
+                        // (export.pdb takes appended entries since #62).
+                        std::set<std::string> rekordboxAfter = inRekordbox;
+                        for (const auto &a : alignments) {
+                            if (a.format == "rekordbox") {
+                                for (const auto &t : a.add) {
+                                    rekordboxAfter.insert(key(t.filePath));
+                                }
+                            }
+                        }
+                        for (auto alignment : alignments) {
+                            if (alignment.format == "onelibrary" && rekordbox != nullptr) {
                                 // OneLibrary gains only what rekordbox's
                                 // copy holds, so the two stay one library.
                                 // A dropped addition takes the old copy it
@@ -621,10 +630,11 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                                 // that alone would drop the song.
                                 std::vector<domain::Track> allowed;
                                 for (auto &t : alignment.add) {
-                                    if (inRekordbox.contains(key(t.filePath))) {
+                                    if (rekordboxAfter.contains(key(t.filePath))) {
                                         allowed.push_back(std::move(t));
                                         continue;
                                     }
+                                    ++leftOut;
                                     const auto paired = std::find_if(
                                         alignment.remove.begin(), alignment.remove.end(),
                                         [&](const domain::Track &old) { return domain::sameSong(old, t); });
