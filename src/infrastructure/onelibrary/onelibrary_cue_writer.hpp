@@ -256,6 +256,9 @@ public:
         std::string name;
     };
     std::vector<PlaylistNode> playlistTree();
+    // How many playlists or folders spell `path`: only exactly one can be
+    // edited by path (two may share a name, or a name hold a "/").
+    int playlistCountAtPath(const std::string &path);
     // A playlist's rows in its order, as (content_id, sequenceNo); throws
     // when there is no such playlist.
     std::vector<std::pair<int64_t, int64_t>> playlistContent(const std::string &playlistPath);

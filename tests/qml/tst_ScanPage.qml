@@ -156,6 +156,17 @@ TestCase {
         cleanupExperimental();
     }
 
+    // The playlist shown is the one picked, by name, not by its row: with
+    // the playlist search in use the row number is the filtered list's.
+    function test_theShownPlaylistIsThePickedName() {
+        const page = makeEditingPage(true);
+        page.selectPlaylist(2, "Tech House", false);
+        compare(page.shownPlaylist, "Tech House");
+        page.selectPlaylist(0, "", false);
+        compare(page.shownPlaylist, "");
+        cleanupExperimental();
+    }
+
     function test_cancellingTheDeleteDialogStagesNothing() {
         const page = makeEditingPage(true);
         page.openPlaylistMenu("Peak", page);

@@ -43,9 +43,17 @@ bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::s
 // playlistPath ("Folder/List"). False when the library cannot be opened.
 bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath);
 
-// The ids of the tracks whose file is `filePath` (absolute), by the path
-// Engine stores relative to the library folder.
-std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibraryPath, const std::string &filePath);
+// The ids of the tracks whose file is `filePath` (absolute), read from the
+// library at `databaseRoot` (a write root, maybe a scratch copy), by the
+// path Engine stores relative to the stick's real library folder
+// `realLibraryPath`.
+std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
+                                                const std::string &filePath);
+
+// How many playlists (or folders) spell `playlistPath` ("Folder/List"):
+// more than one when two share a name in one folder, or a name holds a
+// "/" that reads as a folder. Only exactly one can be edited by path.
+int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath);
 
 // The ids of every track some playlist in the library holds.
 std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLibraryPath);

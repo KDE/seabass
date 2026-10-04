@@ -16,6 +16,11 @@ namespace seabass::gui
 // path, "Folder/List"), read now: "rekordbox", "onelibrary", "engine".
 // What a playlist edit from Browse will write, and what it backs up.
 QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
+// The libraries where more than one playlist spells that path (two of one
+// name in a folder, or a name holding a "/"): editing by path would have
+// to guess there, so Browse refuses, and the changes fail rather than
+// guess if it happens by Save.
+QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
 
 // Deletes a playlist (or a folder, with everything in it) from every
 // library on the stick that has it, each through its own writer, the way

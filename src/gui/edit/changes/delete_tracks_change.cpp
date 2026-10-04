@@ -37,9 +37,12 @@ std::string engineDbOf(const std::string &enginePath)
     return pathToUtf8(pathFromUtf8(enginePath) / "Database2" / "m.db");
 }
 
-bool numeric(const std::string &id)
+// "/Contents/..." as export.pdb spells a file on the stick.
+std::string pathOnStick(const std::string &pioneerRoot, const std::string &filePath)
 {
-    return !id.empty() && std::all_of(id.begin(), id.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+    std::error_code ec;
+    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(pioneerRoot).parent_path(), ec);
+    return ec ? filePath : "/" + pathToGenericUtf8(relative);
 }
 
 }  // namespace
@@ -155,96 +158,120 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
             }
         }
 
-        // Checked again now: a file some library put in a playlist since
-        // the scan is left alone in every library.
-        std::vector<const Entry *> doomed;
+        // Every row looked up again now, by its own file path in its own
+        // library: ids from the scan could name other tracks by now (a
+        // re-export renumbers them), and each library spells the path its
+        // own way.
+        struct Resolved
+        {
+            const Entry *entry = nullptr;
+            std::vector<uint32_t> rekordboxIds;
+            std::vector<std::string> oneLibraryPaths;
+            std::vector<std::int64_t> engineIds;
+        };
+        std::vector<Resolved> doomed;
         for (const auto &e : m_entries) {
+            Resolved r;
+            r.entry = &e;
             bool listed = false;
-            for (const auto &r : e.rows) {
-                if (r.format == "rekordbox" && pdb && numeric(r.sourceId)) {
-                    listed = listed || pdb->trackInAnyPlaylist(static_cast<uint32_t>(std::stoul(r.sourceId)));
-                } else if (r.format == "onelibrary" && oneLibrary) {
-                    listed = listed || oneLibrary->isInAnyPlaylist(e.filePath);
-                } else if (r.format == "engine" && numeric(r.sourceId)) {
-                    listed = listed || engineListed.count(std::stoll(r.sourceId)) > 0;
+            for (const auto &row : e.rows) {
+                if (row.filePath.empty()) {
+                    continue;
+                }
+                if (row.format == "rekordbox" && pdb) {
+                    for (const uint32_t id : pdb->trackIdsWithFilePath(pathOnStick(pioneer, row.filePath))) {
+                        listed = listed || pdb->trackInAnyPlaylist(id);
+                        r.rekordboxIds.push_back(id);
+                    }
+                } else if (row.format == "onelibrary" && oneLibrary) {
+                    listed = listed || oneLibrary->isInAnyPlaylist(row.filePath);
+                    r.oneLibraryPaths.push_back(row.filePath);
+                } else if (row.format == "engine" && engineSession) {
+                    for (const std::int64_t id :
+                         infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(), row.filePath)) {
+                        listed = listed || engineListed.count(id) > 0;
+                        r.engineIds.push_back(id);
+                    }
                 }
             }
             if (listed) {
                 ctx.log().record(std::string(Label) + ": \"" + e.filePath + "\" is in a playlist now, left alone");
             } else {
-                doomed.push_back(&e);
+                doomed.push_back(std::move(r));
             }
         }
         if (doomed.empty()) {
             return ChangeOutcome::skip();
         }
 
-        if (pdb) {
-            bool removed = false;
-            for (const Entry *e : doomed) {
-                for (const auto &r : e->rows) {
-                    if (r.format == "rekordbox" && numeric(r.sourceId)) {
-                        removed = pdb->removeTrack(static_cast<uint32_t>(std::stoul(r.sourceId))) || removed;
-                    }
+        // The pending-deletions list is put back with the databases if this
+        // change fails partway.
+        const std::filesystem::path stickRoot = pioneer.empty() ? pathFromUtf8(engine).parent_path() : pathFromUtf8(pioneer).parent_path();
+        const std::string manifestPath = pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot));
+        ctx.protectForThisChange(manifestPath);
+        infrastructure::cleanup::PendingDeletionManifest manifest(manifestPath);
+
+        bool pdbChanged = false;
+        std::vector<std::int64_t> engineIds;
+        std::vector<std::string> removedFrom(doomed.size());
+        for (size_t i = 0; i < doomed.size(); ++i) {
+            for (const uint32_t id : doomed[i].rekordboxIds) {
+                if (pdb->removeTrack(id)) {
+                    pdbChanged = true;
+                    removedFrom[i] = removedFrom[i].empty() ? "rekordbox" : removedFrom[i];
                 }
             }
-            if (removed) {
-                if (!pdb->commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                }
-                pdbSession->noteItemApplied();
-            }
-        }
-        if (oneLibrary) {
-            for (const Entry *e : doomed) {
-                const bool listedThere = std::any_of(e->rows.begin(), e->rows.end(), [](const auto &r) { return r.format == "onelibrary"; });
-                if (!listedThere) {
-                    continue;
-                }
+            for (const std::string &path : doomed[i].oneLibraryPaths) {
                 try {
-                    oneLibrary->removeTrackByPath(e->filePath);
+                    oneLibrary->removeTrackByPath(path);
+                    removedFrom[i] = removedFrom[i].empty() ? "onelibrary" : removedFrom[i];
                 } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
                     // Gone since the scan: nothing to remove.
                 }
             }
+            if (!doomed[i].engineIds.empty()) {
+                engineIds.insert(engineIds.end(), doomed[i].engineIds.begin(), doomed[i].engineIds.end());
+                removedFrom[i] = removedFrom[i].empty() ? "engine" : removedFrom[i];
+            }
         }
-        if (engineSession) {
-            std::vector<std::int64_t> ids;
-            for (const Entry *e : doomed) {
-                for (const auto &r : e->rows) {
-                    if (r.format == "engine" && numeric(r.sourceId)) {
-                        ids.push_back(std::stoll(r.sourceId));
-                    }
-                }
+        if (pdbChanged) {
+            if (!pdb->commit()) {
+                return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
             }
-            if (infrastructure::engine::removeEngineTracks(engineSession->writeRoot(), ids) > 0) {
-                engineSession->noteItemApplied();
+            pdbSession->noteItemApplied();
+        }
+        if (!engineIds.empty()) {
+            if (infrastructure::engine::removeEngineTracks(engineSession->writeRoot(), engineIds) != static_cast<int>(engineIds.size())) {
+                return ChangeOutcome::failure(QStringLiteral("Engine did not remove every track it was asked to"));
             }
+            engineSession->noteItemApplied();
         }
 
-        // Every file on the list for Delete Orphaned Files, naming the
-        // backup that still holds a removed row.
-        const std::filesystem::path stickRoot = pioneer.empty() ? pathFromUtf8(engine).parent_path() : pathFromUtf8(pioneer).parent_path();
-        infrastructure::cleanup::PendingDeletionManifest manifest(pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot)));
-        for (const Entry *e : doomed) {
+        // Each file whose rows actually went, on the list for Delete
+        // Orphaned Files, naming the backup of a database it came out of.
+        for (size_t i = 0; i < doomed.size(); ++i) {
+            if (removedFrom[i].empty()) {
+                ctx.log().record(std::string(Label) + ": \"" + doomed[i].entry->filePath + "\" had no row left to remove");
+                continue;
+            }
+            const Entry *e = doomed[i].entry;
             infrastructure::cleanup::PendingDeletion pending;
-            const std::string format = e->rows.empty() ? "rekordbox" : e->rows.front().format;
-            pending.format = format == "engine" ? "engine" : "rekordbox";
+            pending.format = removedFrom[i] == "engine" ? "engine" : "rekordbox";
             pending.filePath = e->filePath;
             pending.title = e->title;
             pending.artist = e->artist;
-            pending.backupId = ctx.backupIdOf(format == "engine"       ? engineDbOf(engine)
-                                              : format == "onelibrary" ? infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer)
-                                                                       : exportPdbOf(pioneer));
+            pending.backupId = ctx.backupIdOf(removedFrom[i] == "engine"       ? engineDbOf(engine)
+                                              : removedFrom[i] == "onelibrary" ? infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer)
+                                                                                : exportPdbOf(pioneer));
             manifest.append(pending);
             ++m_deleted;
             ctx.log().record(std::string(Label) + ": removed \"" + e->title + "\" (" + e->filePath
-                             + ") from every library; the file waits on the pending-deletions list");
+                             + ") from every library that listed it; the file waits on the pending-deletions list");
         }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
-    return ChangeOutcome::success();
+    return m_deleted > 0 ? ChangeOutcome::success() : ChangeOutcome::skip();
 }
 
 }  // namespace seabass::gui

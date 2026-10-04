@@ -171,11 +171,12 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
     }
 }
 
-std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibraryPath, const std::string &filePath)
+std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
+                                                const std::string &filePath)
 {
-    auto db = djinterop::engine::load_database(engineLibraryPath);
+    auto db = djinterop::engine::load_database(databaseRoot);
     std::error_code ec;
-    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(engineLibraryPath), ec);
+    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(realLibraryPath), ec);
     std::vector<std::int64_t> ids;
     if (ec) {
         return ids;
@@ -184,6 +185,32 @@ std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibrary
         ids.push_back(t.id());
     }
     return ids;
+}
+
+namespace
+{
+
+void countSpelled(const djinterop::playlist &pl, const std::string &prefix, const std::string &wanted, int &count)
+{
+    const std::string spelled = prefix.empty() ? pl.name() : prefix + "/" + pl.name();
+    if (spelled == wanted) {
+        ++count;
+    }
+    for (const auto &child : pl.children()) {
+        countSpelled(child, spelled, wanted, count);
+    }
+}
+
+}  // namespace
+
+int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    int count = 0;
+    for (const auto &root : db.root_playlists()) {
+        countSpelled(root, "", playlistPath, count);
+    }
+    return count;
 }
 
 namespace
