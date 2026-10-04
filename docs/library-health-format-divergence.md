@@ -182,6 +182,11 @@ with no live duplicate is reported and not repaired.
 Anonymized fixtures cannot show any of this: the anonymizer zeroes the
 bodies this evidence lives in. Tests build their own deleted rows.
 
+*(Removed 2026-10-04.)* The Library Health check and repair built on this
+("Duplicates left in OneLibrary") are gone again: those rows were left by
+Clean Up in Seabass development builds from before the mirror, on the
+developers' own sticks, and no released build leaves them.
+
 ## Proposed sequencing
 
 **Step 1 -- see it.** Detect and report all three shapes, repair none.
