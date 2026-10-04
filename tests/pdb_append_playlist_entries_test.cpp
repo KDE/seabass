@@ -7,7 +7,8 @@
 // whose last transaction was rekordbox adding one playlist entry (tx =
 // (1, last row)): undoing that row by hand and appending the same track
 // with Seabass must give rekordbox's page back, byte for byte. Then the
-// rules around it: a new group, a track already there, a page too full.
+// rules around it: a new group, a track already there, and, against a
+// reference export rekordbox made for this, a new page and a removal.
 
 #include <algorithm>
 #include <cassert>
@@ -176,8 +177,8 @@ int main(int argc, char **argv)
     }
 
     // 2. Appending on the real last page: crossing into a new group of
-    //    sixteen, counters by the rules, the transaction naming exactly the
-    //    rows added, and the file still parsing with the rows in order.
+    //    sixteen, counters by the rules, the transaction naming the last
+    //    row added, and the file still parsing with the rows in order.
     {
         writeFile(pdb, original);
         const Counters c0 = countersOf(original, 52);
@@ -189,10 +190,10 @@ int main(int argc, char **argv)
         const Counters c = countersOf(after, 52);
         assert(c.rowOffsets == 19 && c.rows == 19 && c.usedSize == c0.usedSize + 36);
         assert(c.freeSize == c0.freeSize - (3 * 14 + 4) && freeRuleHolds(after, 52));
-        assert(c.txCount == 3 && c.txIndex == 16);
+        assert(c.txCount == 1 && c.txIndex == 18 && "one transaction per row: the last one is named");
         const size_t base = LenPage * 52;
         assert(u16(after, base + LenPage - 2) == 0 && "group 0's transaction flags cleared");
-        assert(u16(after, base + LenPage - 0x24 - 2) == 0x7 && "group 1's mark the three rows");
+        assert(u16(after, base + LenPage - 0x24 - 2) == 0x4 && "group 1's mark the last row only");
         assert(u16(after, base + LenPage - 0x24 - 4) == 0x7);
         std::istringstream iss(after);
         kaitai::kstream ks(&iss);
@@ -240,9 +241,12 @@ int main(int argc, char **argv)
         std::cout << "case 3 (a track already there is not added twice) OK\n";
     }
 
-    // 4. More than the page holds: refused, and nothing changes.
+    // 4. A last page that does not lead to the table's empty candidate:
+    //    a new page is not started there, and nothing changes.
     {
-        writeFile(pdb, original);
+        std::string bent = original;
+        put32(bent, LenPage * 52 + 12, 12345);
+        writeFile(pdb, bent);
         PdbRowWriter writer(seabass::pathToUtf8(pdb));
         std::vector<uint32_t> many;
         for (uint32_t id = 10000; id < 10400; ++id) {
@@ -256,8 +260,8 @@ int main(int argc, char **argv)
         }
         assert(refused);
         assert(!writer.commit() && "nothing was edited");
-        assert(readFile(pdb) == original);
-        std::cout << "case 4 (more than the page holds is refused, nothing written) OK\n";
+        assert(readFile(pdb) == bent);
+        std::cout << "case 4 (a last page not leading to the candidate is refused, nothing written) OK\n";
     }
 
     // 5. rekordbox's own deletion, replayed: the anonymized fixture's last
@@ -299,6 +303,132 @@ int main(int argc, char **argv)
         }
         assert(same && "Seabass's deletion is rekordbox's, byte for byte");
         std::cout << "case 5 (rekordbox's own deletion of 104 entries replayed, byte for byte) OK\n";
+    }
+
+    // 6..8 need rekordbox's reference export (tests/fixtures/pdb_new_page).
+    if (argc > 3) {
+        const fs::path ref = seabass::pathFromUtf8(argv[3]);
+        const std::string eight = readFile(ref / "1-eight-playlists.pdb");
+        const std::string nine = readFile(ref / "2-ninth-playlist.pdb");
+        const std::string removed = readFile(ref / "3-one-entry-removed.pdb");
+        // Seabass's file against rekordbox's, apart from the sequence
+        // numbers (the header's and every page's) and the pages rekordbox
+        // changed for reasons of its own (the playlist tree, page 16).
+        const auto sameAsRekordbox = [](std::string seabass, const std::string &rekordbox, const char *what) {
+            assert(seabass.size() == rekordbox.size());
+            put32(seabass, 20, u32(rekordbox, 20));
+            for (size_t p = 1; p * LenPage < seabass.size(); ++p) {
+                put32(seabass, p * LenPage + 16, u32(rekordbox, p * LenPage + 16));
+            }
+            bool same = true;
+            for (size_t o = 0; o < seabass.size(); ++o) {
+                if (o / LenPage != 16 && seabass[o] != rekordbox[o]) {
+                    std::cerr << what << ": page " << o / LenPage << " differs at +" << o % LenPage << ": seabass "
+                              << int(static_cast<unsigned char>(seabass[o])) << " rekordbox "
+                              << int(static_cast<unsigned char>(rekordbox[o])) << "\n";
+                    same = false;
+                }
+            }
+            return same;
+        };
+
+        // 6. rekordbox's ninth playlist, replayed: 34 entries that do not
+        //    all fit on page 18 go on a new page, the table's empty
+        //    candidate 54, and the file header and table follow.
+        {
+            std::vector<uint32_t> tracks;
+            for (uint32_t i = 0; i < 34; ++i) {
+                assert(u32(nine, LenPage * 54 + 40 + i * 12 + 8) == 9);
+                tracks.push_back(u32(nine, LenPage * 54 + 40 + i * 12 + 4));
+            }
+            writeFile(pdb, eight);
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
+            assert(writer.appendPlaylistEntries(9, tracks) == 34);
+            assert(writer.commit());
+            assert(sameAsRekordbox(readFile(pdb), nine, "case 6") && "Seabass's new page is rekordbox's, byte for byte");
+            std::cout << "case 6 (rekordbox's new playlist page replayed, byte for byte) OK\n";
+        }
+
+        // 7. rekordbox taking d05 (track 26) out of P09, replayed: the
+        //    playlist's rows deleted, the other 33 added again from
+        //    entry_index 1, and page 54 listed on the index page.
+        {
+            writeFile(pdb, nine);
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
+            assert(writer.removePlaylistEntries(9, {26}) == 1);
+            assert(writer.commit());
+            assert(sameAsRekordbox(readFile(pdb), removed, "case 7") && "Seabass's removal is rekordbox's, byte for byte");
+            PdbRowWriter again(seabass::pathToUtf8(pdb));
+            assert(again.removePlaylistEntries(9, {26}) == 0 && "a track not in the playlist removes nothing");
+            assert(!again.commit());
+            std::cout << "case 7 (rekordbox's removal of one entry replayed, byte for byte) OK\n";
+        }
+    }
+
+    // 8. More entries than two pages hold, with the empty candidate past
+    //    the end of the file (page 67 of a 66-page file): two new pages,
+    //    the file grown, the page between them zeros, the playlist
+    //    readable in order with its numbering contiguous.
+    {
+        writeFile(pdb, original);
+        const uint32_t pagesBefore = static_cast<uint32_t>(original.size() / LenPage);
+        uint32_t table = 0;
+        for (uint32_t t = 0; t < u32(original, 8); ++t) {
+            if (u32(original, 28 + 16 * t) == 8) {
+                table = t;
+            }
+        }
+        const uint32_t candidate = u32(original, 28 + 16 * table + 4);
+        const uint32_t nextUnused = u32(original, 12);
+        assert(candidate > pagesBefore && "precondition: the candidate lies past the end of the file");
+        std::vector<uint32_t> many;
+        for (uint32_t id = 10000; id < 10400; ++id) {
+            many.push_back(id);
+        }
+        PdbRowWriter writer(seabass::pathToUtf8(pdb));
+        assert(writer.appendPlaylistEntries(4, many) == 400);
+        assert(writer.commit());
+        const std::string after = readFile(pdb);
+        assert(after.size() == LenPage * (nextUnused + 1));
+        assert(u32(after, 28 + 16 * table + 12) == nextUnused && "the second new page is the last");
+        assert(u32(after, 28 + 16 * table + 4) == nextUnused + 1 && u32(after, 12) == nextUnused + 2);
+        assert(u32(after, LenPage * candidate + 12) == nextUnused);
+        assert(after.compare(LenPage * pagesBefore, LenPage, std::string(LenPage, '\0')) == 0);
+        const Counters first = countersOf(after, candidate);
+        const Counters second = countersOf(after, nextUnused);
+        assert(first.rows == 284 && second.rows == 116 && freeRuleHolds(after, candidate) && freeRuleHolds(after, nextUnused));
+        assert(first.txCount == 1 && first.txIndex == 283 && second.txCount == 1 && second.txIndex == 115);
+        std::istringstream iss(after);
+        kaitai::kstream ks(&iss);
+        rekordbox_pdb_t parsed(false, &ks);
+        std::vector<uint32_t> indices;
+        for (const auto &t : *parsed.tables()) {
+            if (t->type() != rekordbox_pdb_t::PAGE_TYPE_PLAYLIST_ENTRIES) {
+                continue;
+            }
+            auto *page = t->first_page()->body();
+            for (int guard = 0; guard < 200; ++guard) {
+                if (page->is_data_page()) {
+                    for (const auto &group : *page->row_groups()) {
+                        for (const auto &row : *group->rows()) {
+                            auto *e = row->present() ? dynamic_cast<rekordbox_pdb_t::playlist_entry_row_t *>(row->body()) : nullptr;
+                            if (e && e->playlist_id() == 4) {
+                                indices.push_back(e->entry_index());
+                            }
+                        }
+                    }
+                }
+                if (page->page_index() == t->last_page()->index()) {
+                    break;
+                }
+                page = page->next_page()->body();
+            }
+        }
+        assert(indices.size() == 408);
+        for (size_t i = 0; i < indices.size(); ++i) {
+            assert(indices[i] == i + 1);
+        }
+        std::cout << "case 8 (two new pages past the end of the file, the playlist in order) OK\n";
     }
 
     fs::remove_all(dir);
