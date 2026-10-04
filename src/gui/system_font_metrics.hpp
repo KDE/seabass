@@ -39,6 +39,13 @@ class SystemFontMetrics : public QObject
     // grows with it. Never set by the app itself.
     Q_PROPERTY(qreal generalPointSizeOverride READ generalPointSizeOverride WRITE setGeneralPointSizeOverride NOTIFY
                    changed)
+    // The general font in device-independent PIXELS, override included.
+    // A point is not the same number of pixels on every platform -- Qt
+    // reports a screen as 96 dpi on Linux and Windows and 72 on macOS --
+    // so the point NUMBER cannot be used as a cross-platform scale,
+    // which is what Theme.iconScale needs. Text is unaffected:
+    // font.pointSize converts correctly by itself.
+    Q_PROPERTY(qreal generalPixelSize READ generalPixelSize NOTIFY changed)
 
 public:
     explicit SystemFontMetrics(QObject *parent = nullptr);
@@ -52,6 +59,8 @@ public:
 
     qreal generalPointSizeOverride() const;
     void setGeneralPointSizeOverride(qreal pointSize);
+
+    qreal generalPixelSize() const;
 
 signals:
     void changed();

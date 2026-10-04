@@ -359,15 +359,39 @@ QtObject {
     readonly property real fontXLarge: baseFontPointSize * 1.6
     readonly property real fontHuge: baseFontPointSize * 2.2
 
-    // ---- Icon sizes -- linked to the same base font size rather than
-    // hardcoded pixels, so an icon scales the same way the text next to
-    // it does. iconScale is the one deliberate pt-to-px conversion this
-    // needs (Item/Layout sizes are pixels, font sizes are points): tuned
-    // so today's actual on-screen icon sizes come out unchanged at
-    // today's real default base size (confirmed 10pt on this machine),
-    // making this a pure refactor with no visual change until someone's
-    // system font size actually differs from that default.
-    readonly property real iconScale: baseFontPointSize / 10.0
+    // ---- Icon sizes -- linked to the same system font as the text
+    // rather than to hardcoded pixels, so an icon scales the way the
+    // text beside it does. iconScale is the one deliberate pt-to-px
+    // conversion this needs (Item/Layout sizes are pixels, font sizes
+    // are points).
+    //
+    // It divides a PIXEL size by a pixel reference. `baseFontPointSize
+    // / 10.0` divided a point size by the point size Plasma happens to
+    // default to, and a point is not the same number of pixels
+    // everywhere: Qt reports a screen as 96 dpi on Linux and Windows
+    // and 72 on macOS, so the same UI font arrives as 10 from Plasma
+    // and 13 from Cocoa. Both are about 13 px and both are right, but
+    // read as a scale, 13 against 10 made every icon, margin and
+    // padding 30% bigger on macOS while the text -- which goes through
+    // font.pointSize and converts properly -- stayed where it was. The
+    // furniture grew around the words. (Measured on a Mac: 13pt at
+    // 72 dpi, so scaled(32) came out 41.6 px against Linux's 32.)
+    //
+    // Linux and Windows are unchanged by construction rather than by
+    // tuning: at 96 dpi, pt * 96/72 / (10 * 96/72) is exactly pt / 10
+    // for every font size, so a Plasma user at 10pt or at 14pt gets
+    // precisely what they got before. macOS comes to meet them.
+    //
+    // It goes through baseFontPointSize, not the raw system size, so
+    // the smallest-readable floor still applies to the furniture as it
+    // did; and it converts with this screen's own pt-to-px factor
+    // rather than a hardcoded one, so generalPointSizeOverride still
+    // grows every scaled() length the way its tests expect.
+    readonly property real referenceFontPixelSize: 10 * 96 / 72
+    readonly property real pixelsPerPoint: (SystemFontMetrics.generalPointSize > 0
+        && SystemFontMetrics.generalPixelSize > 0)
+        ? SystemFontMetrics.generalPixelSize / SystemFontMetrics.generalPointSize : 96 / 72
+    readonly property real iconScale: baseFontPointSize * pixelsPerPoint / referenceFontPixelSize
     readonly property real iconSizeSmall: scaled(32)
     readonly property real iconSizeNormal: scaled(40)
     readonly property real iconSizeLarge: scaled(48)
