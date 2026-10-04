@@ -231,6 +231,13 @@ Page {
             ? " " + root.artworkUncheckedCount + " stored cover(s) could not be read to check them."
             : "";
         if (root.artworkUnreadableCount === 0) {
+            const playerOnly = healthController.artworkPlayerOnlyCount;
+            if (playerOnly > 0) {
+                return playerOnly + " of " + healthController.artworkTracksWithArt + " Engine tracks keep their cover "
+                    + "as the path a Denon player wrote when it imported the rekordbox library. Every Denon player "
+                    + "shows them; Engine DJ on a computer does not. Seabass can copy them into the library so they "
+                    + "show everywhere." + unchecked;
+            }
             return root.artworkUncheckedCount === 0
                 ? "Every Engine track's cover art is stored where a player can find it."
                 : unchecked.trim();
@@ -628,7 +635,10 @@ Page {
                 ok: root.artworkUnreadableCount === 0 && root.artworkUncheckedCount === 0
                     && healthController.artworkError.length === 0
                 failed: healthController.artworkError.length > 0
+                // Player-resolved covers are fine (ok stays true), and the
+                // page still offers to make them self-contained.
                 actionLabel: root.artworkUnreadableCount > 0 || root.artworkUncheckedCount > 0
+                        || healthController.artworkPlayerOnlyCount > 0
                     ? "Review cover art" : ""
                 onActionRequested: root.detailRequested("artwork")
             }
