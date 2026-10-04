@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <set>
 #include <iostream>
 
 #include "domain/duplicate_cue_consolidation.hpp"
@@ -195,6 +196,32 @@ int main()
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.empty());
         std::cout << "case 11 (unknown duration -> never grouped) OK\n";
+    }
+
+    // Case 11b: lengths unknown, but both catalogs recorded the same file
+    // size to the byte: the same file, grouped (#61; WHALESHARK2's Engine
+    // rows 462 and 324, 14024144 bytes each). A size that differs by one
+    // byte is not, and neither is a row whose catalog recorded none.
+    {
+        auto sized = [](Track t, std::uint64_t bytes) {
+            t.catalogFileBytes = bytes;
+            return t;
+        };
+        std::vector<Track> tracks = {
+            sized(makeTrack("gone", "10_song.mp3", 0.0, {}, "Song", "Artist"), 14024144),
+            sized(makeTrack("copy", "28_song.mp3", 0.0, {}, "Song", "Artist"), 14024144),
+            sized(makeTrack("other", "17_song.mp3", 0.0, {}, "Song", "Artist"), 14024145),
+            sized(makeTrack("unsized", "18_song.mp3", 0.0, {}, "Song", "Artist"), 0),
+        };
+        auto groups = DuplicateTrackFinder::find(tracks);
+        assert(groups.size() == 1);
+        assert(groups[0].tracks.size() == 2);
+        std::set<std::string> ids;
+        for (const auto &t : groups[0].tracks) {
+            ids.insert(t.sourceId);
+        }
+        assert((ids == std::set<std::string>{"gone", "copy"}));
+        std::cout << "case 11b (same recorded size to the byte -> grouped) OK\n";
     }
 
     // Case 12: two copies that agree on artist, title AND length are a

@@ -153,6 +153,19 @@ std::vector<DuplicateGroup> DuplicateTrackFinder::find(const std::vector<Track> 
         auto bothLengthsKnown = [&](size_t a, size_t b) {
             return lengthOf(a) > 0.0 && lengthOf(b) > 0.0;
         };
+        // Without a length, the one thing that still tells a radio edit
+        // from an extended mix is the file itself: two rows of one title
+        // and artist whose catalogs recorded the same size to the byte
+        // are the same file (a copy), whatever else is unknown. Engine's
+        // own rekordbox import leaves Track.length NULL on most rows, so
+        // without this a broken row there never found the copy beside it
+        // (WHALESHARK2: "Too Little Too Late (feat. Underworld)", 14024144
+        // bytes in both rows). A size alone is never a near match: equal
+        // or nothing.
+        auto sameRecordedFile = [&](size_t a, size_t b) {
+            const std::uint64_t sa = tracks[indices[a]].catalogFileBytes;
+            return sa > 0 && sa == tracks[indices[b]].catalogFileBytes;
+        };
 
         // Pass one: stored lengths, exact window.
         for (size_t i = 0; i < indices.size(); ++i) {
@@ -163,7 +176,14 @@ std::vector<DuplicateGroup> DuplicateTrackFinder::find(const std::vector<Track> 
             clusters.push_back({i});
             clusterOf[i] = here;
             for (size_t j = i + 1; j < indices.size(); ++j) {
-                if (clusterOf[j] != NoCluster || !bothLengthsKnown(i, j)) {
+                if (clusterOf[j] != NoCluster) {
+                    continue;
+                }
+                if (!bothLengthsKnown(i, j)) {
+                    if (sameRecordedFile(i, j)) {
+                        clusters[here].push_back(j);
+                        clusterOf[j] = here;
+                    }
                     continue;
                 }
                 if (std::abs(lengthOf(i) - lengthOf(j)) <= MatchingPolicy::exactMatchSeconds()) {

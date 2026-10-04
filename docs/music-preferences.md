@@ -18,7 +18,7 @@ they change.
 |---|---|---|
 | Same duration within *N* sec is considered an exact match | 2 s | 0 to 30 |
 | Same duration within *N* sec will compare audio | 10 s | 0 to 120, never below the exact window |
-| Ignore cues at 0:00 | on | |
+| Treat cues in the first second as accidental | on | |
 
 The defaults are exactly what the code used as hardcoded constants before
 any of this was a setting, so an existing library's next scan finds what
@@ -144,7 +144,9 @@ degrade to the grouping stored lengths alone would give, never to a wrong
 one. That is also what lets `CancellableAudioContentProbe` implement Cancel
 by simply refusing to answer.
 
-## What "Ignore cues at 0:00" changes
+## What "Treat cues in the first second as accidental" changes
+
+The label used to read "Ignore cues at 0:00", which read the wrong way round on Library Health, where ON means these cues are offered for removal (#61). The setting key is unchanged (`music/ignoreCuesAtStart`).
 
 `domain::isJunkCue`, which is the single definition shared by the finder,
 the remover, the metadata backup, the restore and the XML export. With it

@@ -809,6 +809,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
             return oss.str();
         });
         track.durationSeconds = snap.duration ? snap.duration->count() / 1000.0 : 0.0;
+        track.catalogFileBytes = snap.file_bytes ? static_cast<std::uint64_t>(*snap.file_bytes) : 0;
         track.lastPlayedAt = snap.last_played_at;
         track.rating = safeGet<std::optional<int>>(*m_progress, id, "rating", [&] {
             auto r = snap.rating;

@@ -144,6 +144,12 @@ struct Track
     // Never play it, merge it, sync it, or clean it up.
     std::string streamingSource;
     std::uint64_t fileSizeBytes = 0;  // best-effort size of the file at filePath on disk, 0 if unresolved/unreadable
+    // The file's size as the catalog recorded it (export.pdb file_size,
+    // Engine Track.fileBytes), 0 when it records none. Unlike
+    // fileSizeBytes it survives the file being gone, which is when it is
+    // needed: DuplicateTrackFinder pairs two rows of one title whose
+    // lengths are unknown only when these agree to the byte.
+    std::uint64_t catalogFileBytes = 0;
     int bitrate = 0;  // kbps, 0 if unknown, used as the primary "which copy is higher quality" signal
     double durationSeconds = 0.0;
 

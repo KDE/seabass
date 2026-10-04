@@ -539,7 +539,7 @@ Page {
                     + "so. An Engine hot cue sitting where rekordbox has a memory cue is that memory cue, "
                     + "so a sync back never duplicates it.\n\n"
                     + "## Cues at 0:00\n"
-                    + "With *Ignore cues at 0:00* on (Preferences, Music), cues inside the first second are "
+                    + "With *Treat cues in the first second as accidental* on (Preferences, Music), cues inside the first second are "
                     + "not compared, not copied, and not kept when a track is written over. Clean them off "
                     + "on Library Health.\n\n"
                     + "## Positions\n"

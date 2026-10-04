@@ -655,6 +655,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
                             (pathFromUtf8(stickRoot) / pathFromUtf8(artworkRelativePath)).make_preferred());
                     }
                     track.durationSeconds = rowTrack->duration();
+                    track.catalogFileBytes = rowTrack->file_size();
                     track.bpm = rowTrack->tempo() / 100.0;
                     track.bitrate = static_cast<int>(rowTrack->bitrate());
                     auto keyIt = keyNameById.find(rowTrack->key_id());

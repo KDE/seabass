@@ -1040,7 +1040,7 @@ Page {
                            : "") + ".");
             if (run.cuesAtStartLeftOut > 0) {
                 lines.push(run.cuesAtStartLeftOut + (run.cuesAtStartLeftOut === 1 ? " cue" : " cues")
-                           + " at 0:00 left out, as Preferences asks (Ignore cues at 0:00).");
+                           + " in the first second left out, as Preferences asks (Treat cues in the first second as accidental).");
             }
             summaryDialog.show({
                 written: run.tracksAdded + run.tracksUpdated,
