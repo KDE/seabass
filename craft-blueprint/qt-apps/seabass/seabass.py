@@ -94,4 +94,61 @@ class Package(CMakePackageBase):
         self.addExecutableFilter(r"(bin|libexec)/(?!(seabass|seabass-cli)).*")
         if CraftCore.compiler.isMacOS:
             self.blacklist_file.append(self.blueprintDir() / "blacklist_mac.txt")
+        if CraftCore.compiler.isWindows:
+            # The Start menu entries. Craft's NSIS installer makes none
+            # unless it is told which executable to point at, and without
+            # one the app could only be found by digging bin\seabass.exe
+            # out of the install folder (Bart, testing the 0.8 installer).
+            # The icon is the one built into the .exe
+            # (src/gui/win/app_icon.rc). The uninstaller sits beside it,
+            # as it does for most Windows apps; the template's uninstall
+            # removes the whole Start menu folder.
+            self.defines["shortcuts"] = [
+                {"name": "Seabass", "target": "bin/seabass.exe", "description": self.subinfo.description},
+                {"name": "Uninstall Seabass", "target": "uninstall.exe"},
+            ]
+            # A desktop shortcut too, as a choice on the installer's
+            # components page: ticked, so a plain Next-Next-Install gets
+            # one, and untickable for whoever does not want it. Same
+            # sections as KDE Connect's and LabPlot's installers use.
+            self.defines["sections"] = r"""
+                Section "Desktop shortcut"
+                    CreateShortCut "$DESKTOP\Seabass.lnk" "$INSTDIR\bin\seabass.exe"
+                SectionEnd
+                """
+            # The template's uninstall removes the program, its Start menu
+            # folder and its registry entries; these remove what Seabass
+            # itself leaves behind, so an uninstall is a clean one. Qt's
+            # caches always go. The app's own state -- its settings,
+            # QSettings("seabass", "seabass") in HKCU\Software\seabass, and
+            # Qt's AppDataLocation for that name (stick history, edit
+            # locks) -- goes too, except when the uninstall is silent: that
+            # is how the installer clears out the previous version before
+            # an upgrade (the template's ExecWait ... /S), and an upgrade
+            # keeps the user's settings.
+            #
+            # ~\Seabass is never touched: it is the user's own, their
+            # library backups and metadata, in a folder with the app's name
+            # on it (infrastructure/paths/seabass_paths.cpp's localRoot()).
+            #
+            # $DESKTOP and $LOCALAPPDATA follow the install mode: an
+            # all-users install made its desktop shortcut on the public
+            # desktop, but Seabass keeps its state per user, under the
+            # user's own $LOCALAPPDATA -- hence SetShellVarContext current
+            # after the shortcut is gone.
+            self.defines["un_sections"] = r"""
+                Section "Un.Remove desktop shortcut"
+                    Delete "$DESKTOP\Seabass.lnk"
+                SectionEnd
+                Section "Un.Remove Seabass's own files"
+                    SetShellVarContext current
+                    RMDir /r "$LOCALAPPDATA\seabass\cache"
+                    ${IfNot} ${Silent}
+                        RMDir /r "$LOCALAPPDATA\seabass"
+                        DeleteRegKey HKCU "Software\seabass"
+                    ${EndIf}
+                    ; Gone if the cache was all there was in it.
+                    RMDir "$LOCALAPPDATA\seabass"
+                SectionEnd
+                """
         return CMakePackageBase.createPackage(self)
