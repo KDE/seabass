@@ -217,10 +217,15 @@ public:
     using CountFn = std::function<std::optional<size_t>(const std::string &format, const std::string &path)>;
     void setCountFnForTesting(CountFn countFn);
 
-    // Test seams for the analysis files' check: how long a check of an
-    // entry stands (2 s in the app), and how many checks this cache has
-    // made (each a stat per analysis file).
-    void setAnalysisCheckWindowForTesting(std::chrono::milliseconds window);
+    // Test seams for the analysis files' check, which stands for
+    // analysisCheckWindow() after it is made: the clock that window is
+    // measured on (steady_clock in the app), so a test steps past it
+    // without sleeping and a slow machine cannot outlast it, and how many
+    // checks this cache has made (each a stat per analysis file). Set the
+    // clock before the cache is first used.
+    using NowFn = std::function<std::chrono::steady_clock::time_point()>;
+    void setNowFnForTesting(NowFn nowFn);
+    static constexpr std::chrono::milliseconds analysisCheckWindow() { return std::chrono::milliseconds(2000); }
     int analysisChecksForTesting() const;
 
     // Reads the rest of this library in the background, up to Full, one
@@ -320,7 +325,7 @@ private:
     static std::string keyFor(const std::string &format, const std::string &path);
     void invalidateLocked(const std::string &key);
     // Whether `entry` holds cues from analysis files that were not
-    // checked within m_analysisCheckWindow.
+    // checked within analysisCheckWindow().
     bool analysisCheckDueLocked(const Entry &entry) const;
     // The files' state, counted; nothing when `cancel` was set first.
     std::optional<std::uint64_t> checkAnalysisFiles(const std::vector<std::string> &files,
@@ -335,7 +340,7 @@ private:
     std::condition_variable m_cv;
     std::unordered_map<std::string, Entry> m_entries;
     std::unordered_map<std::string, RememberedCount> m_counts;
-    std::chrono::milliseconds m_analysisCheckWindow{2000};
+    NowFn m_nowFn = [] { return std::chrono::steady_clock::now(); };
     std::atomic<int> m_analysisChecks{0};
     // Per-key invalidation counter, incremented by invalidate() and never
     // erased (unlike m_entries) -- lets a pass detect an invalidate()
