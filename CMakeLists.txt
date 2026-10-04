@@ -359,7 +359,6 @@ add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
     src/domain/camelot_key.cpp
-    src/domain/cleanup_leftovers.cpp
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/cross_source_sync_conflict.cpp
@@ -896,10 +895,6 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/copy_cues_change.cpp
         src/gui/edit/changes/delete_orphan_change.hpp
         src/gui/edit/changes/delete_orphan_change.cpp
-        src/gui/edit/changes/finish_cleanup_change.hpp
-        src/gui/edit/changes/finish_cleanup_change.cpp
-        src/gui/edit/changes/recolour_engine_cues_change.cpp
-        src/gui/edit/changes/repair_legacy_memory_list_change.cpp
         src/gui/edit/changes/align_playlist_change.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
@@ -1652,14 +1647,6 @@ target_link_libraries(duplicate_cleanup_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cleanup_test PRIVATE src)
 add_test(NAME duplicate_cleanup_test COMMAND duplicate_cleanup_test)
 
-add_executable(cleanup_leftovers_test
-    src/domain/cleanup_leftovers.cpp
-    tests/cleanup_leftovers_test.cpp
-)
-target_link_libraries(cleanup_leftovers_test PRIVATE seabass_core_testing)
-target_include_directories(cleanup_leftovers_test PRIVATE src)
-add_test(NAME cleanup_leftovers_test COMMAND cleanup_leftovers_test)
-
 add_executable(library_consistency_test
     src/domain/library_consistency.cpp
     tests/library_consistency_test.cpp
@@ -2218,8 +2205,8 @@ seabass_cli_test(cli_unknown_command EXIT 1 ARGS frobnicate EXPECT "unknown comm
 seabass_cli_test(cli_unknown_option EXIT 1 ARGS scan --bogus EXPECT "unknown option: --bogus")
 seabass_cli_test(cli_option_missing_value EXIT 1 ARGS scan --track EXPECT "--track requires a name to search for")
 # The summary counts the analysis files whose legacy and modern cue lists
-# disagree (#60), the fixture's 203 that cue_list_health_test's Cue lists
-# check counts too. Engine has no analysis files and says nothing.
+# disagree (#60), the fixture's 203 that cue_list_health_test's cue list
+# audit counts too. Engine has no analysis files and says nothing.
 seabass_cli_test(cli_scan_rekordbox EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox}
     EXPECT ${_cli_rekordbox_counts} "total cues:       317\\n  203 cue lists disagree\\n"
            "\\n9b55b1 Track \\(Artist 228\\) .503s."
@@ -2617,24 +2604,6 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME junk_cue_mirror_failure_test COMMAND junk_cue_mirror_failure_test)
 
-    add_executable(finish_cleanup_change_test tests/finish_cleanup_change_test.cpp)
-    target_include_directories(finish_cleanup_change_test PRIVATE src)
-    target_compile_definitions(finish_cleanup_change_test PRIVATE
-        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(finish_cleanup_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
-    if(NOT WIN32)
-        target_link_libraries(finish_cleanup_change_test PRIVATE ${CMAKE_DL_LIBS})
-    endif()
-    add_test(NAME finish_cleanup_change_test COMMAND finish_cleanup_change_test)
-
-    add_executable(recolour_engine_cues_change_test tests/recolour_engine_cues_change_test.cpp)
-    target_include_directories(recolour_engine_cues_change_test PRIVATE src)
-    target_link_libraries(recolour_engine_cues_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
-    if(NOT WIN32)
-        target_link_libraries(recolour_engine_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
-    endif()
-    add_test(NAME recolour_engine_cues_change_test COMMAND recolour_engine_cues_change_test)
-
     add_executable(align_playlist_change_test tests/align_playlist_change_test.cpp)
     target_include_directories(align_playlist_change_test PRIVATE src tests)
     target_link_libraries(align_playlist_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
@@ -2642,15 +2611,6 @@ if(TARGET seabass_edit)
         target_link_libraries(align_playlist_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME align_playlist_change_test COMMAND align_playlist_change_test)
-
-    add_executable(repair_legacy_memory_list_change_test tests/repair_legacy_memory_list_change_test.cpp)
-    target_include_directories(repair_legacy_memory_list_change_test PRIVATE src tests)
-    target_link_libraries(repair_legacy_memory_list_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
-    if(NOT WIN32)
-        target_link_libraries(repair_legacy_memory_list_change_test PRIVATE ${CMAKE_DL_LIBS})
-    endif()
-    add_test(NAME repair_legacy_memory_list_change_test COMMAND repair_legacy_memory_list_change_test
-        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
     add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
     target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)
@@ -3461,8 +3421,9 @@ target_link_libraries(rig_restore PRIVATE seabass_core)
 # Library Health, stray cues and duplicates, timed -- without writing to it.
 # #62 hardware check: edits TESTRIG's export.pdb playlists with
 # PdbRowWriter so a player can show the result.
-# Read-only: counts what pre-6e0f1c09 / pre-05d71bbd dev builds left on a
-# stick (#55, #56), with Library Health's own checks.
+# Read-only: counts what Seabass builds before 6e0f1c09 / 05d71bbd (up to
+# the 0.7.12 and 0.7.13 alphas) left on a stick (#55, #56), with the checks
+# Library Health had until 2026-10-04.
 add_executable(stick_damage_audit tools/stick_damage_audit.cpp)
 target_include_directories(stick_damage_audit PRIVATE src)
 target_link_libraries(stick_damage_audit PRIVATE seabass_core rekordbox_format)

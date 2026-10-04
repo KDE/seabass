@@ -98,7 +98,7 @@ std::optional<LegacyMemoryListFinding> auditTrackAnalysis(const std::string &pio
 // What a scan of many tracks found, counted. Every count is of analysis
 // files (a .DAT and .EXT pair), each once however many rows name it.
 // `examined` is the honest one: a scan that opened nothing says 0 here,
-// and the page says "nothing was checked", never "all is well".
+// and a report says "nothing was checked", never "all is well".
 struct CueListTally
 {
     size_t examined = 0;

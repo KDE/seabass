@@ -479,7 +479,7 @@ Item {
                   () => p.pendingDeletionsRequested(s.label, s.rb, s.engine),
                   () => p.junkCueCleanupRequested(s.label, s.rb, s.engine)][which];
         } else if (name === "LibraryHealthHubPage") {
-            what = runner.pick(["broken", "junkcues", "import", "samplerates", "artwork", "cleanupleftovers"]);
+            what = runner.pick(["broken", "junkcues", "import", "samplerates", "artwork", "playlists"]);
             fn = () => p.detailRequested(what);
         } else if (name === "StickStatisticsPage") {
             what = "sync";

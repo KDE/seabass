@@ -274,7 +274,7 @@ std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource
     // one just yields nothing.
     auto datBytes = source.read(anlzRelativePath(analyzePath, /*wantExt=*/false));
     if (cueLists) {
-        // The Cue lists check's own comparison, of the bytes in hand. A
+        // The cue list audit's own comparison, of the bytes in hand. A
         // file missing or not an analysis file is unreadable there too.
         *cueLists = CueListsCheck::Unreadable;
         if (datBytes) {
@@ -286,7 +286,7 @@ std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource
                                                                      extLabel);
                 // Lists the check could not compare (a memory list it
                 // cannot read, a list that does not decode) are not lists
-                // that agree: Library Health names them, and the summary
+                // that agree: the cue list audit names them, and the summary
                 // counts them with the files it could not read.
                 if (!compared.shape.malformed.empty() || !compared.listsMalformed.empty()) {
                     *cueLists = CueListsCheck::Unreadable;

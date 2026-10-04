@@ -305,23 +305,6 @@ Page {
         return text;
     }
 
-    // #8. Only ever shown once the check has run: a stick without
-    // OneLibrary has nothing it could report.
-    // Pads the player hides: see HiddenCuesPage. Only once the Engine leg
-    // has run, since only Engine has them.
-    readonly property bool hiddenCuesShown: healthController.hiddenCuesChecked
-    readonly property int hiddenCueCount: healthController.hiddenCueCount
-    readonly property int hiddenCueTrackCount: healthController.hiddenCueTrackCount
-    readonly property string hiddenCueSummary: {
-        if (root.hiddenCueCount === 0) {
-            return "Every hot cue and saved loop in the Engine library has a colour, so the player shows them all.";
-        }
-        return root.hiddenCueCount + (root.hiddenCueCount === 1 ? " cue" : " cues") + " on "
-            + root.hiddenCueTrackCount + (root.hiddenCueTrackCount === 1 ? " track" : " tracks")
-            + " in the Engine library " + (root.hiddenCueCount === 1 ? "has" : "have") + " no colour, and a Denon "
-            + "player does not show a pad without one. Seabass can give them the player's own colour for the pad.";
-    }
-
     // #61. Playlists that differ between the libraries, and Engine
     // entries naming no track: see PlaylistSyncPage. Only once the last
     // leg has every catalog.
@@ -349,85 +332,6 @@ Page {
                        + " at a track the library no longer has.");
         }
         return parts.join(" ");
-    }
-
-    // #55 and #60. Cue lists in the analysis files: memory lists an
-    // XDJ-RX2 hangs on, the files a hung one leaves, and older and newer
-    // lists that disagree. See MemoryCueListsPage. Only once the
-    // rekordbox leg has run.
-    readonly property bool memoryCueListsShown: healthController.legacyMemoryListsChecked
-        || healthController.legacyMemoryListError.length > 0
-    readonly property int memoryCueListCount: healthController.cueListFindingCount
-    readonly property int memoryCueListFixableCount: healthController.cueListFixableCount
-    readonly property int cueListsExamined: healthController.cueListCounts.examined ?? 0
-    readonly property int cueListsUnreadable: healthController.cueListCounts.unreadable ?? 0
-    readonly property string memoryCueListSummary: {
-        if (healthController.legacyMemoryListError.length > 0) {
-            return healthController.legacyMemoryListError;
-        }
-        // Never "all is well" over nothing: a stick whose analysis files
-        // could not be read has had nothing checked, and one with files
-        // it could not read is not clean either.
-        if (root.cueListsExamined === 0 && root.memoryCueListCount === 0) {
-            return root.cueListsUnreadable === 0
-                ? "No track names an analysis file, so there were no cue lists to check."
-                : "No analysis file could be read (" + root.cueListsUnreadable
-                  + (root.cueListsUnreadable === 1 ? " is" : " are") + " missing or damaged), so no cue list was checked.";
-        }
-        const files = root.cueListsExamined + (root.cueListsExamined === 1 ? " analysis file" : " analysis files");
-        const malformed = healthController.cueListMalformedCount;
-        const unread = root.cueListsUnreadable === 0 ? ""
-            : " " + root.cueListsUnreadable + (root.cueListsUnreadable === 1 ? " other is" : " others are")
-              + " missing or damaged and could not be checked.";
-        if (root.memoryCueListCount === 0) {
-            return "Checked " + files + ": the player and Seabass read the same cues, and every memory cue list is "
-                + "in the shape a player reads." + unread;
-        }
-        const memory = healthController.legacyMemoryListCount;
-        const disagree = healthController.cueListDisagreementCount;
-        const parts = [];
-        if (disagree > 0) {
-            parts.push(disagree + (disagree === 1 ? " track shows" : " tracks show")
-                       + " different cues on the player than in Seabass");
-        }
-        if (memory > 0) {
-            parts.push(memory + (memory === 1 ? " track has" : " tracks have")
-                       + " a memory cue list an XDJ-RX2 can hang on, or a file a hung player left behind");
-        }
-        if (malformed > 0) {
-            parts.push(malformed + (malformed === 1 ? " track has" : " tracks have")
-                       + " cue lists Seabass cannot read, left alone");
-        }
-        let text = "Checked " + files + ". " + parts.join("; ") + "." + unread;
-        if (root.memoryCueListFixableCount > 0) {
-            text += " Seabass can repair " + (root.memoryCueListFixableCount === root.memoryCueListCount
-                                              ? (root.memoryCueListCount === 1 ? "it" : "them")
-                                              : root.memoryCueListFixableCount + " of them") + ".";
-        }
-        return text;
-    }
-
-    readonly property bool cleanupLeftoversShown: healthController.cleanupLeftoversChecked
-        || healthController.cleanupLeftoverError.length > 0
-    readonly property int cleanupLeftoverCount: healthController.cleanupLeftoverCount
-    readonly property int cleanupLeftoverFixableCount: healthController.cleanupLeftoverFixableCount
-
-    readonly property string cleanupLeftoverSummary: {
-        if (healthController.cleanupLeftoverError.length > 0) {
-            return healthController.cleanupLeftoverError;
-        }
-        if (root.cleanupLeftoverCount === 0) {
-            return "Every duplicate Clean Up removed from the rekordbox library is gone from OneLibrary too.";
-        }
-        let text = root.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the rekordbox library are still "
-            + "in OneLibrary, from before Clean Up wrote to both. A OneLibrary player (CDJ-3000, OMNIS-DUO, XDJ-AZ) "
-            + "still lists both copies, and its playlists still point at the one that was removed.";
-        if (root.cleanupLeftoverFixableCount > 0) {
-            text += " Seabass can remove " + (root.cleanupLeftoverFixableCount === root.cleanupLeftoverCount
-                                              ? "them" : root.cleanupLeftoverFixableCount + " of them")
-                 + " and move their playlist entries onto the copy Clean Up kept.";
-        }
-        return text;
     }
 
     // #38. Deliberately has no action: see engine_analysis_state.hpp, and
@@ -679,27 +583,6 @@ Page {
                 onActionRequested: root.detailRequested("artwork")
             }
 
-            // The part of the rekordbox/OneLibrary comparison that can say
-            // which half is right (#8, and
-            // docs/library-health-format-divergence.md): a deleted
-            // export.pdb row is evidence the rekordbox half removed the
-            // file. The rest of the comparison is still not built, and
-            // is still not shown as a card that always says "not checked".
-            HealthCheckCard {
-                objectName: "hiddenCueCard"
-                visible: root.hiddenCuesShown
-                fixableCount: root.hiddenCueCount
-                foundCount: root.hiddenCueCount
-                actionEnabled: !healthController.stickReadOnly
-                actionDisabledReason: root.blockedByReadOnly
-                title: "Cues the player hides"
-                summary: root.hiddenCueSummary
-                running: root.scanning
-                ok: root.hiddenCueCount === 0
-                actionLabel: root.hiddenCueCount > 0 ? "Review cues" : ""
-                onActionRequested: root.detailRequested("hiddencues")
-            }
-
             HealthCheckCard {
                 objectName: "playlistSyncCard"
                 visible: root.playlistsShown
@@ -716,39 +599,6 @@ Page {
                 actionLabel: root.playlistDifferenceCount > 0 || root.danglingPlaylistEntryCount > 0
                     ? "Review playlists" : ""
                 onActionRequested: root.detailRequested("playlists")
-            }
-
-            HealthCheckCard {
-                objectName: "memoryCueListCard"
-                visible: root.memoryCueListsShown
-                fixableCount: root.memoryCueListFixableCount
-                foundCount: root.memoryCueListCount
-                actionEnabled: !healthController.stickReadOnly
-                actionDisabledReason: root.blockedByReadOnly
-                title: "Cue lists"
-                summary: root.memoryCueListSummary
-                running: root.scanning
-                ok: root.memoryCueListCount === 0 && root.cueListsExamined > 0 && root.cueListsUnreadable === 0
-                    && healthController.legacyMemoryListError.length === 0
-                failed: healthController.legacyMemoryListError.length > 0
-                actionLabel: root.memoryCueListCount > 0 || root.cueListsUnreadable > 0 ? "Review lists" : ""
-                onActionRequested: root.detailRequested("memorycuelists")
-            }
-
-            HealthCheckCard {
-                objectName: "cleanupLeftoverCard"
-                visible: root.cleanupLeftoversShown
-                fixableCount: root.cleanupLeftoverFixableCount
-                foundCount: root.cleanupLeftoverCount
-                actionEnabled: !healthController.stickReadOnly
-                actionDisabledReason: root.blockedByReadOnly
-                title: "Duplicates left in OneLibrary"
-                summary: root.cleanupLeftoverSummary
-                running: root.scanning
-                ok: root.cleanupLeftoverCount === 0 && healthController.cleanupLeftoverError.length === 0
-                failed: healthController.cleanupLeftoverError.length > 0
-                actionLabel: root.cleanupLeftoverCount > 0 ? "Review duplicates" : ""
-                onActionRequested: root.detailRequested("cleanupleftovers")
             }
 
             // Inset to the card TEXT, not to the card edge. These three

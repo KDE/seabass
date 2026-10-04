@@ -2,11 +2,16 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// Read-only: does a stick (or a copy of one) carry what dev builds before
-// 6e0f1c09 and 05d71bbd left behind? Runs the same checks as Library
-// Health's "Memory cue lists a player hangs on" (#55) and "Cues the player
-// hides" (#56) and prints the counts. Point it at a copy, not a mounted
-// stick, to be sure nothing is ever opened for writing.
+// Read-only: does a stick (or a copy of one) carry what Seabass builds
+// before 6e0f1c09 and 05d71bbd left behind? Legacy memory cue lists a
+// player hangs on (#55) were written by builds up to 0.7.12, including the
+// published 0.7.11 and 0.7.12 alphas; Engine cues without a colour, which
+// the player hides (#56), by builds before 05d71bbd, including all three
+// alphas 0.7.11 to 0.7.13. Seabass ships no repair for either (Library
+// Health's checks for them were removed on 2026-10-04); users of those
+// alphas are advised to re-export the stick from rekordbox. Runs the same
+// checks and prints the counts. Point it at a copy, not a mounted stick,
+// to be sure nothing is ever opened for writing.
 //
 //   stick_damage_audit <root holding PIONEER/ and Engine Library/>
 #include <cstdlib>

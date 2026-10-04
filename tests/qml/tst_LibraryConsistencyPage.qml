@@ -17,8 +17,7 @@ import "Breadcrumb.js" as Breadcrumb
 // after staging 29 stray cue removals; and every card on the hub opened
 // the same long page, so "Review sample rates" landed on a list of
 // missing files. The other checks' tests moved with them, to
-// tst_CuesAtZeroPage, tst_ImportPromptPage, tst_SampleRatesPage and
-// tst_OneLibraryLeftoversPage.
+// tst_CuesAtZeroPage, tst_ImportPromptPage and tst_SampleRatesPage.
 TestCase {
     id: testCase
     name: "LibraryConsistencyPage"
@@ -48,14 +47,6 @@ TestCase {
             function unstageRekordboxImportMark() { importMarkStaged = false; }
             function fillSampleRates() { sampleRateFillStaged = true; }
             function unstageSampleRateFill() { sampleRateFillStaged = false; }
-            property bool cleanupLeftoversChecked: false
-            property int cleanupLeftoverCount: 0
-            property int cleanupLeftoverFixableCount: 0
-            property bool cleanupLeftoverFixStaged: false
-            property string cleanupLeftoverError: ""
-            property var cleanupLeftoversHeldBack: []
-            function finishCleanupLeftovers() { cleanupLeftoverFixStaged = true; }
-            function unstageCleanupLeftoverFix() { cleanupLeftoverFixStaged = false; }
             property int unstagedJunkCueCount: 0
             property int stagedCount: stagedIssueCount + stagedJunkCueCount
             property int stagedIssueCount: 0
@@ -226,8 +217,6 @@ TestCase {
         controller.sampleRateMissingCount = 3;
         controller.sampleRateFixableCount = 3;
         controller.playerWillOfferImport = true;
-        controller.cleanupLeftoversChecked = true;
-        controller.cleanupLeftoverCount = 2;
         controller.junkCues.append({track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
                                             durationMs: 0, cues: [], side: "engine", sourceId: "1",
                                             artworkPath: ""},
@@ -237,7 +226,7 @@ TestCase {
         verify(page !== null, "the page must instantiate");
         verify(findChild(page, "missingFilesSummary") !== null, "its own check is here");
         for (const other of ["sampleRateSummary", "fillSampleRatesButton", "importPromptSummary",
-                             "markImportedButton", "cleanupLeftoverSummary", "finishCleanupButton",
+                             "markImportedButton",
                              "stagedJunkCuesNote", "cuesAtZeroSummary"]) {
             compare(findChild(page, other), null, other + " belongs to another check's page");
         }

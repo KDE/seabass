@@ -124,7 +124,7 @@ struct Track
     // What the reader found comparing that file's two generations of cue
     // list (#60) while it read the track's cues: the legacy lists a
     // player of the XDJ-RX2's generation shows, the modern ones Seabass
-    // reads first. The comparison Library Health's Cue lists check makes
+    // reads first. The comparison the cue list audit makes
     // (infrastructure/rekordbox/cue_list_check.hpp), of the bytes already
     // read for the cues, so the stick's summary counts the files that
     // disagree without a second pass over them (domain::countCueLists).

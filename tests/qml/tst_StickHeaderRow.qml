@@ -193,7 +193,8 @@ TestCase {
         compare(badge.visible, true);
         compare(badge.label, "3 cue lists disagree");
         verify(Qt.colorEqual(badge.badgeColor, Theme.warnIcon), "in the warning colour");
-        verify(badge.tooltipText.indexOf("Cue lists check") >= 0, "the tooltip says where to repair them");
+        verify(badge.tooltipText.indexOf("A sync would write what Seabass shows") >= 0,
+               "the tooltip says what a sync does with them");
         verify(badge.tooltipText.indexOf("-".repeat(2)) < 0 && badge.tooltipText.indexOf("\u2014") < 0, "no dashes");
         saveScreenshot(row, "stick-header-cue-lists");
 

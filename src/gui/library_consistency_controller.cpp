@@ -7,7 +7,6 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
-#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -33,9 +32,6 @@
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
-#include "infrastructure/rekordbox/anlz_path_index.hpp"
-#include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
-#include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cleanup_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
@@ -48,9 +44,6 @@
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
-#include "gui/edit/changes/finish_cleanup_change.hpp"
-#include "gui/edit/changes/recolour_engine_cues_change.hpp"
-#include "gui/edit/changes/repair_legacy_memory_list_change.hpp"
 #include "gui/edit/changes/align_playlist_change.hpp"
 #include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
@@ -380,7 +373,7 @@ std::vector<domain::Track> scanTracks(const QString &format, const QString &path
 // (see runScanTask). The Engine leg's "Reading cover images" has no
 // cheap count and is left out; a plan short by a few rows costs the bar
 // a moment at the end, not a restart.
-std::optional<size_t> planLeg(const QString &format, const QString &path, const QString &rekordboxPath,
+std::optional<size_t> planLeg(const QString &format, const QString &path,
                               LibraryConsistencyController::ScanDepth depth,
                               const application::CancellationToken &cancel)
 {
@@ -396,27 +389,16 @@ std::optional<size_t> planLeg(const QString &format, const QString &path, const 
         return std::nullopt;
     }
     size_t units = *read;
-    if (depth != LibraryConsistencyController::Full) {
+    if (depth != LibraryConsistencyController::Full || format != QStringLiteral("engine")) {
         return units;
     }
     const auto rows = cache.countTracks(fmt, at, cancel);
     if (!rows) {
         return std::nullopt;
     }
-    if (format == QStringLiteral("rekordbox")) {
-        units += *rows;  // "Checking cue lists"
-    } else if (format == QStringLiteral("engine")) {
-        units += *rows;  // "Checking cover art"
-        units += 1;      // "Counting tracks the player will analyse"
-        units += *rows;  // "Checking sample rates"
-    } else if (format == QStringLiteral("onelibrary")) {
-        // "Looking for Clean Up leftovers": a key per rekordbox row and
-        // per OneLibrary row (its deleted-file list is not counted). The
-        // rekordbox read it makes first is a cache hit by then.
-        const auto rekordboxRows = cache.countTracks("rekordbox", rekordboxPath.toStdString(), cancel);
-        units += *rows + rekordboxRows.value_or(0);
-        units += *rows;  // "Checking cue lists"
-    }
+    units += *rows;  // "Checking cover art"
+    units += 1;      // "Counting tracks the player will analyse"
+    units += *rows;  // "Checking sample rates"
     return units;
 }
 
@@ -430,7 +412,7 @@ ScanChainPlan planChain(const QStringList &formats, const QString &rekordboxPath
     plan.known = true;
     for (const QString &format : formats) {
         const QString path = format == QStringLiteral("engine") ? enginePath : rekordboxPath;
-        const auto units = planLeg(format, path, rekordboxPath, depth, cancel);
+        const auto units = planLeg(format, path, depth, cancel);
         plan.unitsPerLeg.push_back(units.value_or(0));
         if (!units) {
             plan.known = false;
@@ -666,103 +648,6 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             }
         }
 
-        if (full && format == QStringLiteral("onelibrary")) {
-            // #8: what a Clean Up removed from export.pdb and never from
-            // here. Before the playlist scope below, like the Engine
-            // audits: a leftover is a fact about the library, and one
-            // outside the chosen playlist is still listed twice on a
-            // player. The rekordbox rows come from the catalog cache the
-            // rekordbox leg just filled. No audio probe: a pair only the
-            // decoded audio would tie together is reported, not repaired.
-            try {
-                const auto rekordboxTracks = scanTracks(QStringLiteral("rekordbox"), path, progress, cancel);
-                const auto deleted = infrastructure::rekordbox::deletedTrackFilePaths(path.toStdString());
-                cancel.throwIfCancelled();
-                // The token rides in on the key: spelling every path of
-                // both catalogs is most of the finder's time (0.2 s of a
-                // Debug build on the committed fixture), and a stop there
-                // must not wait for all of it. So does the progress: one
-                // key per deleted file and per row of either catalog,
-                // then a few more for the rows it pairs up, which the
-                // count holds at the total rather than running past it.
-                const size_t keysExpected = deleted.size() + rekordboxTracks.size() + tracks.size();
-                progress.start("Looking for Clean Up leftovers", keysExpected);
-                size_t keysSpelled = 0;
-                const auto keyOrStop = [&cancel, &progress, &keysSpelled, keysExpected](const std::string &file) {
-                    cancel.throwIfCancelled();
-                    if (keysSpelled < keysExpected) {
-                        progress.tick(++keysSpelled);
-                    }
-                    return application::normalizedPathKey(file);
-                };
-                result.cleanupLeftovers =
-                    domain::CleanupLeftoverFinder::find(tracks, rekordboxTracks, deleted, keyOrStop);
-                result.cleanupLeftoversChecked = true;
-            } catch (const application::OperationCancelled &) {
-                throw;
-            } catch (const std::exception &e) {
-                // Its own error, so the rest of this leg still reports.
-                result.cleanupLeftoversError = e.what();
-            }
-        }
-
-        if (full && format == QStringLiteral("onelibrary")) {
-            // #59, #60: a OneLibrary row names its analysis file too, and
-            // the players take that row's cues from it. The files
-            // export.pdb also names were checked by the rekordbox leg;
-            // these are the rest, appended to what it found.
-            try {
-                // A stick with OneLibrary alone has no export.pdb: then no
-                // file is DeviceLibrary's and every one is checked here.
-                std::set<std::string> deviceLibraryKeys;
-                std::error_code pdbError;
-                if (std::filesystem::exists(pathFromQString(path) / "rekordbox" / "export.pdb", pdbError)) {
-                    const infrastructure::rekordbox::AnlzPathIndex analysisPaths(path.toStdString());
-                    for (const auto &p : analysisPaths.paths()) {
-                        deviceLibraryKeys.insert(application::normalizedPathKey(p));
-                    }
-                }
-                std::vector<std::string> analyzePaths;
-                std::map<std::string, const domain::Track *> trackOf;
-                for (const domain::Track &track : tracks) {
-                    const std::string key = track.analysisFile.empty()
-                                                ? std::string()
-                                                : application::normalizedPathKey(track.analysisFile);
-                    if (!key.empty()) {
-                        result.oneLibraryAnalysisKeys.insert(key);
-                    }
-                    if (key.empty() || deviceLibraryKeys.count(key)) {
-                        analyzePaths.emplace_back();
-                        continue;
-                    }
-                    analyzePaths.push_back(track.analysisFile);
-                    trackOf.emplace(key, &track);
-                }
-                const auto named = [&](const std::string &p) {
-                    const std::string key = application::normalizedPathKey(p);
-                    return deviceLibraryKeys.count(key) > 0 || result.oneLibraryAnalysisKeys.count(key) > 0;
-                };
-                progress.start("Checking cue lists", tracks.size());
-                size_t checked = 0;
-                auto scan = infrastructure::rekordbox::scanCueLists(path.toStdString(), analyzePaths, named, [&] {
-                    cancel.throwIfCancelled();
-                    progress.tick(++checked);
-                });
-                for (auto &finding : scan.findings) {
-                    const domain::Track *track = trackOf.at(application::normalizedPathKey(finding.analyzePath));
-                    result.legacyMemoryLists.push_back({*track, std::move(finding)});
-                }
-                result.cueListTally = scan.tally;
-                result.cueListsAppend = true;
-                result.legacyMemoryListsChecked = true;
-            } catch (const application::OperationCancelled &) {
-                throw;
-            } catch (const std::exception &e) {
-                result.cueListsAppend = true;
-                result.legacyMemoryListsError = e.what();
-            }
-        }
-
         if (full && format == QStringLiteral("rekordbox")) {
             // What this catalog holds per audio file, for the Engine pass
             // that follows: Engine keeps its own copies of the art, so
@@ -775,56 +660,8 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 result.artSources.emplace(infrastructure::engine::artworkSourceKey(track.filePath),
                                           track.artworkPath);
             }
-            // #55 and #60: each analysis file's legacy memory list, its
-            // two generations of cue list compared, and what a hung
-            // player left beside it. Two small reads per track over USB
-            // (the cue sections only, not the waveforms), so it has its
-            // own counted phase, and its own error so the rest of this
-            // leg still reports.
-            try {
-                const infrastructure::rekordbox::AnlzPathIndex analysisPaths(path.toStdString());
-                std::vector<std::string> analyzePaths;
-                std::map<std::string, const domain::Track *> trackOf;
-                for (const domain::Track &track : tracks) {
-                    // The row's own analyze_path, as the writer looks it
-                    // up (an empty one is skipped and still ticks).
-                    std::optional<std::string> analyzePath;
-                    if (!track.sourceId.empty()
-                        && std::all_of(track.sourceId.begin(), track.sourceId.end(),
-                                       [](unsigned char c) { return std::isdigit(c) != 0; })) {
-                        analyzePath = analysisPaths.pathFor(static_cast<uint32_t>(std::stoul(track.sourceId)));
-                    }
-                    analyzePaths.push_back(analyzePath.value_or(std::string()));
-                    if (analyzePath) {
-                        trackOf.emplace(application::normalizedPathKey(*analyzePath), &track);
-                    }
-                }
-                progress.start("Checking cue lists", tracks.size());
-                size_t checked = 0;
-                const auto named = [&analysisPaths](const std::string &p) { return analysisPaths.names(p); };
-                auto scan = infrastructure::rekordbox::scanCueLists(path.toStdString(), analyzePaths, named, [&] {
-                    cancel.throwIfCancelled();
-                    progress.tick(++checked);
-                });
-                for (auto &finding : scan.findings) {
-                    const domain::Track *track = trackOf.at(application::normalizedPathKey(finding.analyzePath));
-                    result.legacyMemoryLists.push_back({*track, std::move(finding)});
-                }
-                result.cueListTally = scan.tally;
-                result.legacyMemoryListsChecked = true;
-            } catch (const application::OperationCancelled &) {
-                throw;
-            } catch (const std::exception &e) {
-                result.legacyMemoryListsError = e.what();
-            }
         }
 
-        if (full && format == QStringLiteral("engine")) {
-            // Pads the player hides: no catalog but Engine has them, and
-            // the finder needs nothing beyond the rows just read.
-            result.hiddenEngineCues = domain::HiddenEngineCueFinder::find(tracks);
-            result.hiddenCuesChecked = true;
-        }
         if (full && format == QStringLiteral("engine")) {
             // Cover art, checked while this format's library is open
             // anyway: one read of Track/AlbumArt and a stat per image,
@@ -975,7 +812,7 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
 // straight after met "device busy", a save on another page met a
 // database still being read, and coming back started a second scan
 // alongside the first. Every leg checks the token at row grain (the
-// catalog readers, each Engine audit, the Clean Up leftover check), so
+// catalog readers, each Engine audit), so
 // the wait is the time to the next row, not the rest of the scan. The one
 // step it cannot cut short is OneLibrary's key derivation on open, a
 // single SQLCipher call of about 0.13 s. tst_ScanLifetime measures it.
@@ -1119,25 +956,6 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_artwork = {};
     m_sampleRates = {};
     m_analysisState = {};
-    // Not the staged fix, for the reason the sample-rate comment below
-    // gives.
-    m_cleanupLeftovers.clear();
-    m_cleanupLeftoversChecked = false;
-    m_cleanupLeftoversError.clear();
-    emit cleanupLeftoversChanged();
-    m_hiddenEngineCues.clear();
-    m_hiddenCuesChecked = false;
-    emit hiddenCuesChanged();
-    m_legacyMemoryLists.clear();
-    m_legacyMemoryListsChecked = false;
-    m_legacyMemoryListsError.clear();
-    m_cueListTally = {};
-    // One choice per stick and scan, back to the player's list unless a
-    // repair staged with the other is still waiting for Save.
-    if (!m_legacyMemoryListFixStaged) {
-        m_keepPlayerCueLists = true;
-    }
-    emit legacyMemoryListsChanged();
     m_playlistFindings.clear();
     m_danglingPlaylistEntries.clear();
     m_playlistsChecked = false;
@@ -1319,96 +1137,12 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_sampleRates = std::move(result.sampleRates);
             emit sampleRatesChanged();
         }
-        if (result.cleanupLeftoversChecked || !result.cleanupLeftoversError.empty()) {
-            m_cleanupLeftovers = std::move(result.cleanupLeftovers);
-            m_cleanupLeftoversChecked = result.cleanupLeftoversChecked;
-            m_cleanupLeftoversError = QString::fromStdString(result.cleanupLeftoversError);
-            emit cleanupLeftoversChanged();
-        }
-        if (result.hiddenCuesChecked) {
-            m_hiddenEngineCues = std::move(result.hiddenEngineCues);
-            m_hiddenCuesChecked = true;
-            emit hiddenCuesChanged();
-        }
         if (result.playlistsChecked || !result.playlistsError.empty()) {
             m_playlistFindings = std::move(result.playlistFindings);
             m_danglingPlaylistEntries = std::move(result.danglingPlaylistEntries);
             m_playlistsChecked = result.playlistsChecked;
             m_playlistsError = QString::fromStdString(result.playlistsError);
             emit playlistsChanged();
-        }
-        if (result.cueListsAppend) {
-            // The OneLibrary leg's files, added to the rekordbox leg's; and
-            // a file that leg took for debris is not, if OneLibrary names
-            // it.
-            for (auto &issue : m_legacyMemoryLists) {
-                auto &debris = issue.finding.debris;
-                const std::string own = pathToUtf8(pathFromUtf8(issue.finding.analyzePath).filename());
-                const std::string rowDir = issue.finding.analyzePath.substr(
-                    0, issue.finding.analyzePath.size() - own.size());
-                const auto before = debris.size();
-                debris.erase(std::remove_if(debris.begin(), debris.end(),
-                                            [&](const std::string &file) {
-                                                const std::string name = pathToUtf8(pathFromUtf8(file).filename());
-                                                return result.oneLibraryAnalysisKeys.count(
-                                                           application::normalizedPathKey(rowDir + name))
-                                                       > 0;
-                                            }),
-                             debris.end());
-                m_cueListTally.strayFiles -= before - debris.size();
-            }
-            m_legacyMemoryLists.erase(std::remove_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                                     [](const auto &issue) {
-                                                         return !issue.finding.anything()
-                                                                && issue.finding.unreadable.empty();
-                                                     }),
-                                      m_legacyMemoryLists.end());
-            // A stray file the rekordbox leg already reported, beside a
-            // track this leg found too, is the same file: counted once.
-            std::set<std::string> reported;
-            for (const auto &issue : m_legacyMemoryLists) {
-                for (const auto &file : issue.finding.debris) {
-                    reported.insert(application::normalizedPathKey(file));
-                }
-            }
-            for (auto &issue : result.legacyMemoryLists) {
-                auto &debris = issue.finding.debris;
-                const auto before = debris.size();
-                debris.erase(std::remove_if(debris.begin(), debris.end(),
-                                            [&reported](const std::string &file) {
-                                                return reported.count(application::normalizedPathKey(file)) > 0;
-                                            }),
-                             debris.end());
-                result.cueListTally.strayFiles -= before - debris.size();
-                if (issue.finding.anything() || !issue.finding.unreadable.empty()) {
-                    m_legacyMemoryLists.push_back(std::move(issue));
-                }
-            }
-            m_cueListTally += result.cueListTally;
-            // This leg leaves the files export.pdb names to the rekordbox
-            // leg. When that leg was in the scan and did not check them,
-            // they were not checked at all, and a clean card over the
-            // OneLibrary files alone would say otherwise.
-            if (result.legacyMemoryListsChecked && !m_legacyMemoryListsChecked && m_legacyMemoryListsError.isEmpty()
-                && m_chainFormats.contains(QStringLiteral("rekordbox"))) {
-                m_legacyMemoryListsError = QStringLiteral(
-                    "The rekordbox library could not be read, so only the analysis files OneLibrary alone names were "
-                    "checked.");
-            }
-            m_legacyMemoryListsChecked = m_legacyMemoryListsChecked || result.legacyMemoryListsChecked;
-            if (!result.legacyMemoryListsError.empty()) {
-                m_legacyMemoryListsError = (m_legacyMemoryListsError.isEmpty() ? QString() : m_legacyMemoryListsError
-                                                                                                + QStringLiteral("; "))
-                                           + QStringLiteral("OneLibrary: ")
-                                           + QString::fromStdString(result.legacyMemoryListsError);
-            }
-            emit legacyMemoryListsChanged();
-        } else if (result.legacyMemoryListsChecked || !result.legacyMemoryListsError.empty()) {
-            m_legacyMemoryLists = std::move(result.legacyMemoryLists);
-            m_legacyMemoryListsChecked = result.legacyMemoryListsChecked;
-            m_legacyMemoryListsError = QString::fromStdString(result.legacyMemoryListsError);
-            m_cueListTally = result.cueListTally;
-            emit legacyMemoryListsChanged();
         }
         // Same rule as the two above: a leg that read nothing must not
         // wipe what a leg that did read left behind. hasColumn is part
@@ -1549,21 +1283,6 @@ void LibraryConsistencyController::attachSession()
                     emit importStateChanged();
                     return;
                 }
-                if (auto staged = m_stagedHiddenCueFixes.find(changeId); staged != m_stagedHiddenCueFixes.end()) {
-                    // The track's pads are coloured now: off the list, and
-                    // the Engine leg is read again after the save like the
-                    // others, so the count is what the database says.
-                    m_stagedHiddenCueFixes.erase(staged);
-                    m_hiddenCueFixStaged = !m_stagedHiddenCueFixes.empty();
-                    m_hiddenEngineCues.erase(
-                        std::remove_if(m_hiddenEngineCues.begin(), m_hiddenEngineCues.end(),
-                                       [&](const auto &h) { return RecolourEngineCuesChange::idFor(h.track.sourceId) == changeId; }),
-                        m_hiddenEngineCues.end());
-                    m_rescanAfterSave = true;
-                    clearStagedStatusIfNothingStaged();
-                    emit hiddenCuesChanged();
-                    return;
-                }
                 if (auto staged = m_stagedPlaylists.find(changeId); staged != m_stagedPlaylists.end()) {
                     m_stagedPlaylists.erase(staged);
                     m_rescanAfterSave = true;
@@ -1576,33 +1295,6 @@ void LibraryConsistencyController::attachSession()
                     m_rescanAfterSave = true;
                     clearStagedStatusIfNothingStaged();
                     emit playlistsChanged();
-                    return;
-                }
-                if (auto staged = m_stagedLegacyMemoryListFixes.find(changeId);
-                    staged != m_stagedLegacyMemoryListFixes.end()) {
-                    m_stagedLegacyMemoryListFixes.erase(staged);
-                    m_legacyMemoryListFixStaged = !m_stagedLegacyMemoryListFixes.empty();
-                    m_legacyMemoryLists.erase(
-                        std::remove_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                       [&](const auto &issue) {
-                                           return RepairLegacyMemoryListChange::idFor(issue.finding.analyzePath)
-                                                  == changeId;
-                                       }),
-                        m_legacyMemoryLists.end());
-                    m_rescanAfterSave = true;
-                    clearStagedStatusIfNothingStaged();
-                    emit legacyMemoryListsChanged();
-                    return;
-                }
-                if (auto staged = m_stagedCleanupLeftovers.find(changeId);
-                    staged != m_stagedCleanupLeftovers.end()) {
-                    // Re-read after the save, like the others: what is
-                    // left over is whatever OneLibrary now says.
-                    m_stagedCleanupLeftovers.erase(staged);
-                    m_cleanupLeftoverFixStaged = !m_stagedCleanupLeftovers.empty();
-                    m_rescanAfterSave = true;
-                    clearStagedStatusIfNothingStaged();
-                    emit cleanupLeftoversChanged();
                     return;
                 }
                 if (auto staged = m_stagedSampleRates.find(changeId); staged != m_stagedSampleRates.end()) {
@@ -1680,15 +1372,6 @@ void LibraryConsistencyController::attachSession()
                 m_stagedArtwork.clear();
                 m_stagedSampleRates.clear();
                 m_sampleRateFillStaged = false;
-                m_stagedCleanupLeftovers.clear();
-                m_cleanupLeftoverFixStaged = false;
-                emit cleanupLeftoversChanged();
-                m_stagedHiddenCueFixes.clear();
-                m_hiddenCueFixStaged = false;
-                emit hiddenCuesChanged();
-                m_stagedLegacyMemoryListFixes.clear();
-                m_legacyMemoryListFixStaged = false;
-                emit legacyMemoryListsChanged();
                 m_stagedPlaylists.clear();
                 m_danglingFixStaged = false;
                 emit playlistsChanged();
@@ -2196,158 +1879,6 @@ void LibraryConsistencyController::unstageSampleRateFill()
     clearStagedStatusIfNothingStaged();
 }
 
-int LibraryConsistencyController::cleanupLeftoverFixableCount() const
-{
-    return static_cast<int>(std::count_if(m_cleanupLeftovers.begin(), m_cleanupLeftovers.end(), [](const auto &l) {
-        return l.kind == domain::CleanupLeftover::Kind::Repairable;
-    }));
-}
-
-QVariantList LibraryConsistencyController::cleanupLeftoversHeldBack() const
-{
-    QVariantList list;
-    for (const auto &leftover : m_cleanupLeftovers) {
-        QString reason;
-        switch (leftover.kind) {
-        case domain::CleanupLeftover::Kind::Repairable:
-            continue;
-        case domain::CleanupLeftover::Kind::NoSurvivor:
-            // Not "no copy is left": the matcher found none it could
-            // confirm, which is a different claim. A copy whose title
-            // differs ("(feat. ...)") is not found, and one was there.
-            reason = QStringLiteral("Seabass found no copy in the rekordbox library it could match this to, so "
-                                    "its playlists have nowhere to go. Check by hand whether one is there under "
-                                    "another title.");
-            break;
-        case domain::CleanupLeftover::Kind::SeveralSurvivors:
-            reason = QStringLiteral("The rekordbox library has more than one copy of it, and nothing says which "
-                                    "one Clean Up kept.");
-            break;
-        case domain::CleanupLeftover::Kind::SurvivorNotInOneLibrary:
-            reason = QStringLiteral("The copy Clean Up kept is not in OneLibrary, so its playlists have nowhere "
-                                    "to go.");
-            break;
-        }
-        list.push_back(QVariantMap{{"title", QString::fromStdString(leftover.row.title)},
-                                   {"artist", QString::fromStdString(leftover.row.artist)},
-                                   {"reason", reason}});
-    }
-    return list;
-}
-
-void LibraryConsistencyController::finishCleanupLeftovers()
-{
-    if (busy() || m_cleanupLeftoverFixStaged) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    std::vector<const domain::CleanupLeftover *> repairable;
-    for (const auto &leftover : m_cleanupLeftovers) {
-        if (leftover.kind == domain::CleanupLeftover::Kind::Repairable) {
-            repairable.push_back(&leftover);
-        }
-    }
-    if (repairable.empty()) {
-        return;
-    }
-    if (!ensureSessionForStaging()) {
-        return;
-    }
-    // One change per duplicate, staged in one call, like the sample rates.
-    std::vector<std::unique_ptr<PendingChange>> changes;
-    std::set<QString> ids;
-    changes.reserve(repairable.size());
-    for (const auto *leftover : repairable) {
-        changes.push_back(std::make_unique<FinishCleanupChange>(m_rekordboxPath, *leftover, changes.empty()));
-        ids.insert(FinishCleanupChange::idFor(leftover->row.filePath));
-    }
-    if (!m_session->stageAll(std::move(changes))) {
-        return;  // the session reported the refusal; the page shows it
-    }
-    m_stagedCleanupLeftovers = std::move(ids);
-    m_cleanupLeftoverFixStaged = true;
-    emit cleanupLeftoversChanged();
-    setStagedStatusMessage(QStringLiteral("Staged removing %1 duplicate(s) Clean Up left in OneLibrary. Press Save "
-                                          "to write it to the stick.")
-                               .arg(repairable.size()));
-}
-
-int LibraryConsistencyController::hiddenCueCount() const
-{
-    int count = 0;
-    for (const auto &hidden : m_hiddenEngineCues) {
-        count += hidden.hidden();
-    }
-    return count;
-}
-
-QVariantList LibraryConsistencyController::hiddenCueTracks() const
-{
-    QVariantList list;
-    for (const auto &hidden : m_hiddenEngineCues) {
-        QVariantMap m;
-        m["title"] = QString::fromStdString(hidden.track.title);
-        m["artist"] = QString::fromStdString(hidden.track.artist);
-        m["hotCues"] = hidden.hotCues;
-        m["loops"] = hidden.loops;
-        list << m;
-    }
-    return list;
-}
-
-void LibraryConsistencyController::recolourHiddenCues()
-{
-    if (busy() || m_hiddenCueFixStaged || m_hiddenEngineCues.empty()) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    if (!ensureSessionForStaging()) {
-        return;
-    }
-    const int count = static_cast<int>(m_hiddenEngineCues.size());
-    std::set<QString> ids;
-    for (const auto &hidden : m_hiddenEngineCues) {
-        if (!m_session->stage(std::make_unique<RecolourEngineCuesChange>(m_enginePath, hidden, count))) {
-            // Refused (the lock): what was staged before stays staged and
-            // marked; the session has reported why.
-            break;
-        }
-        ids.insert(RecolourEngineCuesChange::idFor(hidden.track.sourceId));
-    }
-    if (ids.empty()) {
-        return;
-    }
-    m_stagedHiddenCueFixes = std::move(ids);
-    m_hiddenCueFixStaged = true;
-    emit hiddenCuesChanged();
-    setStagedStatusMessage(QStringLiteral("Staged a colour for the hidden cues on %1 track(s). Press Save to write it.")
-                               .arg(static_cast<int>(m_stagedHiddenCueFixes.size())));
-}
-
-void LibraryConsistencyController::unstageHiddenCueFix()
-{
-    if (!m_hiddenCueFixStaged) {
-        return;
-    }
-    if (m_session) {
-        for (const QString &id : m_stagedHiddenCueFixes) {
-            m_session->unstage(id);
-        }
-    }
-    m_stagedHiddenCueFixes.clear();
-    m_hiddenCueFixStaged = false;
-    emit hiddenCuesChanged();
-    clearStagedStatusIfNothingStaged();
-}
-
-int LibraryConsistencyController::legacyMemoryListCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return issue.finding.memoryListFinding(); }));
-}
-
 namespace
 {
 QString libraryNameOf(const std::string &format)
@@ -2528,311 +2059,6 @@ void LibraryConsistencyController::unstageDanglingPlaylistEntries()
     clearStagedStatusIfNothingStaged();
 }
 
-int LibraryConsistencyController::legacyMemoryListFixableCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return issue.finding.memoryListFixable(); }));
-}
-
-int LibraryConsistencyController::legacyMemoryListDebrisCount() const
-{
-    int count = 0;
-    for (const auto &issue : m_legacyMemoryLists) {
-        count += static_cast<int>(issue.finding.debris.size());
-    }
-    return count;
-}
-
-QVariantList LibraryConsistencyController::legacyMemoryListTracks() const
-{
-    QVariantList list;
-    for (const auto &issue : m_legacyMemoryLists) {
-        if (!issue.finding.memoryListFinding()) {
-            continue;
-        }
-        const auto &shape = issue.finding.shape;
-        QStringList what;
-        if (!shape.malformed.empty()) {
-            what << QStringLiteral("a memory cue list Seabass cannot read (%1), left alone")
-                        .arg(QString::fromStdString(shape.malformed));
-        } else if (shape.damaged()) {
-            QStringList how;
-            if (shape.headerStale) {
-                how << QStringLiteral("a header that says it is empty");
-            }
-            if (shape.unlinked) {
-                how << QStringLiteral("entries not linked");
-            }
-            if (shape.zeroSlots) {
-                how << QStringLiteral("an empty slot a player left");
-            }
-            what << QStringLiteral("a memory cue list of %1 %2 with %3")
-                        .arg(shape.entries)
-                        .arg(shape.entries == 1 ? QStringLiteral("entry") : QStringLiteral("entries"))
-                        .arg(how.join(QStringLiteral(", ")));
-        }
-        if (!issue.finding.debris.empty()) {
-            QStringList names;
-            for (const auto &file : issue.finding.debris) {
-                names << QString::fromStdString(pathToUtf8(pathFromUtf8(file).filename()));
-            }
-            what << QStringLiteral("%1 beside its analysis, which nothing refers to").arg(names.join(QStringLiteral(", ")));
-        }
-        QVariantMap m;
-        m["title"] = QString::fromStdString(issue.track.title);
-        m["artist"] = QString::fromStdString(issue.track.artist);
-        m["what"] = what.join(QStringLiteral("; "));
-        m["fixable"] = issue.finding.memoryListFixable();
-        list << m;
-    }
-    return list;
-}
-
-namespace
-{
-
-// "1:07.8": where a cue sits, as a DJ reads it off a player.
-QString cueTime(uint32_t ms)
-{
-    const uint32_t tenths = (ms + 50) / 100;
-    return QStringLiteral("%1:%2.%3")
-        .arg(tenths / 600)
-        .arg((tenths / 10) % 60, 2, 10, QLatin1Char('0'))
-        .arg(tenths % 10);
-}
-
-// One list in words: "1 pad (A 0:30.8)", "2 memory cues (0:00.1, 0:16.6)",
-// "no pads". A list of more than eight is counted, not spelled out.
-QString cueListWords(const std::vector<infrastructure::rekordbox::ListedCue> &cues, bool hot)
-{
-    const int n = static_cast<int>(cues.size());
-    const QString noun = hot ? (n == 1 ? QStringLiteral("pad") : QStringLiteral("pads"))
-                             : (n == 1 ? QStringLiteral("memory cue") : QStringLiteral("memory cues"));
-    if (n == 0) {
-        return QStringLiteral("no ") + noun;
-    }
-    QString text = QString::number(n) + QLatin1Char(' ') + noun;
-    if (n > 8) {
-        return text;
-    }
-    auto sorted = cues;
-    std::stable_sort(sorted.begin(), sorted.end(), [hot](const auto &a, const auto &b) {
-        return hot && a.pad != b.pad ? a.pad < b.pad : a.timeMs < b.timeMs;
-    });
-    QStringList each;
-    for (const auto &cue : sorted) {
-        QString one = hot && cue.pad >= 1 && cue.pad <= 26 ? QString(QChar('A' + int(cue.pad) - 1)) + QLatin1Char(' ')
-                      : hot                                ? QStringLiteral("pad %1 ").arg(cue.pad)
-                                                           : QString();
-        one += cueTime(cue.timeMs);
-        if (cue.isLoop) {
-            one += QStringLiteral(" loop to ") + cueTime(cue.loopEndMs);
-        }
-        each << one;
-    }
-    return text + QStringLiteral(" (") + each.join(QStringLiteral(", ")) + QLatin1Char(')');
-}
-
-}  // namespace
-
-int LibraryConsistencyController::cueListDisagreementCount() const
-{
-    // Only lists that were compared and differ; a list that could not be
-    // read is named on the page, but not counted as showing other cues.
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) {
-                                              return issue.finding.disagreement && issue.finding.disagreement->any();
-                                          }));
-}
-
-int LibraryConsistencyController::cueListDisagreementFixableCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return issue.finding.listsFixable(); }));
-}
-
-int LibraryConsistencyController::cueListFindingCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return issue.finding.anything(); }));
-}
-
-int LibraryConsistencyController::cueListMalformedCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return !issue.finding.listsMalformed.empty(); }));
-}
-
-QVariantList LibraryConsistencyController::cueListUnreadableTracks() const
-{
-    QVariantList list;
-    for (const auto &issue : m_legacyMemoryLists) {
-        if (issue.finding.examined || issue.finding.unreadable.empty()) {
-            continue;
-        }
-        QVariantMap m;
-        m["title"] = QString::fromStdString(issue.track.title);
-        m["artist"] = QString::fromStdString(issue.track.artist);
-        m["what"] = QStringLiteral("could not be read: %1").arg(QString::fromStdString(issue.finding.unreadable));
-        list << m;
-    }
-    return list;
-}
-
-int LibraryConsistencyController::cueListFixableCount() const
-{
-    return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
-                                          [](const auto &issue) { return issue.finding.fixable(); }));
-}
-
-QVariantList LibraryConsistencyController::cueListDisagreementTracks() const
-{
-    QVariantList list;
-    for (const auto &issue : m_legacyMemoryLists) {
-        const auto &finding = issue.finding;
-        if (!finding.listsFinding()) {
-            continue;
-        }
-        QStringList what;
-        QStringList player;
-        QStringList seabass;
-        if (!finding.listsMalformed.empty()) {
-            what << QStringLiteral("cue lists Seabass cannot read (%1), left alone")
-                        .arg(QString::fromStdString(finding.listsMalformed));
-        } else {
-            const auto &d = *finding.disagreement;
-            if (d.hot) {
-                player << cueListWords(d.lists.legacyHot, true);
-                seabass << cueListWords(d.seabassHot, true);
-            }
-            if (d.memory) {
-                player << cueListWords(d.lists.legacyMemory, false);
-                seabass << cueListWords(d.seabassMemory, false);
-            }
-            if (d.viewsAgree) {
-                // Seabass shows the legacy cues the newer list lacks, so
-                // the two agree on screen; a reader of the newer list
-                // alone would not.
-                QStringList newer;
-                if (d.hot) {
-                    newer << cueListWords(d.lists.modernHot, true);
-                }
-                if (d.memory) {
-                    newer << cueListWords(d.lists.modernMemory, false);
-                }
-                what << QStringLiteral("the player and Seabass show %1, but the newer list holds only %2")
-                            .arg(player.join(QStringLiteral(" and ")), newer.join(QStringLiteral(" and ")));
-            } else {
-                what << QStringLiteral("the player shows %1; Seabass sees %2")
-                            .arg(player.join(QStringLiteral(" and ")), seabass.join(QStringLiteral(" and ")));
-            }
-            if (!d.unrepairable.empty()) {
-                what << QStringLiteral("left alone: %1").arg(QString::fromStdString(d.unrepairable));
-            }
-        }
-        QVariantMap m;
-        m["title"] = QString::fromStdString(issue.track.title);
-        m["artist"] = QString::fromStdString(issue.track.artist);
-        m["what"] = what.join(QStringLiteral("; "));
-        m["player"] = player.join(QStringLiteral(" and "));
-        m["seabass"] = seabass.join(QStringLiteral(" and "));
-        m["fixable"] = finding.listsFixable();
-        list << m;
-    }
-    return list;
-}
-
-QVariantMap LibraryConsistencyController::cueListCounts() const
-{
-    QVariantMap m;
-    m["examined"] = static_cast<int>(m_cueListTally.examined);
-    m["unreadable"] = static_cast<int>(m_cueListTally.unreadable);
-    m["legacyHeader"] = static_cast<int>(m_cueListTally.legacyHeader);
-    m["playerRewritten"] = static_cast<int>(m_cueListTally.playerRewritten);
-    m["disagree"] = static_cast<int>(m_cueListTally.disagree);
-    m["strayFiles"] = static_cast<int>(m_cueListTally.strayFiles);
-    return m;
-}
-
-void LibraryConsistencyController::setKeepPlayerCueLists(bool keepPlayer)
-{
-    // Read when the repair is staged; a staged repair keeps the choice it
-    // was staged with, so the choice is fixed until it is unstaged.
-    if (m_keepPlayerCueLists == keepPlayer || m_legacyMemoryListFixStaged) {
-        return;
-    }
-    m_keepPlayerCueLists = keepPlayer;
-    emit legacyMemoryListsChanged();
-}
-
-void LibraryConsistencyController::repairLegacyMemoryLists()
-{
-    if (busy() || m_legacyMemoryListFixStaged || cueListFixableCount() == 0) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    if (!ensureSessionForStaging()) {
-        return;
-    }
-    const auto keep = m_keepPlayerCueLists ? infrastructure::rekordbox::KeepCueList::Player
-                                           : infrastructure::rekordbox::KeepCueList::Seabass;
-    std::set<QString> ids;
-    for (const auto &issue : m_legacyMemoryLists) {
-        if (!issue.finding.fixable()) {
-            continue;
-        }
-        if (!m_session->stage(std::make_unique<RepairLegacyMemoryListChange>(issue.track, issue.finding, keep))) {
-            // Refused (the lock): what was staged before stays staged and
-            // marked; the session has reported why.
-            break;
-        }
-        ids.insert(RepairLegacyMemoryListChange::idFor(issue.finding.analyzePath));
-    }
-    if (ids.empty()) {
-        return;
-    }
-    m_stagedLegacyMemoryListFixes = std::move(ids);
-    m_legacyMemoryListFixStaged = true;
-    emit legacyMemoryListsChanged();
-    setStagedStatusMessage(QStringLiteral("Staged the cue list repair for %1 track(s). Press Save to write it.")
-                               .arg(static_cast<int>(m_stagedLegacyMemoryListFixes.size())));
-}
-
-void LibraryConsistencyController::unstageLegacyMemoryListFix()
-{
-    if (!m_legacyMemoryListFixStaged) {
-        return;
-    }
-    if (m_session) {
-        for (const QString &id : m_stagedLegacyMemoryListFixes) {
-            m_session->unstage(id);
-        }
-    }
-    m_stagedLegacyMemoryListFixes.clear();
-    m_legacyMemoryListFixStaged = false;
-    emit legacyMemoryListsChanged();
-    clearStagedStatusIfNothingStaged();
-}
-
-void LibraryConsistencyController::unstageCleanupLeftoverFix()
-{
-    if (!m_cleanupLeftoverFixStaged) {
-        return;
-    }
-    if (m_session) {
-        QStringList staged;
-        for (const QString &id : m_stagedCleanupLeftovers) {
-            staged << id;
-        }
-        m_session->unstageAll(staged);
-    }
-    m_stagedCleanupLeftovers.clear();
-    m_cleanupLeftoverFixStaged = false;
-    emit cleanupLeftoversChanged();
-    clearStagedStatusIfNothingStaged();
-}
-
 void LibraryConsistencyController::unstageArtworkRepair()
 {
     if (m_stagedArtwork.empty()) {
@@ -2964,8 +2190,7 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged && !m_cleanupLeftoverFixStaged && !m_hiddenCueFixStaged
-        && !m_legacyMemoryListFixStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged) {
+        && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged) {
         setStatusMessage({});
     }
 }

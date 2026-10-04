@@ -130,9 +130,6 @@ set(SEABASS_GUI_QML_FILES
     qml/CuesAtZeroPage.qml
     qml/ImportPromptPage.qml
     qml/SampleRatesPage.qml
-    qml/OneLibraryLeftoversPage.qml
-    qml/HiddenCuesPage.qml
-    qml/MemoryCueListsPage.qml
     qml/PlaylistSyncPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml

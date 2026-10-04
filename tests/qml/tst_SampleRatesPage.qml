@@ -108,7 +108,7 @@ TestCase {
 
         verify(findChild(page, "sampleRateSummary") !== null, "its own check is here");
         for (const other of ["missingFilesSummary", "stagedIssuesNote", "cuesAtZeroSummary", "stagedJunkCuesNote",
-                             "importPromptSummary", "markImportedButton", "cleanupLeftoverSummary", "finishCleanupButton"]) {
+                             "importPromptSummary", "markImportedButton"]) {
             compare(findChild(page, other), null, other + " belongs to another check's page");
         }
         compare(controller.scanCalls, 0, "a shared controller is not scanned again");

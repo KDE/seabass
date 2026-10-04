@@ -116,7 +116,6 @@ TestCase {
             {name: "CuesAtZeroPage", props: stickProps({playbackController: realPlayback})},
             {name: "ImportPromptPage", props: stickProps({})},
             {name: "SampleRatesPage", props: stickProps({})},
-            {name: "OneLibraryLeftoversPage", props: stickProps({})},
             {name: "SyncPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "ScanPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "DuplicatesPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
