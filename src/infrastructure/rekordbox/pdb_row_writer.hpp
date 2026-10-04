@@ -313,6 +313,11 @@ public:
     // many rows were added.
     size_t appendPlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
 
+    // The ids of the track rows whose file_path is `pathOnStick` as
+    // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
+    // ignored. More than one when the file was imported twice.
+    std::vector<uint32_t> trackIdsWithFilePath(const std::string &pathOnStick) const;
+
     // The playlist tree as export.pdb holds it now: every playlist and
     // folder, with its parent (0 for the top level) and its place there.
     struct PlaylistTreeNode

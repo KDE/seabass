@@ -4,8 +4,10 @@
 
 #include "infrastructure/engine/engine_playlists.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
 #include <djinterop/djinterop.hpp>
 #include <sqlite3.h>
@@ -156,6 +158,80 @@ bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::s
                                  + "\" after removing it");
     }
     return true;
+}
+
+bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath)
+{
+    try {
+        auto db = djinterop::engine::load_database(engineLibraryPath);
+        return playlistAtPath(db, playlistPath).has_value();
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibraryPath, const std::string &filePath)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    std::error_code ec;
+    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(engineLibraryPath), ec);
+    std::vector<std::int64_t> ids;
+    if (ec) {
+        return ids;
+    }
+    for (const auto &t : db.tracks_by_relative_path(pathToGenericUtf8(relative))) {
+        ids.push_back(t.id());
+    }
+    return ids;
+}
+
+int deleteEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    const auto top = playlistAtPath(db, playlistPath);
+    if (!top) {
+        return 0;
+    }
+    // Children before parents, so each playlist is removed after
+    // everything below it.
+    std::vector<djinterop::playlist> order;
+    std::vector<djinterop::playlist> pending{*top};
+    while (!pending.empty()) {
+        djinterop::playlist pl = pending.back();
+        pending.pop_back();
+        order.push_back(pl);
+        for (const auto &child : pl.children()) {
+            pending.push_back(child);
+        }
+    }
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {
+        it->clear_tracks();
+        db.remove_playlist(*it);
+    }
+    if (playlistAtPath(db, playlistPath)) {
+        throw std::runtime_error("engine: \"" + playlistPath + "\" is still there after deleting it");
+    }
+    // No entry may be left naming a playlist that is gone.
+    const std::string file = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(file.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        sqlite3_stmt *stmt = nullptr;
+        int orphans = 0;
+        if (sqlite3_prepare_v2(handle, "SELECT count(*) FROM PlaylistEntity WHERE listId NOT IN (SELECT id FROM Playlist);", -1,
+                               &stmt, nullptr)
+                == SQLITE_OK
+            && sqlite3_step(stmt) == SQLITE_ROW) {
+            orphans = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(handle);
+        if (orphans > 0) {
+            throw std::runtime_error("engine: " + std::to_string(orphans) + " playlist entries left without a playlist");
+        }
+    } else {
+        sqlite3_close(handle);
+    }
+    return static_cast<int>(order.size());
 }
 
 }  // namespace seabass::infrastructure::engine

@@ -39,4 +39,20 @@ bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string
 bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                               std::int64_t trackId);
 
+// Whether the library at `engineLibraryPath` has a playlist at
+// playlistPath ("Folder/List"). False when the library cannot be opened.
+bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath);
+
+// The ids of the tracks whose file is `filePath` (absolute), by the path
+// Engine stores relative to the library folder.
+std::vector<std::int64_t> engineTrackIdsForFile(const std::string &engineLibraryPath, const std::string &filePath);
+
+// Deletes the playlist at playlistPath ("Folder/List") with every playlist
+// below it, from the library at `engineLibraryPath` (a write root). Each
+// playlist's entries are cleared first: m.db only cascades them with
+// foreign keys on, which nothing guarantees. Tracks stay. Returns how many
+// playlists went (0 when there is no such playlist); throws when the
+// database cannot be written or an entry survives.
+int deleteEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath);
+
 }  // namespace seabass::infrastructure::engine
