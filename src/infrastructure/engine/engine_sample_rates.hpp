@@ -42,6 +42,14 @@ struct SampleRateEntry
 struct SampleRateAudit
 {
     int tracksChecked = 0;
+    // Rows the player has not analysed yet: no track data blob at all,
+    // which is what Engine OS's own rekordbox import writes. Left out of
+    // `missing` (#58 follow-up, 2026-10-04): the rate is one field of the
+    // analysis the player writes on first load, Library Health's analysis
+    // card already reports these rows, and filling the rate in would mean
+    // writing an analysis-shaped blob into a row the player has not
+    // analysed. Counted so a page can say why they are not listed.
+    int notYetAnalysed = 0;
     std::vector<SampleRateEntry> missing;
     std::string error;  // the library could not be read at all
 

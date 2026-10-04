@@ -443,11 +443,18 @@ Page {
             return "Not checked yet.";
         }
         if (root.junkCueCount === 0) {
-            return "No cues are sitting at 0:00.";
+            return "No cues are sitting at the very start of a track.";
         }
-        return (root.junkCueCount === 1 ? "One cue sits" : root.junkCueCount + " cues sit")
-             + " at 0:00. These are almost always accidental: a stray press while the track was at the"
-             + " start, rather than something you placed on purpose.";
+        // Said in tracks, and true to both rules: a cue within the first
+        // second, or hot cues crowded into the first two. The same cue is
+        // a row in every library that holds it, so the row count alone
+        // read as several times the problem there is.
+        const tracks = Math.max(1, healthController.junkCues.trackCount());
+        return (tracks === 1 ? "One track has" : tracks + " tracks have")
+             + " cues in the first second, or hot cues crowded into the first two ("
+             + root.junkCueCount + (root.junkCueCount === 1 ? " cue" : " cues")
+             + " across the libraries that hold them). These are almost always accidental: a stray press"
+             + " while the track was at the start, rather than something you placed on purpose.";
     }
 
     // The same header every other section page uses. This one had the

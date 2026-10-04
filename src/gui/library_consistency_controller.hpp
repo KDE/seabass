@@ -157,6 +157,10 @@ public:
     void setStaged(int index, bool staged);
     void clearStaged();
     int count() const { return static_cast<int>(m_issues.size()); }
+    // The tracks those rows are on, each audio file once: the same cue is
+    // a row in every library that holds it (rekordbox, OneLibrary,
+    // Engine), so the row count overstates how much is wrong.
+    Q_INVOKABLE int trackCount() const;
 
 signals:
     void countChanged();

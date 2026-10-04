@@ -777,6 +777,28 @@ TestCase {
         LibraryConsistencyController {}
     }
 
+    // The stray-cue headline counts tracks, each audio file once, and
+    // says what the rules are: a cue a library mirrors is a row in each,
+    // and "214 cues sit at 0:00" read as 214 separate problems while
+    // the rows also held cues up to two seconds in (Library Health
+    // audit, 2026-10-04).
+    function test_theStrayCueHeadlineCountsTracks() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        const rows = controller.junkCues.count;
+        verify(rows > 0, "precondition: the fixture has stray cues");
+        const tracks = controller.junkCues.trackCount();
+        verify(tracks > 0 && tracks <= rows, "tracks " + tracks + " of " + rows + " rows");
+        const card = findByObjectName(page, "junkCuesCard");
+        verify(card.summary.indexOf(tracks + (tracks === 1 ? " track has" : " tracks have")) === 0, card.summary);
+        verify(card.summary.indexOf(rows + (rows === 1 ? " cue" : " cues")) > 0, card.summary);
+        verify(card.summary.indexOf("at 0:00") < 0, "not \"at 0:00\": the rules reach two seconds in");
+    }
+
     // #55. A stick with one track's memory list in the shape of 5282555e
     // and a hung player's ANLZ0001.DAT beside it: the real check finds
     // exactly that track, the card says so, and the repair stages from

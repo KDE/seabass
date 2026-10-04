@@ -340,6 +340,17 @@ void JunkCueIssueListModel::setStaged(int index, bool staged)
     emit dataChanged(this->index(index), this->index(index), {StagedRole});
 }
 
+int JunkCueIssueListModel::trackCount() const
+{
+    std::set<std::string> files;
+    for (const auto &issue : m_issues) {
+        files.insert(issue.track.filePath.empty()
+                         ? issue.track.format + "\n" + issue.track.sourceId
+                         : application::normalizedPathKey(issue.track.filePath));
+    }
+    return static_cast<int>(files.size());
+}
+
 void JunkCueIssueListModel::clearStaged()
 {
     if (m_issues.empty()) {
@@ -2063,7 +2074,12 @@ QVariantList LibraryConsistencyController::cleanupLeftoversHeldBack() const
         case domain::CleanupLeftover::Kind::Repairable:
             continue;
         case domain::CleanupLeftover::Kind::NoSurvivor:
-            reason = QStringLiteral("No copy of it is left in the rekordbox library to keep its playlists.");
+            // Not "no copy is left": the matcher found none it could
+            // confirm, which is a different claim. A copy whose title
+            // differs ("(feat. ...)") is not found, and one was there.
+            reason = QStringLiteral("Seabass found no copy in the rekordbox library it could match this to, so "
+                                    "its playlists have nowhere to go. Check by hand whether one is there under "
+                                    "another title.");
             break;
         case domain::CleanupLeftover::Kind::SeveralSurvivors:
             reason = QStringLiteral("The rekordbox library has more than one copy of it, and nothing says which "

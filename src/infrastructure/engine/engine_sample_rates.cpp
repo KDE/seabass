@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <exception>
 #include <filesystem>
+#include <set>
+
+#include <sqlite3.h>
 
 #include <djinterop/djinterop.hpp>
 
@@ -48,6 +51,35 @@ std::optional<double> rateOf(djinterop::track &track, bool &unreadable)
     return std::nullopt;
 }
 
+// The rows whose PerformanceData has no trackData at all: never analysed
+// by a player. Read straight from m.db, read-only, because libdjinterop
+// answers "no rate" alike for a missing blob and for a blob holding 0.
+// Empty when the schema has no such column (Engine 1.x keeps performance
+// data elsewhere), and then every row is audited as before.
+std::set<std::int64_t> rowsWithoutTrackData(const std::string &engineLibraryPath)
+{
+    std::set<std::int64_t> ids;
+    const std::string db = pathToUtf8(databaseDirectory(engineLibraryPath) / "m.db");
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(db.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(handle);
+        return ids;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle,
+                           "SELECT t.id FROM Track t LEFT JOIN PerformanceData p ON p.trackId = t.id "
+                           "WHERE p.trackData IS NULL OR length(p.trackData) = 0;",
+                           -1, &stmt, nullptr)
+        == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            ids.insert(sqlite3_column_int64(stmt, 0));
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    return ids;
+}
+
 std::string textOf(const std::optional<std::string> &value)
 {
     return value ? *value : std::string();
@@ -75,12 +107,17 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         // answers every read with "SQL logic error".
         auto db = djinterop::engine::load_database(engineLibraryPath);
         const auto tracks = db.tracks();
+        const std::set<std::int64_t> notAnalysed = rowsWithoutTrackData(engineLibraryPath);
         progress.start("Checking sample rates", tracks.size());
         for (djinterop::track track : tracks) {
             cancel.throwIfCancelled();
             // Rows finished before this one; the loop ends rows early.
             progress.tick(static_cast<size_t>(audit.tracksChecked));
             audit.tracksChecked++;
+            if (notAnalysed.contains(track.id())) {
+                audit.notYetAnalysed++;
+                continue;
+            }
             bool unreadable = false;
             if (rateOf(track, unreadable) || unreadable) {
                 continue;
