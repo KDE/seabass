@@ -256,6 +256,13 @@ public:
     // rows affected.
     size_t reassignPlaylistMemberships(uint32_t oldTrackId, uint32_t newTrackId);
 
+    // Takes trackId out of playlistId: clears the presence bit of every
+    // playlist_entry row of that pair, the deletion rekordbox itself
+    // leaves behind. The other entries keep their entry_index; a gap in
+    // the numbering is what a real deletion leaves too. Returns how many
+    // rows were cleared (0 when the track was not in the playlist).
+    size_t removePlaylistEntry(uint32_t playlistId, uint32_t trackId);
+
     // Bumps the sequence number for every page touched this session
     // (page.sequence <- the header's current sequence; then the header's
     // own sequence is incremented -- matching the order the format's own

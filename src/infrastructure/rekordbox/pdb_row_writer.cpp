@@ -1443,6 +1443,22 @@ size_t PdbRowWriter::reassignPlaylistMemberships(uint32_t oldTrackId, uint32_t n
     return affected;
 }
 
+size_t PdbRowWriter::removePlaylistEntry(uint32_t playlistId, uint32_t trackId)
+{
+    size_t removed = 0;
+    for (const auto &m : findAllPlaylistEntriesForTrack(m_buffer, trackId)) {
+        if (m.playlistId != playlistId) {
+            continue;
+        }
+        uint16_t flags = readU16LE(m_buffer, m.row.presentFlagsOffset);
+        flags &= static_cast<uint16_t>(~(static_cast<uint16_t>(1) << m.row.rowIndexBit));
+        writeU16LE(m_buffer, m.row.presentFlagsOffset, flags);
+        m_editedPageIndices.insert(m.row.pageIndex);
+        ++removed;
+    }
+    return removed;
+}
+
 bool PdbRowWriter::commit()
 {
     if (m_editedPageIndices.empty()) {

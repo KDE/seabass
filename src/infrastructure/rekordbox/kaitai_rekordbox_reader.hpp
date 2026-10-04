@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -112,5 +113,10 @@ private:
     // same reader does not parse export.pdb a second time.
     std::unordered_map<std::string, std::string> m_analyzePathBySourceId;
 };
+
+// Every playlist's id in export.pdb by its full path ("Folder/List"),
+// spelled as the reader spells PlaylistMembership::name. Folders are
+// left out. Throws when export.pdb cannot be opened.
+std::map<std::string, uint32_t> rekordboxPlaylistIdsByPath(const std::string &pioneerRoot);
 
 }  // namespace seabass::infrastructure::rekordbox

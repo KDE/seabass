@@ -51,6 +51,8 @@
 #include "gui/edit/changes/finish_cleanup_change.hpp"
 #include "gui/edit/changes/recolour_engine_cues_change.hpp"
 #include "gui/edit/changes/repair_legacy_memory_list_change.hpp"
+#include "gui/edit/changes/align_playlist_change.hpp"
+#include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -557,6 +559,103 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
         tallyPlaylists(tracks, result);
         const bool full = depth == LibraryConsistencyController::Full;
 
+        if (full && lastLeg) {
+            // Playlists across the libraries, once all of them are read.
+            // The other catalogs come from the cache the earlier legs
+            // filled, so this reads nothing again. Unscoped: a playlist
+            // that differs is a fact about the stick, whatever playlist
+            // the page is showing.
+            try {
+                std::vector<domain::PlaylistCatalog> catalogs;
+                for (const QString &f : chain.formats) {
+                    const QString at = f == QStringLiteral("engine") ? enginePath : rekordboxPath;
+                    auto rows = f == format ? tracks
+                                            : scanTracks(f, at, application::NullProgressReporter::instance(), cancel);
+                    catalogs.push_back({f.toStdString(), std::move(rows)});
+                }
+                const auto key = [](const std::string &file) { return application::normalizedPathKey(file); };
+                // The rekordbox playlist's files, for the rule that
+                // OneLibrary gains only what rekordbox's copy holds.
+                const domain::PlaylistCatalog *rekordbox = nullptr;
+                for (const auto &c : catalogs) {
+                    if (c.format == "rekordbox") {
+                        rekordbox = &c;
+                    }
+                }
+                // Indexed once: spelling every path of three catalogs is
+                // the cost here, and doing it per playlist and per
+                // library took ten seconds and ignored a stop.
+                const domain::PlaylistIndex index(catalogs, [&cancel, &key](const std::string &file) {
+                    cancel.throwIfCancelled();
+                    return key(file);
+                });
+                const auto stopBetween = [&cancel]() { cancel.throwIfCancelled(); };
+                for (auto &difference : domain::findPlaylistDifferences(index, stopBetween)) {
+                    cancel.throwIfCancelled();
+                    PlaylistFinding finding;
+                    std::set<std::string> inRekordbox;
+                    if (rekordbox != nullptr) {
+                        for (const auto &t : rekordbox->tracks) {
+                            for (const auto &m : t.playlists) {
+                                if (m.name == difference.name && !t.filePath.empty()) {
+                                    inRekordbox.insert(key(t.filePath));
+                                }
+                            }
+                        }
+                    }
+                    for (const auto &side : difference.sides) {
+                        if (!side.hasPlaylist) {
+                            continue;
+                        }
+                        int leftOut = 0;
+                        std::vector<domain::PlaylistAlignment> kept;
+                        for (auto alignment : domain::alignTo(difference, side.format, index)) {
+                            if (alignment.format == "rekordbox") {
+                                leftOut += static_cast<int>(alignment.add.size());
+                                alignment.add.clear();
+                            } else if (alignment.format == "onelibrary" && rekordbox != nullptr) {
+                                // OneLibrary gains only what rekordbox's
+                                // copy holds, so the two stay one library.
+                                // A dropped addition takes the old copy it
+                                // would have replaced with it: removing
+                                // that alone would drop the song.
+                                std::vector<domain::Track> allowed;
+                                for (auto &t : alignment.add) {
+                                    if (inRekordbox.contains(key(t.filePath))) {
+                                        allowed.push_back(std::move(t));
+                                        continue;
+                                    }
+                                    const auto paired = std::find_if(
+                                        alignment.remove.begin(), alignment.remove.end(),
+                                        [&](const domain::Track &old) { return domain::sameSong(old, t); });
+                                    if (paired != alignment.remove.end()) {
+                                        alignment.remove.erase(paired);
+                                        --alignment.replacements;
+                                    }
+                                }
+                                alignment.add = std::move(allowed);
+                            }
+                            if (!alignment.add.empty() || !alignment.remove.empty()) {
+                                kept.push_back(std::move(alignment));
+                            }
+                        }
+                        finding.byReference[side.format] = std::move(kept);
+                        finding.leftOutByReference[side.format] = leftOut;
+                    }
+                    finding.difference = std::move(difference);
+                    result.playlistFindings.push_back(std::move(finding));
+                }
+                if (!enginePath.isEmpty()) {
+                    result.danglingPlaylistEntries = infrastructure::engine::danglingPlaylistEntries(enginePath.toStdString());
+                }
+                result.playlistsChecked = true;
+            } catch (const application::OperationCancelled &) {
+                throw;
+            } catch (const std::exception &e) {
+                result.playlistsError = e.what();
+            }
+        }
+
         if (full && format == QStringLiteral("onelibrary")) {
             // #8: what a Clean Up removed from export.pdb and never from
             // here. Before the playlist scope below, like the Engine
@@ -1029,6 +1128,11 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
         m_keepPlayerCueLists = true;
     }
     emit legacyMemoryListsChanged();
+    m_playlistFindings.clear();
+    m_danglingPlaylistEntries.clear();
+    m_playlistsChecked = false;
+    m_playlistsError.clear();
+    emit playlistsChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
     // though: it may wait for another thread's recovery of m.db, or copy a
@@ -1215,6 +1319,13 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_hiddenEngineCues = std::move(result.hiddenEngineCues);
             m_hiddenCuesChecked = true;
             emit hiddenCuesChanged();
+        }
+        if (result.playlistsChecked || !result.playlistsError.empty()) {
+            m_playlistFindings = std::move(result.playlistFindings);
+            m_danglingPlaylistEntries = std::move(result.danglingPlaylistEntries);
+            m_playlistsChecked = result.playlistsChecked;
+            m_playlistsError = QString::fromStdString(result.playlistsError);
+            emit playlistsChanged();
         }
         if (result.cueListsAppend) {
             // The OneLibrary leg's files, added to the rekordbox leg's; and
@@ -1443,6 +1554,20 @@ void LibraryConsistencyController::attachSession()
                     emit hiddenCuesChanged();
                     return;
                 }
+                if (auto staged = m_stagedPlaylists.find(changeId); staged != m_stagedPlaylists.end()) {
+                    m_stagedPlaylists.erase(staged);
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit playlistsChanged();
+                    return;
+                }
+                if (changeId == RemoveDanglingPlaylistEntriesChange::idFor()) {
+                    m_danglingFixStaged = false;
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit playlistsChanged();
+                    return;
+                }
                 if (auto staged = m_stagedLegacyMemoryListFixes.find(changeId);
                     staged != m_stagedLegacyMemoryListFixes.end()) {
                     m_stagedLegacyMemoryListFixes.erase(staged);
@@ -1554,6 +1679,9 @@ void LibraryConsistencyController::attachSession()
                 m_stagedLegacyMemoryListFixes.clear();
                 m_legacyMemoryListFixStaged = false;
                 emit legacyMemoryListsChanged();
+                m_stagedPlaylists.clear();
+                m_danglingFixStaged = false;
+                emit playlistsChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
                 emit sampleRatesChanged();
@@ -2210,6 +2338,186 @@ int LibraryConsistencyController::legacyMemoryListCount() const
                                           [](const auto &issue) { return issue.finding.memoryListFinding(); }));
 }
 
+namespace
+{
+QString libraryNameOf(const std::string &format)
+{
+    if (format == "rekordbox") {
+        return QStringLiteral("rekordbox");
+    }
+    if (format == "onelibrary") {
+        return QStringLiteral("OneLibrary");
+    }
+    return QStringLiteral("Engine");
+}
+
+QStringList titlesOf(const std::vector<domain::Track> &tracks)
+{
+    QStringList titles;
+    for (const auto &t : tracks) {
+        const QString title = QString::fromStdString(t.title.empty() ? t.filename : t.title);
+        titles << (t.artist.empty() ? title : title + QStringLiteral(", ") + QString::fromStdString(t.artist));
+    }
+    return titles;
+}
+}  // namespace
+
+QVariantList LibraryConsistencyController::playlistDifferences() const
+{
+    QVariantList list;
+    for (const auto &finding : m_playlistFindings) {
+        const auto &d = finding.difference;
+        QVariantMap m;
+        m["name"] = QString::fromStdString(d.name);
+        m["missingSomewhere"] = d.missingSomewhere();
+        QVariantList sides;
+        for (const auto &side : d.sides) {
+            QVariantMap sm;
+            sm["format"] = QString::fromStdString(side.format);
+            sm["library"] = libraryNameOf(side.format);
+            sm["hasPlaylist"] = side.hasPlaylist;
+            sm["members"] = side.members;
+            sm["lacking"] = titlesOf(side.lacking);
+            sm["extra"] = titlesOf(side.extra);
+            sm["notInEveryLibrary"] = side.notInEveryLibrary;
+            sides << sm;
+        }
+        m["sides"] = sides;
+        QVariantList references;
+        for (const auto &[format, alignments] : finding.byReference) {
+            int adds = 0;
+            int removes = 0;
+            int swaps = 0;
+            for (const auto &a : alignments) {
+                adds += static_cast<int>(a.add.size());
+                removes += static_cast<int>(a.remove.size());
+                swaps += a.replacements;
+            }
+            const auto left = finding.leftOutByReference.find(format);
+            references << QVariantMap{{"format", QString::fromStdString(format)},
+                                      {"library", libraryNameOf(format)},
+                                      {"adds", adds - swaps},
+                                      {"removes", removes - swaps},
+                                      {"swaps", swaps},
+                                      {"leftOut", left == finding.leftOutByReference.end() ? 0 : left->second}};
+        }
+        m["references"] = references;
+        const auto staged = m_stagedPlaylists.find(AlignPlaylistChange::idFor(d.name));
+        m["staged"] = staged == m_stagedPlaylists.end() ? QString() : staged->second;
+        list << m;
+    }
+    return list;
+}
+
+int LibraryConsistencyController::danglingPlaylistEntryCount() const
+{
+    int count = 0;
+    for (const auto &d : m_danglingPlaylistEntries) {
+        count += d.entries;
+    }
+    return count;
+}
+
+QVariantList LibraryConsistencyController::danglingPlaylists() const
+{
+    QVariantList list;
+    for (const auto &d : m_danglingPlaylistEntries) {
+        list << QVariantMap{{"playlist", QString::fromStdString(d.playlist)}, {"entries", d.entries}};
+    }
+    return list;
+}
+
+void LibraryConsistencyController::alignPlaylist(const QString &playlist, const QString &reference)
+{
+    if (busy()) {
+        return;
+    }
+    const std::string name = playlist.toStdString();
+    const std::string ref = reference.toStdString();
+    const PlaylistFinding *finding = nullptr;
+    for (const auto &f : m_playlistFindings) {
+        if (f.difference.name == name) {
+            finding = &f;
+        }
+    }
+    if (finding == nullptr) {
+        return;
+    }
+    const auto alignments = finding->byReference.find(ref);
+    if (alignments == finding->byReference.end() || alignments->second.empty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    const QString id = AlignPlaylistChange::idFor(name);
+    if (m_stagedPlaylists.contains(id)) {
+        if (m_session) {
+            m_session->unstage(id);
+        }
+        m_stagedPlaylists.erase(id);
+    }
+    if (!m_session->stage(std::make_unique<AlignPlaylistChange>(m_rekordboxPath, m_enginePath, name, ref,
+                                                                alignments->second, 1))) {
+        emit playlistsChanged();
+        return;
+    }
+    m_stagedPlaylists[id] = reference;
+    emit playlistsChanged();
+    setStagedStatusMessage(QStringLiteral("Staged matching \"%1\" to %2. Press Save to write it.")
+                               .arg(playlist, libraryNameOf(ref)));
+}
+
+void LibraryConsistencyController::unstagePlaylist(const QString &playlist)
+{
+    const QString id = AlignPlaylistChange::idFor(playlist.toStdString());
+    if (!m_stagedPlaylists.contains(id)) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(id);
+    }
+    m_stagedPlaylists.erase(id);
+    emit playlistsChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
+void LibraryConsistencyController::removeDanglingPlaylistEntries()
+{
+    const int count = danglingPlaylistEntryCount();
+    if (busy() || m_danglingFixStaged || count == 0 || m_enginePath.isEmpty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    if (!m_session->stage(std::make_unique<RemoveDanglingPlaylistEntriesChange>(m_enginePath, count))) {
+        return;
+    }
+    m_danglingFixStaged = true;
+    emit playlistsChanged();
+    setStagedStatusMessage(QStringLiteral("Staged removing %1 Engine playlist entr(ies) that point at no track. Press "
+                                          "Save to write it.")
+                               .arg(count));
+}
+
+void LibraryConsistencyController::unstageDanglingPlaylistEntries()
+{
+    if (!m_danglingFixStaged) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(RemoveDanglingPlaylistEntriesChange::idFor());
+    }
+    m_danglingFixStaged = false;
+    emit playlistsChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 int LibraryConsistencyController::legacyMemoryListFixableCount() const
 {
     return static_cast<int>(std::count_if(m_legacyMemoryLists.begin(), m_legacyMemoryLists.end(),
@@ -2647,7 +2955,7 @@ void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
         && !m_sampleRateFillStaged && !m_cleanupLeftoverFixStaged && !m_hiddenCueFixStaged
-        && !m_legacyMemoryListFixStaged && !m_importMarkStaged) {
+        && !m_legacyMemoryListFixStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged) {
         setStatusMessage({});
     }
 }
