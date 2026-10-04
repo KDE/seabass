@@ -81,17 +81,6 @@ bool allWithin(const std::vector<CuePoint> &sub, const std::vector<CuePoint> &su
     return true;
 }
 
-std::vector<CuePoint> loopsOrNot(const std::vector<CuePoint> &cues, bool loops)
-{
-    std::vector<CuePoint> out;
-    for (const CuePoint &cue : cues) {
-        if (cue.isLoop == loops) {
-            out.push_back(cue);
-        }
-    }
-    return out;
-}
-
 // Two lists of memory cues hold the same cues: as many of each kind, each
 // at the same place, a loop ending where the other does.
 bool memorySetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
@@ -561,33 +550,11 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     std::vector<CuePoint> ifXWins = ontoE();
     std::vector<CuePoint> ifEWins = ontoX(seen.hotCues);
 
-    // An Engine pad at one of X's memory cues, on a pad Engine DJ's own
-    // import would not have given it: a translation, or a hot cue the DJ
-    // set on the player at that place? Nothing on the stick says which.
-    if (!seen.uncertain.empty()) {
-        // X's way: X's cues the way the import places them, so the pads in
-        // question move to the translation's numbers (Engine's main cue is
-        // kept). Engine's way: those pads are hot cues, and X gets them.
-        std::vector<CuePoint> mainOnly;
-        for (const CuePoint &cue : e.cues) {
-            if (cue.kind != CuePoint::Kind::Hot) {
-                mainOnly.push_back(cue);
-            }
-        }
-        ifXWins = keepExistingColours(translateCuesForEngine(x.cues, mainOnly, toleranceMs).cues, e.cues, toleranceMs);
-        std::vector<CuePoint> hotFromEngine = seen.hotCues;
-        for (const auto &pad : seen.uncertain) {
-            hotFromEngine.push_back(pad.pad);
-        }
-        ifEWins = ontoX(hotFromEngine);
-        result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
-        result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
-        makeChoice(result, SyncPlan::Reason::EngineMemoryOrHotCue, describeUncertainPads(seen.uncertain, catalogDisplayName(x.format)));
-        return result;
-    }
     // A saved loop at one of X's memory loops, ending elsewhere: the loop's
     // length was changed on one side. X's way writes X's loop onto that
-    // pad; Engine's way gives X's memory loop Engine's end.
+    // pad; Engine's way gives X's memory loop Engine's end. Asked before
+    // an uncertain pad, whose choice would overwrite one of the two ends
+    // without saying so; such pads are counted in the reason.
     if (!seen.loopEnds.empty()) {
         std::vector<CuePoint> withEngineEnds = memoryX;
         std::vector<CuePoint> seenWithEngineEnds = seen.memoryCues;
@@ -615,12 +582,36 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
                                             catalogDisplayName(match.trackA.format),
                                             catalogDisplayName(match.trackB.format));
         // Any hot cue difference rides along: one choice settles the pair.
-        const std::size_t more = seen.loopEnds.size() - 1 + hotDifference.apart.size()
+        const std::size_t more = seen.loopEnds.size() - 1 + seen.uncertain.size() + hotDifference.apart.size()
             + hotDifference.loopVsCue.size() + hotDifference.loopEnds.size() + hotDifference.differ.size();
         if (more > 0) {
             text += ", and " + pluralPads(more);
         }
         makeChoice(result, SyncPlan::Reason::LoopEndsDiffer, std::move(text));
+        return result;
+    }
+    // An Engine pad at one of X's memory cues, on a pad Engine DJ's own
+    // import would not have given it: a translation, or a hot cue the DJ
+    // set on the player at that place? Nothing on the stick says which.
+    if (!seen.uncertain.empty()) {
+        // X's way: X's cues the way the import places them, so the pads in
+        // question move to the translation's numbers (Engine's main cue is
+        // kept). Engine's way: those pads are hot cues, and X gets them.
+        std::vector<CuePoint> mainOnly;
+        for (const CuePoint &cue : e.cues) {
+            if (cue.kind != CuePoint::Kind::Hot) {
+                mainOnly.push_back(cue);
+            }
+        }
+        ifXWins = keepExistingColours(translateCuesForEngine(x.cues, mainOnly, toleranceMs).cues, e.cues, toleranceMs);
+        std::vector<CuePoint> hotFromEngine = seen.hotCues;
+        for (const auto &pad : seen.uncertain) {
+            hotFromEngine.push_back(pad.pad);
+        }
+        ifEWins = ontoX(hotFromEngine);
+        result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
+        result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
+        makeChoice(result, SyncPlan::Reason::EngineMemoryOrHotCue, describeUncertainPads(seen.uncertain, catalogDisplayName(x.format)));
         return result;
     }
     result.cuesIfAWins = aIsEngine ? ifEWins : ifXWins;
@@ -716,6 +707,24 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
     result.cuesIfAWins = writeOnto(match.trackA, match.trackB);
     result.cuesIfBWins = writeOnto(match.trackB, match.trackA);
 
+    // A memory loop whose length changed on one side: the union above would
+    // carry both lengths, so whatever else differs, the DJ chooses, and the
+    // loop is named. Each side's own cues, not the union.
+    if (const auto loops = memoryLoopEndsDiffer(memoryA, memoryB, toleranceMs)) {
+        result.cuesIfAWins = keepExistingColours(match.trackA.cues, match.trackB.cues, toleranceMs);
+        result.cuesIfBWins = keepExistingColours(match.trackB.cues, match.trackA.cues, toleranceMs);
+        std::string text = describeLoopEnds("Memory loop at " + formatCuePosition(loops->first.positionMs),
+                                            loops->first, loops->second, catalogDisplayName(match.trackA.format),
+                                            catalogDisplayName(match.trackB.format));
+        const std::size_t pads = hotDifference.apart.size() + hotDifference.loopVsCue.size()
+            + hotDifference.loopEnds.size() + hotDifference.differ.size();
+        if (pads > 0) {
+            text += ", and " + std::to_string(pads) + (pads == 1 ? " pad differs" : " pads differ");
+        }
+        makeChoice(result, SyncPlan::Reason::LoopEndsDiffer, std::move(text));
+        return result;
+    }
+
     if (!hotDifference.any()) {
         // Hot cues agree, only memory cues differ. A side whose memory cues
         // are all among the other's only lacks some: it receives the
@@ -734,15 +743,6 @@ SyncPlan planBetween(const SyncMatch &original, const SyncMatch &match, double t
         // either way, and what is being chosen is whose edit stands.
         result.cuesIfAWins = keepExistingColours(match.trackA.cues, match.trackB.cues, toleranceMs);
         result.cuesIfBWins = keepExistingColours(match.trackB.cues, match.trackA.cues, toleranceMs);
-        // A memory loop whose length changed on one side is named as such:
-        // the DJ chooses a loop, not "both sides".
-        if (const auto loops = memoryLoopEndsDiffer(memoryA, memoryB, toleranceMs)) {
-            makeChoice(result, SyncPlan::Reason::LoopEndsDiffer,
-                       describeLoopEnds("Memory loop at " + formatCuePosition(loops->first.positionMs),
-                                        loops->first, loops->second, catalogDisplayName(match.trackA.format),
-                                        catalogDisplayName(match.trackB.format)));
-            return result;
-        }
         makeChoice(result, SyncPlan::Reason::BothChanged,
                    "Changed on both sides; the stick's clocks cannot say which is newer");
         return result;

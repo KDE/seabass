@@ -866,6 +866,28 @@ int main()
         assert(memoryPlan.needsChoice && memoryPlan.reason == SyncPlan::Reason::LoopEndsDiffer);
         assert(memoryPlan.reasonText == "Memory loop at 0:10.000 ends differ: rekordbox 0:14.000, OneLibrary 0:18.000");
 
+        // Hot cues differing as well do not hide it: the union would carry
+        // both lengths of the loop. Each side's own cues are the options.
+        auto withHot = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), memoryLoop}),
+                                                   side("onelibrary", 124.0, {hot(1, 5000.0), longerMemoryLoop})},
+                                         now, now);
+        assert(withHot.needsChoice && withHot.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(withHot.reasonText
+               == "Memory loop at 0:10.000 ends differ: rekordbox 0:14.000, OneLibrary 0:18.000, and 1 pad differs");
+        const auto loopsIn = [](const std::vector<CuePoint> &cues) {
+            int n = 0;
+            for (const CuePoint &cue : cues) {
+                n += cue.isLoop ? 1 : 0;
+            }
+            return n;
+        };
+        assert(loopsIn(withHot.cuesIfAWins) == 1 && loopsIn(withHot.cuesIfBWins) == 1 && "never both lengths");
+        auto oneSideHot = SyncPlanner::plan(SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), memoryLoop}),
+                                                      side("onelibrary", 124.0, {longerMemoryLoop})},
+                                            now, now);
+        assert(oneSideHot.needsChoice && oneSideHot.reason == SyncPlan::Reason::LoopEndsDiffer
+               && "not written as the side with hot cues winning");
+
         // Engine holds that memory loop as a saved loop on the pad its
         // import gives it. Its end moved there: a choice, and each option
         // carries its own side's end.
@@ -884,6 +906,15 @@ int main()
         };
         assert(endOf(enginePlan.cuesIfAWins) == 14000.0 && "rekordbox's way writes its end onto Engine's pad");
         assert(endOf(enginePlan.cuesIfBWins) == 18000.0 && "Engine's way gives rekordbox's memory loop Engine's end");
+        // On a pad the import would not have given it (pad 5, where the
+        // import uses pad 2), it is still a loop whose end moved, asked
+        // about as such rather than as "memory cue or hot cue".
+        auto uncertainPad = SyncPlanner::plan(
+            SyncMatch{side("rekordbox", 124.0, {hot(1, 1000.0), memoryLoop}),
+                      side("engine", 124.0, {hot(1, 1000.0), loopOn(5, 10000.0, 18000.0)})},
+            now, now);
+        assert(uncertainPad.needsChoice && uncertainPad.reason == SyncPlan::Reason::LoopEndsDiffer);
+        assert(uncertainPad.reasonText == "Pad 5 loop ends differ: rekordbox 0:14.000, Engine 0:18.000, and 1 more pad differs");
         // No string literal of a reason holds a dash (the UI's rule).
         for (const auto *text : {&plan.reasonText, &memoryPlan.reasonText, &enginePlan.reasonText}) {
             assert(text->find(std::string(2, '-')) == std::string::npos && text->find("\xE2\x80\x94") == std::string::npos);
