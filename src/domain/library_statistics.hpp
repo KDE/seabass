@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "domain/cue_list_count.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -77,9 +76,6 @@ struct LibraryStatistics
     std::map<std::string, int> streamingTracksByService;  // e.g. "TIDAL" -> count
     std::vector<BpmBucket> bpmDistribution;               // sorted by rangeStart, tracks with bpm <= 0 excluded
     CueCoverage cueCoverage;                              // local tracks only, see CueCoverage
-    // Analysis files whose two generations of cue list disagree (#60),
-    // from the readers' cue pass; see CueListCount for when it is known.
-    CueListCount cueLists;
 };
 
 class LibraryStatisticsCalculator

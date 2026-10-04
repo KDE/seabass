@@ -66,7 +66,6 @@ LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track
 {
     LibraryStatistics stats;
     stats.trackCount = static_cast<int>(tracks.size());
-    stats.cueLists = countCueLists(tracks);
 
     std::set<std::string> playlistNames;
     std::map<int, int> bpmBucketCounts;
