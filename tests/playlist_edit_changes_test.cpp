@@ -14,6 +14,8 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -25,6 +27,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "gui/edit/changes/delete_tracks_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
@@ -53,6 +56,7 @@ const File A04{"Tone Artist 04/Tone Album 04/a04.mp3", 4};
 const File A05{"Tone Artist 05/Tone Album 01/a05.mp3", 5};
 const File B01{"Nouvel Artiste/Nouvel Album/b01.mp3", 13};
 const File C01{"Tone Artist 01/Tone Album 01/c01.mp3", 14};
+const File A10{"Tone Artist 05/Tone Album 02/a10.mp3", 0};  // in no playlist; pdb id looked up
 
 std::vector<std::int64_t> engineMembers(const fs::path &library, const std::string &path)
 {
@@ -115,11 +119,14 @@ int main(int argc, char **argv)
         auto q1 = db.create_root_playlist("Q1");
         auto f1 = db.create_root_playlist("F1");
         auto f1a = f1.create_sub_playlist("F1A");
-        for (const File &f : {A01, A02, A03, A04, A05, B01, C01}) {
+        for (const File &f : {A01, A02, A03, A04, A05, B01, C01, A10}) {
             djinterop::track_snapshot s;
             s.relative_path = std::string("../Contents/") + f.relative;
             auto t = db.create_track(s);
             engineId[f.relative] = t.id();
+            if (f.pdbId == 0) {
+                continue;  // a10: in no playlist
+            }
             (f.pdbId <= 5 ? q1 : f1a).add_track_back(t);
         }
     }
@@ -190,6 +197,58 @@ int main(int argc, char **argv)
     }
     assert(librariesWithPlaylist(pioneerQ, libraryQ, "Q1") == all && "the other playlist is untouched");
     std::cout << "case 3 (a folder deleted from all three libraries, tracks kept) OK\n";
+
+    // 4. Deleting tracks that are in no playlist: a10 is in none in any
+    //    library, a01 is in Q1. Only a10 goes, from all three, and its file
+    //    is put on the pending-deletions list; a01 is left alone.
+    {
+        const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        const auto rowsFor = [&](const File &f) {
+            std::vector<domain::Track> rows;
+            for (const uint32_t id : infrastructure::rekordbox::PdbRowWriter(pdbPath).trackIdsWithFilePath("/Contents/" + std::string(f.relative))) {
+                domain::Track t;
+                t.format = "rekordbox";
+                t.sourceId = std::to_string(id);
+                rows.push_back(t);
+            }
+            domain::Track one;
+            one.format = "onelibrary";
+            one.sourceId = "x";
+            rows.push_back(one);
+            domain::Track eng;
+            eng.format = "engine";
+            eng.sourceId = std::to_string(engineId[f.relative]);
+            rows.push_back(eng);
+            return rows;
+        };
+        assert(rowsFor(A10).size() == 3 && "a10 is in all three libraries");
+        std::vector<DeleteTracksChange::Entry> entries = {{file(A10), "Tone A10", "Tone Artist 05", rowsFor(A10)},
+                                                          {file(A01), "Tone A01", "Tone Artist 01", rowsFor(A01)}};
+        const auto result = save(std::make_shared<DeleteTracksChange>(pioneerQ, libraryQ, entries));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+
+        infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+        assert(rows.trackIdsWithFilePath("/Contents/" + std::string(A10.relative)).empty() && "a10 out of export.pdb");
+        assert(!rows.trackIdsWithFilePath("/Contents/" + std::string(A01.relative)).empty() && "a01 kept");
+        infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+        bool a10Gone = false;
+        try {
+            w.addToPlaylist("Q1", file(A10));
+        } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+            a10Gone = true;
+        }
+        assert(a10Gone && "a10 out of OneLibrary");
+        assert(w.isInAnyPlaylist(file(A01)) && "a01 still in OneLibrary's Q1");
+        auto db = djinterop::engine::load_database(pathToUtf8(library));
+        assert(!db.track_by_id(engineId[A10.relative]).has_value() && "a10 out of Engine");
+        assert(db.track_by_id(engineId[A01.relative]).has_value() && "a01 kept in Engine");
+        std::ifstream manifest(stick / "Seabass" / "orphaned" / "pending-deletions.jsonl");
+        std::stringstream lines;
+        lines << manifest.rdbuf();
+        assert(lines.str().find("a10.mp3") != std::string::npos && "a10's file waits on the list");
+        assert(lines.str().find("a01.mp3") == std::string::npos && "a01's file does not");
+    }
+    std::cout << "case 4 (tracks in no playlist deleted from all three, the file queued, a listed one kept) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

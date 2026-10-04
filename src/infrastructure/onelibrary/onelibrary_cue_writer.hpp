@@ -262,6 +262,9 @@ public:
     // playlist_content rows whose playlist does not exist: what deleting a
     // playlist must never leave behind.
     int64_t playlistContentRowsWithoutPlaylist();
+    // Whether any playlist holds a content row for the file. False when no
+    // row lists the file.
+    bool isInAnyPlaylist(const std::string &filePath);
 
     // Creates a playlist (or folder) named `name` in the folder at
     // parentPath ("" for the top level), at `position` in that level

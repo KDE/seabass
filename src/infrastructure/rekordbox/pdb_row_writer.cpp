@@ -1993,6 +1993,11 @@ std::string PdbRowWriter::treeRowBytes(const TreeRowSlot &slot, uint32_t sortOrd
     return row + slot.nameBytes;
 }
 
+bool PdbRowWriter::trackInAnyPlaylist(uint32_t trackId) const
+{
+    return !findAllPlaylistEntriesForTrack(m_buffer, trackId).empty();
+}
+
 std::vector<uint32_t> PdbRowWriter::trackIdsWithFilePath(const std::string &pathOnStick) const
 {
     std::vector<uint32_t> ids;

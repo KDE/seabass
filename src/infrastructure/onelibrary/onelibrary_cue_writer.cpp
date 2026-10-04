@@ -934,6 +934,20 @@ std::vector<std::pair<int64_t, int64_t>> OneLibraryCueWriter::playlistContent(co
     return rows;
 }
 
+bool OneLibraryCueWriter::isInAnyPlaylist(const std::string &filePath)
+{
+    SqlCipherDb &db = verifyConnection();
+    for (const int64_t contentId : contentIdsAt(db, toContentPath(m_stickRoot, filePath))) {
+        SqlCipherStatement count(db, "SELECT count(*) FROM playlist_content WHERE content_id = ?");
+        count.bindInt64(1, contentId);
+        count.step();
+        if (count.columnInt64(0) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int64_t OneLibraryCueWriter::playlistContentRowsWithoutPlaylist()
 {
     SqlCipherStatement count(verifyConnection(),
