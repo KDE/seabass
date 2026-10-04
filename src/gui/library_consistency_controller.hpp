@@ -183,8 +183,8 @@ private:
 // on a worker thread, no access to the controller.
 // One playlist that differs between the libraries, with what matching it
 // to each library would do (domain::alignTo), already trimmed to what
-// can be written: no addition to export.pdb (#62), and no OneLibrary
-// addition that rekordbox's copy of the playlist would not also hold.
+// can be written: no OneLibrary addition that rekordbox's copy of the
+// playlist would not also hold.
 struct PlaylistFinding
 {
     domain::PlaylistDifference difference;

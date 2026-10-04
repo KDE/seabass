@@ -111,9 +111,11 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
     try {
         for (const auto &a : m_alignments) {
             if (a.format == "rekordbox") {
-                // Removals only: the controller never stages an addition
-                // to export.pdb (#62).
-                if (a.remove.empty()) {
+                // Removals clear a row's presence bit; additions append
+                // rows to the table's last page the way rekordbox does
+                // (PdbRowWriter::appendPlaylistEntries, #62), refused
+                // whole when that page has no room.
+                if (a.remove.empty() && a.add.empty()) {
                     continue;
                 }
                 FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
@@ -129,12 +131,28 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
                 for (const auto &track : a.remove) {
                     cleared += rows.removePlaylistEntry(playlist->second, static_cast<uint32_t>(std::stoul(track.sourceId)));
                 }
-                if (cleared > 0) {
+                size_t appended = 0;
+                if (!a.add.empty()) {
+                    std::vector<uint32_t> ids;
+                    for (const auto &track : a.add) {
+                        ids.push_back(static_cast<uint32_t>(std::stoul(track.sourceId)));
+                    }
+                    try {
+                        appended = rows.appendPlaylistEntries(playlist->second, ids);
+                    } catch (const infrastructure::rekordbox::PdbPageFull &e) {
+                        return ChangeOutcome::failure(
+                            QStringLiteral("export.pdb has no room for %1 more playlist entries (%2)")
+                                .arg(ids.size())
+                                .arg(QString::fromStdString(e.what())));
+                    }
+                }
+                if (cleared + appended > 0) {
                     if (!rows.commit()) {
                         return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
                     }
                     session.noteItemApplied();
                     removed += static_cast<int>(cleared);
+                    added += static_cast<int>(appended);
                 }
             } else if (a.format == "onelibrary") {
                 ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);

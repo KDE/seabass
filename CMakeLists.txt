@@ -2801,6 +2801,13 @@ target_include_directories(local_cue_store_test PRIVATE src)
 target_link_libraries(local_cue_store_test PRIVATE SQLite::SQLite3 ZLIB::ZLIB)
 add_test(NAME local_cue_store_test COMMAND local_cue_store_test)
 
+add_executable(pdb_append_playlist_entries_test tests/pdb_append_playlist_entries_test.cpp)
+target_link_libraries(pdb_append_playlist_entries_test PRIVATE seabass_core_testing rekordbox_format ZLIB::ZLIB)
+target_include_directories(pdb_append_playlist_entries_test PRIVATE src tests)
+add_test(NAME pdb_append_playlist_entries_test COMMAND pdb_append_playlist_entries_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs/rekordbox/rekordbox/export.pdb
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library/rekordbox/rekordbox/export.pdb)
+
 add_executable(pdb_row_writer_test
     tests/pdb_row_writer_test.cpp
 )

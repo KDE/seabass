@@ -49,8 +49,8 @@ HealthCheckPage {
         let text = "Make every other library's copy of this playlist hold what " + reference.library + "'s holds: "
             + (parts.length > 0 ? parts.join(", ") : "nothing to change") + ".";
         if (reference.leftOut > 0) {
-            text += " " + reference.leftOut + (reference.leftOut === 1 ? " track" : " tracks")
-                + " cannot be added to the rekordbox library yet, so rekordbox and OneLibrary keep them out.";
+            text += " " + reference.leftOut + (reference.leftOut === 1 ? " track stays" : " tracks stay")
+                + " out of OneLibrary, which only takes what the rekordbox library holds.";
         }
         return text;
     }
@@ -84,8 +84,7 @@ HealthCheckPage {
               + " not hold the same tracks in every library on this stick. A Pioneer player reads the "
               + "rekordbox side and a Denon player the Engine side, so the set changes with the player. Pick "
               + "which library each playlist should follow; Seabass makes the others match. Only tracks every "
-              + "library lists are compared, and order is not. Seabass cannot add a track to the rekordbox "
-              + "library's playlists yet, only take one out."
+              + "library lists are compared, and order is not. A track added to a playlist goes at its end."
     }
 
     RowLayout {
