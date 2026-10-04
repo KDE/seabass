@@ -39,6 +39,15 @@ std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
     std::vector<JunkCueIssue> issues;
     for (const auto &track : tracks) {
         for (const auto &cue : track.cues) {
+            // Engine has no memory cues: its one "memory" cue is the
+            // main cue, the player's CUE point, which Engine's analysis
+            // places a few hundred milliseconds in by design (#61:
+            // WHALESHARK2 listed The End @660 ms). Removing it is not
+            // tidying a stray press, so it is never offered here. A
+            // negative position is still the format's "unset" sentinel.
+            if (track.format == "engine" && cue.kind == CuePoint::Kind::Memory && cue.positionMs >= 0.0) {
+                continue;
+            }
             if (isJunkCue(cue)) {
                 issues.push_back(JunkCueIssue{track, cue, "at the very start of the track"});
             }

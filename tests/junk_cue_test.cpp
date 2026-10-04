@@ -46,6 +46,22 @@ int main()
         std::cout << "case 1 (memory cue at 0:00 is flagged) OK\n";
     }
 
+    // Case 1b (#61): Engine's main cue, which Seabass reads as its one
+    // memory cue, is the player's CUE point and never a stray cue, even
+    // in the first second. The same position on a rekordbox memory cue
+    // is, and an Engine hot cue there is too.
+    {
+        Track engineTrack = makeTrack("e", "The End", "Monolink",
+                                      {makeCue(CuePoint::Kind::Memory, 660.0), makeCue(CuePoint::Kind::Hot, 68.0)});
+        engineTrack.format = "engine";
+        Track rekordboxTrack = makeTrack("r", "The End", "Monolink", {makeCue(CuePoint::Kind::Memory, 660.0)});
+        rekordboxTrack.format = "rekordbox";
+        auto issues = JunkCueFinder::find({engineTrack, rekordboxTrack});
+        assert(issues.size() == 2);
+        assert(issues[0].track.sourceId == "e" && issues[0].cue.kind == CuePoint::Kind::Hot);
+        assert(issues[1].track.sourceId == "r" && issues[1].cue.kind == CuePoint::Kind::Memory);
+        std::cout << "case 1b (Engine's main cue is not a stray cue) OK\n";
+    }
     // Case 2: a hot cue at 0:00 is junk as well.
     //
     // It was exempt on the theory that some DJs keep a deliberate

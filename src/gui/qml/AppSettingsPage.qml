@@ -472,12 +472,12 @@ Page {
                     spacing: 8 * Theme.iconScale
                     SeabassCheckBox {
                         objectName: "ignoreCuesAtStartCheck"
-                        text: "Ignore cues at 0:00"
+                        text: "Treat cues in the first second as accidental"
                         checked: root.appSettingsController.ignoreCuesAtStart
                         onToggled: root.appSettingsController.ignoreCuesAtStart = checked
                     }
                     InfoButton {
-                        explanationTitle: "Cues at 0:00"
+                        explanationTitle: "Cues in the first second"
                         summaryText: "A cue inside the first second of a track is treated as noise rather "
                             + "than as a marker you placed."
                         explanationText:
