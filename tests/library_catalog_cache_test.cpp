@@ -751,10 +751,15 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
         },
         LibraryCatalogCache::realMtimeForTesting());
 
-    // A short window, so the test can step past it.
-    const auto window = 300ms;
-    cache.setAnalysisCheckWindowForTesting(window);
-    const auto pastTheWindow = [&] { std::this_thread::sleep_for(window + 50ms); };
+    // The window is measured on a clock the test moves: however slow the
+    // machine, a read never outlasts it, and stepping past it never
+    // sleeps.
+    std::atomic<std::int64_t> fakeNowMs{1000000};
+    cache.setNowFnForTesting(
+        [&] { return std::chrono::steady_clock::time_point(std::chrono::milliseconds(fakeNowMs.load())); });
+    const auto pastTheWindow = [&] {
+        fakeNowMs += (LibraryCatalogCache::analysisCheckWindow() + 1ms).count();
+    };
 
     for (const std::string format : {"rekordbox", "onelibrary"}) {
         const auto tracks = cache.tracksFor(format, pioneer, Detail::Cues);

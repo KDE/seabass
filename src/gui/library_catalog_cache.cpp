@@ -333,7 +333,7 @@ LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
 bool LibraryCatalogCache::analysisCheckDueLocked(const Entry &entry) const
 {
     return entry.analysisFiles && !entry.analysisFiles->empty()
-        && std::chrono::steady_clock::now() - entry.analysisCheckedAt >= m_analysisCheckWindow;
+        && m_nowFn() - entry.analysisCheckedAt >= analysisCheckWindow();
 }
 
 std::optional<std::uint64_t> LibraryCatalogCache::checkAnalysisFiles(const std::vector<std::string> &files,
@@ -350,14 +350,14 @@ void LibraryCatalogCache::noteAnalysisChecked(const std::string &key,
     const auto it = m_entries.find(key);
     // Only the entry whose files were checked: one read since has its own.
     if (it != m_entries.end() && it->second.analysisFiles == files) {
-        it->second.analysisCheckedAt = std::chrono::steady_clock::now();
+        it->second.analysisCheckedAt = m_nowFn();
     }
 }
 
-void LibraryCatalogCache::setAnalysisCheckWindowForTesting(std::chrono::milliseconds window)
+void LibraryCatalogCache::setNowFnForTesting(NowFn nowFn)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_analysisCheckWindow = window;
+    m_nowFn = std::move(nowFn);
 }
 
 int LibraryCatalogCache::analysisChecksForTesting() const
@@ -535,7 +535,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     // file), so the loop takes it again if the entry changed meanwhile.
     //
     // Not for every request: at most once per entry per
-    // m_analysisCheckWindow, so one operation's burst of plans and reads
+    // analysisCheckWindow(), so one operation's burst of plans and reads
     // pays it once, and never for a request for Tracks alone, whose rows
     // no analysis file changes. Such a request served from an entry that
     // holds cues not checked lately is told it has Tracks only, so a
@@ -553,7 +553,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                 if (checkedState && *checkedState != entry.analysisState) {
                     fresh = false;
                 } else if (checkedState) {
-                    entry.analysisCheckedAt = std::chrono::steady_clock::now();
+                    entry.analysisCheckedAt = m_nowFn();
                 }
             } else if (wanted <= stageNumber(Detail::Tracks)) {
                 cuesVouchedFor = false;
@@ -644,7 +644,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                     }
                     analysisState = *state;
                 }
-                analysisTakenAt = std::chrono::steady_clock::now();
+                analysisTakenAt = m_nowFn();
             }
             m_stageFn(detailOf(next), format, path, work, notes, progress, cancel);
         } catch (...) {
