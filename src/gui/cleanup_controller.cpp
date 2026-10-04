@@ -628,6 +628,11 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
                                           "they may be offered again on the next pass; nothing else was lost.")
                                       .arg(summary);
         }
+    } catch (const application::OperationCancelled &) {
+        // Stopped while the catalogs were counted or read: before any
+        // file was touched.
+        result.cancelled = true;
+        result.statusMessage = QStringLiteral("Stopped. Nothing was deleted.");
     } catch (const std::exception &e) {
         result.errorMessage = QString::fromStdString(e.what());
     }

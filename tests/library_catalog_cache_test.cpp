@@ -709,10 +709,13 @@ void rememberedCountCases()
     cache.invalidateWithOneLibraryMirror("rekordbox", stick);
     cache.countTracks("onelibrary", stick);
     assert(counted["onelibrary"] == 3);
-    // A failed count is not remembered.
+    // A failed count is remembered too (a OneLibrary that does not open
+    // is not tried twice), until the catalog file changes.
     failNext = true;
     assert(!cache.countTracks("rekordbox", stick).has_value());
-    assert(cache.countTracks("rekordbox", stick) == 10);
+    assert(!cache.countTracks("rekordbox", stick).has_value());
+    assert(counted["rekordbox"] == 1);
+    mtime += 1s;
     assert(cache.countTracks("rekordbox", stick) == 10);
     assert(counted["rekordbox"] == 2);
     std::cout << "stage 16 (a count is made once per catalog state, after a look at the token) OK\n";

@@ -327,6 +327,7 @@ void LibraryCatalogCache::setCountFnForTesting(CountFn countFn)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_countFn = std::move(countFn);
+    m_counts.clear();
 }
 
 std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format, const std::string &path,
@@ -353,12 +354,12 @@ std::optional<size_t> LibraryCatalogCache::countTracks(const std::string &format
     }
     cancel.throwIfCancelled();
     const std::optional<size_t> rows = count(format, path);
-    if (rows && mtime) {
+    if (mtime) {
         std::lock_guard<std::mutex> lock(m_mutex);
         // Not when an invalidation landed during the count: it may have
         // counted the catalog from before the write.
         if (m_generation[key] == generation) {
-            m_counts[key] = RememberedCount{*mtime, generation, *rows};
+            m_counts[key] = RememberedCount{*mtime, generation, rows};
         }
     }
     return rows;
@@ -520,6 +521,8 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
         ++m_waiting;
         m_cv.wait_for(lock, std::chrono::milliseconds(100));
         --m_waiting;
+        // The files may have moved while this caller waited.
+        checkedFiles = nullptr;
         if (cancel.cancelled()) {
             throw application::OperationCancelled();
         }
@@ -551,20 +554,21 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
         }
         lock.unlock();
 
-        // Before the cue pass reads them, so a file rewritten while it
-        // runs leaves the entry stale rather than fresh with the old cues.
         std::shared_ptr<const std::vector<std::string>> analysisFiles;
         std::uint64_t analysisState = 0;
-        if (detailOf(next) == Detail::Cues) {
-            analysisFiles = analysisFilesOf(format, path, work);
-            if (analysisFiles) {
-                analysisState = analysisStateOf(*analysisFiles);
-            }
-        }
-
         std::exception_ptr error;
         try {
             cancel.throwIfCancelled();
+            // Before the cue pass reads them, so a file rewritten while it
+            // runs leaves the entry stale rather than fresh with the old
+            // cues. Inside the try: a path that does not convert must end
+            // the pass like any reader error, not leave it claimed.
+            if (detailOf(next) == Detail::Cues) {
+                analysisFiles = analysisFilesOf(format, path, work);
+                if (analysisFiles) {
+                    analysisState = analysisStateOf(*analysisFiles);
+                }
+            }
             m_stageFn(detailOf(next), format, path, work, notes, progress, cancel);
         } catch (...) {
             error = std::current_exception();
