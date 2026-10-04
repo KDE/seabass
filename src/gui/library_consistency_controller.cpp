@@ -1907,6 +1907,51 @@ void LibraryConsistencyController::repairArtwork()
         QStringLiteral("Staged cover art for %1 track(s). Press Save to write it to the stick.").arg(count));
 }
 
+void LibraryConsistencyController::embedPlayerOnlyArtwork()
+{
+    if (busy() || m_artwork.playerOnly.empty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    // The same change the repair stages, for the same reason it is one
+    // call: see repairArtwork(). An entry already staged (the repair ran
+    // first) is left to it.
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    std::set<QString> ids = m_stagedArtwork;
+    int added = 0;
+    for (const auto &entry : m_artwork.playerOnly) {
+        const QString id = RepairArtworkChange::idFor(entry.trackId);
+        if (entry.imageOnStick.empty() || ids.contains(id)) {
+            continue;
+        }
+        ++added;
+    }
+    const int count = added;
+    for (const auto &entry : m_artwork.playerOnly) {
+        const QString id = RepairArtworkChange::idFor(entry.trackId);
+        if (entry.imageOnStick.empty() || ids.contains(id)) {
+            continue;
+        }
+        changes.push_back(std::make_unique<RepairArtworkChange>(m_enginePath, entry, count, changes.empty(), m_rescue));
+        ids.insert(id);
+    }
+    if (changes.empty()) {
+        return;
+    }
+    if (!m_session->stageAll(std::move(changes))) {
+        return;
+    }
+    m_stagedArtwork = std::move(ids);
+    emit artworkChanged();
+    setStagedStatusMessage(
+        QStringLiteral("Staged copying the covers of %1 track(s) into the Engine library. Press Save to write it.")
+            .arg(count));
+}
+
 void LibraryConsistencyController::fillSampleRates()
 {
     if (busy() || m_sampleRateFillStaged) {

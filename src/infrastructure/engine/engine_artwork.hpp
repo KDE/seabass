@@ -35,11 +35,16 @@ namespace seabass::infrastructure::engine
 //
 // Engine's own "import rekordbox library" writes something else into the
 // hash column: the text "image://fileart//<absolute path>" naming the
-// rekordbox JPEG as the *importing computer* saw it, e.g.
-// "/media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg". That path exists on
-// no player and on no other machine, so the art silently never appears --
-// found on a real stick where 1174 of 1271 tracks were in this state while
-// the 95 with cached art showed up fine.
+// rekordbox JPEG as the *importing device* saw it, e.g.
+// "/media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg". A path from
+// another computer exists nowhere else, and the art silently never
+// appears. A path under "/media/<this stick's label>/" is different: it
+// is what a Denon player wrote, since Engine OS mounts every stick at
+// /media/<label>, and every Engine OS player resolves it again for as
+// long as the stick keeps its label. Engine DJ on a computer does not
+// (/Volumes/<label> on a Mac, /media/<user>/<label> here). WHALESHARK2
+// had 1467 of 1564 tracks that way and the Prime 4 showed every cover;
+// the audit used to call them all missing.
 enum class ArtworkStorage {
     // A hash, with its file present under Artwork/: what a player reads.
     Cached,
@@ -51,9 +56,15 @@ enum class ArtworkStorage {
     // saying apart from "missing", because the two read differently to
     // anyone looking at the stick: this one looks fine in a file manager.
     CachedFileUnreadable,
-    // "image://fileart//<absolute path>" from an import. Unusable on a
-    // player, whatever this machine can resolve.
+    // "image://fileart//<absolute path>" from an import on another
+    // computer. Unusable on a player, whatever this machine can resolve.
     ImportedPath,
+    // "image://fileart//media/<this stick's label>/..." from an import on
+    // a Denon player, with the image on this stick: every Engine OS
+    // player shows it, Engine DJ on a computer does not. Not a fault.
+    // Repairable all the same, into Engine's own storage, for a library
+    // that should show its covers everywhere.
+    ImportedPathOnPlayer,
     // The track points at an AlbumArt row whose hash is NULL or empty:
     // art was asked for and there is nothing to find it by. Never
     // repairable -- there is no image to copy and no name to write.
@@ -115,6 +126,10 @@ struct ArtworkAudit
     // Tracks whose art a player cannot find, worst first: the repairable
     // ones (imageOnStick set) before the ones with nothing to copy.
     std::vector<ArtworkEntry> unreadable;
+    // Tracks whose art a Denon player finds and Engine DJ on a computer
+    // does not (ImportedPathOnPlayer). Counted among readableByAPlayer,
+    // not among the faults; each has imageOnStick set.
+    std::vector<ArtworkEntry> playerOnly;
     // Tracks whose row keeps bytes in the database that Seabass leaves
     // alone (InDatabaseLeftAlone). Apart from the faults: a library of GIF
     // covers is not a broken one.
@@ -216,6 +231,10 @@ ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceTyp
 // valid UTF-8 (the Engine reader catches the same throw per row, for the
 // same reason -- one bad row must not cost the whole scan).
 std::string imageOnStickFor(std::string_view reference, const std::string &stickRoot);
+// Whether an imported reference names this stick as a Denon player mounts
+// it ("image://fileart//media/<label>/..."), the label compared without
+// case. Exposed for the test.
+bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label);
 
 struct ArtworkRepair
 {

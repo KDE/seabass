@@ -203,6 +203,63 @@ int main(int argc, char **argv)
         std::cout << "case 2 (an imported path is recognised, either spelling, and re-anchored here) OK\n";
     }
 
+    // 2c. An imported path a Denon player wrote for THIS stick, under
+    //     /media/<its label>/, with the image here: shown on every Engine
+    //     OS player, so not a fault, counted as readable, kept apart for
+    //     the optional copy into the library. The label compares without
+    //     case. The same path for another label, or with no image, is the
+    //     fault it always was.
+    {
+        assert(importedPathIsThisStickOnAPlayer("image://fileart//media/PLAYERSTICK/PIONEER/Artwork/00001/a5_m.jpg",
+                                                "PLAYERSTICK"));
+        assert(importedPathIsThisStickOnAPlayer("image://fileart//media/playerstick/PIONEER/Artwork/00001/a5_m.jpg",
+                                                "PLAYERSTICK"));
+        assert(!importedPathIsThisStickOnAPlayer("image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg",
+                                                 "PLAYERSTICK"));
+        assert(!importedPathIsThisStickOnAPlayer("image://fileart//media/PLAYERSTICK2/PIONEER/Artwork/00001/a5_m.jpg",
+                                                 "PLAYERSTICK"));
+        assert(!importedPathIsThisStickOnAPlayer("image://fileart//Volumes/PLAYERSTICK/PIONEER/Artwork/00001/a5_m.jpg",
+                                                 "PLAYERSTICK"));
+        assert(!importedPathIsThisStickOnAPlayer("image://fileart//media/PLAYERSTICK/PIONEER/Artwork/a.jpg", ""));
+
+        Fixture fixture(seabass::testing::scratchRoot() / "PLAYERSTICK");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES "
+                 "(1, 'image://fileart//media/PLAYERSTICK/PIONEER/Artwork/00001/a5_m.jpg');");
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES "
+                 "(2, 'image://fileart//media/playerstick/PIONEER/Artwork/00001/a5_m.jpg');");
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES "
+                 "(3, 'image://fileart//media/OTHERSTICK/PIONEER/Artwork/00001/a5_m.jpg');");
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES "
+                 "(4, 'image://fileart//media/PLAYERSTICK/PIONEER/Artwork/00009/gone.jpg');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'On the player', 'A', 1);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'On the player, lower', 'B', 2);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (3, 'Other computer', 'C', 3);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (4, 'On the player, no image', 'D', 4);");
+        sqlite3_close(db);
+
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
+        assert(audit.error.empty());
+        assert(audit.tracksWithArt == 4);
+        assert(audit.playerOnly.size() == 2 && "the two under this stick's label with the image here");
+        assert(audit.playerOnly[0].storage == ArtworkStorage::ImportedPathOnPlayer);
+        assert(!audit.playerOnly[0].imageOnStick.empty());
+        assert(audit.readableByAPlayer == 2 && "a player shows them");
+        assert(audit.unreadable.size() == 2 && "the other computer's path, and the one with no image");
+        assert(audit.unreadable[0].storage == ArtworkStorage::ImportedPath);
+        assert(audit.repairable() == 1 && "only the other computer's, whose image is here");
+
+        // The optional copy: the same repair, after which the library is
+        // self-contained and nothing is player-only any more.
+        const ArtworkRepair embed = repairArtwork(pathToUtf8(fixture.library), audit.playerOnly);
+        assert(embed.error.empty() && embed.repaired == 2);
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library));
+        assert(after.playerOnly.empty());
+        assert(after.readableByAPlayer == 2);
+        assert(after.unreadable.size() == 2);
+        std::cout << "case 2c (a path a Denon player wrote for this stick is shown, not missing) OK\n";
+    }
+
     // 3. The audit: one track a player can read, one whose cached file is
     //    gone, one imported path whose image is here, one whose is not.
     {

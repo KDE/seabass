@@ -370,6 +370,12 @@ private:
     Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkEmptyInDatabaseCount READ artworkEmptyInDatabaseCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkLeftAloneCount READ artworkLeftAloneCount NOTIFY artworkChanged)
+    // Covers a Denon player shows and Engine DJ on a computer does not:
+    // the path the player's own rekordbox import wrote, which resolves
+    // on every Engine OS player and nowhere else (ArtworkStorage::
+    // ImportedPathOnPlayer). Not a fault; embedPlayerOnlyArtwork() makes
+    // them self-contained for anyone who wants that.
+    Q_PROPERTY(int artworkPlayerOnlyCount READ artworkPlayerOnlyCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkUncheckedCount READ artworkUncheckedCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
     // Tracks whose Engine row does not say what sample rate they are, and
@@ -525,6 +531,7 @@ public:
     int artworkReadableCount() const { return m_artwork.readableByAPlayer; }
     int artworkUnreadableCount() const { return static_cast<int>(m_artwork.unreadable.size()); }
     int artworkRepairableCount() const { return m_artwork.repairable(); }
+    int artworkPlayerOnlyCount() const { return static_cast<int>(m_artwork.playerOnly.size()); }
     // The two faults are different things to say to a person, and the
     // notice said the first one about both: an imported path points at the
     // importing computer and can be repaired from the rekordbox art beside
@@ -636,6 +643,11 @@ public:
         std::function<infrastructure::media::FilesystemRepairResult(const std::string &mountPoint)> repair);
 
     Q_INVOKABLE void repairArtwork();
+    // Stages copying the covers a Denon player resolves by path into
+    // Engine's own storage, so Engine DJ on a computer shows them too.
+    // Optional: nothing is broken without it. Staged and unstaged
+    // together with repairArtwork()'s changes.
+    Q_INVOKABLE void embedPlayerOnlyArtwork();
     // Stages writing every sample rate a file could answer for. Staging
     // only, like every other fix here: Save writes it.
     Q_INVOKABLE void fillSampleRates();

@@ -107,7 +107,11 @@ Page {
                     : consistencyController?.artworkTracksWithArt === 0
                         ? "No Engine library on this stick, or no track carries cover art."
                         : consistencyController?.artworkUnreadableCount === 0
-                            ? (consistencyController?.artworkUncheckedCount === 0
+                            ? (consistencyController?.artworkPlayerOnlyCount > 0
+                                ? consistencyController?.artworkPlayerOnlyCount + " of "
+                                  + consistencyController?.artworkTracksWithArt
+                                  + " Engine track(s) show their cover on a Denon player and not in Engine DJ"
+                                : consistencyController?.artworkUncheckedCount === 0
                                 ? "Every Engine track's cover art is stored where a player can find it."
                                 : consistencyController?.artworkUncheckedCount
                                   + " stored cover(s) could not be read to check them")
@@ -139,6 +143,14 @@ Page {
                 var broken = consistencyController?.artworkBrokenRowCount;
                 var fixable = consistencyController?.artworkRepairableCount;
                 var parts = [];
+                const playerOnly = consistencyController?.artworkPlayerOnlyCount;
+                if (playerOnly > 0) {
+                    parts.push(playerOnly + " keep their cover as the path a Denon player wrote when it imported "
+                        + "the rekordbox library (/media/<stick name>/PIONEER/Artwork/...). Every Denon player "
+                        + "mounts the stick there and shows them, for as long as the stick keeps its name. Engine "
+                        + "DJ on a computer does not. Nothing is broken; Seabass can copy them into Engine "
+                        + "Library/Artwork so they show everywhere.");
+                }
                 if (imported > 0) {
                     parts.push(imported + " point at a folder on the computer that ran Engine's "
                         + "\"import rekordbox library\", which a player does not have."
@@ -221,6 +233,20 @@ Page {
                 onClicked: consistencyController?.artworkRepairStaged
                     ? consistencyController?.unstageArtworkRepair()
                     : consistencyController?.repairArtwork()
+            }
+            Button {
+                objectName: "embedCoverArtButton"
+                text: "Copy Covers Into the Library"
+                visible: consistencyController?.artworkPlayerOnlyCount > 0
+                    && !(consistencyController?.artworkRepairStaged ?? false)
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && !consistencyController?.stickReadOnly
+                ToolTip.visible: hovered
+                ToolTip.text: consistencyController?.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
+                    : "Stage copying each cover into Engine Library/Artwork and pointing the track at it, the way "
+                      + "Engine stores its own, so Engine DJ on a computer shows them too. Save writes it."
+                onClicked: consistencyController?.embedPlayerOnlyArtwork()
             }
             Label {
                 objectName: "coverArtStagedNote"

@@ -7,6 +7,9 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -256,6 +259,67 @@ ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceTyp
     return type == ReferenceType::Text ? ArtworkStorage::InDatabase : ArtworkStorage::Cached;
 }
 
+// The stick's volume label, which is what Engine OS mounts it under
+// (/media/<label>). On Linux and macOS the mount point is named after it
+// (/media/<user>/<label>, /Volumes/<label>); on Windows it is asked of
+// the volume, since the root is a drive letter.
+std::string volumeLabelOf(const std::string &stickRoot)
+{
+#if defined(_WIN32)
+    std::wstring root = pathFromUtf8(stickRoot).make_preferred().wstring();
+    if (!root.empty() && root.back() != L'\\') {
+        root += L'\\';
+    }
+    wchar_t name[MAX_PATH + 1] = {};
+    if (GetVolumeInformationW(root.c_str(), name, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0)) {
+        return pathToUtf8(fs::path(name));
+    }
+    return {};
+#else
+    fs::path root = pathFromUtf8(stickRoot).lexically_normal();
+    if (!root.has_filename()) {
+        root = root.parent_path();
+    }
+    return pathToUtf8(root.filename());
+#endif
+}
+
+// Whether an imported path is one a Denon player wrote for this very
+// stick: "/media/<label>/..." with the stick's own label, compared
+// without case since FAT keeps labels in capitals and a player may not.
+bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label)
+{
+    if (label.empty() || !reference.starts_with(ImportedPrefix)) {
+        return false;
+    }
+    std::string_view path = reference.substr(ImportedPrefix.size());
+    // "image://fileart//media/..." as Engine writes it: the scheme's own
+    // "fileart/" first, then the absolute path.
+    const std::string_view scheme = "fileart/";
+    if (path.starts_with(scheme)) {
+        path.remove_prefix(scheme.size());
+    }
+    const std::string_view media = "/media/";
+    if (!path.starts_with(media)) {
+        return false;
+    }
+    path.remove_prefix(media.size());
+    const auto slash = path.find('/');
+    if (slash == std::string_view::npos) {
+        return false;
+    }
+    const std::string_view mounted = path.substr(0, slash);
+    if (mounted.size() != label.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < label.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(mounted[i])) != std::tolower(static_cast<unsigned char>(label[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::string imageOnStickFor(std::string_view reference, const std::string &stickRoot)
 {
     bool windowsSpelling = false;
@@ -303,6 +367,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     const fs::path db = databaseFile(engineLibraryPath);
     const fs::path artwork = artworkDirectory(engineLibraryPath);
     const std::string stickRoot = pathToUtf8(pathFromUtf8(engineLibraryPath).parent_path());
+    const std::string stickLabel = volumeLabelOf(stickRoot);
 
     sqlite3 *handle = nullptr;
     if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -574,6 +639,16 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             // and so one odd file cannot stop a save of a thousand others.
             if (!entry.imageOnStick.empty() && !isImageARepairCanName(pathFromUtf8(entry.imageOnStick))) {
                 entry.imageOnStick.clear();
+            }
+            // A path a Denon player wrote for this stick, with its image
+            // here: every Engine OS player shows it. Not a fault, and
+            // counted as readable; kept apart so a library can still be
+            // made self-contained for Engine DJ on a computer.
+            if (!entry.imageOnStick.empty() && importedPathIsThisStickOnAPlayer(reference, stickLabel)) {
+                entry.storage = ArtworkStorage::ImportedPathOnPlayer;
+                audit.readableByAPlayer++;
+                audit.playerOnly.push_back(std::move(entry));
+                continue;
             }
             audit.unreadable.push_back(std::move(entry));
             continue;
