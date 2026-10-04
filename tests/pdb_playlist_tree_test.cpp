@@ -10,6 +10,7 @@
 // by what it holds: the tree (ids, parents, sort orders, folders, names),
 // every playlist's entries in order, and the encoded rows themselves.
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
