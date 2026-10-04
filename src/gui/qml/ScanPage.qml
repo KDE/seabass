@@ -74,6 +74,106 @@ Page {
         id: addCueController
     }
 
+    // Deleting a playlist and taking a track out of one (Experimental):
+    // staged into the same session as an added cue, written by the same
+    // Save into every library on the stick that has the playlist.
+    readonly property bool playlistEditing: root.appSettingsController.experimentalFeaturesEnabled === true
+    property string shownPlaylist: root.selectedPlaylistIndex > 0
+        ? (scanController.playlistNames[root.selectedPlaylistIndex - 1] ?? "") : ""
+    property var playlistEditController: PlaylistEditController {}
+    Connections {
+        target: ("objectName" in root.playlistEditController) ? root.playlistEditController : null
+        ignoreUnknownSignals: true
+        function onPlaylistsSaved() {
+            root.rescan();
+        }
+        function onErrorMessageChanged() {
+            if (root.playlistEditController.errorMessage.length > 0) {
+                playlistEditMessage.show(root.playlistEditController.errorMessage, true);
+            }
+        }
+    }
+    MessagePopup {
+        id: playlistEditMessage
+        objectName: "playlistEditMessage"
+    }
+
+    Menu {
+        id: playlistMenu
+        objectName: "playlistMenu"
+        property string playlist: ""
+        readonly property bool staged: root.playlistEditController.pendingRevision >= 0
+            && playlist.length > 0 && root.playlistEditController.isPlaylistStaged(playlist)
+        MenuItem {
+            objectName: "deletePlaylistItem"
+            text: playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist...")
+            onTriggered: {
+                if (playlistMenu.staged) {
+                    root.playlistEditController.keepPlaylist(playlistMenu.playlist);
+                } else {
+                    deletePlaylistDialog.playlist = playlistMenu.playlist;
+                    deletePlaylistDialog.open();
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: deletePlaylistDialog
+        objectName: "deletePlaylistDialog"
+        property string playlist: ""
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Delete playlist")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label {
+            width: Math.min(implicitWidth, root.width * 0.6)
+            wrapMode: Text.Wrap
+            text: qsTr("Delete \"%1\" from every library on this stick? Its tracks stay on the stick. Nothing changes until you Save.")
+                .arg(deletePlaylistDialog.playlist)
+        }
+        onAccepted: root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, deletePlaylistDialog.playlist)
+    }
+
+    Menu {
+        id: trackMenu
+        objectName: "trackMenu"
+        property string filePath: ""
+        property string trackTitle: ""
+        readonly property bool staged: root.playlistEditController.pendingRevision >= 0 && filePath.length > 0
+            && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
+        MenuItem {
+            objectName: "removeFromPlaylistItem"
+            text: trackMenu.staged ? qsTr("Keep in \"%1\"").arg(root.shownPlaylist)
+                                   : qsTr("Remove from \"%1\"").arg(root.shownPlaylist)
+            onTriggered: {
+                if (trackMenu.staged) {
+                    root.playlistEditController.keepInPlaylist(root.shownPlaylist, trackMenu.filePath);
+                } else {
+                    root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, root.shownPlaylist,
+                                                                   trackMenu.filePath, trackMenu.trackTitle);
+                }
+            }
+        }
+    }
+
+    function openPlaylistMenu(name, row) {
+        if (!root.playlistEditing) {
+            return;
+        }
+        playlistMenu.playlist = name;
+        playlistMenu.popup(row);
+    }
+
+    function openTrackMenu(filePath, title, row) {
+        if (!root.playlistEditing || root.shownPlaylist.length === 0 || filePath.length === 0) {
+            return;
+        }
+        trackMenu.filePath = filePath;
+        trackMenu.trackTitle = title;
+        trackMenu.popup(row);
+    }
+
     // Browse is read-only until a cue is added: the session is opened
     // here (no lock), the first staged cue takes the lock and enables
     // the floating Save.
@@ -526,6 +626,9 @@ Page {
                 searchQuery: searchField.text
                 selectedIndex: root.selectedPlaylistIndex
                 onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
+                isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
+                pendingRevision: root.playlistEditController.pendingRevision
+                onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
             }
         }
 
@@ -716,10 +819,16 @@ Page {
                         id: rowMouseArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: {
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: mouse => {
+                            if (mouse.button === Qt.RightButton) {
+                                root.openTrackMenu(filePath, title, trackDelegate);
+                                return;
+                            }
                             trackDetailPanel.showFor(trackDelegate);
                             root.trackPanelOpen = true;
                         }
+                        onPressAndHold: root.openTrackMenu(filePath, title, trackDelegate)
                     }
 
                     RowLayout {
@@ -803,6 +912,10 @@ Page {
                                 Label {
                                     text: title
                                     font.bold: true
+                                    // Staged to come out of the playlist shown.
+                                    font.strikeout: root.playlistEditing && root.shownPlaylist.length > 0
+                                        && root.playlistEditController.pendingRevision >= 0
+                                        && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }

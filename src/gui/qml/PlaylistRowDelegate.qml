@@ -20,7 +20,13 @@ Rectangle {
     required property string name
     property int count: 0
     property bool isCurrent: false
+    // Staged for deletion (Browse's playlist editing, Experimental): the
+    // name is struck through until Save deletes it or Keep takes it back.
+    property bool pendingDelete: false
     signal picked()
+    // Right click, or a long press on touch: Browse offers its playlist
+    // menu here. The Matching page's combo ignores it.
+    signal contextRequested()
 
     // The same fallback the other two pickers needed. This delegate is
     // used inside a ComboBox popup on the Matching page as well as in a
@@ -44,7 +50,9 @@ Rectangle {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: root.picked()
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: mouse => mouse.button === Qt.RightButton ? root.contextRequested() : root.picked()
+        onPressAndHold: root.contextRequested()
     }
 
     RowLayout {
@@ -56,6 +64,8 @@ Rectangle {
             text: root.name
             Layout.fillWidth: true
             elide: Text.ElideRight
+            font.strikeout: root.pendingDelete
+            color: root.pendingDelete ? Theme.textMuted : palette.windowText
         }
         Label {
             text: root.count

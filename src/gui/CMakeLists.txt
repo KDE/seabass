@@ -185,6 +185,8 @@ set(SEABASS_GUI_SOURCES
     recordings_controller.cpp
     add_cue_controller.hpp
     add_cue_controller.cpp
+    playlist_edit_controller.hpp
+    playlist_edit_controller.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
     stick_statistics_controller.hpp
