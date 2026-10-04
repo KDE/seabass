@@ -81,6 +81,40 @@ int main()
         noFile = db.create_track(missing).id();
     }
 
+    // 0. A row the player has not analysed (no trackData at all, what
+    //    Engine OS's rekordbox import writes) is not a sample-rate
+    //    finding: the analysis card reports it, and filling a rate in
+    //    would write analysis into it. Counted apart, and left alone.
+    {
+        const fs::path other = root / "unanalysed" / "Engine Library";
+        fs::create_directories(other);
+        std::int64_t imported = 0;
+        {
+            auto db = djinterop::engine::create_database(seabass::pathToUtf8(other));
+            djinterop::track_snapshot row;
+            row.title = "Imported, Not Analysed";
+            row.relative_path = "../../Contents/quiet.mp3";
+            imported = db.create_track(row).id();
+            djinterop::track_snapshot zero;
+            zero.title = "Analysed, Rate Zero";
+            zero.relative_path = "../../Contents/knows.mp3";
+            db.create_track(zero);
+        }
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(other / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        const std::string sql = "UPDATE PerformanceData SET trackData = NULL WHERE trackId = " + std::to_string(imported) + ";";
+        assert(sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(handle);
+        const auto probe = [](const std::string &) { return 44100.0; };
+        const SampleRateAudit audit = auditSampleRates(seabass::pathToUtf8(other), probe);
+        assert(audit.error.empty());
+        assert(audit.tracksChecked == 2);
+        assert(audit.notYetAnalysed == 1 && "the imported row is counted apart");
+        assert(audit.missing.size() == 1 && audit.missing[0].trackId != imported
+               && "and only the row with a blob that says no rate is a finding");
+        std::cout << "case 0 (a row the player has not analysed is not a sample-rate finding) OK\n";
+    }
+
     // 1. The audit finds the rows that cannot say, and asks the file.
     {
         const auto probe = [](const std::string &file) { return file.find("quiet.mp3") != std::string::npos ? 48000.0 : 0.0; };
