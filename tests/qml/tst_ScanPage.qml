@@ -108,13 +108,18 @@ TestCase {
         tryCompare(menu, "opened", true);
         const item = findChild(page, "deletePlaylistItem");
         compare(item.text, "Delete playlist...");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_playlist_menu");
         item.triggered();
         tryCompare(dialog, "opened", true);
+        waitForRendering(page);
+        saveScreenshot(page, "browse_delete_playlist_dialog");
         compare(page.playlistEditController.calls.length, 0, "nothing staged before OK");
         dialog.accept();
         compare(JSON.stringify(page.playlistEditController.calls[0]),
                 JSON.stringify(["delete", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak"]));
         menu.close();
+        tryCompare(menu, "visible", false);
         page.openPlaylistMenu("Peak", page);
         tryCompare(menu, "opened", true);
         compare(item.text, "Keep this playlist");
@@ -136,10 +141,13 @@ TestCase {
         tryCompare(menu, "opened", true);
         const item = findChild(page, "removeFromPlaylistItem");
         compare(item.text, "Remove from \"Peak\"");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_track_menu");
         item.triggered();
         compare(JSON.stringify(page.playlistEditController.calls[0]),
                 JSON.stringify(["remove", "Peak", "/nonexistent/a.mp3", "A Track"]));
         menu.close();
+        tryCompare(menu, "visible", false);
         page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
         tryCompare(menu, "opened", true);
         compare(item.text, "Keep in \"Peak\"");
