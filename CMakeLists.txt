@@ -3461,6 +3461,12 @@ target_link_libraries(rig_restore PRIVATE seabass_core)
 # Library Health, stray cues and duplicates, timed -- without writing to it.
 # #62 hardware check: edits TESTRIG's export.pdb playlists with
 # PdbRowWriter so a player can show the result.
+# Read-only: counts what pre-6e0f1c09 / pre-05d71bbd dev builds left on a
+# stick (#55, #56), with Library Health's own checks.
+add_executable(stick_damage_audit tools/stick_damage_audit.cpp)
+target_include_directories(stick_damage_audit PRIVATE src)
+target_link_libraries(stick_damage_audit PRIVATE seabass_core rekordbox_format)
+
 add_executable(pdb_playlist_edit tools/pdb_playlist_edit.cpp)
 target_include_directories(pdb_playlist_edit PRIVATE src)
 target_link_libraries(pdb_playlist_edit PRIVATE seabass_core rekordbox_format)
