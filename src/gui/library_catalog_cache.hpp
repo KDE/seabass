@@ -205,7 +205,10 @@ public:
     // catalog file's mtime moves and by every invalidation. `cancel` is
     // checked before a count is made (a remembered one is returned
     // regardless), so a stop waits for one count at most; it throws
-    // application::OperationCancelled. A failed count is not remembered.
+    // application::OperationCancelled. A failed count is remembered like
+    // any other: the same catalog file fails the same way, and a second
+    // try would be a second key derivation on a database that does not
+    // open.
     std::optional<size_t> countTracks(const std::string &format, const std::string &path,
                                       application::CancellationToken cancel = application::CancellationToken::none());
     // Test seam: the count countTracks() makes when it has none
@@ -292,7 +295,7 @@ private:
     {
         std::chrono::system_clock::time_point mtime;
         std::uint64_t generation = 0;
-        size_t rows = 0;
+        std::optional<size_t> rows;
     };
 
     struct PrefetchJob
