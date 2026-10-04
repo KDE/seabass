@@ -751,6 +751,11 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
         },
         LibraryCatalogCache::realMtimeForTesting());
 
+    // A short window, so the test can step past it.
+    const auto window = 300ms;
+    cache.setAnalysisCheckWindowForTesting(window);
+    const auto pastTheWindow = [&] { std::this_thread::sleep_for(window + 50ms); };
+
     for (const std::string format : {"rekordbox", "onelibrary"}) {
         const auto tracks = cache.tracksFor(format, pioneer, Detail::Cues);
         assert(!tracks.empty());
@@ -759,13 +764,32 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
         assert(named != tracks.end());
         assert(catalogReads[format] == 1);
 
-        // Fresh: nothing to plan, nothing read again. Timed: this is the
-        // check every request for the entry makes.
+        // Within the window of the read, nothing is checked.
+        int checks = cache.analysisChecksForTesting();
+        assert(cache.plannedUnits(format, pioneer, Detail::Cues) == 0);
+        cache.tracksFor(format, pioneer, Detail::Cues);
+        assert(cache.analysisChecksForTesting() == checks && "a read just made stands for the window");
+
+        // Past it, the first request for cues checks, timed, and the
+        // requests of the same burst do not check again.
+        pastTheWindow();
         const auto before = std::chrono::steady_clock::now();
         assert(cache.plannedUnits(format, pioneer, Detail::Cues) == 0);
         const auto took = std::chrono::steady_clock::now() - before;
+        assert(cache.analysisChecksForTesting() == checks + 1);
         cache.tracksFor(format, pioneer, Detail::Cues);
+        cache.plannedUnits(format, pioneer, Detail::Full);
+        assert(cache.analysisChecksForTesting() == checks + 1 && "two requests within the window check once");
         assert(catalogReads[format] == 1 && "an unchanged stick is served from the cache");
+
+        // A request for Tracks alone never checks, and past the window it
+        // does not vouch for the cues it carries.
+        pastTheWindow();
+        checks = cache.analysisChecksForTesting();
+        const auto tracksOnly = cache.stagedTracksFor(format, pioneer, Detail::Tracks);
+        assert(cache.plannedUnits(format, pioneer, Detail::Tracks) == 0);
+        assert(cache.analysisChecksForTesting() == checks && "a Tracks request does not check the analysis files");
+        assert(tracksOnly.stage == Detail::Tracks && !tracksOnly.tracks.empty());
 
         // One analysis file moves, as a player's pad store moves it. The
         // track's .DAT: the legacy list a player reads hot cues from.
@@ -773,14 +797,22 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
         const fs::path dat = root / "PIONEER" / seabass::pathFromUtf8(rel);
         assert(fs::exists(dat));
         fs::last_write_time(dat, fs::last_write_time(dat) + 1min);
+        pastTheWindow();
+        // A stop gives the check up and leaves the entry as it is for
+        // that call (the caller is stopping anyway).
+        CancellationToken stopped;
+        stopped.cancel();
+        assert(cache.plannedUnits(format, pioneer, Detail::Cues, stopped) == 0
+               && "a stopped check takes the entry as fresh");
         const auto planned = cache.plannedUnits(format, pioneer, Detail::Cues);
         assert(planned.has_value() && *planned > 0 && "a moved analysis file makes the entry stale");
         cache.tracksFor(format, pioneer, Detail::Cues);
         assert(catalogReads[format] == 2 && "and the next request reads the catalog and its cues again");
         assert(cache.plannedUnits(format, pioneer, Detail::Cues) == 0 && "and is fresh after that");
-        std::cout << "stage 17 (" << format << ": a moved analysis file makes the entry stale; the freshness "
-                  << "check took " << std::chrono::duration_cast<std::chrono::microseconds>(took).count()
-                  << " us over " << tracks.size() << " rows) OK\n";
+        std::cout << "stage 17 (" << format << ": a moved analysis file makes the entry stale, checked once per "
+                  << "window and never for Tracks; the check took "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(took).count() << " us over "
+                  << tracks.size() << " rows) OK\n";
     }
     fs::remove_all(root);
 }

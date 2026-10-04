@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -216,6 +217,12 @@ public:
     using CountFn = std::function<std::optional<size_t>(const std::string &format, const std::string &path)>;
     void setCountFnForTesting(CountFn countFn);
 
+    // Test seams for the analysis files' check: how long a check of an
+    // entry stands (2 s in the app), and how many checks this cache has
+    // made (each a stat per analysis file).
+    void setAnalysisCheckWindowForTesting(std::chrono::milliseconds window);
+    int analysisChecksForTesting() const;
+
     // Reads the rest of this library in the background, up to Full, one
     // catalog at a time on one worker thread for the whole cache (the FAT
     // driver and the USB queue serialise every read anyway): the prefetch
@@ -282,6 +289,8 @@ private:
         // holds cues from analysis files; Engine never has them.
         std::shared_ptr<const std::vector<std::string>> analysisFiles;
         std::uint64_t analysisState = 0;
+        // When that state was last taken or found unchanged.
+        std::chrono::steady_clock::time_point analysisCheckedAt;
         // 0 = nothing read yet, else 1 + Detail of the last stage read.
         int stage = 0;
         // 0 = no pass running, else 1 + Detail of the pass another
@@ -310,6 +319,13 @@ private:
     void stopPrefetching();
     static std::string keyFor(const std::string &format, const std::string &path);
     void invalidateLocked(const std::string &key);
+    // Whether `entry` holds cues from analysis files that were not
+    // checked within m_analysisCheckWindow.
+    bool analysisCheckDueLocked(const Entry &entry) const;
+    // The files' state, counted; nothing when `cancel` was set first.
+    std::optional<std::uint64_t> checkAnalysisFiles(const std::vector<std::string> &files,
+                                                    const application::CancellationToken &cancel);
+    void noteAnalysisChecked(const std::string &key, const std::shared_ptr<const std::vector<std::string>> &files);
     void prefetchLoop();
 
     StageFn m_stageFn;
@@ -319,6 +335,8 @@ private:
     std::condition_variable m_cv;
     std::unordered_map<std::string, Entry> m_entries;
     std::unordered_map<std::string, RememberedCount> m_counts;
+    std::chrono::milliseconds m_analysisCheckWindow{2000};
+    std::atomic<int> m_analysisChecks{0};
     // Per-key invalidation counter, incremented by invalidate() and never
     // erased (unlike m_entries) -- lets a pass detect an invalidate()
     // that landed while it was still running, so it doesn't write a
