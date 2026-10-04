@@ -48,6 +48,27 @@ constexpr size_t PageSequenceOffset = 16;
 // playlist_entry_row: u4(entry_index) + u4(track_id) + u4(playlist_id) --
 // track_id starts right after entry_index.
 constexpr size_t PlaylistEntryTrackIdOffset = 4;
+
+// The file header's next_unused_page, and the table list after it: one
+// 16-byte entry per table (type, empty_candidate, first_page, last_page).
+constexpr size_t HeaderNextUnusedPageOffset = 12;
+constexpr size_t TablesOffset = 28;
+constexpr size_t TableEntrySize = 16;
+constexpr uint32_t PlaylistEntriesTableType = 8;
+constexpr size_t PlaylistPageHeaderSize = 40;
+constexpr size_t PlaylistRowSize = 12;
+
+// An index page (page_flags 0x40, a table's first page), past its 32-byte
+// page header: how many entries it can hold, the next slot, the entry
+// count, the first freed slot (0x1fff: none), then the entries, unused
+// ones 0x1ffffff8.
+constexpr size_t IndexCapacityOffset = 36;
+constexpr size_t IndexNextOffsetOffset = 38;
+constexpr size_t IndexNumEntriesOffset = 56;
+constexpr size_t IndexFirstEmptyOffset = 58;
+constexpr size_t IndexEntriesOffset = 60;
+constexpr uint16_t IndexNoFreeSlot = 0x1FFF;
+constexpr uint32_t IndexEmptySlot = 0x1FFFFFF8;
 // track_row: derived from specs/rekordbox_pdb.ksy's seq field layout,
 // confirmed against the generated parser's own _read() order (rekordbox_
 // pdb.cpp) -- subtype(u2)+index_shift(u2)+bitmask(u4)+sample_rate(u4)+
@@ -552,6 +573,54 @@ std::vector<PlaylistEntryMatch> findAllPlaylistEntriesForTrack(const std::string
         });
     }
     return matches;
+}
+
+// Every present entry of one playlist, in entry_index order, with where
+// each row is.
+struct PlaylistEntryRow
+{
+    uint32_t entryIndex = 0;
+    uint32_t trackId = 0;
+    FoundRow row;
+};
+
+std::vector<PlaylistEntryRow> playlistEntriesOf(const std::string &buffer, uint32_t playlistId)
+{
+    std::vector<PlaylistEntryRow> rows;
+    std::istringstream iss(buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_PLAYLIST_ENTRIES) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (!row->present()) {
+                        continue;
+                    }
+                    auto *e = dynamic_cast<Pdb::playlist_entry_row_t *>(row->body());
+                    if (!e || e->playlist_id() != playlistId) {
+                        continue;
+                    }
+                    PlaylistEntryRow r;
+                    r.entryIndex = e->entry_index();
+                    r.trackId = e->track_id();
+                    r.row.pageIndex = page->page_index();
+                    r.row.presentFlagsOffset =
+                        static_cast<size_t>(pdb.len_page()) * page->page_index() + static_cast<size_t>(group->base()) - 4;
+                    r.row.rowIndexBit = row->row_index();
+                    r.row.rowBodyOffset =
+                        static_cast<size_t>(pdb.len_page()) * page->page_index() + static_cast<size_t>(row->row_base());
+                    rows.push_back(r);
+                }
+            }
+        });
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) { return a.entryIndex < b.entryIndex; });
+    return rows;
 }
 
 // The byte ranges a row actually uses: its fixed header, and each
@@ -1478,42 +1547,38 @@ size_t PdbRowWriter::removePlaylistEntry(uint32_t playlistId, uint32_t trackId)
     return removed;
 }
 
+size_t PdbRowWriter::removePlaylistEntries(uint32_t playlistId, const std::set<uint32_t> &trackIds)
+{
+    const auto rows = playlistEntriesOf(m_buffer, playlistId);
+    std::vector<uint32_t> keep;
+    size_t removed = 0;
+    for (const auto &e : rows) {
+        if (trackIds.count(e.trackId)) {
+            ++removed;
+        } else {
+            keep.push_back(e.trackId);
+        }
+    }
+    if (removed == 0) {
+        return 0;
+    }
+    // Where the survivors go is settled before anything is deleted, so a
+    // refusal leaves the buffer as it was.
+    const auto placement = placePlaylistRows(keep.size());
+    for (const auto &e : rows) {
+        deleteRowAt(e.row.pageIndex, e.row.presentFlagsOffset, e.row.rowIndexBit);
+    }
+    writePlaylistRows(placement, playlistId, keep, 1);
+    return removed;
+}
+
 size_t PdbRowWriter::appendPlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds)
 {
-    constexpr size_t PageHeaderSize = 40;
-    constexpr size_t RowSize = 12;
-    constexpr size_t GroupSize = 0x24;
-    constexpr uint32_t PlaylistEntriesType = 8;
-    constexpr size_t TablesOffset = 28;
-    constexpr size_t TableEntrySize = 16;
-
-    // What the playlist holds now, from the parsed file: its highest
-    // entry_index and its tracks.
     uint32_t highestIndex = 0;
     std::set<uint32_t> already;
-    {
-        std::istringstream iss(m_buffer);
-        kaitai::kstream ks(&iss);
-        Pdb pdb(false, &ks);
-        for (const auto &table : *pdb.tables()) {
-            if (table->type() != Pdb::PAGE_TYPE_PLAYLIST_ENTRIES) {
-                continue;
-            }
-            forEachDataPage(*table, [&](Pdb::page_t *page) {
-                for (const auto &group : *page->row_groups()) {
-                    for (const auto &row : *group->rows()) {
-                        if (!row->present()) {
-                            continue;
-                        }
-                        auto *e = dynamic_cast<Pdb::playlist_entry_row_t *>(row->body());
-                        if (e && e->playlist_id() == playlistId) {
-                            highestIndex = std::max(highestIndex, e->entry_index());
-                            already.insert(e->track_id());
-                        }
-                    }
-                }
-            });
-        }
+    for (const auto &e : playlistEntriesOf(m_buffer, playlistId)) {
+        highestIndex = std::max(highestIndex, e.entryIndex);
+        already.insert(e.trackId);
     }
     std::vector<uint32_t> adding;
     for (const uint32_t id : trackIds) {
@@ -1524,82 +1589,227 @@ size_t PdbRowWriter::appendPlaylistEntries(uint32_t playlistId, const std::vecto
     if (adding.empty()) {
         return 0;
     }
+    writePlaylistRows(placePlaylistRows(adding.size()), playlistId, adding, highestIndex + 1);
+    return adding.size();
+}
 
+PdbRowWriter::PlaylistRowPlacement PdbRowWriter::placePlaylistRows(size_t count) const
+{
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
-    const uint32_t numTables = readU32LE(m_buffer, 8);
-    std::optional<uint32_t> lastPage;
+    const uint32_t numTables = readU32LE(m_buffer, HeaderNumTablesOffset);
+    std::optional<size_t> tableEntry;
     for (uint32_t t = 0; t < numTables; ++t) {
         const size_t entry = TablesOffset + TableEntrySize * t;
-        if (readU32LE(m_buffer, entry) == PlaylistEntriesType) {
-            lastPage = readU32LE(m_buffer, entry + 12);
+        if (readU32LE(m_buffer, entry) == PlaylistEntriesTableType) {
+            tableEntry = entry;
         }
     }
-    if (!lastPage) {
+    if (!tableEntry) {
         throw std::runtime_error("export.pdb has no playlist_entries table");
     }
-    const size_t base = lenPage * *lastPage;
-    if (base + lenPage > m_buffer.size() || readU32LE(m_buffer, base + 8) != PlaylistEntriesType
+    PlaylistRowPlacement placement;
+    placement.tableEntry = *tableEntry;
+    placement.lastPage = readU32LE(m_buffer, *tableEntry + 12);
+    const size_t base = lenPage * placement.lastPage;
+    if (base + lenPage > m_buffer.size() || readU32LE(m_buffer, base + 8) != PlaylistEntriesTableType
         || (static_cast<unsigned char>(m_buffer[base + 27]) & 0x40) != 0) {
         throw std::runtime_error("export.pdb's last playlist_entries page is not a data page of that table");
     }
-    uint32_t counts = readU32LE(m_buffer, base + 24) & 0xFFFFFFu;
-    uint32_t numRowOffsets = counts & 0x1FFFu;
-    uint32_t numRows = counts >> 13;
+    if (count == 0) {
+        return placement;
+    }
+    const uint32_t numRowOffsets = readU32LE(m_buffer, base + 24) & 0x1FFFu;
+    const uint16_t freeSize = readU16LE(m_buffer, base + 28);
+    if (playlistRowsFitting(numRowOffsets, freeSize, count) == count) {
+        placement.onLastPage = count;
+        return placement;
+    }
+    // rekordbox starts a new page for rows that do not all fit on the
+    // last one, even when some would: given 34 entries and a last page
+    // with room for 12, it put all 34 on a new page (#62's reference
+    // export). Each new page is filled before the next is started.
+    const size_t perPage = playlistRowsFitting(0, static_cast<uint16_t>(lenPage - PlaylistPageHeaderSize), SIZE_MAX);
+    placement.newPages = (count + perPage - 1) / perPage;
+    placement.perNewPage = perPage;
+    const uint32_t candidate = readU32LE(m_buffer, *tableEntry + 4);
+    if (readU32LE(m_buffer, base + 12) != candidate) {
+        throw PdbPageFull("export.pdb's last playlist page does not lead to the table's empty candidate page ("
+                          + std::to_string(readU32LE(m_buffer, base + 12)) + " vs " + std::to_string(candidate)
+                          + "); not starting a new page there");
+    }
+    // The candidate is a page nothing uses yet: past the end of the file
+    // on the sticks surveyed, a page of zeros inside it on a fresh export.
+    const size_t candidateBase = lenPage * candidate;
+    if (candidateBase < m_buffer.size()) {
+        const auto first = m_buffer.begin() + static_cast<std::ptrdiff_t>(candidateBase);
+        const auto last = m_buffer.begin() + static_cast<std::ptrdiff_t>(std::min(candidateBase + lenPage, m_buffer.size()));
+        if (std::any_of(first, last, [](char c) { return c != '\0'; })) {
+            throw PdbPageFull("export.pdb's empty candidate page " + std::to_string(candidate)
+                              + " is not empty; not starting a new playlist page there");
+        }
+    }
+    return placement;
+}
+
+size_t PdbRowWriter::playlistRowsFitting(uint32_t numRowOffsets, uint16_t freeSize, size_t wanted)
+{
+    size_t fit = 0;
+    size_t used = 0;
+    while (fit < wanted && numRowOffsets + fit < 0x7FFu) {
+        const size_t cost = PlaylistRowSize + 2 + ((numRowOffsets + fit) % 16 == 0 ? 4 : 0);
+        if (used + cost > freeSize) {
+            break;
+        }
+        used += cost;
+        ++fit;
+    }
+    return fit;
+}
+
+void PdbRowWriter::writePlaylistRows(const PlaylistRowPlacement &placement, uint32_t playlistId,
+                                     const std::vector<uint32_t> &trackIds, uint32_t firstEntryIndex)
+{
+    uint32_t entryIndex = firstEntryIndex;
+    size_t next = 0;
+    if (placement.onLastPage > 0) {
+        appendPlaylistRowsToPage(placement.lastPage, playlistId, trackIds, next, placement.onLastPage, entryIndex);
+    }
+    for (size_t p = 0; p < placement.newPages; ++p) {
+        const uint32_t page = startPlaylistEntriesPage(placement.tableEntry);
+        appendPlaylistRowsToPage(page, playlistId, trackIds, next, std::min(placement.perNewPage, trackIds.size() - next),
+                                 entryIndex);
+    }
+}
+
+uint32_t PdbRowWriter::startPlaylistEntriesPage(size_t tableEntry)
+{
+    // As rekordbox started page 54 in #62's reference export: the table's
+    // empty candidate becomes its last page, pointing at the file's next
+    // unused page, which becomes the new candidate; next_unused_page moves
+    // one on. The old last page already points at the candidate.
+    const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const uint32_t page = readU32LE(m_buffer, tableEntry + 4);
+    const uint32_t nextUnused = readU32LE(m_buffer, HeaderNextUnusedPageOffset);
+    const size_t base = lenPage * page;
+    if (m_buffer.size() < base + lenPage) {
+        // A page past the end grows the file; any page in between stays
+        // zeros, as a write past the end of a file leaves it.
+        m_buffer.resize(base + lenPage, '\0');
+    }
+    writeU32LE(m_buffer, base + 4, page);
+    writeU32LE(m_buffer, base + 8, PlaylistEntriesTableType);
+    writeU32LE(m_buffer, base + 12, nextUnused);
+    writeU32LE(m_buffer, base + 24, 0x24u << 24);
+    writeU16LE(m_buffer, base + 28, static_cast<uint16_t>(lenPage - PlaylistPageHeaderSize));
+    writeU16LE(m_buffer, base + 30, 0);
+    writeU32LE(m_buffer, tableEntry + 4, nextUnused);
+    writeU32LE(m_buffer, tableEntry + 12, page);
+    writeU32LE(m_buffer, HeaderNextUnusedPageOffset, nextUnused + 1);
+    m_editedPageIndices.insert(page);
+    return page;
+}
+
+void PdbRowWriter::appendPlaylistRowsToPage(uint32_t pageIndex, uint32_t playlistId, const std::vector<uint32_t> &trackIds,
+                                            size_t &next, size_t count, uint32_t &entryIndex)
+{
+    const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const size_t base = lenPage * pageIndex;
+    uint32_t numRowOffsets = readU32LE(m_buffer, base + 24) & 0x1FFFu;
+    uint32_t numRows = (readU32LE(m_buffer, base + 24) >> 13) & 0x7FFu;
     uint16_t freeSize = readU16LE(m_buffer, base + 28);
     uint16_t usedSize = readU16LE(m_buffer, base + 30);
 
-    // The room every row needs, checked before anything is written.
-    size_t needed = 0;
-    for (size_t k = 0; k < adding.size(); ++k) {
-        needed += RowSize + 2 + ((numRowOffsets + k) % 16 == 0 ? 4 : 0);
-    }
-    if (needed > freeSize || numRowOffsets + adding.size() > 0x1FFFu || numRows + adding.size() > 0x7FFu) {
-        throw PdbPageFull("export.pdb's last playlist page has room for " + std::to_string(freeSize)
-                          + " bytes and these entries need " + std::to_string(needed)
-                          + "; adding a page is not supported yet (#62)");
-    }
-
-    // The transaction flags of every group the page has, cleared: they
-    // say which rows the last transaction touched, and that is this one.
-    const uint32_t firstAdded = numRowOffsets;
+    // rekordbox adds entries one transaction each, so after a batch the
+    // page names only the last row: transaction (1, that row) and its
+    // transaction flag alone, every other group's cleared (34 rows added
+    // in #62's reference export, one row on the fixture's pages).
     const size_t groupsBefore = numRowOffsets == 0 ? 0 : (numRowOffsets - 1) / 16 + 1;
     for (size_t g = 0; g < groupsBefore; ++g) {
-        writeU16LE(m_buffer, base + lenPage - g * GroupSize - 2, 0);
+        writeU16LE(m_buffer, base + lenPage - g * RowGroupSizeBytes - 2, 0);
     }
-    uint32_t entryIndex = highestIndex;
-    for (const uint32_t trackId : adding) {
+    for (size_t k = 0; k < count; ++k, ++next) {
         const uint32_t i = numRowOffsets;
-        const size_t g = i / 16;
         const size_t r = i % 16;
-        const size_t groupBase = base + lenPage - g * GroupSize;
+        const size_t groupBase = base + lenPage - (i / 16) * RowGroupSizeBytes;
         if (r == 0) {
             writeU16LE(m_buffer, groupBase - 4, 0);
             writeU16LE(m_buffer, groupBase - 2, 0);
         }
         const size_t heapOffset = usedSize;
-        const size_t rowAt = base + PageHeaderSize + heapOffset;
-        writeU32LE(m_buffer, rowAt, ++entryIndex);
-        writeU32LE(m_buffer, rowAt + 4, trackId);
+        const size_t rowAt = base + PlaylistPageHeaderSize + heapOffset;
+        writeU32LE(m_buffer, rowAt, entryIndex++);
+        writeU32LE(m_buffer, rowAt + 4, trackIds[next]);
         writeU32LE(m_buffer, rowAt + 8, playlistId);
         writeU16LE(m_buffer, groupBase - 6 - 2 * r, static_cast<uint16_t>(heapOffset));
         writeU16LE(m_buffer, groupBase - 4, static_cast<uint16_t>(readU16LE(m_buffer, groupBase - 4) | (1u << r)));
-        writeU16LE(m_buffer, groupBase - 2, static_cast<uint16_t>(readU16LE(m_buffer, groupBase - 2) | (1u << r)));
-        freeSize = static_cast<uint16_t>(freeSize - (RowSize + 2 + (r == 0 ? 4 : 0)));
-        usedSize = static_cast<uint16_t>(usedSize + RowSize);
+        freeSize = static_cast<uint16_t>(freeSize - (PlaylistRowSize + 2 + (r == 0 ? 4 : 0)));
+        usedSize = static_cast<uint16_t>(usedSize + PlaylistRowSize);
         ++numRowOffsets;
         ++numRows;
     }
+    const uint32_t last = numRowOffsets - 1;
+    const size_t lastFlags = base + lenPage - (last / 16) * RowGroupSizeBytes - 2;
+    writeU16LE(m_buffer, lastFlags, static_cast<uint16_t>(1u << (last % 16)));
     // num_row_offsets (13 bits) and num_rows (11 bits) share three bytes
     // with page_flags as the fourth, which is kept.
     const uint32_t flagsByte = readU32LE(m_buffer, base + 24) & 0xFF000000u;
     writeU32LE(m_buffer, base + 24, flagsByte | (numRows << 13) | numRowOffsets);
     writeU16LE(m_buffer, base + 28, freeSize);
     writeU16LE(m_buffer, base + 30, usedSize);
-    writeU16LE(m_buffer, base + 32, static_cast<uint16_t>(adding.size()));
-    writeU16LE(m_buffer, base + 34, static_cast<uint16_t>(firstAdded));
-    m_editedPageIndices.insert(*lastPage);
-    m_appendedPages.insert(*lastPage);
-    return adding.size();
+    writeU16LE(m_buffer, base + 32, 1);
+    writeU16LE(m_buffer, base + 34, static_cast<uint16_t>(last));
+    m_editedPageIndices.insert(pageIndex);
+    m_appendedPages.insert(pageIndex);
+}
+
+void PdbRowWriter::listDeletionInTableIndex(uint32_t pageIndex)
+{
+    // rekordbox lists a playlist page it deleted rows from on the table's
+    // index page (its first): the entry is the page index shifted left by
+    // three, num_entries and next_offset one higher (#62's reference
+    // export, page 17). Only the plain case is written, an index whose
+    // entries are all in use with no free list (first_empty 0x1fff);
+    // an index with freed slots is left as it is, as rekordbox itself
+    // leaves some pages with deletions unlisted.
+    const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const size_t pageBase = lenPage * pageIndex;
+    if (m_format != Format::Export || readU32LE(m_buffer, pageBase + 8) != PlaylistEntriesTableType) {
+        return;
+    }
+    const uint32_t numTables = readU32LE(m_buffer, HeaderNumTablesOffset);
+    for (uint32_t t = 0; t < numTables; ++t) {
+        const size_t entry = TablesOffset + TableEntrySize * t;
+        if (readU32LE(m_buffer, entry) != PlaylistEntriesTableType) {
+            continue;
+        }
+        const uint32_t indexPage = readU32LE(m_buffer, entry + 8);
+        const size_t base = lenPage * indexPage;
+        if (base + lenPage > m_buffer.size() || (static_cast<unsigned char>(m_buffer[base + 27]) & 0x40) == 0) {
+            return;
+        }
+        const uint16_t capacity = readU16LE(m_buffer, base + IndexCapacityOffset);
+        const uint16_t nextOffset = readU16LE(m_buffer, base + IndexNextOffsetOffset);
+        const uint16_t numEntries = readU16LE(m_buffer, base + IndexNumEntriesOffset);
+        const uint16_t firstEmpty = readU16LE(m_buffer, base + IndexFirstEmptyOffset);
+        const size_t entries = base + IndexEntriesOffset;
+        if (firstEmpty != IndexNoFreeSlot || numEntries != nextOffset || nextOffset >= capacity
+            || entries + 4u * (nextOffset + 1u) > base + lenPage) {
+            return;
+        }
+        for (uint16_t i = 0; i < nextOffset; ++i) {
+            if (readU32LE(m_buffer, entries + 4u * i) >> 3 == pageIndex) {
+                return;
+            }
+        }
+        if (readU32LE(m_buffer, entries + 4u * nextOffset) != IndexEmptySlot) {
+            return;
+        }
+        writeU32LE(m_buffer, entries + 4u * nextOffset, pageIndex << 3);
+        writeU16LE(m_buffer, base + IndexNextOffsetOffset, static_cast<uint16_t>(nextOffset + 1));
+        writeU16LE(m_buffer, base + IndexNumEntriesOffset, static_cast<uint16_t>(numEntries + 1));
+        m_editedPageIndices.insert(indexPage);
+        return;
+    }
 }
 
 bool PdbRowWriter::commit()
@@ -1654,6 +1864,11 @@ bool PdbRowWriter::commit()
         }
         writeU16LE(m_buffer, base + 32, static_cast<uint16_t>(rows.size()));
         writeU16LE(m_buffer, base + 34, static_cast<uint16_t>(*rows.begin()));
+    }
+    for (const auto &[pageIndex, rows] : m_deletedRowsByPage) {
+        if (!rows.empty()) {
+            listDeletionInTableIndex(pageIndex);
+        }
     }
     for (uint32_t pageIndex : m_editedPageIndices) {
         size_t pageSequenceOffset = static_cast<size_t>(lenPage) * pageIndex + PageSequenceOffset;

@@ -2806,7 +2806,8 @@ target_link_libraries(pdb_append_playlist_entries_test PRIVATE seabass_core_test
 target_include_directories(pdb_append_playlist_entries_test PRIVATE src tests)
 add_test(NAME pdb_append_playlist_entries_test COMMAND pdb_append_playlist_entries_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs/rekordbox/rekordbox/export.pdb
-    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library/rekordbox/rekordbox/export.pdb)
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library/rekordbox/rekordbox/export.pdb
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/pdb_new_page)
 
 add_executable(pdb_row_writer_test
     tests/pdb_row_writer_test.cpp
