@@ -45,6 +45,16 @@ void check(bool ok, const std::string &what)
     }
 }
 
+// Whether a path the audit reports is this file. Compared as paths, not
+// as strings: the audit joins the row's "/PIONEER/..." onto the stick's
+// root as text, so on Windows it reports the stick's own backslashes
+// followed by forward ones -- the same file as the test's t.dir / "...",
+// spelled differently.
+bool samePath(const std::string &reported, const fs::path &expected)
+{
+    return pathFromUtf8(reported).lexically_normal() == expected.lexically_normal();
+}
+
 std::string fromHex(const std::string &hex)
 {
     std::string out;
@@ -349,9 +359,9 @@ void files(const fs::path &fixtureDat)
         if (!finding) {
             return;
         }
-        check(finding->datPath == pathToUtf8(t.dir / "ANLZ0000.DAT"), "the finding names the .DAT");
+        check(samePath(finding->datPath, t.dir / "ANLZ0000.DAT"), "the finding names the .DAT");
         check(finding->shape.headerStale && finding->shape.repairable(), "its list is the stale one");
-        check(finding->debris.size() == 1 && finding->debris[0] == pathToUtf8(t.dir / "ANLZ0001.DAT"),
+        check(finding->debris.size() == 1 && samePath(finding->debris[0], t.dir / "ANLZ0001.DAT"),
               "and ANLZ0001.DAT is the debris, the .EXT and .2EX are not");
 
         const std::string account = repairTrackAnalysis(*finding);
@@ -412,7 +422,7 @@ void files(const fs::path &fixtureDat)
         auto finding = auditTrackAnalysis(pathToUtf8(t.pioneer), t.analyzePath, named);
         check(finding.has_value(), "the one skeleton is found");
         if (finding) {
-            check(finding->debris.size() == 1 && finding->debris[0] == pathToUtf8(t.dir / "ANLZ0004.DAT"),
+            check(finding->debris.size() == 1 && samePath(finding->debris[0], t.dir / "ANLZ0004.DAT"),
                   "only the unnamed skeleton without an .EXT is debris");
         }
         // And a named skeleton is not: it is some row's analysis, however
@@ -473,7 +483,7 @@ void files(const fs::path &fixtureDat)
         const auto finding = examineTrackAnalysis(pathToUtf8(t.pioneer), padded, namesOnly(t.analyzePath));
         check(finding.examined && finding.unreadable.empty(),
               "a padded analyze_path is examined: " + finding.unreadable);
-        check(finding.debris.size() == 1 && finding.debris[0] == pathToUtf8(t.dir / "ANLZ0001.DAT"),
+        check(finding.debris.size() == 1 && samePath(finding.debris[0], t.dir / "ANLZ0001.DAT"),
               "and only the skeleton is debris");
     }
     {
