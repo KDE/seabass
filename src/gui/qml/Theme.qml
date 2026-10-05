@@ -412,6 +412,10 @@ QtObject {
     // this app drew at 4. One number, and the controls that borrow their
     // background from the style get given one of their own.
     readonly property real cornerRadius: scaled(4)
+    // A popup floating over the page -- the Camelot wheel, a picker -- is
+    // a layer above the cards, and rounds a little more than they do so
+    // it reads as one.
+    readonly property real popupRadius: scaled(8)
 
     // The width of the compact combos that sit in a page header -- the
     // library picker and Browse Library's sort combo. One number so the

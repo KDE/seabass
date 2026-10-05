@@ -25,14 +25,32 @@ Popup {
     // fight with dragging every time something it depends on re-evaluates.
     modal: true
     focus: true
-    width: 380
-    height: 480
+    width: 400
+    height: 500
     // Still modal (captures input, closes on an outside click) but
     // without the default dim-the-whole-window scrim: the rest of the
     // app -- in particular a candidate list doing its own hover-fade
     // highlighting behind this -- needs to stay at its own true opacity,
     // not additionally darkened by the popup's own overlay on top of it.
     Overlay.modal: Rectangle { color: "transparent" }
+
+    // Its own edge on every platform, not only where the app's style
+    // supplies one: a rounded card a step above the page, so the wheel
+    // reads as a panel laid over the app rather than a hole cut in it.
+    padding: Theme.cardPadding
+    background: Rectangle {
+        radius: Theme.popupRadius
+        color: Theme.surface
+        border.color: Theme.border
+        border.width: 1
+    }
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 140; easing.type: Easing.OutQuad }
+        NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: 220; easing.type: Easing.OutBack }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 100; easing.type: Easing.InQuad }
+    }
 
     // Falls back to centered when nothing's been dragged yet, or the
     // window's a different size than whatever it was dragged at (an old
@@ -87,6 +105,9 @@ Popup {
     // wedges and keys you were trying to read; the info area is in view
     // and covers nothing.
     property string hoverInfo: ""
+    // What a clicked segment is, kept while the pointer is elsewhere;
+    // hovering still wins while it lasts.
+    property string pinnedInfo: ""
     // Set on enter; on leave, cleared only if it is still this item's
     // text. Moving from one wedge to the next can deliver the second's
     // enter before the first's exit, and a plain clear on exit would
@@ -116,6 +137,8 @@ Popup {
         } else {
             root.originNumber = 0;
         }
+        root.pinnedInfo = "";
+        wheel.selectedIndex = -1;
         root.resetPosition();
         root.open();
     }
@@ -269,40 +292,56 @@ Popup {
                 elide: Text.ElideRight
                 color: Theme.text
                 font.pointSize: Theme.fontSmall
-                text: root.hoverInfo
+                text: root.hoverInfo.length > 0 ? root.hoverInfo : root.pinnedInfo
             }
         }
 
-        // Two rings of twelve segments that touch and close the circle, the
-        // way a Camelot wheel is drawn everywhere else: major keys (B)
-        // outside, their relative minors (A) inside, each pair on one
-        // spoke. It used to place twelve small circles on each of two rings,
-        // which left every key floating in empty space with nothing to say
-        // which ones were neighbours.
+        // Two rings of twelve segments that close the circle, the way a
+        // Camelot wheel is drawn everywhere else: major keys (B) outside,
+        // their relative minors (A) inside, each pair on one spoke. Seams of
+        // one even width run between them, straight-sided rather than
+        // wedge-shaped, so the gap reads the same at the rim as at the hub.
+        //
+        // Hovering a segment lifts it out of the ring; clicking it keeps it
+        // lifted, with a little bounce, and keeps what it is in the info
+        // area after the pointer moves on. Clicking it again, or anywhere
+        // off the segments, lets it go. Still a reference: nothing outside
+        // the popup hears about a click.
         Item {
             id: wheel
             Layout.fillWidth: true
             Layout.fillHeight: true
 
+            // The width of every seam, between neighbours and between rings.
+            readonly property real seam: 8
+            // How far a lifted segment moves out, and room kept for it at
+            // the rim so the outer ring is not clipped when it does.
+            readonly property real hoverLift: 5
+            readonly property real selectLift: 9
             readonly property real cx: width / 2
             readonly property real cy: height / 2
-            readonly property real majorOuter: Math.max(0, Math.min(width, height) / 2 - 4)
+            readonly property real majorOuter: Math.max(0, Math.min(width, height) / 2 - wheel.selectLift - 4)
             readonly property real majorInner: wheel.majorOuter * 0.64
-            readonly property real minorOuter: wheel.majorInner
-            readonly property real minorInner: wheel.majorOuter * 0.30
+            readonly property real minorOuter: wheel.majorInner - wheel.seam
+            readonly property real minorInner: wheel.majorOuter * 0.36
 
-            // One key, as a ring segment: its colour, a hairline in the
-            // page colour as the seam to its neighbours, and on top of that
-            // whatever outline the key carries -- its relation to the
-            // track's key, and the track's own key.
+            property int selectedIndex: -1
+            property bool selectedMinor: false
+
+            // One key, as a ring segment with rounded corners: its colour, and
+            // on top of that whatever outline the key carries -- its relation
+            // to the track's key, and the track's own key.
             component KeySegment: Item {
                 id: segment
                 required property int index
                 required property bool minor
                 readonly property int number: index + 1
                 readonly property real centreDeg: index * 30 - 90
+                readonly property real centreRad: segment.centreDeg * Math.PI / 180
                 readonly property real innerR: segment.minor ? wheel.minorInner : wheel.majorInner
                 readonly property real outerR: segment.minor ? wheel.minorOuter : wheel.majorOuter
+                readonly property real midR: (segment.innerR + segment.outerR) / 2
+                readonly property color keyColor: Theme.colorForKey(segment.number + (segment.minor ? "A" : "B"))
                 // var, not color: relationColor() answers null for a key with no
                 // relation to the track's, and null assigned to a color property
                 // is opaque black, which drew a black ring inside every
@@ -310,95 +349,145 @@ Popup {
                 readonly property var highlight: root.relationColor(segment.number, segment.minor)
                 readonly property bool isOrigin: segment.number === root.originNumber
                                                  && segment.minor === root.originIsMinor
+                readonly property bool hovered: wheelPointer.hoverIndex === segment.index
+                                                && wheelPointer.hoverMinor === segment.minor
+                readonly property bool selected: wheel.selectedIndex === segment.index
+                                                 && wheel.selectedMinor === segment.minor
                 anchors.fill: parent
-                opacity: root.originNumber !== 0 && !segment.isOrigin
-                    && root.relationLabel(segment.number, segment.minor) === "Unrelated key" ? 0.6 : 1.0
-                Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
+                // Above its neighbours while lifted, so its outline is not
+                // cut by the segment beside it.
+                z: segment.selected ? 2 : segment.hovered ? 1 : 0
+                // Unrelated keys fade toward the popup's own colour. Not by
+                // opacity: the fill and its rounding stroke overlap, and at
+                // partial opacity the overlap drew a darker rim round every
+                // faded segment.
+                property real fade: root.originNumber !== 0 && !segment.isOrigin && !segment.selected
+                    && root.relationLabel(segment.number, segment.minor) === "Unrelated key" ? 0.45 : 0
+                Behavior on fade { NumberAnimation { duration: Theme.shortTransitionDuration } }
+                readonly property color shownColor: Qt.tint(segment.keyColor,
+                    Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, segment.fade))
 
+                // Outward along the segment's own spoke; springs, so it
+                // overshoots a touch and settles rather than sliding.
+                property real lift: segment.selected ? wheel.selectLift : segment.hovered ? wheel.hoverLift : 0
+                Behavior on lift { SpringAnimation { spring: 4.5; damping: 0.22; epsilon: 0.05 } }
+                // A pulse on being picked: swells and settles back.
+                property real zoom: 1.0
+                SequentialAnimation {
+                    id: pickPulse
+                    NumberAnimation { target: segment; property: "zoom"; to: 1.12; duration: 110; easing.type: Easing.OutQuad }
+                    NumberAnimation { target: segment; property: "zoom"; to: 1.0; duration: 520; easing.type: Easing.OutElastic; easing.amplitude: 1.1; easing.period: 0.4 }
+                }
+                onSelectedChanged: if (segment.selected) pickPulse.restart()
+
+                transform: [
+                    Scale {
+                        origin.x: wheel.cx + segment.midR * Math.cos(segment.centreRad)
+                        origin.y: wheel.cy + segment.midR * Math.sin(segment.centreRad)
+                        xScale: segment.zoom
+                        yScale: segment.zoom
+                    },
+                    Translate {
+                        x: segment.lift * Math.cos(segment.centreRad)
+                        y: segment.lift * Math.sin(segment.centreRad)
+                    }
+                ]
+
+                // The corners are rounded by stroking the fill in its own
+                // colour with round joins, inset by the stroke's half width
+                // so the rounded shape keeps the segment's footprint.
                 Arc {
                     innerR: segment.innerR
                     outerR: segment.outerR
                     centreDeg: segment.centreDeg
-                    fill: Theme.colorForKey(segment.number + (segment.minor ? "A" : "B"))
-                    stroke: Theme.background
-                    strokeW: 2
+                    inset: 3
+                    fill: segment.shownColor
+                    stroke: segment.shownColor
+                    strokeW: 6
                 }
-                // Outlines inset by half their width, so they sit inside the
-                // segment rather than across the seam onto its neighbours.
                 Arc {
                     visible: segment.highlight !== null
-                    innerR: segment.innerR + 3
-                    outerR: segment.outerR - 3
+                    innerR: segment.innerR
+                    outerR: segment.outerR
                     centreDeg: segment.centreDeg
-                    spanDeg: 30 - 2 * (3 / Math.max(1, (segment.innerR + segment.outerR) / 2)) * 180 / Math.PI
+                    inset: 3
                     stroke: segment.highlight !== null ? segment.highlight : "transparent"
                     strokeW: 3
                 }
                 Arc {
                     visible: segment.isOrigin
-                    innerR: segment.innerR + 1.5
-                    outerR: segment.outerR - 1.5
+                    innerR: segment.innerR
+                    outerR: segment.outerR
                     centreDeg: segment.centreDeg
-                    spanDeg: 30 - 2 * (1.5 / Math.max(1, (segment.innerR + segment.outerR) / 2)) * 180 / Math.PI
+                    inset: 1.5
                     stroke: Theme.text
                     strokeW: 3
                 }
                 Label {
-                    readonly property real midR: (segment.innerR + segment.outerR) / 2
-                    readonly property real angle: segment.centreDeg * Math.PI / 180
-                    x: Theme.snap(wheel.cx + midR * Math.cos(angle) - width / 2)
-                    y: Theme.snap(wheel.cy + midR * Math.sin(angle) - height / 2)
+                    x: Theme.snap(wheel.cx + segment.midR * Math.cos(segment.centreRad) - width / 2)
+                    y: Theme.snap(wheel.cy + segment.midR * Math.sin(segment.centreRad) - height / 2)
                     text: root.wedgeLabel(segment.number, segment.minor)
                     font.bold: true
                     font.pointSize: Theme.fontSmall
-                    color: Theme.contrastingTextColor(
-                        Theme.colorForKey(segment.number + (segment.minor ? "A" : "B")))
+                    color: Theme.contrastingTextColor(segment.shownColor)
                 }
             }
 
-            // A ring segment from innerR to outerR, spanDeg wide, centred
-            // on centreDeg (0 = east, clockwise, as screen angles run).
+            // A ring segment from innerR to outerR, one twelfth of the circle
+            // centred on centreDeg (0 = east, clockwise, as screen angles run),
+            // less half a seam on either side and inset by `inset` all round
+            // -- so an outline of width 2 * inset lies just inside the edge.
+            // The seam is cut at a constant width: each radius loses the
+            // angle that half a seam subtends there, more at the hub than at
+            // the rim.
             component Arc: Shape {
                 id: arc
                 property real innerR: 0
                 property real outerR: 0
                 property real centreDeg: 0
-                property real spanDeg: 30
+                property real inset: 0
                 property color fill: "transparent"
                 property color stroke: "transparent"
                 property real strokeW: 1
                 anchors.fill: parent
                 preferredRendererType: Shape.CurveRenderer
-                readonly property real a0: (arc.centreDeg - arc.spanDeg / 2) * Math.PI / 180
-                readonly property real a1: (arc.centreDeg + arc.spanDeg / 2) * Math.PI / 180
+                readonly property real rOut: Math.max(1, arc.outerR - arc.inset)
+                readonly property real rIn: Math.max(1, arc.innerR + arc.inset)
+                readonly property real half: wheel.seam / 2 + arc.inset
+                readonly property real centre: arc.centreDeg * Math.PI / 180
+                readonly property real halfSpan: 15 * Math.PI / 180
+                readonly property real outA0: arc.centre - arc.halfSpan + Math.asin(Math.min(1, arc.half / arc.rOut))
+                readonly property real outA1: arc.centre + arc.halfSpan - Math.asin(Math.min(1, arc.half / arc.rOut))
+                readonly property real inA0: arc.centre - arc.halfSpan + Math.asin(Math.min(1, arc.half / arc.rIn))
+                readonly property real inA1: arc.centre + arc.halfSpan - Math.asin(Math.min(1, arc.half / arc.rIn))
                 ShapePath {
                     fillColor: arc.fill
                     strokeColor: arc.stroke
                     strokeWidth: arc.strokeW
-                    joinStyle: ShapePath.MiterJoin
-                    startX: wheel.cx + arc.outerR * Math.cos(arc.a0)
-                    startY: wheel.cy + arc.outerR * Math.sin(arc.a0)
+                    joinStyle: ShapePath.RoundJoin
+                    startX: wheel.cx + arc.rOut * Math.cos(arc.outA0)
+                    startY: wheel.cy + arc.rOut * Math.sin(arc.outA0)
                     PathArc {
-                        x: wheel.cx + arc.outerR * Math.cos(arc.a1)
-                        y: wheel.cy + arc.outerR * Math.sin(arc.a1)
-                        radiusX: arc.outerR
-                        radiusY: arc.outerR
+                        x: wheel.cx + arc.rOut * Math.cos(arc.outA1)
+                        y: wheel.cy + arc.rOut * Math.sin(arc.outA1)
+                        radiusX: arc.rOut
+                        radiusY: arc.rOut
                         direction: PathArc.Clockwise
                     }
                     PathLine {
-                        x: wheel.cx + arc.innerR * Math.cos(arc.a1)
-                        y: wheel.cy + arc.innerR * Math.sin(arc.a1)
+                        x: wheel.cx + arc.rIn * Math.cos(arc.inA1)
+                        y: wheel.cy + arc.rIn * Math.sin(arc.inA1)
                     }
                     PathArc {
-                        x: wheel.cx + arc.innerR * Math.cos(arc.a0)
-                        y: wheel.cy + arc.innerR * Math.sin(arc.a0)
-                        radiusX: arc.innerR
-                        radiusY: arc.innerR
+                        x: wheel.cx + arc.rIn * Math.cos(arc.inA0)
+                        y: wheel.cy + arc.rIn * Math.sin(arc.inA0)
+                        radiusX: arc.rIn
+                        radiusY: arc.rIn
                         direction: PathArc.Counterclockwise
                     }
                     PathLine {
-                        x: wheel.cx + arc.outerR * Math.cos(arc.a0)
-                        y: wheel.cy + arc.outerR * Math.sin(arc.a0)
+                        x: wheel.cx + arc.rOut * Math.cos(arc.outA0)
+                        y: wheel.cy + arc.rOut * Math.sin(arc.outA0)
                     }
                 }
             }
@@ -415,12 +504,15 @@ Popup {
             // One pointer target for all twenty-four segments, hit by angle
             // and radius. A segment is not a rectangle, so a MouseArea per
             // key would claim the corners it does not cover and answer for
-            // the wrong key near every seam.
+            // the wrong key near every seam. The seams themselves count for
+            // the nearer segment, so moving across one does not flicker the
+            // info area through "nothing".
             MouseArea {
                 id: wheelPointer
                 objectName: "wheelPointer"
                 anchors.fill: parent
                 hoverEnabled: true
+                cursorShape: wheelPointer.hoverIndex >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                 property int hoverIndex: -1
                 property bool hoverMinor: false
 
@@ -428,10 +520,11 @@ Popup {
                     const dx = mx - wheel.cx;
                     const dy = my - wheel.cy;
                     const r = Math.sqrt(dx * dx + dy * dy);
+                    const ringSplit = (wheel.minorOuter + wheel.majorInner) / 2;
                     var minor;
-                    if (r >= wheel.majorInner && r <= wheel.majorOuter) {
+                    if (r >= ringSplit && r <= wheel.majorOuter) {
                         minor = false;
-                    } else if (r >= wheel.minorInner && r < wheel.majorInner) {
+                    } else if (r >= wheel.minorInner && r < ringSplit) {
                         minor = true;
                     } else {
                         return {index: -1, minor: false};
@@ -464,6 +557,19 @@ Popup {
                     setHover(hit.index, hit.minor);
                 }
                 onExited: setHover(-1, false)
+                onClicked: (mouse) => {
+                    const hit = segmentAt(mouse.x, mouse.y);
+                    if (hit.index < 0 || (hit.index === wheel.selectedIndex && hit.minor === wheel.selectedMinor)) {
+                        wheel.selectedIndex = -1;
+                        root.pinnedInfo = "";
+                    } else {
+                        wheel.selectedIndex = hit.index;
+                        wheel.selectedMinor = hit.minor;
+                        const n = hit.index + 1;
+                        root.pinnedInfo = root.wedgeInfo(n, hit.minor,
+                            n === root.originNumber && hit.minor === root.originIsMinor);
+                    }
+                }
             }
         }
 
@@ -472,7 +578,7 @@ Popup {
             Layout.alignment: Qt.AlignHCenter
             // Reduced from 14 -- one more legend entry (Adjacent split
             // into Boost/Drop) needs the room in this popup's fixed
-            // 380px width.
+            // 400px width.
             spacing: 9
             Repeater {
                 model: [

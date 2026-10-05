@@ -7,7 +7,7 @@ import QtQuick.Controls
 import QtTest
 import SeabassGui
 
-// The wheel is two rings of twelve segments that touch, and what the
+// The wheel is two rings of twelve segments a seam apart, and what the
 // pointer is over is told in the info area top right rather than in a
 // tooltip laid over the wheel.
 TestCase {
@@ -45,12 +45,13 @@ TestCase {
         return {x: wheel.cx + r * Math.cos(a), y: wheel.cy + r * Math.sin(a)};
     }
 
-    function test_theRingsTouch() {
+    function test_theRingsAreOneSeamApart() {
         const w = opened().wheel;
         verify(w.majorOuter > 0, "the wheel has a size");
-        compare(w.minorOuter, w.majorInner, "the minor ring ends where the major ring begins");
+        compare(w.majorInner - w.minorOuter, w.seam, "the rings are one seam apart, like the segments");
         if (typeof screenshotDir !== "undefined" && screenshotDir && screenshotDir.length > 0) {
-            grabImage(w.parent).save(screenshotDir + "/camelot-wheel.png");
+            const popup = w.parent.parent.parent;
+            grabImage(popup).save(screenshotDir + "/camelot-wheel.png");
         }
     }
 
@@ -96,5 +97,37 @@ TestCase {
                   "the info area names the key under the pointer: '" + info.text + "'");
         mouseMove(t.pointer, t.wheel.cx, t.wheel.cy);
         tryCompare(info, "text", "", 1000, "leaving the segments clears it");
+    }
+
+    // A seam belongs to the nearer segment, so crossing one never reads
+    // as "nothing": not between neighbours, not between the rings.
+    function test_theSeamsAreNotHoles() {
+        const t = opened();
+        const gapR = (t.wheel.minorOuter + t.wheel.majorInner) / 2;
+        const a = -90 * Math.PI / 180;
+        compare(t.pointer.segmentAt(t.wheel.cx + (gapR + 1) * Math.cos(a), t.wheel.cy + (gapR + 1) * Math.sin(a)).minor,
+                false, "just outside the ring gap is the major ring");
+        compare(t.pointer.segmentAt(t.wheel.cx + (gapR - 1) * Math.cos(a), t.wheel.cy + (gapR - 1) * Math.sin(a)).minor,
+                true, "just inside it is the minor ring");
+        verify(t.pointer.segmentAt(t.wheel.cx + gapR * Math.cos(a), t.wheel.cy + gapR * Math.sin(a)).index >= 0,
+               "the gap itself is a key");
+    }
+
+    // Clicking a segment picks it: it stays lifted and its text stays in
+    // the info area after the pointer leaves; clicking it again lets go.
+    function test_clickingPinsASegment() {
+        const t = opened();
+        const info = findChild(t.popup.contentItem, "wheelHoverInfo");
+        const c = centreOf(t.wheel, 5, false);
+        mouseClick(t.pointer, c.x, c.y);
+        compare(t.wheel.selectedIndex, 4, "5B is picked");
+        compare(t.wheel.selectedMinor, false);
+        mouseMove(t.pointer, t.wheel.cx, t.wheel.cy);
+        tryVerify(() => info.text.indexOf(t.popup.wedgeLabel(5, false)) === 0, 1000,
+                  "the picked key stays in the info area: '" + info.text + "'");
+        mouseClick(t.pointer, c.x, c.y);
+        compare(t.wheel.selectedIndex, -1, "a second click lets go");
+        mouseMove(t.pointer, t.wheel.cx, t.wheel.cy);
+        tryCompare(info, "text", "", 1000, "and the info area empties");
     }
 }
