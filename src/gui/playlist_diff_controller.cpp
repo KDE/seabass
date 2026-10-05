@@ -25,6 +25,11 @@ namespace
 constexpr int kFoldContext = 2;
 constexpr int kFoldMinimum = 3;
 
+// Up to this many table cells (entries of A times entries of B, about
+// 2000 x 2000) the diff runs on the GUI thread: tens of milliseconds.
+// Beyond, a worker.
+constexpr double kSynchronousDiffCells = 4.0e6;
+
 QString kindName(domain::DiffEntryKind kind)
 {
     switch (kind) {
@@ -344,52 +349,14 @@ void PlaylistDiffController::expandFold(int row)
     rebuildRows();
 }
 
+// The relatives now, the diff now when it is small and on a worker when
+// it is not: the linear-space diff is O(n*m) time, seconds for two
+// reshuffled 20000-entry playlists in a debug build.
 void PlaylistDiffController::recompute()
 {
     const Entries &a = entriesOf(m_playlistA);
     const Entries &b = entriesOf(m_playlistB);
-    m_diff = domain::diffPlaylists(idsOf(a), idsOf(b));
     m_openFolds.clear();
-
-    // The verdict, in words a reader can act on.
-    auto plural = [](int n, const char *word) {
-        return QStringLiteral("%1 %2%3").arg(n).arg(QLatin1String(word)).arg(n == 1 ? "" : "s");
-    };
-    // n tracks only one side has, saying how many of them are extra
-    // copies of a track the other side lists fewer times.
-    auto tracksOnly = [&plural](int n, int extra) {
-        if (extra == 0) {
-            return plural(n, "track");
-        }
-        const QString copies = extra == 1 ? QStringLiteral("1 extra copy") : QStringLiteral("%1 extra copies").arg(extra);
-        return extra == n ? copies : QStringLiteral("%1 (%2)").arg(plural(n, "track"), copies);
-    };
-    const QString reordered = m_diff.moved > 0 ? QStringLiteral(", %1 reordered").arg(m_diff.moved) : QString();
-    if (m_playlistA.isEmpty() || m_playlistB.isEmpty()) {
-        m_verdict = QStringLiteral("This catalog has no playlists to compare.");
-    } else if (m_playlistA == m_playlistB) {
-        m_verdict = QStringLiteral("The same playlist on both sides.");
-    } else if (m_diff.identical()) {
-        m_verdict = QStringLiteral("Identical: the same %1 in the same order.").arg(plural(m_diff.shared, "track"));
-    } else if (m_diff.sameTracks()) {
-        m_verdict = QStringLiteral("The same %1, %2 of them in a different order.")
-                        .arg(plural(m_diff.shared, "track"))
-                        .arg(m_diff.moved);
-    } else if (m_diff.onlyA == 0) {
-        m_verdict = QStringLiteral("%1 is %2 plus %3%4.")
-                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyB, m_diff.extraB), reordered);
-    } else if (m_diff.onlyB == 0) {
-        m_verdict = QStringLiteral("%1 is %2 minus %3%4.")
-                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyA, m_diff.extraA), reordered);
-    } else {
-        m_verdict = QStringLiteral("%1 shared. %2 has %3 the other lacks, %4 has %5%6.")
-                        .arg(m_diff.shared)
-                        .arg(m_playlistA)
-                        .arg(m_diff.onlyA)
-                        .arg(m_playlistB)
-                        .arg(m_diff.onlyB)
-                        .arg(reordered);
-    }
 
     // The relatives of A, most alike first.
     m_relatives.clear();
@@ -446,6 +413,81 @@ void PlaylistDiffController::recompute()
             }
             m_relatives.push_back(m);
         }
+    }
+
+    std::vector<std::string> idsA = idsOf(a);
+    std::vector<std::string> idsB = idsOf(b);
+    const double cells = static_cast<double>(idsA.size()) * static_cast<double>(idsB.size());
+    if (cells <= kSynchronousDiffCells) {
+        // A big diff still running is for another pair: its answer must
+        // never land on this one.
+        m_diffJob.cancel();
+        applyDiff(domain::diffPlaylists(idsA, idsB));
+        return;
+    }
+    // Until the worker answers, no rows: never the previous pair's rows
+    // under the new names. A newer recompute supersedes this request,
+    // and a superseded answer is swallowed (see AsyncRequest, rule 4).
+    m_diff = {};
+    m_verdict = QStringLiteral("Comparing two long playlists: %1 and %2 entries.")
+                    .arg(QString::number(idsA.size()), QString::number(idsB.size()));
+    rebuildRows();
+    emit diffChanged();
+    m_diffJob.restart(
+        QString::number(++m_diffGeneration), QString(),
+        [idsA = std::move(idsA), idsB = std::move(idsB)](application::CancellationToken cancel) {
+            return domain::diffPlaylists(idsA, idsB, [cancel]() { return cancel.cancelled(); });
+        },
+        {
+            [this](domain::PlaylistDiff &&diff) { applyDiff(std::move(diff)); },
+            [this](const QString &message) { setErrorMessage(message); },
+            {},
+        });
+}
+
+void PlaylistDiffController::applyDiff(domain::PlaylistDiff diff)
+{
+    m_diff = std::move(diff);
+    m_openFolds.clear();
+
+    // The verdict, in words a reader can act on.
+    auto plural = [](int n, const char *word) {
+        return QStringLiteral("%1 %2%3").arg(n).arg(QLatin1String(word)).arg(n == 1 ? "" : "s");
+    };
+    // n tracks only one side has, saying how many of them are extra
+    // copies of a track the other side lists fewer times.
+    auto tracksOnly = [&plural](int n, int extra) {
+        if (extra == 0) {
+            return plural(n, "track");
+        }
+        const QString copies = extra == 1 ? QStringLiteral("1 extra copy") : QStringLiteral("%1 extra copies").arg(extra);
+        return extra == n ? copies : QStringLiteral("%1 (%2)").arg(plural(n, "track"), copies);
+    };
+    const QString reordered = m_diff.moved > 0 ? QStringLiteral(", %1 reordered").arg(m_diff.moved) : QString();
+    if (m_playlistA.isEmpty() || m_playlistB.isEmpty()) {
+        m_verdict = QStringLiteral("This catalog has no playlists to compare.");
+    } else if (m_playlistA == m_playlistB) {
+        m_verdict = QStringLiteral("The same playlist on both sides.");
+    } else if (m_diff.identical()) {
+        m_verdict = QStringLiteral("Identical: the same %1 in the same order.").arg(plural(m_diff.shared, "track"));
+    } else if (m_diff.sameTracks()) {
+        m_verdict = QStringLiteral("The same %1, %2 of them in a different order.")
+                        .arg(plural(m_diff.shared, "track"))
+                        .arg(m_diff.moved);
+    } else if (m_diff.onlyA == 0) {
+        m_verdict = QStringLiteral("%1 is %2 plus %3%4.")
+                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyB, m_diff.extraB), reordered);
+    } else if (m_diff.onlyB == 0) {
+        m_verdict = QStringLiteral("%1 is %2 minus %3%4.")
+                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyA, m_diff.extraA), reordered);
+    } else {
+        m_verdict = QStringLiteral("%1 shared. %2 has %3 the other lacks, %4 has %5%6.")
+                        .arg(m_diff.shared)
+                        .arg(m_playlistA)
+                        .arg(m_diff.onlyA)
+                        .arg(m_playlistB)
+                        .arg(m_diff.onlyB)
+                        .arg(reordered);
     }
 
     rebuildRows();

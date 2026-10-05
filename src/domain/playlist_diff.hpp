@@ -4,7 +4,10 @@
 
 #pragma once
 
+#include <cstddef>
+#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace seabass::domain
@@ -58,7 +61,22 @@ struct PlaylistDiff
     bool identical() const { return sameTracks() && moved == 0; }
 };
 
-PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<std::string> &b);
+// O(n*m) time, O(n+m) memory: two 20000-entry playlists that are each
+// other reshuffled take seconds, so a caller on the GUI thread hands big
+// ones to a worker. `stop`, when set, is polled as it goes; once it says
+// true the diff gives up and what it returns means nothing.
+PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<std::string> &b,
+                           const std::function<bool()> &stop = {});
+
+namespace detail
+{
+// One longest common subsequence of a and b (small non-negative ids), as
+// index pairs in order. `tableCells`, when given, gets the length-table
+// cells it held: linear in the inputs, never their product.
+std::vector<std::pair<int, int>> longestCommonSubsequence(const std::vector<int> &a, const std::vector<int> &b,
+                                                          const std::function<bool()> &stop = {},
+                                                          std::size_t *tableCells = nullptr);
+}  // namespace detail
 
 // How B stands to A, as a set, for picking what to compare against: the
 // "Whaleshark Spacy Techno" that is the first thirty of "Spacy Techno",

@@ -14,6 +14,7 @@
 
 #include <QCoreApplication>
 #include <QSignalSpy>
+#include <QTest>
 
 #include <cassert>
 #include <filesystem>
@@ -119,6 +120,48 @@ void testExtraCopyInAAndPartners()
         }
     }
     assert(moved == 2);
+}
+
+// Two long playlists diff on a worker, the page told so meanwhile, and
+// an answer for a pair no longer shown never lands.
+void testLongPlaylistsDiffOffTheGuiThread()
+{
+    // 2500 x 2500 entries, past the synchronous bound; Q is P with every
+    // neighbouring pair swapped, so half the entries are moved.
+    std::vector<std::string> p;
+    std::vector<std::string> q;
+    for (int i = 0; i < 2500; ++i) {
+        p.push_back("t" + std::to_string(i));
+        q.push_back("t" + std::to_string(i ^ 1));
+    }
+    PlaylistDiffController controller;
+    controller.setTracksForTesting(tracksOf({{"P", p}, {"Q", q}, {"S", {"t0", "t1"}}}));
+    controller.setPlaylistA(QStringLiteral("P"));
+    controller.setPlaylistB(QStringLiteral("Q"));
+    assert(controller.busy());
+    assert(controller.rows()->rowCount() == 0);
+    assert(controller.verdict() == QStringLiteral("Comparing two long playlists: 2500 and 2500 entries."));
+    waitUntilIdle(controller);
+    assert(controller.sharedCount() == 2500 && controller.movedCount() == 1250);
+    assert(controller.onlyACount() == 0 && controller.onlyBCount() == 0);
+    assert(controller.rows()->rowCount() > 0);
+
+    // Superseded: the long diff starts, then a short pair is picked
+    // before it answers. The short pair's diff stands; the long one's
+    // answer, whenever it comes, is dropped.
+    controller.setPlaylistB(QStringLiteral("S"));
+    controller.setPlaylistB(QStringLiteral("Q"));
+    assert(controller.busy());
+    controller.setPlaylistB(QStringLiteral("S"));
+    const QString shortVerdict = controller.verdict();
+    assert(controller.sharedCount() == 2 && controller.onlyACount() == 2498);
+    QSignalSpy diffChanged(&controller, &PlaylistDiffController::diffChanged);
+    for (int i = 0; i < 20; ++i) {
+        QTest::qWait(100);
+    }
+    assert(!controller.busy());
+    assert(diffChanged.isEmpty());
+    assert(controller.verdict() == shortVerdict && controller.sharedCount() == 2 && controller.onlyACount() == 2498);
 }
 
 }  // namespace
@@ -252,6 +295,7 @@ int main(int argc, char **argv)
 
     testExtraCopyInB();
     testExtraCopyInAAndPartners();
+    testLongPlaylistsDiffOffTheGuiThread();
 
     std::cout << "playlist_diff_controller_test: ok\n";
     return 0;
