@@ -61,10 +61,16 @@ TestCase {
         const long = "This sentence is deliberately far longer than any tooltip "
             + "ought to be on one line, so that it has to wrap onto several "
             + "lines to stay inside the window it was opened in.";
+        // Measured against a one-line tip of the same style rather than
+        // through contentItem.font: KDE's desktop style gives its tooltip
+        // a contentItem with no font property.
+        const oneLineHeight = shown("Short").height;
+        target.ToolTip.hide();
         const tip = shown(long);
         verify(tip.width < testCase.width,
                "tooltip " + tip.width + " px wide in a " + testCase.width + " px window");
-        verify(tip.height > tip.contentItem.font.pixelSize * 1.5 || tip.contentItem.lineCount > 1,
-               "a long tip wraps onto more than one line");
+        verify(tip.height > oneLineHeight * 1.5,
+               "a long tip wraps onto more than one line: " + tip.height + " px tall, one line is "
+               + oneLineHeight + " px");
     }
 }
