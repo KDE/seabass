@@ -124,7 +124,6 @@ set(SEABASS_GUI_QML_FILES
     qml/CamelotWheelPosition.qml
     qml/Main.qml
     qml/StickListPage.qml
-    qml/DuplicatesHubPage.qml
     qml/ScanPage.qml
     qml/TrackDetailPage.qml
     qml/DuplicatesPage.qml

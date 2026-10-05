@@ -373,21 +373,21 @@ TestCase {
         }
     }
 
-    // From Housekeeping's card, and from Sync Cue Points' stray-cue link.
+    // From Maintain's card on the home, and from Sync Cue Points' stray-cue link.
     function test_breadcrumb_data() {
         return [
-            {tag: "housekeeping", props: {}, middle: "Housekeeping"},
-            {tag: "sync", props: {hubLabel: "Sync Cue Points"}, middle: "Sync Cue Points"},
+            {tag: "maintain", props: {}, below: 1, middle: "", link: false},
+            {tag: "sync", props: {hubLabel: "Sync Cue Points"}, below: 2, middle: "Sync Cue Points", link: true},
         ];
     }
 
     function test_breadcrumb(data) {
-        const page = pushOnStack(2, data.props);
+        const page = pushOnStack(data.below, data.props);
         waitForRendering(page);
         const crumb = Breadcrumb.read(page);
         compare(crumb.stick, "TESTSTICK");
         compare(crumb.middle, data.middle);
-        verify(crumb.middleIsLink);
+        compare(crumb.middleIsLink, data.link);
         compare(crumb.title, "Clean Up Stray Cues");
         saveCrumbShot(page, "junk-cues-" + data.tag);
     }

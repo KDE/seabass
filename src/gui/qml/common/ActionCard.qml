@@ -8,10 +8,9 @@ import QtQuick.Layouts
 import SeabassGui
 
 // A big icon+title+subtitle menu button -- the tappable tile used on
-// the home screen (StickToolCards, StickListPage) and DuplicatesHubPage
-// to navigate to a specific feature page. Extracted from StickListPage.qml
-// (where it originated as an inline `component`) once a second page needed
-// the exact same tile.
+// the home screen (StickToolCards, StickListPage) to navigate to a
+// specific feature page. Extracted from StickListPage.qml, where it
+// originated as an inline `component`.
 Button {
     id: card
     property string cardTitle

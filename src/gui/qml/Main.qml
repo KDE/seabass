@@ -499,7 +499,29 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
-            onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(duplicatesHubPageComponent, {
+            // Maintain's clean-up cards, straight from the home: they had a
+            // Housekeeping page of their own in between.
+            onDuplicatesStatsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(duplicatesPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
+            onCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(cleanupPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
+            onPendingDeletionsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(pendingDeletionsPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
+            onJunkCueCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(junkCuePageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
+            onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(recordingsPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
@@ -613,37 +635,6 @@ ApplicationWindow {
     }
 
     Component {
-        id: duplicatesHubPageComponent
-        DuplicatesHubPage {
-            onDuplicatesStatsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(duplicatesPageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-            onCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(cleanupPageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-            onPendingDeletionsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(pendingDeletionsPageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-            onJunkCueCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(junkCuePageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-            onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(recordingsPageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-        }
-    }
-
-    Component {
         id: junkCuePageComponent
         JunkCuePage {
             appSettingsController: appSettingsCtrl
@@ -655,11 +646,12 @@ ApplicationWindow {
         DuplicatesPage {
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
-            // The same push the hub makes: this page's own suggestion.
+            // This page's own suggestion; its breadcrumb leads back here.
             onCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(cleanupPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
+                hubLabel: "Cues on Duplicate Copies",
             })
         }
     }

@@ -63,8 +63,7 @@ Page {
             BackBreadcrumb {
                 stack: root.StackView.view
                 stickLabel: root.stickLabel
-                middleLabel: "Housekeeping"
-                title: "Delete Orphaned Files"
+                                title: "Delete Orphaned Files"
                 backEnabled: !cleanupController.writing
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()

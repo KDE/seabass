@@ -207,7 +207,8 @@ TestCase {
              advice: {cloneSource: mainCloneSource(true)},
              expected: ["Restore Backup", "Create Backup USB Stick"]},
             {tag: "maintain", group: "maintain", stick: {},
-             expected: ["Housekeeping", "Library Health", "Format USB Stick"]},
+             expected: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+                 "Delete Orphaned Files", "Library Health", "Format USB Stick"]},
         ];
     }
     function test_eachGroupShowsItsCardsInOrder(data) {
@@ -301,7 +302,7 @@ TestCase {
              args: main.concat(["lib-main"])},
             {tag: "Restore Metadata", group: "sync", signalName: "metadataRestoreRequested",
              args: main.concat(["lib-main"])},
-            {tag: "Housekeeping", group: "maintain", signalName: "duplicateTracksHubRequested", args: main},
+            {tag: "Clean Up Duplicates", group: "maintain", signalName: "cleanupRequested", args: main},
             {tag: "Library Health", group: "maintain", signalName: "libraryHealthRequested", args: main},
             {tag: "Format USB Stick", group: "maintain", signalName: "formatUsbRequested", args: []},
         ];
@@ -328,7 +329,8 @@ TestCase {
             "explore": ["Device Profile"],
             "sync": ["Sync Cue Points", "Restore Metadata"],
             "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
-            "maintain": ["Housekeeping", "Library Health"],
+            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+                 "Delete Orphaned Files", "Library Health"],
         };
         const plain = {
             "explore": ["Browse Library", "Compare Playlists", "Library Statistics", "USB Stick Performance"],
@@ -351,21 +353,21 @@ TestCase {
         }
 
         const cards = makeCards(makeStick({}), "maintain", {}, {editRegistry: registry});
-        const housekeeping = card(cards, "Housekeeping");
+        const cleanUp = card(cards, "Clean Up Duplicates");
         const opened = createTemporaryObject(spyComponent, testCase,
-            {target: cards, signalName: "duplicateTracksHubRequested"});
+            {target: cards, signalName: "cleanupRequested"});
         const explain = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "explainLockRequested"});
         // Before the click, whose hover would put the card's tooltip in it.
         saveScreenshot(cards, "stick-tools-read-only");
-        mouseClick(housekeeping);
+        mouseClick(cleanUp);
         compare(opened.count, 0);
         compare(explain.count, 1);
         compare(explain.signalArguments[0][0], "lib-main");
 
         // No lock: the same card opens the feature.
         cards.editRegistry = fakeEditRegistry([]);
-        compare(housekeeping.readOnly, false);
-        mouseClick(housekeeping);
+        compare(cleanUp.readOnly, false);
+        mouseClick(cleanUp);
         compare(opened.count, 1);
     }
 
@@ -378,7 +380,8 @@ TestCase {
             "explore": ["USB Stick Performance"],
             "sync": ["Sync Cue Points", "Restore Metadata", "Create Engine Library"],
             "backup": [],
-            "maintain": ["Housekeeping"],
+            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+                 "Delete Orphaned Files"],
         };
         for (const group in writers) {
             const cards = makeCards(makeStick({readOnly: true, hasEngine: false}), group, {});
@@ -419,10 +422,10 @@ TestCase {
         // page that can fix the stick. (The maintain cards are the last
         // ones built, so they are the ones on top to take the click.)
         const opened = createTemporaryObject(spyComponent, testCase,
-            {target: maintain, signalName: "duplicateTracksHubRequested"});
+            {target: maintain, signalName: "cleanupRequested"});
         const health = createTemporaryObject(spyComponent, testCase, {target: maintain, signalName: "libraryHealthRequested"});
         const explain = createTemporaryObject(spyComponent, testCase, {target: maintain, signalName: "explainLockRequested"});
-        mouseClick(card(maintain, "Housekeeping"));
+        mouseClick(card(maintain, "Clean Up Duplicates"));
         compare(opened.count, 0);
         compare(explain.count, 0);
         compare(health.count, 1);
@@ -735,7 +738,7 @@ TestCase {
         compare(card(makeCards(folder, "explore", {}), "USB Stick Performance").visible, false);
         compare(card(makeCards(folder, "sync", {}), "Sync Cue Points").visible, true);
         const maintain = makeCards(folder, "maintain", {});
-        compare(card(maintain, "Housekeeping").visible, true);
+        compare(card(maintain, "Clean Up Duplicates").visible, true);
         compare(card(maintain, "Format USB Stick").visible, false, "no drive to erase behind a folder");
         // Its backups can be made and listed, but nothing restores or
         // updates a drive it does not have.
@@ -812,7 +815,7 @@ TestCase {
         const cards = makeCards(makeStick({}), "maintain", {},
                                 {mediaController: fakeMediaController({busy: true, busyDevicePath: "/dev/sdz1"})});
         compare(card(cards, "Format USB Stick").enabled, false);
-        compare(card(cards, "Housekeeping").enabled, true, "the other cards are not held up");
+        compare(card(cards, "Clean Up Duplicates").enabled, true, "the other cards are not held up");
         saveScreenshot(cards, "stick-tools-maintain");
     }
 
@@ -825,5 +828,99 @@ TestCase {
         compare(card(makeCards(engineOnly, "explore", {}), "Device Profile").enabled, false,
                 "Device Profile reads the rekordbox settings");
         compare(card(makeCards(engineOnly, "explore", {}), "Browse Library").enabled, true);
+    }
+
+    // ---- Maintain's clean-up cards (they had a Housekeeping page) -----
+
+    // Stand-ins for the two quick probes the group takes when it shows.
+    Component {
+        id: recordingsProbeComponent
+        QtObject {
+            property var summary: ({count: 0, bytes: 0, sources: []})
+            property int asked: 0
+            function summarize(rekordbox, engine) { asked++; return summary; }
+        }
+    }
+    Component {
+        id: pendingProbeComponent
+        QtObject {
+            property int perFormat: 0
+            property int pendingDeletionsIncludedCount: 0
+            function loadPendingDeletionsOnly(format, path) { pendingDeletionsIncludedCount = perFormat; }
+            function hasOneLibrary(path) { return false; }
+        }
+    }
+
+    function makeMaintain(summary, pendingPerFormat, lockedByOther) {
+        const recordings = createTemporaryObject(recordingsProbeComponent, testCase, {summary: summary});
+        const pending = createTemporaryObject(pendingProbeComponent, testCase, {perFormat: pendingPerFormat || 0});
+        const overrides = {recordingsProbe: recordings, pendingProbe: pending};
+        if (lockedByOther) {
+            overrides.editRegistry = fakeEditRegistry(lockedByOther);
+        }
+        const cards = makeCards(makeStick({}), "maintain", {}, overrides);
+        verify(recordings.asked > 0, "Maintain asks for the recordings when it shows");
+        return cards;
+    }
+
+    function test_recordingsCardSaysWhatIsThere_data() {
+        const g = 1024 * 1024 * 1024;
+        return [
+            {tag: "engine and pioneer", summary: {count: 3, bytes: 6.2 * g, sources: ["engine", "pioneer"]},
+             subtitle: "3 recordings, " + Theme.humanBytes(6.2 * g) + ", from Engine OS and a Pioneer deck", enabled: true},
+            {tag: "one alphatheta", summary: {count: 1, bytes: 0.5 * g, sources: ["alphatheta"]},
+             subtitle: "1 recording, " + Theme.humanBytes(0.5 * g) + ", from an AlphaTheta deck", enabled: true},
+            {tag: "all three", summary: {count: 4, bytes: 2 * g, sources: ["engine", "pioneer", "alphatheta"]},
+             subtitle: "4 recordings, " + Theme.humanBytes(2 * g)
+                       + ", from Engine OS, a Pioneer deck and an AlphaTheta deck", enabled: true},
+            {tag: "none", summary: {count: 0, bytes: 0, sources: []},
+             subtitle: "No recordings on this stick", enabled: false},
+            {tag: "unreadable", summary: {count: 0, bytes: 0, sources: [], unreadable: true},
+             subtitle: "Could not read the recording folders on this stick", enabled: false},
+        ];
+    }
+    function test_recordingsCardSaysWhatIsThere(data) {
+        const cards = makeMaintain(data.summary);
+        const c = card(cards, "Clean Up Recordings");
+        verify(c !== null && c.visible);
+        compare(c.cardSubtitle, data.subtitle);
+        compare(c.enabled, data.enabled);
+        compare(c.readOnly, false);
+        if (data.tag === "engine and pioneer") {
+            saveScreenshot(cards, "stick-tools-maintain-recordings");
+        }
+    }
+
+    function test_recordingsCardOpensThePage() {
+        const cards = makeMaintain({count: 2, bytes: 1000, sources: ["engine"]});
+        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "recordingsRequested"});
+        mouseClick(card(cards, "Clean Up Recordings"));
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "MAIN");
+    }
+
+    function test_recordingsCardIsReadOnlyWhileAnotherInstanceEdits() {
+        const cards = makeMaintain({count: 2, bytes: 1000, sources: ["engine"]}, 0, ["lib-main"]);
+        const c = card(cards, "Clean Up Recordings");
+        compare(c.readOnly, true);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "recordingsRequested"});
+        mouseClick(c);
+        compare(spy.count, 0, "a read-only card does not open the page");
+    }
+
+    // Delete Orphaned Files is offered only when earlier cleanups left
+    // something, counted over both catalogs.
+    function test_orphanedFilesCardOnlyWithSomethingToDelete_data() {
+        return [
+            {tag: "nothing", perFormat: 0, enabled: false, text: "Nothing orphaned right now"},
+            {tag: "some", perFormat: 2, enabled: true, text: "Free disk space"},
+        ];
+    }
+    function test_orphanedFilesCardOnlyWithSomethingToDelete(data) {
+        const cards = makeMaintain({count: 0, bytes: 0, sources: []}, data.perFormat);
+        compare(cards.pendingCount, 2 * data.perFormat, "both catalogs counted");
+        const c = card(cards, "Delete Orphaned Files");
+        compare(c.enabled, data.enabled);
+        verify(c.cardSubtitle.indexOf(data.text) === 0, c.cardSubtitle);
     }
 }

@@ -40,7 +40,7 @@ Item {
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
                      || root.showManageBackups || root.showCreateBackupStick);
         case "maintain":
-            return !(root.showHousekeeping || root.showLibraryHealth || root.showFormat);
+            return !(root.showCleanUp || root.showLibraryHealth || root.showFormat);
         default:
             return true;
         }
@@ -55,7 +55,12 @@ Item {
 
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal playlistDiffRequested(string stickLabel, string rekordboxPath, string enginePath)
-    signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // Maintain's clean-up cards (they had a Housekeeping page of their own).
+    signal duplicatesStatsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal pendingDeletionsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal recordingsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint)
@@ -179,7 +184,66 @@ Item {
     // devicePath to restore a whole stick through.
     readonly property bool showRestoreBackup: (!root.hasKnownLibrary && !root.isFolder)
         || (root.writable && root.devicePath.length > 0)
-    readonly property bool showHousekeeping: root.writable
+    readonly property bool showCleanUp: root.writable
+
+    // What two of Maintain's cards say before they are opened: whether
+    // earlier cleanups left files to delete, and what recordings the
+    // players left. Both are cheap (a small text file and a stat per
+    // entry; a directory listing), so they are taken when Maintain shows
+    // and again on the way back home, never for a group not on screen.
+    // Made on first use, one of each; tests set their own stand-ins.
+    property var pendingProbe: null
+    property var recordingsProbe: null
+    Component { id: pendingProbeComponent; CleanupController {} }
+    Component { id: recordingsProbeComponent; RecordingsController {} }
+    property int pendingCount: 0
+    property var recordingsSummary: ({count: 0, bytes: 0, sources: []})
+    readonly property int recordingCount: root.recordingsSummary.count || 0
+    property bool hasOneLibrary: false
+    function refreshMaintain() {
+        if (root.group !== "maintain" || !root.showCleanUp) {
+            return;
+        }
+        if (root.pendingProbe === null) {
+            root.pendingProbe = pendingProbeComponent.createObject(root);
+        }
+        if (root.recordingsProbe === null) {
+            root.recordingsProbe = recordingsProbeComponent.createObject(root);
+        }
+        // One instance for both formats: right after loading, every entry
+        // is included, so the included count is that format's total.
+        let pending = 0;
+        if (root.hasRekordbox) {
+            root.pendingProbe.loadPendingDeletionsOnly("rekordbox", root.rekordboxPath);
+            pending += root.pendingProbe.pendingDeletionsIncludedCount;
+        }
+        if (root.hasEngine) {
+            root.pendingProbe.loadPendingDeletionsOnly("engine", root.enginePath);
+            pending += root.pendingProbe.pendingDeletionsIncludedCount;
+        }
+        root.pendingCount = pending;
+        root.hasOneLibrary = root.hasRekordbox && root.pendingProbe.hasOneLibrary(root.rekordboxPath);
+        root.recordingsSummary = root.recordingsProbe.summarize(root.rekordboxPath, root.enginePath);
+    }
+    onGroupChanged: root.refreshMaintain()
+    Component.onCompleted: root.refreshMaintain()
+    onRowChanged: root.refreshMaintain()
+    // "3 recordings, 5.8 GiB, from Engine OS and a Pioneer deck"
+    readonly property string recordingsSubtitle: {
+        const count = root.recordingCount;
+        if (count <= 0) {
+            return root.recordingsSummary.unreadable === true
+                ? "Could not read the recording folders on this stick"
+                : "No recordings on this stick";
+        }
+        const names = {engine: "Engine OS", pioneer: "a Pioneer deck", alphatheta: "an AlphaTheta deck"};
+        const from = (root.recordingsSummary.sources || []).map(key => names[key] || key);
+        const fromText = from.length === 0 ? ""
+            : ", from " + (from.length === 1 ? from[0]
+                : from.slice(0, from.length - 1).join(", ") + " and " + from[from.length - 1]);
+        return count + (count === 1 ? " recording, " : " recordings, ")
+            + Theme.humanBytes(root.recordingsSummary.bytes) + fromText;
+    }
     readonly property bool showLibraryHealth: root.writable
     // There is no drive behind a folder row to erase.
     readonly property bool showFormat: !root.isFolder
@@ -520,21 +584,90 @@ Item {
             }
 
             // ---- Maintain
+            // The clean-up cards first: Clean Up Duplicates, the one most
+            // people come for, leads.
             ActionCard {
-                objectName: "housekeepingCard"
+                objectName: "cleanupCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
                 Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
-                cardTitle: "Housekeeping"
+                cardTitle: "Clean Up Duplicates"
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: "Clean up duplicate copies, level their cues, clean up files and recordings"
+                cardSubtitle: "Remove redundant copies, keep the best one"
+                    + (root.hasOneLibrary ? " (also updates OneLibrary)" : "")
                 cardIcon: "edit-clear-all"
-                visible: root.group === "maintain" && root.showHousekeeping
+                visible: root.group === "maintain" && root.showCleanUp
                 enabled: root.hasRekordbox || root.hasEngine
-                onClicked: root.duplicateTracksHubRequested(root.label, root.rekordboxPath, root.enginePath)
+                onClicked: root.cleanupRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "duplicateCuesCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Cues on Duplicate Copies"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Copies of a track whose cues differ: level the cues and keep every copy"
+                cardIcon: "edit-duplicate"
+                visible: root.group === "maintain" && root.showCleanUp
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.duplicatesStatsRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "strayCuesCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Clean Up Stray Cues"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Remove cues sitting at 0:00, almost always accidental"
+                cardIcon: "draw-eraser"
+                visible: root.group === "maintain" && root.showCleanUp
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.junkCueCleanupRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "recordingsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Clean Up Recordings"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: root.recordingsSubtitle
+                cardIcon: "media-record"
+                visible: root.group === "maintain" && root.showCleanUp
+                enabled: (root.hasRekordbox || root.hasEngine) && root.recordingCount > 0
+                onClicked: root.recordingsRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "orphanedFilesCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Delete Orphaned Files"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: root.pendingCount > 0
+                    ? "Free disk space: delete files earlier cleanups' database edits orphaned"
+                    : "Nothing orphaned right now. Every earlier cleanup's files are accounted for"
+                cardIcon: "edit-delete"
+                visible: root.group === "maintain" && root.showCleanUp
+                enabled: (root.hasRekordbox || root.hasEngine) && root.pendingCount > 0
+                onClicked: root.pendingDeletionsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
                 objectName: "libraryHealthCard"

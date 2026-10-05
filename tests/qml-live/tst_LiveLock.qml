@@ -81,7 +81,7 @@ TestCase {
         });
         // Both test sticks are plugged in during a round, and the page
         // lists them in udev's enumeration order, which a replug changes.
-        // Round 4 took the first Housekeeping card on the page, RV2's, and
+        // Round 4 took the first Clean Up Duplicates card on the page, RV2's, and
         // found it (rightly) not locked while the lock was on A4-128GB's.
         // So the card is found under the section of the library this test
         // locked, never by title alone: the home shows one stick at a
@@ -94,23 +94,23 @@ TestCase {
         const keys = Live.stickKeys(page);
         console.log("  sticks listed: " + keys.join(", ") + "; locked: " + stickLabel);
         let card = null;
-        tryVerify(function() { card = Live.cardInRow(page, lockedKey, "Housekeeping"); return card !== null && card.visible; },
-                  30000, "the locked stick's section shows a Housekeeping card");
+        tryVerify(function() { card = Live.cardInRow(page, lockedKey, "Clean Up Duplicates"); return card !== null && card.visible; },
+                  30000, "the locked stick's section shows a Clean Up Duplicates card");
         tryCompare(card, "readOnly", true, 10000);
         compare(findChild(card, "readOnlyBadge").visible, true);
         compare(Live.cardInRow(page, lockedKey, "Browse Library").readOnly, false);
         // The lock is this library's alone: any other stick's cards stay
         // writable, which the first-card version could never have told.
         keys.filter(function(key) { return key !== lockedKey; }).forEach(function(key) {
-            const other = Live.cardInRow(page, key, "Housekeeping");
-            verify(other !== null, key + " has a Housekeeping card, shown or not");
-            compare(other.readOnly, false, key + "'s Housekeeping card stays writable");
+            const other = Live.cardInRow(page, key, "Clean Up Duplicates");
+            verify(other !== null, key + " has a Clean Up Duplicates card, shown or not");
+            compare(other.readOnly, false, key + "'s Clean Up Duplicates card stays writable");
         });
         // Back to the locked stick's card, on screen: a click at the centre
         // of a card outside the window lands nowhere and opens nothing, so
         // the pane is scrolled to it first (a 900 px window with a banner
         // showing puts Maintain's cards below the fold).
-        card = Live.cardInRow(page, lockedKey, "Housekeeping");
+        card = Live.cardInRow(page, lockedKey, "Clean Up Duplicates");
         verify(Live.scrollIntoView(page, card), "the pane scrolls the card into view");
         waitForRendering(page);
         const inPage = card.mapToItem(page, 0, 0);
@@ -118,7 +118,7 @@ TestCase {
                "the card is inside the window (y " + inPage.y + ", height " + card.height + ")");
         shot(page, "live-stick-list-read-only");
 
-        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cleanupRequested"});
         mouseClick(card);
         compare(spy.count, 0);
         const dialog = findChild(page, "lockedDialog");

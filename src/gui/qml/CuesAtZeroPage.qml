@@ -12,7 +12,7 @@ import SeabassGui
 // waveform with that cue picked out, and Remove or Ignore beside it.
 //
 // Not Clean Up Stray Cues (JunkCuePage), although it lists the same
-// thing. That page is reached from Housekeeping, scans for itself and can
+// thing. That page is reached from Maintain, scans for itself and can
 // be narrowed to one playlist; this one shows the hub's own scan of the
 // whole library, so the number on the card and the number here are the
 // same number.

@@ -16,8 +16,8 @@ import SeabassGui
 // specifically, per real user feedback. That section stays exactly where
 // it was on Library Health too (a legitimate contextual shortcut, not a
 // replaced one) -- this page is the "reachable through the main nav
-// structure" home for the same feature, filed under Clean-up and
-// Housekeeping where someone would actually think to look for it.
+// structure" home for the same feature, filed under Maintain
+// where someone would actually think to look for it.
 // Reuses LibraryConsistencyController rather than a new controller, at
 // its CuesOnly depth: the catalogs and their cues, and none of Library
 // Health's other checks. Those read every track's file on the stick (the
@@ -27,9 +27,9 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
-    // The page it was opened from, for the breadcrumb: Housekeeping's card
-    // or Sync Cue Points' stray-cue link.
-    property string hubLabel: "Housekeeping"
+    // The page it was opened from, for the breadcrumb: empty from the
+    // home's Maintain card, "Sync Cue Points" from its stray-cue link.
+    property string hubLabel: ""
     required property string rekordboxPath
     required property string enginePath
     required property var appSettingsController

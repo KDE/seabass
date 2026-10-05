@@ -132,8 +132,7 @@ Page {
                 BackBreadcrumb {
                     stack: root.StackView.view
                     stickLabel: root.stickLabel
-                    middleLabel: "Housekeeping"
-                    title: "Cues on Duplicate Copies"
+                                        title: "Cues on Duplicate Copies"
                     backEnabled: !duplicatesController.writing
                     onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                     onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
