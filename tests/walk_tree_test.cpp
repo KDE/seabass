@@ -12,6 +12,7 @@
 // macOS creates that directory on every USB volume it indexes. A disk image
 // has no Spotlight index, so the rig never saw it, and neither did any test
 // on any developer machine.
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -173,6 +174,99 @@ void testNamesOutsideTheCodePage()
     tearDown(root.parent_path());
 }
 
+// The counted walk Library Statistics and Stick Performance put on their
+// bars (#58): countWalkSlices() says up front how many folders two levels
+// down the walk will enter, walkTree()'s onSlice counts them off in turn,
+// one at a time, and a slice is reported done only once the walk has
+// left it for good. The log interleaves the walk's descend questions
+// (asked as it lists a folder) with the slice counts, so a slice's own
+// subfolders have to fall between its count and the next.
+void testSlicesAreCountedUpFrontAndFinishedInTurn()
+{
+    const fs::path root = scratch("slices");
+    for (const char *slice : {"USBANLZ/P001/h1", "USBANLZ/P001/h2", "USBANLZ/P002/h3", "USBANLZ/P003/h4", "Music/Artist",
+                              "skip/away"}) {
+        write(root / slice / "a" / "b" / "c" / "ANLZ0000.DAT", "x");
+    }
+    write(root / "rekordbox" / "export.pdb", "pdb");  // a first-level folder with no slice in it
+    write(root / "top.dat", "t");
+    const auto keep = [](const std::string &relative) { return relative != "skip"; };
+
+    // Slices sit two levels down: USBANLZ/P001, P002 and P003, Music/Artist,
+    // and skip/away unless the walk prunes skip. (Four folders sit one
+    // level down, three of them kept: neither count may be the answer.)
+    assert(storageprobe::countWalkSlices(seabass::pathToUtf8(root)) == 5);
+    const std::uint64_t planned = storageprobe::countWalkSlices(seabass::pathToUtf8(root), keep);
+    assert(planned == 4);
+
+    std::vector<std::string> log;
+    std::vector<std::uint64_t> counts;
+    auto walk = walkTree(
+        seabass::pathToUtf8(root),
+        [&](const std::string &relative) {
+            log.push_back(relative);
+            return keep(relative);
+        },
+        {},
+        [&](std::uint64_t slicesDone) {
+            log.push_back("#" + std::to_string(slicesDone));
+            counts.push_back(slicesDone);
+        });
+    assert(walk.skipped.empty());
+    assert(walk.files.size() == 7);  // h1 to h4, Artist, export.pdb, top.dat
+
+    // 0 on entering the first, one more on entering each next, and all of
+    // them at the end: the count the plan said, never more, never back.
+    assert(counts.size() == planned + 1);
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        assert(counts[i] == i);
+    }
+
+    // Between one count and the next, every folder deeper than a slice
+    // belongs to the one slice entered at that count, and the deepest of
+    // them is listed before the next count: that slice was finished.
+    const auto depth = [](const std::string &relative) {
+        return static_cast<int>(std::count(relative.begin(), relative.end(), '/'));
+    };
+    std::string current;
+    std::vector<std::string> finished;
+    for (const auto &entry : log) {
+        if (entry[0] == '#') {
+            if (!current.empty()) {
+                finished.push_back(current);
+            }
+            current.clear();
+            continue;
+        }
+        if (depth(entry) < 2) {
+            continue;  // a slice or its parent, listed by the folder above it
+        }
+        const std::string slice = entry.substr(0, entry.find('/', entry.find('/') + 1));
+        if (current.empty()) {
+            assert(std::find(finished.begin(), finished.end(), slice) == finished.end());
+            current = slice;
+        }
+        assert(slice == current);
+    }
+    assert(current.empty());  // the last count came after the last slice
+    std::sort(finished.begin(), finished.end());
+    assert((finished == std::vector<std::string>{"Music/Artist", "USBANLZ/P001", "USBANLZ/P002", "USBANLZ/P003"}));
+    tearDown(root);
+}
+
+void testSliceCountOfAShallowOrMissingTree()
+{
+    const fs::path root = scratch("shallow");
+    write(root / "only" / "file.dat", "x");
+    // Nothing two levels down: no slice, and the walk counts none either.
+    assert(storageprobe::countWalkSlices(seabass::pathToUtf8(root)) == 0);
+    std::vector<std::uint64_t> counts;
+    walkTree(seabass::pathToUtf8(root), {}, {}, [&](std::uint64_t done) { counts.push_back(done); });
+    assert((counts == std::vector<std::uint64_t>{0}));
+    assert(storageprobe::countWalkSlices("/definitely/not/here") == 0);
+    tearDown(root);
+}
+
 }  // namespace
 
 int main()
@@ -182,6 +276,8 @@ int main()
     testPruning();
     testMissingRootIsReportedNotThrown();
     testNamesOutsideTheCodePage();
+    testSlicesAreCountedUpFrontAndFinishedInTurn();
+    testSliceCountOfAShallowOrMissingTree();
     std::cout << "walk_tree_test passed\n";
     return 0;
 }

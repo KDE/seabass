@@ -56,8 +56,24 @@ struct TreeWalk
 // callers apply their own exclusions. Empty means descend everywhere.
 // `onProgress` is called every so often with the running file count, so a
 // slow walk of a big stick can still be cancelled by the caller throwing.
+// `onSlice`, for a walk counted on a bar: called with the number of
+// slices finished (see countWalkSlices()) each time the walk enters the
+// next one, and once more at the end with all it entered. A slice is a
+// folder two levels below root: the walk finishes each one before it
+// enters the next, so the count is folders whose every file is listed.
 TreeWalk walkTree(const std::string &root,
                    const std::function<bool(const std::string &relativePath)> &shouldDescend = {},
-                   const std::function<void(std::uint64_t filesSoFar)> &onProgress = {});
+                   const std::function<void(std::uint64_t filesSoFar)> &onProgress = {},
+                   const std::function<void(std::uint64_t slicesDone)> &onSlice = {});
+
+// How many slices walkTree(root, shouldDescend) will enter: the folders
+// two levels below root, found by listing root and the folders directly
+// in it and nothing deeper, so it costs a few directory reads where the
+// walk costs one per folder and a stat per file. On a rekordbox export
+// a slice is about one track's analysis folder; on a stick of music an
+// artist or album folder. A folder that cannot be listed counts nothing,
+// as the walk then enters nothing below it either.
+std::uint64_t countWalkSlices(const std::string &root,
+                              const std::function<bool(const std::string &relativePath)> &shouldDescend = {});
 
 }  // namespace storageprobe

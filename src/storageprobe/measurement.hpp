@@ -22,6 +22,23 @@ inline CancelCheck neverCancel()
     return [] { return false; };
 }
 
+// The part of a probe's run under way, for a caller naming it on a bar.
+enum class ProbeStep {
+    Streaming,        // ReadProbe: the long sequential reads
+    RandomReads,      // ReadProbe: 4 KiB at random offsets
+    SmallFiles,       // ReadProbe: open, read, close per small file
+    StreamingWrite,   // WriteProbe: the large files
+    SmallFileWrites,  // WriteProbe: the small files
+    InPlaceUpdates,   // WriteProbe: the overwrites inside one file
+};
+
+// Called as a probe works, with the step it is on and how far the whole
+// run is: `total` is counted before the first read or write and stays
+// the same for the run, `done` only grows and reaches `total` when the
+// probe returns. A step that finds nothing to do (no file large enough
+// for random reads) is passed over at once.
+using ProbeProgress = std::function<void(ProbeStep step, std::uint64_t done, std::uint64_t total)>;
+
 class Cancelled : public std::runtime_error
 {
 public:
