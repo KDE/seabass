@@ -439,7 +439,6 @@ Page {
 
             EmptyState {
                 objectName: "emptyLabel"
-                anchors.centerIn: parent
                 visible: backupsList.count === 0 && root.controller.listing !== true
                 iconName: "backup"
                 text: "No full stick backups yet."

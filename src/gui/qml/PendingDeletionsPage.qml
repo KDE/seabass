@@ -229,7 +229,6 @@ Page {
             }
 
             EmptyState {
-                anchors.centerIn: parent
                 visible: pendingListView.count === 0 && !cleanupController.busy
                 tone: "good"
                 iconName: "checkmark"

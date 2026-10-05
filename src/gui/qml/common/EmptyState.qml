@@ -14,8 +14,11 @@ import SeabassGui
 // blank area, which is what each page had on its own.
 //
 // Not a popup: nothing to dismiss, no shadow, and it sits in the list's
-// place. Centre it in the list area (anchors.centerIn: parent); it caps
-// its own width so a wide page does not stretch it into a strip.
+// place. It places itself in its parent (the list's area): centred
+// across, and down at the golden section -- the space above it to the
+// space below as 1 : 1.618 -- which reads as the middle of the area
+// where the true middle reads as low. It caps its own width so a wide
+// page does not stretch it into a strip.
 Rectangle {
     id: root
 
@@ -33,6 +36,8 @@ Rectangle {
     readonly property color toneColor: root.tone === "good" ? Theme.good : Theme.accent
 
     width: Math.min(Theme.scaled(480), parent ? parent.width - 2 * Theme.pageMargin : Theme.scaled(480))
+    x: parent ? Math.round((parent.width - root.width) / 2) : 0
+    y: parent ? Math.round(Math.max(0, parent.height - root.height) * (1 - 1 / 1.618)) : 0
     implicitHeight: content.implicitHeight + 2 * Theme.cardPadding
     height: implicitHeight
     radius: Theme.popupRadius

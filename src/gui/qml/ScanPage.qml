@@ -1128,11 +1128,10 @@ Page {
                     }
                 }
 
-                Label {
-                    anchors.centerIn: parent
+                EmptyState {
                     visible: trackListView.count === 0 && !scanController.busy
+                    iconName: "edit-find"
                     text: "No tracks found."
-                    color: Theme.textMuted
                 }
             }
 

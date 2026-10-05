@@ -516,7 +516,6 @@ Page {
             }
 
             EmptyState {
-                anchors.centerIn: parent
                 visible: plansListView.count === 0 && !duplicatesController.busy
                 tone: "good"
                 iconName: "checkmark"

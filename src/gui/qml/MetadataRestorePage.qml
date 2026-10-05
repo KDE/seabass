@@ -511,13 +511,11 @@ Page {
 
             }
 
-            Label {
-                anchors.centerIn: parent
-                width: Theme.snap(parent.width * 0.7)
+            EmptyState {
                 visible: proposalList.count === 0 && !controller.busy && controller.hasScanned
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                color: Theme.textMuted
+                tone: controller.storedTrackCount > 0 && controller.proposalCount === 0 ? "good" : "info"
+                iconName: controller.storedTrackCount > 0 && controller.proposalCount === 0 ? "checkmark"
+                    : (controller.storedTrackCount === 0 ? "backup" : "edit-find")
                 text: {
                     if (controller.storedTrackCount === 0) {
                         return "Nothing is stored yet, so there is nothing to put back.";

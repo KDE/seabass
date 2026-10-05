@@ -98,6 +98,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/WarningBanner.qml
     qml/common/EmptyState.qml
     qml/common/EntranceSlot.qml
+    qml/common/GoldenColumn.qml
     qml/common/TableHeaderLabel.qml
     qml/common/SortableTableHeader.qml
     qml/common/ThemePalette.qml

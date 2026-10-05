@@ -1076,10 +1076,9 @@ Page {
             readonly property bool justSynced: plansListView.count === 0 && !syncController.busy
                 && !syncController.writing && !root.searching && syncController.syncedCueCount > 0
 
-            Column {
+            GoldenColumn {
                 objectName: "syncedState"
-                anchors.centerIn: parent
-                visible: parent.justSynced
+                visible: plansListView.justSynced
                 spacing: Theme.rowSpacing
                 Canvas {
                     id: syncedMark
@@ -1117,8 +1116,7 @@ Page {
 
             EmptyState {
                 objectName: "nothingToSyncLabel"
-                anchors.centerIn: parent
-                visible: plansListView.count === 0 && !syncController.busy && !parent.justSynced
+                visible: plansListView.count === 0 && !syncController.busy && !plansListView.justSynced
                 tone: root.searching ? "info" : "good"
                 iconName: root.searching ? "edit-find" : "checkmark"
                 text: root.searching
