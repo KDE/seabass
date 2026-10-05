@@ -28,7 +28,27 @@ void applyDefaultControlsStyle()
 #if defined(Q_OS_WIN)
     qputenv("QT_QUICK_CONTROLS_STYLE", "FluentWinUI3");
 #elif defined(Q_OS_MACOS)
-    qputenv("QT_QUICK_CONTROLS_STYLE", "Material");
+    // Basic, whose controls take the app's own font and the palette
+    // ThemePalette gives them -- the same deal a Linux desktop that is
+    // not Plasma gets, and the reason styleInksFromPalette() lists it.
+    //
+    // Material was here first, because the native macOS style refuses
+    // this app's background and contentItem overrides. Material accepts
+    // them, but it also hardcodes a type scale of its own and hands a
+    // different size to each kind of control: measured under it, a
+    // ComboBox and a TextField come out at 16pt and a Label at 14pt
+    // while the system font is 13pt. On Browse Library that put three
+    // sizes on one row -- the library picker at 14 (its contentItem is
+    // the app's own Labels), the sort combo at 16 (Material's
+    // contentItem), the search field at 16 and 25 px taller than the
+    // combo beside it, since only the combo's height was pinned.
+    //
+    // None of it showed on Linux, where KDE's style leaves fonts to the
+    // system font, so Material was a second source of truth that only
+    // one platform ever consulted. Basic has no type scale of its own:
+    // every control inherits the app font, which is what the rest of
+    // this app already assumes.
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 #elif defined(Q_OS_LINUX)
     // Inside an AppImage, KDE's desktop style, as on a Plasma desktop.
     // Installed normally, the app gets org.kde.desktop from Plasma's
