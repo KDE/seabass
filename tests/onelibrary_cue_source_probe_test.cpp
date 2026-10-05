@@ -132,6 +132,10 @@ int main()
         std::cerr << "  " << p << "\n";
     }
     check(problems.empty(), "every plant reads back exactly as planted");
+    // The save behind T4 finished, so it leaves no note of a save in
+    // progress, as the app's edit session clears it.
+    check(!fs::exists(stick / "Seabass" / "backups" / ".save-in-progress"), "no save is left noted as in progress");
+    check(fs::exists(stick / "Seabass" / "backups"), "T4's save took its backup on the stick");
 
     // Seabass's own readers, independently of the probe's decoding.
     {
