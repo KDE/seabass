@@ -17,6 +17,7 @@
 //   has read them does, and says the same as the Cues read.
 
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -244,6 +245,16 @@ int main(int argc, char **argv)
         std::cerr << "usage: library_fingerprint_reader_test <tests/fixtures/anonymized_library>\n";
         return 2;
     }
+    // The cache vouches for the cues it read for analysisCheckWindow(),
+    // measured from when it read the analysis files' state, near the
+    // start of the cue pass. A pass that takes longer than that -- a
+    // Debug build on a Windows laptop does -- leaves the next Tracks read
+    // told "cues not checked lately", and the stage test fails on the
+    // clock rather than on the code. Stood still here, as
+    // library_catalog_cache_test does with its own: nothing in this test
+    // is about the window.
+    seabass::gui::LibraryCatalogCache::instance().setNowFnForTesting(
+        [] { return std::chrono::steady_clock::time_point(std::chrono::seconds(1000)); });
     cuesPassCases();
     stageFromTheCacheCases(seabass::pathFromUtf8(argv[1]));
     unreadableCatalogCases(seabass::pathFromUtf8(argv[1]));
