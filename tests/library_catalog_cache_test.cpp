@@ -645,6 +645,99 @@ void stagedCases()
         assert(cache.plannedUnits("rekordbox", stick, Detail::Full) == 30 && "an invalidated entry is read again");
         std::cout << "stage 15 (plannedUnits counts the passes still to run) OK\n";
     }
+
+    // Stage 15b (#67): a pass another thread is in (the prefetch, say) is
+    // planned like one still to run, and a caller that waits for it sees
+    // its progress on its own bar as it goes: no stall at the start, no
+    // second read, and the bar ends on what was planned.
+    {
+        std::mutex m;
+        std::condition_variable cv;
+        bool halfway = false;
+        bool release = false;
+        std::atomic<int> reads{0};
+        LibraryCatalogCache::StageFn stageFn = [&](Detail stage, const std::string &, const std::string &,
+                                                   std::vector<seabass::domain::Track> &tracks, LibraryCatalogCache::StageNotes &,
+                                                   seabass::application::ProgressReporter &progress, CancellationToken) {
+            if (stage != Detail::Tracks) {
+                return;
+            }
+            ++reads;
+            progress.start("Scanning rekordbox tracks", 10);
+            for (size_t i = 1; i <= 5; ++i) {
+                progress.tick(i);
+            }
+            {
+                std::unique_lock<std::mutex> lock(m);
+                halfway = true;
+                cv.notify_all();
+                cv.wait(lock, [&] { return release; });
+            }
+            for (size_t i = 6; i <= 10; ++i) {
+                progress.tick(i);
+            }
+            tracks.assign(10, seabass::domain::Track{});
+        };
+        LibraryCatalogCache cache(stageFn, fixedMtime());
+        cache.setCountFnForTesting([](const std::string &, const std::string &) -> std::optional<size_t> { return 10; });
+
+        auto first = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Tracks); });
+        {
+            std::unique_lock<std::mutex> lock(m);
+            cv.wait(lock, [&] { return halfway; });
+        }
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Tracks) == 10 && "a pass in flight is planned, not counted as done");
+
+        struct Recorder : seabass::application::ProgressReporter
+        {
+            std::mutex m;
+            std::vector<std::pair<std::string, size_t>> starts;
+            std::vector<size_t> ticks;
+            void start(const std::string &label, size_t total) override
+            {
+                std::lock_guard<std::mutex> lock(m);
+                starts.emplace_back(label, total);
+            }
+            void tick(size_t current) override
+            {
+                std::lock_guard<std::mutex> lock(m);
+                ticks.push_back(current);
+            }
+            void finish() override {}
+            void warn(const std::string &) override {}
+        } recorder;
+        auto waiter = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Tracks, recorder); });
+        // The waiter shows the pass as far as it has got before it ends.
+        for (int i = 0; i < 100; ++i) {
+            {
+                std::lock_guard<std::mutex> lock(recorder.m);
+                if (!recorder.ticks.empty()) {
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        {
+            std::lock_guard<std::mutex> lock(recorder.m);
+            assert(recorder.starts.size() == 1 && recorder.starts[0].second == 10 && "the waited pass's stretch, as planned");
+            assert(!recorder.ticks.empty() && recorder.ticks.back() == 5 && "its progress while it is still running");
+        }
+        {
+            std::lock_guard<std::mutex> lock(m);
+            release = true;
+            cv.notify_all();
+        }
+        assert(first.get().size() == 10 && waiter.get().size() == 10);
+        assert(reads == 1 && "served from the pass it waited for, not read again");
+        // Ticks seen at most every 100 ms: whatever the last one was, the
+        // bar does not go back, and the waiter is served once the pass
+        // commits. (It may or may not have seen the final tick.)
+        for (size_t i = 1; i < recorder.ticks.size(); ++i) {
+            assert(recorder.ticks[i] > recorder.ticks[i - 1] && "never backwards");
+        }
+        assert(cache.plannedUnits("rekordbox", stick, Detail::Tracks) == 0);
+        std::cout << "stage 15b (a pass in flight is planned, and a waiter shows its progress) OK\n";
+    }
 }
 
 // Counts are remembered (#58): a count opens the catalog, and for
