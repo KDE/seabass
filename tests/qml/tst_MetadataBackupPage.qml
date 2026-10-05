@@ -444,7 +444,18 @@ TestCase {
         const page = makeShowingTheStore();
         const list = findChild(page, "storedTrackList");
         verify(list.count > 0, "the harness seeds two stored tracks, so this list is never empty");
-        const row = list.itemAtIndex(0);
+        // A stored row with cues, not simply the first: the store lives
+        // across runs, and rows other cases leave in it (cue-less ones
+        // among them) can sort ahead of the seeded tracks.
+        let row = null;
+        for (let i = 0; i < list.count && row === null; ++i) {
+            list.positionViewAtIndex(i, ListView.Contain);
+            const candidate = list.itemAtIndex(i);
+            if (candidate && candidate.cueCount > 0) {
+                row = candidate;
+            }
+        }
+        verify(row !== null, "the harness seeds a stored track with cues");
         verify(findChild(row, "rowWaveform") === null, "a closed row builds no waveform");
         row.expandToggled();
         waitForRendering(page);
