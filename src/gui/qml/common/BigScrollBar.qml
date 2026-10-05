@@ -21,6 +21,12 @@ import SeabassGui
 ScrollBar {
     id: control
     policy: ScrollBar.AsNeeded
+    // As needed means as needed: nothing at all while everything fits.
+    // The thumb below is drawn here and kept faintly visible at rest, and
+    // without this it sat there over a list that had nothing to scroll --
+    // a full-height bar beside the playlist sidebar's one row.
+    visible: control.policy === ScrollBar.AlwaysOn
+             || (control.policy === ScrollBar.AsNeeded && control.size < 1.0)
     implicitWidth: 10
     padding: 2
 
