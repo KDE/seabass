@@ -381,8 +381,14 @@ int main(int argc, char **argv)
         // (the command line's mirror goes on after a failure).
         {
             const std::string ext = rekordbox::extAnlzPath(root, ownRow.analysisFile);
-            std::ifstream in(seabass::pathFromUtf8(ext), std::ios::binary);
-            const std::string before((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            // Read and closed before the writer runs: Windows will not
+            // replace a file this test still holds open, and the writer's
+            // write and its putting back would fail on the test, not on
+            // the table.
+            const std::string before = [&ext] {
+                std::ifstream in(seabass::pathFromUtf8(ext), std::ios::binary);
+                return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            }();
             bool sabotaged = false;
             rekordbox::RekordboxCueWriter::setAfterWriteForTesting([&](const std::string &path) {
                 if (sabotaged || path != ext) {
