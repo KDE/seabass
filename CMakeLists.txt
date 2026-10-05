@@ -1479,10 +1479,15 @@ endif()
 
 # tools/macos-bundle-check.sh, which refuses a macOS bundle whose binaries
 # load anything from outside it, run against fake bundles with a canned
-# otool: no Mac is needed, only bash and file(1).
+# otool: no Mac is needed, only bash and file(1). Not on Windows: Git's
+# bash and file(1) are found there when they are on PATH, but the test's
+# fake bundles are built from symbolic links, which Git's bash makes as
+# copies, and four of its cases failed on that, not on the script.
 find_program(SEABASS_BASH bash)
 find_program(SEABASS_FILE file)
-if(SEABASS_BASH AND SEABASS_FILE)
+if(WIN32)
+    message(STATUS "Windows: tools/macos-bundle-check.sh is tested on Linux and macOS only")
+elseif(SEABASS_BASH AND SEABASS_FILE)
     add_test(NAME macos_bundle_check_test
         COMMAND ${SEABASS_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/macos_bundle_check_test.sh)
 else()
