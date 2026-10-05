@@ -62,6 +62,14 @@ void check(bool ok, const std::string &what)
     }
 }
 
+// Whether a path the check reports is this file, compared as paths: the
+// audit joins the row's "/PIONEER/..." onto the stick's root as text, so
+// on Windows its separators are mixed where the test's are not.
+bool samePath(const std::string &reported, const fs::path &expected)
+{
+    return pathFromUtf8(reported).lexically_normal() == expected.lexically_normal();
+}
+
 constexpr uint32_t Pcob = 0x50434f42;
 constexpr uint32_t Pco2 = 0x50434f32;
 
@@ -394,7 +402,7 @@ void findingsAndRepairs(const fs::path &stick)
     }
     {
         const auto f = examineTrackAnalysis(root, debris.analyzePath, names);
-        check(f.debris.size() == 1 && f.debris[0] == pathToUtf8(debris.dir / "ANLZ0001.DAT"), "d: the skeleton is found");
+        check(f.debris.size() == 1 && samePath(f.debris[0], debris.dir / "ANLZ0001.DAT"), "d: the skeleton is found");
         check(!f.shape.damaged() && !f.disagreement, "d: nothing else");
     }
 
