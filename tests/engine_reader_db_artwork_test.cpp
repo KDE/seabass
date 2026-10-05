@@ -516,6 +516,12 @@ int main()
 
     // 18. Covers that could not be copied out of the database (here the
     //     local cache cannot be written) are said, once, with how many.
+    //     POSIX only: on Windows fs::permissions sets the read-only
+    //     attribute, which a directory ignores, so the cache stays
+    //     writable and nothing is refused.
+#if defined(_WIN32)
+    std::cout << "skipped case 18: a read-only directory is still writable on Windows\n";
+#else
     {
         fs::remove_all(cache, ec);
         fs::create_directories(cache);
@@ -534,6 +540,7 @@ int main()
         assert(reporter.warnings[0].find("could not be copied from the Engine database") != std::string::npos);
         std::cout << "case 18 (covers that could not be copied out are said) OK\n";
     }
+#endif
 
     // 19. A row whose value cannot be read is counted and warned about, and
     //     not remembered as holding no picture: once it can be read, its
