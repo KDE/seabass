@@ -192,7 +192,8 @@ TestCase {
     function test_eachGroupShowsItsCardsInOrder_data() {
         return [
             {tag: "explore", group: "explore", stick: {},
-             expected: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"]},
+             expected: ["Browse Library", "Compare Playlists", "Library Statistics", "Device Profile",
+                        "USB Stick Performance"]},
             {tag: "sync", group: "sync", stick: {},
              expected: ["Sync Cue Points", "Metadata", "Restore Metadata"]},
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
@@ -221,7 +222,7 @@ TestCase {
     function test_twoCardsToARowOrOne() {
         const cards = makeCards(makeStick({}), "explore", {});
         const shown = shownCards(cards);
-        compare(shown.length, 4);
+        compare(shown.length, 5);
         compare(shown[1].y, shown[0].y, "the second card is on the first row");
         verify(shown[1].x > shown[0].x, "beside the first");
         compare(shown[2].x, shown[0].x, "the third starts the second row");
@@ -283,6 +284,7 @@ TestCase {
         const main = ["MAIN", "/media/MAIN/PIONEER", "/media/MAIN/Engine Library"];
         return [
             {tag: "Browse Library", group: "explore", signalName: "browseRequested", args: main},
+            {tag: "Compare Playlists", group: "explore", signalName: "playlistDiffRequested", args: main},
             {tag: "Library Statistics", group: "explore", signalName: "stickStatisticsRequested", args: main},
             {tag: "Device Profile", group: "explore", signalName: "settingsRequested",
              args: ["MAIN", "/media/MAIN/PIONEER"]},
@@ -329,7 +331,7 @@ TestCase {
             "maintain": ["Housekeeping", "Library Health"],
         };
         const plain = {
-            "explore": ["Browse Library", "Library Statistics", "USB Stick Performance"],
+            "explore": ["Browse Library", "Compare Playlists", "Library Statistics", "USB Stick Performance"],
             "sync": ["Metadata"],
             "maintain": ["Format USB Stick"],
         };
@@ -756,7 +758,7 @@ TestCase {
                                   rekordboxPath: "/home/dj/Seabass/metadata/browsed-backups/folder-abc/PIONEER",
                                   enginePath: ""});
         const expected = {
-            "explore": ["Browse Library", "Library Statistics"],
+            "explore": ["Browse Library", "Compare Playlists", "Library Statistics"],
             "sync": ["Metadata"],
             "backup": [],
             "maintain": [],

@@ -494,6 +494,11 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
+            onPlaylistDiffRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(playlistDiffPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
             onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(duplicatesHubPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
@@ -575,6 +580,13 @@ ApplicationWindow {
         id: formatUsbPageComponent
         FormatUsbPage {
             controller: FormatUsbController {}
+        }
+    }
+
+    Component {
+        id: playlistDiffPageComponent
+        PlaylistDiffPage {
+            appSettingsController: appSettingsCtrl
         }
     }
 

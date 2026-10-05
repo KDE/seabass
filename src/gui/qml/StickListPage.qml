@@ -444,6 +444,7 @@ Page {
         }
     }
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal playlistDiffRequested(string stickLabel, string rekordboxPath, string enginePath)
     // Every full stick backup on this computer. From a stick's Backup
     // group, with its label and the backup the advisor matched to it
     // (listed first); from the no-stick pane, both empty.
@@ -760,6 +761,8 @@ Page {
                             columns: root.cardColumns
                             onBrowseRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.browseRequested(stickLabel, rekordboxPath, enginePath)
+                            onPlaylistDiffRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.playlistDiffRequested(stickLabel, rekordboxPath, enginePath)
                             onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.duplicateTracksHubRequested(stickLabel, rekordboxPath, enginePath)
                             onLibraryHealthRequested: (stickLabel, rekordboxPath, enginePath) =>
