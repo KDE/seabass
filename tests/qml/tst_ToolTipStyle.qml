@@ -28,6 +28,8 @@ TestCase {
         text: "Hover me"
     }
 
+    FontMetrics { id: metrics }
+
     function shown(text) {
         target.ToolTip.show(text);
         const tip = target.ToolTip.toolTip;
@@ -45,8 +47,15 @@ TestCase {
         verify(tip.width > 0 && tip.height > 0,
                "tooltip is " + tip.width + " x " + tip.height + "; a template that sets no size draws no box");
         verify(tip.background !== null, "it has a background");
-        compare(Math.round(tip.background.width), Math.round(tip.width), "the background covers the whole tooltip");
-        compare(Math.round(tip.background.height), Math.round(tip.height));
+        // The text has the box behind it. Not "the box is the tooltip":
+        // FluentWinUI3 insets its background to leave room for a shadow.
+        const bg = tip.background;
+        const text = tip.contentItem;
+        verify(bg.width > 0 && bg.height > 0, "the background is drawn: " + bg.width + " x " + bg.height);
+        verify(bg.x <= text.x + 1 && bg.x + bg.width >= text.x + text.width - 1
+               && bg.y <= text.y + 1 && bg.y + bg.height >= text.y + text.height - 1,
+               "the background covers the text: background " + bg.x + "," + bg.y + " " + bg.width + "x" + bg.height
+               + ", text " + text.x + "," + text.y + " " + text.width + "x" + text.height);
     }
 
     function test_theTextIsInsideTheBox() {
@@ -58,7 +67,8 @@ TestCase {
     // A long tip wraps into a block instead of being one line as wide as
     // its text, which is what ran off the window.
     function test_aLongTipWrapsInsteadOfRunningOffTheWindow() {
-        const long = "This sentence is deliberately far longer than any tooltip "
+        // Not `long`: Qt 6.8's QML parser reserves it.
+        const longText = "This sentence is deliberately far longer than any tooltip "
             + "ought to be on one line, so that it has to wrap onto several "
             + "lines to stay inside the window it was opened in.";
         // Measured against a one-line tip of the same style rather than
@@ -66,11 +76,17 @@ TestCase {
         // a contentItem with no font property.
         const oneLineHeight = shown("Short").height;
         target.ToolTip.hide();
-        const tip = shown(long);
+        const tip = shown(longText);
         verify(tip.width < testCase.width,
                "tooltip " + tip.width + " px wide in a " + testCase.width + " px window");
-        verify(tip.height > oneLineHeight * 1.5,
+        // Grown by most of a line: a ratio to the one-line height said
+        // nothing under styles with generous padding, where two lines are
+        // well under one and a half times one.
+        metrics.font = tip.font;
+        verify(metrics.advanceWidth(longText) > tip.availableWidth,
+               "the text is too long for one line of this tooltip, or this checks nothing");
+        verify(tip.height >= oneLineHeight + 0.6 * metrics.lineSpacing,
                "a long tip wraps onto more than one line: " + tip.height + " px tall, one line is "
-               + oneLineHeight + " px");
+               + oneLineHeight + " px, a line of text " + metrics.lineSpacing + " px");
     }
 }
