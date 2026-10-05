@@ -242,8 +242,6 @@ PanelPopup {
                 IconToolButton {
                     text: "Close"
                     iconName: "window-close"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Close"
                     onClicked: root.close()
                 }
             }

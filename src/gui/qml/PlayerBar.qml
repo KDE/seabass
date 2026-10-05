@@ -265,8 +265,6 @@ Frame {
         opacity: playerHover.hovered || hovered ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
-        ToolTip.visible: hovered
-        ToolTip.text: "Close the player"
         onClicked: root.controller.stop()
     }
 
