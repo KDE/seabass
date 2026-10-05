@@ -503,6 +503,17 @@ QtObject {
     // overrun. A page margin of it is the overrun; the second is the room
     // below the crumb, matching the room above.
     readonly property real headerBottomPadding: pageMargin * 2
+
+    // The room a reader sees under a breadcrumb: one page margin, on every
+    // page. Not headerBottomPadding, which is that plus the overrun
+    // described above and is only right as a ToolBar's bottomPadding. The
+    // headers with a second row under the crumb (Browse, Duplicates, Clean
+    // Up) space that row from the crumb with this. They used
+    // headerBottomPadding for it, which was the same number until the
+    // overrun was folded in, and then put 32 px between Browse's crumb and
+    // its search field -- exactly the test's ceiling on a Mac, and over it
+    // with Linux's fonts.
+    readonly property real crumbGap: pageMargin
     readonly property real pageMargin: 16
     readonly property real cardPadding: 16
     readonly property real sectionSpacing: 14   // between blocks down a page
