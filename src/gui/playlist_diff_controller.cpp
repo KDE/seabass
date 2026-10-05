@@ -156,6 +156,10 @@ QVariantMap PlaylistDiffController::playlistTrackCounts() const
 void PlaylistDiffController::scan(const QString &format, const QString &path)
 {
     setErrorMessage({});
+    // The catalog shown so far is another one's (the source toggle, a
+    // stick that changed): gone now, not left under the new toggle while
+    // this scan runs, nor for good if it fails or is cancelled.
+    clearCatalog();
     const std::string fmt = format.toStdString();
     const std::string catalogPath = path.toStdString();
     m_scan.start(
@@ -180,6 +184,21 @@ void PlaylistDiffController::scan(const QString &format, const QString &path)
             [this](const QString &message) { setErrorMessage(message); },
             [this]() { emit scanCancelled(); },
         });
+}
+
+void PlaylistDiffController::clearCatalog()
+{
+    m_diffJob.cancel();
+    m_tracks.clear();
+    m_playlists.clear();
+    m_names.clear();
+    m_diff = {};
+    m_openFolds.clear();
+    m_relatives.clear();
+    m_verdict.clear();
+    rebuildRows();
+    emit playlistsChanged();
+    emit diffChanged();
 }
 
 void PlaylistDiffController::cancelScan()

@@ -174,6 +174,24 @@ TestCase {
         compare(Math.round(header.mapToItem(page, 0, 0).x), Theme.pageMargin);
     }
 
+    // Switching source rescans: nothing of the catalog shown so far stays
+    // on the page, neither while the scan runs nor once it has failed.
+    function test_aFailedRescanLeavesNothingBehind() {
+        const page = openOnAFreshCopy();
+        verify(rowsOf(page).count > 0);
+        compare(findChild(page, "headerA").title, "Playlist 000");
+        page.controller.scan("engine", testCase.fixtureRoot + "/no-such-stick/Engine Library");
+        compare(rowsOf(page).count, 0);
+        compare(findChild(page, "headerA").title, "");
+        compare(findChild(page, "headerB").title, "");
+        compare(findChild(page, "playlistACombo").count, 0);
+        tryCompare(page.controller, "busy", false, 60000);
+        verify(page.controller.errorMessage.length > 0);
+        compare(rowsOf(page).count, 0);
+        compare(findChild(page, "headerA").title, "");
+        compare(findChild(page, "playlistACombo").count, 0);
+    }
+
     function test_screenshot() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");
