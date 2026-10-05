@@ -156,6 +156,10 @@ public:
     Q_INVOKABLE QString onlyInBText() const;
     Q_INVOKABLE void copyToClipboard(const QString &text) const;
 
+    // The catalog's tracks as a finished scan would hand them over, for a
+    // test that needs playlists the fixture does not have.
+    void setTracksForTesting(std::vector<domain::Track> tracks);
+
 signals:
     void busyChanged();
     void errorMessageChanged();
@@ -176,6 +180,7 @@ private:
     using Entries = std::vector<int>;
 
     void onScanFinished(ScanResult &&result);
+    void setTracks(std::vector<domain::Track> tracks);
     void setErrorMessage(const QString &message);
     void indexPlaylists();
     void chooseDefaults();
@@ -183,7 +188,7 @@ private:
     std::vector<std::string> idsOf(const Entries &entries) const;
     void recompute();
     void rebuildRows();
-    QString onlyText(const Entries &entries, const Entries &other) const;
+    QString onlyText(bool sideA) const;
 
     QString m_errorMessage;
     std::vector<domain::Track> m_tracks;

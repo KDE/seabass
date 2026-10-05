@@ -48,7 +48,8 @@ struct PlaylistDiff
     std::vector<DiffRow> rows;
     int shared = 0;  // entries of A whose track is also in B
     int onlyA = 0;   // entries of A whose track is not in B
-    int onlyB = 0;   // entries of B whose track is not in A
+    int onlyB = 0;   // entries of B whose track is not in A, or an extra copy of one A has fewer of
+    int extraB = 0;  // of onlyB: extra copies of a track A also has
     int moved = 0;   // shared entries the common subsequence could not pin: a different order
 
     bool sameTracks() const { return onlyA == 0 && onlyB == 0; }

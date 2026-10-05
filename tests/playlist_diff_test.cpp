@@ -119,16 +119,29 @@ void testDifferentTracksBetweenPinsShareARow()
 
 void testADuplicateEntryIsTwoEntries()
 {
-    // B lists "a" twice. The second copy is a B entry whose track A has,
-    // so it is moved (shared on B's side), not onlyB; and A's one "a"
-    // counts once in shared.
+    // B lists "a" twice, A once. The first copy pins against A's "a"; the
+    // second is a copy A does not have, so it is only in B, an extra
+    // copy, and never a move (nothing in A moved to stand beside it).
     const List a{"a", "b"};
     const List b{"a", "b", "a"};
     const auto diff = diffPlaylists(a, b);
-    assert(diff.onlyB == 0);
-    assert(diff.shared == 2);
-    expectLayout(diff, "=0|=0 =1|=1 _-1|~2");
-    assert(diff.rows[2].b.partner == 0);
+    assert(diff.onlyB == 1 && diff.extraB == 1);
+    assert(diff.shared == 2 && diff.moved == 0);
+    expectLayout(diff, "=0|=0 =1|=1 _-1|!2");
+}
+
+void testAnExtraCopyInBIsNotIdentical()
+{
+    // The review's case: A = [x], B = [x, x] was reported identical.
+    const auto diff = diffPlaylists({"x"}, {"x", "x"});
+    assert(!diff.identical());
+    assert(!diff.sameTracks());
+    assert(diff.shared == 1 && diff.onlyA == 0 && diff.onlyB == 1 && diff.extraB == 1 && diff.moved == 0);
+    expectLayout(diff, "=0|=0 _-1|!1");
+    // A copy that is out of place and also extra: B = [y, x, x], A = [x, y].
+    // One x pins or moves against A's x; the other is extra either way.
+    const auto shuffled = diffPlaylists({"x", "y"}, {"y", "x", "x"});
+    assert(shuffled.shared == 2 && shuffled.onlyB == 1 && shuffled.extraB == 1 && shuffled.onlyA == 0);
 }
 
 void testEmptyLists()
@@ -168,6 +181,7 @@ int main()
     testAMovedTrackIsSharedNotMissing();
     testDifferentTracksBetweenPinsShareARow();
     testADuplicateEntryIsTwoEntries();
+    testAnExtraCopyInBIsNotIdentical();
     testEmptyLists();
     testOverlapRelations();
     std::cout << "playlist_diff_test: ok\n";
