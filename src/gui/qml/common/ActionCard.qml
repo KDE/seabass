@@ -63,6 +63,22 @@ Button {
     // does) wins over `padding`, and the large card's text has to sit
     // exactly cardPadding plus its icon in from the edge for the home
     // pane's one left line.
+    // The card's own ground, rather than whatever the active style draws
+    // there. A card had no background of its own, so its shape was the
+    // style's: Material rounded it, Basic draws it square, and on macOS
+    // the switch between them turned every card on the home and library
+    // pages square while the badges this file draws stayed rounded at 4.
+    // One box, two corner radii, and nothing in the app had said either.
+    //
+    // Same three states the style gave it, taken from Theme so they hold
+    // under any style: pressed, hovered, at rest.
+    background: Rectangle {
+        radius: Theme.cornerRadius
+        color: card.down ? Theme.rowPressed : (card.hovered ? Theme.rowHover : Theme.surface)
+        border.color: Theme.border
+        border.width: 1
+    }
+
     Binding { target: card; property: "leftPadding"; value: Theme.cardPadding; when: card.large }
     Binding { target: card; property: "rightPadding"; value: Theme.cardPadding; when: card.large }
     Binding { target: card; property: "topPadding"; value: Theme.cardPadding; when: card.large }

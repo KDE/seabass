@@ -44,7 +44,7 @@ Rectangle {
         : (root.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
     border.color: root.isCurrent ? Theme.accent : "transparent"
     border.width: root.isCurrent ? 2 : 0
-    radius: root.isCurrent ? 4 : 0
+    radius: Theme.cornerRadius
 
     MouseArea {
         id: mouseArea
@@ -58,7 +58,10 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 8
-        anchors.rightMargin: 8
+        // Clear of the list's scrollbar (BigScrollBar, 10 px, drawn over
+        // the content): the track counts are right-aligned, so without
+        // this the bar sat on top of the numbers.
+        anchors.rightMargin: 8 + Theme.scaled(10)
         spacing: 6
         Label {
             text: root.name

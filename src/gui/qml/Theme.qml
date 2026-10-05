@@ -404,6 +404,21 @@ QtObject {
     // desktop style, at 10 pt. 32 is KDE's own combo height at 10 pt.
     readonly property real compactControlHeight: scaled(32)
 
+    // The corner every box this app draws itself is rounded by. It was
+    // the literal 4 repeated across the QML, which was fine while the
+    // active style rounded its own controls to roughly the same amount
+    // and wrong the moment one did not: Basic draws square, so a card
+    // whose background came from the style sat square beside a badge
+    // this app drew at 4. One number, and the controls that borrow their
+    // background from the style get given one of their own.
+    readonly property real cornerRadius: scaled(4)
+
+    // The width of the compact combos that sit in a page header -- the
+    // library picker and Browse Library's sort combo. One number so the
+    // two on one row are the same width; they were 160 and 140, and the
+    // shorter one clipped "Playlist Order".
+    readonly property real compactComboWidth: scaled(180)
+
     // The URL of a bundled Breeze icon (qml/icons/breeze/<name>.svg), for
     // a button's icon.source; SeabassIcon draws one on its own. The same
     // URL in the app and under test, since both register the icons at

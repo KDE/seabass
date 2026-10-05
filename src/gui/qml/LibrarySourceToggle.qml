@@ -61,7 +61,6 @@ ComboBox {
     readonly property var entries: [
         {
             value: "engine",
-            glyph: "⬡",
             label: "Engine OS",
             selectable: root.hasEngine,
             tooltip: "Denon's own library, read directly by Engine DJ hardware "
@@ -69,7 +68,6 @@ ComboBox {
         },
         {
             value: "rekordbox",
-            glyph: "◎",
             label: "DeviceLibrary",
             selectable: root.hasRekordbox,
             tooltip: "Pioneer's classic per-stick export, read directly by CDJs "
@@ -78,7 +76,6 @@ ComboBox {
         },
         {
             value: "onelibrary",
-            glyph: "◈",
             label: "OneLibrary",
             selectable: root.hasOneLibrary && root.oneLibrarySupported,
             // A plain call, not an inline block: an object literal's value
@@ -102,56 +99,6 @@ ComboBox {
         return "Pioneer's newer catalog, written by Rekordbox 7. Mirrors "
             + "DeviceLibrary's tracks in a richer schema, and you can add "
             + "cues to it directly.";
-    }
-
-    // A catalog's glyph beside its name, both centred in the row as the
-    // name always was, and the glyph then moved so its ink is centred on
-    // the name's capitals. The glyphs come from Noto Sans Symbols2 (bundled,
-    // see Theme.symbolFamily), whose metrics are not the UI font's:
-    // centring the two text boxes left every
-    // glyph 1.5 to 2.5 px above the name, and sitting both on one baseline
-    // instead lifted the whole text about 2 px in the box (both measured in
-    // tst_LibrarySourceToggle.qml).
-    component CatalogGlyph: Label {
-        id: glyphLabel
-        required property Item nameLabel
-        font.family: Theme.symbolFamily
-        color: Theme.text
-        Layout.alignment: Qt.AlignVCenter
-        // The translate below is an approximation, and deliberately left
-        // as one. It comes from TextMetrics, which reports UNHINTED
-        // metrics, while the app paints with NativeRendering on Linux
-        // (main.cpp), which hints each glyph onto the pixel grid as it
-        // goes -- so the ink lands a fraction away from where the sum
-        // says it will.
-        //
-        // This glyph and its name were pinned to Text.QtRendering for a
-        // while to close that gap, on a reading of a test that said the
-        // pair was 4.5 px out of line. That number was the measurement,
-        // not the drawing: the test took the first and last row of
-        // pixels clearing a contrast threshold, and under NativeRendering
-        // most of this hexagon's faint outline fell below it, so the band
-        // collapsed to a sliver at the bottom of the glyph. Measured by
-        // ink centroid the pair sits 0.65 px apart painted the way the
-        // rest of the app is painted, and 0.36 px apart pinned: a third
-        // of a pixel, for the cost of being the only labels in Seabass
-        // rasterised differently from every other one. The pins came out
-        // again on 2026-09-21 and the approximation stays.
-        //
-        // What holds it honest is tst_LibrarySourceToggle.qml, which
-        // measures the painted ink of both the header and the list rows
-        // and allows them 1 px. Deleting this translate moves them 3 px
-        // and fails.
-        TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
-        TextMetrics { id: capitalInk; font: glyphLabel.nameLabel.font; text: "H" }
-        // A transform, not a position: it moves the ink without asking the
-        // layout for anything, so this cannot feed back into the y it reads.
-        transform: Translate {
-            y: (glyphLabel.nameLabel.y + glyphLabel.nameLabel.baselineOffset
-                + capitalInk.tightBoundingRect.y + capitalInk.tightBoundingRect.height / 2)
-               - (glyphLabel.y + glyphLabel.baselineOffset
-                  + glyphInk.tightBoundingRect.y + glyphInk.tightBoundingRect.height / 2)
-        }
     }
 
     model: entries
@@ -262,18 +209,10 @@ ComboBox {
         readonly property int selectionStart: 0
         function positionToRectangle(position) { return Qt.rect(0, 0, 0, 0); }
 
-        CatalogGlyph {
-            objectName: "catalogGlyph"
-            text: {
-                const entry = root.entries[root.currentIndex];
-                return entry ? entry.glyph : "";
-            }
-            nameLabel: currentName
-            leftPadding: 8
-        }
         Label {
             id: currentName
             objectName: "catalogName"
+            leftPadding: 8
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.label : "";
@@ -313,7 +252,7 @@ ComboBox {
     // The list below had the same fault and this is the same fix, so
     // both halves of the control stand on a ground Theme chose.
     background: Rectangle {
-        implicitWidth: 160
+        implicitWidth: Theme.compactComboWidth
         radius: 4
         color: root.hovered ? Theme.rowHover : Theme.surface
         border.color: Theme.border
@@ -370,14 +309,6 @@ ComboBox {
 
         contentItem: RowLayout {
             spacing: 4
-            CatalogGlyph {
-                // Named so the pixel test can find this pair in the open
-                // list as well: the row is a second use of CatalogGlyph,
-                // and what the closed control does says nothing about it.
-                objectName: "entryGlyph"
-                text: entryDelegate.modelData.glyph
-                nameLabel: entryName
-            }
             Label {
                 id: entryName
                 objectName: "entryName"
