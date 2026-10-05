@@ -759,4 +759,35 @@ TestCase {
         id: signalSpyComponent
         SignalSpy {}
     }
+
+    // The playlist sidebar shows no scroll bar while its rows fit.
+    function test_thePlaylistSidebarHasNoScrollBarWhenItFits() {
+        const page = makePage();
+        page.playlistSidebarOpen = true;
+        waitForRendering(page);
+        const list = findChild(page, "playlistList");
+        verify(list !== null);
+        tryVerify(() => list.height > 0);
+        const bar = list.ScrollBar.vertical;
+        verify(list.contentHeight <= list.height, "the rows fit: " + list.contentHeight + " in " + list.height);
+        compare(bar.visible, false, "so no scroll bar");
+    }
+
+    // BigScrollBar itself, which every scrolling page uses: there while
+    // there is something to scroll, gone while there is not.
+    Component {
+        id: scrollingComponent
+        Flickable {
+            width: 200
+            height: 100
+            contentWidth: 200
+            ScrollBar.vertical: BigScrollBar {}
+        }
+    }
+    function test_theBigScrollBarIsThereOnlyWhenThereIsSomethingToScroll() {
+        const f = createTemporaryObject(scrollingComponent, testCase, {contentHeight: 1000});
+        tryCompare(f.ScrollBar.vertical, "visible", true);
+        f.contentHeight = 60;
+        tryCompare(f.ScrollBar.vertical, "visible", false);
+    }
 }

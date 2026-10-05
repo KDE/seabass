@@ -749,6 +749,7 @@ Page {
             padding: 0
 
             PlaylistListView {
+                objectName: "playlistList"
                 anchors.fill: parent
                 scanController: scanController
                 searchQuery: searchField.text
