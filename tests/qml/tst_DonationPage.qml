@@ -116,8 +116,9 @@ TestCase {
         verify(portrait !== null, "the page has its portrait");
         // loadImage() is asynchronous, so an empty first frame is
         // legitimate; a missing resource looks the same and never
-        // resolves.
-        tryVerify(function() { return portrait.isImageLoaded(portrait.photo); }, 3000,
+        // resolves, so a long limit costs nothing when it works (3 s ran
+        // out in a Windows Debug build under load).
+        tryVerify(function() { return portrait.isImageLoaded(portrait.photo); }, 30000,
                   "the portrait resource loaded from " + portrait.photo);
         verify(portrait.width > 0, "the portrait has a size");
         compare(portrait.width, portrait.height, "square, so the rounded corners are equal ones");
