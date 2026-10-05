@@ -18,7 +18,11 @@ namespace seabass::gui
 // like the rest of the app, so it takes FluentWinUI3. macOS's native
 // style refuses the background and contentItem overrides every control
 // here is built on -- it logs "does not support customization" and
-// draws its own -- so it takes Material, which honours the palette.
+// draws its own -- so it takes Basic, which accepts them, inherits the
+// app's font and takes its ink from the palette ThemePalette fills.
+// (Material was tried there and accepted the overrides too, but it
+// hardcodes its own type scale -- 16pt controls beside 14pt labels
+// against a 13pt system font -- which no other platform sees.)
 // Linux keeps its KDE-driven auto-selection, except inside an AppImage,
 // which cannot load Plasma's plugins and so asks for org.kde.desktop itself.
 //
