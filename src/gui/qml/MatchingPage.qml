@@ -269,7 +269,7 @@ ColumnLayout {
                     Rectangle {
                         Layout.preferredWidth: Theme.iconSizeSmall
                         Layout.preferredHeight: Theme.iconSizeSmall
-                        color: Theme.groupBackground
+                        color: Theme.surface
                         ArtworkImage {
                             objectName: "anchorArtwork"
                             anchors.fill: parent
@@ -415,7 +415,7 @@ ColumnLayout {
                     background: Rectangle {
                         color: Theme.surface
                         border.color: Theme.border
-                        radius: 4
+                        radius: Theme.cornerRadius
                     }
                 }
                 ToolTip.visible: hovered
@@ -625,7 +625,7 @@ ColumnLayout {
                 Rectangle {
                     Layout.preferredWidth: Theme.iconSizeSmall
                     Layout.preferredHeight: Theme.iconSizeSmall
-                    color: Theme.groupBackground
+                    color: Theme.surface
                     ArtworkImage {
                         objectName: "candidateArtwork"
                         anchors.fill: parent
@@ -730,7 +730,7 @@ ColumnLayout {
     // returns (no waveform/cue editing the way Browse's own trackInfoPopup
     // has, since that's about editing cues on a track you're about to
     // play, not one you're just considering adding).
-    Popup {
+    PanelPopup {
         id: candidateInfoPopup
         modal: true
         focus: true
@@ -773,7 +773,7 @@ ColumnLayout {
                 Rectangle {
                     Layout.preferredWidth: Theme.iconSizeLarge
                     Layout.preferredHeight: Theme.iconSizeLarge
-                    color: Theme.groupBackground
+                    color: Theme.surface
                     ArtworkImage {
                         anchors.fill: parent
                         source: candidateInfoPopup.infoArtworkPath

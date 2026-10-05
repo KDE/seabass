@@ -210,7 +210,7 @@ Page {
             Layout.fillHeight: true
             spacing: 16
 
-            component TransitionPanel: Frame {
+            component TransitionPanel: Card {
                 id: panel
                 Layout.fillWidth: true
                 Layout.fillHeight: true

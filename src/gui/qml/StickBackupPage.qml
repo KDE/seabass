@@ -431,7 +431,7 @@ Page {
                 Layout.fillWidth: true
                 visible: compactDialog.preflight.enoughFreeSpace === false
                 implicitHeight: notEnoughLabel.implicitHeight + 16
-                radius: 4
+                radius: Theme.cornerRadius
                 color: Theme.warnBg
                 border.color: Theme.warnBorder
                 Label {
@@ -461,14 +461,14 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
             // ---- Refusal / running banners ----
             Rectangle {
                 Layout.fillWidth: true
                 visible: root.blockedBy.length > 0
                 implicitHeight: blockedLabel.implicitHeight + 16
-                radius: 4
+                radius: Theme.cornerRadius
                 color: Theme.dangerBg
                 border.color: Theme.dangerBorder
                 Label {
@@ -492,7 +492,7 @@ Page {
                 objectName: "emergencyCopyBanner"
                 visible: root.controller.stickReadOnly === true
                 implicitHeight: emergencyLabel.implicitHeight + 16
-                radius: 4
+                radius: Theme.cornerRadius
                 color: Theme.warnBg
                 border.color: Theme.warnBorder
                 Label {
@@ -520,7 +520,8 @@ Page {
             }
 
             // ---- Status ----
-            Frame {
+            PageSection {
+                title: "This Stick's Backup"
                 Layout.fillWidth: true
                 GridLayout {
                     anchors.fill: parent
@@ -596,8 +597,9 @@ Page {
             }
 
             // ---- Back up (idle) / progress (running) ----
-            Frame {
+            PageSection {
                 objectName: "backUpFrame"
+                title: root.controller.backingUp === true ? "Backing up " + root.stickLabel : "Back Up to This Computer"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -613,12 +615,8 @@ Page {
                             // grows as far as a visible child can, and while a
                             // backup runs the description below is hidden --
                             // the row then shrank to its content and Cancel
-                            // stood in the middle of the card.
-                            Label {
-                                Layout.fillWidth: true
-                                text: root.controller.backingUp === true ? "Backing up " + root.stickLabel : "Back Up to This Computer"
-                                font.bold: true
-                            }
+                            // stood in the middle of the section.
+                            Item { Layout.fillWidth: true }
                             Label {
                                 visible: root.controller.backingUp !== true
                                 Layout.fillWidth: true
@@ -809,7 +807,8 @@ Page {
             }
 
             // ---- Archive health ----
-            Frame {
+            PageSection {
+                title: "Archive Health"
                 Layout.fillWidth: true
                 visible: root.hasBackup
                 opacity: root.controller.busy === true ? 0.5 : 1.0
@@ -819,7 +818,6 @@ Page {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Label { text: "Archive Health"; font.bold: true }
                         Label {
                             objectName: "deadSpaceLabel"
                             Layout.fillWidth: true
@@ -854,8 +852,9 @@ Page {
             }
 
             // ---- Restore ----
-            Frame {
+            PageSection {
                 objectName: "restoreSection"
+                title: "Restore Onto " + root.stickLabel
                 Layout.fillWidth: true
                 opacity: root.hasBackup && root.controller.busy !== true ? 1.0 : 0.55
                 RowLayout {
@@ -864,7 +863,6 @@ Page {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Label { text: "Restore Onto " + root.stickLabel; font.bold: true }
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap

@@ -158,7 +158,7 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
             // What goes in the zip and why, on the page rather than behind
             // the (?): someone is being asked to hand over a copy of their
@@ -167,10 +167,10 @@ Page {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: exportSummary.implicitHeight + 24
-                color: Theme.groupBackground
+                color: Theme.surface
                 border.color: Theme.borderSubtle
                 border.width: 1
-                radius: 4
+                radius: Theme.cornerRadius
 
                 ColumnLayout {
                     id: exportSummary
@@ -233,8 +233,8 @@ Page {
                 }
             }
 
-            GroupBox {
-                label: Subtitle { text: "Source library" }
+            PageSection {
+                title: "Source library"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -275,8 +275,8 @@ Page {
                 }
             }
 
-            GroupBox {
-                label: Subtitle { text: "Output location" }
+            PageSection {
+                title: "Output location"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -337,9 +337,9 @@ Page {
                 }
             }
 
-            GroupBox {
+            PageSection {
                 id: submissionBox
-                label: Subtitle { text: "For the submission (optional; saved into MANIFEST.txt as entered)" }
+                title: "For the submission (optional; saved into MANIFEST.txt as entered)"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -400,16 +400,8 @@ Page {
 
             RowLayout {
                 Layout.fillWidth: true
-                // Every field above lives inside a GroupBox, so the right
-                // edge a reader lines things up against is the box's
-                // CONTENT edge -- where the "Choose..." button and the two
-                // text fields end -- not the frame around it. This row is
-                // a direct child of the page column, so without the same
-                // inset it overhangs them by the box's own padding: six
-                // pixels in the desktop style, which is exactly enough to
-                // look wrong. Borrowed from a real GroupBox rather than
-                // hardcoded, because that padding is the style's to pick
-                // and it differs between them.
+                // The sections above have no box and no inset, so this row
+                // ends on the same right edge as their fields.
                 spacing: 12
                 // Right-aligned, the same way SeabassDialog places its
                 // accept button: the action that commits the page sits at

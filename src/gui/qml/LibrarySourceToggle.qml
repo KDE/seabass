@@ -253,7 +253,7 @@ ComboBox {
     // both halves of the control stand on a ground Theme chose.
     background: Rectangle {
         implicitWidth: Theme.compactComboWidth
-        radius: 4
+        radius: Theme.cornerRadius
         color: root.hovered ? Theme.rowHover : Theme.surface
         border.color: Theme.border
         border.width: 1

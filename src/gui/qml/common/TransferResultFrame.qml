@@ -14,7 +14,7 @@ import SeabassGui
 // do about it). `result` is the controller's result map: filesWritten,
 // filesUnchanged, directoriesCreated, extrasRemoved, databaseChecked,
 // missingTracks, rejected, writeErrors, warnings.
-Frame {
+Card {
     id: resultFrame
 
     property var result: ({})

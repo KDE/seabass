@@ -154,7 +154,7 @@ HealthCheckPage {
     // Library's own manual-merge feature uses, just seeded directly with
     // the conflict's own two tracks via planManualMerge() (no picker
     // step needed, both tracks are already known).
-    Popup {
+    PanelPopup {
         id: conflictResolvePopup
         modal: true
         focus: true
@@ -528,9 +528,9 @@ HealthCheckPage {
                 width: parent.width
                 visible: issueDelegate.expanded
                 height: issueDelegate.expanded ? detailColumn.implicitHeight + 16 : 0
-                color: Theme.groupBackground
+                color: Theme.surface
                 border.color: Theme.borderSubtle
-                radius: 4
+                radius: Theme.cornerRadius
 
                 ColumnLayout {
                     id: detailColumn
@@ -565,7 +565,7 @@ HealthCheckPage {
 
                     Repeater {
                         model: issueDelegate.detailTracks
-                        delegate: Frame {
+                        delegate: Card {
                             id: trackFrame
                             Layout.fillWidth: true
                             required property var modelData

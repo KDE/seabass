@@ -223,10 +223,10 @@ Page {
             Layout.fillWidth: true
             visible: list.count > 0 && spaceBar.known
             implicitHeight: spaceBar.implicitHeight + 2 * Theme.cardPadding
-            color: Theme.groupBackground
+            color: Theme.surface
             border.color: Theme.borderSubtle
             border.width: 1
-            radius: 4
+            radius: Theme.cornerRadius
 
             SpaceReclaimBar {
                 id: spaceBar

@@ -307,8 +307,8 @@ Page {
             visible: junkCueListView.count > 0
             Layout.fillWidth: true
             Layout.bottomMargin: 12
-            radius: 6
-            color: Theme.groupBackground
+            radius: Theme.cornerRadius
+            color: Theme.surface
             border.color: Theme.borderSubtle
             implicitHeight: summaryRow.implicitHeight + 20
 

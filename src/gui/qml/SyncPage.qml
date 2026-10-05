@@ -352,7 +352,7 @@ Page {
                 }
                 enabled: card.track.filePath.length > 0 && root.playbackController !== null
                 background: Rectangle {
-                    radius: 4
+                    radius: Theme.cornerRadius
                     color: playButton.hovered ? Theme.rowHover : Theme.surface
                     opacity: 0.9
                 }
@@ -970,9 +970,9 @@ Page {
                         objectName: "syncPanel"
                         Layout.fillWidth: true
                         implicitHeight: panelColumn.implicitHeight + 2 * Theme.rowSpacing
-                        color: Theme.groupBackground
+                        color: Theme.surface
                         border.color: Theme.borderSubtle
-                        radius: 4
+                        radius: Theme.cornerRadius
 
                         // Takes clicks on the panel's own background, which
                         // would otherwise reach the row underneath and fold

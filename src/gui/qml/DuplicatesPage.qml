@@ -469,9 +469,9 @@ Page {
                     width: parent.width
                     visible: delegateRoot.expanded
                     height: delegateRoot.expanded ? groupColumn.implicitHeight + 16 : 0
-                    color: Theme.groupBackground
+                    color: Theme.surface
                     border.color: Theme.borderSubtle
-                    radius: 4
+                    radius: Theme.cornerRadius
 
                     ColumnLayout {
                         id: groupColumn

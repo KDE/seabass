@@ -218,7 +218,7 @@ Page {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: warnColumn.implicitHeight + 24
-                radius: 4
+                radius: Theme.cornerRadius
                 color: root.nothingToLose ? Theme.warnBg : Theme.dangerBg
                 border.color: root.nothingToLose ? Theme.warnBorder : Theme.dangerBorder
                 border.width: 1
@@ -338,7 +338,7 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
             Label {
                 Layout.fillWidth: true
@@ -363,8 +363,8 @@ Page {
                 text: controller.statusMessage
             }
 
-            GroupBox {
-                label: Subtitle { text: "1. Choose a drive" }
+            PageSection {
+                title: "1. Choose a drive"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -485,9 +485,9 @@ Page {
                 }
             }
 
-            GroupBox {
+            PageSection {
                 objectName: "formatGroupBox"
-                label: Subtitle { text: "2. Choose a format" }
+                title: "2. Choose a format"
                 Layout.fillWidth: true
                 // Greyed out (not hidden) until a drive is picked -- shows
                 // what's coming next rather than making the page jump
@@ -627,9 +627,9 @@ Page {
                 }
             }
 
-            GroupBox {
+            PageSection {
                 objectName: "nameGroupBox"
-                label: Subtitle { text: "3. Name it" }
+                title: "3. Name it"
                 Layout.fillWidth: true
                 // See "2. Choose a format" above: greyed out, not hidden.
                 enabled: root.selectedDisk !== null

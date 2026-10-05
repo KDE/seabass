@@ -73,7 +73,7 @@ Rectangle {
     implicitHeight: contentColumn.implicitHeight + 2 * Theme.cardPadding
     color: Theme.surface
     border.color: Theme.border
-    radius: 4
+    radius: Theme.cornerRadius
 
     ColumnLayout {
         id: contentColumn
@@ -98,7 +98,7 @@ Rectangle {
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: -Theme.tightSpacing
-                    radius: 4
+                    radius: Theme.cornerRadius
                     visible: !root.mounted
                     color: rowMouseArea.pressed ? Theme.rowPressed
                         : rowMouseArea.containsMouse ? Theme.rowHover

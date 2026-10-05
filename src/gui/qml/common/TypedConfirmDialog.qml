@@ -51,7 +51,7 @@ SeabassDialog {
             Layout.fillWidth: true
             visible: dialog.showWarning
             implicitHeight: warnColumn.implicitHeight + 24
-            radius: 4
+            radius: Theme.cornerRadius
             color: Theme.dangerBg
             border.color: Theme.dangerBorder
             RowLayout {

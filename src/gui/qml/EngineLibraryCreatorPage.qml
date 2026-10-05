@@ -151,10 +151,10 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
-            GroupBox {
-                label: Subtitle { text: "What's included" }
+            PageSection {
+                title: "What's included"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -178,8 +178,8 @@ Page {
                 }
             }
 
-            GroupBox {
-                label: Subtitle { text: "Engine schema generation" }
+            PageSection {
+                title: "Engine schema generation"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent

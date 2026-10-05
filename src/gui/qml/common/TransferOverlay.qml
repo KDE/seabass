@@ -55,7 +55,7 @@ Item {
         background: Rectangle {
             color: Theme.surface
             border.color: Theme.border
-            radius: 4
+            radius: Theme.cornerRadius
         }
 
         contentItem: ColumnLayout {

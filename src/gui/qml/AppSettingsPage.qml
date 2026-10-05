@@ -243,7 +243,7 @@ Page {
             readonly property int maxWidth: 640
             width: Math.min(parent.width, maxWidth)
             x: Math.round(Math.max(0, (parent.width - width) / 2))
-            spacing: Theme.scaled(24)
+            spacing: Theme.sectionSpacing
 
             // ---- Appearance -------------------------------------------
             SectionHeader { text: "Appearance" }
