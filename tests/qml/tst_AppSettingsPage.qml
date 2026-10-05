@@ -266,9 +266,15 @@ TestCase {
         compare(spinner.running, true, "the spinner is on the button at once");
         compare(result.text, "Checking…");
         compare(button.enabled, false, "and the button waits");
+        // Waited for, not read at once: the spinner widens the button, and
+        // the row moves the answer along on a later layout pass. On
+        // Windows, whose style sizes the button by its padding, the answer
+        // still sat where the narrower button had left it when measured
+        // straight after the click.
+        tryVerify(() => result.mapToItem(page, 0, 0).x > button.mapToItem(page, 0, 0).x + button.width - 1,
+                  2000, "the answer is beside the button");
         const buttonPos = button.mapToItem(page, 0, 0);
         const resultPos = result.mapToItem(page, 0, 0);
-        verify(resultPos.x > buttonPos.x + button.width - 1, "the answer is beside the button");
         verify(Math.abs((resultPos.y + result.height / 2) - (buttonPos.y + button.height / 2)) < button.height,
                "on the same line");
 
