@@ -292,6 +292,78 @@ TestCase {
         failOnWarning(/Cannot read property/);
     }
 
+    // The topmost line of readable text in a page's body, in page
+    // coordinates. Text only, on purpose: a first version also counted
+    // any sized leaf, and a body's own background rectangle -- which
+    // starts at the very top of the body and is not content -- measured
+    // StickPerformancePage at 2 px under its crumb when its first line
+    // of text sits a full page margin down.
+    function firstInk(item, page) {
+        var best = {y: Infinity, text: ""};
+        if (!item || !item.visible || item.opacity === 0)
+            return best;
+        var kids = item.children || [];
+        var isText = item.text !== undefined && item.font !== undefined && item.contentHeight !== undefined;
+        if (isText && typeof item.text === "string" && item.text.trim().length > 0 && item.height > 0) {
+            best = {y: item.mapToItem(page, 0, 0).y, text: item.text};
+        }
+        for (var i = 0; i < kids.length; ++i) {
+            var found = firstInk(kids[i], page);
+            if (found.y < best.y)
+                best = found;
+        }
+        return best;
+    }
+
+    function test_everyBreadcrumbHasRoomUnderIt_data() {
+        return pageSpecs().map(function(spec) {
+            return {tag: spec.name, name: spec.name, props: spec.props};
+        });
+    }
+
+    // Every page, not two. The breadcrumb sat crowded onto the body on
+    // some pages and not others -- found by looking, one page at a time,
+    // which is the wrong way to find it. The range is the one
+    // test_theBreadcrumbHasRoomUnderIt already holds Backups and Browse
+    // Library to: at least a page margin, at most two.
+    function test_everyBreadcrumbHasRoomUnderIt(row) {
+        // Not skip(): the rig counts a skip as a failure. A page that does
+        // not compile is test_everyPageCompiles' to report, and a page with
+        // no breadcrumb has nothing here to measure. A lookup that has
+        // quietly stopped finding crumbs would pass every row, so
+        // test_theBreadcrumbHasRoomUnderIt keeps asserting that Backups has
+        // one.
+        var component = Qt.createComponent(qmlDir + row.name + ".qml");
+        if (component.status !== Component.Ready)
+            return;
+        var page = createTemporaryObject(component, testCase, row.props);
+        verify(page !== null);
+        waitForRendering(page);
+        var crumb = page.header ? crumbIn(page.header) : null;
+        if (crumb === null) {
+            component.destroy();
+            return;
+        }
+        const crumbBottom = crumb.mapToItem(page, 0, crumb.height).y;
+        const header = page.header;
+        const crumbTopInBar = crumb.mapToItem(header, 0, 0).y;
+        const crumbBottomInBar = crumb.mapToItem(header, 0, crumb.height).y;
+        console.log("crumb bar " + row.name + ": above " + Math.round(crumbTopInBar)
+                    + ", below " + Math.round(header.height - crumbBottomInBar));
+        // Room below the crumb inside its bar, against the room above it.
+        // That is the thing that was wrong, on every page at once: 16 px
+        // above, 0 below, the crumb flush on the bar's bottom edge. It is
+        // also independent of what the page's body shows, unlike the
+        // first line of body text, which on a page whose fixture is empty
+        // is a centred empty-state message at some arbitrary height.
+        const above = Math.round(crumbTopInBar);
+        const below = Math.round(header.height - crumbBottomInBar);
+        verify(below >= above - 1,
+               row.name + ": " + below + " px under the crumb inside its bar, "
+               + above + " px over it, so the crumb sits on the bar's lower edge");
+        component.destroy();
+    }
+
     function test_everyPageInstantiates_data() {
         return pageSpecs().map(function(spec) {
             return {tag: spec.name, name: spec.name, props: spec.props};
