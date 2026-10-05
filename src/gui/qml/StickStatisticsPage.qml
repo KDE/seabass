@@ -118,24 +118,19 @@ Page {
         }
     }
 
-    // A plain Flickable, not ScrollView: KDE's org.kde.desktop style
-    // positions a ScrollView's attached scrollbar itself, and doesn't
-    // know how to place a foreign BigScrollBar -- it was rendering
-    // unanchored at the content's top-left instead of docked to the
-    // right edge. Every other scrollable page in this app pairs
-    // BigScrollBar with a real Flickable/ListView instead precisely
-    // because that positions the attached scrollbar itself, independent
-    // of style.
-    Flickable {
+    // PageScrollView, like the other scrolling pages: a Flickable with
+    // BigScrollBar (not a ScrollView, whose bar KDE's style misplaces),
+    // and it keeps a gutter for the bar. The plain Flickable this page
+    // had kept none, and once its sections lost their boxes the
+    // right-hand figures ran under the bar.
+    //
+    // Hidden while the scan runs: the overlay is a see-through scrim, and
+    // what showed through it was an empty page -- a disabled Back button
+    // and the treemap's "Nothing to show yet." right under Cancel.
+    PageScrollView {
         anchors.fill: parent
-        anchors.margins: 16
-        contentWidth: width
-        contentHeight: statsColumn.height
-        clip: true
-        // See AboutPage.qml's own comment on this same fix -- a Flickable
-        // is draggable by default even with nothing to scroll.
-        interactive: contentHeight > height
-        ScrollBar.vertical: BigScrollBar {}
+        anchors.margins: Theme.pageMargin
+        visible: !controller.busy
 
         ColumnLayout {
             id: statsColumn
