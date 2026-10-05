@@ -192,7 +192,17 @@ void PlaylistDiffController::onScanFinished(ScanResult &&result)
         setErrorMessage(result.errorMessage);
         return;
     }
-    m_tracks = std::move(result.tracks);
+    setTracks(std::move(result.tracks));
+}
+
+void PlaylistDiffController::setTracksForTesting(std::vector<domain::Track> tracks)
+{
+    setTracks(std::move(tracks));
+}
+
+void PlaylistDiffController::setTracks(std::vector<domain::Track> tracks)
+{
+    m_tracks = std::move(tracks);
     indexPlaylists();
     chooseDefaults();
     emit playlistsChanged();
@@ -345,6 +355,15 @@ void PlaylistDiffController::recompute()
     auto plural = [](int n, const char *word) {
         return QStringLiteral("%1 %2%3").arg(n).arg(QLatin1String(word)).arg(n == 1 ? "" : "s");
     };
+    // n tracks only one side has, saying how many of them are extra
+    // copies of a track the other side lists fewer times.
+    auto tracksOnly = [&plural](int n, int extra) {
+        if (extra == 0) {
+            return plural(n, "track");
+        }
+        const QString copies = extra == 1 ? QStringLiteral("1 extra copy") : QStringLiteral("%1 extra copies").arg(extra);
+        return extra == n ? copies : QStringLiteral("%1 (%2)").arg(plural(n, "track"), copies);
+    };
     const QString reordered = m_diff.moved > 0 ? QStringLiteral(", %1 reordered").arg(m_diff.moved) : QString();
     if (m_playlistA.isEmpty() || m_playlistB.isEmpty()) {
         m_verdict = QStringLiteral("This catalog has no playlists to compare.");
@@ -358,7 +377,7 @@ void PlaylistDiffController::recompute()
                         .arg(m_diff.moved);
     } else if (m_diff.onlyA == 0) {
         m_verdict = QStringLiteral("%1 is %2 plus %3%4.")
-                        .arg(m_playlistB, m_playlistA, plural(m_diff.onlyB, "track"), reordered);
+                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyB, m_diff.extraB), reordered);
     } else if (m_diff.onlyB == 0) {
         m_verdict = QStringLiteral("%1 is %2 minus %3%4.")
                         .arg(m_playlistB, m_playlistA, plural(m_diff.onlyA, "track"), reordered);
@@ -567,15 +586,16 @@ void PlaylistDiffController::rebuildRows()
     m_rows.setRows(std::move(rows));
 }
 
-QString PlaylistDiffController::onlyText(const Entries &entries, const Entries &other) const
+// The entries the diff calls only this side's, in list order: a track
+// the other list lacks, and an extra copy of one it lists fewer times.
+QString PlaylistDiffController::onlyText(bool sideA) const
 {
-    std::vector<std::string> otherIds = idsOf(other);
-    std::sort(otherIds.begin(), otherIds.end());
+    const Entries &entries = entriesOf(sideA ? m_playlistA : m_playlistB);
     QStringList lines;
-    for (int index : entries) {
-        const domain::Track &t = m_tracks[static_cast<std::size_t>(index)];
-        if (!std::binary_search(otherIds.begin(), otherIds.end(), t.sourceId)) {
-            lines << lineOf(t);
+    for (const domain::DiffRow &row : m_diff.rows) {
+        const domain::DiffEntry &entry = sideA ? row.a : row.b;
+        if (entry.kind == domain::DiffEntryKind::Only) {
+            lines << lineOf(m_tracks[static_cast<std::size_t>(entries[static_cast<std::size_t>(entry.index)])]);
         }
     }
     return lines.join(QLatin1Char('\n'));
@@ -583,12 +603,12 @@ QString PlaylistDiffController::onlyText(const Entries &entries, const Entries &
 
 QString PlaylistDiffController::onlyInAText() const
 {
-    return onlyText(entriesOf(m_playlistA), entriesOf(m_playlistB));
+    return onlyText(true);
 }
 
 QString PlaylistDiffController::onlyInBText() const
 {
-    return onlyText(entriesOf(m_playlistB), entriesOf(m_playlistA));
+    return onlyText(false);
 }
 
 void PlaylistDiffController::copyToClipboard(const QString &text) const

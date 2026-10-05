@@ -94,6 +94,17 @@ PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<
 
     PlaylistDiff diff;
     auto pairs = longestCommonSubsequence(ids.a, ids.b);
+
+    // How many copies of each track A has that the common subsequence
+    // left unpinned: each can stand for one unpinned copy in B as moved.
+    // A copy in B beyond those is an extra copy only B has, not a move.
+    std::unordered_map<int, int> unpinnedInA;
+    for (int i = 0; i < static_cast<int>(ids.a.size()); ++i) {
+        ++unpinnedInA[ids.a[i]];
+    }
+    for (const auto &[ai, bj] : pairs) {
+        --unpinnedInA[ids.a[ai]];
+    }
     // A closing sentinel so the tail after the last agreed row is laid
     // out by the same loop.
     pairs.emplace_back(static_cast<int>(ids.a.size()), static_cast<int>(ids.b.size()));
@@ -125,7 +136,13 @@ PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<
             if (other == firstInA.end()) {
                 entry.kind = DiffEntryKind::Only;
                 ++diff.onlyB;
+            } else if (unpinnedInA[ids.b[j]] <= 0) {
+                // A has this track, but every copy of it is accounted for.
+                entry.kind = DiffEntryKind::Only;
+                ++diff.onlyB;
+                ++diff.extraB;
             } else {
+                --unpinnedInA[ids.b[j]];
                 entry.kind = DiffEntryKind::Moved;
                 entry.partner = other->second;
             }

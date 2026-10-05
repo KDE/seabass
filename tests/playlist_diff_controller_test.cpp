@@ -18,7 +18,10 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "gui/playlist_diff_controller.hpp"
 #include "gui/qt_path.hpp"
@@ -50,6 +53,46 @@ int foldRows(const PlaylistDiffRowModel &rows)
         }
     }
     return n;
+}
+
+// Tracks named by id, each a member of the playlists that list it, at the
+// positions they list it: a playlist naming "x" twice is one track with
+// two memberships, the way a catalog with a duplicate entry reads.
+std::vector<seabass::domain::Track> tracksOf(const std::vector<std::pair<std::string, std::vector<std::string>>> &playlists)
+{
+    std::map<std::string, seabass::domain::Track> byId;
+    for (const auto &[name, ids] : playlists) {
+        for (int position = 0; position < static_cast<int>(ids.size()); ++position) {
+            auto &track = byId[ids[static_cast<std::size_t>(position)]];
+            track.sourceId = ids[static_cast<std::size_t>(position)];
+            track.title = "Title " + track.sourceId;
+            track.artist = "Artist " + track.sourceId;
+            track.playlists.push_back({name, position + 1});
+        }
+    }
+    std::vector<seabass::domain::Track> out;
+    for (auto &[id, track] : byId) {
+        out.push_back(std::move(track));
+    }
+    return out;
+}
+
+// Duplicate entries, common in rekordbox playlists: an extra copy on B's
+// side is a track only B has, never a silent move.
+void testExtraCopyInB()
+{
+    PlaylistDiffController controller;
+    controller.setTracksForTesting(tracksOf({{"A", {"x"}}, {"B", {"x", "x"}}}));
+    controller.setPlaylistA(QStringLiteral("A"));
+    controller.setPlaylistB(QStringLiteral("B"));
+    assert(controller.onlyBCount() == 1);
+    assert(controller.movedCount() == 0);
+    assert(controller.sharedCount() == 1);
+    assert(controller.verdict() == QStringLiteral("B is A plus 1 extra copy."));
+    assert(controller.onlyInBText() == QStringLiteral("Artist x - Title x"));
+    for (const auto &row : controller.rows()->rows()) {
+        assert(row.leftKind != QLatin1String("moved") && row.rightKind != QLatin1String("moved"));
+    }
 }
 
 }  // namespace
@@ -180,6 +223,8 @@ int main(int argc, char **argv)
     controller.setPlaylistB(QStringLiteral("Playlist 003"));
     assert(controller.verdict() == QStringLiteral("The same playlist on both sides."));
     assert(controller.onlyACount() == 0 && controller.onlyBCount() == 0 && controller.movedCount() == 0);
+
+    testExtraCopyInB();
 
     std::cout << "playlist_diff_controller_test: ok\n";
     return 0;
