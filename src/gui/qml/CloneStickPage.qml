@@ -155,7 +155,7 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 14
+            spacing: Theme.sectionSpacing
 
             Label {
                 Layout.fillWidth: true
@@ -169,7 +169,7 @@ Page {
                 Layout.fillWidth: true
                 visible: root.blockedBy.length > 0
                 implicitHeight: blockedLabel.implicitHeight + 16
-                radius: 4
+                radius: Theme.cornerRadius
                 color: Theme.dangerBg
                 border.color: Theme.dangerBorder
                 Label {
@@ -199,7 +199,8 @@ Page {
             }
 
             // ---- From / To ----
-            Frame {
+            PageSection {
+                title: "Sticks"
                 Layout.fillWidth: true
                 RowLayout {
                     anchors.fill: parent
@@ -236,7 +237,8 @@ Page {
             }
 
             // ---- Plan ----
-            Frame {
+            PageSection {
+                title: "What will happen"
                 Layout.fillWidth: true
                 visible: root.preview.ready === true
                 GridLayout {

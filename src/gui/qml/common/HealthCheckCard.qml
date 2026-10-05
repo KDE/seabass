@@ -60,7 +60,7 @@ Rectangle {
 
     Layout.fillWidth: true
     implicitHeight: layout.implicitHeight + 2 * card.contentInset
-    radius: 8
+    radius: Theme.cornerRadius
     color: Theme.surface
     border.width: 1
     border.color: card.failed || !card.ok ? Qt.rgba(card.statusColor.r, card.statusColor.g, card.statusColor.b, 0.45)

@@ -18,7 +18,7 @@ import SeabassGui
 //
 // The page feeds it its controller's progress properties one by one so a
 // plain JS stand-in works in tests.
-Frame {
+Card {
     id: frame
 
     property var phases: []              // phase ids in order, e.g. ["analyzing", "writing", "checking"]

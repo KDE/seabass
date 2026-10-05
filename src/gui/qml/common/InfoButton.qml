@@ -106,7 +106,7 @@ ToolButton {
         background: Rectangle {
             color: Theme.surface
             border.color: Theme.textMuted
-            radius: 6
+            radius: Theme.popupRadius
         }
 
         // Everything here addresses its siblings by id, never through
@@ -146,7 +146,7 @@ ToolButton {
                         color: Theme.groupBackground
                         border.color: Theme.borderSubtle
                         border.width: 1
-                        radius: 4
+                        radius: Theme.cornerRadius
                     }
                 }
                 Label {

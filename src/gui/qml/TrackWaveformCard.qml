@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import SeabassGui
 
 // One track's investigation view -- format badge, title, an optional
 // action button, waveform with cue markers, cue-fallback notice, and an
@@ -22,7 +23,7 @@ import QtQuick.Layouts
 // on this: neither shows a waveform or lets you compare cues at all --
 // they're a different kind of decision (bitrate/size/an already-computed
 // survivor), not this one.
-Frame {
+Card {
     id: root
 
     // trackToMap()-shaped (src/gui/*.cpp): side/format, sourceId, title,

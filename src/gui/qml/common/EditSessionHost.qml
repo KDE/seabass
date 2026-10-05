@@ -249,7 +249,7 @@ Item {
         height: bannerRow.implicitHeight + 2 * Theme.rowSpacing
         color: Theme.surface
         border.color: Theme.warnIcon
-        radius: 4
+        radius: Theme.cornerRadius
         RowLayout {
             id: bannerRow
             anchors.fill: parent

@@ -266,10 +266,10 @@ Page {
                 Layout.topMargin: 4
                 visible: plansListView.count > 0 && spaceBar.known
                 implicitHeight: spaceBar.implicitHeight + 28
-                color: Theme.groupBackground
+                color: Theme.surface
                 border.color: Theme.borderSubtle
                 border.width: 1
-                radius: 4
+                radius: Theme.cornerRadius
 
                 SpaceReclaimBar {
                     id: spaceBar
@@ -671,9 +671,9 @@ Page {
                     width: parent.width
                     visible: delegateRoot.expanded
                     height: delegateRoot.expanded ? groupColumn.implicitHeight + 16 : 0
-                    color: Theme.groupBackground
+                    color: Theme.surface
                     border.color: Theme.borderSubtle
-                    radius: 4
+                    radius: Theme.cornerRadius
 
                     ColumnLayout {
                         id: groupColumn

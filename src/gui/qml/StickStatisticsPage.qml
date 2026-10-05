@@ -140,7 +140,7 @@ Page {
         ColumnLayout {
             id: statsColumn
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
             Label {
                 visible: controller.errorMessage.length > 0
@@ -151,8 +151,8 @@ Page {
             }
 
             // -- Filesystem & capacity --------------------------------
-            GroupBox {
-                label: Subtitle { text: "Filesystem" }
+            PageSection {
+                title: "Filesystem"
                 Layout.fillWidth: true
                 visible: Object.keys(controller.filesystemInfo).length > 0
 
@@ -209,14 +209,14 @@ Page {
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 18
-                            radius: 4
-                            color: Theme.groupBackground
+                            radius: Theme.cornerRadius
+                            color: Theme.surface
                             border.color: Theme.borderSubtle
                             Rectangle {
                                 anchors.left: parent.left
                                 anchors.top: parent.top
                                 anchors.bottom: parent.bottom
-                                radius: 4
+                                radius: Theme.cornerRadius
                                 width: parent.width * (controller.filesystemInfo.totalBytes > 0
                                     ? (1 - controller.filesystemInfo.freeBytes / controller.filesystemInfo.totalBytes) : 0)
                                 color: Theme.accent
@@ -233,8 +233,8 @@ Page {
             }
 
             // -- Library statistics ------------------------------------
-            GroupBox {
-                label: Subtitle { text: "Library Statistics" }
+            PageSection {
+                title: "Library Statistics"
                 Layout.fillWidth: true
 
                 ColumnLayout {
@@ -255,7 +255,7 @@ Page {
                         implicitHeight: syncWarningRow.implicitHeight + 16
                         color: Theme.warnBg
                         border.color: Theme.warnBorder
-                        radius: 4
+                        radius: Theme.cornerRadius
 
                         RowLayout {
                             id: syncWarningRow
@@ -595,8 +595,8 @@ Page {
             }
 
             // -- Disk usage ---------------------------------------------
-            GroupBox {
-                label: Subtitle { text: "Disk Usage" }
+            PageSection {
+                title: "Disk Usage"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 420
 

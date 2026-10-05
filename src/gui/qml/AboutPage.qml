@@ -104,7 +104,7 @@ Page {
             x: Theme.snap(Math.max(32, (parent.width - width) / 2))
             width: Math.min(parent.width - 64, 640)
             y: 32
-            spacing: 20
+            spacing: Theme.sectionSpacing
 
             // The mark and the name side by side, the mark as tall as the
             // name block it stands beside (name, tagline, address, version);
@@ -255,10 +255,10 @@ Page {
             Rectangle {
                 objectName: "aboutKdeNote"
                 Layout.fillWidth: true
-                color: Theme.groupBackground
+                color: Theme.surface
                 border.color: Theme.borderSubtle
                 border.width: 1
-                radius: 4
+                radius: Theme.cornerRadius
                 implicitHeight: kdeRow.implicitHeight + 24
                 RowLayout {
                     id: kdeRow
@@ -302,10 +302,10 @@ Page {
             // write to a stick.
             Rectangle {
                 Layout.fillWidth: true
-                color: Theme.groupBackground
+                color: Theme.surface
                 border.color: Theme.borderSubtle
                 border.width: 1
-                radius: 4
+                radius: Theme.cornerRadius
                 implicitHeight: betaText.implicitHeight + 24
                 Label {
                     id: betaText

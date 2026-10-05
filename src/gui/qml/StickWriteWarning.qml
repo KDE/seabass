@@ -19,7 +19,7 @@ Rectangle {
     implicitHeight: visible ? contentRow.implicitHeight + 16 : 0
     color: Theme.warnBg
     border.color: Theme.warnBorder
-    radius: 4
+    radius: Theme.cornerRadius
 
     RowLayout {
         id: contentRow

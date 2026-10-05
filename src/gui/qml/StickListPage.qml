@@ -566,7 +566,7 @@ Page {
             visible: alarming || newer
             Layout.fillWidth: true
             implicitHeight: visible ? bannerColumn.implicitHeight + 2 * Theme.cardPadding : 0
-            radius: 4
+            radius: Theme.cornerRadius
             // Opaque, and from the Theme's own surface: the text inside is
             // Theme ink, and a see-through tint would put it on whatever
             // ground the style paints, where it can vanish.

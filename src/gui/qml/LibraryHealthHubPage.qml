@@ -554,10 +554,14 @@ Page {
         ColumnLayout {
             objectName: "healthColumn"
             width: parent.width
-            spacing: 14
+            spacing: Theme.sectionSpacing
 
-            Subtitle {
+            // The page's intro, in the muted body text every other page
+            // opens with, not a heading.
+            Label {
                 Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
                 text: root.scanning
                     ? "Checking this library. This can take a minute on a full stick."
                     : "Everything Seabass can check about this library, and what it found."

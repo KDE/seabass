@@ -273,7 +273,7 @@ Page {
                 objectName: "backupRow" + index
                 width: ListView.view.width
                 implicitHeight: rowContent.implicitHeight + 24
-                radius: 6
+                radius: Theme.cornerRadius
                 color: Theme.surface
                 border.width: 1
                 border.color: modelData.isCurrentStick ? Theme.accent : Theme.border

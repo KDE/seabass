@@ -47,7 +47,7 @@ RowLayout {
         // Breeze style draws square corners here regardless of this
         // app's own Material palette).
         background: Rectangle {
-            radius: 4
+            radius: Theme.cornerRadius
             color: btn.checked ? Theme.primary : (btn.hovered ? Theme.rowHover : "transparent")
             border.color: Theme.border
             border.width: btn.checked ? 0 : 1

@@ -188,7 +188,7 @@ Page {
                 implicitHeight: scratchRow.implicitHeight + Theme.cardPadding
                 color: Theme.warnBg
                 border.color: Theme.warnBorder
-                radius: 4
+                radius: Theme.cornerRadius
 
                 RowLayout {
                     id: scratchRow

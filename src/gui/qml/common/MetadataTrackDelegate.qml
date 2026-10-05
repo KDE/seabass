@@ -167,7 +167,7 @@ Rectangle {
     implicitHeight: layout.implicitHeight + 2 * Theme.tightSpacing
     color: rowMouse.containsMouse ? Theme.rowHover
          : (delegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-    radius: 4
+    radius: Theme.cornerRadius
     opacity: delegate.markedForRemoval ? 0.55 : 1.0
 
     MouseArea {

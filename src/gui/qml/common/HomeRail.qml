@@ -470,7 +470,7 @@ FocusScope {
         Rectangle {
             objectName: "railPill"
             anchors.fill: parent
-            radius: 4
+            radius: Theme.cornerRadius
             color: entry.selected ? Theme.groupBackground
                 : pointer.pressed ? Theme.rowPressed
                 : pointer.containsMouse ? Theme.rowHover
@@ -542,7 +542,7 @@ FocusScope {
             objectName: "railCursor"
             anchors.fill: parent
             visible: entry.hasCursor
-            radius: 4
+            radius: Theme.cornerRadius
             color: "transparent"
             border.width: 2
             border.color: Theme.accent

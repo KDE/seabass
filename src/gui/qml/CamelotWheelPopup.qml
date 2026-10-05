@@ -17,7 +17,7 @@ import SeabassGui
 // or Move Track panel's own key-tier row's job, not this popup's; the
 // wheel only ever hovers (see keyHovered/relationHovered below), never
 // picks.
-Popup {
+PanelPopup {
     id: root
     parent: Overlay.overlay
     // Positioned imperatively (see resetPosition(), called from
@@ -34,16 +34,6 @@ Popup {
     // not additionally darkened by the popup's own overlay on top of it.
     Overlay.modal: Rectangle { color: "transparent" }
 
-    // Its own edge on every platform, not only where the app's style
-    // supplies one: a rounded card a step above the page, so the wheel
-    // reads as a panel laid over the app rather than a hole cut in it.
-    padding: Theme.cardPadding
-    background: Rectangle {
-        radius: Theme.popupRadius
-        color: Theme.surface
-        border.color: Theme.border
-        border.width: 1
-    }
     enter: Transition {
         NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 140; easing.type: Easing.OutQuad }
         NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: 220; easing.type: Easing.OutBack }

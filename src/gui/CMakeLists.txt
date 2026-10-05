@@ -92,6 +92,9 @@ set(SEABASS_GUI_QML_FILES
     qml/common/StickHeaderRow.qml
     qml/common/StickToolCards.qml
     qml/common/Subtitle.qml
+    qml/common/PageSection.qml
+    qml/common/PanelPopup.qml
+    qml/common/Card.qml
     qml/common/TableHeaderLabel.qml
     qml/common/SortableTableHeader.qml
     qml/common/ThemePalette.qml

@@ -436,7 +436,7 @@ Page {
 
         ColumnLayout {
             width: parent.width
-            spacing: 16
+            spacing: Theme.sectionSpacing
 
             Label {
                 Layout.fillWidth: true
@@ -453,8 +453,8 @@ Page {
                 text: root.controller.errorMessage
             }
 
-            GroupBox {
-                label: Subtitle { text: "1. Choose a backup" }
+            PageSection {
+                title: "1. Choose a backup"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -608,8 +608,8 @@ Page {
                 }
             }
 
-            GroupBox {
-                label: Subtitle { text: "2. Choose a drive" }
+            PageSection {
+                title: "2. Choose a drive"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -694,8 +694,8 @@ Page {
                 }
             }
 
-            GroupBox {
-                label: Subtitle { text: "3. What will happen" }
+            PageSection {
+                title: "3. What will happen"
                 Layout.fillWidth: true
                 visible: root.archiveReady && root.selectedDisk !== null && root.selectedDisk.usable === true
                 ColumnLayout {
