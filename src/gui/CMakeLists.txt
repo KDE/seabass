@@ -378,7 +378,7 @@ set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES_FROM_ROOT} PARENT_SCOPE)
 # looking for SeabassStyle/<Control>.qml: without the alias these land at
 # SeabassStyle/qml/style/<Control>.qml and the style silently does
 # nothing, every control quietly falling back.
-foreach(style_file Frame Pane Button ToolButton TextField ComboBox ItemDelegate GroupBox ToolTip Menu MenuItem RadioButton Switch)
+foreach(style_file Frame Pane Button ToolButton TextField ComboBox ItemDelegate GroupBox ToolTip Menu MenuItem RadioButton Switch Popup)
     set_source_files_properties(qml/style/${style_file}.qml
         PROPERTIES QT_RESOURCE_ALIAS ${style_file}.qml)
 endforeach()
@@ -401,6 +401,7 @@ qt_add_qml_module(seabass_style
         qml/style/MenuItem.qml
         qml/style/RadioButton.qml
         qml/style/Switch.qml
+        qml/style/Popup.qml
 )
 
 qt_add_qml_module(seabass
