@@ -694,7 +694,8 @@ Page {
                 Layout.fillHeight: true
                 clip: true
                 contentWidth: width
-                contentHeight: paneColumn.implicitHeight
+                // Room inside the clip for a card's focus frame (Theme.focusRoom).
+                contentHeight: paneColumn.implicitHeight + 2 * Theme.focusRoom
                 // Not draggable when everything already fits.
                 interactive: contentHeight > height
                 boundsBehavior: Flickable.StopAtBounds
@@ -704,7 +705,9 @@ Page {
 
                 ColumnLayout {
                     id: paneColumn
-                    width: pane.width
+                    x: Theme.focusRoom
+                    y: Theme.focusRoom
+                    width: pane.width - 2 * Theme.focusRoom
                     spacing: Theme.sectionSpacing
 
                     // The selected stick: its row, the group's heading and
