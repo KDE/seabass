@@ -682,6 +682,18 @@ public:
     // lengths as this hold's tracks: titles and artists of their own and,
     // like the held tracks, no filename. A store that lives across runs
     // gathers rows like these by itself, one hold's lengths at a time.
+    static constexpr const char *SameLengthLabel = "SAME LENGTH";
+    static int removeSameLengthRows(seabass::infrastructure::local::MetadataStore &store)
+    {
+        std::vector<std::int64_t> ids;
+        for (const auto &[id, source] : store.stickSourcesByTrackId()) {
+            if (source.stickLabel == SameLengthLabel) {
+                ids.push_back(id);
+            }
+        }
+        return ids.empty() ? 0 : store.removeTracks(ids);
+    }
+
     Q_INVOKABLE bool storeOtherRecordingsOfTheSameLength(int count)
     {
         if (!m_gate) {
@@ -700,15 +712,31 @@ public:
         }
         try {
             seabass::infrastructure::local::MetadataStore store;
+            // An earlier run's rows go first: the lane's store outlives
+            // the run, and a case that reads it must not meet them (#63).
+            removeSameLengthRows(store);
             seabass::infrastructure::local::MetadataSource source;
             source.stickRoot = "/same-length";
-            source.stickLabel = "SAME LENGTH";
+            source.stickLabel = SameLengthLabel;
             store.store(tracks, source, seabass::application::NullProgressReporter::instance(),
                         seabass::application::CancellationToken::none());
         } catch (const std::exception &) {
             return false;
         }
         return true;
+    }
+
+    // Takes out every row storeOtherRecordingsOfTheSameLength() put in the
+    // store, so no other case reading the store finds them. Returns how
+    // many went.
+    Q_INVOKABLE int removeOtherRecordingsOfTheSameLength()
+    {
+        try {
+            seabass::infrastructure::local::MetadataStore store;
+            return removeSameLengthRows(store);
+        } catch (const std::exception &) {
+            return -1;
+        }
     }
 
     Q_INVOKABLE void release()
