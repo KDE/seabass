@@ -30,6 +30,7 @@ TestCase {
             writeBusy: false, writeErrorMessage: "", needsScratchFiles: false,
             wearBusy: false, wearErrorMessage: "", wearBytesDone: 0, wearBytesTotal: 0, wearFilesDone: 0, wearFilesTotal: 0,
             wearCheck: {}, wearAssessment: {}, anyBusy: false,
+            measureCurrent: 0, measureTotal: 0, measureLabel: "",
             cancelWrites: function() { this.calls.push("cancelWrites"); },
             checkWear: function(label, rb, en, mp) { this.calls.push("wear:" + label + ":" + mp); },
             cancelWearCheck: function() { this.calls.push("cancelWear"); },
@@ -226,6 +227,27 @@ TestCase {
         wearButton.clicked();
         calls = page3.controller.calls;
         compare(calls[calls.length - 1], "cancelWear");
+    }
+
+    // The measurement's overlay is the controller's one counted bar (#58),
+    // not a sweep: the count and total it shows are the controller's, and
+    // the step under way is named under it.
+    function test_measuringShowsTheCountedBar() {
+        const c = fakeController(true, false);
+        c.busy = true;
+        c.anyBusy = true;
+        c.measureCurrent = 120;
+        c.measureTotal = 480;
+        c.measureLabel = "Finding analysis files";
+        const page = makePage(c);
+        const overlay = findOne(page, "performanceBusyOverlay");
+        verify(overlay.visible, "the overlay is up while measuring");
+        const report = findOne(overlay, "progressReport");
+        compare(report.unitsDone, 120);
+        compare(report.unitsTotal, 480);
+        compare(report.indeterminate, false, "a counted bar, not a sweep");
+        compare(report.currentItem, "Finding analysis files");
+        compare(findOne(overlay, "unitsLabel").text, "120 / 480");
     }
 
     function test_screenshot() {

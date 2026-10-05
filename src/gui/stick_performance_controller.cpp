@@ -19,9 +19,12 @@
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/stick_performance.hpp"
 
+#include "application/phased_progress.hpp"
 #include "gui/future_result.hpp"
 #include "gui/async_request.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/main_thread_shared.hpp"
+#include "gui/qt_progress_reporter.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
@@ -195,8 +198,37 @@ struct WalkResult
     std::uint64_t folders = 0;
 };
 
+// The exclusions a whole-stick walk applies (see walk() below), as a
+// descend rule countWalkSlices() can share.
+bool descendIntoForSample(const std::string &relative, bool skipHidden)
+{
+    // The same exclusions Full Stick Backup applies (the recycle
+    // bin, System Volume Information, this app's own backups and
+    // locks), so a no-library measurement never samples deleted
+    // files or backup archives as "audio".
+    return !skipHidden || !infrastructure::stick_backup::isExcludedFromBackup(relative, true);
+}
+
+// What walk(dir, ..., skipHidden) will count on the bar: one unit per
+// slice (storageprobe::countWalkSlices) and one for the rest.
+std::size_t walkUnits(const fs::path &dir, bool skipHidden = false)
+{
+    std::error_code ec;
+    if (dir.empty() || !fs::exists(dir, ec) || ec) {
+        return 0;
+    }
+    return storageprobe::countWalkSlices(pathToUtf8(dir), [skipHidden](const std::string &relative) {
+               return descendIntoForSample(relative, skipHidden);
+           })
+        + 1;
+}
+
+// `plannedUnits` is what walkUnits() counted for the same folder: the
+// walk is one stretch of that many on `progress`, ticked as each slice is
+// finished, its last unit the files above the slices.
 template <typename Accept>
 WalkResult walk(const fs::path &dir, Accept accept, const application::CancellationToken &cancel,
+                application::ProgressReporter &progress, const std::string &label, std::size_t plannedUnits,
                 bool skipHidden = false)
 {
     WalkResult result;
@@ -204,6 +236,7 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
     if (dir.empty() || !fs::exists(dir, ec) || ec) {
         return result;
     }
+    progress.start(label, plannedUnits);
 
     // storageprobe::walkTree rather than recursive_directory_iterator: the
     // iterator abandons the whole walk on the first error, and on any macOS
@@ -211,15 +244,13 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
     // skip_permission_denied does not cover). A no-library measurement then
     // found no files to sample on a stick full of them.
     auto walked = storageprobe::walkTree(
-        pathToUtf8(dir),
-        [skipHidden](const std::string &relative) {
-            // The same exclusions Full Stick Backup applies (the recycle
-            // bin, System Volume Information, this app's own backups and
-            // locks), so a no-library measurement never samples deleted
-            // files or backup archives as "audio".
-            return !skipHidden || !infrastructure::stick_backup::isExcludedFromBackup(relative, true);
-        },
-        [&cancel](std::uint64_t) { cancel.throwIfCancelled(); });
+        pathToUtf8(dir), [skipHidden](const std::string &relative) { return descendIntoForSample(relative, skipHidden); },
+        [&cancel](std::uint64_t) { cancel.throwIfCancelled(); },
+        [&cancel, &progress](std::uint64_t slicesDone) {
+            cancel.throwIfCancelled();
+            progress.tick(slicesDone);
+        });
+    progress.finish();
 
     result.folders = walked.folders;
     for (const auto &file : walked.files) {
@@ -306,18 +337,131 @@ std::vector<std::string> spread(std::vector<std::string> files, std::size_t coun
     return out;
 }
 
+// The read probe's share of the bar. Its own count (files streamed,
+// random reads, small files read) is known only once the sample is
+// chosen, after the catalogs are read and the folders walked, so it gets
+// a fixed share, the most it can count with the defaults (20 audio
+// files, 300 reads, 150 analysis files), and moves through it in
+// proportion: counted, but in its own units.
+constexpr std::size_t kReadProbeUnits = 20 + 300 + 150;
+// The write probe's share in a throwaway-file measurement, in its own
+// units as they are: StickWriteProbe's options are fixed, so its total
+// is known before it starts (see storageprobe::WriteProbeOptions).
+std::size_t writeProbeUnits()
+{
+    const storageprobe::WriteProbeOptions o;
+    constexpr std::uint64_t kMiB = 1024 * 1024;
+    return static_cast<std::size_t>(o.streamingFiles) * ((o.streamingBytesPerFile + kMiB - 1) / kMiB)
+        + static_cast<std::size_t>(o.smallFiles) + (o.inPlaceFileBytes + kMiB - 1) / kMiB
+        + static_cast<std::size_t>(o.inPlaceUpdates);
+}
+
+std::string probeStepLabel(storageprobe::ProbeStep step, bool library)
+{
+    switch (step) {
+    case storageprobe::ProbeStep::Streaming:
+        return library ? "Streaming audio files" : "Streaming large files";
+    case storageprobe::ProbeStep::RandomReads:
+        return library ? "Reading audio files at random places" : "Reading large files at random places";
+    case storageprobe::ProbeStep::SmallFiles:
+        return library ? "Opening analysis files" : "Opening small files";
+    case storageprobe::ProbeStep::StreamingWrite:
+        return "Writing large throwaway files";
+    case storageprobe::ProbeStep::SmallFileWrites:
+        return "Writing small throwaway files";
+    case storageprobe::ProbeStep::InPlaceUpdates:
+        return "Updating a throwaway file in place";
+    }
+    return "Measuring";
+}
+
+// A probe's ProbeProgress as one stretch of `units` on `progress`: the
+// first call opens the stretch, a new step is a phase, and the probe's
+// own count is scaled onto the stretch (exact when they are the same).
+storageprobe::ProbeProgress probeStretch(application::ProgressReporter &progress, std::size_t units, bool library)
+{
+    auto opened = std::make_shared<bool>(false);
+    auto lastStep = std::make_shared<storageprobe::ProbeStep>();
+    return [&progress, units, library, opened, lastStep](storageprobe::ProbeStep step, std::uint64_t done,
+                                                         std::uint64_t total) {
+        if (!*opened) {
+            *opened = true;
+            *lastStep = step;
+            progress.start(probeStepLabel(step, library), units);
+        } else if (step != *lastStep) {
+            *lastStep = step;
+            progress.phase(probeStepLabel(step, library));
+        }
+        progress.tick(total == 0 ? units : static_cast<std::size_t>(done * units / total));
+    };
+}
+
 // Runs entirely on a background thread, no access to the controller.
+// `reporter` gets one bar for the whole measurement (#58): counted first
+// (see plan below), announced once, every stretch on it in turn.
 StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath, QString enginePath,
                                       QString mountPoint, bool useScratchFiles, bool alwaysRecord,
+                                      std::shared_ptr<QtProgressReporter> reporter,
                                       application::CancellationToken cancel)
 {
     StickPerformanceResult result;
-    auto &noProgress = application::NullProgressReporter::instance();
     try {
         std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
+        const fs::path analysisRoot = !rekordboxPath.isEmpty() ? pathFromQString(rekordboxPath) / "USBANLZ"
+                                                                : fs::path();
+        const fs::path overviewRoot = !enginePath.isEmpty()
+            ? pathFromQString(enginePath) / "Database2" / "OverviewData"
+            : fs::path();
+
+        // The plan: the stick's facts (one unit), the catalog reads that
+        // pick the audio sample, the walk for the analysis files (counted
+        // in slices, storageprobe::countWalkSlices), then the probes.
+        // Everything here costs a count(*) or a page-header sum per
+        // catalog and a few directory listings, nothing per file.
+        auto &catalogCache = LibraryCatalogCache::instance();
+        std::optional<std::size_t> plannedTotal = 1;
+        const auto plan = [&plannedTotal](std::optional<std::size_t> units) {
+            plannedTotal = plannedTotal && units ? std::optional<std::size_t>(*plannedTotal + *units) : std::nullopt;
+        };
+        const bool library = !useScratchFiles && (!rekordboxPath.isEmpty() || !enginePath.isEmpty());
+        if (useScratchFiles) {
+            plan(writeProbeUnits());
+        } else {
+            if (!rekordboxPath.isEmpty()) {
+                plan(catalogCache.plannedUnits("rekordbox", rekordboxPath.toStdString(),
+                                               LibraryCatalogCache::Detail::Tracks, cancel));
+            }
+            if (!enginePath.isEmpty()) {
+                plan(catalogCache.plannedUnits("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Tracks,
+                                               cancel));
+            }
+        }
+        // The walks the measurement will make for certain; the fallbacks
+        // that run only when one finds nothing get one unit each, as they
+        // are announced with no count (counting them first would cost a
+        // walk's worth of listings on every stick for a case few have).
+        const std::size_t analysisUnits = useScratchFiles ? 0 : walkUnits(analysisRoot);
+        const std::size_t overviewUnits = useScratchFiles || !rekordboxPath.isEmpty() ? 0 : walkUnits(overviewRoot);
+        const std::size_t stickUnits = library || useScratchFiles ? 0 : walkUnits(pathFromUtf8(stickRoot), true);
+        if (!useScratchFiles) {
+            plan(analysisUnits + overviewUnits + stickUnits);
+            if (!rekordboxPath.isEmpty() && !enginePath.isEmpty()) {
+                plan(1);  // Engine's overview data, when the export has no analysis files
+            }
+            if (library) {
+                plan(1);  // the whole stick, when the library has no local files
+            }
+        }
+        plan(kReadProbeUnits);
+        cancel.throwIfCancelled();
+
+        application::PhasedProgress progress(*reporter, useScratchFiles ? "Measuring with throwaway files" : "Measuring the stick",
+                                             plannedTotal.value_or(0));
+        progress.start("Reading the stick's facts", 0);
         auto hwInfo = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel.toStdString());
         auto compat = domain::FilesystemCompatibility::lookup(hwInfo.filesystem);
         result.filesystemInfo = toVariant(hwInfo, compat);
+        progress.finish();
 
         std::vector<std::string> audioFiles;
         std::vector<std::string> smallFiles;
@@ -340,7 +484,10 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             infrastructure::benchmark::ScratchFiles files;
             scratchGuard.emplace(pathFromUtf8(stickRoot)
                                  / infrastructure::benchmark::StickWriteProbe::kScratchFolderName);
-            writeMeasurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel, {}, &files);
+            storageprobe::WriteProbeOptions writeOptions;
+            writeOptions.onProgress = probeStretch(progress, writeProbeUnits(), false);
+            writeMeasurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel, writeOptions, &files);
+            progress.finish();
             audioFiles = files.streamFiles;
             smallFiles = files.smallFiles;
             audioCount = audioFiles.size();
@@ -354,7 +501,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             auto collect = [&](const char *format, const QString &path) {
                 // Tracks: this page reads file paths and nothing else.
                 auto tracks = catalogCache.tracksFor(format, path.toStdString(), LibraryCatalogCache::Detail::Tracks,
-                                                     noProgress, cancel);
+                                                     progress, cancel);
                 for (const auto &t : tracks) {
                     if (!t.streamingSource.empty() || t.filePath.empty()) {
                         continue;
@@ -383,12 +530,15 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             // Engine's overview data when there is no rekordbox export.
             WalkResult analysis;
             if (!rekordboxPath.isEmpty()) {
-                analysis = walk(pathFromQString(rekordboxPath) / "USBANLZ",
-                                [](const fs::path &path, std::uint64_t) { return path.filename() == "ANLZ0000.DAT"; }, cancel);
+                analysis = walk(analysisRoot,
+                                [](const fs::path &path, std::uint64_t) { return path.filename() == "ANLZ0000.DAT"; },
+                                cancel, progress, "Finding analysis files", analysisUnits);
             }
             if (analysis.files.empty() && !enginePath.isEmpty()) {
-                analysis = walk(pathFromQString(enginePath) / "Database2" / "OverviewData",
-                                [](const fs::path &, std::uint64_t) { return true; }, cancel);
+                // Planned in slices when there is no export; the fallback
+                // behind an empty one is the uncounted unit planned above.
+                analysis = walk(overviewRoot, [](const fs::path &, std::uint64_t) { return true; }, cancel, progress,
+                                "Finding overview files", rekordboxPath.isEmpty() ? overviewUnits : 0);
             }
             sampleKind = QStringLiteral("library");
 
@@ -397,7 +547,8 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 // stick big enough to stream from and seek in will do, and
                 // any small one stands in for an analysis file.
                 auto everything = walk(pathFromUtf8(stickRoot),
-                                       [](const fs::path &, std::uint64_t size) { return size >= 4 * 1024; }, cancel, true);
+                                       [](const fs::path &, std::uint64_t size) { return size >= 4 * 1024; }, cancel,
+                                       progress, "Finding files to read", library ? 0 : stickUnits, true);
                 analysis.folders = everything.folders;
                 for (std::size_t i = 0; i < everything.files.size(); ++i) {
                     (everything.sizes[i] >= 64 * 1024 ? audioFiles : analysis.files).push_back(everything.files[i]);
@@ -425,7 +576,11 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             }
         }
 
-        auto measurement = infrastructure::benchmark::StickPerformanceProbe::run(audioFiles, smallFiles, databaseFiles, cancel);
+        infrastructure::benchmark::ProbeOptions readOptions;
+        readOptions.onProgress = probeStretch(progress, kReadProbeUnits, sampleKind == QStringLiteral("library"));
+        auto measurement =
+            infrastructure::benchmark::StickPerformanceProbe::run(audioFiles, smallFiles, databaseFiles, cancel, readOptions);
+        progress.finish();
         auto score = domain::scoreDjWorkload(measurement);
         result.measurement = toVariant(measurement);
         result.score = toVariant(score);
@@ -893,10 +1048,16 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
         // could not see its token, and the destructor waited without end.
         const std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
         const QString key = QStringLiteral("%1|%2|%3|%4").arg(stickLabel, rekordboxPath, enginePath, mountPoint);
+        if (m_measure.busy() && m_measure.key() == key) {
+            return;  // served by the one running, its bar left as it is
+        }
+        setMeasureProgress(0, 0, {});
+        auto reporter = makeMeasureReporter(m_measure.speaksForNext());
         m_measure.start(key, qtPathFromUtf8(stickRoot),
-                        [stickLabel, rekordboxPath, enginePath, mountPoint, alwaysRecord](application::CancellationToken cancel) {
+                        [stickLabel, rekordboxPath, enginePath, mountPoint, alwaysRecord,
+                         reporter](application::CancellationToken cancel) {
                             StickPerformanceResult result = runMeasureTask(stickLabel, rekordboxPath, enginePath, mountPoint,
-                                                                           false, alwaysRecord, cancel);
+                                                                           false, alwaysRecord, reporter, cancel);
                             if (result.cancelled) {
                                 throw application::OperationCancelled();
                             }
@@ -909,10 +1070,47 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
     }
     // With scratch files it writes to the stick: a write, cancelled by
     // asking and waited for (see the destructor).
+    setMeasureProgress(0, 0, {});
+    const std::uint64_t run = ++m_scratchRun;
+    auto reporter = makeMeasureReporter([this, run]() { return m_busy && m_scratchRun == run; });
     setBusy(true);
     m_cancel = application::CancellationToken();
     m_watcher.setFuture(QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, mountPoint,
-                                          useScratchFiles, alwaysRecord, m_cancel));
+                                          useScratchFiles, alwaysRecord, reporter, m_cancel));
+}
+
+std::shared_ptr<QtProgressReporter> StickPerformanceController::makeMeasureReporter(std::function<bool()> speaks)
+{
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
+    // One announcement per measurement (#58): runMeasureTask folds its
+    // steps onto one bar and names each one as a phase.
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, speaks](const QString &label, int total) {
+        if (speaks()) {
+            setMeasureProgress(0, total, label);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::phaseChanged, this, [this, speaks](const QString &label) {
+        if (speaks()) {
+            setMeasureProgress(m_measureCurrent, m_measureTotal, label);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, speaks](int done) {
+        if (speaks()) {
+            setMeasureProgress(done, m_measureTotal, m_measureLabel);
+        }
+    });
+    return reporter;
+}
+
+void StickPerformanceController::setMeasureProgress(int current, int total, const QString &label)
+{
+    if (m_measureCurrent == current && m_measureTotal == total && m_measureLabel == label) {
+        return;
+    }
+    m_measureCurrent = current;
+    m_measureTotal = total;
+    m_measureLabel = label;
+    emit measureProgressChanged();
 }
 
 void StickPerformanceController::cancel()

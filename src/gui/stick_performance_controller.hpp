@@ -10,11 +10,16 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <functional>
+#include <memory>
+
 #include "application/ports/cancellation_token.hpp"
 #include "gui/async_request.hpp"
 
 namespace seabass::gui
 {
+
+class QtProgressReporter;
 
 // Result of the background measurement, built entirely on a worker
 // thread with no access to the controller.
@@ -84,6 +89,15 @@ class StickPerformanceController : public QObject
     Q_PROPERTY(QString measuredAt READ measuredAt NOTIFY resultsChanged)
     Q_PROPERTY(bool needsScratchFiles READ needsScratchFiles NOTIFY resultsChanged)
     Q_PROPERTY(QVariantMap trend READ trend NOTIFY resultsChanged)
+    // The measurement's one bar (#58), the throwaway-file one included:
+    // the total is counted before the first read and announced once,
+    // the count only goes up, and measureLabel names the step under way
+    // ("Finding analysis files", "Reading audio files at random places").
+    // measureTotal stays 0 only for the moment the plan is being counted,
+    // or when a catalog could not be counted at all.
+    Q_PROPERTY(int measureCurrent READ measureCurrent NOTIFY measureProgressChanged)
+    Q_PROPERTY(int measureTotal READ measureTotal NOTIFY measureProgressChanged)
+    Q_PROPERTY(QString measureLabel READ measureLabel NOTIFY measureProgressChanged)
     Q_PROPERTY(bool writeBusy READ writeBusy NOTIFY writeBusyChanged)
     Q_PROPERTY(QString writeErrorMessage READ writeErrorMessage NOTIFY writeErrorMessageChanged)
     Q_PROPERTY(QVariantMap writeMeasurement READ writeMeasurement NOTIFY writeResultsChanged)
@@ -118,6 +132,9 @@ public:
     QString measuredAt() const { return m_measuredAt; }
     bool needsScratchFiles() const { return m_needsScratchFiles; }
     QVariantMap trend() const { return m_trend; }
+    int measureCurrent() const { return m_measureCurrent; }
+    int measureTotal() const { return m_measureTotal; }
+    QString measureLabel() const { return m_measureLabel; }
     bool writeBusy() const { return m_writeBusy; }
     QString writeErrorMessage() const { return m_writeErrorMessage; }
     QVariantMap writeMeasurement() const { return m_writeMeasurement; }
@@ -179,6 +196,7 @@ signals:
     void wearProgressChanged();
     void wearResultsChanged();
     void anyBusyChanged();
+    void measureProgressChanged();
 
 private:
     void onFinished();
@@ -196,6 +214,10 @@ private:
     void setErrorMessage(const QString &message);
     void setWriteBusy(bool busy);
     void setWriteErrorMessage(const QString &message);
+    // A reporter for the measurement about to start, speaking only while
+    // `speaks` says it is still the one the page shows.
+    std::shared_ptr<QtProgressReporter> makeMeasureReporter(std::function<bool()> speaks);
+    void setMeasureProgress(int current, int total, const QString &label);
 
     QFutureWatcher<StickPerformanceResult> m_watcher;
     application::CancellationToken m_cancel;  // fresh per measure()
@@ -221,6 +243,12 @@ private:
     QVariantMap m_trend;
     QString m_lastRecordedAtUtc;  // the history line the last measurement appended, for the wear check to stamp
     double m_usbSpeedMbps = 0.0;
+    int m_measureCurrent = 0;
+    int m_measureTotal = 0;
+    QString m_measureLabel;
+    // Which throwaway-file measurement the bar belongs to; the read one
+    // has its voice from m_measure.
+    std::uint64_t m_scratchRun = 0;
 
     bool m_writeBusy = false;
     QString m_writeErrorMessage;

@@ -642,18 +642,23 @@ Page {
     // Without this, the content area was just blank while the initial
     // scan ran -- only a small BusyIndicator tucked into the header (see
     // BusyOverlay.qml's own comment on exactly this problem elsewhere).
-    // No current/total to report here yet, so this renders as the
-    // indeterminate sweep animation rather than a real progress bar.
-    // A cancelled scan takes the user back to where they came from.
+    // One counted bar for the whole scan (#58): the controller counts the
+    // catalog reads and folder walks first, and names the step under way
+    // below the bar. A cancelled scan takes the user back to where they
+    // came from.
     Connections {
         target: controller
         function onScanCancelled() { root.StackView.view.pop(); }
     }
 
     BusyOverlay {
+        objectName: "statisticsBusyOverlay"
         anchors.fill: parent
         busy: controller.busy
+        current: controller.scanCurrent
+        total: controller.scanTotal
         label: "Scanning stick statistics..."
+        currentItem: controller.scanLabel
         cancellable: controller.scanCancellable
         onCancelRequested: controller.cancelScan()
     }

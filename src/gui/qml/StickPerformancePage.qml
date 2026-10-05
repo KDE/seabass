@@ -760,9 +760,16 @@ Page {
     // A cancelled measurement stays on the page, unlike Library
     // Statistics' scan: the page is still useful with nothing measured,
     // and the button reads "Measure" again.
+    // One counted bar for the measurement (#58): the controller counts
+    // the catalog reads, the folder walk and the probes first, and names
+    // the step under way below the bar.
     BusyOverlay {
+        objectName: "performanceBusyOverlay"
         anchors.fill: parent
         busy: controller.busy
+        current: controller.measureCurrent
+        total: controller.measureTotal
+        currentItem: controller.measureLabel
         label: controller.facts.sampleKind === "scratch" || controller.needsScratchFiles
             ? "Writing throwaway files and reading them back..." : "Measuring the stick..."
         cancellable: controller.busy

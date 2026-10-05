@@ -10,12 +10,16 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <memory>
+
 #include "gui/async_request.hpp"
 
 #include "application/ports/cancellation_token.hpp"
 
 namespace seabass::gui
 {
+
+class QtProgressReporter;
 
 // Result of the background scan task, see
 // StickStatisticsController::scan(). Built entirely on a worker thread,
@@ -44,6 +48,14 @@ class StickStatisticsController : public QObject
     // True while the scan runs: it can be stopped via cancelScan(), after
     // which scanCancelled() fires instead of resultsChanged().
     Q_PROPERTY(bool scanCancellable READ scanCancellable NOTIFY busyChanged)
+    // The scan's one bar (#58): the catalog reads, the facts, the artwork
+    // and the folder walks, counted before the first read and announced
+    // once; the count only goes up and scanLabel names the step under way.
+    // scanTotal stays 0 only while the plan is being counted, or when a
+    // catalog could not be counted at all.
+    Q_PROPERTY(int scanCurrent READ scanCurrent NOTIFY scanProgressChanged)
+    Q_PROPERTY(int scanTotal READ scanTotal NOTIFY scanProgressChanged)
+    Q_PROPERTY(QString scanLabel READ scanLabel NOTIFY scanProgressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QVariantMap filesystemInfo READ filesystemInfo NOTIFY resultsChanged)
     Q_PROPERTY(QVariantMap rekordboxStats READ rekordboxStats NOTIFY resultsChanged)
@@ -61,6 +73,9 @@ public:
     QVariantMap engineStats() const { return m_engineStats; }
     QVariantMap oneLibraryStats() const { return m_oneLibraryStats; }
     QVariantMap diskUsage() const { return m_diskUsage; }
+    int scanCurrent() const { return m_scanCurrent; }
+    int scanTotal() const { return m_scanTotal; }
+    QString scanLabel() const { return m_scanLabel; }
 
     // rekordboxPath/enginePath: empty for a catalog not present on this
     // stick, same convention as every other controller in this app.
@@ -74,12 +89,18 @@ signals:
     void busyChanged();
     void errorMessageChanged();
     void resultsChanged();
+    void scanProgressChanged();
 
 private:
     void onScanFinished(StickStatisticsScanResult &&result);
     void setErrorMessage(const QString &message);
+    std::shared_ptr<QtProgressReporter> makeReporter();
+    void setScanProgress(int current, int total, const QString &label);
 
     QString m_errorMessage;
+    int m_scanCurrent = 0;
+    int m_scanTotal = 0;
+    QString m_scanLabel;
     QVariantMap m_filesystemInfo;
     QVariantMap m_rekordboxStats;
     QVariantMap m_engineStats;
