@@ -124,7 +124,8 @@ class PlaylistDiffController : public QObject
 public:
     explicit PlaylistDiffController(QObject *parent = nullptr);
 
-    bool busy() const { return m_scan.busy(); }
+    // Reading the catalog, or diffing two long playlists on a worker.
+    bool busy() const { return m_scan.busy() || m_diffJob.busy(); }
     QString errorMessage() const { return m_errorMessage; }
     QStringList playlistNames() const { return m_names; }
     QVariantMap playlistTrackCounts() const;
@@ -187,6 +188,7 @@ private:
     const Entries &entriesOf(const QString &name) const;
     std::vector<std::string> idsOf(const Entries &entries) const;
     void recompute();
+    void applyDiff(domain::PlaylistDiff diff);
     void rebuildRows();
     QString onlyText(bool sideA) const;
 
@@ -202,9 +204,11 @@ private:
     QString m_verdict;
     QVariantList m_relatives;
     PlaylistDiffRowModel m_rows;
+    quint64 m_diffGeneration = 0;  // the key of each worker diff, so every one supersedes the last
 
     // Last, so it is destroyed first. See docs/async-requests.md.
     AsyncRequest<ScanResult> m_scan{this, [this]() { emit busyChanged(); }};
+    AsyncRequest<domain::PlaylistDiff> m_diffJob{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

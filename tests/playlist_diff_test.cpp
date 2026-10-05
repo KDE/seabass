@@ -10,9 +10,11 @@
 #include "domain/playlist_diff.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -257,6 +259,97 @@ void testMovedCopiesPartnerEachOther()
                      diffPlaylists({"a", "x", "a", "b", "x"}, {"x", "a", "b", "a", "a"}));
 }
 
+// The length of a longest common subsequence by the full table, the way
+// the diff did it before: the reference the linear-space one must match.
+int lcsLengthByTable(const std::vector<int> &a, const std::vector<int> &b)
+{
+    std::vector<std::vector<int>> t(a.size() + 1, std::vector<int>(b.size() + 1, 0));
+    for (std::size_t i = a.size(); i-- > 0;) {
+        for (std::size_t j = b.size(); j-- > 0;) {
+            t[i][j] = a[i] == b[j] ? t[i + 1][j + 1] + 1 : std::max(t[i + 1][j], t[i][j + 1]);
+        }
+    }
+    return t[0][0];
+}
+
+void expectCommonSubsequence(const std::vector<int> &a, const std::vector<int> &b,
+                             const std::vector<std::pair<int, int>> &pairs)
+{
+    int lastA = -1;
+    int lastB = -1;
+    for (const auto &[i, j] : pairs) {
+        assert(i > lastA && j > lastB);
+        assert(i < static_cast<int>(a.size()) && j < static_cast<int>(b.size()));
+        assert(a[static_cast<std::size_t>(i)] == b[static_cast<std::size_t>(j)]);
+        lastA = i;
+        lastB = j;
+    }
+}
+
+void testLinearSpaceMatchesTheTable()
+{
+    // 200 random pairs over a small alphabet, so there are many
+    // duplicates and many equally long answers: the subsequence found
+    // must be a common one and as long as the full table says.
+    std::mt19937 random(20261005);
+    for (int round = 0; round < 200; ++round) {
+        const int alphabet = 1 + static_cast<int>(random() % 8);
+        std::vector<int> a(random() % 40);
+        std::vector<int> b(random() % 40);
+        for (int &x : a) {
+            x = static_cast<int>(random() % static_cast<unsigned>(alphabet));
+        }
+        for (int &y : b) {
+            y = static_cast<int>(random() % static_cast<unsigned>(alphabet));
+        }
+        const auto pairs = seabass::domain::detail::longestCommonSubsequence(a, b);
+        expectCommonSubsequence(a, b, pairs);
+        assert(static_cast<int>(pairs.size()) == lcsLengthByTable(a, b));
+
+        List sa;
+        List sb;
+        for (int x : a) {
+            sa.push_back(std::to_string(x));
+        }
+        for (int y : b) {
+            sb.push_back(std::to_string(y));
+        }
+        const auto diff = diffPlaylists(sa, sb);
+        expectInvariants(sa, sb, diff);
+        assert(diff.shared - diff.moved == lcsLengthByTable(a, b));
+    }
+}
+
+void testHugePlaylistsNeedLinearMemory()
+{
+    // Two 20000-entry playlists, B being A with every neighbouring pair
+    // swapped: nothing to trim at either end, nothing to leave out, so the
+    // whole table is walked. The full table was 1.6 GB here; the linear
+    // one holds two rows.
+    constexpr int n = 20000;
+    std::vector<int> a(n);
+    std::vector<int> b(n);
+    for (int i = 0; i < n; ++i) {
+        a[static_cast<std::size_t>(i)] = i;
+        b[static_cast<std::size_t>(i)] = i ^ 1;
+    }
+    std::size_t cells = 0;
+    const auto started = std::chrono::steady_clock::now();
+    const auto pairs = seabass::domain::detail::longestCommonSubsequence(a, b, {}, &cells);
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    std::cout << "20000 x 20000: " << seconds << " s, " << cells << " table cells\n";
+    assert(cells <= 2 * (static_cast<std::size_t>(n) + 1));
+    assert(pairs.size() == static_cast<std::size_t>(n / 2));
+    expectCommonSubsequence(a, b, pairs);
+
+    // And told to stop, it stops: the worker the GUI hands it to is
+    // cancelled when the user picks another pair.
+    int polls = 0;
+    const auto stopped = seabass::domain::detail::longestCommonSubsequence(a, b, [&polls]() { return ++polls > 2; });
+    assert(polls == 3);
+    assert(stopped.size() < pairs.size());
+}
+
 void testEmptyLists()
 {
     assert(diffPlaylists({}, {}).rows.empty());
@@ -297,6 +390,8 @@ int main()
     testAnExtraCopyInBIsNotIdentical();
     testAnExtraCopyInAIsOnlyInA();
     testMovedCopiesPartnerEachOther();
+    testLinearSpaceMatchesTheTable();
+    testHugePlaylistsNeedLinearMemory();
     testEmptyLists();
     testOverlapRelations();
     std::cout << "playlist_diff_test: ok\n";
