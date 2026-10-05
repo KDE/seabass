@@ -187,6 +187,16 @@ void testRescanDropsTheOldCatalog(const fs::path &scratch)
     assert(controller.rows()->rowCount() == 0);
 }
 
+// A playlist name with "%N" in it is shown as it is, not filled in.
+void testPercentInANameIsText()
+{
+    PlaylistDiffController controller;
+    controller.setTracksForTesting(tracksOf({{"100%2 Techno", {"x", "y"}}, {"Mix %1", {"y", "z", "w"}}}));
+    controller.setPlaylistA(QStringLiteral("100%2 Techno"));
+    controller.setPlaylistB(QStringLiteral("Mix %1"));
+    assert(controller.verdict() == QStringLiteral("1 shared. 100%2 Techno has 1 the other lacks, Mix %1 has 2."));
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -320,6 +330,7 @@ int main(int argc, char **argv)
     testExtraCopyInAAndPartners();
     testLongPlaylistsDiffOffTheGuiThread();
     testRescanDropsTheOldCatalog(scratch);
+    testPercentInANameIsText();
 
     std::cout << "playlist_diff_controller_test: ok\n";
     return 0;
