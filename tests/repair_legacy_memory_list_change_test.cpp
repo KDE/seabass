@@ -369,7 +369,12 @@ int main(int argc, char **argv)
     assert(!auditTrackAnalysis(pathToUtf8(pioneer), analyzePath, named).has_value());
     std::cout << "case 1 (stale list rebuilt, entry kept, debris removed) OK\n";
 
-    fs::remove_all(stick);
+    // Not the throwing overload: the save context and the library's
+    // handles above are still open, and Windows will not delete an open
+    // file, so the test aborted here with nothing said. The next run
+    // clears what is left before it starts.
+    std::error_code cleanupError;
+    fs::remove_all(stick, cleanupError);
 
     if (!oneLibraryTableFollowsTheFile(pathFromUtf8(argv[1]))) {
         return 1;

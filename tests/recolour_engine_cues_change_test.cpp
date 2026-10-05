@@ -101,7 +101,12 @@ int main()
     assert(main && std::abs(*main - 44100.0 * 5) < 1.0 && "the cue point is where it was");
     std::cout << "case 1 (hidden pads take the pad's default colour, nothing else moves) OK\n";
 
-    fs::remove_all(stick);
+    // Not the throwing overload: the save context and the library's
+    // handles above are still open, and Windows will not delete an open
+    // file, so the test aborted here with nothing said. The next run
+    // clears what is left before it starts.
+    std::error_code cleanupError;
+    fs::remove_all(stick, cleanupError);
     std::cout << "all cases passed\n";
     return 0;
 }
