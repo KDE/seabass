@@ -286,9 +286,38 @@ Page {
                                 id: statsGrid
                                 objectName: "statsGrid"
                                 Layout.alignment: Qt.AlignTop
-                                columns: 4
                                 columnSpacing: 16
                                 rowSpacing: 8
+
+                                // Four columns when four, the pie (as tall as
+                                // the rows) and the legend's figures fit
+                                // beside each other; fewer when not. Always
+                                // four pushed the pie off the right edge of
+                                // a narrow window wherever the figures'
+                                // font runs wide, as it does on macOS and
+                                // Windows. Worked out from the tiles' own
+                                // sizes, which do not depend on the column
+                                // count, so it is no binding loop.
+                                readonly property var tiles: {
+                                    const list = [];
+                                    for (let i = 0; i < statsGrid.children.length; ++i) {
+                                        if (statsGrid.children[i].visible) list.push(statsGrid.children[i]);
+                                    }
+                                    return list;
+                                }
+                                readonly property real tileWidth: statsGrid.tiles.reduce((w, t) => Math.max(w, t.implicitWidth), 0)
+                                readonly property real tileHeight: statsGrid.tiles.reduce((h, t) => Math.max(h, t.implicitHeight), 0)
+                                columns: {
+                                    const room = statsSection.width;
+                                    for (let n = 4; n > 2; --n) {
+                                        const rows = Math.ceil(statsGrid.tiles.length / n);
+                                        const pie = rows * statsGrid.tileHeight + (rows - 1) * statsGrid.rowSpacing;
+                                        const needed = n * statsGrid.tileWidth + (n - 1) * statsGrid.columnSpacing
+                                            + Theme.sectionSpacing + pie + Theme.rowSpacing + coverageLegend.implicitWidth;
+                                        if (needed <= room) return n;
+                                    }
+                                    return 2;
+                                }
 
                                 component StatTile: ColumnLayout {
                                     id: statTile
@@ -362,6 +391,7 @@ Page {
 
                                     // Swatch, count, share, name: one row per slice.
                                     GridLayout {
+                                        id: coverageLegend
                                         columns: 4
                                         columnSpacing: Theme.rowSpacing
                                         rowSpacing: Theme.tightSpacing

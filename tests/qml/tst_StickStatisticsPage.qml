@@ -88,6 +88,15 @@ TestCase {
         verify(page !== null);
         compare(controller.scans, 1, "the page asks for its numbers on open");
         waitForRendering(page);
+        // The pie is a Canvas and paints after the page renders: on macOS
+        // and Windows the pixel checks read the ground where the pie goes
+        // until it had.
+        for (const pie of findAll(page, "cueCoveragePie")) {
+            if (pie.visible) {
+                tryVerify(() => pie.paintedCount > 0, 2000, "the pie has painted");
+            }
+        }
+        waitForRendering(page);
         return page;
     }
 
