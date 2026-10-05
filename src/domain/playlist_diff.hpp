@@ -15,7 +15,8 @@ namespace seabass::domain
 // track that is in both but somewhere else is reported as moved, never as
 // missing. The lists are sequences of track identities (one catalog's
 // sourceId, or whatever key the caller chose); a track listed twice is
-// two entries.
+// two entries. Copies pair up one to one: a copy one list has more of
+// than the other is only in that list (an extra copy), never moved.
 //
 // Rows are produced in the order a side-by-side view shows them: the
 // longest common subsequence of the two lists pins the rows where both
@@ -33,7 +34,7 @@ struct DiffEntry
 {
     DiffEntryKind kind = DiffEntryKind::None;
     int index = -1;    // index into this side's list, or -1 for None
-    int partner = -1;  // Moved: the first index of the same track in the other list
+    int partner = -1;  // Moved: the index of the copy in the other list it is paired with, itself Moved
 };
 
 struct DiffRow
@@ -47,8 +48,9 @@ struct PlaylistDiff
 {
     std::vector<DiffRow> rows;
     int shared = 0;  // entries of A whose track is also in B
-    int onlyA = 0;   // entries of A whose track is not in B
+    int onlyA = 0;   // entries of A whose track is not in B, or an extra copy of one B has fewer of
     int onlyB = 0;   // entries of B whose track is not in A, or an extra copy of one A has fewer of
+    int extraA = 0;  // of onlyA: extra copies of a track B also has
     int extraB = 0;  // of onlyB: extra copies of a track A also has
     int moved = 0;   // shared entries the common subsequence could not pin: a different order
 

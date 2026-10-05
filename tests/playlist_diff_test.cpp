@@ -10,8 +10,11 @@
 #include "domain/playlist_diff.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <iostream>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 using seabass::domain::DiffEntryKind;
@@ -58,6 +61,86 @@ void expectLayout(const seabass::domain::PlaylistDiff &diff, const std::string &
         std::cerr << "layout\n  expected: " << expected << "\n  got:      " << got << "\n";
         assert(false);
     }
+}
+
+// What every diff must hold, whatever common subsequence it picked:
+// each entry of either list on exactly one row, in list order; a Same
+// row pairs equal tracks; a moved entry's partner is a moved entry of the
+// same track that points back; copies pair one to one, so the counts are
+// the multiset ones (shared = sum of min(copies in A, copies in B)).
+void expectInvariants(const List &a, const List &b, const seabass::domain::PlaylistDiff &diff)
+{
+    std::vector<const seabass::domain::DiffEntry *> entryA(a.size(), nullptr);
+    std::vector<const seabass::domain::DiffEntry *> entryB(b.size(), nullptr);
+    int lastA = -1;
+    int lastB = -1;
+    int same = 0;
+    int movedA = 0;
+    int movedB = 0;
+    int onlyA = 0;
+    int onlyB = 0;
+    for (const auto &row : diff.rows) {
+        if (row.a.kind != DiffEntryKind::None) {
+            assert(row.a.index == lastA + 1);
+            lastA = row.a.index;
+            entryA[static_cast<std::size_t>(row.a.index)] = &row.a;
+        }
+        if (row.b.kind != DiffEntryKind::None) {
+            assert(row.b.index == lastB + 1);
+            lastB = row.b.index;
+            entryB[static_cast<std::size_t>(row.b.index)] = &row.b;
+        }
+        assert((row.a.kind == DiffEntryKind::Same) == (row.b.kind == DiffEntryKind::Same));
+        if (row.a.kind == DiffEntryKind::Same) {
+            assert(a[static_cast<std::size_t>(row.a.index)] == b[static_cast<std::size_t>(row.b.index)]);
+            ++same;
+        }
+        movedA += row.a.kind == DiffEntryKind::Moved;
+        movedB += row.b.kind == DiffEntryKind::Moved;
+        onlyA += row.a.kind == DiffEntryKind::Only;
+        onlyB += row.b.kind == DiffEntryKind::Only;
+    }
+    assert(lastA + 1 == static_cast<int>(a.size()) && lastB + 1 == static_cast<int>(b.size()));
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (entryA[i]->kind == DiffEntryKind::Moved) {
+            const int p = entryA[i]->partner;
+            assert(p >= 0 && p < static_cast<int>(b.size()));
+            assert(entryB[static_cast<std::size_t>(p)]->kind == DiffEntryKind::Moved);
+            assert(entryB[static_cast<std::size_t>(p)]->partner == static_cast<int>(i));
+            assert(a[i] == b[static_cast<std::size_t>(p)]);
+        }
+    }
+    for (std::size_t j = 0; j < b.size(); ++j) {
+        if (entryB[j]->kind == DiffEntryKind::Moved) {
+            const int p = entryB[j]->partner;
+            assert(p >= 0 && p < static_cast<int>(a.size()));
+            assert(entryA[static_cast<std::size_t>(p)]->partner == static_cast<int>(j));
+        }
+    }
+    std::map<std::string, std::pair<int, int>> copies;
+    for (const auto &s : a) {
+        ++copies[s].first;
+    }
+    for (const auto &s : b) {
+        ++copies[s].second;
+    }
+    int shared = 0;
+    int extraA = 0;
+    int extraB = 0;
+    for (const auto &[s, c] : copies) {
+        shared += std::min(c.first, c.second);
+        if (c.second > 0) {
+            extraA += std::max(0, c.first - c.second);
+        }
+        if (c.first > 0) {
+            extraB += std::max(0, c.second - c.first);
+        }
+    }
+    assert(movedA == movedB && movedA == diff.moved);
+    assert(diff.shared == same + movedA && diff.shared == shared);
+    assert(diff.onlyA == onlyA && diff.onlyA == static_cast<int>(a.size()) - shared);
+    assert(diff.onlyB == onlyB && diff.onlyB == static_cast<int>(b.size()) - shared);
+    assert(diff.extraA == extraA && diff.extraB == extraB);
 }
 
 void testIdenticalListsAreOneSameRowPerEntry()
@@ -144,6 +227,36 @@ void testAnExtraCopyInBIsNotIdentical()
     assert(shuffled.shared == 2 && shuffled.onlyB == 1 && shuffled.extraB == 1 && shuffled.onlyA == 0);
 }
 
+void testAnExtraCopyInAIsOnlyInA()
+{
+    // A = [x, x], B = [x]: one copy pins, the other is A's alone. It was
+    // counted shared and moved, partnered with B's pinned row.
+    const List a{"x", "x"};
+    const List b{"x"};
+    const auto diff = diffPlaylists(a, b);
+    assert(diff.shared == 1 && diff.onlyA == 1 && diff.extraA == 1 && diff.onlyB == 0 && diff.moved == 0);
+    expectLayout(diff, "=0|=0 !1|_-1");
+    expectInvariants(a, b, diff);
+}
+
+void testMovedCopiesPartnerEachOther()
+{
+    // A = [x, y, x], B = [y, x, x]: two of the three pin, and the third
+    // pair is one track moved. Its partner must be the other unpinned
+    // copy, never a copy already pinned to a Same row.
+    const List a{"x", "y", "x"};
+    const List b{"y", "x", "x"};
+    const auto diff = diffPlaylists(a, b);
+    assert(diff.shared == 3 && diff.moved == 1 && diff.onlyA == 0 && diff.onlyB == 0);
+    expectInvariants(a, b, diff);
+    // And the cases above, all of them, hold the same rules.
+    expectInvariants({"x"}, {"x", "x"}, diffPlaylists({"x"}, {"x", "x"}));
+    expectInvariants({"x", "y"}, {"y", "x", "x"}, diffPlaylists({"x", "y"}, {"y", "x", "x"}));
+    expectInvariants({"a", "b", "c"}, {"c", "a", "b"}, diffPlaylists({"a", "b", "c"}, {"c", "a", "b"}));
+    expectInvariants({"a", "x", "a", "b", "x"}, {"x", "a", "b", "a", "a"},
+                     diffPlaylists({"a", "x", "a", "b", "x"}, {"x", "a", "b", "a", "a"}));
+}
+
 void testEmptyLists()
 {
     assert(diffPlaylists({}, {}).rows.empty());
@@ -182,6 +295,8 @@ int main()
     testDifferentTracksBetweenPinsShareARow();
     testADuplicateEntryIsTwoEntries();
     testAnExtraCopyInBIsNotIdentical();
+    testAnExtraCopyInAIsOnlyInA();
+    testMovedCopiesPartnerEachOther();
     testEmptyLists();
     testOverlapRelations();
     std::cout << "playlist_diff_test: ok\n";

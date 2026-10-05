@@ -57,6 +57,7 @@ struct Interned
 {
     std::vector<int> a;
     std::vector<int> b;
+    int distinct = 0;  // ids run 0 .. distinct - 1
 };
 
 Interned intern(const std::vector<std::string> &a, const std::vector<std::string> &b)
@@ -75,6 +76,7 @@ Interned intern(const std::vector<std::string> &a, const std::vector<std::string
     for (const auto &s : b) {
         out.b.push_back(idOf(s));
     }
+    out.distinct = static_cast<int>(ids.size());
     return out;
 }
 
@@ -83,31 +85,55 @@ Interned intern(const std::vector<std::string> &a, const std::vector<std::string
 PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<std::string> &b)
 {
     const Interned ids = intern(a, b);
-    std::unordered_map<int, int> firstInA;
-    std::unordered_map<int, int> firstInB;
-    for (int i = 0; i < static_cast<int>(ids.a.size()); ++i) {
-        firstInA.emplace(ids.a[i], i);
-    }
-    for (int j = 0; j < static_cast<int>(ids.b.size()); ++j) {
-        firstInB.emplace(ids.b[j], j);
-    }
+    const int n = static_cast<int>(ids.a.size());
+    const int m = static_cast<int>(ids.b.size());
 
     PlaylistDiff diff;
     auto pairs = longestCommonSubsequence(ids.a, ids.b);
 
-    // How many copies of each track A has that the common subsequence
-    // left unpinned: each can stand for one unpinned copy in B as moved.
-    // A copy in B beyond those is an extra copy only B has, not a move.
-    std::unordered_map<int, int> unpinnedInA;
-    for (int i = 0; i < static_cast<int>(ids.a.size()); ++i) {
-        ++unpinnedInA[ids.a[i]];
-    }
+    // The copies of each track the common subsequence left unpinned, in
+    // list order. The k-th such copy in A and the k-th in B are one entry
+    // moved, each the other's partner. A copy beyond what the other side
+    // has unpinned is an extra copy that side alone lists: never a move,
+    // since nothing on the other side moved to stand for it.
+    std::vector<char> pinnedA(static_cast<std::size_t>(n), 0);
+    std::vector<char> pinnedB(static_cast<std::size_t>(m), 0);
     for (const auto &[ai, bj] : pairs) {
-        --unpinnedInA[ids.a[ai]];
+        pinnedA[static_cast<std::size_t>(ai)] = 1;
+        pinnedB[static_cast<std::size_t>(bj)] = 1;
     }
+    const auto tracks = static_cast<std::size_t>(ids.distinct);
+    std::vector<int> copiesInA(tracks, 0);
+    std::vector<int> copiesInB(tracks, 0);
+    std::vector<std::vector<int>> looseA(tracks);
+    std::vector<std::vector<int>> looseB(tracks);
+    for (int i = 0; i < n; ++i) {
+        const auto id = static_cast<std::size_t>(ids.a[static_cast<std::size_t>(i)]);
+        ++copiesInA[id];
+        if (!pinnedA[static_cast<std::size_t>(i)]) {
+            looseA[id].push_back(i);
+        }
+    }
+    for (int j = 0; j < m; ++j) {
+        const auto id = static_cast<std::size_t>(ids.b[static_cast<std::size_t>(j)]);
+        ++copiesInB[id];
+        if (!pinnedB[static_cast<std::size_t>(j)]) {
+            looseB[id].push_back(j);
+        }
+    }
+    std::vector<int> partnerInB(static_cast<std::size_t>(n), -1);
+    std::vector<int> partnerInA(static_cast<std::size_t>(m), -1);
+    for (std::size_t id = 0; id < tracks; ++id) {
+        const std::size_t moves = std::min(looseA[id].size(), looseB[id].size());
+        for (std::size_t k = 0; k < moves; ++k) {
+            partnerInB[static_cast<std::size_t>(looseA[id][k])] = looseB[id][k];
+            partnerInA[static_cast<std::size_t>(looseB[id][k])] = looseA[id][k];
+        }
+    }
+
     // A closing sentinel so the tail after the last agreed row is laid
     // out by the same loop.
-    pairs.emplace_back(static_cast<int>(ids.a.size()), static_cast<int>(ids.b.size()));
+    pairs.emplace_back(n, m);
 
     int i = 0;
     int j = 0;
@@ -117,34 +143,34 @@ PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<
         for (; i < ai; ++i) {
             DiffEntry entry;
             entry.index = i;
-            auto other = firstInB.find(ids.a[i]);
-            if (other == firstInB.end()) {
-                entry.kind = DiffEntryKind::Only;
-                ++diff.onlyA;
-            } else {
+            const int partner = partnerInB[static_cast<std::size_t>(i)];
+            if (partner >= 0) {
                 entry.kind = DiffEntryKind::Moved;
-                entry.partner = other->second;
+                entry.partner = partner;
                 ++diff.shared;
                 ++diff.moved;
+            } else {
+                entry.kind = DiffEntryKind::Only;
+                ++diff.onlyA;
+                if (copiesInB[static_cast<std::size_t>(ids.a[static_cast<std::size_t>(i)])] > 0) {
+                    ++diff.extraA;
+                }
             }
             left.push_back(entry);
         }
         for (; j < bj; ++j) {
             DiffEntry entry;
             entry.index = j;
-            auto other = firstInA.find(ids.b[j]);
-            if (other == firstInA.end()) {
-                entry.kind = DiffEntryKind::Only;
-                ++diff.onlyB;
-            } else if (unpinnedInA[ids.b[j]] <= 0) {
-                // A has this track, but every copy of it is accounted for.
-                entry.kind = DiffEntryKind::Only;
-                ++diff.onlyB;
-                ++diff.extraB;
-            } else {
-                --unpinnedInA[ids.b[j]];
+            const int partner = partnerInA[static_cast<std::size_t>(j)];
+            if (partner >= 0) {
                 entry.kind = DiffEntryKind::Moved;
-                entry.partner = other->second;
+                entry.partner = partner;
+            } else {
+                entry.kind = DiffEntryKind::Only;
+                ++diff.onlyB;
+                if (copiesInA[static_cast<std::size_t>(ids.b[static_cast<std::size_t>(j)])] > 0) {
+                    ++diff.extraB;
+                }
             }
             right.push_back(entry);
         }
@@ -161,7 +187,7 @@ PlaylistDiff diffPlaylists(const std::vector<std::string> &a, const std::vector<
             }
             diff.rows.push_back(row);
         }
-        if (ai < static_cast<int>(ids.a.size())) {
+        if (ai < n) {
             DiffRow row;
             row.a.kind = DiffEntryKind::Same;
             row.a.index = ai;

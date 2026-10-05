@@ -95,6 +95,32 @@ void testExtraCopyInB()
     }
 }
 
+// An extra copy on A's side is only in A, and every moved row's partner
+// is a row on screen (the folded-partner stub is for folds alone).
+void testExtraCopyInAAndPartners()
+{
+    PlaylistDiffController controller;
+    controller.setTracksForTesting(tracksOf({{"A", {"x", "x"}}, {"B", {"x"}}, {"C", {"x", "y", "x"}}, {"D", {"y", "x", "x"}}}));
+    controller.setFoldIdentical(false);
+    controller.setPlaylistA(QStringLiteral("A"));
+    controller.setPlaylistB(QStringLiteral("B"));
+    assert(controller.onlyACount() == 1 && controller.movedCount() == 0 && controller.sharedCount() == 1);
+    assert(controller.verdict() == QStringLiteral("B is A minus 1 extra copy."));
+    assert(controller.onlyInAText() == QStringLiteral("Artist x - Title x"));
+
+    controller.setPlaylistA(QStringLiteral("C"));
+    controller.setPlaylistB(QStringLiteral("D"));
+    assert(controller.movedCount() == 1 && controller.onlyACount() == 0 && controller.onlyBCount() == 0);
+    int moved = 0;
+    for (const auto &row : controller.rows()->rows()) {
+        if (row.leftKind == QLatin1String("moved") || row.rightKind == QLatin1String("moved")) {
+            ++moved;
+            assert(row.partnerRow >= 0);
+        }
+    }
+    assert(moved == 2);
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -225,6 +251,7 @@ int main(int argc, char **argv)
     assert(controller.onlyACount() == 0 && controller.onlyBCount() == 0 && controller.movedCount() == 0);
 
     testExtraCopyInB();
+    testExtraCopyInAAndPartners();
 
     std::cout << "playlist_diff_controller_test: ok\n";
     return 0;

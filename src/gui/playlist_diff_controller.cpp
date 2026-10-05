@@ -380,7 +380,7 @@ void PlaylistDiffController::recompute()
                         .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyB, m_diff.extraB), reordered);
     } else if (m_diff.onlyB == 0) {
         m_verdict = QStringLiteral("%1 is %2 minus %3%4.")
-                        .arg(m_playlistB, m_playlistA, plural(m_diff.onlyA, "track"), reordered);
+                        .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyA, m_diff.extraA), reordered);
     } else {
         m_verdict = QStringLiteral("%1 shared. %2 has %3 the other lacks, %4 has %5%6.")
                         .arg(m_diff.shared)
