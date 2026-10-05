@@ -139,8 +139,13 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
                 unambiguous = it->second.size() == 1 && aCountByTitleArtist[*key] == 1;
             }
         }
-        if (!candidates) {
-            const std::string name = normalizeFilename(trackA.filename);
+        // No filename is no key, as no title or artist is (#63): every row
+        // without one sat under "", and a track new to the other side was
+        // paired with whichever of them had a length within the window.
+        // The metadata store, which this preview is meant to agree with,
+        // has never matched on an empty filename.
+        const std::string name = normalizeFilename(trackA.filename);
+        if (!candidates && !name.empty()) {
             auto it = bByFilename.find(name);
             if (it != bByFilename.end()) {
                 candidates = &it->second;

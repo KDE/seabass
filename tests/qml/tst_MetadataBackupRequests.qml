@@ -67,6 +67,26 @@ TestCase {
         verifyIdleOnceNothingReads([controller]);
     }
 
+    // Another recording of the same length in the store is not this
+    // track (#63). The store is kept across runs of the suite, and with
+    // no filename on either side every stored row of a length within the
+    // matching window was taken for each new track, so a run that drew
+    // the lengths of an earlier run's tracks planned 1 of these 3.
+    function test_anotherRecordingOfTheSameLengthIsNotThisTrack() {
+        const root = stick();
+        catalogGate.hold(3, true);
+        verify(catalogGate.storeOtherRecordingsOfTheSameLength(3), "the store must take the other recordings");
+        catalogGate.release();
+        const controller = make();
+        controller.selectStick(root + "/PIONEER", "", "GATED");
+        tryVerify(() => !controller.busy && controller.hasScanned, 10000, "the read must end with a plan");
+        compare(controller.tracksSeen, 3, "all three tracks read");
+        compare(controller.otherCopies, 0, "none of them a copy of another");
+        compare(controller.alreadyCurrent, 0, "none of them stored already");
+        compare(controller.proposalCount, 3, "each one new to the store");
+        verifyIdleOnceNothingReads([controller]);
+    }
+
     // A backup ends when its bar reaches the end. The list is then worked
     // out again, since the store just changed, and that re-read is marked
     // as a refresh so the page does not show it as a second scan starting

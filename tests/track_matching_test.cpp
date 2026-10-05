@@ -336,6 +336,46 @@ int main()
         std::cout << "case 10 (matchTracks: a real duration mismatch still rejects the match) OK\n";
     }
 
+    // matchTracks: no filename on either side is not a shared filename
+    // (#63). A track whose artist and title the other side does not have
+    // was paired with any row there that had no filename either and a
+    // length within the window: Metadata Backup took three new tracks for
+    // copies of one stored row of another recording.
+    {
+        Track stick;
+        stick.sourceId = "stick";
+        stick.title = "New Song";
+        stick.artist = "New Artist";
+        stick.durationSeconds = 300.0;
+
+        Track stored;
+        stored.sourceId = "stored";
+        stored.title = "Other Song";
+        stored.artist = "Other Artist";
+        stored.durationSeconds = 301.0;
+
+        std::vector<Track> as = {stick};
+        std::vector<Track> bs = {stored};
+        assert(matchTracks(as, bs).empty() && "an empty filename names no track");
+
+        // Neither side with a title, and still no filename: nothing to match by.
+        Track bareA = stick;
+        bareA.title.clear();
+        Track bareB = stored;
+        bareB.title.clear();
+        std::vector<Track> bareAs = {bareA};
+        std::vector<Track> bareBs = {bareB};
+        assert(matchTracks(bareAs, bareBs).empty() && "no key at all matches nothing");
+
+        // The filename fallback itself still works when there is one.
+        stick.filename = "Track.mp3";
+        stored.filename = "track.mp3";
+        std::vector<Track> named = {stick};
+        std::vector<Track> namedStored = {stored};
+        assert(matchTracks(named, namedStored).size() == 1 && "a shared filename still matches");
+        std::cout << "case 10b (matchTracks: an empty filename is no key) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     // A loop is only ever the same as a loop, with the same in AND out
     // point, the way Sync compares (domain::sameCuePlace). cueSetsEqual
