@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -74,6 +75,11 @@ std::map<int, std::vector<std::string>> expectedSteps(const fs::path &file)
     std::string line;
     int step = 0;
     while (std::getline(in, line)) {
+        // A Windows checkout with core.autocrlf hands the file over with
+        // CRLF line endings.
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
         if (line.rfind("step ", 0) == 0) {
             step = std::stoi(line.substr(5));
         } else if (!line.empty()) {
@@ -120,7 +126,10 @@ int main(int argc, char **argv)
     const auto file = [&](const char *artist, const char *album, const char *name) {
         return seabass::pathToUtf8(stick / "Contents" / artist / album / name);
     };
-    OneLibraryCueWriter w(seabass::pathToUtf8(stick / "PIONEER"));
+    // Held by pointer so it can be closed before the scratch stick is
+    // removed: Windows will not delete a database something has open.
+    auto writer = std::make_unique<OneLibraryCueWriter>(seabass::pathToUtf8(stick / "PIONEER"));
+    OneLibraryCueWriter &w = *writer;
 
     // 1. Q1 with a01..a05.
     assert(w.createPlaylist("", "Q1", false) == 1);
@@ -207,7 +216,9 @@ int main(int argc, char **argv)
     }
     std::cout << "step 7 (a removal leaves no gap) OK\n";
 
-    fs::remove_all(stick);
+    writer.reset();
+    std::error_code ignored;
+    fs::remove_all(stick, ignored);
     std::cout << "onelibrary_playlist_tree_test: all steps passed\n";
     return 0;
 }
