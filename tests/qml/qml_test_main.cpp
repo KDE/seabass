@@ -310,9 +310,15 @@ public:
     {
         namespace fs = std::filesystem;
         std::error_code ec;
+        // Numbered across the whole process, not per test file: a fixture
+        // object is made for each file, and a folder name used again would
+        // be served from the process-wide catalog cache whenever the copy
+        // keeps the files' times, as a copy on Windows does, so a scan
+        // there would read nothing and report no rekordbox or Engine step.
+        static std::atomic<int> copies{0};
         const fs::path root = seabass::testing::scratchRoot()
             / ("seabass_qml_stick_" + std::to_string(QCoreApplication::applicationPid()) + "_"
-               + std::to_string(m_roots.size()));
+               + std::to_string(copies++));
         fs::remove_all(root, ec);
         fs::create_directories(root, ec);
         const fs::path from = seabass::pathFromUtf8(fixtureRoot.toStdString());
