@@ -1063,6 +1063,15 @@ if(SEABASS_GUI AND Qt6_FOUND)
         target_link_libraries(seabass_qml_tests PRIVATE
             seabass_core
             seabass_edit
+            # The app's controls style, for the same reason the app links
+            # it: applyDefaultControlsStyle() asks for SeabassStyle, and a
+            # binary that does not carry the module fails every page with
+            # "module SeabassStyle is not installed" -- which is what the
+            # whole QML suite did the first time this landed. A suite
+            # running under a style the app never uses is testing a
+            # different program; a suite that cannot find the style at all
+            # is testing nothing.
+            seabass_styleplugin
             Qt6::QuickTest
             Qt6::Core
             Qt6::Gui

@@ -358,6 +358,48 @@ set(SEABASS_GUI_ICONS_FROM_ROOT ${SEABASS_GUI_ICONS_FROM_ROOT} PARENT_SCOPE)
 set(SEABASS_GUI_FONTS_FROM_ROOT ${SEABASS_GUI_FONTS_FROM_ROOT} PARENT_SCOPE)
 set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES_FROM_ROOT} PARENT_SCOPE)
 
+# The app's own Qt Quick Controls style, as its own QML module because
+# that is what a style is: a module whose name is the style name, holding
+# one file per control it draws. Everything it does not define falls back
+# to Basic (QQuickStyle::setFallbackStyle, see controls_style.cpp).
+#
+# It exists because the alternative is 187 call sites. Every Frame,
+# ComboBox, TextField and ToolButton in this app took its background --
+# and so its corner radius, its ink and its font -- from whichever style
+# happened to be active, and the app's own boxes are drawn at
+# Theme.cornerRadius. Under Material those agreed by luck; under Basic
+# they did not, and the mismatch showed up one page at a time. A style
+# is the one place where "what a control looks like" belongs.
+#
+# QT_RESOURCE_ALIAS on each file, because a style module is resolved by
+# looking for SeabassStyle/<Control>.qml: without the alias these land at
+# SeabassStyle/qml/style/<Control>.qml and the style silently does
+# nothing, every control quietly falling back.
+foreach(style_file Frame Pane Button ToolButton TextField ComboBox ItemDelegate GroupBox ToolTip Menu MenuItem RadioButton Switch)
+    set_source_files_properties(qml/style/${style_file}.qml
+        PROPERTIES QT_RESOURCE_ALIAS ${style_file}.qml)
+endforeach()
+
+qt_add_qml_module(seabass_style
+    STATIC
+    URI SeabassStyle
+    VERSION 1.0
+    QML_FILES
+        qml/style/Frame.qml
+        qml/style/Pane.qml
+        qml/style/Button.qml
+        qml/style/ToolButton.qml
+        qml/style/TextField.qml
+        qml/style/ComboBox.qml
+        qml/style/ItemDelegate.qml
+        qml/style/GroupBox.qml
+        qml/style/ToolTip.qml
+        qml/style/Menu.qml
+        qml/style/MenuItem.qml
+        qml/style/RadioButton.qml
+        qml/style/Switch.qml
+)
+
 qt_add_qml_module(seabass
     URI SeabassGui
     VERSION 1.0
@@ -394,6 +436,9 @@ target_include_directories(seabass PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRE
 target_link_libraries(seabass PRIVATE
     seabass_core
     seabass_edit
+    # The app's own controls style; linked so its QML module is found
+    # without an import path at run time.
+    seabass_styleplugin
     Qt6::Core
     Qt6::Gui
     Qt6::Qml

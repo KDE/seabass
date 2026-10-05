@@ -48,7 +48,12 @@ void applyDefaultControlsStyle()
     // one platform ever consulted. Basic has no type scale of its own:
     // every control inherits the app font, which is what the rest of
     // this app already assumes.
-    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
+    // SeabassStyle draws the controls this app actually uses, in Theme's
+    // colours, at Theme.cornerRadius, in the application font. Basic
+    // catches everything it does not define -- a style only has to
+    // provide the controls it wants to change.
+    qputenv("QT_QUICK_CONTROLS_STYLE", "SeabassStyle");
+    qputenv("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic");
 #elif defined(Q_OS_LINUX)
     // Inside an AppImage, KDE's desktop style, as on a Plasma desktop.
     // Installed normally, the app gets org.kde.desktop from Plasma's

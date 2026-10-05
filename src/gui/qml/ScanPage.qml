@@ -539,6 +539,20 @@ Page {
                     // the same job on two different, easy-to-miss fields.
                     placeholderText: "Search title, artist, or playlist..."
                     rightPadding: searchClearButton.visible ? searchClearButton.width + 4 : 0
+                    // As tall as the combo beside it, and on a ground
+                    // Theme chose: left to the style, this sat 25 px
+                    // taller than the combo and square beside its
+                    // rounded neighbours.
+                    implicitHeight: Theme.compactControlHeight
+                    color: Theme.text
+                    placeholderTextColor: Theme.textMuted
+                    leftPadding: 8
+                    background: Rectangle {
+                        radius: Theme.cornerRadius
+                        color: Theme.surface
+                        border.color: searchField.activeFocus ? Theme.accent : Theme.border
+                        border.width: 1
+                    }
                     onTextChanged: scanController.search(text)
 
                     IconToolButton {
@@ -565,7 +579,11 @@ Page {
                 ComboBox {
                     id: sortCombo
                     objectName: "sortCombo"
-                    Layout.preferredWidth: 140
+                    // Wide enough for "Playlist Order" beside the
+                    // indicator: the label is elided to whatever is left
+                    // after it, and at 140 the longest entry came out as
+                    // "Playlis...".
+                    Layout.preferredWidth: Theme.compactComboWidth
                     // As tall as the library picker above it.
                     implicitHeight: Theme.compactControlHeight
                     textRole: "text"
@@ -573,6 +591,82 @@ Page {
                     model: root.sortOptions
                     currentIndex: root.sortOptions.findIndex(option => option.value === root.sortField)
                     onActivated: (index) => root.sortByField(root.sortOptions[index].value)
+
+                    // Background, popup and rows drawn here rather than
+                    // left to the active style, for the reason
+                    // LibrarySourceToggle already records: what the style
+                    // draws comes from the PLATFORM's palette, while every
+                    // colour in this app comes from Theme, which is dark
+                    // unless the user asked for the system one. Where the
+                    // two disagree the text lands on a ground Theme never
+                    // chose -- here the open list's entries came out
+                    // unreadable, dark on dark. The other combo on this
+                    // very row was fixed this way; this one had simply
+                    // never been given the same treatment.
+                    // The same arrow the library picker beside it uses,
+                    // rather than the style's: Basic draws a pair of
+                    // chevrons, so the two combos on one row pointed at
+                    // different things.
+                    indicator: SeabassIcon {
+                        x: sortCombo.width - width - 8
+                        y: Theme.snap(sortCombo.topPadding + (sortCombo.availableHeight - height) / 2)
+                        iconName: "arrow-down"
+                        size: Theme.iconSizeSmall * 0.5
+                        color: Theme.textMuted
+                    }
+                    background: Rectangle {
+                        radius: Theme.cornerRadius
+                        color: sortCombo.hovered ? Theme.rowHover : Theme.surface
+                        border.color: Theme.border
+                        border.width: 1
+                    }
+                    contentItem: Label {
+                        text: sortCombo.displayText
+                        color: Theme.text
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                        leftPadding: 8
+                        rightPadding: sortCombo.indicator ? sortCombo.indicator.width + 4 : 8
+                    }
+                    popup: Popup {
+                        y: sortCombo.height
+                        width: sortCombo.width
+                        implicitHeight: Math.min(contentItem.implicitHeight + 2, 320)
+                        padding: 1
+                        background: Rectangle {
+                            radius: Theme.cornerRadius
+                            color: Theme.surface
+                            border.color: Theme.border
+                            border.width: 1
+                        }
+                        contentItem: ListView {
+                            clip: true
+                            implicitHeight: contentHeight
+                            model: sortCombo.delegateModel
+                            currentIndex: sortCombo.highlightedIndex
+                            ScrollIndicator.vertical: ScrollIndicator {}
+                        }
+                    }
+                    delegate: ItemDelegate {
+                        id: sortEntry
+                        required property int index
+                        required property var modelData
+                        width: ListView.view ? ListView.view.width : sortCombo.width
+                        height: Theme.compactControlHeight
+                        highlighted: sortCombo.highlightedIndex === index
+                        background: Rectangle {
+                            color: sortEntry.highlighted
+                                   ? Theme.rowPressed
+                                   : (sortEntry.hovered ? Theme.rowHover : Theme.surface)
+                        }
+                        contentItem: Label {
+                            text: sortEntry.modelData.text
+                            color: Theme.text
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            leftPadding: 8
+                        }
+                    }
                 }
             }
         }
@@ -786,7 +880,11 @@ Page {
                     // etc.), all radius: 4. This one was square.
                     border.color: trackDelegate.isPlaying ? Theme.accent : "transparent"
                     border.width: trackDelegate.isPlaying ? 2 : 0
-                    radius: trackDelegate.isPlaying ? 4 : 0
+                    // Rounded whether or not this is the playing row: the
+                    // corner was conditional, so a row changed shape as it
+                    // started playing and sat square against the rounded
+                    // boxes above it the rest of the time.
+                    radius: Theme.cornerRadius
 
                     // The currently playing row's own waveform, with cue
                     // markers and live progress, used as a faded
