@@ -842,6 +842,18 @@ QJsonObject snapshot(const std::string &stickRoot, const std::vector<Candidate> 
     return snap;
 }
 
+namespace
+{
+
+// An empty value is a NULL column: the snapshot keeps columnText's reading.
+std::string cueUpdateCountText(const QJsonObject &row)
+{
+    const std::string text = row["cueUpdateCount"].toString().toStdString();
+    return text.empty() ? std::string("NULL") : text;
+}
+
+}  // namespace
+
 int readback(const std::string &stickRoot, const QJsonObject &before, std::ostream &out)
 {
     std::vector<Candidate> five;
@@ -905,7 +917,7 @@ int readback(const std::string &stickRoot, const QJsonObject &before, std::ostre
                 for (const auto &value : rows) {
                     const QJsonObject r = value.toObject();
                     text += "content_id " + r["contentId"].toString().toStdString() + " cueUpdateCount "
-                        + r["cueUpdateCount"].toString().toStdString() + " cues [";
+                        + cueUpdateCountText(r) + " cues [";
                     std::string cues;
                     for (const auto &cue : r["cues"].toArray()) {
                         cues += (cues.empty() ? "" : ", ") + cue.toObject()["text"].toString().toStdString();
@@ -931,7 +943,7 @@ int readback(const std::string &stickRoot, const QJsonObject &before, std::ostre
                     cues += (cues.empty() ? "" : ", ") + cue.toObject()["text"].toString().toStdString();
                 }
                 out << "  same    cue table: " << (cues.empty() ? "(no rows)" : cues) << "; content row unchanged"
-                    << " (cueUpdateCount " << r["cueUpdateCount"].toString().toStdString() << ")\n";
+                    << " (cueUpdateCount " << cueUpdateCountText(r) << ")\n";
             }
         }
     }
