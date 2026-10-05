@@ -698,30 +698,15 @@ ColumnLayout {
             }
         }
 
-        ColumnLayout {
+        EmptyState {
             anchors.centerIn: parent
-            width: parent.width - 40
             visible: root.hasAnchor && candidatesListView.count === 0
-            spacing: 8
-            Label {
-                Layout.fillWidth: true
-                text: "No matching tracks. Try a looser key range, widen the BPM range, or pick All as This "
-                    + "Playlist to search the whole library."
-                color: Theme.textMuted
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: "Clear all filters"
-                color: Theme.accent
-                font.underline: true
-
-                TapHandler {
-                    cursorShape: Qt.PointingHandCursor
-                    onTapped: root.clearAllFilters()
-                }
-            }
+            iconName: "edit-find"
+            text: "No matching tracks."
+            detail: "Try a looser key range, widen the BPM range, or pick All as This Playlist to search the "
+                + "whole library."
+            actionText: "Clear All Filters"
+            onActionTriggered: root.clearAllFilters()
         }
     }
 

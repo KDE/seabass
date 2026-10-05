@@ -736,14 +736,13 @@ Page {
                 ]
             }
 
-            Label {
+            EmptyState {
                 anchors.centerIn: parent
-                width: Theme.snap(parent.width * 0.7)
                 visible: proposalList.count === 0 && !controller.busy
                          && (controller.hasScanned || controller.scanCancelled)
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                color: Theme.textMuted
+                tone: !controller.scanCancelled && controller.proposalCount === 0 ? "good" : "info"
+                iconName: controller.scanCancelled ? "help-about"
+                    : (controller.proposalCount === 0 ? "checkmark" : "edit-find")
                 text: controller.scanCancelled
                     ? "Nothing was read, so nothing is listed."
                     : (controller.proposalCount === 0
@@ -848,16 +847,13 @@ Page {
                 ]
             }
 
-            Label {
+            EmptyState {
                 anchors.centerIn: parent
-                width: Theme.snap(parent.width * 0.7)
                 visible: trackList.count === 0 && !controller.busy
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
+                iconName: controller.storedTrackCount === 0 ? "backup" : "edit-find"
                 text: controller.storedTrackCount === 0
                     ? "Nothing has been backed up yet. Pick a stick above to see what it would add."
                     : "No stored track matches that search."
-                color: Theme.textMuted
             }
         }
 

@@ -437,15 +437,13 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 objectName: "emptyLabel"
                 anchors.centerIn: parent
-                width: Theme.snap(parent.width * 0.8)
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
                 visible: backupsList.count === 0 && root.controller.listing !== true
-                text: "No full stick backups yet. Make one from a stick's Backups page: Full Stick Backup."
-                color: Theme.textMuted
+                iconName: "backup"
+                text: "No full stick backups yet."
+                detail: "Make one from a stick's Backups page: Full Stick Backup."
             }
         }
     }

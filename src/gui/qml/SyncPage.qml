@@ -1115,17 +1115,15 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 objectName: "nothingToSyncLabel"
                 anchors.centerIn: parent
-                width: Math.min(implicitWidth, parent.width)
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
                 visible: plansListView.count === 0 && !syncController.busy && !parent.justSynced
+                tone: root.searching ? "info" : "good"
+                iconName: root.searching ? "edit-find" : "checkmark"
                 text: root.searching
                     ? "No track needing sync matches “" + toolbar.searchText + "”."
                     : "Nothing to sync. Matched tracks' cues are already consistent."
-                color: Theme.textMuted
             }
         }
     }
