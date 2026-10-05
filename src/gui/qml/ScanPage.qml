@@ -140,12 +140,36 @@ Page {
     Menu {
         id: trackMenu
         objectName: "trackMenu"
-        property string filePath: ""
-        property string trackTitle: ""
-        readonly property bool staged: root.playlistEditController.pendingRevision >= 0 && filePath.length > 0
+        // The row it was opened for: its delegate carries filePath, title,
+        // streamingSource and what Merge and Find need.
+        property var row: null
+        onClosed: row = null
+        readonly property string filePath: row ? row.filePath : ""
+        readonly property bool streaming: row ? row.streamingSource.length > 0 : false
+        readonly property bool canRemove: root.playlistEditing && root.shownPlaylist.length > 0 && filePath.length > 0
+        readonly property bool staged: canRemove && root.playlistEditController.pendingRevision >= 0
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
         MenuItem {
+            objectName: "mergeTrackItem"
+            enabled: root.format !== "onelibrary" && !trackMenu.streaming
+            text: trackMenu.streaming ? qsTr("Merge with another track... (streaming track, no local file)")
+                : root.format === "onelibrary" ? qsTr("Merge with another track... (not on OneLibrary yet)")
+                : qsTr("Merge with another track...")
+            onTriggered: mergePickerPopup.showFor(trackMenu.row)
+        }
+        MenuItem {
+            objectName: "findMatchingItem"
+            text: qsTr("Find matching tracks")
+            onTriggered: root.toggleAnchor(trackMenu.row)
+        }
+        MenuSeparator {
+            visible: trackMenu.canRemove
+            height: visible ? implicitHeight : 0
+        }
+        MenuItem {
             objectName: "removeFromPlaylistItem"
+            visible: trackMenu.canRemove
+            height: visible ? implicitHeight : 0
             text: trackMenu.staged ? qsTr("Keep in \"%1\"").arg(root.shownPlaylist)
                                    : qsTr("Remove from \"%1\"").arg(root.shownPlaylist)
             onTriggered: {
@@ -153,7 +177,7 @@ Page {
                     root.playlistEditController.keepInPlaylist(root.shownPlaylist, trackMenu.filePath);
                 } else {
                     root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, root.shownPlaylist,
-                                                                   trackMenu.filePath, trackMenu.trackTitle);
+                                                                   trackMenu.filePath, trackMenu.row.title);
                 }
             }
         }
@@ -167,13 +191,11 @@ Page {
         playlistMenu.popup(row);
     }
 
-    function openTrackMenu(filePath, title, row) {
-        if (!root.playlistEditing || root.shownPlaylist.length === 0 || filePath.length === 0) {
-            return;
-        }
-        trackMenu.filePath = filePath;
-        trackMenu.trackTitle = title;
-        trackMenu.popup(row);
+    // The row's menu, at `at` (the row's menu button, or the row itself
+    // for a right click).
+    function openTrackMenu(row, at) {
+        trackMenu.row = row;
+        trackMenu.popup(at);
     }
 
     // Browse is read-only until a cue is added: the session is opened
@@ -924,13 +946,13 @@ Page {
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton) {
-                                root.openTrackMenu(filePath, title, trackDelegate);
+                                root.openTrackMenu(trackDelegate, trackDelegate);
                                 return;
                             }
                             trackDetailPanel.showFor(trackDelegate);
                             root.trackPanelOpen = true;
                         }
-                        onPressAndHold: root.openTrackMenu(filePath, title, trackDelegate)
+                        onPressAndHold: root.openTrackMenu(trackDelegate, trackDelegate)
                     }
 
                     RowLayout {
@@ -1080,27 +1102,20 @@ Page {
                             text: playCount >= 0 ? playCount : "--"
                             Layout.preferredWidth: root.playsColumnWidth
                         }
+                        // The row's actions in one menu: merging, finding
+                        // matches, and (Experimental, a playlist shown)
+                        // taking the track out of that playlist. A right
+                        // click on the row opens the same menu.
                         IconToolButton {
-                            text: "Merge"
-                            iconName: "link"
-                            Layout.preferredWidth: Theme.iconSizeSmall
-                            enabled: root.format !== "onelibrary" && trackDelegate.streamingSource.length === 0
-                            ToolTip.visible: hovered
-                            ToolTip.text: trackDelegate.streamingSource.length > 0
-                                ? "Streaming track (" + trackDelegate.streamingSource + ") - no local file, can't be merged."
-                                : (root.format === "onelibrary"
-                                    ? "Merging isn't supported on OneLibrary yet - switch to DeviceLibrary or Engine OS"
-                                    : "Merge with another track...")
-                            onClicked: mergePickerPopup.showFor(trackDelegate)
-                        }
-                        IconToolButton {
-                            id: editButton
-                            text: "Find matching tracks"
-                            iconName: "edit-find"
+                            id: rowMenuButton
+                            objectName: "trackRowMenuButton"
+                            text: "Track actions"
+                            iconName: "application-menu"
                             Layout.preferredWidth: Theme.iconSizeSmall
                             ToolTip.visible: hovered
-                            ToolTip.text: "Find matching tracks"
-                            onClicked: root.toggleAnchor(trackDelegate)
+                            ToolTip.text: "Merge, find matching tracks" + (root.playlistEditing && root.shownPlaylist.length > 0
+                                ? ", remove from this playlist" : "")
+                            onClicked: root.openTrackMenu(trackDelegate, rowMenuButton)
                         }
                     }
                 }
