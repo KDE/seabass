@@ -308,19 +308,23 @@ Page {
                 color: Theme.groupBackground
             }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.borderSubtle }
+            // No names while there are no playlists (a scan running, or
+            // one that failed): the picked pair is another catalog's.
             DiffCellHeader {
+                objectName: "headerA"
                 x: 0
                 width: parent.cellWidth
                 height: parent.height
-                title: controller.playlistA
+                title: controller.playlistNames.length > 0 ? controller.playlistA : ""
                 count: controller.entriesA
                 accent: Theme.danger
             }
             DiffCellHeader {
                 x: parent.cellWidth + root.gutterWidth
                 width: parent.cellWidth
+                objectName: "headerB"
                 height: parent.height
-                title: controller.playlistB
+                title: controller.playlistNames.length > 0 ? controller.playlistB : ""
                 count: controller.entriesB
                 accent: Theme.good
             }

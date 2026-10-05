@@ -182,6 +182,7 @@ private:
 
     void onScanFinished(ScanResult &&result);
     void setTracks(std::vector<domain::Track> tracks);
+    void clearCatalog();
     void setErrorMessage(const QString &message);
     void indexPlaylists();
     void chooseDefaults();

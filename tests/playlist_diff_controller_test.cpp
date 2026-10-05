@@ -164,6 +164,29 @@ void testLongPlaylistsDiffOffTheGuiThread()
     assert(controller.verdict() == shortVerdict && controller.sharedCount() == 2 && controller.onlyACount() == 2498);
 }
 
+// A new scan (the source toggle) drops the catalog shown so far at once,
+// and a scan that fails leaves nothing of it behind.
+void testRescanDropsTheOldCatalog(const fs::path &scratch)
+{
+    PlaylistDiffController controller;
+    controller.setTracksForTesting(tracksOf({{"A", {"x", "y"}}, {"B", {"y", "z"}}}));
+    assert(controller.playlistNames().size() == 2);
+    assert(controller.rows()->rowCount() > 0);
+    assert(!controller.relatives().isEmpty());
+
+    controller.scan(QStringLiteral("rekordbox"), seabass::gui::pathToQString(scratch / "no-such-stick" / "PIONEER"));
+    assert(controller.playlistNames().isEmpty());
+    assert(controller.playlistTrackCounts().isEmpty());
+    assert(controller.rows()->rowCount() == 0);
+    assert(controller.relatives().isEmpty());
+    assert(controller.sharedCount() == 0 && controller.onlyACount() == 0 && controller.onlyBCount() == 0);
+    assert(controller.entriesA() == 0 && controller.entriesB() == 0);
+    waitUntilIdle(controller);
+    assert(!controller.errorMessage().isEmpty());
+    assert(controller.playlistNames().isEmpty());
+    assert(controller.rows()->rowCount() == 0);
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -296,6 +319,7 @@ int main(int argc, char **argv)
     testExtraCopyInB();
     testExtraCopyInAAndPartners();
     testLongPlaylistsDiffOffTheGuiThread();
+    testRescanDropsTheOldCatalog(scratch);
 
     std::cout << "playlist_diff_controller_test: ok\n";
     return 0;
