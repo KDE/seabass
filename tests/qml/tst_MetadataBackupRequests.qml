@@ -85,6 +85,8 @@ TestCase {
         compare(controller.alreadyCurrent, 0, "none of them stored already");
         compare(controller.proposalCount, 3, "each one new to the store");
         verifyIdleOnceNothingReads([controller]);
+        // The lane's store outlives the run: other cases read it.
+        compare(catalogGate.removeOtherRecordingsOfTheSameLength(), 3, "the other recordings leave the store again");
     }
 
     // A backup ends when its bar reaches the end. The list is then worked
