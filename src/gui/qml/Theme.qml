@@ -489,8 +489,20 @@ QtObject {
     // ToolBar's bottomPadding by every page's header; the other three
     // sides stay zeroed so the header's horizontal inset is pageMargin
     // and nothing else (see any page's header comment for why).
-    // 16, doubled from 8: at 8 the breadcrumb sat crowded onto the body.
-    readonly property real headerBottomPadding: 16
+    //
+    // Twice the page margin, and the reason is the headers themselves, not
+    // taste. Every page's header lays its row out with
+    // `anchors.fill: parent; anchors.margins: Theme.pageMargin` inside a
+    // ToolBar that sizes itself to that row's natural height. The top
+    // margin pushes the row down by a page margin and nothing makes the
+    // bar any taller for it, so the row overruns the bottom by exactly
+    // that much -- into this padding. At 16 the overrun ate all 16 and the
+    // breadcrumb sat flush on the bar's bottom edge on every page: 16 px
+    // above it, 0 below (measured, tst_PagesCompile). It had been doubled
+    // from 8 once already for looking crowded, which only filled the
+    // overrun. A page margin of it is the overrun; the second is the room
+    // below the crumb, matching the room above.
+    readonly property real headerBottomPadding: pageMargin * 2
     readonly property real pageMargin: 16
     readonly property real cardPadding: 16
     readonly property real sectionSpacing: 14   // between blocks down a page
