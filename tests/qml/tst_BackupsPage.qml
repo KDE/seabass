@@ -319,8 +319,11 @@ TestCase {
         const overlay = findChild(page, "scanOverlay");
         // The page's own first listing, to the end: `backups` is only
         // replaced once the result has been taken, unlike `listing`, which
-        // reads false as soon as the worker is done.
-        tryVerify(function() { return controller.backups.length === 20000 && !controller.listing; }, 30000);
+        // reads false as soon as the worker is done. Set-up, not the check,
+        // so its limit is generous: it is the first read of 20000 new
+        // files, which Defender scans one by one on Windows (past 30 s in
+        // a Debug build); the refresh below reads them again, scanned.
+        tryVerify(function() { return controller.backups.length === 20000 && !controller.listing; }, 600000);
         compare(overlay.visible, false);
 
         const shown = [];
