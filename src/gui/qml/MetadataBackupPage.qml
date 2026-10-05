@@ -737,7 +737,6 @@ Page {
             }
 
             EmptyState {
-                anchors.centerIn: parent
                 visible: proposalList.count === 0 && !controller.busy
                          && (controller.hasScanned || controller.scanCancelled)
                 tone: !controller.scanCancelled && controller.proposalCount === 0 ? "good" : "info"
@@ -848,7 +847,6 @@ Page {
             }
 
             EmptyState {
-                anchors.centerIn: parent
                 visible: trackList.count === 0 && !controller.busy
                 iconName: controller.storedTrackCount === 0 ? "backup" : "edit-find"
                 text: controller.storedTrackCount === 0

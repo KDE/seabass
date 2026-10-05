@@ -331,12 +331,11 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 objectName: "emptyLabel"
-                anchors.centerIn: parent
                 visible: list.count === 0 && root.controller.listed && !root.controller.busy
+                iconName: "media-record"
                 text: "No recordings on this stick."
-                color: Theme.textMuted
             }
         }
 

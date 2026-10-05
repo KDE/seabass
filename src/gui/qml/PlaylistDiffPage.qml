@@ -532,13 +532,12 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 objectName: "emptyNote"
-                anchors.centerIn: parent
                 visible: !controller.busy && diffList.count === 0
+                iconName: controller.errorMessage.length > 0 ? "dialog-warning" : "view-list-details"
                 text: controller.errorMessage.length > 0 ? controller.errorMessage
                     : (controller.playlistNames.length === 0 ? "This catalog has no playlists." : "Nothing to show.")
-                color: Theme.textMuted
             }
         }
     }

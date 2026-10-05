@@ -699,7 +699,6 @@ ColumnLayout {
         }
 
         EmptyState {
-            anchors.centerIn: parent
             visible: root.hasAnchor && candidatesListView.count === 0
             iconName: "edit-find"
             text: "No matching tracks."
