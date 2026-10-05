@@ -323,8 +323,6 @@ ColumnLayout {
                 Layout.alignment: Qt.AlignTop
                 text: "Close"
                 iconName: "window-close"
-                ToolTip.visible: hovered
-                ToolTip.text: "Close"
                 onClicked: root.closeRequested()
             }
         }

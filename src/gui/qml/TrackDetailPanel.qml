@@ -211,8 +211,6 @@ Pane {
                 objectName: "closeTrackPanelButton"
                 text: "Close track details"
                 iconName: "window-close"
-                ToolTip.visible: hovered
-                ToolTip.text: "Close track details"
                 onClicked: panel.closeRequested()
             }
         }
