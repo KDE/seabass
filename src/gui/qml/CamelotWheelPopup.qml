@@ -193,6 +193,7 @@ PanelPopup {
         // instead of a drag cursor everywhere.
         Item {
             id: titleBar
+            objectName: "wheelTitleBar"
             Layout.fillWidth: true
             implicitHeight: titleRow.implicitHeight
 
@@ -206,25 +207,25 @@ PanelPopup {
                 // not a transform MouseArea's built-in drag machinery can
                 // attach to), so drag.target silently did nothing: the
                 // cursor changed but the popup never actually moved.
-                // mouse.x/mouse.y are always local to this MouseArea,
-                // which moves with the popup each time root.x/root.y
-                // below are updated, so the delta from the press-time
-                // local position stays correct frame to frame.
-                property real pressLocalX: 0
-                property real pressLocalY: 0
+                //
+                // The pointer is measured in window coordinates. This area
+                // moves with the popup, so a delta in its own coordinates
+                // shrank by however far the popup had already followed:
+                // the popup trailed the pointer at about half its pace.
+                property point pressScene: Qt.point(0, 0)
                 property real pressPopupX: 0
                 property real pressPopupY: 0
 
                 onPressed: (mouse) => {
-                    dragArea.pressLocalX = mouse.x;
-                    dragArea.pressLocalY = mouse.y;
+                    dragArea.pressScene = dragArea.mapToItem(null, mouse.x, mouse.y);
                     dragArea.pressPopupX = root.x;
                     dragArea.pressPopupY = root.y;
                 }
                 onPositionChanged: (mouse) => {
                     if (pressed) {
-                        root.x = dragArea.pressPopupX + (mouse.x - dragArea.pressLocalX);
-                        root.y = dragArea.pressPopupY + (mouse.y - dragArea.pressLocalY);
+                        const now = dragArea.mapToItem(null, mouse.x, mouse.y);
+                        root.x = dragArea.pressPopupX + (now.x - dragArea.pressScene.x);
+                        root.y = dragArea.pressPopupY + (now.y - dragArea.pressScene.y);
                     }
                 }
                 onReleased: {

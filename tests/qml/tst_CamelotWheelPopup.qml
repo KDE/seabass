@@ -130,4 +130,26 @@ TestCase {
         mouseMove(t.pointer, t.wheel.cx, t.wheel.cy);
         tryCompare(info, "text", "", 1000, "and the info area empties");
     }
+
+    // Dragged by its title bar, the popup moves as far as the pointer
+    // does. It used to measure the pointer in the title bar's own
+    // coordinates, which move with the popup, and trailed at half pace.
+    function test_draggingFollowsThePointer() {
+        const t = opened();
+        const bar = findChild(t.popup.contentItem, "wheelTitleBar");
+        verify(bar !== null);
+        const x0 = t.popup.x;
+        const y0 = t.popup.y;
+        const px = 20;
+        const py = bar.height / 2;
+        mousePress(bar, px, py);
+        for (let i = 1; i <= 10; ++i) {
+            // Where the pointer is now, in the bar's coordinates as they
+            // are after the popup has followed the last step.
+            mouseMove(bar, px + 6 * i - (t.popup.x - x0), py + 3 * i - (t.popup.y - y0));
+        }
+        mouseRelease(bar, px + 60 - (t.popup.x - x0), py + 30 - (t.popup.y - y0));
+        compare(Math.round(t.popup.x - x0), 60, "across as far as the pointer went");
+        compare(Math.round(t.popup.y - y0), 30, "and down");
+    }
 }
