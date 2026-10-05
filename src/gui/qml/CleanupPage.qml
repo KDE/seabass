@@ -726,11 +726,12 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 anchors.centerIn: parent
                 visible: plansListView.count === 0 && !cleanupController.busy
+                tone: "good"
+                iconName: "checkmark"
                 text: "No duplicate tracks with a removable copy found."
-                color: Theme.textMuted
             }
         }
     }

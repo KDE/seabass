@@ -515,11 +515,12 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 anchors.centerIn: parent
                 visible: plansListView.count === 0 && !duplicatesController.busy
+                tone: "good"
+                iconName: "checkmark"
                 text: "No duplicate tracks needing attention."
-                color: Theme.textMuted
             }
         }
     }

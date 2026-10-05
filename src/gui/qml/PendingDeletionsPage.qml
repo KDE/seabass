@@ -228,11 +228,13 @@ Page {
                 }
             }
 
-            Label {
+            EmptyState {
                 anchors.centerIn: parent
                 visible: pendingListView.count === 0 && !cleanupController.busy
-                text: "Nothing orphaned: every earlier cleanup's files are either still in use or already deleted."
-                color: Theme.textMuted
+                tone: "good"
+                iconName: "checkmark"
+                text: "Nothing orphaned."
+                detail: "Every earlier cleanup's files are either still in use or already deleted."
             }
         }
     }
