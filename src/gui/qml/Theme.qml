@@ -563,9 +563,11 @@ QtObject {
     // that the long subtitles take two lines rather than three or four.
     readonly property real homeCardMinWidth: scaled(300)
     // From this width up, the medium form: the page margins, the rail
-    // column, the gap beside it and one card column of the narrowest
-    // width. Below it, the narrow form.
-    readonly property real homeMediumWidth: 2 * pageMargin + homeRailWidth + pageMargin + homeCardMinWidth
+    // column, the gap beside it, the pane's room for a card's focus frame
+    // on either side (focusRoom, StickListPage's homePane) and one card
+    // column of the narrowest width. Below it, the narrow form.
+    readonly property real homeMediumWidth: 2 * pageMargin + homeRailWidth + pageMargin + 2 * focusRoom
+                                            + homeCardMinWidth
     // From this width up, the wide form: the medium form plus a second
     // card column and the gap between the two.
     readonly property real homeWideWidth: homeMediumWidth + rowSpacing + homeCardMinWidth
