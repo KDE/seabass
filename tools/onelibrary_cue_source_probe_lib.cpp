@@ -35,6 +35,8 @@
 #include "gui/edit/save_loop.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
+#include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
@@ -644,6 +646,11 @@ void plant(const std::string &stickRoot, const std::vector<Candidate> &five, std
             || result.skippedIds.contains(change->id())) {
             throw std::runtime_error("T4: Add Cue's save did not apply: " + result.error.toStdString());
         }
+        // What the app's edit session does after a save that finished
+        // (LibraryEditSession): the stick's note of a save in progress
+        // goes, or the next session opened on it offers to undo an
+        // "interrupted" save.
+        infrastructure::backup::clearSaveInProgress(infrastructure::backup::backupDirForStickRoot(stickRoot));
         gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(stickRoot);
         log << "T4: Add Cue saved pad B 1:15 to the OneLibrary row (content_id " << five[3].contentId << ")\n";
     }
