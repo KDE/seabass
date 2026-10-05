@@ -412,6 +412,12 @@ QtObject {
     // this app drew at 4. One number, and the controls that borrow their
     // background from the style get given one of their own.
     readonly property real cornerRadius: scaled(4)
+    // How far a control may draw outside itself, which a clipping
+    // container has to leave room for: FluentWinUI3's keyboard-focus
+    // frame sits 3 px around its control (FocusFrame.outerFrameSize),
+    // and cards flush with a clip's edge lost that side of it. Not
+    // scaled: the style's frame is not either.
+    readonly property real focusRoom: 3
     // A popup floating over the page -- the Camelot wheel, a picker -- is
     // a layer above the cards, and rounds a little more than they do so
     // it reads as one.
