@@ -1107,8 +1107,11 @@ TestCase {
     // this is what is on screen. A picture of each group, too.
     function test_theCardsComeInTheirOrder() {
         const settings = fakeAppSettings();
+        // At the wide form, where the cards go two to a row: the default
+        // window falls short of that threshold wherever the system font
+        // scales it up (macOS).
         const page = makePage([makeStick({hasEngine: false, enginePath: ""})], {"/media/MAIN": makeAdvice({})},
-                              {appSettingsController: settings});
+                              {appSettingsController: settings, width: Math.ceil(Theme.homeWideWidth) + 10});
         const grid = findByName(page, "actionGrid");
         verify(grid !== null, "the action grid must exist");
         const expected = {
