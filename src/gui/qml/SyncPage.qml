@@ -742,19 +742,15 @@ Page {
         // Said here because a sync is where it bites: the player offers to
         // import the rekordbox library and accepting replaces the Engine
         // side, the cues just levelled included.
-        RowLayout {
+        //
+        // A banner, like every other warning that has to be read before
+        // going on; as a line of yellow text it read as a status note.
+        WarningBanner {
             objectName: "importPromptRow"
             visible: syncController.playerWillOfferImport || syncController.importMarkStaged
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.warnText
-                text: "This stick's rekordbox library changed since the player last imported it, so the player "
-                    + "will offer the import, and accepting it replaces the Engine side, cues included. Once the "
-                    + "two are in sync, mark it imported and Save."
-            }
+            text: "This stick's rekordbox library changed since the player last imported it, so the player "
+                + "will offer the import, and accepting it replaces the Engine side, cues included. Once the "
+                + "two are in sync, mark it imported and Save."
             Button {
                 objectName: "markImportedButton"
                 text: syncController.importMarkStaged ? "Unstage" : "Mark As Already Imported"

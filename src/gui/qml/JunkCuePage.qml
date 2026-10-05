@@ -285,17 +285,10 @@ Page {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
-        RowLayout {
+        WarningBanner {
             objectName: "junkCueScanStopped"
             visible: root.scanStopped
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            Label {
-                text: "The scan was stopped before it finished, so this list is incomplete."
-                color: Theme.warnText
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
+            text: "The scan was stopped before it finished, so this list is incomplete."
             Button {
                 text: "Scan Again"
                 enabled: !consistencyController.busy

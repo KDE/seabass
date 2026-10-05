@@ -295,6 +295,10 @@ TestCase {
         verify(!row.visible, "nothing known about the player: no offer");
         controller.setImportStateForTesting(true);
         tryCompare(row, "visible", true, 2000);
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/SyncPage-import-prompt.png");
+        }
         var button = findChild(page, "markImportedButton");
         compare(button.text, "Mark As Already Imported");
         mouseClick(button);

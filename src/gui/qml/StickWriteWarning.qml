@@ -4,40 +4,13 @@
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import SeabassGui
 
 // Shown while a controller is actively writing to the stick (not merely
 // scanning it) -- unplugging mid-write can corrupt the very file being
 // written. Collapses to zero height when not visible, so pages can leave
 // it in their layout unconditionally.
-Rectangle {
-    id: root
-    property alias text: label.text
+WarningBanner {
     visible: false
-    Layout.fillWidth: true
-    implicitHeight: visible ? contentRow.implicitHeight + 16 : 0
-    color: Theme.warnBg
-    border.color: Theme.warnBorder
-    radius: Theme.cornerRadius
-
-    RowLayout {
-        id: contentRow
-        anchors.fill: parent
-        anchors.margins: 8
-        spacing: 8
-
-        SeabassIcon {
-            iconName: "dialog-warning"
-            size: Theme.iconSizeSmall * 0.75
-            color: Theme.warnIcon
-        }
-        Label {
-            id: label
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.warnText
-            text: "Writing to the stick. Do not remove it until this finishes."
-        }
-    }
+    text: "Writing to the stick. Do not remove it until this finishes."
 }

@@ -570,13 +570,9 @@ Page {
         // What the unreadable catalog alone held is missing from this
         // plan, and a DJ who believes their Engine cues were just backed
         // up when Engine was never opened has been misled.
-        Label {
+        WarningBanner {
             objectName: "unreadableCatalogsLabel"
-            Layout.fillWidth: true
             visible: controller.catalogsUnreadable.length > 0 && !controller.busy
-            wrapMode: Text.WordWrap
-            color: Theme.warnText
-            font.pointSize: Theme.fontSmall
             text: {
                 var names = controller.catalogsUnreadable.join(", ");
                 return (controller.catalogsUnreadable.length === 1

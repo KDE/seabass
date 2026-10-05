@@ -249,36 +249,14 @@ Page {
                         onSourceRequested: (value) => root.currentSource = value
                     }
 
-                    Rectangle {
+                    WarningBanner {
                         visible: root.cueCountsLookOutOfSync
-                        Layout.fillWidth: true
-                        implicitHeight: syncWarningRow.implicitHeight + 16
-                        color: Theme.warnBg
-                        border.color: Theme.warnBorder
-                        radius: Theme.cornerRadius
-
-                        RowLayout {
-                            id: syncWarningRow
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 8
-                            SeabassIcon {
-                                iconName: "dialog-warning"
-                                size: Theme.iconSizeSmall * 0.75
-                                color: Theme.warnIcon
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: Theme.warnText
-                                text: "DeviceLibrary has " + (controller.rekordboxStats.totalCuePoints || 0)
-                                    + " cue point(s), Engine has " + (controller.engineStats.totalCuePoints || 0)
-                                    + "; these catalogs look out of sync."
-                            }
-                            Button {
-                                text: "Go to Sync Cue Points"
-                                onClicked: root.syncRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
-                            }
+                        text: "DeviceLibrary has " + (controller.rekordboxStats.totalCuePoints || 0)
+                            + " cue point(s), Engine has " + (controller.engineStats.totalCuePoints || 0)
+                            + "; these catalogs look out of sync."
+                        Button {
+                            text: "Go to Sync Cue Points"
+                            onClicked: root.syncRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
                         }
                     }
 

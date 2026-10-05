@@ -366,12 +366,8 @@ Page {
         // that the field is unreliable; one that says which format
         // cannot hold it teaches them something true about their own
         // library.
-        Label {
-            Layout.fillWidth: true
+        WarningBanner {
             visible: controller.commentsRekordboxCannotTake > 0
-            wrapMode: Text.WordWrap
-            color: Theme.warnText
-            font.pointSize: Theme.fontSmall
             text: {
                 const n = controller.commentsRekordboxCannotTake;
                 return (n === 1 ? "One track's comment cannot be put back: it is"
