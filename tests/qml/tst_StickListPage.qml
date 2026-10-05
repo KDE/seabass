@@ -1029,7 +1029,11 @@ TestCase {
             {tag: "wide plus 10", width: Theme.homeWideWidth + 10, form: "wide", railColumn: true, columns: 2},
             {tag: "wide at the threshold", width: Theme.homeWideWidth, form: "wide", railColumn: true, columns: 2},
             {tag: "wide minus 10", width: Theme.homeWideWidth - 10, form: "medium", railColumn: true, columns: 1},
-            {tag: "medium", width: 700, form: "medium", railColumn: true, columns: 1},
+            // Midway between the thresholds, not a fixed 700: the
+            // thresholds scale with the system font, and on macOS the medium
+            // one sits just above 700.
+            {tag: "medium", width: Math.round((Theme.homeMediumWidth + Theme.homeWideWidth) / 2), form: "medium",
+             railColumn: true, columns: 1},
             {tag: "medium plus 10", width: Theme.homeMediumWidth + 10, form: "medium", railColumn: true, columns: 1},
             {tag: "medium at the threshold", width: Theme.homeMediumWidth, form: "medium", railColumn: true, columns: 1},
             {tag: "medium minus 10", width: Theme.homeMediumWidth - 10, form: "narrow", railColumn: false, columns: 1},
