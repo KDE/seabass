@@ -500,13 +500,10 @@ void PlaylistDiffController::applyDiff(domain::PlaylistDiff diff)
         m_verdict = QStringLiteral("%1 is %2 minus %3%4.")
                         .arg(m_playlistB, m_playlistA, tracksOnly(m_diff.onlyA, m_diff.extraA), reordered);
     } else {
+        // One pass: a name with "%1" in it is text, not a placeholder.
         m_verdict = QStringLiteral("%1 shared. %2 has %3 the other lacks, %4 has %5%6.")
-                        .arg(m_diff.shared)
-                        .arg(m_playlistA)
-                        .arg(m_diff.onlyA)
-                        .arg(m_playlistB)
-                        .arg(m_diff.onlyB)
-                        .arg(reordered);
+                        .arg(QString::number(m_diff.shared), m_playlistA, QString::number(m_diff.onlyA), m_playlistB,
+                             QString::number(m_diff.onlyB), reordered);
     }
 
     rebuildRows();
