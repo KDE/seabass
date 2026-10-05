@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Shapes
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
@@ -80,6 +81,29 @@ Popup {
     // see the file's own doc comment above.
     signal keyHovered(int number, bool isMinor, bool hovering)
     signal relationHovered(string relationLabel, bool hovering)
+
+    // What the pointer is over, shown in the info area top right instead
+    // of a tooltip. Tooltips sat on the wheel itself, over the very
+    // wedges and keys you were trying to read; the info area is in view
+    // and covers nothing.
+    property string hoverInfo: ""
+    // Set on enter; on leave, cleared only if it is still this item's
+    // text. Moving from one wedge to the next can deliver the second's
+    // enter before the first's exit, and a plain clear on exit would
+    // blank the info for the wedge the pointer is now on.
+    function showInfo(text, hovering) {
+        if (hovering) {
+            root.hoverInfo = text;
+        } else if (root.hoverInfo === text) {
+            root.hoverInfo = "";
+        }
+    }
+    function wedgeInfo(number, isMinor, isOrigin) {
+        const relation = root.relationLabel(number, isMinor);
+        return root.wedgeLabel(number, isMinor)
+            + (relation.length > 0 ? ": " + relation : "")
+            + (isOrigin ? " (this track's key)" : "");
+    }
 
     // camelotLabel is e.g. "8A", or "" when the key that opened this
     // didn't parse (KeyBadge.qml's own fallback/unrecognized-key case),
@@ -211,16 +235,50 @@ Popup {
                 }
             }
         }
-        Label {
+        // Context on the left, what the pointer is over on the right. A
+        // fixed height, three lines, whether or not anything is hovered:
+        // if the row grew with the text, the wheel below would shrink and
+        // move while you hovered it, and the wedge under the pointer with
+        // it.
+        FontMetrics { id: infoMetrics; font.pointSize: Theme.fontSmall }
+        RowLayout {
             Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.textMuted
-            font.pointSize: Theme.fontSmall
-            text: root.originNumber === 0
-                ? "A visual reference: color and position show which keys mix well together."
-                : "Showing how every key relates to " + root.wedgeLabel(root.originNumber, root.originIsMinor) + "."
+            Layout.preferredHeight: Math.ceil(infoMetrics.lineSpacing * 3)
+            spacing: 12
+            Label {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                Layout.alignment: Qt.AlignTop
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+                color: Theme.textMuted
+                font.pointSize: Theme.fontSmall
+                text: root.originNumber === 0
+                    ? "A visual reference: color and position show which keys mix well together."
+                    : "Showing how every key relates to " + root.wedgeLabel(root.originNumber, root.originIsMinor) + "."
+            }
+            Label {
+                objectName: "wheelHoverInfo"
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                Layout.alignment: Qt.AlignTop
+                horizontalAlignment: Text.AlignRight
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+                color: Theme.text
+                font.pointSize: Theme.fontSmall
+                text: root.hoverInfo
+            }
         }
 
+        // Two rings of twelve segments that touch and close the circle, the
+        // way a Camelot wheel is drawn everywhere else: major keys (B)
+        // outside, their relative minors (A) inside, each pair on one
+        // spoke. It used to place twelve small circles on each of two rings,
+        // which left every key floating in empty space with nothing to say
+        // which ones were neighbours.
         Item {
             id: wheel
             Layout.fillWidth: true
@@ -228,117 +286,184 @@ Popup {
 
             readonly property real cx: width / 2
             readonly property real cy: height / 2
-            readonly property real outerRadius: Math.min(width, height) / 2 - 26
-            readonly property real innerRadius: wheel.outerRadius - 54
+            readonly property real majorOuter: Math.max(0, Math.min(width, height) / 2 - 4)
+            readonly property real majorInner: wheel.majorOuter * 0.64
+            readonly property real minorOuter: wheel.majorInner
+            readonly property real minorInner: wheel.majorOuter * 0.30
 
-            Repeater {
-                model: 12
-                delegate: Item {
-                    id: majorWedge
-                    required property int index
-                    readonly property int number: index + 1
-                    readonly property real angle: (index * 30 - 90) * Math.PI / 180
-                    x: Theme.snap(wheel.cx + wheel.outerRadius * Math.cos(angle) - width / 2)
-                    y: Theme.snap(wheel.cy + wheel.outerRadius * Math.sin(angle) - height / 2)
-                    width: 42
-                    height: 42
+            // One key, as a ring segment: its colour, a hairline in the
+            // page colour as the seam to its neighbours, and on top of that
+            // whatever outline the key carries -- its relation to the
+            // track's key, and the track's own key.
+            component KeySegment: Item {
+                id: segment
+                required property int index
+                required property bool minor
+                readonly property int number: index + 1
+                readonly property real centreDeg: index * 30 - 90
+                readonly property real innerR: segment.minor ? wheel.minorInner : wheel.majorInner
+                readonly property real outerR: segment.minor ? wheel.minorOuter : wheel.majorOuter
+                // var, not color: relationColor() answers null for a key with no
+                // relation to the track's, and null assigned to a color property
+                // is opaque black, which drew a black ring inside every
+                // unrelated segment.
+                readonly property var highlight: root.relationColor(segment.number, segment.minor)
+                readonly property bool isOrigin: segment.number === root.originNumber
+                                                 && segment.minor === root.originIsMinor
+                anchors.fill: parent
+                opacity: root.originNumber !== 0 && !segment.isOrigin
+                    && root.relationLabel(segment.number, segment.minor) === "Unrelated key" ? 0.6 : 1.0
+                Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
 
-                    readonly property color highlight: root.relationColor(majorWedge.number, false)
-                    readonly property bool isOrigin: majorWedge.number === root.originNumber && !root.originIsMinor
-                    opacity: root.originNumber !== 0 && !majorWedge.isOrigin
-                        && root.relationLabel(majorWedge.number, false) === "Unrelated key" ? 0.6 : 1.0
-                    Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
+                Arc {
+                    innerR: segment.innerR
+                    outerR: segment.outerR
+                    centreDeg: segment.centreDeg
+                    fill: Theme.colorForKey(segment.number + (segment.minor ? "A" : "B"))
+                    stroke: Theme.background
+                    strokeW: 2
+                }
+                // Outlines inset by half their width, so they sit inside the
+                // segment rather than across the seam onto its neighbours.
+                Arc {
+                    visible: segment.highlight !== null
+                    innerR: segment.innerR + 3
+                    outerR: segment.outerR - 3
+                    centreDeg: segment.centreDeg
+                    spanDeg: 30 - 2 * (3 / Math.max(1, (segment.innerR + segment.outerR) / 2)) * 180 / Math.PI
+                    stroke: segment.highlight !== null ? segment.highlight : "transparent"
+                    strokeW: 3
+                }
+                Arc {
+                    visible: segment.isOrigin
+                    innerR: segment.innerR + 1.5
+                    outerR: segment.outerR - 1.5
+                    centreDeg: segment.centreDeg
+                    spanDeg: 30 - 2 * (1.5 / Math.max(1, (segment.innerR + segment.outerR) / 2)) * 180 / Math.PI
+                    stroke: Theme.text
+                    strokeW: 3
+                }
+                Label {
+                    readonly property real midR: (segment.innerR + segment.outerR) / 2
+                    readonly property real angle: segment.centreDeg * Math.PI / 180
+                    x: Theme.snap(wheel.cx + midR * Math.cos(angle) - width / 2)
+                    y: Theme.snap(wheel.cy + midR * Math.sin(angle) - height / 2)
+                    text: root.wedgeLabel(segment.number, segment.minor)
+                    font.bold: true
+                    font.pointSize: Theme.fontSmall
+                    color: Theme.contrastingTextColor(
+                        Theme.colorForKey(segment.number + (segment.minor ? "A" : "B")))
+                }
+            }
 
-                    // Origin marker -- a plain ring independent of the
-                    // relation highlight below, so it stays visible no
-                    // matter what's faded.
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: -5
-                        radius: width / 2
-                        color: "transparent"
-                        border.width: majorWedge.isOrigin ? 2 : 0
-                        border.color: Theme.text
+            // A ring segment from innerR to outerR, spanDeg wide, centred
+            // on centreDeg (0 = east, clockwise, as screen angles run).
+            component Arc: Shape {
+                id: arc
+                property real innerR: 0
+                property real outerR: 0
+                property real centreDeg: 0
+                property real spanDeg: 30
+                property color fill: "transparent"
+                property color stroke: "transparent"
+                property real strokeW: 1
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                readonly property real a0: (arc.centreDeg - arc.spanDeg / 2) * Math.PI / 180
+                readonly property real a1: (arc.centreDeg + arc.spanDeg / 2) * Math.PI / 180
+                ShapePath {
+                    fillColor: arc.fill
+                    strokeColor: arc.stroke
+                    strokeWidth: arc.strokeW
+                    joinStyle: ShapePath.MiterJoin
+                    startX: wheel.cx + arc.outerR * Math.cos(arc.a0)
+                    startY: wheel.cy + arc.outerR * Math.sin(arc.a0)
+                    PathArc {
+                        x: wheel.cx + arc.outerR * Math.cos(arc.a1)
+                        y: wheel.cy + arc.outerR * Math.sin(arc.a1)
+                        radiusX: arc.outerR
+                        radiusY: arc.outerR
+                        direction: PathArc.Clockwise
                     }
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: width / 2
-                        color: Theme.colorForKey(majorWedge.number + "B")
-                        border.width: majorWedge.highlight ? 3 : 0
-                        border.color: majorWedge.highlight ?? "transparent"
-                        Label {
-                            anchors.centerIn: parent
-                            text: root.wedgeLabel(majorWedge.number, false)
-                            font.bold: true
-                            font.pointSize: Theme.fontSmall
-                            color: Theme.contrastingTextColor(parent.color)
-                        }
+                    PathLine {
+                        x: wheel.cx + arc.innerR * Math.cos(arc.a1)
+                        y: wheel.cy + arc.innerR * Math.sin(arc.a1)
                     }
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        ToolTip.visible: containsMouse
-                        ToolTip.text: root.wedgeLabel(majorWedge.number, false)
-                            + (root.relationLabel(majorWedge.number, false).length > 0
-                                ? ": " + root.relationLabel(majorWedge.number, false) : "")
-                            + (majorWedge.isOrigin ? " (this track's key)" : "")
-                        onEntered: root.keyHovered(majorWedge.number, false, true)
-                        onExited: root.keyHovered(majorWedge.number, false, false)
+                    PathArc {
+                        x: wheel.cx + arc.innerR * Math.cos(arc.a0)
+                        y: wheel.cy + arc.innerR * Math.sin(arc.a0)
+                        radiusX: arc.innerR
+                        radiusY: arc.innerR
+                        direction: PathArc.Counterclockwise
+                    }
+                    PathLine {
+                        x: wheel.cx + arc.outerR * Math.cos(arc.a0)
+                        y: wheel.cy + arc.outerR * Math.sin(arc.a0)
                     }
                 }
             }
+
             Repeater {
                 model: 12
-                delegate: Item {
-                    id: minorWedge
-                    required property int index
-                    readonly property int number: index + 1
-                    readonly property real angle: (index * 30 - 90) * Math.PI / 180
-                    x: Theme.snap(wheel.cx + wheel.innerRadius * Math.cos(angle) - width / 2)
-                    y: Theme.snap(wheel.cy + wheel.innerRadius * Math.sin(angle) - height / 2)
-                    width: 38
-                    height: 38
+                delegate: KeySegment { minor: false }
+            }
+            Repeater {
+                model: 12
+                delegate: KeySegment { minor: true }
+            }
 
-                    readonly property color highlight: root.relationColor(minorWedge.number, true)
-                    readonly property bool isOrigin: minorWedge.number === root.originNumber && root.originIsMinor
-                    opacity: root.originNumber !== 0 && !minorWedge.isOrigin
-                        && root.relationLabel(minorWedge.number, true) === "Unrelated key" ? 0.6 : 1.0
-                    Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
+            // One pointer target for all twenty-four segments, hit by angle
+            // and radius. A segment is not a rectangle, so a MouseArea per
+            // key would claim the corners it does not cover and answer for
+            // the wrong key near every seam.
+            MouseArea {
+                id: wheelPointer
+                objectName: "wheelPointer"
+                anchors.fill: parent
+                hoverEnabled: true
+                property int hoverIndex: -1
+                property bool hoverMinor: false
 
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: -5
-                        radius: width / 2
-                        color: "transparent"
-                        border.width: minorWedge.isOrigin ? 2 : 0
-                        border.color: Theme.text
+                function segmentAt(mx, my) {
+                    const dx = mx - wheel.cx;
+                    const dy = my - wheel.cy;
+                    const r = Math.sqrt(dx * dx + dy * dy);
+                    var minor;
+                    if (r >= wheel.majorInner && r <= wheel.majorOuter) {
+                        minor = false;
+                    } else if (r >= wheel.minorInner && r < wheel.majorInner) {
+                        minor = true;
+                    } else {
+                        return {index: -1, minor: false};
                     }
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: width / 2
-                        color: Theme.colorForKey(minorWedge.number + "A")
-                        border.width: minorWedge.highlight ? 3 : 0
-                        border.color: minorWedge.highlight ?? "transparent"
-                        Label {
-                            anchors.centerIn: parent
-                            text: root.wedgeLabel(minorWedge.number, true)
-                            font.bold: true
-                            font.pointSize: Theme.fontSmall
-                            color: Theme.contrastingTextColor(parent.color)
-                        }
+                    const deg = Math.atan2(dy, dx) * 180 / Math.PI;
+                    const index = ((Math.round((deg + 90) / 30) % 12) + 12) % 12;
+                    return {index: index, minor: minor};
+                }
+                function setHover(index, minor) {
+                    if (index === hoverIndex && minor === hoverMinor) {
+                        return;
                     }
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        ToolTip.visible: containsMouse
-                        ToolTip.text: root.wedgeLabel(minorWedge.number, true)
-                            + (root.relationLabel(minorWedge.number, true).length > 0
-                                ? ": " + root.relationLabel(minorWedge.number, true) : "")
-                            + (minorWedge.isOrigin ? " (this track's key)" : "")
-                        onEntered: root.keyHovered(minorWedge.number, true, true)
-                        onExited: root.keyHovered(minorWedge.number, true, false)
+                    if (hoverIndex >= 0) {
+                        const n = hoverIndex + 1;
+                        root.keyHovered(n, hoverMinor, false);
+                        root.showInfo(root.wedgeInfo(n, hoverMinor,
+                            n === root.originNumber && hoverMinor === root.originIsMinor), false);
+                    }
+                    hoverIndex = index;
+                    hoverMinor = minor;
+                    if (index >= 0) {
+                        const n = index + 1;
+                        root.keyHovered(n, minor, true);
+                        root.showInfo(root.wedgeInfo(n, minor,
+                            n === root.originNumber && minor === root.originIsMinor), true);
                     }
                 }
+                onPositionChanged: (mouse) => {
+                    const hit = segmentAt(mouse.x, mouse.y);
+                    setHover(hit.index, hit.minor);
+                }
+                onExited: setHover(-1, false)
             }
         }
 
@@ -375,11 +500,11 @@ Popup {
 
                     HoverHandler {
                         id: legendHover
-                        onHoveredChanged: root.relationHovered(legendItem.modelData.relationLabel, legendHover.hovered)
+                        onHoveredChanged: {
+                            root.relationHovered(legendItem.modelData.relationLabel, legendHover.hovered);
+                            root.showInfo(legendItem.modelData.tip, legendHover.hovered);
+                        }
                     }
-                    ToolTip.visible: legendHover.hovered
-                    ToolTip.text: legendItem.modelData.tip
-                    ToolTip.delay: 300
                 }
             }
         }
