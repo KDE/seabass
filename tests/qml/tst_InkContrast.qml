@@ -262,13 +262,32 @@ TestCase {
         const inkOnAccent = ratio(Theme.accentInk, Theme.accent);
         verify(inkOnAccent >= 4.5, "Theme.accentInk reads at " + inkOnAccent.toFixed(2) + ":1 on the accent");
         // Under KDE's style and Material the palette is the style's own and
-        // ThemePalette leaves it alone; only Basic and Fusion take its roles.
+        // ThemePalette leaves it alone; Basic, Fusion and SeabassStyle take
+        // its roles.
         if (!ControlsStyle.inksFromPalette)
             return;
         for (const on of [false, true]) {
             chooseSystemTheme(on);
             const r = ratio(appWindow.palette.highlightedText, appWindow.palette.highlight);
             verify(r >= 4.5, (on ? "system theme" : "Kelp") + ": selected text reads at " + r.toFixed(2) + ":1 on the accent");
+        }
+    }
+
+    // The style this app sets for itself must take Theme's palette. The
+    // check above returns early for a style that does not, and when
+    // SeabassStyle was introduced it was missing from that list: the test
+    // went on passing while every page on macOS lost its Kelp ground and
+    // came up the platform's black. A style the app chose itself is never
+    // one whose palette is somebody else's.
+    function test_theAppsOwnStyleTakesThemesPalette() {
+        if (ControlsStyle.name !== "SeabassStyle")
+            return;
+        verify(ControlsStyle.inksFromPalette,
+               "SeabassStyle falls back to Basic for Page and friends, which ink from the palette");
+        for (const on of [false, true]) {
+            chooseSystemTheme(on);
+            compare(String(appWindow.palette.window), String(Theme.background),
+                    (on ? "system theme" : "Kelp") + ": the window's ground is Theme's");
         }
     }
 
