@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "read_probe.hpp"
+#include "run_progress.hpp"
 #include "utf8_path.hpp"
 
 #include <algorithm>
@@ -218,7 +219,7 @@ struct AlignedBuffer
 };
 
 double measureStreaming(const std::vector<std::string> &files, std::uint64_t bytesPerFile,
-                        const CancelCheck &cancelled)
+                        const CancelCheck &cancelled, RunProgress &progress)
 {
     for (const auto &path : files) {
         dropCacheFor(path);
@@ -226,26 +227,29 @@ double measureStreaming(const std::vector<std::string> &files, std::uint64_t byt
     std::vector<char> buffer(bytesPerFile);
     std::uint64_t total = 0;
     auto start = Clock::now();
+    progress.begin(ProbeStep::Streaming);
     for (const auto &path : files) {
         if (cancelled()) {
             throw Cancelled();
         }
         std::ifstream in(pathFromUtf8(path), std::ios::binary);
-        if (!in) {
-            continue;
+        if (in) {
+            in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            if (in.gcount() > 0) {
+                total += static_cast<std::uint64_t>(in.gcount());
+            }
         }
-        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        if (in.gcount() > 0) {
-            total += static_cast<std::uint64_t>(in.gcount());
-        }
+        progress.advance();
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return (seconds > 0.0 && total > 0) ? static_cast<double>(total) / seconds : 0.0;
 }
 
 void measureRandomReads(const std::vector<std::string> &files, int reads, const CancelCheck &cancelled,
-                        ReadMeasurement &out)
+                        ReadMeasurement &out, RunProgress &progress)
 {
+    progress.begin(ProbeStep::RandomReads);
+    const std::uint64_t endOfStep = progress.done() + static_cast<std::uint64_t>(std::max(reads, 0));
     struct Candidate
     {
         std::string path;
@@ -260,6 +264,7 @@ void measureRandomReads(const std::vector<std::string> &files, int reads, const 
         }
     }
     if (candidates.empty() || reads <= 0) {
+        progress.advanceTo(endOfStep);
         return;
     }
 
@@ -268,6 +273,7 @@ void measureRandomReads(const std::vector<std::string> &files, int reads, const 
     std::mt19937_64 rng(0x5EABA55u);
     AlignedBuffer buffer;
     if (buffer.data == nullptr) {
+        progress.advanceTo(endOfStep);
         return;
     }
     std::vector<double> latencies;
@@ -287,13 +293,13 @@ void measureRandomReads(const std::vector<std::string> &files, int reads, const 
         std::uint64_t slots = c.size / kAlignment - 1;
         std::uint64_t offset = std::uniform_int_distribution<std::uint64_t>(0, slots - 1)(rng) * kAlignment;
         DirectReader reader(c.path);
-        if (!reader.ok()) {
-            continue;
+        if (reader.ok()) {
+            auto start = Clock::now();
+            if (reader.readAt(offset, buffer.data)) {
+                latencies.push_back(elapsedMs(start));
+            }
         }
-        auto start = Clock::now();
-        if (reader.readAt(offset, buffer.data)) {
-            latencies.push_back(elapsedMs(start));
-        }
+        progress.advance();
     }
     out.randomReads = static_cast<int>(latencies.size());
     out.randomReadMedianMs = median(latencies);
@@ -302,8 +308,9 @@ void measureRandomReads(const std::vector<std::string> &files, int reads, const 
 }
 
 void measureSmallFiles(const std::vector<std::string> &files, std::uint64_t readBytes,
-                       const CancelCheck &cancelled, ReadMeasurement &out)
+                       const CancelCheck &cancelled, ReadMeasurement &out, RunProgress &progress)
 {
+    progress.begin(ProbeStep::SmallFiles);
     for (const auto &path : files) {
         dropCacheFor(path);
     }
@@ -317,15 +324,14 @@ void measureSmallFiles(const std::vector<std::string> &files, std::uint64_t read
         }
         auto start = Clock::now();
         std::ifstream in(pathFromUtf8(path), std::ios::binary);
-        if (!in) {
-            continue;
+        if (in) {
+            in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            if (in.gcount() > 0) {
+                in.close();
+                latencies.push_back(elapsedMs(start));
+            }
         }
-        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        if (in.gcount() <= 0) {
-            continue;
-        }
-        in.close();
-        latencies.push_back(elapsedMs(start));
+        progress.advance();
     }
     double seconds = std::chrono::duration<double>(Clock::now() - groupStart).count();
     out.smallFilesRead = static_cast<int>(latencies.size());
@@ -341,6 +347,8 @@ ReadMeasurement ReadProbe::run(const std::vector<std::string> &largeFiles, const
                                const ReadProbeOptions &options)
 {
     ReadMeasurement m;
+    RunProgress progress(options.onProgress, largeFiles.size() + static_cast<std::uint64_t>(std::max(options.randomReads, 0))
+                                                 + smallFiles.size());
     for (const auto &path : catalogFiles) {
         std::error_code ec;
         auto size = fs::file_size(path, ec);
@@ -348,9 +356,9 @@ ReadMeasurement ReadProbe::run(const std::vector<std::string> &largeFiles, const
             m.catalogBytes += size;
         }
     }
-    m.streamingBytesPerSecond = measureStreaming(largeFiles, options.streamingBytesPerFile, cancelled);
-    measureRandomReads(largeFiles, options.randomReads, cancelled, m);
-    measureSmallFiles(smallFiles, options.smallFileReadBytes, cancelled, m);
+    m.streamingBytesPerSecond = measureStreaming(largeFiles, options.streamingBytesPerFile, cancelled, progress);
+    measureRandomReads(largeFiles, options.randomReads, cancelled, m, progress);
+    measureSmallFiles(smallFiles, options.smallFileReadBytes, cancelled, m, progress);
     return m;
 }
 

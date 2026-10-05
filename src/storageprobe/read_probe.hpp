@@ -18,6 +18,9 @@ struct ReadProbeOptions
     std::uint64_t streamingBytesPerFile = 4 * 1024 * 1024;
     int randomReads = 300;
     std::uint64_t smallFileReadBytes = 16 * 1024;
+    // One unit per large file streamed, per random read and per small
+    // file read; see ProbeProgress.
+    ProbeProgress onProgress;
 };
 
 // Reads real files already on the drive; never writes. See README.md

@@ -38,6 +38,13 @@ block fails, is the controller retrying error correction on weak cells,
 which makes those reads abnormally slow. The read probe counts the same
 symptom in its own tail: reads over five times the median.
 
+Each probe can report how far it is through its options' `onProgress`
+(`ProbeProgress` in `measurement.hpp`): the total is counted before the
+first read or write and stays put, and the count only grows. A walk can
+be counted the same way: `countWalkSlices()` lists the top two levels to
+say how many folders `walkTree()` will enter two levels down, and the
+walk's `onSlice` counts them off as it finishes each one.
+
 `workload.hpp` models a session as a list of actions (so many random
 reads, so many small opens, so many bytes streamed, so many times), sums
 the modelled waiting for the measured drive and for a reference drive,

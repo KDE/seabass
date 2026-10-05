@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "write_probe.hpp"
+#include "run_progress.hpp"
 #include "utf8_path.hpp"
 
 #include <algorithm>
@@ -189,6 +190,14 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
     WriteMeasurement m;
     std::mt19937_64 rng(0x5EABA55u);
 
+    constexpr std::uint64_t kMiB = 1024 * 1024;
+    const auto mebibytes = [](std::uint64_t bytes) { return (bytes + kMiB - 1) / kMiB; };
+    RunProgress progress(options.onProgress,
+                         static_cast<std::uint64_t>(std::max(options.streamingFiles, 0)) * mebibytes(options.streamingBytesPerFile)
+                             + static_cast<std::uint64_t>(std::max(options.smallFiles, 0))
+                             + mebibytes(options.inPlaceFileBytes)
+                             + static_cast<std::uint64_t>(std::max(options.inPlaceUpdates, 0)));
+
     // Streaming: a library export copying audio.
     {
         std::vector<char> chunk(1024 * 1024);
@@ -197,6 +206,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             c = static_cast<char>(byte(rng));  // not all zeros: some controllers compress those
         }
         std::uint64_t total = 0;
+        progress.begin(ProbeStep::StreamingWrite);
         auto start = Clock::now();
         for (int i = 0; i < options.streamingFiles; ++i) {
             if (cancelled()) {
@@ -217,6 +227,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
                     throw std::runtime_error("write failed in " + utf8FromPath(scratch));
                 }
                 total += bytes;
+                progress.advance();
             }
             file.sync();
         }
@@ -229,6 +240,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
     {
         std::vector<char> payload(options.smallFileBytes, 'a');
         std::vector<double> latencies;
+        progress.begin(ProbeStep::SmallFileWrites);
         auto groupStart = Clock::now();
         for (int i = 0; i < options.smallFiles; ++i) {
             if ((i & 0xf) == 0) {
@@ -239,14 +251,14 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             fs::path path = scratch / ("small-" + std::to_string(i) + ".dat");
             auto start = Clock::now();
             SyncedFile file(path, true);
-            if (!file.ok() || !file.writeAt(0, payload.data(), payload.size())) {
-                continue;
+            if (file.ok() && file.writeAt(0, payload.data(), payload.size())) {
+                file.sync();
+                file.close();
+                latencies.push_back(elapsedMs(start));
+                m.bytesWritten += payload.size();
+                files.smallFiles.push_back(utf8FromPath(path));
             }
-            file.sync();
-            file.close();
-            latencies.push_back(elapsedMs(start));
-            m.bytesWritten += payload.size();
-            files.smallFiles.push_back(utf8FromPath(path));
+            progress.advance();
         }
         double seconds = std::chrono::duration<double>(Clock::now() - groupStart).count();
         m.smallFilesWritten = static_cast<int>(latencies.size());
@@ -257,6 +269,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
     // In place: a database page updated on save.
     {
         fs::path target = scratch / "inplace.db";
+        progress.begin(ProbeStep::InPlaceUpdates);
         {
             std::vector<char> fill(1024 * 1024, 'b');
             SyncedFile file(target, true);
@@ -265,6 +278,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             }
             for (std::uint64_t offset = 0; offset < options.inPlaceFileBytes; offset += fill.size()) {
                 file.writeAt(offset, fill.data(), std::min<std::uint64_t>(fill.size(), options.inPlaceFileBytes - offset));
+                progress.advance();
             }
             file.sync();
             m.bytesWritten += options.inPlaceFileBytes;
@@ -272,6 +286,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
         std::vector<char> page(4096, 'c');
         std::uniform_int_distribution<std::uint64_t> slot(0, options.inPlaceFileBytes / page.size() - 1);
         std::vector<double> latencies;
+        const std::uint64_t endOfUpdates = progress.done() + static_cast<std::uint64_t>(std::max(options.inPlaceUpdates, 0));
         SyncedFile file(target, false);
         if (file.ok()) {
             for (int i = 0; i < options.inPlaceUpdates; ++i) {
@@ -282,13 +297,16 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
                 }
                 std::uint64_t offset = slot(rng) * page.size();
                 auto start = Clock::now();
-                if (!file.writeAt(offset, page.data(), page.size()) || !file.sync()) {
-                    continue;
+                if (file.writeAt(offset, page.data(), page.size()) && file.sync()) {
+                    latencies.push_back(elapsedMs(start));
+                    m.bytesWritten += page.size();
                 }
-                latencies.push_back(elapsedMs(start));
-                m.bytesWritten += page.size();
+                progress.advance();
             }
         }
+        // An in-place file that would not open did no updates; its units
+        // are over all the same.
+        progress.advanceTo(endOfUpdates);
         m.inPlaceUpdates = static_cast<int>(latencies.size());
         m.inPlaceUpdateMedianMs = median(latencies);
     }

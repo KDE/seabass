@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
@@ -33,6 +34,44 @@ void writeFile(const fs::path &path, std::size_t bytes)
     std::string chunk(bytes, 'x');
     out.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
 }
+
+// What a probe's onProgress said, for the checks a counted bar needs
+// (#58): one total for the run, a count that only grows and ends on it,
+// and the steps in the order the probe takes them.
+struct ProgressLog
+{
+    std::vector<storageprobe::ProbeStep> steps;  // each step once, in order
+    std::vector<std::uint64_t> done;
+    std::uint64_t total = 0;
+    bool totalChanged = false;
+
+    storageprobe::ProbeProgress callback()
+    {
+        return [this](storageprobe::ProbeStep step, std::uint64_t d, std::uint64_t t) {
+            if (steps.empty() || steps.back() != step) {
+                steps.push_back(step);
+            }
+            if (!done.empty() && t != total) {
+                totalChanged = true;
+            }
+            total = t;
+            done.push_back(d);
+        };
+    }
+
+    void verify(std::uint64_t expectedTotal, const std::vector<storageprobe::ProbeStep> &expectedSteps) const
+    {
+        assert(!done.empty());
+        assert(!totalChanged);
+        assert(total == expectedTotal);
+        assert(done.front() == 0);
+        for (std::size_t i = 1; i < done.size(); ++i) {
+            assert(done[i] >= done[i - 1]);
+        }
+        assert(done.back() == total);
+        assert(steps == expectedSteps);
+    }
+};
 
 }  // namespace
 
@@ -61,8 +100,14 @@ int main()
 
         ProbeOptions options;
         options.randomReads = 40;
+        ProgressLog progress;
+        options.onProgress = progress.callback();
         auto m = StickPerformanceProbe::run(audio, small, {seabass::pathToUtf8(db)}, seabass::application::CancellationToken::none(),
                                             options);
+        // One unit per file streamed, per random read, per small file.
+        progress.verify(3 + 40 + 20, {storageprobe::ProbeStep::Streaming, storageprobe::ProbeStep::RandomReads,
+                                      storageprobe::ProbeStep::SmallFiles});
+        assert(progress.done.size() > 3 + 40 + 20);  // a report per unit, not a jump at the end
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.randomReads == 40);
         assert(m.randomReadMedianMs > 0.0);
@@ -94,9 +139,17 @@ int main()
     {
         fs::path tiny = root / "tiny.mp3";
         writeFile(tiny, 4096);
-        auto m = StickPerformanceProbe::run({seabass::pathToUtf8(tiny)}, {}, {});
+        ProbeOptions options;
+        ProgressLog progress;
+        options.onProgress = progress.callback();
+        auto m = StickPerformanceProbe::run({seabass::pathToUtf8(tiny)}, {}, {}, seabass::application::CancellationToken::none(),
+                                            options);
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.randomReads == 0);
+        // The random reads' units are passed over at once, so the bar
+        // still ends on its total.
+        progress.verify(1 + 300, {storageprobe::ProbeStep::Streaming, storageprobe::ProbeStep::RandomReads,
+                                  storageprobe::ProbeStep::SmallFiles});
         std::cout << "case 3 (tiny file streams, no random reads) OK\n";
     }
 
@@ -112,7 +165,13 @@ int main()
         options.inPlaceUpdates = 10;
         options.inPlaceFileBytes = 256 * 1024;
         options.minimumFreeBytes = 1;
+        ProgressLog progress;
+        options.onProgress = progress.callback();
         auto m = StickWriteProbe::run(seabass::pathToUtf8(stick), seabass::application::CancellationToken::none(), options);
+        // Two MiB streamed, ten small files, the in-place file's one
+        // (partial) MiB of fill and its ten updates.
+        progress.verify(2 + 10 + 1 + 10, {storageprobe::ProbeStep::StreamingWrite, storageprobe::ProbeStep::SmallFileWrites,
+                                          storageprobe::ProbeStep::InPlaceUpdates});
         assert(m.streamingWriteBytesPerSecond > 0.0);
         assert(m.smallFilesWritten == 10);
         assert(m.smallFileWriteMedianMs > 0.0 && m.smallFileWritesPerSecond > 0.0);

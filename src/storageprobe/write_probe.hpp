@@ -25,6 +25,9 @@ struct WriteProbeOptions
     std::uint64_t inPlaceFileBytes = 4 * 1024 * 1024;
     // Refuse to start below this much free space.
     std::uint64_t minimumFreeBytes = 64 * 1024 * 1024;
+    // One unit per MiB of the streaming files and of the in-place file's
+    // fill, per small file and per in-place update; see ProbeProgress.
+    ProbeProgress onProgress;
 };
 
 // The files the probe left behind when asked to keep them: a blank drive

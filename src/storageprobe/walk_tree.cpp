@@ -14,8 +14,55 @@ namespace storageprobe
 
 namespace fs = std::filesystem;
 
+namespace
+{
+
+// The depth below root a slice sits at; see countWalkSlices().
+constexpr int kSliceDepth = 2;
+
+}  // namespace
+
+std::uint64_t countWalkSlices(const std::string &root, const std::function<bool(const std::string &)> &shouldDescend)
+{
+    // Breadth first, down to the slices' own level and not into them: the
+    // same descend rule as walkTree(), so the count is what it enters.
+    struct Level
+    {
+        fs::path path;
+        std::string relative;
+    };
+    std::vector<Level> current{{pathFromUtf8(root), std::string()}};
+    for (int depth = 1; depth <= kSliceDepth; ++depth) {
+        std::vector<Level> next;
+        for (const Level &level : current) {
+            std::error_code ec;
+            fs::directory_iterator it(level.path, ec);
+            if (ec) {
+                continue;
+            }
+            for (const fs::directory_iterator end; it != end; it.increment(ec)) {
+                if (ec) {
+                    break;
+                }
+                std::error_code entryEc;
+                if (!it->is_directory(entryEc) || entryEc) {
+                    continue;
+                }
+                const std::string name = utf8FromPath(it->path().filename());
+                const std::string relative = level.relative.empty() ? name : level.relative + "/" + name;
+                if (!shouldDescend || shouldDescend(relative)) {
+                    next.push_back({it->path(), relative});
+                }
+            }
+        }
+        current = std::move(next);
+    }
+    return current.size();
+}
+
 TreeWalk walkTree(const std::string &root, const std::function<bool(const std::string &)> &shouldDescend,
-                   const std::function<void(std::uint64_t)> &onProgress)
+                   const std::function<void(std::uint64_t)> &onProgress,
+                   const std::function<void(std::uint64_t)> &onSlice)
 {
     TreeWalk walk;
 
@@ -23,13 +70,23 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
     {
         fs::path path;
         std::string relative;
+        int depth = 0;
     };
 
-    std::vector<Level> stack{{pathFromUtf8(root), std::string()}};
+    std::vector<Level> stack{{pathFromUtf8(root), std::string(), 0}};
+    std::uint64_t slicesEntered = 0;
 
     while (!stack.empty()) {
         const Level level = stack.back();
         stack.pop_back();
+        if (level.depth == kSliceDepth) {
+            // Last in, first out: every folder pushed after this one, the
+            // previous slice's whole subtree among them, is already done.
+            if (onSlice) {
+                onSlice(slicesEntered);
+            }
+            ++slicesEntered;
+        }
 
         std::error_code ec;
         // Deliberately WITHOUT skip_permission_denied. That option makes an
@@ -61,7 +118,7 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
             if (it->is_directory(entryEc) && !entryEc) {
                 if (!shouldDescend || shouldDescend(relative)) {
                     ++walk.folders;
-                    stack.push_back({path, relative});
+                    stack.push_back({path, relative, level.depth + 1});
                 }
                 continue;
             }
@@ -85,6 +142,9 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
         }
     }
 
+    if (onSlice) {
+        onSlice(slicesEntered);
+    }
     return walk;
 }
 
