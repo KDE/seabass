@@ -282,7 +282,21 @@ public:
     // next read.
     void invalidateEveryCatalogOn(const std::string &stickRoot);
 
+    // What a pass in flight has reported so far: the stretch it is in
+    // (label and total), how far into it, and how many stretches it has
+    // begun. Written by the pass's reporter, read by callers waiting for
+    // the pass.
+    struct PassProgress
+    {
+        std::mutex mutex;
+        std::string label;
+        size_t total = 0;
+        size_t current = 0;
+        std::uint64_t stretches = 0;
+    };
+
 private:
+
     struct Entry
     {
         // Holds everything up to and including `stage`.
@@ -301,6 +315,10 @@ private:
         // 0 = no pass running, else 1 + Detail of the pass another
         // thread is running for this key right now. Always stage + 1.
         int passInFlight = 0;
+        // That pass's progress, as its own reporter sees it, for a caller
+        // that waits for it to show on its own bar (#67). Null when no
+        // pass runs.
+        std::shared_ptr<PassProgress> passProgress;
     };
 
     // A remembered countTracks(): valid while the catalog file keeps

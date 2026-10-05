@@ -33,6 +33,43 @@ namespace seabass::gui
 namespace
 {
 
+// Passes a pass's progress on to its own caller and keeps a copy for the
+// callers waiting for that pass (LibraryCatalogCache::PassProgress, #67).
+class RecordingReporter : public application::ProgressReporter
+{
+public:
+    RecordingReporter(application::ProgressReporter &inner, LibraryCatalogCache::PassProgress &record)
+        : m_inner(inner), m_record(record)
+    {
+    }
+    void start(const std::string &label, size_t total) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_record.mutex);
+            m_record.label = label;
+            m_record.total = total;
+            m_record.current = 0;
+            ++m_record.stretches;
+        }
+        m_inner.start(label, total);
+    }
+    void tick(size_t current) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_record.mutex);
+            m_record.current = current;
+        }
+        m_inner.tick(current);
+    }
+    void finish() override { m_inner.finish(); }
+    void phase(const std::string &label) override { m_inner.phase(label); }
+    void warn(const std::string &message) override { m_inner.warn(message); }
+
+private:
+    application::ProgressReporter &m_inner;
+    LibraryCatalogCache::PassProgress &m_record;
+};
+
 namespace fs = std::filesystem;
 
 // The catalog file whose mtime stands in for "has this catalog changed
@@ -425,9 +462,11 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_entries.find(key);
         if (it != m_entries.end() && it->second.mtime == currentMtime) {
-            // A pass another thread is in counts as had: tracksFor() waits
-            // for it and is served from it, announcing nothing of its own.
-            have = std::max(it->second.stage, it->second.passInFlight);
+            // A pass another thread is in is planned like one still to run:
+            // tracksFor() waits for it and shows its progress on the
+            // caller's bar as it goes (#67), so the bar neither stalls
+            // through the wait nor runs past a plan that left it out.
+            have = it->second.stage;
             // A Tracks request is served without the check (see
             // stagedTracksFor()), and one made lately stands.
             if (wanted > stageNumber(Detail::Tracks) && analysisCheckDueLocked(it->second)) {
@@ -543,6 +582,13 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     // during the check leaves the entry as it is for this call.
     std::shared_ptr<const std::vector<std::string>> checkedFiles;
     std::optional<std::uint64_t> checkedState;
+    // The other thread's pass this call has shown so far, and how far.
+    struct
+    {
+        std::shared_ptr<PassProgress> pass;
+        std::uint64_t stretches = 0;
+        size_t current = 0;
+    } mirrored;
     for (;;) {
         Entry &entry = m_entries[key];
         bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
@@ -592,6 +638,33 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
         ++m_waiting;
         m_cv.wait_for(lock, std::chrono::milliseconds(100));
         --m_waiting;
+        // The pass being waited for, shown on this caller's bar as far as
+        // it has got (#67): its stretch as it begins one, then its ticks.
+        if (std::shared_ptr<PassProgress> pass = m_entries[key].passProgress) {
+            std::string label;
+            size_t total = 0;
+            size_t current = 0;
+            std::uint64_t stretches = 0;
+            {
+                std::lock_guard<std::mutex> passLock(pass->mutex);
+                label = pass->label;
+                total = pass->total;
+                current = pass->current;
+                stretches = pass->stretches;
+            }
+            if (stretches > 0) {
+                lock.unlock();
+                if (pass != mirrored.pass || stretches != mirrored.stretches) {
+                    progress.start(label, total);
+                    mirrored = {pass, stretches, 0};
+                }
+                if (current > mirrored.current) {
+                    progress.tick(current);
+                    mirrored.current = current;
+                }
+                lock.lock();
+            }
+        }
         // The files may have moved while this caller waited.
         checkedFiles = nullptr;
         if (cancel.cancelled()) {
@@ -620,8 +693,11 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     bool committing = true;
     while (have < wanted) {
         const int next = have + 1;
+        std::shared_ptr<PassProgress> passProgress;
         if (committing) {
             m_entries[key].passInFlight = next;
+            passProgress = std::make_shared<PassProgress>();
+            m_entries[key].passProgress = passProgress;
         }
         lock.unlock();
 
@@ -646,7 +722,12 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                 }
                 analysisTakenAt = m_nowFn();
             }
-            m_stageFn(detailOf(next), format, path, work, notes, progress, cancel);
+            if (passProgress) {
+                RecordingReporter recording(progress, *passProgress);
+                m_stageFn(detailOf(next), format, path, work, notes, recording, cancel);
+            } else {
+                m_stageFn(detailOf(next), format, path, work, notes, progress, cancel);
+            }
         } catch (...) {
             error = std::current_exception();
         }
@@ -656,6 +737,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
             if (m_generation[key] == generationAtStart) {
                 Entry &entry = m_entries[key];
                 entry.passInFlight = 0;
+                entry.passProgress = nullptr;
                 if (!error) {
                     // Committed and the next pass claimed (at the top of
                     // the loop) under one lock, so a caller waiting for
