@@ -104,6 +104,28 @@ int main()
         std::cout << "case 3 (upsert matches by title+artist and replaces cues) OK\n";
     }
 
+    // No filename is no key (#68): two rows with neither title+artist nor
+    // a filename, lengths inside the window, are two tracks; one shared
+    // filename still finds its row, so the lookup is skipped only when
+    // there is nothing to look up by.
+    {
+        const fs::path noNamePath = seabass::testing::scratchRoot() / "seabass_local_cue_store_noname_test.db";
+        fs::remove(noNamePath);
+        {
+            LocalCueStore store(seabass::pathToUtf8(noNamePath));
+            CuePoint second{CuePoint::Kind::Hot, 2, 2000.0, "#00FF00", ""};
+            store.upsert({makeTrack("a", "", "", "", 180.0, {hotCue})}, "engine", "STICK");
+            store.upsert({makeTrack("b", "", "", "", 180.5, {second})}, "engine", "STICK");
+            assert(store.readAll().size() == 2);
+
+            store.upsert({makeTrack("c", "named.mp3", "", "", 240.0, {hotCue})}, "engine", "STICK");
+            store.upsert({makeTrack("d", "named.mp3", "", "", 240.5, {second})}, "engine", "STICK");
+            assert(store.readAll().size() == 3);
+        }
+        fs::remove(noNamePath);
+        std::cout << "case 3b (an empty filename matches nothing, a shared one still does) OK\n";
+    }
+
     // Snapshots: independent of upsert()'s merged state, each createSnapshot()
     // call freezes its own restorable copy, with an editable description and
     // its own lifecycle (list/read/delete).
