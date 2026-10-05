@@ -267,27 +267,31 @@ ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceTyp
 
 // The stick's volume label, which is what Engine OS mounts it under
 // (/media/<label>). On Linux and macOS the mount point is named after it
-// (/media/<user>/<label>, /Volumes/<label>); on Windows it is asked of
-// the volume, since the root is a drive letter.
+// (/media/<user>/<label>, /Volumes/<label>); on Windows a drive's root
+// has no name of its own, so there it is asked of the volume. A stick
+// opened as a folder is named after the folder, on Windows too:
+// GetVolumeInformationW answers only for a volume's root, and asked
+// about C:\...\PLAYERSTICK it fails and the label would be empty.
 std::string volumeLabelOf(const std::string &stickRoot)
 {
 #if defined(_WIN32)
-    std::wstring root = pathFromUtf8(stickRoot).make_preferred().wstring();
-    if (!root.empty() && root.back() != L'\\') {
-        root += L'\\';
+    if (pathFromUtf8(stickRoot).relative_path().empty()) {
+        std::wstring root = pathFromUtf8(stickRoot).make_preferred().wstring();
+        if (!root.empty() && root.back() != L'\\') {
+            root += L'\\';
+        }
+        wchar_t name[MAX_PATH + 1] = {};
+        if (GetVolumeInformationW(root.c_str(), name, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0)) {
+            return pathToUtf8(fs::path(name));
+        }
+        return {};
     }
-    wchar_t name[MAX_PATH + 1] = {};
-    if (GetVolumeInformationW(root.c_str(), name, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0)) {
-        return pathToUtf8(fs::path(name));
-    }
-    return {};
-#else
+#endif
     fs::path root = pathFromUtf8(stickRoot).lexically_normal();
     if (!root.has_filename()) {
         root = root.parent_path();
     }
     return pathToUtf8(root.filename());
-#endif
 }
 
 // Whether an imported path is one a Denon player wrote for this very
