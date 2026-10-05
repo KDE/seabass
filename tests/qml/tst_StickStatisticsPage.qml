@@ -54,6 +54,9 @@ TestCase {
         QtObject {
             property bool busy: false
             property bool scanCancellable: false
+            property int scanCurrent: 0
+            property int scanTotal: 0
+            property string scanLabel: ""
             property string errorMessage: ""
             property var filesystemInfo: ({})
             property var rekordboxStats: ({})
@@ -62,6 +65,7 @@ TestCase {
             property var diskUsage: ({})
             property int scans: 0
             signal resultsChanged()
+            signal scanProgressChanged()
             signal scanCancelled()
             function scan(label, rb, en) { scans++; }
             function cancelScan() {}
@@ -289,5 +293,28 @@ TestCase {
         const c = pieSample(image, empty, pie, 0.3, 0.6);
         verify(distance(c, Theme.accent) > 0.15 && distance(c, Theme.textMuted) > 0.15,
                "no tracks: neither slice drawn, got " + c);
+    }
+
+    // The scan's overlay is the controller's one counted bar (#58), not
+    // a sweep: count and total from the controller, the step named under
+    // it, and it follows the controller as the scan goes.
+    function test_scanShowsTheCountedBar() {
+        const page = makePage(rekordboxCoverage);
+        const controller = page.controller;
+        const overlay = findOne(page, "statisticsBusyOverlay");
+        verify(!overlay.visible, "no overlay while nothing runs");
+        controller.scanTotal = 900;
+        controller.scanCurrent = 314;
+        controller.scanLabel = "Sizing the rekordbox folder";
+        controller.busy = true;
+        verify(overlay.visible, "the overlay is up while scanning");
+        const report = findOne(overlay, "progressReport");
+        compare(report.unitsDone, 314);
+        compare(report.unitsTotal, 900);
+        compare(report.indeterminate, false, "a counted bar, not a sweep");
+        compare(report.currentItem, "Sizing the rekordbox folder");
+        controller.scanCurrent = 900;
+        compare(report.unitsDone, 900, "the bar follows the count");
+        controller.busy = false;
     }
 }

@@ -113,4 +113,28 @@ TestCase {
         catalogGate.release();
         verifyIdleOnceNothingReads([]);
     }
+
+    // The same stick asked for again is served by the measurement running,
+    // and that measurement's bar (#58) stays its own: the second request
+    // must not reset it or take its reporter away.
+    function test_aServedRequestLeavesTheBarMoving() {
+        const root = stick();
+        catalogGate.hold(3, true);
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        measure(controller, root);
+        tryVerify(() => catalogGate.waiting() === 1, 5000, "the read must reach the gate");
+        tryVerify(() => controller.measureTotal > 0 && controller.measureCurrent > 0, 2000,
+                  "the bar shows the measurement's progress");
+        const total = controller.measureTotal;
+        const current = controller.measureCurrent;
+        measure(controller, root);
+        wait(50);
+        compare(catalogGate.passes(), 1, "served by the running measurement");
+        compare(controller.measureTotal, total, "and the bar still shows its total");
+        verify(controller.measureCurrent >= current, "and its count");
+        catalogGate.release();
+        tryVerify(() => !controller.busy, 20000);
+        compare(controller.measureCurrent, total, "the bar ends on its total");
+        verifyIdleOnceNothingReads([controller]);
+    }
 }

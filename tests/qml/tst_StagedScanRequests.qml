@@ -69,6 +69,7 @@ TestCase {
             },
             {
                 name: "statistics",
+                progress: true,
                 component: statisticsComponent,
                 read: (controller, root) => controller.scan("GATED", root + "/PIONEER", root + "/Engine Library"),
             },
