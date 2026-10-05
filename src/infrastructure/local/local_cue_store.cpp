@@ -424,9 +424,13 @@ void LocalCueStore::upsert(const std::vector<Track> &tracks, const std::string &
                 }
             }
         }
-        if (!existingId) {
+        // No filename is no key: every row without one has the same empty
+        // string here, and two of them of a similar length would be taken
+        // for one track (#68), as matchTracks() once paired them (#63).
+        const std::string filenameKey = domain::normalizeFilename(track.filename);
+        if (!existingId && !filenameKey.empty()) {
             Stmt find(m_db, "SELECT id, duration_seconds FROM tracks WHERE filename_normalized = ?");
-            find.bind(1, domain::normalizeFilename(track.filename));
+            find.bind(1, filenameKey);
             while (find.step()) {
                 if (std::abs(find.columnDouble(1) - track.durationSeconds) <= durationToleranceSeconds()) {
                     existingId = find.columnInt64(0);
