@@ -44,6 +44,13 @@ Canvas {
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
 
+    // How many times the pie has finished painting. A Canvas paints after
+    // the frame that asked for it, on some platforms well after, so a
+    // screenshot taken as soon as the page renders can still be empty
+    // where the pie goes; tests wait on this.
+    property int paintedCount: 0
+    onPainted: root.paintedCount += 1
+
     onPaint: {
         const ctx = getContext("2d");
         ctx.reset();
