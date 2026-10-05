@@ -362,6 +362,7 @@ add_library(seabass_core STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/playlist_diff.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -1864,6 +1865,15 @@ target_link_libraries(cross_source_sync_conflict_test PRIVATE seabass_core_testi
 target_include_directories(cross_source_sync_conflict_test PRIVATE src)
 add_test(NAME cross_source_sync_conflict_test COMMAND cross_source_sync_conflict_test)
 
+# The playlist diff: set first, order second. Pure domain, compiled
+# straight from its one source like track_scope_test.
+add_executable(playlist_diff_test
+    src/domain/playlist_diff.cpp
+    tests/playlist_diff_test.cpp
+)
+target_include_directories(playlist_diff_test PRIVATE src)
+add_test(NAME playlist_diff_test COMMAND playlist_diff_test)
+
 add_executable(track_scope_test
     src/domain/track_scope.cpp
     tests/track_scope_test.cpp
@@ -2424,6 +2434,20 @@ if(TARGET seabass_edit)
     target_link_libraries(recordings_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
     set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    # Compare Playlists over the anonymized Engine fixture: the playlists
+    # listed, the pair the page opens on, the counts and the folded rows.
+    add_executable(playlist_diff_controller_test
+        src/gui/playlist_diff_controller.cpp
+        src/gui/stick_events.cpp
+        tests/playlist_diff_controller_test.cpp
+    )
+    target_include_directories(playlist_diff_controller_test PRIVATE src tests)
+    target_link_libraries(playlist_diff_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME playlist_diff_controller_test COMMAND playlist_diff_controller_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(playlist_diff_controller_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.

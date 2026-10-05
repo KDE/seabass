@@ -138,6 +138,7 @@ set(SEABASS_GUI_QML_FILES
     qml/NoPlaylistTracksPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
+    qml/PlaylistDiffPage.qml
     qml/StickPerformancePage.qml
     qml/TreemapView.qml
     qml/EngineLibraryCreatorPage.qml
@@ -193,6 +194,8 @@ set(SEABASS_GUI_SOURCES
     library_consistency_controller.cpp
     stick_statistics_controller.hpp
     stick_statistics_controller.cpp
+    playlist_diff_controller.hpp
+    playlist_diff_controller.cpp
     stick_performance_controller.hpp
     stick_performance_controller.cpp
     engine_library_creator_controller.hpp
@@ -337,6 +340,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/view-list-details.svg
     qml/icons/breeze/view-media-equalizer.svg
     qml/icons/breeze/view-media-track.svg
+    qml/icons/breeze/vcs-diff.svg
     qml/icons/breeze/view-refresh.svg
     qml/icons/breeze/window-close.svg
 )

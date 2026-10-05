@@ -32,7 +32,8 @@ Item {
     readonly property bool empty: {
         switch (root.group) {
         case "explore":
-            return !(root.showBrowse || root.showStatistics || root.showDeviceProfile || root.showPerformance);
+            return !(root.showBrowse || root.showCompare || root.showStatistics || root.showDeviceProfile
+                     || root.showPerformance);
         case "sync":
             return !(root.showSync || root.showMetadataBackup || root.showRestoreMetadata || root.showCreateEngine);
         case "backup":
@@ -53,6 +54,7 @@ Item {
     readonly property real textInset: browseLibraryCard.textInset
 
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal playlistDiffRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -144,6 +146,8 @@ Item {
     // directory is replaced on the next open. Browse, Statistics and
     // Metadata Backup only read, and stay.
     readonly property bool showBrowse: root.hasKnownLibrary
+    // Reads the same catalogs Browse does.
+    readonly property bool showCompare: root.hasKnownLibrary
     readonly property bool showStatistics: root.hasKnownLibrary
     readonly property bool showDeviceProfile: root.writable
     // Needs no library, but a stick: a browsed backup or an opened
@@ -242,6 +246,19 @@ Item {
                 visible: root.group === "explore" && root.showBrowse
                 enabled: root.hasRekordbox || root.hasEngine
                 onClicked: root.browseRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "comparePlaylistsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Compare Playlists"
+                cardSubtitle: "Two playlists side by side: what one has that the other lacks"
+                cardIcon: "vcs-diff"
+                visible: root.group === "explore" && root.showCompare
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.playlistDiffRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
                 objectName: "statisticsCard"

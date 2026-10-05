@@ -61,6 +61,7 @@ actions/22/edit-clear-all.svg
 actions/22/kt-check-data.svg
 actions/22/office-chart-bar.svg
 actions/22/speedometer.svg
+actions/22/vcs-diff.svg
 actions/22/document-save.svg
 actions/22/document-import.svg
 places/22/server-database.svg

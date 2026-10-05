@@ -1108,7 +1108,8 @@ TestCase {
         const grid = findByName(page, "actionGrid");
         verify(grid !== null, "the action grid must exist");
         const expected = {
-            explore: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"],
+            explore: ["Browse Library", "Compare Playlists", "Library Statistics", "Device Profile",
+                      "USB Stick Performance"],
             sync: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"],
             backup: ["Full Stick Backup", "Restore Backup", "Manage Backups"],
             maintain: ["Housekeeping", "Library Health", "Format USB Stick"],
