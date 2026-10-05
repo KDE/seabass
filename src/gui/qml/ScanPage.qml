@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Templates as T
 import SeabassGui
 
 Page {
@@ -598,7 +599,13 @@ Page {
                 // The only way to Playlist Order and Artist, which have no
                 // column; the direction is the column headers' (see
                 // root.sortField).
-                ComboBox {
+                //
+                // The template, not the styled ComboBox: every part is drawn
+                // below, and a style still runs its own code against the
+                // parts it is handed. KDE's desktop ComboBox calls
+                // positionToRectangle() on its contentItem, which a Label
+                // does not have, and ScanPage failed to load under it.
+                T.ComboBox {
                     id: sortCombo
                     objectName: "sortCombo"
                     // Wide enough for "Playlist Order" beside the
@@ -606,6 +613,7 @@ Page {
                     // after it, and at 140 the longest entry came out as
                     // "Playlis...".
                     Layout.preferredWidth: Theme.compactComboWidth
+                    implicitWidth: Theme.compactComboWidth
                     // As tall as the library picker above it.
                     implicitHeight: Theme.compactControlHeight
                     textRole: "text"
@@ -1134,7 +1142,7 @@ Page {
             // own filtered/sorted `tracks` model or scanController.search()
             // Typing here must not disturb whatever's shown on the page
             // underneath once this closes.
-            Popup {
+            PanelPopup {
                 id: mergePickerPopup
                 modal: true
                 focus: true
@@ -1239,7 +1247,7 @@ Page {
             // DuplicateCleanupPlanner output and apply() path Clean Up
             // Duplicates uses for an auto-detected group, just seeded with
             // this one manually-chosen pair via planManualMerge().
-            Popup {
+            PanelPopup {
                 id: mergeReviewPopup
                 modal: true
                 focus: true
