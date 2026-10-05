@@ -65,6 +65,9 @@ TestCase {
         waitForRendering(h);
         compare(h.overlay.visible, true);
         compare(h.overlay.place, "home");
+        // Arriving home plays the buttons' entrance; stillness is about
+        // what follows it.
+        tryCompare(h.overlay, "entranceRunning", false, 3000);
         compare(findChild(h.overlay, "homeMenuButton").visible, true, "the menu is on the home");
         verify(h.overlay.width > 0);
         // Still means the buttons keep their place: the row is anchored
@@ -172,5 +175,39 @@ TestCase {
             compare(button.icon.width, h.overlay.iconSize);
             compare(button.icon.height, h.overlay.iconSize);
         }
+    }
+
+    // Arriving home, the buttons make their entrance; moving between the
+    // places that share the row, they do not.
+    function test_arrivingHomeThePlayersMakeAnEntrance() {
+        const h = createTemporaryObject(harness, testCase);
+        h.stack.push(toolLike);
+        tryCompare(h.stack, "busy", false);
+        verify(!h.overlay.visible, "no row on a tool page");
+        h.stack.replace(homeLike);
+        tryCompare(h.overlay, "entranceRunning", true, 1000, "back home, the entrance plays");
+        if (typeof screenshotDir !== "undefined" && screenshotDir && screenshotDir.length > 0) {
+            let elapsed = 0;
+            for (const ms of [120, 260, 420, 700]) {
+                wait(ms - elapsed);
+                elapsed = ms;
+                grabImage(h.overlay).save(screenshotDir + "/header-entrance-" + ms + ".png");
+            }
+        }
+        tryCompare(h.overlay, "entranceRunning", false, 3000, "and ends");
+        // At rest the buttons are where the layout put them: no transform left over.
+        const about = findChild(h.overlay, "aboutButton");
+        const slot = about.parent.parent;
+        const p = about.mapToItem(slot, 0, 0);
+        compare(Math.round(p.x), 0, "no sideways offset left");
+        compare(Math.round(p.y), 0, "no drop left");
+        compare(about.parent.opacity, 1);
+
+        h.stack.replace(aboutLike);
+        tryCompare(h.stack, "busy", false);
+        h.stack.replace(guardedLike);
+        tryCompare(h.stack, "busy", false);
+        wait(50);
+        verify(!h.overlay.entranceRunning, "between About and Preferences the row stays put");
     }
 }

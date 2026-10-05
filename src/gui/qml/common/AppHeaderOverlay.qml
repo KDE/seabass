@@ -50,6 +50,26 @@ Item {
         }
     }
 
+    // Arriving home -- at start, or back from a stick's page or from
+    // About, Preferences or Support -- the buttons make an entrance: they
+    // drop in one after another, spinning, overshooting their size and
+    // bursting a ring as they land (EntranceSlot). Only on the way in;
+    // moving between About, Preferences and Support they stay put.
+    property string _previousPlace: ""
+    readonly property bool entranceRunning: menuSlot.running || headerButtons.entranceRunning
+    onPlaceChanged: {
+        if (root.place === "home" && root._previousPlace !== "home") {
+            // After the page transition has settled the new page under
+            // the row, so the cascade is not lost in the slide.
+            Qt.callLater(root.playEntrance);
+        }
+        root._previousPlace = root.place;
+    }
+    function playEntrance() {
+        menuSlot.play();
+        headerButtons.playEntrance();
+    }
+
     // The page keeps that much of its header clear.
     Binding {
         target: root.page
@@ -68,60 +88,65 @@ Item {
         // stick, behind one button: each is used now and then, and as
         // header buttons plus a row under the list they crowded a page
         // whose subject is the sticks. Home only.
-        IconToolButton {
-            id: homeMenuButton
-            objectName: "homeMenuButton"
+        EntranceSlot {
+            id: menuSlot
             visible: root.place === "home"
-            iconName: "application-menu"
-            iconSize: root.iconSize
-            text: "Backups and folders"
-            ToolTip.visible: hovered && !homeMenu.visible
-            ToolTip.text: "Backups and folders on this computer"
-            onClicked: homeMenu.visible ? homeMenu.close() : homeMenu.open()
+            IconToolButton {
+                id: homeMenuButton
+                objectName: "homeMenuButton"
+                iconName: "application-menu"
+                iconSize: root.iconSize
+                text: "Backups and folders"
+                ToolTip.visible: hovered && !homeMenu.visible
+                ToolTip.text: "Backups and folders on this computer"
+                onClicked: homeMenu.visible ? homeMenu.close() : homeMenu.open()
 
-            Menu {
-                id: homeMenu
-                objectName: "homeMenu"
-                // A press on the button itself does not close the menu,
-                // so its click can: otherwise the press closed it and the
-                // click opened it again, under every style but KDE's.
-                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-                // Opens down and to the left, so it stays in the window
-                // from a button near the right edge.
-                x: homeMenuButton.width - width
-                y: homeMenuButton.height
-                // As wide as its longest entry. A Menu keeps the style's
-                // own width, 200 px, whatever its items hold, and elided
-                // "Browse a Full Stick Backup…" with the window half
-                // empty. Rounded up for the reason BackBreadcrumb's crumbs
-                // are: a fraction short of the text elides it.
-                width: {
-                    let widest = 0;
-                    for (let i = 0; i < count; ++i) {
-                        const item = itemAt(i);
-                        if (item) widest = Math.max(widest, item.implicitWidth);
+                Menu {
+                    id: homeMenu
+                    objectName: "homeMenu"
+                    // A press on the button itself does not close the menu,
+                    // so its click can: otherwise the press closed it and the
+                    // click opened it again, under every style but KDE's.
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                    // Opens down and to the left, so it stays in the window
+                    // from a button near the right edge.
+                    x: homeMenuButton.width - width
+                    y: homeMenuButton.height
+                    // As wide as its longest entry. A Menu keeps the style's
+                    // own width, 200 px, whatever its items hold, and elided
+                    // "Browse a Full Stick Backup…" with the window half
+                    // empty. Rounded up for the reason BackBreadcrumb's crumbs
+                    // are: a fraction short of the text elides it.
+                    width: {
+                        let widest = 0;
+                        for (let i = 0; i < count; ++i) {
+                            const item = itemAt(i);
+                            if (item) widest = Math.max(widest, item.implicitWidth);
+                        }
+                        return Math.max(implicitWidth, Math.ceil(widest) + 1 + leftPadding + rightPadding);
                     }
-                    return Math.max(implicitWidth, Math.ceil(widest) + 1 + leftPadding + rightPadding);
-                }
-                MenuItem {
-                    objectName: "browseFullBackupItem"
-                    text: "Browse a Full Stick Backup…"
-                    icon.source: Theme.iconUrl("backup")
-                    icon.color: enabled ? Theme.text : Theme.textMuted
-                    onTriggered: root.browseFullBackupRequested()
-                }
-                MenuItem {
-                    objectName: "openFolderItem"
-                    text: "Open a Library From a Folder…"
-                    icon.source: Theme.iconUrl("folder-open")
-                    icon.color: enabled ? Theme.text : Theme.textMuted
-                    onTriggered: root.openFolderRequested()
+                    MenuItem {
+                        objectName: "browseFullBackupItem"
+                        text: "Browse a Full Stick Backup…"
+                        icon.source: Theme.iconUrl("backup")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
+                        onTriggered: root.browseFullBackupRequested()
+                    }
+                    MenuItem {
+                        objectName: "openFolderItem"
+                        text: "Open a Library From a Folder…"
+                        icon.source: Theme.iconUrl("folder-open")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
+                        onTriggered: root.openFolderRequested()
+                    }
                 }
             }
         }
 
         AppHeaderButtons {
+            id: headerButtons
             objectName: "appHeaderButtons"
+            firstDelay: 90
             current: root.place === "home" ? "" : root.place
             iconSize: root.iconSize
             onAboutRequested: root.leave(() => root.aboutRequested())

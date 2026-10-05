@@ -25,45 +25,68 @@ RowLayout {
     signal preferencesRequested()
     signal supportRequested()
 
-    IconToolButton {
-        objectName: "aboutButton"
-        iconName: "help-about"
-        iconSize: root.iconSize
-        text: "About Seabass"
-        enabled: root.current !== "about"
-        ToolTip.visible: hovered
-        ToolTip.text: "About Seabass"
-        onClicked: root.aboutRequested()
+    // The cascade on the way back home (see AppHeaderOverlay): each
+    // button a beat after the one before, the first `firstDelay` in.
+    property int firstDelay: 0
+    readonly property bool entranceRunning: aboutSlot.running || preferencesSlot.running || supportSlot.running
+    function playEntrance() {
+        aboutSlot.play();
+        preferencesSlot.play();
+        supportSlot.play();
     }
-    IconToolButton {
-        objectName: "preferencesButton"
-        iconName: "configure"
-        iconSize: root.iconSize
-        text: "Preferences"
-        enabled: root.current !== "preferences"
-        ToolTip.visible: hovered
-        ToolTip.text: "Preferences"
-        onClicked: root.preferencesRequested()
-    }
-    ToolButton {
-        id: donateButton
-        objectName: "donateButton"
-        contentItem: HeartIcon {
-            objectName: "donateHeart"
-            iconSize: root.iconSize
-            color: "#aa0000"
-            opacity: donateButton.enabled ? 1.0 : 0.5
-        }
-        display: AbstractButton.IconOnly
-        text: "Support Seabass"
-        enabled: root.current !== "support"
-        ToolTip.visible: hovered
-        ToolTip.text: "Support Seabass"
-        onClicked: root.supportRequested()
 
-        Heartbeat {
-            target: donateButton
-            period: 6230
+    EntranceSlot {
+        id: aboutSlot
+        delay: root.firstDelay
+        IconToolButton {
+            objectName: "aboutButton"
+            iconName: "help-about"
+            iconSize: root.iconSize
+            text: "About Seabass"
+            enabled: root.current !== "about"
+            ToolTip.visible: hovered
+            ToolTip.text: "About Seabass"
+            onClicked: root.aboutRequested()
+        }
+    }
+    EntranceSlot {
+        id: preferencesSlot
+        delay: root.firstDelay + 90
+        IconToolButton {
+            objectName: "preferencesButton"
+            iconName: "configure"
+            iconSize: root.iconSize
+            text: "Preferences"
+            enabled: root.current !== "preferences"
+            ToolTip.visible: hovered
+            ToolTip.text: "Preferences"
+            onClicked: root.preferencesRequested()
+        }
+    }
+    EntranceSlot {
+        id: supportSlot
+        delay: root.firstDelay + 180
+        burstColor: "#aa0000"
+        ToolButton {
+            id: donateButton
+            objectName: "donateButton"
+            contentItem: HeartIcon {
+                objectName: "donateHeart"
+                iconSize: root.iconSize
+                color: "#aa0000"
+                opacity: donateButton.enabled ? 1.0 : 0.5
+            }
+            display: AbstractButton.IconOnly
+            text: "Support Seabass"
+            enabled: root.current !== "support"
+            ToolTip.visible: hovered
+            ToolTip.text: "Support Seabass"
+            onClicked: root.supportRequested()
+
+            Heartbeat {
+                target: donateButton
+                period: 6230
+            }
         }
     }
 }
