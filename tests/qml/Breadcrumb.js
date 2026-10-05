@@ -10,7 +10,7 @@
 //     import "Breadcrumb.js" as Breadcrumb
 //     const crumb = Breadcrumb.read(page);
 //     compare(crumb.stick, "TESTSTICK");
-//     compare(crumb.middle, "Housekeeping");
+//     compare(crumb.middle, "Library Health");
 //     verify(crumb.middleIsLink);
 //
 // A segment that is not shown reads as "". The page must sit in a real

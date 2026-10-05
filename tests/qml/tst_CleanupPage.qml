@@ -176,14 +176,23 @@ TestCase {
         }
     }
 
-    function test_breadcrumbNamesTheStickAndHousekeeping() {
-        const page = pushOnStack(2, {});
+    // From Maintain's card on the home, and from Cues on Duplicate
+    // Copies' suggestion, which the crumb leads back to.
+    function test_breadcrumb_data() {
+        return [
+            {tag: "home", props: {}, below: 1, middle: "", link: false},
+            {tag: "duplicates", props: {hubLabel: "Cues on Duplicate Copies"}, below: 2,
+             middle: "Cues on Duplicate Copies", link: true},
+        ];
+    }
+    function test_breadcrumb(data) {
+        const page = pushOnStack(data.below, data.props);
         waitForRendering(page);
         const crumb = Breadcrumb.read(page);
         compare(crumb.stick, "TESTSTICK");
-        compare(crumb.middle, "Housekeeping");
-        verify(crumb.middleIsLink);
+        compare(crumb.middle, data.middle);
+        compare(crumb.middleIsLink, data.link);
         compare(crumb.title, "Clean Up Duplicates");
-        saveCrumbShot(page, "cleanup");
+        saveCrumbShot(page, "cleanup-" + data.tag);
     }
 }

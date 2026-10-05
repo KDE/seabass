@@ -128,20 +128,20 @@ TestCase {
     // clicked; Browse stays a plain card.
     function test_readOnlyCardsWhileAnotherInstanceEdits() {
         var page = makePage([makeStick({})], {}, {editRegistry: fakeEditRegistry(["lib-main"])});
-        // Browse first: finding Housekeeping switches the pane to its
+        // Browse first: finding Clean Up Duplicates switches the pane to its
         // group, Maintain, where the click below has to land.
         var browse = findCard(page, "/media/MAIN", "Browse Library");
         verify(browse !== null);
         compare(browse.readOnly, false);
         compare(findChild(browse, "readOnlyBadge").visible, false);
-        var housekeeping = findCard(page, "/media/MAIN", "Housekeeping");
-        verify(housekeeping !== null);
+        var cleanUp = findCard(page, "/media/MAIN", "Clean Up Duplicates");
+        verify(cleanUp !== null);
         compare(page.selectedGroup, "maintain");
-        compare(housekeeping.readOnly, true);
-        compare(findChild(housekeeping, "readOnlyBadge").visible, true);
+        compare(cleanUp.readOnly, true);
+        compare(findChild(cleanUp, "readOnlyBadge").visible, true);
 
-        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
-        mouseClick(housekeeping);
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cleanupRequested"});
+        mouseClick(cleanUp);
         compare(spy.count, 0);
         var dialog = findChild(page, "lockedDialog");
         tryCompare(dialog, "opened", true);
@@ -156,8 +156,8 @@ TestCase {
 
         // No lock: the same card opens the feature.
         page.editRegistry = fakeEditRegistry([]);
-        compare(housekeeping.readOnly, false);
-        mouseClick(housekeeping);
+        compare(cleanUp.readOnly, false);
+        mouseClick(cleanUp);
         compare(spy.count, 1);
     }
 
@@ -168,7 +168,7 @@ TestCase {
     // the cards that only read, stay ordinary.
     function test_readOnlyStickGreysOutEveryWritingCard() {
         var page = makePage([makeStick({readOnly: true})], {});
-        var writers = ["Housekeeping", "Restore Metadata", "Sync Cue Points", "USB Stick Performance"];
+        var writers = ["Clean Up Duplicates", "Restore Metadata", "Sync Cue Points", "USB Stick Performance"];
         for (var i = 0; i < writers.length; ++i) {
             var card = findCard(page, "/media/MAIN", writers[i]);
             verify(card !== null, writers[i] + " missing");
@@ -184,9 +184,9 @@ TestCase {
         // Clicking a greyed card does not start the feature; it opens the
         // page that can fix the stick.
         var housekeepingSpy = createTemporaryObject(spyComponent, testCase,
-            {target: page, signalName: "duplicateTracksHubRequested"});
+            {target: page, signalName: "cleanupRequested"});
         var healthSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "libraryHealthRequested"});
-        mouseClick(findCard(page, "/media/MAIN", "Housekeeping"));
+        mouseClick(findCard(page, "/media/MAIN", "Clean Up Duplicates"));
         compare(housekeepingSpy.count, 0);
         compare(healthSpy.count, 1);
         saveScreenshot(page, "stick-list-read-only-stick");
@@ -784,7 +784,7 @@ TestCase {
 
         // The library is reachable: the ordinary cards are all there.
         verify(findCard(page, "/home/dj/restored", "Browse Library") !== null);
-        verify(findCard(page, "/home/dj/restored", "Housekeeping") !== null);
+        verify(findCard(page, "/home/dj/restored", "Clean Up Duplicates") !== null);
         verify(findCard(page, "/home/dj/restored", "Sync Cue Points") !== null);
 
         // Formatting would erase a drive this row does not have.
@@ -835,7 +835,7 @@ TestCase {
             verify(card !== null, reads[i] + " missing");
             compare(card.visible, true, reads[i] + " should stay");
         }
-        var writes = ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Housekeeping", "Library Health", "Restore Metadata",
+        var writes = ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Clean Up Duplicates", "Library Health", "Restore Metadata",
                       "Create Engine Library", "Sync Cue Points", "Device Profile", "Format USB Stick"];
         for (var j = 0; j < writes.length; ++j) {
             var w = findCard(page, mp, writes[j]);
@@ -1119,7 +1119,9 @@ TestCase {
                       "USB Stick Performance"],
             sync: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"],
             backup: ["Full Stick Backup", "Restore Backup", "Manage Backups"],
-            maintain: ["Housekeeping", "Library Health", "Format USB Stick"],
+            maintain: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+                       "Delete Orphaned Files", "Library Health",
+                       "Format USB Stick"],
         };
         for (const group of page.groupKeys) {
             page.selectGroup(group);

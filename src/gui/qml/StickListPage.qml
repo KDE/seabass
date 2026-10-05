@@ -336,6 +336,9 @@ Page {
         // Coming back from having made a backup, or deleted the last
         // one: the menu's Browse Metadata Backups entry is stale until asked.
         homeBackups.refresh();
+        // Back from a clean-up, which can leave files orphaned or clear
+        // them: Maintain's counts are stale.
+        toolCards.refreshMaintain();
     }
     // Another instance taking or dropping a lock shows up within 2 s
     // while this page is in front.
@@ -449,14 +452,14 @@ Page {
     // group, with its label and the backup the advisor matched to it
     // (listed first); from the no-stick pane, both empty.
     signal manageBackupsRequested(string stickLabel, string currentArchivePath)
-    // Housekeeping is a hub page (DuplicatesHubPage.qml), fanning out to
-    // the sub-pages that used to be separate top-level cards here. Library
-    // Health used to be a card inside it too, but it isn't a
-    // duplicate-tracks concern (it spans all three catalogs looking for
-    // missing files, not just consolidating copies), so it got promoted to
-    // its own top-level entry instead. Backups had a hub page as well;
-    // its cards are the Backup group's own now.
-    signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // Maintain's clean-up cards. They sat behind a Housekeeping page of
+    // their own; the group is that page now (Sebastian, 2026-10-06), as
+    // the Backup group took over the backups hub's cards before.
+    signal duplicatesStatsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal pendingDeletionsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal recordingsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint)
@@ -766,8 +769,16 @@ Page {
                                 root.browseRequested(stickLabel, rekordboxPath, enginePath)
                             onPlaylistDiffRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.playlistDiffRequested(stickLabel, rekordboxPath, enginePath)
-                            onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) =>
-                                root.duplicateTracksHubRequested(stickLabel, rekordboxPath, enginePath)
+                            onDuplicatesStatsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.duplicatesStatsRequested(stickLabel, rekordboxPath, enginePath)
+                            onCleanupRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.cleanupRequested(stickLabel, rekordboxPath, enginePath)
+                            onPendingDeletionsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.pendingDeletionsRequested(stickLabel, rekordboxPath, enginePath)
+                            onJunkCueCleanupRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.junkCueCleanupRequested(stickLabel, rekordboxPath, enginePath)
+                            onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.recordingsRequested(stickLabel, rekordboxPath, enginePath)
                             onLibraryHealthRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.libraryHealthRequested(stickLabel, rekordboxPath, enginePath)
                             onStickStatisticsRequested: (stickLabel, rekordboxPath, enginePath) =>

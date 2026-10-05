@@ -9,8 +9,8 @@ import SeabassGui
 import "Breadcrumb.js" as Breadcrumb
 
 // Clean Up Recordings: the page, with a QtObject standing in for
-// RecordingsController (same properties, signals and calls), and the
-// Housekeeping hub's card for it, with a stand-in for the quick summary.
+// RecordingsController (same properties, signals and calls). Its card
+// on the home is tst_StickToolCards.qml's.
 // What moves and what stays is the use case's to prove
 // (clean_up_recordings_test); this is what the page says and asks.
 TestCase {
@@ -166,8 +166,7 @@ TestCase {
         if (setup) {
             setup(controller);
         }
-        // Home, then the Housekeeping hub, then the page.
-        stack.push(fillerComponent, {}, StackView.Immediate);
+        // Home, then the page.
         stack.push(fillerComponent, {}, StackView.Immediate);
         const page = stack.push(pageComponent, {controller: controller, playbackController: player},
                                 StackView.Immediate);
@@ -220,7 +219,7 @@ TestCase {
 
         const crumb = Breadcrumb.read(page);
         compare(crumb.stick, "WHALESHARK");
-        compare(crumb.middle, "Housekeeping");
+        compare(crumb.middle, "");
         compare(crumb.title, "Clean Up Recordings");
         saveScreenshot(page, "recordings-page");
     }
@@ -420,92 +419,5 @@ TestCase {
         verify(findChild(dialog, "detailLabel").text.indexOf("REC001.WAV") >= 0);
         saveScreenshot(page, "recordings-summary");
         dialog.close();
-    }
-
-    // ---- the Housekeeping hub's card --------------------------------
-
-    Component {
-        id: probeComponent
-        QtObject {
-            property var summary: ({count: 0, bytes: 0, sources: []})
-            property int asked: 0
-            function summarize(rekordbox, engine) { asked++; return summary; }
-        }
-    }
-    Component {
-        id: hubComponent
-        DuplicatesHubPage {
-            stickLabel: "WHALESHARK"
-            rekordboxPath: "/nonexistent/WHALESHARK/PIONEER"
-            enginePath: "/nonexistent/WHALESHARK/Engine Library"
-        }
-    }
-    Component {
-        id: registryComponent
-        QtObject {
-            property var lockedByOther: []
-            function libraryIdForPath(path) { return "lib-whaleshark"; }
-            function refreshLocks() {}
-            function lockHolder(id) { return ({}); }
-            function removeLock(id) {}
-        }
-    }
-
-    function makeHub(summary, lockedByOther) {
-        const stack = createTemporaryObject(stackComponent, testCase);
-        const probe = createTemporaryObject(probeComponent, testCase, {summary: summary});
-        const registry = createTemporaryObject(registryComponent, testCase, {lockedByOther: lockedByOther || []});
-        stack.push(fillerComponent, {}, StackView.Immediate);
-        const hub = stack.push(hubComponent, {recordingsProbe: probe, editRegistry: registry}, StackView.Immediate);
-        waitForRendering(hub);
-        verify(probe.asked > 0, "the hub asks for the summary when it opens");
-        return hub;
-    }
-
-    function test_hubCardSaysWhatIsThere_data() {
-        const g = 1024 * 1024 * 1024;
-        return [
-            {tag: "engine and pioneer", summary: {count: 3, bytes: 6.2 * g, sources: ["engine", "pioneer"]},
-             subtitle: "3 recordings, " + Theme.humanBytes(6.2 * g) + ", from Engine OS and a Pioneer deck", enabled: true},
-            {tag: "one alphatheta", summary: {count: 1, bytes: 0.5 * g, sources: ["alphatheta"]},
-             subtitle: "1 recording, " + Theme.humanBytes(0.5 * g) + ", from an AlphaTheta deck", enabled: true},
-            {tag: "all three", summary: {count: 4, bytes: 2 * g, sources: ["engine", "pioneer", "alphatheta"]},
-             subtitle: "4 recordings, " + Theme.humanBytes(2 * g)
-                       + ", from Engine OS, a Pioneer deck and an AlphaTheta deck", enabled: true},
-            {tag: "none", summary: {count: 0, bytes: 0, sources: []},
-             subtitle: "No recordings on this stick", enabled: false},
-            {tag: "unreadable", summary: {count: 0, bytes: 0, sources: [], unreadable: true},
-             subtitle: "Could not read the recording folders on this stick", enabled: false},
-        ];
-    }
-
-    function test_hubCardSaysWhatIsThere(data) {
-        const hub = makeHub(data.summary);
-        const card = findChild(hub, "recordingsCard");
-        verify(card !== null);
-        compare(card.cardTitle, "Clean Up Recordings");
-        compare(card.cardSubtitle, data.subtitle);
-        compare(card.enabled, data.enabled);
-        compare(card.readOnly, false);
-        if (data.tag === "engine and pioneer") {
-            saveScreenshot(hub, "housekeeping-hub-recordings");
-        }
-    }
-
-    function test_hubCardOpensThePage() {
-        const hub = makeHub({count: 2, bytes: 1000, sources: ["engine"]});
-        const spy = createTemporaryObject(spyComponent, testCase, {target: hub, signalName: "recordingsRequested"});
-        mouseClick(findChild(hub, "recordingsCard"));
-        compare(spy.count, 1);
-        compare(spy.signalArguments[0][0], "WHALESHARK");
-    }
-
-    function test_hubCardIsReadOnlyWhileAnotherInstanceEdits() {
-        const hub = makeHub({count: 2, bytes: 1000, sources: ["engine"]}, ["lib-whaleshark"]);
-        const card = findChild(hub, "recordingsCard");
-        compare(card.readOnly, true);
-        const spy = createTemporaryObject(spyComponent, testCase, {target: hub, signalName: "recordingsRequested"});
-        mouseClick(card);
-        compare(spy.count, 0, "a read-only card does not open the page");
     }
 }

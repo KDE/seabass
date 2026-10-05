@@ -105,8 +105,7 @@ Page {
             BackBreadcrumb {
                 stack: root.StackView.view
                 stickLabel: root.stickLabel
-                middleLabel: "Housekeeping"
-                title: "Clean Up Recordings"
+                                title: "Clean Up Recordings"
                 backEnabled: !root.working
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()

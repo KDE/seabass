@@ -10,6 +10,9 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
+    // The page it was opened from, for the breadcrumb: empty from the
+    // home's card, "Cues on Duplicate Copies" from that page's suggestion.
+    property string hubLabel: ""
     required property string rekordboxPath
     required property string enginePath
     required property var appSettingsController
@@ -143,7 +146,7 @@ Page {
                 BackBreadcrumb {
                     stack: root.StackView.view
                     stickLabel: root.stickLabel
-                    middleLabel: "Housekeeping"
+                    middleLabel: root.hubLabel
                     title: "Clean Up Duplicates"
                     backEnabled: !cleanupController.writing
                     onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))

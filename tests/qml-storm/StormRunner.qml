@@ -363,7 +363,16 @@ Item {
         const h = runner.home();
         switch (kind) {
         case "browse": return () => h.browseRequested(s.label, s.rb, s.engine);
-        case "duplicates": return () => h.duplicateTracksHubRequested(s.label, s.rb, s.engine);
+        // Maintain's clean-up cards, straight from the home now that the
+        // Housekeeping page is gone; weighted the way that page's own
+        // pick was, towards Clean Up Duplicates.
+        case "duplicates": {
+            const which = runner.pick([0, 1, 1, 1, 2, 3, 3]);
+            return [() => h.duplicatesStatsRequested(s.label, s.rb, s.engine),
+                    () => h.cleanupRequested(s.label, s.rb, s.engine),
+                    () => h.pendingDeletionsRequested(s.label, s.rb, s.engine),
+                    () => h.junkCueCleanupRequested(s.label, s.rb, s.engine)][which];
+        }
         case "health": return () => h.libraryHealthRequested(s.label, s.rb, s.engine);
         case "statistics": return () => h.stickStatisticsRequested(s.label, s.rb, s.engine);
         case "performance": return () => h.stickPerformanceRequested(s.label, s.rb, s.engine, s.mount);
@@ -471,14 +480,7 @@ Item {
         const s = {label: p.stickLabel, rb: p.rekordboxPath, engine: p.enginePath};
         let fn = null;
         let what = "";
-        if (name === "DuplicatesHubPage") {
-            const which = runner.pick([0, 1, 1, 1, 2, 3, 3]);
-            what = ["duplicates", "cleanup", "pending deletions", "junk cues"][which];
-            fn = [() => p.duplicatesStatsRequested(s.label, s.rb, s.engine),
-                  () => p.cleanupRequested(s.label, s.rb, s.engine),
-                  () => p.pendingDeletionsRequested(s.label, s.rb, s.engine),
-                  () => p.junkCueCleanupRequested(s.label, s.rb, s.engine)][which];
-        } else if (name === "LibraryHealthHubPage") {
+        if (name === "LibraryHealthHubPage") {
             what = runner.pick(["broken", "junkcues", "import", "samplerates", "artwork", "playlists"]);
             fn = () => p.detailRequested(what);
         } else if (name === "StickStatisticsPage") {
