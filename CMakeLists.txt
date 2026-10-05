@@ -3599,6 +3599,33 @@ target_link_libraries(rig_clone PRIVATE seabass_core)
 add_executable(rig_advise tools/rig_advise.cpp)
 target_include_directories(rig_advise PRIVATE src)
 target_link_libraries(rig_advise PRIVATE seabass_core)
+
+# Issue #59 on hardware: plants five tracks on a test stick that say where
+# a OneLibrary player takes its cues from (table or analysis file, PCOB or
+# PCO2, file-only loops, Seabass's own Add Cue, table against file), and
+# reads back what the deck changed. T4 goes through AddCueChange and the
+# save loop, so it needs seabass_edit.
+if(TARGET seabass_edit)
+    add_library(onelibrary_cue_source_probe_lib STATIC tools/onelibrary_cue_source_probe_lib.cpp)
+    target_include_directories(onelibrary_cue_source_probe_lib PUBLIC src tools)
+    target_link_libraries(onelibrary_cue_source_probe_lib PUBLIC seabass_edit Qt6::Core ZLIB::ZLIB SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(onelibrary_cue_source_probe_lib PUBLIC ${CMAKE_DL_LIBS})
+    endif()
+    add_executable(onelibrary_cue_source_probe tools/onelibrary_cue_source_probe.cpp)
+    target_link_libraries(onelibrary_cue_source_probe PRIVATE onelibrary_cue_source_probe_lib)
+
+    if(SEABASS_TESTS)
+        add_executable(onelibrary_cue_source_probe_test tests/onelibrary_cue_source_probe_test.cpp)
+        target_include_directories(onelibrary_cue_source_probe_test PRIVATE tests)
+        target_compile_definitions(onelibrary_cue_source_probe_test PRIVATE
+            SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(onelibrary_cue_source_probe_test PRIVATE onelibrary_cue_source_probe_lib)
+        add_test(NAME onelibrary_cue_source_probe_test COMMAND onelibrary_cue_source_probe_test)
+        set_tests_properties(onelibrary_cue_source_probe_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+    endif()
+endif()
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
