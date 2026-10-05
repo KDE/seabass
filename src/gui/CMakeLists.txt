@@ -95,6 +95,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/PageSection.qml
     qml/common/PanelPopup.qml
     qml/common/Card.qml
+    qml/common/WarningBanner.qml
     qml/common/TableHeaderLabel.qml
     qml/common/SortableTableHeader.qml
     qml/common/ThemePalette.qml

@@ -427,23 +427,11 @@ Page {
                         + Theme.humanBytes(compactDialog.preflight.availableFreeBytes) + " available"
                 }
             }
-            Rectangle {
-                Layout.fillWidth: true
+            WarningBanner {
                 visible: compactDialog.preflight.enoughFreeSpace === false
-                implicitHeight: notEnoughLabel.implicitHeight + 16
-                radius: Theme.cornerRadius
-                color: Theme.warnBg
-                border.color: Theme.warnBorder
-                Label {
-                    id: notEnoughLabel
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    wrapMode: Text.WordWrap
-                    color: Theme.warnText
-                    text: "Not enough free space on this drive. Compacting writes a fresh copy of the backup before "
-                        + "removing the old one, so it needs room for both. Free some space and try again. The "
-                        + "backup is complete and usable as it is."
-                }
+                text: "Not enough free space on this drive. Compacting writes a fresh copy of the backup before "
+                    + "removing the old one, so it needs room for both. Free some space and try again. The "
+                    + "backup is complete and usable as it is."
             }
             Label {
                 Layout.fillWidth: true
@@ -487,25 +475,13 @@ Page {
             // move -- it only reads -- but what it captures is whatever
             // survived, and that has to be said before the press, not
             // discovered at restore time.
-            Rectangle {
-                Layout.fillWidth: true
+            WarningBanner {
                 objectName: "emergencyCopyBanner"
                 visible: root.controller.stickReadOnly === true
-                implicitHeight: emergencyLabel.implicitHeight + 16
-                radius: Theme.cornerRadius
-                color: Theme.warnBg
-                border.color: Theme.warnBorder
-                Label {
-                    id: emergencyLabel
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    wrapMode: Text.WordWrap
-                    color: Theme.warnText
-                    text: "This stick is mounted read-only, which means its filesystem is damaged. Backing it up "
-                        + "still works and is worth doing now, since reading is all a backup does, but this will be "
-                        + "an emergency copy: it holds whatever could still be read off a damaged stick, and it "
-                        + "is marked as such. Restore it onto a working library only as a last resort."
-                }
+                text: "This stick is mounted read-only, which means its filesystem is damaged. Backing it up "
+                    + "still works and is worth doing now, since reading is all a backup does, but this will be "
+                    + "an emergency copy: it holds whatever could still be read off a damaged stick, and it "
+                    + "is marked as such. Restore it onto a working library only as a last resort."
             }
             StickWriteWarning {
                 visible: root.controller.backingUp === true

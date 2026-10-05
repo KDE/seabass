@@ -181,39 +181,17 @@ Page {
             }
 
             // -- Nothing to read: offer the throwaway-file measurement ------
-            Rectangle {
+            WarningBanner {
                 objectName: "scratchNotice"
                 visible: controller.needsScratchFiles && !controller.busy
-                Layout.fillWidth: true
-                implicitHeight: scratchRow.implicitHeight + Theme.cardPadding
-                color: Theme.warnBg
-                border.color: Theme.warnBorder
-                radius: Theme.cornerRadius
-
-                RowLayout {
-                    id: scratchRow
-                    anchors.fill: parent
-                    anchors.margins: Theme.rowSpacing
-                    spacing: Theme.rowSpacing
-                    SeabassIcon {
-                        iconName: "dialog-warning"
-                        size: Theme.iconSizeSmall * 0.75
-                        color: Theme.warnIcon
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Theme.warnText
-                        text: "There is nothing on this stick to read. Measuring it means writing about 22 MiB of "
-                            + "throwaway files into a hidden folder, reading them back, and removing them; that also "
-                            + "gives the write results below."
-                    }
-                    Button {
-                        objectName: "scratchMeasureButton"
-                        text: "Measure With Throwaway Files"
-                        enabled: !controller.anyBusy
-                        onClicked: controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
-                    }
+                text: "There is nothing on this stick to read. Measuring it means writing about 22 MiB of "
+                    + "throwaway files into a hidden folder, reading them back, and removing them; that also "
+                    + "gives the write results below."
+                Button {
+                    objectName: "scratchMeasureButton"
+                    text: "Measure With Throwaway Files"
+                    enabled: !controller.anyBusy
+                    onClicked: controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
                 }
             }
 
