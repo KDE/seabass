@@ -17,6 +17,22 @@ import SeabassGui
 T.ToolTip {
     id: control
 
+    // A template computes no size of its own. Without these the popup was
+    // 0 x 0: its background, sized to the popup, vanished, while the text
+    // still drew at its full natural width over whatever lay beneath and
+    // out past the window's edge. Both reports -- no background, and
+    // tooltips running off the window -- were this.
+    //
+    // Capped, so a long tip wraps into a readable block rather than one
+    // line as wide as the text; the popup's margins then keep the block
+    // inside the window.
+    readonly property real maximumWidth: Theme.scaled(360)
+    implicitWidth: Math.min(maximumWidth,
+                            Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                                     contentItem.implicitWidth + leftPadding + rightPadding))
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             contentItem.implicitHeight + topPadding + bottomPadding)
+
     x: parent ? Math.round((parent.width - implicitWidth) / 2) : 0
     y: parent ? parent.height + 6 : 0
 
@@ -31,6 +47,7 @@ T.ToolTip {
     exit: Transition { NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; easing.type: Easing.InQuad; duration: 120 } }
 
     contentItem: Text {
+        width: control.availableWidth
         text: control.text
         font: control.font
         color: Theme.text
