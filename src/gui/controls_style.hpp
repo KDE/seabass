@@ -54,9 +54,19 @@ void applyDefaultControlsStyle();
 // their other palette roles are their own look.
 //
 // Pure, so the choice is testable apart from the style in force.
+//
+// SeabassStyle too, and it is the one that matters on macOS. Its own
+// controls draw from Theme directly, but everything it does not define
+// falls back to Basic -- Page and ScrollView among them -- and those take
+// their ground and ink from this palette. Leaving it off the list when the
+// style was introduced switched ThemePalette off on macOS: every page
+// background fell back to the platform's black while Linux and Windows
+// stayed Kelp, and tst_InkContrast, which only checks the palette when
+// this answers true, stopped checking without failing.
 inline bool styleInksFromPalette(const QString &styleName)
 {
-    return styleName == QLatin1String("Basic") || styleName == QLatin1String("Fusion");
+    return styleName == QLatin1String("Basic") || styleName == QLatin1String("Fusion")
+        || styleName == QLatin1String("SeabassStyle");
 }
 
 // The style in force, for QML: common/ThemePalette.qml gives the window
