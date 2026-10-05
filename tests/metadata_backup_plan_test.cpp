@@ -501,6 +501,33 @@ int main()
         std::cout << "case 18 (a stray cue is not something a backup would take) OK\n";
     }
 
+    // ---- another recording of the same length is not this track (#63) ----
+    // Three tracks new to the store, none with a filename, beside a stored
+    // row of another recording that has none either and a length within
+    // the matching window of all three. Each is new. They used to be
+    // paired with that row, as three copies of it, and the plan offered
+    // one of the three.
+    {
+        std::vector<Track> stick;
+        for (int i = 0; i < 3; ++i) {
+            Track track = stickTrack("Neu " + std::to_string(i), "Neue Band");
+            track.filename.clear();
+            track.durationSeconds = 400.0 + i;
+            track.cues = {hotCue(1, 1000.0)};
+            stick.push_back(track);
+        }
+        Track other = storedTrack("Ganz Anders", "Andere Band");
+        other.filename.clear();
+        other.durationSeconds = 400.0;
+        const auto plan = planMetadataBackup(stick, {other}, StickWrittenLongAgo);
+        assert(plan.otherCopies == 0 && "none of them is a copy of another recording");
+        assert(plan.proposals.size() == 3 && "each one is offered");
+        for (const auto &proposal : plan.proposals) {
+            assert(proposal.isNew && proposal.storedId.empty());
+        }
+        std::cout << "case 19 (no filename on either side is not a match) OK\n";
+    }
+
     std::cout << "metadata_backup_plan_test: all cases passed\n";
     // ---- a loop is never the cue at its start ---------------------------
     // The stick turned pad 2 into a loop since the last backup. Taken for

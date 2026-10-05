@@ -589,6 +589,8 @@ class CatalogGateFixture : public QObject
         // Track counts by catalog path, for a test that needs to tell
         // two sticks' answers apart; the rest get hold()'s count.
         std::map<std::string, int> counts;
+        // Track i of this hold is durationBase + i seconds long.
+        int durationBase = 0;
     };
 
     std::shared_ptr<Gate> m_gate;
@@ -619,6 +621,7 @@ public:
         // suite.
         const std::string salt = std::to_string(QCoreApplication::applicationPid()) + "."
             + std::to_string(QDateTime::currentMSecsSinceEpoch()) + "." + std::to_string(++m_holds);
+        gate->durationBase = 200 + static_cast<int>(std::hash<std::string>{}(salt) % 3000) * 7;
         auto stage = [gate, trackCount, honourCancel, salt](seabass::gui::LibraryCatalogCache::Detail detail,
                                                       const std::string &format, const std::string &path,
                                                       std::vector<seabass::domain::Track> &tracks,
@@ -660,7 +663,7 @@ public:
                 // a recording by more than its title.
                 track.artist = "Gated Artist " + salt;
                 track.filePath = "/Contents/gated/" + salt + "/" + std::to_string(i + 1) + ".mp3";
-                track.durationSeconds = 200 + i + static_cast<int>(std::hash<std::string>{}(salt) % 3000) * 7;
+                track.durationSeconds = gate->durationBase + i;
                 seabass::domain::CuePoint cue;
                 cue.kind = seabass::domain::CuePoint::Kind::Hot;
                 cue.hotCueNumber = 1;
@@ -673,6 +676,39 @@ public:
         m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(stage, mtime));
         m_gate = gate;
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(m_caches.back().get());
+    }
+
+    // Rows in the metadata store that are other recordings of the same
+    // lengths as this hold's tracks: titles and artists of their own and,
+    // like the held tracks, no filename. A store that lives across runs
+    // gathers rows like these by itself, one hold's lengths at a time.
+    Q_INVOKABLE bool storeOtherRecordingsOfTheSameLength(int count)
+    {
+        if (!m_gate) {
+            return false;
+        }
+        std::vector<seabass::domain::Track> tracks;
+        const std::string salt = std::to_string(QDateTime::currentMSecsSinceEpoch()) + "." + std::to_string(++m_holds);
+        for (int i = 0; i < count; ++i) {
+            seabass::domain::Track track;
+            track.format = "rekordbox";
+            track.sourceId = "same-length-" + std::to_string(i + 1);
+            track.title = "Same Length " + salt + "-" + std::to_string(i);
+            track.artist = "Another Artist " + salt;
+            track.durationSeconds = m_gate->durationBase + i;
+            tracks.push_back(std::move(track));
+        }
+        try {
+            seabass::infrastructure::local::MetadataStore store;
+            seabass::infrastructure::local::MetadataSource source;
+            source.stickRoot = "/same-length";
+            source.stickLabel = "SAME LENGTH";
+            store.store(tracks, source, seabass::application::NullProgressReporter::instance(),
+                        seabass::application::CancellationToken::none());
+        } catch (const std::exception &) {
+            return false;
+        }
+        return true;
     }
 
     Q_INVOKABLE void release()
