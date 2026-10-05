@@ -87,14 +87,42 @@ TestCase {
         realAppSettings.experimentalFeaturesEnabled = false;
     }
 
-    function test_withoutExperimentalNeitherMenuOpens() {
+    Component {
+        id: fakeRowComponent
+        QtObject {
+            property string filePath: "/nonexistent/a.mp3"
+            property string title: "A Track"
+            property string streamingSource: ""
+        }
+    }
+
+    // Without Experimental: no playlist menu, and the row menu (Merge,
+    // Find) has no "Remove from".
+    function test_withoutExperimentalThereIsNoPlaylistEditing() {
         const page = makeEditingPage(false);
         page.shownPlaylist = "Peak";
         page.openPlaylistMenu("Peak", page);
-        page.openTrackMenu("/nonexistent/a.mp3", "A", page);
         compare(findChild(page, "playlistMenu").opened, false);
-        compare(findChild(page, "trackMenu").opened, false);
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase), page);
+        tryCompare(menu, "opened", true);
+        verify(findChild(page, "mergeTrackItem").visible && findChild(page, "findMatchingItem").visible);
+        compare(findChild(page, "removeFromPlaylistItem").visible, false);
         compare(page.playlistEditController.calls.length, 0);
+        menu.close();
+        cleanupExperimental();
+    }
+
+    // A streaming track has no file to merge: the item says so, disabled.
+    function test_aStreamingRowCannotBeMerged() {
+        const page = makeEditingPage(false);
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase, {streamingSource: "TIDAL"}), page);
+        tryCompare(menu, "opened", true);
+        const merge = findChild(page, "mergeTrackItem");
+        compare(merge.enabled, false);
+        verify(merge.text.indexOf("streaming track") > 0, merge.text);
+        menu.close();
         cleanupExperimental();
     }
 
@@ -128,18 +156,23 @@ TestCase {
         cleanupExperimental();
     }
 
-    // Remove from the playlist shown, and Keep; with "All tracks" shown
-    // there is no playlist to take a track out of, so no menu.
+    // Remove from the playlist shown, and Keep, in the row menu; with "All
+    // tracks" shown there is no playlist to take a track out of.
     function test_removingATrackFromThePlaylistShownStagesAndKeeps() {
         const page = makeEditingPage(true);
         const menu = findChild(page, "trackMenu");
-        page.shownPlaylist = "";
-        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
-        compare(menu.opened, false, "no playlist shown, no menu");
-        page.shownPlaylist = "Peak";
-        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
-        tryCompare(menu, "opened", true);
         const item = findChild(page, "removeFromPlaylistItem");
+        const row = createTemporaryObject(fakeRowComponent, testCase);
+        page.shownPlaylist = "";
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, false, "no playlist shown, no Remove");
+        menu.close();
+        tryCompare(menu, "visible", false);
+        page.shownPlaylist = "Peak";
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, true);
         compare(item.text, "Remove from \"Peak\"");
         waitForRendering(page);
         saveScreenshot(page, "browse_track_menu");
@@ -148,11 +181,12 @@ TestCase {
                 JSON.stringify(["remove", "Peak", "/nonexistent/a.mp3", "A Track"]));
         menu.close();
         tryCompare(menu, "visible", false);
-        page.openTrackMenu("/nonexistent/a.mp3", "A Track", page);
+        page.openTrackMenu(row, page);
         tryCompare(menu, "opened", true);
         compare(item.text, "Keep in \"Peak\"");
         item.triggered();
         compare(JSON.stringify(page.playlistEditController.calls[1]), JSON.stringify(["keepIn", "Peak", "/nonexistent/a.mp3"]));
+        menu.close();
         cleanupExperimental();
     }
 
