@@ -38,9 +38,9 @@ Item {
             return !(root.showSync || root.showMetadataBackup || root.showRestoreMetadata || root.showCreateEngine);
         case "backup":
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
-                     || root.showManageBackups || root.showCreateBackupStick);
+                     || root.showManageBackups || root.showCreateBackupStick || root.showFormat);
         case "maintain":
-            return !(root.showCleanUp || root.showLibraryHealth || root.showFormat);
+            return !(root.showCleanUp || root.showLibraryHealth);
         default:
             return true;
         }
@@ -587,6 +587,24 @@ Item {
                     root.cloneSource.rekordboxPath, root.cloneSource.enginePath,
                     root.mountPoint, root.label, false)
             }
+            ActionCard {
+                objectName: "formatUsbCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Format USB Stick"
+                cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
+                cardIcon: "edit-delete-shred"
+                // The one action here that can permanently erase a drive,
+                // so it keeps its own warnings and its type-to-confirm
+                // dialog, and it is offered whether or not the stick has
+                // a library: it is the action for a stick with nothing
+                // recognizable on it yet.
+                visible: root.group === "backup" && root.showFormat
+                enabled: !root.mediaController.busy
+                onClicked: root.formatUsbRequested()
+            }
 
             // ---- Maintain
             // The clean-up cards first: Clean Up Duplicates, the one most
@@ -690,24 +708,6 @@ Item {
                 visible: root.group === "maintain" && root.showLibraryHealth
                 enabled: root.hasRekordbox || root.hasEngine
                 onClicked: root.libraryHealthRequested(root.label, root.rekordboxPath, root.enginePath)
-            }
-            ActionCard {
-                objectName: "formatUsbCard"
-                large: root.large
-                Layout.preferredWidth: grid.cellWidth
-                Layout.maximumWidth: grid.cellWidth
-                Layout.fillHeight: true
-                cardTitle: "Format USB Stick"
-                cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
-                cardIcon: "edit-delete-shred"
-                // The one action here that can permanently erase a drive,
-                // so it keeps its own warnings and its type-to-confirm
-                // dialog, and it is offered whether or not the stick has
-                // a library: it is the action for a stick with nothing
-                // recognizable on it yet.
-                visible: root.group === "maintain" && root.showFormat
-                enabled: !root.mediaController.busy
-                onClicked: root.formatUsbRequested()
             }
         }
     }
