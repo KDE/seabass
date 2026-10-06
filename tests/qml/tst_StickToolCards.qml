@@ -891,6 +891,24 @@ TestCase {
         }
     }
 
+    // At start-up the row comes before its library does: the cards are
+    // made for a stick whose library is not found yet, and the row is
+    // replaced once it is. The recordings are counted for that row, not
+    // left at the "nothing here" of the one before it.
+    function test_recordingsAreCountedOnceTheLibraryIsFound() {
+        const recordings = createTemporaryObject(recordingsProbeComponent, testCase,
+                                                 {summary: {count: 2, bytes: 2 * 1024 * 1024 * 1024, sources: ["engine"]}});
+        const pending = createTemporaryObject(pendingProbeComponent, testCase, {perFormat: 0});
+        const cards = makeCards(emptyStick({label: "MAIN", mountPoint: "/media/MAIN", devicePath: "/dev/sdb1"}),
+                                "maintain", {}, {recordingsProbe: recordings, pendingProbe: pending});
+        compare(card(cards, "Clean Up Recordings").visible, false, "no library yet, so no clean-up cards");
+        cards.row = makeStick({});
+        tryVerify(() => card(cards, "Clean Up Recordings").enabled, 2000,
+                  "the recordings are counted once the library is found: " + card(cards, "Clean Up Recordings").cardSubtitle);
+        verify(card(cards, "Clean Up Recordings").cardSubtitle.indexOf("2 recordings") === 0,
+               card(cards, "Clean Up Recordings").cardSubtitle);
+    }
+
     function test_recordingsCardOpensThePage() {
         const cards = makeMaintain({count: 2, bytes: 1000, sources: ["engine"]});
         const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "recordingsRequested"});

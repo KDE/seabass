@@ -225,9 +225,14 @@ Item {
         root.hasOneLibrary = root.hasRekordbox && root.pendingProbe.hasOneLibrary(root.rekordboxPath);
         root.recordingsSummary = root.recordingsProbe.summarize(root.rekordboxPath, root.enginePath);
     }
-    onGroupChanged: root.refreshMaintain()
+    // Later, not at once: a handler on `row` runs before the bindings
+    // read off it (showCleanUp, the paths) have caught up, so a stick
+    // whose library was found after the row first came was asked about
+    // with the row before it, found not writable, and its recordings
+    // never counted.
+    onGroupChanged: Qt.callLater(root.refreshMaintain)
     Component.onCompleted: root.refreshMaintain()
-    onRowChanged: root.refreshMaintain()
+    onRowChanged: Qt.callLater(root.refreshMaintain)
     // "3 recordings, 5.8 GiB, from Engine OS and a Pioneer deck"
     readonly property string recordingsSubtitle: {
         const count = root.recordingCount;
