@@ -103,6 +103,12 @@ class Package(CMakePackageBase):
             # (src/gui/win/app_icon.rc). The uninstaller sits beside it,
             # as it does for most Windows apps; the template's uninstall
             # removes the whole Start menu folder.
+            # The installer's own icon, which NSIS also installs beside the
+            # program and names as the icon of Seabass's entry in Windows'
+            # Apps list. Craft falls back to its own craft.ico without
+            # this, so setup.exe and that entry wore Craft's logo (0.7.13).
+            # The same .ico the .exe is built with.
+            self.defines["icon"] = self.sourceDir() / "src" / "gui" / "win" / "app_icon.ico"
             self.defines["shortcuts"] = [
                 {"name": "Seabass", "target": "bin/seabass.exe", "description": self.subinfo.description},
                 {"name": "Uninstall Seabass", "target": "uninstall.exe"},
