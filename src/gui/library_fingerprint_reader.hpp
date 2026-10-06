@@ -64,7 +64,10 @@ std::optional<domain::LibraryFingerprint> fingerprintAfterCuesPass(const std::op
 // compared against later -- a backup's manifest header -- where a stale
 // number is indistinguishable from a true one and turns into "this is a
 // different library" about a stick that never changed.
-std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const QString &rekordboxPath,
-                                                                          const QString &enginePath);
+// `cancel` is the caller's own: a backup or clone being stopped must stop
+// this read too, or whoever waits on the job waits on a slow stick.
+std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(
+    const QString &rekordboxPath, const QString &enginePath,
+    application::CancellationToken cancel = application::CancellationToken::none());
 
 }  // namespace seabass::gui
