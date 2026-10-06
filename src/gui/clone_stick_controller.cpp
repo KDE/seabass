@@ -379,8 +379,8 @@ void CloneStickController::start(bool exact)
         // see BackupStickOptions::readLibraryFingerprint. A clone writes
         // the same manifest header a backup does and has the same way of
         // getting it wrong.
-        options.backup.readLibraryFingerprint = [rekordboxPath, enginePath]() -> std::string {
-            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath);
+        options.backup.readLibraryFingerprint = [rekordboxPath, enginePath, cancel = options.cancel]() -> std::string {
+            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath, cancel);
             return fingerprint ? fingerprint->serialize() : std::string();
         };
         result->outcome = CloneStick::execute(options);

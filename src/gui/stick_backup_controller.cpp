@@ -506,8 +506,8 @@ void StickBackupController::backUp()
         // answers for the catalogs as it last saw them and the archive
         // holds them as they are -- the two disagreeing is what put 143
         // tracks in a header over catalogs holding 156.
-        options.readLibraryFingerprint = [rekordboxPath, enginePath]() -> std::string {
-            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath);
+        options.readLibraryFingerprint = [rekordboxPath, enginePath, cancel = options.cancel]() -> std::string {
+            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath, cancel);
             return fingerprint ? fingerprint->serialize() : std::string();
         };
         result->backup = std::make_shared<BackupStickOutcome>(BackupStick::execute(options));

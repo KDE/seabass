@@ -71,7 +71,8 @@ std::optional<domain::LibraryFingerprint> fingerprintAfterCuesPass(const std::op
 }
 
 std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const QString &rekordboxPath,
-                                                                          const QString &enginePath)
+                                                                          const QString &enginePath,
+                                                                          application::CancellationToken cancel)
 {
     // Drops the cached read first, so what comes back describes the
     // catalogs as they are on disk rather than as whichever page last
@@ -96,7 +97,7 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const Q
             LibraryCatalogCache::instance().invalidate(format, path.toStdString());
         }
     }
-    return readLibraryFingerprint(rekordboxPath, enginePath);
+    return readLibraryFingerprint(rekordboxPath, enginePath, FingerprintPass::Cues, std::move(cancel));
 }
 
 }  // namespace seabass::gui
