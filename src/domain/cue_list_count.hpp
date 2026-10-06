@@ -18,7 +18,7 @@ namespace seabass::domain
 // that disagree (#60), counted from what the readers found while reading
 // the tracks' cues (Track::cueLists), so the stick's summary says it at a
 // glance before a sync. Each file once, however many rows name it, as
-// Library Health's Cue lists check counts them.
+// the cue list audit (legacy_memory_list_audit.hpp) counts them.
 //
 // Honest: `disagree` means something only when complete(), every file
 // examined. A file that could not be read, or whose cues were not read

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// Library Health's cue list check (#55, #60) on synthetic analysis files:
+// The cue list audit (#55, #60) on synthetic analysis files:
 // one .DAT/.EXT pair per shape the check names, built from the layouts
 // the codecs' surveys establish (anlz_legacy_cue_codec.hpp,
 // anlz_cue_codec.hpp), and one clean pair. No real track's file is in
@@ -437,7 +437,7 @@ void findingsAndRepairs(const fs::path &stick)
     // The same files read the way the readers' cue pass reads them
     // (readAnalysisFileCues): each row's cue lists are compared in the
     // bytes read for its cues, with no second pass, and the stick summary
-    // counts what the Cue lists check counts (#60).
+    // counts what the cue list audit counts (#60).
     {
         const std::string missing = "/PIONEER/USBANLZ/P001/0000FFFF/ANLZ0000.DAT";
         FilesystemAnlzSource source(root);
@@ -469,7 +469,7 @@ void findingsAndRepairs(const fs::path &stick)
                                                                      zeroSlot.analyzePath, disagree.analyzePath,
                                                                      debris.analyzePath, stale.analyzePath, missing},
                                                               names).tally.examined),
-              "and examines exactly the files the Cue lists check examines");
+              "and examines exactly the files the cue list audit examines");
         check(seabass::domain::describeCueListCount(count) == "1 analysis file could not be read",
               "with a file unread, the summary says so and gives no count of disagreements: "
                   + seabass::domain::describeCueListCount(count));

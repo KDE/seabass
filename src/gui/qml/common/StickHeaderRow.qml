@@ -249,12 +249,10 @@ Rectangle {
                                 badgeColor: Theme.warnIcon
                                 tooltipText: root.cueListsText.indexOf("could not be read") >= 0
                                     ? "Analysis files that are missing, or whose cue lists could not be read, so "
-                                      + "whether their two generations of cue list agree is not known. Library "
-                                      + "Health's Cue lists check names them."
+                                      + "whether their two generations of cue list agree is not known."
                                     : "Analysis files whose legacy cue lists, the ones an XDJ-RX2 or a "
                                       + "CDJ-3000X shows, differ from the modern lists Seabass reads. A sync would "
-                                      + "write what Seabass shows. Library Health's Cue lists check names them "
-                                      + "and repairs them."
+                                      + "write what Seabass shows."
                             }
                             StatusBadge {
                                 objectName: "syncNeededBadge"

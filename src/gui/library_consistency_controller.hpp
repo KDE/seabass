@@ -20,9 +20,6 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "gui/async_request.hpp"
-#include "domain/cleanup_leftovers.hpp"
-#include "domain/hidden_engine_cues.hpp"
-#include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "domain/playlist_sync.hpp"
 #include "domain/tracks_in_no_playlist.hpp"
@@ -194,14 +191,6 @@ struct PlaylistFinding
     std::map<std::string, int> leftOutByReference;
 };
 
-// One rekordbox track whose legacy memory list, or whose analysis
-// directory, needs a hand (infrastructure::rekordbox::LegacyMemoryListFinding).
-struct LegacyMemoryListIssue
-{
-    domain::Track track;
-    infrastructure::rekordbox::LegacyMemoryListFinding finding;
-};
-
 // One bar for the whole scan (#58): what each leg will announce, counted
 // before the first read from the catalogs' own row counts
 // (LibraryCatalogCache::plannedUnits() for the reads, the audits' own
@@ -255,21 +244,6 @@ struct LibraryConsistencyScanResult
     // Engine only: where covers this library has lost can be found again
     // (tags, stick backups). Shared with the repair that follows.
     std::shared_ptr<ArtworkRescueSources> rescue;
-    // OneLibrary only: rows a Clean Up removed from export.pdb and never
-    // from OneLibrary (see domain::CleanupLeftover). Needs both halves, so
-    // it runs in the OneLibrary leg, which comes after rekordbox's.
-    std::vector<domain::CleanupLeftover> cleanupLeftovers;
-    bool cleanupLeftoversChecked = false;
-    std::string cleanupLeftoversError;
-    // Engine only: pads the player hides (domain::HiddenEngineCues).
-    std::vector<domain::HiddenEngineCues> hiddenEngineCues;
-    bool hiddenCuesChecked = false;
-    // rekordbox and OneLibrary: legacy memory cue lists a player chokes
-    // on, the analysis debris a hung one left (#55), and legacy and
-    // modern cue lists that disagree (#60). The rekordbox leg checks the
-    // files export.pdb names; the OneLibrary leg adds the ones only
-    // OneLibrary names, and appends (cueListsAppend) rather than
-    // replacing what the rekordbox leg found.
     // The last leg only, once every catalog is in the cache: playlists
     // that differ between the libraries, and Engine entries naming no
     // track (#61).
@@ -277,16 +251,6 @@ struct LibraryConsistencyScanResult
     std::vector<infrastructure::engine::DanglingPlaylistEntries> danglingPlaylistEntries;
     bool playlistsChecked = false;
     std::string playlistsError;
-    std::vector<LegacyMemoryListIssue> legacyMemoryLists;
-    bool legacyMemoryListsChecked = false;
-    std::string legacyMemoryListsError;
-    infrastructure::rekordbox::CueListTally cueListTally;
-    bool cueListsAppend = false;
-    // OneLibrary leg: the analysis files its rows name (normalizedPathKey),
-    // so a file the rekordbox leg took for debris is not, when this
-    // catalog names it.
-    std::set<std::string> oneLibraryAnalysisKeys;
-
     // The same pass: files no library has in any playlist.
     domain::NoPlaylistScan noPlaylist;
     QString errorMessage;
@@ -335,9 +299,8 @@ public:
     // How much of the stick one scan reads. Full is Library Health's scan:
     // every check this class has. CuesOnly is the stray-cue pages': the
     // catalogs, their cues and the two stray-cue finders, and nothing
-    // else. No Clean Up leftover check, no cover-art, analysis or
-    // sample-rate audit, no file-presence check (the missing-file issues),
-    // no import-prompt read. The sample-rate audit alone opens every Engine
+    // else. No cover-art, analysis or sample-rate audit, no file-presence
+    // check (the missing-file issues), no import-prompt read. The sample-rate audit alone opens every Engine
     // track's file whose row lacks a rate, which on a full USB stick is
     // minutes spent on something those pages never show.
     enum ScanDepth {
@@ -426,30 +389,6 @@ private:
     // without it, a library that would not open showed the same green
     // "every track says what it is" as a healthy one.
     Q_PROPERTY(QString sampleRateError READ sampleRateError NOTIFY sampleRatesChanged)
-    // #8: OneLibrary rows a Clean Up removed from export.pdb and never
-    // from OneLibrary, so the DJ still sees both copies on a OneLibrary
-    // player. Checked only when the stick has both halves.
-    Q_PROPERTY(bool cleanupLeftoversChecked READ cleanupLeftoversChecked NOTIFY cleanupLeftoversChanged)
-    Q_PROPERTY(int cleanupLeftoverCount READ cleanupLeftoverCount NOTIFY cleanupLeftoversChanged)
-    Q_PROPERTY(int cleanupLeftoverFixableCount READ cleanupLeftoverFixableCount NOTIFY cleanupLeftoversChanged)
-    Q_PROPERTY(bool cleanupLeftoverFixStaged READ cleanupLeftoverFixStaged NOTIFY cleanupLeftoversChanged)
-    Q_PROPERTY(QString cleanupLeftoverError READ cleanupLeftoverError NOTIFY cleanupLeftoversChanged)
-    // The ones left alone, each {title, artist, reason}: few, and each one
-    // is a decision the DJ may want to make by hand.
-    Q_PROPERTY(QVariantList cleanupLeftoversHeldBack READ cleanupLeftoversHeldBack NOTIFY cleanupLeftoversChanged)
-    // Engine pads the player hides: a cue or loop written without a colour
-    // by a build before 05d71bbd (domain::HiddenEngineCues). Checked by
-    // the Engine leg of a full scan.
-    Q_PROPERTY(bool hiddenCuesChecked READ hiddenCuesChecked NOTIFY hiddenCuesChanged)
-    Q_PROPERTY(int hiddenCueTrackCount READ hiddenCueTrackCount NOTIFY hiddenCuesChanged)
-    Q_PROPERTY(int hiddenCueCount READ hiddenCueCount NOTIFY hiddenCuesChanged)
-    Q_PROPERTY(bool hiddenCueFixStaged READ hiddenCueFixStaged NOTIFY hiddenCuesChanged)
-    Q_PROPERTY(QVariantList hiddenCueTracks READ hiddenCueTracks NOTIFY hiddenCuesChanged)
-    // rekordbox legacy memory cue lists in a shape an XDJ-RX2 hangs on,
-    // written by a build between 5282555e and 6e0f1c09 or rewritten by
-    // the player since, plus the analysis file a hung player leaves
-    // behind (infrastructure::rekordbox::LegacyMemoryListFinding, #55).
-    // Checked by the rekordbox leg of a full scan.
     // Playlists that do not hold the same tracks in every library on the
     // stick (domain::findPlaylistDifferences), and Engine playlist entries
     // naming no track. Checked by the last leg of a full scan.
@@ -465,43 +404,6 @@ private:
     // Each {playlist, entries}.
     Q_PROPERTY(QVariantList danglingPlaylists READ danglingPlaylists NOTIFY playlistsChanged)
     Q_PROPERTY(bool danglingFixStaged READ danglingFixStaged NOTIFY playlistsChanged)
-    Q_PROPERTY(bool legacyMemoryListsChecked READ legacyMemoryListsChecked NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(int legacyMemoryListCount READ legacyMemoryListCount NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(int legacyMemoryListFixableCount READ legacyMemoryListFixableCount NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(int legacyMemoryListDebrisCount READ legacyMemoryListDebrisCount NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(bool legacyMemoryListFixStaged READ legacyMemoryListFixStaged NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(QString legacyMemoryListError READ legacyMemoryListError NOTIFY legacyMemoryListsChanged)
-    // Each {title, artist, what}: the tracks, with what is wrong in words.
-    Q_PROPERTY(QVariantList legacyMemoryListTracks READ legacyMemoryListTracks NOTIFY legacyMemoryListsChanged)
-    // #60, the same check's other half: tracks whose legacy cue lists
-    // (what an XDJ-RX2 or CDJ-3000X shows) and modern ones (what Seabass
-    // reads first) disagree. Each {title, artist, what, player, seabass}.
-    // The count is of lists compared and found to differ; a list that
-    // could not be read is in the tracks, not the count.
-    Q_PROPERTY(int cueListDisagreementCount READ cueListDisagreementCount NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(int cueListDisagreementFixableCount READ cueListDisagreementFixableCount
-                   NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(QVariantList cueListDisagreementTracks READ cueListDisagreementTracks NOTIFY legacyMemoryListsChanged)
-    // Tracks whose hot or modern list does not decode: named, not
-    // compared, not repaired.
-    Q_PROPERTY(int cueListMalformedCount READ cueListMalformedCount NOTIFY legacyMemoryListsChanged)
-    // Each {title, artist, what}: the analysis files that could not be
-    // read, with why, so "3 could not be read" can say which.
-    Q_PROPERTY(QVariantList cueListUnreadableTracks READ cueListUnreadableTracks NOTIFY legacyMemoryListsChanged)
-    // Files with anything to report, and with anything the repair does.
-    Q_PROPERTY(int cueListFindingCount READ cueListFindingCount NOTIFY legacyMemoryListsChanged)
-    Q_PROPERTY(int cueListFixableCount READ cueListFixableCount NOTIFY legacyMemoryListsChanged)
-    // {examined, unreadable, legacyHeader, playerRewritten, disagree,
-    // strayFiles}: what the check looked at and found, counted
-    // (infrastructure::rekordbox::CueListTally). examined 0 means
-    // nothing was checked, never that all is well.
-    Q_PROPERTY(QVariantMap cueListCounts READ cueListCounts NOTIFY legacyMemoryListsChanged)
-    // Which list wins where the two disagree: true keeps what the player
-    // shows (the default), false what Seabass wrote. One choice per
-    // stick, read when the repair is staged.
-    Q_PROPERTY(bool keepPlayerCueLists READ keepPlayerCueLists WRITE setKeepPlayerCueLists
-                   NOTIFY legacyMemoryListsChanged)
-
     // Files no library on the stick has in any playlist (domain::
     // findTracksInNoPlaylist), checked with the playlists. Each {filePath,
     // title, artist, libraries, staged}. stickHasPlaylists false means
@@ -626,17 +528,6 @@ public:
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
     QString sampleRateError() const { return QString::fromStdString(m_sampleRates.error); }
-    bool cleanupLeftoversChecked() const { return m_cleanupLeftoversChecked; }
-    int cleanupLeftoverCount() const { return static_cast<int>(m_cleanupLeftovers.size()); }
-    int cleanupLeftoverFixableCount() const;
-    bool cleanupLeftoverFixStaged() const { return m_cleanupLeftoverFixStaged; }
-    QString cleanupLeftoverError() const { return m_cleanupLeftoversError; }
-    QVariantList cleanupLeftoversHeldBack() const;
-    bool hiddenCuesChecked() const { return m_hiddenCuesChecked; }
-    int hiddenCueTrackCount() const { return static_cast<int>(m_hiddenEngineCues.size()); }
-    int hiddenCueCount() const;
-    bool hiddenCueFixStaged() const { return m_hiddenCueFixStaged; }
-    QVariantList hiddenCueTracks() const;
     bool playlistsChecked() const { return m_playlistsChecked; }
     int noPlaylistTrackCount() const { return static_cast<int>(m_noPlaylist.tracks.size()); }
     QVariantList noPlaylistTracks() const;
@@ -648,23 +539,6 @@ public:
     int danglingPlaylistEntryCount() const;
     QVariantList danglingPlaylists() const;
     bool danglingFixStaged() const { return m_danglingFixStaged; }
-    bool legacyMemoryListsChecked() const { return m_legacyMemoryListsChecked; }
-    int legacyMemoryListCount() const;
-    int legacyMemoryListFixableCount() const;
-    int legacyMemoryListDebrisCount() const;
-    bool legacyMemoryListFixStaged() const { return m_legacyMemoryListFixStaged; }
-    QString legacyMemoryListError() const { return m_legacyMemoryListsError; }
-    QVariantList legacyMemoryListTracks() const;
-    int cueListDisagreementCount() const;
-    int cueListDisagreementFixableCount() const;
-    QVariantList cueListDisagreementTracks() const;
-    int cueListFindingCount() const;
-    int cueListMalformedCount() const;
-    QVariantList cueListUnreadableTracks() const;
-    int cueListFixableCount() const;
-    QVariantMap cueListCounts() const;
-    bool keepPlayerCueLists() const { return m_keepPlayerCueLists; }
-    void setKeepPlayerCueLists(bool keepPlayer);
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -716,18 +590,6 @@ public:
     // only, like every other fix here: Save writes it.
     Q_INVOKABLE void fillSampleRates();
     Q_INVOKABLE void unstageSampleRateFill();
-    // Stages finishing every repairable Clean Up leftover. Staging only.
-    Q_INVOKABLE void finishCleanupLeftovers();
-    Q_INVOKABLE void unstageCleanupLeftoverFix();
-    // Stages one RecolourEngineCuesChange per track with hidden pads; Save
-    // writes them. The whole set at once: a pad the player hides is never
-    // something to keep hidden.
-    Q_INVOKABLE void recolourHiddenCues();
-    Q_INVOKABLE void unstageHiddenCueFix();
-    // Stages one RepairLegacyMemoryListChange per track that has a
-    // repairable memory list, debris, or lists that disagree (resolved
-    // the way keepPlayerCueLists says); a list this cannot read is named
-    // and left alone.
     // Stages making `playlist` hold, in every other library, what it
     // holds in `reference` ("rekordbox", "onelibrary", "engine"), within
     // what can be written (see PlaylistFinding). Staging another
@@ -742,8 +604,6 @@ public:
     Q_INVOKABLE void unstageTracksInNoPlaylist();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
-    Q_INVOKABLE void repairLegacyMemoryLists();
-    Q_INVOKABLE void unstageLegacyMemoryListFix();
     // Stages telling Engine the rekordbox library is already imported.
     Q_INVOKABLE void markRekordboxImported();
     Q_INVOKABLE void unstageRekordboxImportMark();
@@ -781,9 +641,6 @@ signals:
     void artworkChanged();
     void analysisStateChanged();
     void sampleRatesChanged();
-    void cleanupLeftoversChanged();
-    void hiddenCuesChanged();
-    void legacyMemoryListsChanged();
     void playlistsChanged();
     void importStateChanged();
     void stickHealthChanged();
@@ -857,29 +714,12 @@ private:
     infrastructure::engine::AnalysisStateAudit m_analysisState;
     std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
-    std::vector<domain::CleanupLeftover> m_cleanupLeftovers;
-    bool m_cleanupLeftoversChecked = false;
-    QString m_cleanupLeftoversError;
-    std::set<QString> m_stagedCleanupLeftovers;
-    bool m_cleanupLeftoverFixStaged = false;
-    std::vector<domain::HiddenEngineCues> m_hiddenEngineCues;
-    bool m_hiddenCuesChecked = false;
-    std::set<QString> m_stagedHiddenCueFixes;
-    bool m_hiddenCueFixStaged = false;
     std::vector<PlaylistFinding> m_playlistFindings;
     std::vector<infrastructure::engine::DanglingPlaylistEntries> m_danglingPlaylistEntries;
     bool m_playlistsChecked = false;
     QString m_playlistsError;
     std::map<QString, QString> m_stagedPlaylists;  // change id -> reference format
     bool m_danglingFixStaged = false;
-    std::vector<LegacyMemoryListIssue> m_legacyMemoryLists;
-    bool m_legacyMemoryListsChecked = false;
-    QString m_legacyMemoryListsError;
-    std::set<QString> m_stagedLegacyMemoryListFixes;
-    bool m_legacyMemoryListFixStaged = false;
-    infrastructure::rekordbox::CueListTally m_cueListTally;
-    bool m_keepPlayerCueLists = true;
-
     domain::NoPlaylistScan m_noPlaylist;
     std::set<std::string> m_stagedNoPlaylistFiles;
     infrastructure::engine::RekordboxImportState m_importState;

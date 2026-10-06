@@ -51,7 +51,7 @@ public:
 };
 //
 // With `cueLists`, also compares the two generations of cue list in the
-// bytes just read, the way Library Health's Cue lists check does
+// bytes just read, the way the cue list audit does
 // (compareCueSections), and says what it found there: no file read twice.
 std::optional<std::vector<domain::CuePoint>> readAnalysisFileCues(AnlzByteSource &source,
                                                                  const std::string &analyzePath,

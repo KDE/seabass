@@ -709,19 +709,6 @@ ApplicationWindow {
     }
 
     Component {
-        id: oneLibraryLeftoversPageComponent
-        OneLibraryLeftoversPage {}
-    }
-
-    Component {
-        id: hiddenCuesPageComponent
-        HiddenCuesPage {}
-    }
-    Component {
-        id: memoryCueListsPageComponent
-        MemoryCueListsPage {}
-    }
-    Component {
         id: playlistSyncPageComponent
         PlaylistSyncPage {}
     }
@@ -746,9 +733,6 @@ ApplicationWindow {
         case "import": return importPromptPageComponent;
         case "samplerates": return sampleRatesPageComponent;
         case "artwork": return coverArtPageComponent;
-        case "cleanupleftovers": return oneLibraryLeftoversPageComponent;
-        case "hiddencues": return hiddenCuesPageComponent;
-        case "memorycuelists": return memoryCueListsPageComponent;
         case "playlists": return playlistSyncPageComponent;
         case "noplaylist": return noPlaylistTracksPageComponent;
         }

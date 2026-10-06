@@ -481,7 +481,7 @@ Item {
         let fn = null;
         let what = "";
         if (name === "LibraryHealthHubPage") {
-            what = runner.pick(["broken", "junkcues", "import", "samplerates", "artwork", "cleanupleftovers"]);
+            what = runner.pick(["broken", "junkcues", "import", "samplerates", "artwork", "playlists"]);
             fn = () => p.detailRequested(what);
         } else if (name === "StickStatisticsPage") {
             what = "sync";

@@ -136,18 +136,6 @@ TestCase {
                "and is shown as the error, got: '" + controller.errorMessage + "'");
     }
 
-    // #8. A stick without OneLibrary has nothing this check could say,
-    // and a card that always reads "not checked" teaches people to skip
-    // the page. The stick here does not exist, so the check never runs.
-    function test_theLeftoverCardOnlyAppearsOnceItHasChecked() {
-        var page = createTemporaryObject(pageComponent, testCase);
-        tryCompare(page.consistencyController, "busy", false);
-        compare(page.consistencyController.cleanupLeftoversChecked, false);
-        var card = findByObjectName(page, "cleanupLeftoverCard");
-        verify(card !== null, "the card exists");
-        compare(card.visible, false, "and stays hidden until the check has run");
-    }
-
     SignalSpy {
         id: detailSpy
         signalName: "detailRequested"
@@ -169,9 +157,6 @@ TestCase {
             {card: "importPromptCard", section: "import"},
             {card: "sampleRateCard", section: "samplerates"},
             {card: "coverArtCard", section: "artwork"},
-            {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
-            {card: "hiddenCueCard", section: "hiddencues"},
-            {card: "memoryCueListCard", section: "memorycuelists"},
             {card: "playlistSyncCard", section: "playlists"},
             {card: "noPlaylistCard", section: "noplaylist"},
         ];
@@ -497,8 +482,7 @@ TestCase {
         // picture is what makes "that card is out" checkable instead of a
         // feeling.
         var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
-                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard", "hiddenCueCard",
-                     "memoryCueListCard", "playlistSyncCard"];
+                     "sampleRateCard", "analysisStateCard", "coverArtCard", "playlistSyncCard"];
         for (var i = 0; i < names.length; ++i) {
             var card = findByObjectName(page, names[i]);
             if (card) {
@@ -702,7 +686,7 @@ TestCase {
     }
 
     // Every step of the check counts. It reads each catalog and then runs
-    // its audits: the Clean Up leftover check, the cover-art audit, the
+    // its audits: the cover-art audit, the
     // analysis count and the sample-rate audit, which on a full USB stick
     // opens an audio file per Engine row without a rate. None of those
     // used to report, so the bar swept (or sat full) for minutes and the
@@ -755,8 +739,7 @@ TestCase {
 
         // Not "Reading cover images": this fixture keeps its covers as
         // files, so that pass has no rows (engine_artwork_test counts it).
-        const steps = ["Checking cue lists", "Looking for Clean Up leftovers", "Checking cover art",
-                       "Counting tracks the player will analyse", "Checking sample rates"];
+        const steps = ["Checking cover art", "Counting tracks the player will analyse", "Checking sample rates"];
         for (const step of steps) {
             const entry = seen[step];
             verify(entry !== undefined, "\"" + step + "\" was a step of the bar; seen: " + JSON.stringify(seen));
@@ -862,61 +845,6 @@ TestCase {
         verify(card.summary.indexOf(tracks + (tracks === 1 ? " track has" : " tracks have")) === 0, card.summary);
         verify(card.summary.indexOf(rows + (rows === 1 ? " cue" : " cues")) > 0, card.summary);
         verify(card.summary.indexOf("at 0:00") < 0, "not \"at 0:00\": the rules reach two seconds in");
-    }
-
-    // #55. A stick with one track's memory list in the shape of 5282555e
-    // and a hung player's ANLZ0001.DAT beside it: the real check finds
-    // exactly that track, the card says so, and the repair stages from
-    // the controller. No other memory list on the fixture is reported,
-    // which is the half of the check that keeps a healthy stick quiet.
-    // (The fixture's own tracks do carry #60 disagreements, written by a
-    // Seabass of that window; the card counts those as well, and
-    // cue_list_health_test pins how many.)
-    function test_aStaleMemoryListIsFoundByTheRealCheck() {
-        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
-        verify(stick.length > 0, "the fixture must copy");
-        const ids = stickFixture.rekordboxTrackIds(stick + "/PIONEER", 3);
-        compare(ids.length, 3, "the fixture has tracks");
-        const dat = stickFixture.plantStaleMemoryList(stick + "/PIONEER", ids[2]);
-        verify(dat.length > 0, "the stale list is planted on " + ids[2]);
-
-        const page = createTemporaryObject(stickPageComponent, testCase,
-                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
-        const controller = page.consistencyController;
-        tryVerify(() => !controller.busy, 300000, "the check finishes");
-        compare(controller.errorMessage, "", "the check read everything");
-        compare(controller.legacyMemoryListError, "", "and the lists were read");
-        compare(controller.legacyMemoryListsChecked, true);
-        compare(controller.legacyMemoryListCount, 1, "the one planted track, and nothing else on the fixture");
-        compare(controller.legacyMemoryListFixableCount, 1);
-        compare(controller.legacyMemoryListDebrisCount, 1, "the ANLZ0001.DAT beside it");
-        const tracks = controller.legacyMemoryListTracks;
-        compare(tracks.length, 1);
-        verify(tracks[0].what.indexOf("says it is empty") >= 0 && tracks[0].what.indexOf("ANLZ0001.DAT") >= 0,
-               tracks[0].what);
-
-        const card = findByObjectName(page, "memoryCueListCard");
-        verify(card !== null && card.visible, "the card is on the hub");
-        compare(card.foundCount, controller.cueListFindingCount);
-        verify(controller.cueListFindingCount >= 1, "at least the planted track");
-        // Pinned: 1161 files export.pdb names and 290 only OneLibrary
-        // names (the #8 leftovers), each examined once. 203 + 17 of them
-        // disagree, as an independent Python reading of the fixture
-        // finds, and the planted track makes 221: its legacy memory list
-        // now holds a cue its PCO2 does not.
-        compare(controller.cueListCounts.examined, 1451, "every analysis file either catalog names");
-        compare(controller.cueListCounts.unreadable, 0);
-        compare(controller.cueListCounts.disagree, 221);
-        compare(controller.cueListCounts.legacyHeader, 1, "one stale header, the planted one");
-        compare(controller.cueListCounts.strayFiles, 1);
-        compare(controller.cueListDisagreementCount, controller.cueListCounts.disagree);
-        compare(card.ok, false);
-
-        compare(controller.keepPlayerCueLists, true, "what the player shows is kept unless the user says otherwise");
-        controller.repairLegacyMemoryLists();
-        compare(controller.legacyMemoryListFixStaged, true, "the repair stages");
-        controller.unstageLegacyMemoryListFix();
-        compare(controller.legacyMemoryListFixStaged, false);
     }
 
     // The legs, one per catalog, share the one bar (#58): a leg begins

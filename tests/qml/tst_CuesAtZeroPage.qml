@@ -84,7 +84,6 @@ TestCase {
             {format: "engine", phase: "Checking cover art", total: 1564},
             {format: "engine", phase: "Counting tracks the player will analyse", total: 1},
             {format: "engine", phase: "Checking sample rates", total: 1564},
-            {format: "onelibrary", phase: "Looking for Clean Up leftovers", total: 3203},
         ];
         for (const step of steps) {
             fake.scanningFormat = step.format;
@@ -149,7 +148,7 @@ TestCase {
 
         verify(findChild(page, "cuesAtZeroSummary") !== null, "its own check is here");
         for (const other of ["missingFilesSummary", "stagedIssuesNote", "importPromptSummary", "markImportedButton",
-                             "sampleRateSummary", "fillSampleRatesButton", "cleanupLeftoverSummary", "finishCleanupButton"]) {
+                             "sampleRateSummary", "fillSampleRatesButton"]) {
             compare(findChild(page, other), null, other + " belongs to another check's page");
         }
         compare(controller.scanCalls, 0, "a shared controller is not scanned again");

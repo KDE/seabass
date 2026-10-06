@@ -100,7 +100,7 @@ private:
 // nothing when it is: the same bytes, every section's length inside the
 // file, and every legacy cue list one the codec's strict check passes.
 // The check every write of an analysis file ends with, the writer's own
-// and Library Health's repair alike. Runs the hook
+// and the cue list audit's repair alike. Runs the hook
 // RekordboxCueWriter::setAfterWriteForTesting() set first.
 std::optional<std::string> analysisFileReadBackProblem(const std::string &path, const std::string &intended);
 

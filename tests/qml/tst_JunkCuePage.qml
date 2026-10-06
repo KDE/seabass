@@ -207,8 +207,8 @@ TestCase {
     }
 
     // The stray-cue page reads cues and nothing else. It used to run
-    // Library Health's whole scan per catalog: the Clean Up leftover
-    // check, the cover-art, analysis and sample-rate audits, and a stat of
+    // Library Health's whole scan per catalog: the playlist
+    // comparison, the cover-art, analysis and sample-rate audits, and a stat of
     // every track's file. On a full USB stick the sample-rate audit alone
     // (one audio file opened per Engine row without a rate) held the
     // overlay up for minutes, for results this page never shows.
@@ -232,7 +232,7 @@ TestCase {
         verify(full.issues.count > 0, "precondition: the fixture has no audio, so every row is a missing file");
         verify(full.artworkTracksWithArt > 0, "precondition: the cover-art audit finds art here");
         verify(full.analysisLibraryPresent, "precondition: the analysis audit finds the Engine library");
-        verify(full.cleanupLeftoversChecked, "precondition: the Clean Up leftover check runs on this stick");
+        verify(full.playlistsChecked, "precondition: the playlist comparison runs on this stick");
         verify(full.junkCues.count > 0, "precondition: the fixture has stray cues");
 
         const page = openOnAFreshCopy();
@@ -252,7 +252,7 @@ TestCase {
         compare(controller.analysisLibraryPresent, false, "no analysis audit");
         compare(controller.sampleRateMissingCount, 0, "no sample-rate audit");
         compare(controller.sampleRateError, "", "no sample-rate audit");
-        compare(controller.cleanupLeftoversChecked, false, "no Clean Up leftover check");
+        compare(controller.playlistsChecked, false, "no playlist comparison");
         console.log("stray-cue scan on the committed fixture (local disk): full " + fullMs + " ms, cues only "
                     + cuesMs + " ms");
     }
@@ -272,7 +272,7 @@ TestCase {
         controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
         tryVerify(() => !controller.busy, 300000, "the scan finishes");
         verify(controller.issues.count > 0, "the full check ran after all");
-        verify(controller.cleanupLeftoversChecked, "every part of it");
+        verify(controller.playlistsChecked, "every part of it");
     }
 
     // Stopped from the overlay, the page stays and says the list is not
