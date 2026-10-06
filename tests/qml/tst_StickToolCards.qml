@@ -199,16 +199,16 @@ TestCase {
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
              expected: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"]},
             {tag: "backup", group: "backup", stick: {},
-             expected: ["Full Stick Backup", "Restore Backup", "Manage Backups"]},
+             expected: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Format USB Stick"]},
             {tag: "backup with a newer copy elsewhere", group: "backup", stick: {},
              advice: {updateSource: spareUpdateSource()},
-             expected: ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]},
+             expected: ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Format USB Stick"]},
             {tag: "backup of an empty stick", group: "backup", stick: {hasRekordbox: false, hasEngine: false},
              advice: {cloneSource: mainCloneSource(true)},
-             expected: ["Restore Backup", "Create Backup USB Stick"]},
+             expected: ["Restore Backup", "Create Backup USB Stick", "Format USB Stick"]},
             {tag: "maintain", group: "maintain", stick: {},
              expected: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
-                 "Delete Orphaned Files", "Library Health", "Format USB Stick"]},
+                 "Delete Orphaned Files", "Library Health"]},
         ];
     }
     function test_eachGroupShowsItsCardsInOrder(data) {
@@ -304,7 +304,7 @@ TestCase {
              args: main.concat(["lib-main"])},
             {tag: "Clean Up Duplicates", group: "maintain", signalName: "cleanupRequested", args: main},
             {tag: "Library Health", group: "maintain", signalName: "libraryHealthRequested", args: main},
-            {tag: "Format USB Stick", group: "maintain", signalName: "formatUsbRequested", args: []},
+            {tag: "Format USB Stick", group: "backup", signalName: "formatUsbRequested", args: []},
         ];
     }
     function test_everyCardAsksForItsPage(data) {
@@ -335,7 +335,7 @@ TestCase {
         const plain = {
             "explore": ["Browse Library", "Compare Playlists", "Library Statistics", "USB Stick Performance"],
             "sync": ["Metadata"],
-            "maintain": ["Format USB Stick"],
+            "backup": ["Format USB Stick"],
         };
         // A newer copy elsewhere, so Update Stick is among the cards.
         const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
@@ -466,9 +466,10 @@ TestCase {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
-        const shown = {"explore": ["USB Stick Performance"], "maintain": ["Format USB Stick"],
+        const shown = {"explore": ["USB Stick Performance"],
                        "sync": ["Metadata", "Restore Metadata"],
-                       "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]};
+                       "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups",
+                                  "Format USB Stick"]};
         const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
         for (const group in shown) {
             const cards = makeCards(stick, group, advice, {appSettingsController: settings});
@@ -497,7 +498,8 @@ TestCase {
         advice["/media/SPARE"] = makeAdvice({state: "restore", backupPath: "/b/MAIN.zip", backupLabel: "MAIN",
             detail: "The newest backup can be restored onto this empty stick.", cloneSource: mainCloneSource(true)});
         const cards = makeCards(emptyStick(), "backup", advice);
-        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Restore Backup", "Create Backup USB Stick"]));
+        compare(JSON.stringify(shownTitles(cards)),
+                JSON.stringify(["Restore Backup", "Create Backup USB Stick", "Format USB Stick"]));
         const clone = card(cards, "Create Backup USB Stick");
         compare(clone.enabled, true);
         compare(clone.cardSubtitle, "Copy MAIN's library onto this stick.");
@@ -739,7 +741,8 @@ TestCase {
         compare(card(makeCards(folder, "sync", {}), "Sync Cue Points").visible, true);
         const maintain = makeCards(folder, "maintain", {});
         compare(card(maintain, "Clean Up Duplicates").visible, true);
-        compare(card(maintain, "Format USB Stick").visible, false, "no drive to erase behind a folder");
+        compare(card(makeCards(folder, "backup", {}), "Format USB Stick").visible, false,
+                "no drive to erase behind a folder");
         // Its backups can be made and listed, but nothing restores or
         // updates a drive it does not have.
         const backup = makeCards(folder, "backup", {"/home/dj/restored": makeAdvice({updateSource: spareUpdateSource()})});
@@ -783,8 +786,8 @@ TestCase {
             {stick: emptyStick(), group: "sync", empty: true},
             {stick: emptyStick(), group: "explore", empty: false},  // Performance needs no library
             {stick: emptyStick({mounted: false}), group: "explore", empty: true},
-            {stick: emptyStick(), group: "backup", empty: false},  // Restore Backup
-            {stick: emptyStick(), group: "maintain", empty: false},  // Format
+            {stick: emptyStick(), group: "backup", empty: false},  // Restore Backup, Format
+            {stick: emptyStick(), group: "maintain", empty: true},
             {stick: makeStick({}), group: "nonsense", empty: true},
         ];
         for (const c of cases) {
@@ -812,11 +815,11 @@ TestCase {
     // Format is the one card the app-wide busy flag disables: erasing a
     // drive has to wait for whatever else is running.
     function test_formatWaitsForTheAppToBeIdle() {
-        const cards = makeCards(makeStick({}), "maintain", {},
+        const cards = makeCards(makeStick({}), "backup", {},
                                 {mediaController: fakeMediaController({busy: true, busyDevicePath: "/dev/sdz1"})});
         compare(card(cards, "Format USB Stick").enabled, false);
-        compare(card(cards, "Clean Up Duplicates").enabled, true, "the other cards are not held up");
-        saveScreenshot(cards, "stick-tools-maintain");
+        compare(card(cards, "Manage Backups").enabled, true, "the other cards are not held up");
+        saveScreenshot(makeCards(makeStick({}), "maintain", {}), "stick-tools-maintain");
     }
 
     // Enabled only when the catalog each card works on is there.

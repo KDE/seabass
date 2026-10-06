@@ -1118,10 +1118,9 @@ TestCase {
             explore: ["Browse Library", "Compare Playlists", "Library Statistics", "Device Profile",
                       "USB Stick Performance"],
             sync: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"],
-            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups"],
+            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Format USB Stick"],
             maintain: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
-                       "Delete Orphaned Files", "Library Health",
-                       "Format USB Stick"],
+                       "Delete Orphaned Files", "Library Health"],
         };
         for (const group of page.groupKeys) {
             page.selectGroup(group);
