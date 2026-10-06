@@ -263,19 +263,6 @@ Page {
 
                         readonly property var stats: root.statsForSource(root.currentSource)
 
-                        // #60: the analysis files whose legacy and modern
-                        // cue lists disagree, counted while the cues were
-                        // read. Said only once every file was examined;
-                        // otherwise how many could not be read.
-                        Label {
-                            objectName: "cueListsNote"
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            wrapMode: Text.WordWrap
-                            text: statsSection.stats.cueListsText || ""
-                            color: (statsSection.stats.cueListsDisagree || 0) > 0 ? Theme.warnText : Theme.textMuted
-                        }
-
                         // The page's first figures, with the cue points pie
                         // beside them at the same height.
                         RowLayout {

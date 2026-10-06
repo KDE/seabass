@@ -126,7 +126,7 @@ struct Track
     // player of the XDJ-RX2's generation shows, the modern ones Seabass
     // reads first. The comparison the cue list audit makes
     // (infrastructure/rekordbox/cue_list_check.hpp), of the bytes already
-    // read for the cues, so the stick's summary counts the files that
+    // read for the cues, so seabass-cli scan counts the files that
     // disagree without a second pass over them (domain::countCueLists).
     // NotChecked until the cues were read, and for a row naming no
     // analysis file; Unreadable when a file is missing or not an analysis

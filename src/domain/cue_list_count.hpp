@@ -16,8 +16,8 @@ namespace seabass::domain
 
 // How many of a stick's analysis files hold legacy and modern cue lists
 // that disagree (#60), counted from what the readers found while reading
-// the tracks' cues (Track::cueLists), so the stick's summary says it at a
-// glance before a sync. Each file once, however many rows name it, as
+// the tracks' cues (Track::cueLists), so seabass-cli scan's summary can
+// say it. Each file once, however many rows name it, as
 // the cue list audit (legacy_memory_list_audit.hpp) counts them.
 //
 // Honest: `disagree` means something only when complete(), every file

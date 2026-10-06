@@ -436,7 +436,7 @@ void findingsAndRepairs(const fs::path &stick)
     }
     // The same files read the way the readers' cue pass reads them
     // (readAnalysisFileCues): each row's cue lists are compared in the
-    // bytes read for its cues, with no second pass, and the stick summary
+    // bytes read for its cues, with no second pass, and seabass-cli scan
     // counts what the cue list audit counts (#60).
     {
         const std::string missing = "/PIONEER/USBANLZ/P001/0000FFFF/ANLZ0000.DAT";

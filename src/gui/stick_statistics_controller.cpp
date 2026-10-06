@@ -16,7 +16,6 @@
 #include <stdexcept>
 
 #include "application/phased_progress.hpp"
-#include "domain/cue_list_count.hpp"
 #include "domain/disk_usage.hpp"
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/library_statistics.hpp"
@@ -49,10 +48,6 @@ QVariantMap toVariant(const domain::LibraryStatistics &stats)
     m["ratedTrackCount"] = stats.ratedTrackCount;
     m["commentedTrackCount"] = stats.commentedTrackCount;
     m["streamingTrackCount"] = stats.streamingTrackCount;
-    // #60: the analysis files whose legacy and modern cue lists disagree,
-    // said only once every file was examined (domain::CueListCount).
-    m["cueListsText"] = QString::fromStdString(domain::describeCueListCount(stats.cueLists, /*sayWhenAgree=*/true));
-    m["cueListsDisagree"] = stats.cueLists.complete() ? stats.cueLists.disagree : -1;
 
     QVariantMap perKey;
     for (const auto &[key, count] : stats.tracksPerKey) {

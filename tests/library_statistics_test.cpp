@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/cue_list_count.hpp"
 #include "domain/library_statistics.hpp"
 
 using namespace seabass::domain;
@@ -249,7 +250,8 @@ int main()
     std::cout << "All library_statistics tests passed.\n";
     // #60: the analysis files whose two generations of cue list disagree,
     // each file once however many rows name it (a padded and an
-    // unpadded spelling are one file), from what the cue pass found.
+    // unpadded spelling are one file), from what the cue pass found. The
+    // CLI's scan summary says it.
     {
         using Check = Track::CueListsCheck;
         Track a = makeTrack("a", "a.mp3");
@@ -261,13 +263,13 @@ int main()
         b.analysisFile = "/PIONEER/USBANLZ/P001/00000002/ANLZ0000.DAT";
         b.cueLists = Check::Examined;
         Track engine = makeTrack("c", "c.mp3");  // no analysis file: not counted
-        auto stats = LibraryStatisticsCalculator::calculate({a, again, b, engine});
-        assert(stats.cueLists.files == 2 && stats.cueLists.examined == 2 && stats.cueLists.disagree == 1);
-        assert(stats.cueLists.complete());
-        assert(describeCueListCount(stats.cueLists) == "1 cue list disagrees");
+        auto count = countCueLists({a, again, b, engine});
+        assert(count.files == 2 && count.examined == 2 && count.disagree == 1);
+        assert(count.complete());
+        assert(describeCueListCount(count) == "1 cue list disagrees");
         b.cueLists = Check::Unreadable;
-        stats = LibraryStatisticsCalculator::calculate({a, b});
-        assert(!stats.cueLists.complete() && describeCueListCount(stats.cueLists) == "1 analysis file could not be read");
+        count = countCueLists({a, b});
+        assert(!count.complete() && describeCueListCount(count) == "1 analysis file could not be read");
         std::cout << "case cue lists (files counted once, said only when all were examined) OK\n";
     }
 

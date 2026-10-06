@@ -14,13 +14,13 @@
 #include "infrastructure/rekordbox/anlz_file.hpp"
 
 // The comparison at the heart of the cue list audit (#55, #60), on its
-// own: the legacy memory list's shape, and a track's two
-// generations of cue list read and compared, from analysis file bytes
-// wherever they come from. legacy_memory_list_audit.hpp reads them from
-// the stick for tools/stick_damage_audit and can repair what it finds; the rekordbox and
-// OneLibrary readers ask the same question of the bytes they already
-// read for a track's cues (readAnalysisFileCues), so the stick's summary
-// can count the disagreements without a second pass over the files.
+// own: the legacy memory list's shape, and a track's two generations of
+// cue list read and compared, from analysis file bytes wherever they come
+// from. legacy_memory_list_audit.hpp reads them from the stick for
+// tools/stick_damage_audit and can repair what it finds; the rekordbox
+// and OneLibrary readers ask the same question of the bytes they already
+// read for a track's cues (readAnalysisFileCues), so seabass-cli scan can
+// count the disagreements without a second pass over the files.
 // Nothing here writes, and nothing here needs more than the two codecs.
 
 namespace seabass::infrastructure::rekordbox

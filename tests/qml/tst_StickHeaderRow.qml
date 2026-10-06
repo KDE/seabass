@@ -177,35 +177,6 @@ TestCase {
                 "a stick with a catalog shows its labels instead");
     }
 
-    // #60: how many analysis files hold legacy and modern cue lists that
-    // disagree, so WHALESHARK and WHALESHARK2 can be checked at a glance
-    // before a sync. The advisor counts it from the cue pass and words it
-    // (advice.cueListsText): the count once every file was examined, how
-    // many could not be read otherwise, nothing while the cues are read.
-    function test_theCueListsBadgeSaysHowManyDisagree() {
-        const quiet = makeRow(makeStick({}), {advice: {state: "current", cueListsText: ""}});
-        compare(named(quiet, "cueListsBadge").visible, false, "nothing to say: no badge");
-        compare(named(makeRow(makeStick({}), {advice: null}), "cueListsBadge").visible, false,
-                "no advice yet: no badge");
-
-        const row = makeRow(makeStick({}), {advice: {state: "current", cueListsText: "3 cue lists disagree"}});
-        const badge = named(row, "cueListsBadge");
-        compare(badge.visible, true);
-        compare(badge.label, "3 cue lists disagree");
-        verify(Qt.colorEqual(badge.badgeColor, Theme.warnIcon), "in the warning colour");
-        verify(badge.tooltipText.indexOf("A sync would write what Seabass shows") >= 0,
-               "the tooltip says what a sync does with them");
-        verify(badge.tooltipText.indexOf("-".repeat(2)) < 0 && badge.tooltipText.indexOf("\u2014") < 0, "no dashes");
-        saveScreenshot(row, "stick-header-cue-lists");
-
-        const unread = makeRow(makeStick({}),
-                               {advice: {state: "current", cueListsText: "2 analysis files could not be read"}});
-        compare(named(unread, "cueListsBadge").label, "2 analysis files could not be read");
-        compare(named(makeRow(makeStick({mounted: false}),
-                              {advice: {cueListsText: "3 cue lists disagree"}}), "cueListsBadge").visible,
-                false, "an unmounted stick says whether it may be pulled instead");
-    }
-
     // The line under an empty stick carries the advisor's news: a stick
     // to copy from, and the backup that can be restored.
     function test_theNoLibraryLineCarriesTheAdvice() {
