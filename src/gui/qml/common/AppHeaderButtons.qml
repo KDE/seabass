@@ -34,6 +34,19 @@ RowLayout {
         preferencesSlot.play();
         supportSlot.play();
     }
+    // The way out, in the opposite order to the way in: the last to land
+    // is the first to go.
+    readonly property bool vanishing: aboutSlot.vanishing || preferencesSlot.vanishing || supportSlot.vanishing
+    function show() {
+        aboutSlot.show();
+        preferencesSlot.show();
+        supportSlot.show();
+    }
+    function playExit() {
+        supportSlot.vanish(0);
+        preferencesSlot.vanish(60);
+        aboutSlot.vanish(120);
+    }
 
     EntranceSlot {
         id: aboutSlot

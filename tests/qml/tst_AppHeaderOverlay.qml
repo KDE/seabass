@@ -210,4 +210,55 @@ TestCase {
         wait(50);
         verify(!h.overlay.entranceRunning, "between About and Preferences the row stays put");
     }
+
+    // Leaving home the buttons slide back up and fade, and the row stays up
+    // until they have gone. For a stick's page, all of them; for About, only
+    // the menu, which is home's alone -- the others stay where they are.
+    function test_leavingHomeTheButtonsSlideAwayUp() {
+        const h = createTemporaryObject(harness, testCase);
+        h.stack.push(homeLike);
+        tryCompare(h.overlay, "entranceRunning", true, 1000);
+        tryCompare(h.overlay, "entranceRunning", false, 3000);
+        const menu = findChild(h.overlay, "homeMenuButton");
+        const about = findChild(h.overlay, "aboutButton");
+
+        h.stack.replace(toolLike);
+        verify(h.overlay.visible, "still up while the buttons leave");
+        if (typeof screenshotDir !== "undefined" && screenshotDir && screenshotDir.length > 0) {
+            wait(150);
+            grabImage(h.overlay).save(screenshotDir + "/header-exit-150.png");
+        }
+        tryCompare(h.overlay, "visible", false, 2000, "and gone once they have");
+        verify(about.mapToItem(about.parent.parent, 0, 0).y < 0, "they left upwards");
+        compare(about.parent.opacity, 0, "faded out");
+
+        h.stack.replace(homeLike);
+        tryCompare(h.overlay, "entranceRunning", true, 1000);
+        tryCompare(h.overlay, "entranceRunning", false, 3000);
+        compare(about.parent.opacity, 1, "back on the way home");
+        h.stack.replace(aboutLike);
+        tryCompare(menu.parent.parent, "visible", false, 2000, "the menu goes to About too");
+        compare(about.parent.opacity, 1, "but About's row stays");
+        verify(h.overlay.visible);
+
+        // About straight from a page without the row: the buttons the stick
+        // page took away are simply back, not invisible.
+        h.stack.replace(homeLike);
+        tryCompare(h.overlay, "entranceRunning", true, 1000);
+        tryCompare(h.overlay, "entranceRunning", false, 3000);
+        h.stack.replace(toolLike);
+        tryCompare(h.overlay, "visible", false, 2000);
+        h.stack.replace(aboutLike);
+        tryCompare(h.overlay, "visible", true, 2000);
+        compare(about.parent.opacity, 1, "shown at once");
+        compare(Math.round(about.mapToItem(about.parent.parent, 0, 0).y), 0, "in place");
+
+        // Home left again before its queued entrance ran: the entrance must
+        // not start over the exit and pull the buttons back down.
+        h.stack.replace(homeLike);
+        h.stack.replace(toolLike);
+        tryCompare(h.overlay, "visible", false, 2000);
+        verify(about.mapToItem(about.parent.parent, 0, 0).y < 0, "still gone up");
+        compare(about.parent.opacity, 0);
+    }
 }
