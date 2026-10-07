@@ -23,6 +23,8 @@
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/anlz_source_for_root.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
@@ -438,6 +440,40 @@ void OneLibraryCueWriter::writeCueRows(SqlCipherDb &db, const std::vector<int64_
     // call after the first refuse itself, since the file legitimately
     // changed size/mtime due to this writer's *own* prior write.
     refreshStalenessBaseline();
+}
+
+void OneLibraryCueWriter::writeCueTableOf(int64_t contentId, const std::vector<CuePoint> &cues)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    SqlCipherStatement row(db, "SELECT count(*) FROM content WHERE content_id = ?");
+    row.bindInt64(1, contentId);
+    row.step();
+    if (row.columnInt64(0) != 1) {
+        throw OneLibraryRowMissing("onelibrary: no content row " + std::to_string(contentId));
+    }
+    writeCueRows(db, {contentId}, cues);
+}
+
+std::vector<CuePoint> OneLibraryCueWriter::cueTableOf(int64_t contentId)
+{
+    checkNotStale();
+    return readCueTable(writeConnection(), contentId);
+}
+
+std::optional<std::vector<CuePoint>> OneLibraryCueWriter::analysisFileCuesOf(int64_t contentId)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto files = analysisFilesOf(db, {contentId}, hasAnalysisPathColumn(db));
+    if (files.empty()) {
+        return std::nullopt;
+    }
+    try {
+        return rekordbox::readAnalysisFileCues(*rekordbox::anlzSourceForPioneerRoot(m_anlzRoot), files.front());
+    } catch (const rekordbox::AnalysisFileUnreadable &) {
+        return std::nullopt;
+    }
 }
 
 bool OneLibraryCueWriter::hasAnalysisPathColumn(SqlCipherDb &db)
