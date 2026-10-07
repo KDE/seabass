@@ -36,7 +36,9 @@ Item {
     signal preferencesRequested()
     signal supportRequested()
 
-    visible: root.place.length > 0
+    // Also while the buttons are leaving: the page behind has changed by
+    // then, and they go over it.
+    visible: root.place.length > 0 || menuSlot.vanishing || headerButtons.vanishing
     implicitWidth: row.implicitWidth
     implicitHeight: row.implicitHeight
 
@@ -53,8 +55,8 @@ Item {
     // Arriving home -- at start, or back from a stick's page or from
     // About, Preferences or Support -- the buttons make an entrance: they
     // drop in one after another, spinning and overshooting their size
-    // (EntranceSlot). Only on the way in;
-    // moving between About, Preferences and Support they stay put.
+    // (EntranceSlot), and leaving home they slide back up out of sight.
+    // Moving between About, Preferences and Support they stay put.
     property string _previousPlace: ""
     readonly property bool entranceRunning: menuSlot.running || headerButtons.entranceRunning
     onPlaceChanged: {
@@ -62,10 +64,29 @@ Item {
             // After the page transition has settled the new page under
             // the row, so the cascade is not lost in the slide.
             Qt.callLater(root.playEntrance);
+        } else if (root._previousPlace === "home" && root.place !== "home") {
+            // The menu is home's alone and leaves either way; the others
+            // leave with it only for a page without the header (a stick's),
+            // and stay for About, Preferences and Support.
+            if (root.place.length === 0) {
+                headerButtons.playExit();
+                menuSlot.vanish(180);
+            } else {
+                menuSlot.vanish(0);
+            }
+        } else if (root.place.length > 0 && root._previousPlace.length === 0) {
+            // About, Preferences or Support straight from a page without
+            // the header: the buttons left with it, and are simply back.
+            headerButtons.show();
         }
         root._previousPlace = root.place;
     }
     function playEntrance() {
+        // Queued (see onPlaceChanged): home may have been left again
+        // before it ran, and an entrance then would undo the exit.
+        if (root.place !== "home") {
+            return;
+        }
         menuSlot.play();
         headerButtons.playEntrance();
     }
@@ -90,7 +111,7 @@ Item {
         // whose subject is the sticks. Home only.
         EntranceSlot {
             id: menuSlot
-            visible: root.place === "home"
+            visible: root.place === "home" || menuSlot.vanishing
             IconToolButton {
                 id: homeMenuButton
                 objectName: "homeMenuButton"
