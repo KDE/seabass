@@ -270,3 +270,30 @@ seabass_clear_dyld_env() {
         DYLD_FALLBACK_FRAMEWORK_PATH DYLD_INSERT_LIBRARIES DYLD_VERSIONED_LIBRARY_PATH \
         DYLD_VERSIONED_FRAMEWORK_PATH DYLD_ROOT_PATH
 }
+
+# <path>: signed for distribution by KDE e.V.'s Apple team (or the one in
+# SEABASS_SIGN_TEAM_ID), not ad hoc. A signing command that finds its ref
+# not cleared skips and exits 0 (ci-notary-service's signmacapp.py does),
+# so its status proves nothing and the signature is read back instead.
+seabass_really_signed() {
+    # KDE e.V.'s Apple team, as craft-ci's CraftConfig.ini names it in
+    # CodeSigning/MacDeveloperId, "K Desktop Environment e.V. (5433B4KXM8)".
+    local team="${SEABASS_SIGN_TEAM_ID:-5433B4KXM8}" out
+    out="$(codesign -dvv "$1" 2>&1)" || { printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1; }
+    # Any Authority is not enough: an Apple Development certificate, or a
+    # Developer ID from some other team, has one too, and neither makes a
+    # package Gatekeeper opens for a stranger. The team is read from the
+    # certificate's name, "Developer ID Application: <name> (<team>)":
+    # rcodesign, which ci-notary-service signs with, leaves a .dmg's
+    # TeamIdentifier "not set" (KDE's own signed and notarised Intel .dmg,
+    # job 5139900, reads that way), so that field may only be the team or
+    # absent, never another team.
+    if printf '%s\n' "$out" | grep -q '^Signature=adhoc' ||
+       ! printf '%s\n' "$out" | grep -q "^Authority=Developer ID Application: .* ($team)\$" ||
+       ! printf '%s\n' "$out" | grep -qxE "TeamIdentifier=($team|not set)"; then
+        printf '%s\n' "$out" | sed 's/^/  /' >&2
+        echo "  wanted: Authority=Developer ID Application: ... ($team), TeamIdentifier=$team or not set" >&2
+        return 1
+    fi
+    printf '%s\n' "$out" | grep -E '^(Authority|TeamIdentifier|Timestamp)=' | sed 's/^/  /'
+}
