@@ -3512,6 +3512,10 @@ target_link_libraries(rig_restore PRIVATE seabass_core)
 add_executable(stick_damage_audit tools/stick_damage_audit.cpp)
 target_include_directories(stick_damage_audit PRIVATE src)
 target_link_libraries(stick_damage_audit PRIVATE seabass_core rekordbox_format)
+if(SEABASS_BASH)
+    add_test(NAME stick_damage_audit_test
+        COMMAND ${SEABASS_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/stick_damage_audit_test.sh $<TARGET_FILE:stick_damage_audit>)
+endif()
 
 add_executable(pdb_playlist_edit tools/pdb_playlist_edit.cpp)
 target_include_directories(pdb_playlist_edit PRIVATE src)
