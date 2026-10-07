@@ -66,7 +66,6 @@ RowLayout {
     EntranceSlot {
         id: supportSlot
         delay: root.firstDelay + 180
-        burstColor: "#aa0000"
         ToolButton {
             id: donateButton
             objectName: "donateButton"
