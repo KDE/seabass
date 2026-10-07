@@ -326,16 +326,26 @@ Page {
     readonly property bool cueTablesShown: healthController.cueTablesChecked
         || healthController.cueTablesError.length > 0
     readonly property int cueTableRowCount: healthController.cueTableRowCount
+    // Rows not compared at all: their analysis file was not read, or the
+    // table holds a cue kind Seabass does not know. Never "all agree".
+    readonly property int cueTableLeftAloneCount: healthController.cueTableLeftAloneCount
     readonly property string cueTableSummary: {
         if (healthController.cueTablesError.length > 0) {
             return healthController.cueTablesError;
         }
+        const leftAlone = root.cueTableLeftAloneCount === 0 ? ""
+            : (root.cueTableLeftAloneCount === 1 ? "One track's cue table was" : root.cueTableLeftAloneCount
+                                                                                 + " tracks' cue tables were")
+              + " not compared: Seabass could not read the analysis file, or the table holds cues of a kind "
+              + "Seabass does not know.";
         if (root.cueTableRowCount === 0) {
-            return "Every OneLibrary cue table agrees with the analysis file the players read.";
+            return leftAlone.length > 0 ? leftAlone
+                                        : "Every OneLibrary cue table agrees with the analysis file the players read.";
         }
         return (root.cueTableRowCount === 1 ? "One track's" : root.cueTableRowCount + " tracks'")
             + " OneLibrary cue table holds cues its analysis file does not, left there by an earlier Seabass "
-            + "build. Seabass can remove them from the table; nothing else changes.";
+            + "build. Seabass can remove them from the table; nothing else changes."
+            + (leftAlone.length > 0 ? " " + leftAlone : "");
     }
     readonly property int playlistDifferenceCount: healthController.playlistDifferenceCount
     readonly property int danglingPlaylistEntryCount: healthController.danglingPlaylistEntryCount
@@ -657,9 +667,10 @@ Page {
                 title: "OneLibrary cue tables"
                 summary: root.cueTableSummary
                 running: root.scanning
-                ok: root.cueTableRowCount === 0 && healthController.cueTablesError.length === 0
+                ok: root.cueTableRowCount === 0 && root.cueTableLeftAloneCount === 0
+                    && healthController.cueTablesError.length === 0
                 failed: healthController.cueTablesError.length > 0
-                actionLabel: root.cueTableRowCount > 0 ? "Review cue tables" : ""
+                actionLabel: root.cueTableRowCount > 0 || root.cueTableLeftAloneCount > 0 ? "Review cue tables" : ""
                 onActionRequested: root.detailRequested("cuetables")
             }
 

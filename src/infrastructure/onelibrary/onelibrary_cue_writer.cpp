@@ -470,8 +470,10 @@ void OneLibraryCueWriter::writeCueRows(SqlCipherDb &db, const std::vector<int64_
     refreshStalenessBaseline();
 }
 
-void OneLibraryCueWriter::removeCueRows(const std::vector<std::pair<int64_t, int64_t>> &contentAndCueIds)
+void OneLibraryCueWriter::removeCueRows(const std::vector<std::pair<int64_t, int64_t>> &pairs)
 {
+    // Each pair once: a pair named twice would be counted twice below.
+    const std::set<std::pair<int64_t, int64_t>> contentAndCueIds(pairs.begin(), pairs.end());
     if (contentAndCueIds.empty()) {
         return;
     }
@@ -559,7 +561,12 @@ std::optional<std::vector<CuePoint>> OneLibraryCueWriter::analysisFileCuesOf(int
         return std::nullopt;
     }
     try {
-        return rekordbox::readAnalysisFileCues(*rekordbox::anlzSourceForPioneerRoot(m_anlzRoot), files.front());
+        // Read by the scan's rule (domain::cueListsRead), so a row the
+        // check would leave alone is left alone here too.
+        domain::Track::CueListsCheck check = domain::Track::CueListsCheck::NotChecked;
+        auto cues = rekordbox::readAnalysisFileCues(*rekordbox::anlzSourceForPioneerRoot(m_anlzRoot), files.front(),
+                                                    &check);
+        return cues && domain::cueListsRead(check) ? cues : std::nullopt;
     } catch (const rekordbox::AnalysisFileUnreadable &) {
         return std::nullopt;
     }

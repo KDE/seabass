@@ -760,6 +760,9 @@ private:
     // Stages one LevelCueTableChange for the listed rows among `wanted`,
     // in place of the one staged before. False when staging refused.
     bool restageCueTables(std::set<int64_t> wanted);
+    // Whether the page may change what is staged now; says why not.
+    bool cueTableStagingAllowed();
+    bool cueTableRowStaged(int64_t contentId) const;
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;

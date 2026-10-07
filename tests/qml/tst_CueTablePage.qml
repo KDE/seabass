@@ -69,6 +69,36 @@ TestCase {
         id: realControllerComponent
         LibraryConsistencyController {}
     }
+    Component {
+        id: playlistEditComponent
+        PlaylistEditController {}
+    }
+
+    // A real controller on a fresh copy of the fixture, scanned. `plant`
+    // runs on the copy first.
+    function scannedCopy(plant) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const planted = plant ? plant(stick) : null;
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        const pioneer = stick + "/PIONEER";
+        controller.scan(pioneer, stick + "/Engine Library");
+        tryCompare(controller, "cueTablesChecked", true, 120000);
+        tryCompare(controller, "busy", false, 120000);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        verify(session !== null);
+        return {stick: stick, pioneer: pioneer, controller: controller, session: session, planted: planted};
+    }
+
+    function saveAndWait(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
 
     // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
     readonly property string fixtureRoot: {
@@ -206,5 +236,69 @@ TestCase {
         tryVerify(() => !controller.busy && controller.cueTablesChecked, 300000, "the rescan finishes");
         compare(controller.cueTableRowCount, 0, "the repaired row is no longer listed");
         compare(controller.cueTableStagedCount, 0);
+    }
+
+    // While a save runs nothing staged moves: taking a row back is
+    // refused and said, and a rescan asked for then leaves the staged
+    // repair to the save, which writes it.
+    function test_aSaveRunningKeepsWhatIsStaged() {
+        const t = scannedCopy(null);
+        t.controller.repairCueTables(["392"]);
+        compare(t.session.pendingCount, 1);
+        let summary = null;
+        const done = (result) => { summary = result; };
+        t.session.saveFinished.connect(done);
+        t.session.save();
+        verify(t.session.writing, "the save is running");
+        t.controller.unstageCueTable("392");
+        verify(t.controller.errorMessage.length > 0, "refused, and said");
+        compare(t.controller.cueTableStagedCount, 1, "still staged");
+        compare(t.session.pendingCount, 1);
+        t.controller.scan(t.pioneer, t.stick + "/Engine Library");
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        t.session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, "the staged repair was written: " + JSON.stringify(summary));
+        tryVerify(() => !t.controller.busy && t.controller.cueTablesChecked, 300000, "the rescan finishes");
+        compare(t.controller.cueTableRowCount, 0);
+        compare(t.controller.cueTableStagedCount, 0);
+        compare(t.session.pendingCount, 0);
+    }
+
+    // Another page's edit holds the session: staging is refused, nothing
+    // is marked staged, and the page says why.
+    function test_aRefusedStageMarksNothingAndSaysWhy() {
+        const t = scannedCopy(null);
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        verify(browse.deletePlaylist(t.pioneer, t.stick + "/Engine Library", "Playlist 000"),
+               "Browse stages a playlist deletion: " + browse.errorMessage);
+        compare(t.session.pendingCount, 1);
+        t.controller.repairCueTables(["392"]);
+        compare(t.session.pendingCount, 1, "only Browse's change");
+        compare(t.controller.cueTableStagedCount, 0);
+        verify(t.controller.errorMessage.length > 0, "the page says the repair was not staged");
+        browse.keepPlaylist("Playlist 000");
+        compare(t.session.pendingCount, 0);
+    }
+
+    // Two rows staged; one's analysis file stops reading before the save.
+    // The summary counts that row skipped and the other written.
+    function test_aRowLeftAloneAtSaveTimeIsCountedSkipped() {
+        const t = scannedCopy((stick) => stickFixture.plantCueTableRow(stick, -1, 3, 200000));
+        verify(t.planted && t.planted.dat, "a second row was planted");
+        compare(t.controller.cueTableRowCount, 2);
+        t.controller.repairCueTables([]);
+        compare(t.controller.cueTableStagedCount, 2);
+        verify(stickFixture.replaceFileInCopy(t.planted.dat, "not an analysis file"));
+        const committed = testCase.fixtureRoot + "/rekordbox" + t.planted.dat.substring((t.stick + "/PIONEER").length);
+        verify(stickFixture.readText(committed) !== "not an analysis file", "the committed fixture is untouched");
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        compare(summary.skipped, 1, JSON.stringify(summary));
+        compare(summary.total, 2, JSON.stringify(summary));
+        tryVerify(() => !t.controller.busy && t.controller.cueTablesChecked, 300000, "the rescan finishes");
+        compare(t.controller.cueTableRowCount, 0);
+        compare(t.controller.cueTableLeftAloneCount, 1, "the row whose file stopped reading is left alone");
     }
 }

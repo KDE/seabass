@@ -42,6 +42,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
+#include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include "gui/scan_controller.hpp"
@@ -52,7 +53,9 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <cstring>
+#include <optional>
 #include <QColor>
+#include <QDebug>
 #include <QFile>
 #include <QImage>
 #include <QSettings>
@@ -407,6 +410,57 @@ public:
     }
 
     Q_INVOKABLE bool fileExists(const QString &file) const { return QFile::exists(file); }
+
+    // writeText() for a file in a stick copy's USBANLZ: those are hard
+    // links to the committed fixture (fixture_copy.hpp), and writing one
+    // in place would write the fixture. Removed first, so the copy gets a
+    // file of its own.
+    Q_INVOKABLE bool replaceFileInCopy(const QString &file, const QString &text)
+    {
+        QFile::remove(file);
+        return writeText(file, text);
+    }
+
+    // #57: adds a row to a stick copy's OneLibrary cue table, for the cue
+    // table pages. contentId -1 picks a row whose table is empty and whose
+    // analysis file is read, other than content_id 392 (the fixture's own
+    // damaged row). Returns {contentId, dat: the row's analysis .DAT}, or
+    // an empty map on failure.
+    Q_INVOKABLE QVariantMap plantCueTableRow(const QString &stickRoot, int contentId, int kind, double positionMs)
+    {
+        namespace ol = seabass::infrastructure::onelibrary;
+        try {
+            const std::string pioneer = stickRoot.toStdString() + "/PIONEER";
+            const auto tracks = ol::OneLibraryReader(pioneer).readAll();
+            std::optional<seabass::domain::Track> row;
+            {
+                const ol::OneLibraryCueTables tables(pioneer);
+                for (const auto &t : tracks) {
+                    const bool wanted = contentId >= 0 ? t.sourceId == std::to_string(contentId)
+                                                       : t.sourceId != "392" && tables.of(std::stoll(t.sourceId)).empty()
+                                                             && seabass::domain::analysisFileRead(t) && !t.cues.empty();
+                    if (wanted) {
+                        row = t;
+                        break;
+                    }
+                }
+            }
+            if (!row) {
+                return {};
+            }
+            ol::SqlCipherLibrary lib;
+            ol::SqlCipherDb db(lib, ol::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + ol::deriveOneLibraryKey() + "';");
+            const std::string usec = std::to_string(static_cast<long long>(positionMs * 1000.0));
+            db.exec("INSERT INTO cue (content_id, kind, colorTableIndex, isActiveLoop, inUsec, outUsec) VALUES ("
+                    + row->sourceId + ", " + std::to_string(kind) + ", 0, 0, " + usec + ", " + usec + ");");
+            return {{QStringLiteral("contentId"), QString::fromStdString(row->sourceId)},
+                    {QStringLiteral("dat"), stickRoot + QString::fromStdString(row->analysisFile)}};
+        } catch (const std::exception &e) {
+            qWarning() << "plantCueTableRow:" << e.what();
+            return {};
+        }
+    }
 
 private:
     QStringList m_roots;

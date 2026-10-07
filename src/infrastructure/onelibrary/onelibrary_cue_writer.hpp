@@ -179,15 +179,17 @@ public:
 
     // Library Health's #57 repair: removes these cue rows, each named by
     // (content_id, cue_id), with their hotCueBankList_cue links, in one
-    // transaction, and writes nothing else: every other cue row keeps its
-    // colour, comment and bank links, and no analysis file is touched.
+    // transaction (each pair once), and writes nothing else: every other
+    // cue row keeps its colour, comment and bank links, and no analysis
+    // file is touched.
     // Checks the file is the one this writer opened once, before writing,
     // and reads back that exactly those rows are gone. Throws
     // OneLibraryRowMissing when a cue_id is no longer that row's.
     void removeCueRows(const std::vector<std::pair<int64_t, int64_t>> &contentAndCueIds);
     // The row's cue table now (readCueTable()), and the cues in the
     // analysis file it names, read as OneLibraryReader reads them: nothing
-    // when the row names none, or it is not on the stick or unreadable.
+    // when the row names none, or the file is not read by the rule the
+    // check uses (domain::cueListsRead()).
     // Reads only, through the write connection, without the whole-file
     // staleness check: a save asking this per row would read the database
     // once per row. removeCueRows() checks before it writes.

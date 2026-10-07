@@ -46,7 +46,9 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    // Every staged row; those the save left alone, unitsSkipped().
     int unitsWritten() const override;
+    int unitsSkipped() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -54,7 +56,7 @@ public:
 private:
     QString m_pioneerRoot;
     std::vector<Row> m_rows;
-    int m_repaired = 0;
+    int m_skipped = 0;
 };
 
 }  // namespace seabass::gui

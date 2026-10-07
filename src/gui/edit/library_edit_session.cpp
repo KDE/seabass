@@ -500,7 +500,8 @@ void LibraryEditSession::onSaveFinished()
             if (skipped.count(change->id())) {
                 skippedUnits += change->unitsWritten();
             } else {
-                writtenUnits += change->unitsWritten();
+                writtenUnits += change->unitsWritten() - change->unitsSkipped();
+                skippedUnits += change->unitsSkipped();
             }
             // A skip still invalidates: it counts no repair, but a track
             // deleted since the scan has had its image copied in and an
