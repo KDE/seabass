@@ -421,12 +421,15 @@ private:
     // OneLibrary rows whose cue table holds cues their analysis file does
     // not (#57), checked in the OneLibrary leg. Each {contentId, title,
     // artist, filePath, extra (what the table holds beyond the file),
-    // fileCues, staged}. The repair sets the table to the file's cues.
+    // fileCues, staged}. The repair removes the extra cues from the table.
+    // Rows left alone (no analysis file read, cue kinds Seabass does not
+    // understand) are counted, not listed.
     Q_PROPERTY(bool cueTablesChecked READ cueTablesChecked NOTIFY cueTablesChanged)
     Q_PROPERTY(QString cueTablesError READ cueTablesError NOTIFY cueTablesChanged)
     Q_PROPERTY(int cueTableRowCount READ cueTableRowCount NOTIFY cueTablesChanged)
     Q_PROPERTY(QVariantList cueTableRows READ cueTableRows NOTIFY cueTablesChanged)
     Q_PROPERTY(int cueTableStagedCount READ cueTableStagedCount NOTIFY cueTablesChanged)
+    Q_PROPERTY(int cueTableLeftAloneCount READ cueTableLeftAloneCount NOTIFY cueTablesChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -552,7 +555,8 @@ public:
     QString cueTablesError() const { return m_cueTablesError; }
     int cueTableRowCount() const { return static_cast<int>(m_cueTables.excess.size()); }
     QVariantList cueTableRows() const;
-    int cueTableStagedCount() const { return static_cast<int>(m_stagedCueTables.size()); }
+    int cueTableLeftAloneCount() const { return m_cueTables.noReadableFile + m_cueTables.notUnderstood; }
+    int cueTableStagedCount() const;
     QString playlistsError() const { return m_playlistsError; }
     int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
     QVariantList playlistDifferences() const;
@@ -622,9 +626,9 @@ public:
     // on a stick with no playlists.
     Q_INVOKABLE void deleteTracksInNoPlaylist(const QStringList &filePaths);
     Q_INVOKABLE void unstageTracksInNoPlaylist();
-    // Stages setting these rows' cue tables (by contentId, from
-    // cueTableRows) to their analysis files' cues, one change per row,
-    // added to what is staged. Empty: every listed row.
+    // Stages removing the cues only the table holds from these rows (by
+    // contentId, from cueTableRows), added to what is staged: one change
+    // for every staged row. Empty: every listed row.
     Q_INVOKABLE void repairCueTables(const QStringList &contentIds);
     Q_INVOKABLE void unstageCueTable(const QString &contentId);
     Q_INVOKABLE void unstageCueTables();
@@ -753,6 +757,9 @@ private:
     bool m_cueTablesChecked = false;
     QString m_cueTablesError;
     std::set<int64_t> m_stagedCueTables;  // content ids
+    // Stages one LevelCueTableChange for the listed rows among `wanted`,
+    // in place of the one staged before. False when staging refused.
+    bool restageCueTables(std::set<int64_t> wanted);
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;

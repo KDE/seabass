@@ -125,8 +125,10 @@ What Seabass does with this:
   own, with another copy's cues (#57). Library Health's "OneLibrary cue
   tables" check lists every row whose table holds a cue its analysis file
   does not (`domain::auditCueTables()`; an empty table, or one the file
-  holds more than, is fine), and its repair sets that row's table to the
-  file's cues, writing nothing else.
+  holds more than, is fine), and its repair removes the cues only the
+  table holds, with their `hotCueBankList_cue` links; nothing else
+  changes. Rows whose analysis file was not read, or whose table holds a
+  `kind` outside 0 to 8, are counted and left alone.
 
 Still unverified: where a CDJ-3000X writes a pad the DJ stores (the
 OMNIS-DUO writes the file), and what rekordbox desktop does with the

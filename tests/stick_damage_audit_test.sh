@@ -27,7 +27,7 @@ cp -a "$fixture" "$work/PIONEER" || exit 1
 
 out="$("$audit" "$work" 2>&1)" || { echo "$out"; echo "FAIL: the audit exited non-zero"; exit 1; }
 summary="$(grep '^#57 ' <<<"$out")"
-expected="#57 OneLibrary cue table against the analysis file: 1644 rows read; 1627 with an empty table, 16 within the file, 1 hold cues the analysis file does not"
+expected="#57 OneLibrary cue table against the analysis file: 1644 rows read; 1627 with an empty table, 16 within the file, 0 with no analysis file read (left alone), 0 with cue kinds Seabass does not understand (left alone), 1 hold cues the analysis file does not"
 if [ "$summary" != "$expected" ]; then
     echo "$out"
     echo "FAIL: expected: $expected"
@@ -40,9 +40,11 @@ if [ "$listed" != 1 ] || ! grep -q '^  content_id 392 ' <<<"$out"; then
     echo "FAIL: expected content_id 392 and only it listed, got $listed rows"
     exit 1
 fi
-if ! grep -q '^    cue table:     A@0.247 C@1.188 D@1.657 M@4.399 E@135.251 B@67.751 $' <<<"$out"; then
+# Cues are named by position, the way Library Health names them.
+if ! grep -qx '    cue table:         pad A at 0:00.247, pad C at 0:01.188, pad D at 0:01.657, memory cue at 0:04.399, pad B at 1:07.751, pad E at 2:15.251' <<<"$out" \
+    || ! grep -qx '    only in the table: pad B at 1:07.751, pad E at 2:15.251' <<<"$out"; then
     echo "$out"
-    echo "FAIL: content_id 392's cue table is not listed as read"
+    echo "FAIL: content_id 392's cue table, or what only it holds, is not listed as read"
     exit 1
 fi
 echo "stick_damage_audit #57 on the fixture: OK"

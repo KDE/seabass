@@ -19,12 +19,12 @@
 // the file alike, so a table holding cues the file does not is what those
 // builds left. An empty table next to a file with cues is not: rekordbox
 // and the OMNIS-DUO leave the table alone. Each differing row is listed
-// with both cue sets.
+// with both cue sets and what only the table holds. Rows whose analysis
+// file was not read, and rows holding cue kinds Seabass does not
+// understand, are counted apart and never listed.
 //
 //   stick_damage_audit <root holding PIONEER/ and Engine Library/>
 #include <cstdlib>
-#include <iomanip>
-#include <sstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -39,28 +39,6 @@
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
 
 namespace fs = std::filesystem;
-
-namespace
-{
-
-using seabass::domain::CuePoint;
-
-std::string describe(const std::vector<CuePoint> &cues)
-{
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(3);
-    for (const auto &c : cues) {
-        out << (c.kind == CuePoint::Kind::Hot ? std::string(1, static_cast<char>('A' + c.hotCueNumber - 1)) : std::string("M"))
-            << "@" << c.positionMs / 1000.0;
-        if (c.isLoop) {
-            out << "-" << c.loopEndMs / 1000.0;
-        }
-        out << " ";
-    }
-    return cues.empty() ? std::string("(none)") : out.str();
-}
-
-}  // namespace
 
 int main(int argc, char **argv)
 {
@@ -104,16 +82,17 @@ int main(int argc, char **argv)
         const ol::OneLibraryCueTables tables(pioneer);
         const auto audit = seabass::domain::auditCueTables(
             tracks, [&tables](const seabass::domain::Track &t) { return tables.of(std::stoll(t.sourceId)); });
-        std::vector<std::string> differ;
-        for (const auto &e : audit.excess) {
-            differ.push_back("  content_id " + e.row.sourceId + " " + e.row.filePath + "\n    cue table:     " + describe(e.table)
-                             + "\n    analysis file: " + describe(e.row.cues));
-        }
+        namespace dm = seabass::domain;
         std::cout << "#57 OneLibrary cue table against the analysis file: " << audit.rowsRead << " rows read; "
-                  << audit.emptyTable << " with an empty table, " << audit.withinFile << " within the file, " << differ.size()
+                  << audit.emptyTable << " with an empty table, " << audit.withinFile << " within the file, "
+                  << audit.noReadableFile << " with no analysis file read (left alone), " << audit.notUnderstood
+                  << " with cue kinds Seabass does not understand (left alone), " << audit.excess.size()
                   << " hold cues the analysis file does not\n";
-        for (const auto &line : differ) {
-            std::cout << line << "\n";
+        for (const auto &e : audit.excess) {
+            std::cout << "  content_id " << e.row.sourceId << " " << e.row.filePath
+                      << "\n    cue table:         " << dm::describeCuePlaces(dm::cuesOf(e.table))
+                      << "\n    analysis file:     " << dm::describeCuePlaces(e.row.cues)
+                      << "\n    only in the table: " << dm::describeCuePlaces(dm::cuesOf(e.notInFile)) << "\n";
         }
     }
     const fs::path engine = root / "Engine Library";

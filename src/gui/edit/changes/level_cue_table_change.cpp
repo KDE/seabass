@@ -4,6 +4,8 @@
 
 #include "gui/edit/changes/level_cue_table_change.hpp"
 
+#include <utility>
+
 #include "domain/cue_tolerance.hpp"
 #include "domain/onelibrary_cue_table.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
@@ -20,19 +22,19 @@ constexpr const char *Label = "level-onelibrary-cue-table";
 
 }  // namespace
 
-LevelCueTableChange::LevelCueTableChange(QString pioneerRoot, Row row)
-    : m_pioneerRoot(std::move(pioneerRoot)), m_row(std::move(row))
+LevelCueTableChange::LevelCueTableChange(QString pioneerRoot, std::vector<Row> rows)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_rows(std::move(rows))
 {
 }
 
-QString LevelCueTableChange::idFor(int64_t contentId)
+QString LevelCueTableChange::idFor()
 {
-    return QStringLiteral("library-health:level-cue-table:%1").arg(contentId);
+    return QStringLiteral("library-health:level-cue-tables");
 }
 
 QString LevelCueTableChange::id() const
 {
-    return idFor(m_row.contentId);
+    return idFor();
 }
 
 QString LevelCueTableChange::owner() const
@@ -42,12 +44,17 @@ QString LevelCueTableChange::owner() const
 
 QString LevelCueTableChange::description() const
 {
-    return QStringLiteral("Match the OneLibrary cue table of \"%1\" to its analysis file").arg(subject());
+    return m_rows.size() == 1
+        ? QStringLiteral("Remove the cues only the OneLibrary cue table of \"%1\" holds").arg(subject())
+        : QStringLiteral("Remove the cues only the OneLibrary cue table holds, for %1 tracks").arg(m_rows.size());
 }
 
 QString LevelCueTableChange::subject() const
 {
-    return QString::fromStdString(m_row.title.empty() ? m_row.filePath : m_row.title);
+    if (m_rows.size() != 1) {
+        return QStringLiteral("OneLibrary cue tables");
+    }
+    return QString::fromStdString(m_rows[0].title.empty() ? m_rows[0].filePath : m_rows[0].title);
 }
 
 QString LevelCueTableChange::unit() const
@@ -58,6 +65,11 @@ QString LevelCueTableChange::unit() const
 QString LevelCueTableChange::verb() const
 {
     return QStringLiteral("repaired");
+}
+
+int LevelCueTableChange::unitsWritten() const
+{
+    return m_repaired;
 }
 
 QStringList LevelCueTableChange::formatsTouched() const
@@ -73,27 +85,37 @@ std::vector<BackupTarget> LevelCueTableChange::filesToBackup(SaveContext &) cons
 ChangeOutcome LevelCueTableChange::apply(SaveContext &ctx)
 {
     const std::string pioneer = m_pioneerRoot.toStdString();
-    const std::string row = "content_id " + std::to_string(m_row.contentId) + " (" + m_row.filePath + ")";
+    m_repaired = 0;
     try {
         ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
         auto &writer = sharedOneLibraryWriter(ctx, pioneer);
-        const auto file = writer.analysisFileCuesOf(m_row.contentId);
-        if (!file) {
-            ctx.log().record(std::string(Label) + ": " + row + " has no analysis file to read, its cue table left alone");
+        std::vector<std::pair<int64_t, int64_t>> doomed;  // (content_id, cue_id)
+        for (const Row &r : m_rows) {
+            const std::string row = "content_id " + std::to_string(r.contentId) + " (" + r.filePath + ")";
+            const auto file = writer.analysisFileCuesOf(r.contentId);
+            if (!file) {
+                ctx.log().record(std::string(Label) + ": " + row + " has no analysis file to read, its cue table left alone");
+                continue;
+            }
+            const auto excess = domain::entriesNotInFile(writer.cueTableOf(r.contentId), *file,
+                                                         domain::cueToleranceMsFor(r.bpm, r.bpm));
+            if (excess.empty()) {
+                ctx.log().record(std::string(Label) + ": " + row + " holds no cue its analysis file does not, left alone");
+                continue;
+            }
+            for (const auto &e : excess) {
+                doomed.emplace_back(r.contentId, e.cueId);
+            }
+            ++m_repaired;
+            ctx.log().record(std::string(Label) + ": " + row + " loses the cues only its table held: "
+                             + domain::describeCuePlaces(domain::cuesOf(excess)));
+        }
+        if (doomed.empty()) {
             return ChangeOutcome::skip();
         }
-        const auto table = writer.cueTableOf(m_row.contentId);
-        if (domain::cuesNotInFile(table, *file, domain::cueToleranceMsFor(m_row.bpm, m_row.bpm)).empty()) {
-            ctx.log().record(std::string(Label) + ": " + row + " holds no cue its analysis file does not, left alone");
-            return ChangeOutcome::skip();
-        }
-        writer.writeCueTableOf(m_row.contentId, *file);
-        ctx.log().record(std::string(Label) + ": " + row + " cue table set to the " + std::to_string(file->size())
-                         + " cue(s) of its analysis file");
-    } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
-        ctx.log().record(std::string(Label) + ": " + row + " is gone, nothing to repair");
-        return ChangeOutcome::skip();
+        writer.removeCueRows(doomed);
     } catch (const std::exception &e) {
+        m_repaired = 0;
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
     return ChangeOutcome::success();

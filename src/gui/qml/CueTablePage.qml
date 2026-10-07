@@ -9,8 +9,8 @@ import SeabassGui
 
 // Library Health's page for OneLibrary rows whose cue table holds cues
 // their analysis file does not (#57). The players read the file, so the
-// file is right: the repair sets the table to the file's cues, row by row
-// or all at once, and writes nothing else.
+// file is right: the repair removes the cues only the table holds, row by
+// row or all at once, and nothing else changes.
 HealthCheckPage {
     id: root
 
@@ -19,6 +19,7 @@ HealthCheckPage {
     readonly property bool checked: consistencyController?.cueTablesChecked ?? false
     readonly property var rows: consistencyController?.cueTableRows ?? []
     readonly property int stagedCount: consistencyController?.cueTableStagedCount ?? 0
+    readonly property int leftAloneCount: consistencyController?.cueTableLeftAloneCount ?? 0
     readonly property bool canStage: !consistencyController?.busy && !consistencyController?.writing
         && !consistencyController?.stickReadOnly
 
@@ -28,7 +29,7 @@ HealthCheckPage {
         Layout.fillWidth: true
         wrapMode: Text.WordWrap
         text: root.rows.length === 0
-            ? "Every OneLibrary cue table on this stick agrees with its analysis file."
+            ? "No OneLibrary cue table on this stick holds cues its analysis file does not."
             : (root.rows.length === 1 ? "One track's" : root.rows.length + " tracks'")
               + " OneLibrary cue table holds cues its analysis file does not."
     }
@@ -40,8 +41,19 @@ HealthCheckPage {
         wrapMode: Text.WordWrap
         color: Theme.textMuted
         text: "Players take a track's cues from its analysis file, so that is what you have been playing. "
-            + "An earlier Seabass build wrote other cues into the table beside it. Repairing sets the table to "
-            + "the file's cues and changes nothing else. A backup is made first. Nothing changes until you Save."
+            + "An earlier Seabass build wrote other cues into the table beside it. Repairing removes the cues "
+            + "only the table holds; nothing else changes. A backup is made first. Nothing changes until you Save."
+    }
+
+    Label {
+        objectName: "cueTableLeftAlone"
+        visible: root.checked && root.leftAloneCount > 0
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        color: Theme.textMuted
+        text: (root.leftAloneCount === 1 ? "One track is" : root.leftAloneCount + " tracks are")
+            + " left alone: Seabass could not read the analysis file, or the table holds cues of a kind "
+            + "Seabass does not know."
     }
 
     RowLayout {

@@ -335,7 +335,7 @@ Page {
         }
         return (root.cueTableRowCount === 1 ? "One track's" : root.cueTableRowCount + " tracks'")
             + " OneLibrary cue table holds cues its analysis file does not, left there by an earlier Seabass "
-            + "build. Seabass can set the table to the file's cues.";
+            + "build. Seabass can remove them from the table; nothing else changes.";
     }
     readonly property int playlistDifferenceCount: healthController.playlistDifferenceCount
     readonly property int danglingPlaylistEntryCount: healthController.danglingPlaylistEntryCount
