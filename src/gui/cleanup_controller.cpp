@@ -12,6 +12,7 @@
 #include "cleanup_controller.hpp"
 
 #include <QDebug>
+#include <QDir>
 #include <QStringList>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -114,7 +115,9 @@ std::uint64_t wastedBytes(const domain::DuplicateCleanupPlan &plan)
 // directly (same shape trackToMap() produces elsewhere in this app) --
 // deliberately no "waveform" field, see TrackWaveformCard.qml's own
 // comment: that's fetched on demand by QML, not precomputed here.
-QVariantMap trackSummary(const domain::Track &t)
+//
+// `shownPath` is how the page names this copy: see shownPaths().
+QVariantMap trackSummary(const domain::Track &t, const QString &shownPath = {})
 {
     QVariantMap m;
     m["side"] = QString::fromStdString(t.format);
@@ -125,6 +128,7 @@ QVariantMap trackSummary(const domain::Track &t)
     m["title"] = QString::fromStdString(t.title);
     m["artist"] = QString::fromStdString(t.artist);
     m["filePath"] = QString::fromStdString(t.filePath);
+    m["shownPath"] = shownPath;
     m["artworkPath"] = QString::fromStdString(t.artworkPath);
     m["bitrate"] = t.bitrate;
     m["durationMs"] = t.durationSeconds * 1000.0;
@@ -141,7 +145,122 @@ QVariantMap trackSummary(const domain::Track &t)
         cues << cueMap;
     }
     m["cues"] = cues;
+
+    // Distinct names, as the planner counts them when it breaks a tie on
+    // playlists: the page must show the number the choice was made on.
+    QStringList playlists;
+    for (const auto &membership : t.playlists) {
+        const QString name = QString::fromStdString(membership.name);
+        if (!playlists.contains(name)) {
+            playlists << name;
+        }
+    }
+    m["playlists"] = playlists;
     return m;
+}
+
+// How the page names each copy of a group, survivor first and then
+// toRemove in order: the fewest trailing path components that no other
+// copy in the group shares. Usually just the file name ("d01.mp3" next
+// to "d01-1.mp3"); a folder is added only when two copies share a name.
+// The copies are byte-identical often enough that nothing else on the
+// page tells them apart, and the whole path does not fit a row.
+QStringList shownPaths(const domain::DuplicateCleanupPlan &plan)
+{
+    std::vector<QStringList> parts;
+    auto add = [&parts](const domain::Track &t) {
+        parts.push_back(QDir::fromNativeSeparators(QString::fromStdString(t.filePath)).split(QLatin1Char('/'), Qt::SkipEmptyParts));
+    };
+    add(plan.survivor);
+    for (const auto &t : plan.toRemove) {
+        add(t);
+    }
+    auto tail = [](const QStringList &p, qsizetype n) { return p.mid(std::max<qsizetype>(0, p.size() - n)).join(QLatin1Char('/')); };
+
+    QStringList shown;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        qsizetype n = 1;
+        for (; n < parts[i].size(); ++n) {
+            bool shared = false;
+            for (size_t j = 0; j < parts.size() && !shared; ++j) {
+                shared = j != i && tail(parts[j], n) == tail(parts[i], n);
+            }
+            if (!shared) {
+                break;
+            }
+        }
+        shown << tail(parts[i], n);
+    }
+    return shown;
+}
+
+// One sentence on why the survivor was kept over the next-best copy.
+// "Same bitrate, length and size" rather than "identical": the planner
+// compared those, not the audio, and the page must not claim more.
+QString survivorReason(const domain::DuplicateCleanupPlan &plan)
+{
+    const QString same = plan.survivor.bitrate > 0 ? QStringLiteral("Same bitrate, length and size")
+                                                   : QStringLiteral("Same length and size");
+    switch (plan.survivorChosenBy) {
+    case domain::SurvivorRule::OnlyCopy:
+        return {};
+    case domain::SurvivorRule::OnlyCatalogued:
+        return QStringLiteral("Keeps the only copy a catalog lists.");
+    case domain::SurvivorRule::Bitrate:
+        return QStringLiteral("Keeps the copy with the higher bitrate.");
+    case domain::SurvivorRule::Duration:
+        return QStringLiteral("Keeps the longer copy.");
+    case domain::SurvivorRule::FileSize:
+        return plan.survivor.bitrate > 0 ? QStringLiteral("Same bitrate and length; keeps the larger file.")
+                                         : QStringLiteral("Same length; keeps the larger file.");
+    case domain::SurvivorRule::MorePlaylists:
+        return same + QStringLiteral("; keeps the copy in more playlists.");
+    case domain::SurvivorRule::ShorterPath:
+        return same + QStringLiteral(", in as many playlists; keeps the copy with the shorter path.");
+    case domain::SurvivorRule::PathOrder:
+        return same + QStringLiteral(", in as many playlists; keeps the copy whose path sorts first.");
+    case domain::SurvivorRule::Unbroken:
+        return same + QStringLiteral("; nothing tells them apart, so keeps the first one listed.");
+    case domain::SurvivorRule::Mixed:
+        return QStringLiteral("The copies differ in more than one way; each removed copy says why.");
+    case domain::SurvivorRule::NotDirectly:
+        return QStringLiteral("No single rule puts the kept copy ahead of the others; compare them before including this group.");
+    }
+    return {};
+}
+
+// Why one copy goes, beside it -- only when the group's sentence above
+// cannot say it for every copy at once (SurvivorRule::Mixed). Said of
+// the copy being removed, which is the one the row names.
+QString removedReason(const domain::DuplicateCleanupPlan &plan, size_t i)
+{
+    if (plan.survivorChosenBy != domain::SurvivorRule::Mixed || i >= plan.removedBy.size()) {
+        return {};
+    }
+    switch (plan.removedBy[i]) {
+    case domain::SurvivorRule::OnlyCatalogued:
+        return QStringLiteral("no catalog lists it");
+    case domain::SurvivorRule::Bitrate:
+        return QStringLiteral("lower bitrate");
+    case domain::SurvivorRule::Duration:
+        return QStringLiteral("shorter");
+    case domain::SurvivorRule::FileSize:
+        return QStringLiteral("smaller file");
+    case domain::SurvivorRule::MorePlaylists:
+        return QStringLiteral("same audio, in fewer playlists");
+    case domain::SurvivorRule::ShorterPath:
+        return QStringLiteral("same audio, longer path");
+    case domain::SurvivorRule::PathOrder:
+        return QStringLiteral("same audio, path sorts later");
+    case domain::SurvivorRule::Unbroken:
+        return QStringLiteral("nothing tells it apart");
+    case domain::SurvivorRule::NotDirectly:
+        return QStringLiteral("not worse than the kept copy by any single rule");
+    case domain::SurvivorRule::OnlyCopy:
+    case domain::SurvivorRule::Mixed:
+        break;
+    }
+    return {};
 }
 
 }  // namespace
@@ -165,11 +284,14 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
     const auto &plan = m_plans[realIndex];
     switch (role) {
     case SurvivorRole:
-        return trackSummary(plan.survivor);
+        return trackSummary(plan.survivor, shownPaths(plan).value(0));
     case ToRemoveRole: {
         QVariantList result;
-        for (const auto &t : plan.toRemove) {
-            QVariantMap summary = trackSummary(t);
+        const QStringList shown = shownPaths(plan);
+        for (size_t i = 0; i < plan.toRemove.size(); ++i) {
+            const auto &t = plan.toRemove[i];
+            QVariantMap summary = trackSummary(t, shown.value(static_cast<qsizetype>(i) + 1));
+            summary["removedReason"] = removedReason(plan, i);
             // Per copy, because the page shows one card each and the
             // three outcomes are genuinely different: a row dropped, a
             // file listed for deletion, or a file left alone.
@@ -198,6 +320,8 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
         return bool(m_included[realIndex]);
     case StagedRole:
         return realIndex < m_stagedDescriptions.size() && !m_stagedDescriptions[realIndex].isEmpty();
+    case SurvivorReasonRole:
+        return survivorReason(plan);
     case StagedDescriptionRole:
         return realIndex < m_stagedDescriptions.size() ? m_stagedDescriptions[realIndex] : QString();
     default:
@@ -232,6 +356,7 @@ QHash<int, QByteArray> CleanupPlanListModel::roleNames() const
         {IncludedRole, "included"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
+        {SurvivorReasonRole, "survivorReason"},
     };
 }
 

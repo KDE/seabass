@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "domain/local_restore.hpp"
 #include "domain/matching_policy.hpp"
@@ -25,36 +26,87 @@ bool durationsAgree(double a, double b)
     return std::abs(a - b) <= MatchingPolicy::exactMatchSeconds();
 }
 
-// Index (into `tracks`) of the highest-scoring track among `candidates`,
-// ties broken by longer duration, then larger file size, then original
-// order -- deterministic regardless of scan order.
+// Playlists, not memberships: a reader may list a track twice in one
+// playlist, and that is not a reason to keep it.
+size_t distinctPlaylistCount(const Track &t)
+{
+    std::vector<std::string> names;
+    for (const auto &membership : t.playlists) {
+        if (std::find(names.begin(), names.end(), membership.name) == names.end()) {
+            names.push_back(membership.name);
+        }
+    }
+    return names.size();
+}
+
+// The first rule on which `a` and `b` differ, and whether `a` is the
+// better of the two by it. {Unbroken, false} when nothing tells them
+// apart. Bitrate comes first when any copy in the group knows it; length
+// is always compared within the matching tolerance, never exactly, so a
+// length worked out to a different millisecond is not a longer copy.
 //
-// Takes a candidate list rather than scoring the whole group because the
-// survivor is sometimes chosen from a subset (see the "survivor must be
-// catalogued" rule below) while `differs` still compares against the
-// best of the *whole* group. Both need the identical tie-break, so there
-// is one implementation and the caller says which tracks may win.
-template<typename Score>
-size_t bestOf(const std::vector<Track> &tracks, const std::vector<size_t> &candidates, Score score)
+// After the audio come rules for copies that are the same recording
+// byte for byte, which is what a re-export leaves behind. Each is one
+// the page can show: the copy in more playlists, then the shorter path
+// (a re-export's "d01-1.mp3" next to the original "d01.mp3"), then the
+// path that sorts first. None of them depends on the catalog's order.
+std::pair<SurvivorRule, bool> compareCopies(const Track &a, const Track &b, bool bitrateFirst)
+{
+    if (bitrateFirst && a.bitrate != b.bitrate) {
+        return {SurvivorRule::Bitrate, a.bitrate > b.bitrate};
+    }
+    if (!durationsAgree(a.durationSeconds, b.durationSeconds)) {
+        return {SurvivorRule::Duration, a.durationSeconds > b.durationSeconds};
+    }
+    if (a.fileSizeBytes != b.fileSizeBytes) {
+        return {SurvivorRule::FileSize, a.fileSizeBytes > b.fileSizeBytes};
+    }
+    const size_t playlistsA = distinctPlaylistCount(a);
+    const size_t playlistsB = distinctPlaylistCount(b);
+    if (playlistsA != playlistsB) {
+        return {SurvivorRule::MorePlaylists, playlistsA > playlistsB};
+    }
+    if (a.filePath.size() != b.filePath.size()) {
+        return {SurvivorRule::ShorterPath, a.filePath.size() < b.filePath.size()};
+    }
+    if (a.filePath != b.filePath) {
+        return {SurvivorRule::PathOrder, a.filePath < b.filePath};
+    }
+    return {SurvivorRule::Unbroken, false};
+}
+
+// Index (into `tracks`) of the best track among `candidates` by
+// compareCopies(), the first one listed when nothing tells two apart.
+//
+// One pass, so with three or more copies the winner is not always
+// better than every other copy: lengths within the tolerance of their
+// neighbours need not be within it of each other. The plan therefore
+// asks compareCopies() about each removed copy separately (removedBy)
+// rather than trusting this to have compared them.
+size_t bestOf(const std::vector<Track> &tracks, const std::vector<size_t> &candidates, bool bitrateFirst)
 {
     size_t best = candidates.front();
     for (size_t c = 1; c < candidates.size(); ++c) {
         size_t i = candidates[c];
-        auto scoreI = score(tracks[i]);
-        auto scoreBest = score(tracks[best]);
-        if (scoreI != scoreBest) {
-            if (scoreI > scoreBest) {
-                best = i;
-            }
-            continue;
+        if (compareCopies(tracks[i], tracks[best], bitrateFirst).second) {
+            best = i;
         }
-        if (!durationsAgree(tracks[i].durationSeconds, tracks[best].durationSeconds)) {
-            if (tracks[i].durationSeconds > tracks[best].durationSeconds) {
-                best = i;
-            }
-            continue;
-        }
-        if (tracks[i].fileSizeBytes > tracks[best].fileSizeBytes) {
+    }
+    return best;
+}
+
+// The longest copy, exactly: a larger file breaks a tie in length, then
+// the first one listed. What `differs` compares the survivor against, so
+// it must not fold lengths within the tolerance together -- a copy just
+// inside it of a neighbour could then hide one well outside it.
+size_t longestOf(const std::vector<Track> &tracks)
+{
+    size_t best = 0;
+    for (size_t i = 1; i < tracks.size(); ++i) {
+        const Track &t = tracks[i];
+        const Track &b = tracks[best];
+        if (t.durationSeconds > b.durationSeconds ||
+            (t.durationSeconds == b.durationSeconds && t.fileSizeBytes > b.fileSizeBytes)) {
             best = i;
         }
     }
@@ -125,11 +177,8 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
     }
     const std::vector<size_t> &eligible = catalogued.empty() ? everyCopy : catalogued;
 
-    size_t byDuration = bestOf(group.tracks, everyCopy, [](const Track &t) { return t.durationSeconds; });
-    size_t survivorIndex = anyBitrateKnown
-                               ? bestOf(group.tracks, eligible, [](const Track &t) { return t.bitrate; })
-                               : bestOf(group.tracks, eligible, [](const Track &t) { return t.durationSeconds; });
-
+    size_t byDuration = longestOf(group.tracks);
+    size_t survivorIndex = bestOf(group.tracks, eligible, anyBitrateKnown);
     // "Differs" means picking by quality and picking by length actually
     // disagree, not merely that bitrates/sizes vary slightly (real
     // duplicate encodes of the same rip commonly do) -- only a
@@ -144,6 +193,25 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
     for (size_t i = 0; i < group.tracks.size(); ++i) {
         if (i != survivorIndex) {
             result.toRemove.push_back(group.tracks[i]);
+        }
+    }
+
+    // Why each copy goes, asked of the same rules that chose the
+    // survivor, against that copy itself -- not against a runner-up,
+    // which with three copies can be true of one and false of another.
+    for (const auto &doomed : result.toRemove) {
+        if (doomed.isUnreferenced && !result.survivor.isUnreferenced) {
+            result.removedBy.push_back(SurvivorRule::OnlyCatalogued);
+            continue;
+        }
+        const auto [rule, survivorWins] = compareCopies(result.survivor, doomed, anyBitrateKnown);
+        result.removedBy.push_back(survivorWins || rule == SurvivorRule::Unbroken ? rule : SurvivorRule::NotDirectly);
+    }
+    result.survivorChosenBy = result.removedBy.front();
+    for (SurvivorRule rule : result.removedBy) {
+        if (rule != result.survivorChosenBy) {
+            result.survivorChosenBy = SurvivorRule::Mixed;
+            break;
         }
     }
 

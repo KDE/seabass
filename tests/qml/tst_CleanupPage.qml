@@ -136,6 +136,69 @@ TestCase {
         check(crumbRow);
     }
 
+    // #66: a group says which copy it keeps and which it removes, by
+    // file, and why -- before anything is staged. The fixture's two rows
+    // are "Duplicate Song.mp3" in folderA and in folderB: the same name,
+    // so the folder is what tells them apart, and nothing else differs,
+    // so the reason has to own up to a tie broken on the path.
+    readonly property string fixtureEngineRoot: {
+        const url = Qt.resolvedUrl("../fixtures/duplicate_engine_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
+        id: enginePageComponent
+        CleanupPage {
+            stickLabel: "TESTSTICK"
+            rekordboxPath: ""
+            playbackController: realPlayback
+            appSettingsController: realAppSettings
+        }
+    }
+
+    function findWhere(item, predicate) {
+        if (predicate(item)) {
+            return item;
+        }
+        const kids = item.children ? item.children : [];
+        for (let i = 0; i < kids.length; ++i) {
+            const found = findWhere(kids[i], predicate);
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    function shownText(page, text) {
+        return findWhere(page, (item) => item.visible && item.text !== undefined && String(item.text) === text);
+    }
+
+    function test_aGroupNamesTheCopyItKeepsAndWhy() {
+        const engineCopy = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(engineCopy.length > 0, "the fixture copy must be made");
+        const page = createTemporaryObject(enginePageComponent, testCase,
+                                           {width: 960, height: 660, enginePath: engineCopy});
+        verify(page, "page did not instantiate");
+        tryVerify(() => shownText(page, "Keep") !== null, 5000, "the scan never showed the fixture's group");
+        waitForRendering(page);
+
+        verify(shownText(page, "Remove") !== null, "the other copy is named as removed");
+        verify(shownText(page, "folderA/Duplicate Song.mp3") !== null, "the kept copy, by folder: the names are the same");
+        verify(shownText(page, "folderB/Duplicate Song.mp3") !== null, "the removed copy, by folder");
+        verify(shownText(page, "Same length and size, in as many playlists; keeps the copy whose path sorts first.")
+               !== null, "the tie is said to be one");
+
+        // Keep and its path share a row: the survivor is folderA's copy.
+        const keep = shownText(page, "Keep");
+        const keptPath = shownText(page, "folderA/Duplicate Song.mp3");
+        compare(keep.mapToItem(page, 0, 0).y, keptPath.mapToItem(page, 0, 0).y);
+
+        if (screenshotDir) {
+            grabImage(page).save(screenshotDir + "/CleanupPage-group.png");
+        }
+    }
+
     // A look at the narrow case, since the failure this file exists for
     // was found in a screenshot and not in a number.
     function test_screenshot() {

@@ -60,6 +60,9 @@ public:
         // This group's clean-up is staged in the edit session.
         StagedRole,
         StagedDescriptionRole,
+        // Why this copy is the one kept, in a sentence: whether the
+        // copies really differ, or are identical and a tie was broken.
+        SurvivorReasonRole,
     };
 
     explicit CleanupPlanListModel(QObject *parent = nullptr);

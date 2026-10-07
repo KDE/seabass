@@ -558,6 +558,7 @@ Page {
                 required property bool included
                 required property bool staged
                 required property string stagedDescription
+                required property string survivorReason
 
                 property bool expanded: false
 
@@ -660,6 +661,85 @@ Page {
                                 iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
                                 size: Theme.iconSizeSmall * 0.75
                                 color: Theme.textMuted
+                            }
+                        }
+                        // Which copy stays and which go, by file, before
+                        // anything is staged. Byte-identical copies share
+                        // every other field on this row, so the path and
+                        // the playlists are the only way to tell them
+                        // apart -- and the reason says whether the copies
+                        // really differ or a tie was broken.
+                        Label {
+                            visible: delegateRoot.survivorReason.length > 0
+                            text: delegateRoot.survivorReason
+                            color: Theme.textMuted
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                        GridLayout {
+                            columns: 3
+                            columnSpacing: Theme.pageMargin
+                            rowSpacing: 2
+                            Layout.fillWidth: true
+
+                            Repeater {
+                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                delegate: Label {
+                                    required property var modelData
+                                    required property int index
+                                    // Same three outcomes as the cards'
+                                    // badges below, in the same words.
+                                    text: index === 0 ? "Keep"
+                                        : modelData.heldBack ? "Kept back"
+                                        : modelData.isUnreferenced ? "Remove file" : "Remove"
+                                    font.bold: true
+                                    color: index === 0 ? Theme.good
+                                        : modelData.heldBack ? Theme.textMuted : Theme.danger
+                                    Layout.row: index
+                                    Layout.column: 0
+                                }
+                            }
+                            Repeater {
+                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                delegate: Label {
+                                    required property var modelData
+                                    required property int index
+                                    text: modelData.shownPath.length > 0 ? modelData.shownPath : "(file not found)"
+                                    elide: Text.ElideMiddle
+                                    Layout.maximumWidth: 420
+                                    Layout.row: index
+                                    Layout.column: 1
+
+                                    HoverHandler { id: pathHover }
+                                    ToolTip.visible: pathHover.hovered && modelData.filePath.length > 0
+                                    ToolTip.text: modelData.filePath
+                                    ToolTip.delay: 300
+                                }
+                            }
+                            Repeater {
+                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                delegate: Label {
+                                    required property var modelData
+                                    required property int index
+                                    // A removed copy's own reason
+                                    // leads, when the group's sentence
+                                    // cannot cover every copy.
+                                    text: (modelData.removedReason ? modelData.removedReason + "; " : "")
+                                        + (modelData.playlists.length === 0 ? "in no playlist"
+                                        : "in " + modelData.playlists.length
+                                            + (modelData.playlists.length === 1 ? " playlist: " : " playlists: ")
+                                            + modelData.playlists.join(", "))
+                                    color: Theme.textMuted
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                    Layout.row: index
+                                    Layout.column: 2
+
+                                    HoverHandler { id: playlistHover }
+                                    ToolTip.visible: playlistHover.hovered && modelData.playlists.length > 0
+                                    ToolTip.text: modelData.playlists.join("\n")
+                                    ToolTip.delay: 300
+                                }
                             }
                         }
                         Label {
