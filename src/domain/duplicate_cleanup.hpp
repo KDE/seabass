@@ -16,6 +16,40 @@
 namespace seabass::domain
 {
 
+// The rule that chose the survivor over another copy, in the order the
+// planner applies them. The first three are about the audio; the
+// rest only ever decide between copies that tie on all three, which for
+// a re-exported file is the usual case -- byte-identical copies.
+//
+// Each tie-break after the audio is one a person can check on the page
+// (which playlists, which path), so the choice can be explained rather
+// than left to the catalog's order, which nobody can see. Only
+// `Unbroken` falls back to that order, and only when two copies agree on
+// every rule, path included.
+enum class SurvivorRule {
+    OnlyCopy,         // a group of one: nothing to choose between
+    OnlyCatalogued,   // every other copy is a file no catalog lists
+    Bitrate,          // higher bitrate
+    Duration,         // longer (beyond the matching tolerance)
+    FileSize,         // larger file
+    MorePlaylists,    // identical audio; in more playlists
+    ShorterPath,      // identical audio, as many playlists; shorter path
+    PathOrder,        // ... and as long a path; the path that sorts first
+    Unbroken,         // nothing tells them apart; the first one listed
+
+    // Only ever for the group as a whole (survivorChosenBy), never for
+    // one copy: the removed copies lost by different rules, and each
+    // one's own is in removedBy.
+    Mixed,
+
+    // Only ever for one copy: the survivor is not better than it by any
+    // rule. Lengths within the matching tolerance of a neighbour need not
+    // be within it of each other, so with three or more copies the one
+    // kept can have won through a third copy instead. Said rather than
+    // explained away; the page shows the copies to compare.
+    NotDirectly,
+};
+
 // What to do about one DuplicateGroup for the "Clean Up" feature: which
 // copy to keep, which to remove, and what data the survivor should end
 // up with so nothing already on either copy is lost.
@@ -24,6 +58,17 @@ struct DuplicateCleanupPlan
     DuplicateGroup group;
     Track survivor;               // the copy that would be kept
     std::vector<Track> toRemove;  // every other copy in the group
+
+    // Why the survivor and not each copy in toRemove, in the same order:
+    // the first rule on which the two differ. For the page to say, before
+    // anything is removed, whether the copies really differ or a tie was
+    // broken.
+    std::vector<SurvivorRule> removedBy;
+
+    // The rule every removed copy lost by, when they all lost by the same
+    // one -- the usual case, and the one sentence a group can carry.
+    // Mixed when they did not; OnlyCopy for a group of one.
+    SurvivorRule survivorChosenBy = SurvivorRule::OnlyCopy;
 
     // Union of every copy's cues (via LocalRestorePlanner::mergeCues,
     // folded across the whole group), deduplicated -- what the survivor

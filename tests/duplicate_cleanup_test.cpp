@@ -947,6 +947,147 @@ int main()
         std::cout << "case 30 (an uncollapsed plan is answered by its own cue set) OK\n";
     }
 
+    // --- byte-identical copies (#66) -----------------------------------
+    //
+    // A re-export leaves "d01.mp3" and "d01-1.mp3": same bitrate, length
+    // and size. The survivor used to be whichever the catalog listed
+    // first, which nobody can see. Each case below lists the copy that
+    // should LOSE first, so falling back to catalog order fails it.
+    auto identicalCopy = [](std::string id, std::string path, std::vector<std::string> playlists) {
+        Track t = makeTrack(std::move(id), 200.0, 320, 8'000'000);
+        t.filePath = std::move(path);
+        for (auto &name : playlists) {
+            t.playlists.push_back({std::move(name), 1});
+        }
+        return t;
+    };
+
+    // The copy in more playlists wins, even with the longer path.
+    {
+        DuplicateGroup group{{identicalCopy("lesser", "/stick/Contents/d01.mp3", {"Warmup"}),
+                              identicalCopy("more", "/stick/Contents/d01-1.mp3", {"Warmup", "Peak"})}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "more");
+        assert(plan.survivorChosenBy == SurvivorRule::MorePlaylists);
+        std::cout << "case 31 (identical copies: the one in more playlists is kept) OK\n";
+    }
+
+    // Playlists counted by name: one playlist listing a copy twice is not
+    // two playlists.
+    {
+        DuplicateGroup group{{identicalCopy("twice", "/stick/Contents/d01-1.mp3", {"Warmup", "Warmup"}),
+                              identicalCopy("once", "/stick/Contents/d01.mp3", {"Warmup"})}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "once");
+        assert(plan.survivorChosenBy == SurvivorRule::ShorterPath);
+        std::cout << "case 32 (as many playlists: the shorter path is kept; a repeat is one playlist) OK\n";
+    }
+
+    // Same length of path: the one that sorts first, never catalog order.
+    {
+        DuplicateGroup group{{identicalCopy("b", "/stick/Contents/b/d01.mp3", {}),
+                              identicalCopy("a", "/stick/Contents/a/d01.mp3", {})}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "a");
+        assert(plan.survivorChosenBy == SurvivorRule::PathOrder);
+        std::cout << "case 33 (as long a path: the one that sorts first is kept) OK\n";
+    }
+
+    // The tie-breaks never outrank the audio: a higher bitrate in no
+    // playlist still beats a lower one in two, and the reason says so.
+    {
+        Track better = identicalCopy("better", "/stick/Contents/d01-1.mp3", {});
+        better.bitrate = 320;
+        Track worse = identicalCopy("worse", "/stick/Contents/d01.mp3", {"Warmup", "Peak"});
+        worse.bitrate = 192;
+        DuplicateGroup group{{worse, better}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "better");
+        assert(plan.survivorChosenBy == SurvivorRule::Bitrate);
+        std::cout << "case 34 (audio rules come before the tie-breaks) OK\n";
+    }
+
+    // Each removed copy carries its own reason, and the group's is one
+    // only when they agree: "low" goes on bitrate, "plain" on playlists,
+    // and no one sentence is true of both.
+    {
+        Track low = identicalCopy("low", "/stick/Contents/d01-2.mp3", {});
+        low.bitrate = 128;
+        DuplicateGroup group{{identicalCopy("plain", "/stick/Contents/d01.mp3", {}), low,
+                              identicalCopy("listed", "/stick/Contents/d01-1.mp3", {"Warmup"})}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "listed");
+        assert(plan.toRemove.size() == 2 && plan.removedBy.size() == 2);
+        assert(plan.toRemove[0].sourceId == "plain" && plan.removedBy[0] == SurvivorRule::MorePlaylists);
+        assert(plan.toRemove[1].sourceId == "low" && plan.removedBy[1] == SurvivorRule::Bitrate);
+        assert(plan.survivorChosenBy == SurvivorRule::Mixed);
+        std::cout << "case 35 (each removed copy has its own reason; the group's only when they agree) OK\n";
+    }
+
+    // Lengths within the tolerance of a neighbour need not be within it of
+    // each other. R (303 s) loses to X (301.5 s, larger) on size, X loses
+    // to S (300 s, larger still) on size, so S is kept -- yet S is 3 s
+    // shorter than R. That is not "keeps the larger file" of R, nor
+    // "keeps the longer copy": it is said as what it is.
+    {
+        Track r = identicalCopy("R", "/stick/Contents/r.mp3", {});
+        r.durationSeconds = 303.0;
+        r.fileSizeBytes = 7'000'000;
+        Track x = identicalCopy("X", "/stick/Contents/x.mp3", {});
+        x.durationSeconds = 301.5;
+        x.fileSizeBytes = 8'000'000;
+        Track sCopy = identicalCopy("S", "/stick/Contents/s.mp3", {});
+        sCopy.durationSeconds = 300.0;
+        sCopy.fileSizeBytes = 9'000'000;
+        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{r, x, sCopy}});
+        assert(plan.survivor.sourceId == "S");
+        assert(plan.toRemove[0].sourceId == "R" && plan.removedBy[0] == SurvivorRule::NotDirectly);
+        assert(plan.toRemove[1].sourceId == "X" && plan.removedBy[1] == SurvivorRule::FileSize);
+        assert(plan.survivorChosenBy == SurvivorRule::Mixed);
+        std::cout << "case 35b (a survivor that won through a third copy is not given a reason it lacks) OK\n";
+    }
+
+    // With no bitrate known, length is still compared within the
+    // tolerance: a length worked out to a different millisecond is the
+    // same length, and the tie goes on to the path.
+    {
+        Track original = identicalCopy("original", "/stick/Contents/d01.mp3", {});
+        original.bitrate = 0;
+        Track reexport = identicalCopy("reexport", "/stick/Contents/d01-1.mp3", {});
+        reexport.bitrate = 0;
+        reexport.durationSeconds = original.durationSeconds + 0.0004;
+        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{reexport, original}});
+        assert(plan.survivor.sourceId == "original");
+        assert(plan.survivorChosenBy == SurvivorRule::ShorterPath);
+        std::cout << "case 35c (no bitrate: lengths within the tolerance are the same length) OK\n";
+    }
+
+    // The reasons for the other paths through the planner.
+    {
+        assert(DuplicateCleanupPlanner::plan(DuplicateGroup{{makeTrack("solo", 200.0, 320, 1)}}).survivorChosenBy ==
+               SurvivorRule::OnlyCopy);
+
+        DuplicateGroup longer{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 210.0, 320, 8'000'000)}};
+        assert(DuplicateCleanupPlanner::plan(longer).survivorChosenBy == SurvivorRule::Duration);
+
+        DuplicateGroup larger{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 320, 9'000'000)}};
+        assert(DuplicateCleanupPlanner::plan(larger).survivorChosenBy == SurvivorRule::FileSize);
+
+        // A stray with a higher bitrate still loses to the catalogued copy.
+        DuplicateGroup catalogued{{makeStray("stray", 200.0, 320, 8'000'000), makeTrack("row", 200.0, 128, 3'000'000)}};
+        auto plan = DuplicateCleanupPlanner::plan(catalogued);
+        assert(plan.survivor.sourceId == "row");
+        assert(plan.survivorChosenBy == SurvivorRule::OnlyCatalogued);
+
+        // Nothing at all to tell them apart: the first listed, and said so.
+        DuplicateGroup same{{identicalCopy("first", "/stick/Contents/d01.mp3", {}),
+                             identicalCopy("second", "/stick/Contents/d01.mp3", {})}};
+        auto unbroken = DuplicateCleanupPlanner::plan(same);
+        assert(unbroken.survivor.sourceId == "first");
+        assert(unbroken.survivorChosenBy == SurvivorRule::Unbroken);
+        std::cout << "case 36 (every rule is reported as the one that decided) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
