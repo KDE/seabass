@@ -174,6 +174,18 @@ public:
     // and setBeforeCueFileWrite() lets a save back each one up as it goes.
     void writeCuesForPath(const std::string &filePath, const std::vector<domain::CuePoint> &cues);
 
+    // Library Health's #57 repair: sets one content row's cue table to
+    // `cues` and writes nothing else, the analysis file included. For
+    // levelling a table to the file the players read, so `cues` is that
+    // file's. Colours are kept and the rows read back as writeCuesForPath()
+    // does. Throws OneLibraryRowMissing when no row has this id.
+    void writeCueTableOf(int64_t contentId, const std::vector<domain::CuePoint> &cues);
+    // The row's cue table now (readCueTable()), and the cues in the
+    // analysis file it names, read as OneLibraryReader reads them: nothing
+    // when the row names none, or it is not on the stick or unreadable.
+    std::vector<domain::CuePoint> cueTableOf(int64_t contentId);
+    std::optional<std::vector<domain::CuePoint>> analysisFileCuesOf(int64_t contentId);
+
     // Every analysis file (.EXT and .DAT, absolute) writeCuesForPath()
     // may write for this file path. Empty when OneLibrary does not list
     // the path or its rows name no analysis file on the stick.
