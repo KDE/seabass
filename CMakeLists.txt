@@ -450,6 +450,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
+    src/infrastructure/utc_timestamp.cpp
     src/infrastructure/anonymization_byte_sweep.cpp
     src/infrastructure/anonymization_verifier.cpp
     src/infrastructure/zip_archive_reader.cpp
@@ -558,6 +559,7 @@ add_library(seabass_core_testing STATIC
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
     src/infrastructure/backup/filesystem_backup_store.cpp
+    src/infrastructure/utc_timestamp.cpp
     src/infrastructure/backup/stick_write_lock.cpp
     src/infrastructure/benchmark/stick_performance_probe.cpp
     src/infrastructure/benchmark/stick_surface_check.cpp
@@ -2101,6 +2103,13 @@ add_executable(metadata_backup_plan_test
 target_link_libraries(metadata_backup_plan_test PRIVATE seabass_core_testing)
 target_include_directories(metadata_backup_plan_test PRIVATE src)
 add_test(NAME metadata_backup_plan_test COMMAND metadata_backup_plan_test)
+
+add_executable(utc_timestamp_test
+    tests/utc_timestamp_test.cpp
+)
+target_link_libraries(utc_timestamp_test PRIVATE seabass_core_testing)
+target_include_directories(utc_timestamp_test PRIVATE src)
+add_test(NAME utc_timestamp_test COMMAND utc_timestamp_test)
 
 add_executable(metadata_merge_test
     tests/metadata_merge_test.cpp
