@@ -22,7 +22,6 @@
 // with both cue sets.
 //
 //   stick_damage_audit <root holding PIONEER/ and Engine Library/>
-#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
@@ -31,12 +30,10 @@
 #include <vector>
 
 #include "domain/hidden_engine_cues.hpp"
-#include "domain/cue_tolerance.hpp"
+#include "domain/onelibrary_cue_table.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
-#include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
-#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
@@ -47,50 +44,6 @@ namespace
 {
 
 using seabass::domain::CuePoint;
-
-// A cue table row as OneLibraryCueWriter writes one: kind 0 is a memory
-// cue, otherwise the hot cue slot; a loop has its out point past its in.
-std::vector<CuePoint> cueTableOf(const seabass::infrastructure::onelibrary::SqlCipherDb &db, const std::string &contentId)
-{
-    namespace ol = seabass::infrastructure::onelibrary;
-    std::vector<CuePoint> cues;
-    ol::SqlCipherStatement select(db, "SELECT kind, inUsec, outUsec, isActiveLoop FROM cue WHERE content_id = ?");
-    select.bindInt64(1, std::stoll(contentId));
-    while (select.step()) {
-        CuePoint cue;
-        const std::int64_t kind = select.columnInt64(0);
-        cue.kind = kind == 0 ? CuePoint::Kind::Memory : CuePoint::Kind::Hot;
-        cue.hotCueNumber = static_cast<int>(kind);
-        cue.positionMs = static_cast<double>(select.columnInt64(1)) / 1000.0;
-        const std::int64_t out = select.columnInt64(2);
-        cue.isLoop = (!select.columnIsNull(3) && select.columnInt64(3) != 0) || out > select.columnInt64(1);
-        cue.loopEndMs = cue.isLoop ? static_cast<double>(out) / 1000.0 : 0.0;
-        cues.push_back(cue);
-    }
-    return cues;
-}
-
-// True if every cue the table holds is in the file too: a hot cue on the
-// same pad at the same place, a memory cue at the same place. The file
-// holding more (rekordbox's memory cue at 0:00, which the table never
-// carries) is not what #57 is about.
-bool tableWithinFile(const std::vector<CuePoint> &table, const std::vector<CuePoint> &file, double toleranceMs)
-{
-    for (const auto &t : table) {
-        bool found = false;
-        for (const auto &f : file) {
-            if (f.kind == t.kind && (t.kind == CuePoint::Kind::Memory || f.hotCueNumber == t.hotCueNumber)
-                && seabass::domain::sameCuePlace(t, f, toleranceMs)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return false;
-        }
-    }
-    return true;
-}
 
 std::string describe(const std::vector<CuePoint> &cues)
 {
@@ -148,27 +101,16 @@ int main(int argc, char **argv)
         namespace ol = seabass::infrastructure::onelibrary;
         // Cues from each row's analysis file, the half the players read.
         const auto tracks = ol::OneLibraryReader(pioneer).readAll();
-        ol::SqlCipherLibrary lib;
-        ol::SqlCipherDb db(lib, ol::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + ol::deriveOneLibraryKey() + "';");
-        int emptyTable = 0;
-        int agree = 0;
+        const ol::OneLibraryCueTables tables(pioneer);
+        const auto audit = seabass::domain::auditCueTables(
+            tracks, [&tables](const seabass::domain::Track &t) { return tables.of(std::stoll(t.sourceId)); });
         std::vector<std::string> differ;
-        for (const auto &track : tracks) {
-            const auto table = cueTableOf(db, track.sourceId);
-            if (table.empty()) {
-                ++emptyTable;
-                continue;
-            }
-            if (tableWithinFile(table, track.cues, seabass::domain::cueToleranceMsFor(track.bpm, track.bpm))) {
-                ++agree;
-                continue;
-            }
-            differ.push_back("  content_id " + track.sourceId + " " + track.filePath + "\n    cue table:     " + describe(table)
-                             + "\n    analysis file: " + describe(track.cues));
+        for (const auto &e : audit.excess) {
+            differ.push_back("  content_id " + e.row.sourceId + " " + e.row.filePath + "\n    cue table:     " + describe(e.table)
+                             + "\n    analysis file: " + describe(e.row.cues));
         }
-        std::cout << "#57 OneLibrary cue table against the analysis file: " << tracks.size() << " rows read; "
-                  << emptyTable << " with an empty table, " << agree << " within the file, " << differ.size()
+        std::cout << "#57 OneLibrary cue table against the analysis file: " << audit.rowsRead << " rows read; "
+                  << audit.emptyTable << " with an empty table, " << audit.withinFile << " within the file, " << differ.size()
                   << " hold cues the analysis file does not\n";
         for (const auto &line : differ) {
             std::cout << line << "\n";

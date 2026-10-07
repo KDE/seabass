@@ -112,6 +112,31 @@ std::vector<std::string> analysisFilesOf(SqlCipherDb &db, const std::vector<int6
 
 }  // namespace
 
+std::vector<CuePoint> readCueTable(const SqlCipherDb &db, int64_t contentId)
+{
+    std::vector<CuePoint> cues;
+    SqlCipherStatement select(db, "SELECT kind, inUsec, outUsec, isActiveLoop FROM cue WHERE content_id = ?");
+    select.bindInt64(1, contentId);
+    while (select.step()) {
+        CuePoint cue;
+        const int64_t kind = select.columnInt64(0);
+        cue.kind = kind == 0 ? CuePoint::Kind::Memory : CuePoint::Kind::Hot;
+        cue.hotCueNumber = static_cast<int>(kind);
+        cue.positionMs = static_cast<double>(select.columnInt64(1)) / 1000.0;
+        const int64_t out = select.columnInt64(2);
+        cue.isLoop = (!select.columnIsNull(3) && select.columnInt64(3) != 0) || out > select.columnInt64(1);
+        cue.loopEndMs = cue.isLoop ? static_cast<double>(out) / 1000.0 : 0.0;
+        cues.push_back(cue);
+    }
+    return cues;
+}
+
+OneLibraryCueTables::OneLibraryCueTables(const std::string &pioneerRoot)
+    : m_db(m_lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true)
+{
+    m_db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+}
+
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
 {
     return pathToUtf8(pathFromUtf8(pioneerRoot) / "rekordbox" / "exportLibrary.db");

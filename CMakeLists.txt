@@ -362,6 +362,7 @@ add_library(seabass_core STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/onelibrary_cue_table.cpp
     src/domain/playlist_diff.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
@@ -555,6 +556,7 @@ add_library(seabass_core_testing STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
