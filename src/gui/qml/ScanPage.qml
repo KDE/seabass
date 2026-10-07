@@ -340,7 +340,16 @@ Page {
     // only artwork -- with the full details one hover away, see that
     // Rectangle's own tooltip below -- rather than letting every column
     // get squeezed illegibly thin at once.
-    readonly property int browseTier: trackListView.width >= 620 ? 2 : (trackListView.width >= 340 ? 1 : 0)
+    //
+    // Measured on the column the SplitView gives Browse, not on the list
+    // inside it. The tier decides which headers show, the headers' row
+    // sets the column's minimum width, and a ColumnLayout narrower than
+    // its minimum lays its children out at the minimum: with every
+    // header showing, the list came out 656 wide on a 388-wide column,
+    // the tier stayed at 2, and the headers never went. Whether that
+    // loop closed depended on the font -- not with macOS's, but with the
+    // wider one the offscreen platform (and so the test suite) uses.
+    readonly property int browseTier: browseColumn.width >= 620 ? 2 : (browseColumn.width >= 340 ? 1 : 0)
 
     // The list's sort, held here so the column headers and the Sort by
     // combo show one state. A header click sorts by its column, ascending
@@ -762,6 +771,7 @@ Page {
         }
 
         ColumnLayout {
+            id: browseColumn
             SplitView.fillWidth: true
             spacing: 0
 
