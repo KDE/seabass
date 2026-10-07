@@ -20,6 +20,7 @@
 #include "application/track_file_presence.hpp"
 #include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
+#include "domain/sync_planning.hpp"
 #include "domain/track_scope.hpp"
 #include "gui/stick_path.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -46,6 +47,7 @@
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
 #include "gui/edit/changes/align_playlist_change.hpp"
 #include "gui/edit/changes/delete_tracks_change.hpp"
+#include "gui/edit/changes/level_cue_table_change.hpp"
 #include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
@@ -650,6 +652,23 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             }
         }
 
+        if (full && format == QStringLiteral("onelibrary")) {
+            // #57: each row's cue table beside the analysis file its cues
+            // came from. One read-only open and a query per row.
+            try {
+                const infrastructure::onelibrary::OneLibraryCueTables tables(path.toStdString());
+                result.cueTables = domain::auditCueTables(tracks, [&](const domain::Track &t) {
+                    cancel.throwIfCancelled();
+                    return tables.of(std::stoll(t.sourceId));
+                });
+                result.cueTablesChecked = true;
+            } catch (const application::OperationCancelled &) {
+                throw;
+            } catch (const std::exception &e) {
+                result.cueTablesError = e.what();
+            }
+        }
+
         if (full && format == QStringLiteral("rekordbox")) {
             // What this catalog holds per audio file, for the Engine pass
             // that follows: Engine keeps its own copies of the art, so
@@ -964,6 +983,10 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_playlistsError.clear();
     m_noPlaylist = {};
     emit playlistsChanged();
+    m_cueTables = {};
+    m_cueTablesChecked = false;
+    m_cueTablesError.clear();
+    emit cueTablesChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
     // though: it may wait for another thread's recovery of m.db, or copy a
@@ -1148,6 +1171,12 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_noPlaylist = std::move(result.noPlaylist);
             emit playlistsChanged();
         }
+        if (result.cueTablesChecked || !result.cueTablesError.empty()) {
+            m_cueTables = std::move(result.cueTables);
+            m_cueTablesChecked = result.cueTablesChecked;
+            m_cueTablesError = QString::fromStdString(result.cueTablesError);
+            emit cueTablesChanged();
+        }
         // Same rule as the two above: a leg that read nothing must not
         // wipe what a leg that did read left behind. hasColumn is part
         // of the test because an Engine 1.x library legitimately reports
@@ -1301,6 +1330,13 @@ void LibraryConsistencyController::attachSession()
                     emit playlistsChanged();
                     return;
                 }
+                if (changeId.startsWith(LevelCueTableChange::idFor(0).chopped(1))) {
+                    m_stagedCueTables.erase(changeId.section(QLatin1Char(':'), -1).toLongLong());
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit cueTablesChanged();
+                    return;
+                }
                 if (changeId == RemoveDanglingPlaylistEntriesChange::idFor()) {
                     m_danglingFixStaged = false;
                     m_rescanAfterSave = true;
@@ -1387,6 +1423,8 @@ void LibraryConsistencyController::attachSession()
                 m_danglingFixStaged = false;
                 m_stagedNoPlaylistFiles.clear();
                 emit playlistsChanged();
+                m_stagedCueTables.clear();
+                emit cueTablesChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
                 emit sampleRatesChanged();
@@ -2107,6 +2145,103 @@ void LibraryConsistencyController::unstageTracksInNoPlaylist()
     clearStagedStatusIfNothingStaged();
 }
 
+namespace
+{
+
+// "pad B at 1:07.751, memory cue at 0:04.399", for the cue table page.
+QString cuePlaces(const std::vector<domain::CuePoint> &cues)
+{
+    QStringList parts;
+    for (const auto &c : cues) {
+        const QString what = c.kind == domain::CuePoint::Kind::Hot
+            ? QStringLiteral("pad %1").arg(QChar(QLatin1Char('A').unicode() + c.hotCueNumber - 1))
+            : QStringLiteral("memory cue");
+        parts << QStringLiteral("%1%2 at %3")
+                     .arg(what, c.isLoop ? QStringLiteral(" loop") : QString(),
+                          QString::fromStdString(domain::formatCuePosition(c.positionMs)));
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
+}  // namespace
+
+QVariantList LibraryConsistencyController::cueTableRows() const
+{
+    QVariantList out;
+    for (const auto &e : m_cueTables.excess) {
+        QVariantMap m;
+        m["contentId"] = QString::fromStdString(e.row.sourceId);
+        m["title"] = QString::fromStdString(e.row.title);
+        m["artist"] = QString::fromStdString(e.row.artist);
+        m["filePath"] = QString::fromStdString(e.row.filePath);
+        m["extra"] = cuePlaces(e.notInFile);
+        m["fileCues"] = e.row.cues.empty() ? QStringLiteral("none") : cuePlaces(e.row.cues);
+        m["staged"] = m_stagedCueTables.count(std::stoll(e.row.sourceId)) > 0;
+        out << m;
+    }
+    return out;
+}
+
+void LibraryConsistencyController::repairCueTables(const QStringList &contentIds)
+{
+    if (busy() || stickReadOnly()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    int added = 0;
+    for (const auto &e : m_cueTables.excess) {
+        const QString id = QString::fromStdString(e.row.sourceId);
+        const int64_t contentId = id.toLongLong();
+        if ((!contentIds.isEmpty() && !contentIds.contains(id)) || m_stagedCueTables.count(contentId)) {
+            continue;
+        }
+        LevelCueTableChange::Row row{contentId, e.row.filePath, e.row.title, e.row.bpm};
+        if (!m_session->stage(std::make_unique<LevelCueTableChange>(m_rekordboxPath, std::move(row)))) {
+            break;
+        }
+        m_stagedCueTables.insert(contentId);
+        ++added;
+    }
+    emit cueTablesChanged();
+    if (added > 0) {
+        setStagedStatusMessage(QStringLiteral("Staged repairing the OneLibrary cue table of %1 track(s). Press Save to write it.")
+                                   .arg(m_stagedCueTables.size()));
+    }
+}
+
+void LibraryConsistencyController::unstageCueTable(const QString &contentId)
+{
+    const int64_t id = contentId.toLongLong();
+    if (!m_stagedCueTables.count(id)) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(LevelCueTableChange::idFor(id));
+    }
+    m_stagedCueTables.erase(id);
+    emit cueTablesChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
+void LibraryConsistencyController::unstageCueTables()
+{
+    if (m_stagedCueTables.empty()) {
+        return;
+    }
+    if (m_session) {
+        for (const int64_t id : m_stagedCueTables) {
+            m_session->unstage(LevelCueTableChange::idFor(id));
+        }
+    }
+    m_stagedCueTables.clear();
+    emit cueTablesChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::removeDanglingPlaylistEntries()
 {
     const int count = danglingPlaylistEntryCount();
@@ -2273,7 +2408,7 @@ void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
         && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged
-        && m_stagedNoPlaylistFiles.empty()) {
+        && m_stagedNoPlaylistFiles.empty() && m_stagedCueTables.empty()) {
         setStatusMessage({});
     }
 }
