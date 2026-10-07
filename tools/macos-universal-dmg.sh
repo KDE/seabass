@@ -98,6 +98,12 @@ else
     out_dmg="${3:?the .dmg to write}"
     volume="${4:-Seabass}"
 fi
+# Absolute, because ci-notary-service's signmacapp.py runs codesign on the
+# path it is given from inside the file's own directory: a relative
+# kde-ci-unverified/x.dmg then names kde-ci-unverified/kde-ci-unverified/
+# x.dmg, and the signed image "does not exist" (job 5139902).
+mkdir -p "$(dirname "$out_dmg")" || exit 1
+out_dmg="$(cd "$(dirname "$out_dmg")" && pwd)/$(basename "$out_dmg")" || exit 1
 
 # A DEPLOYED bundle, not an installed one. Craft's <root>/Applications/KDE/
 # seabass.app holds four files -- the executable, Info.plist, the icon and a
@@ -304,28 +310,10 @@ fi
 sign_cmd=(); notarize_cmd=()
 [ -n "${SEABASS_SIGN_COMMAND:-}" ] && read -r -a sign_cmd <<< "$SEABASS_SIGN_COMMAND"
 [ -n "${SEABASS_NOTARIZE_COMMAND:-}" ] && read -r -a notarize_cmd <<< "$SEABASS_NOTARIZE_COMMAND"
-# KDE e.V.'s Apple team, as craft-ci's CraftConfig.ini names it in
-# CodeSigning/MacDeveloperId, "K Desktop Environment e.V. (5433B4KXM8)".
-sign_team="${SEABASS_SIGN_TEAM_ID:-5433B4KXM8}"
-really_signed() {  # <path>: signed for distribution by that team, not ad hoc
-    local out
-    out="$(codesign -dvv "$1" 2>&1)" || { printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1; }
-    # Any Authority is not enough: an Apple Development certificate, or a
-    # Developer ID from some other team, has one too, and neither makes a
-    # package Gatekeeper opens for a stranger.
-    if printf '%s\n' "$out" | grep -q '^Signature=adhoc' ||
-       ! printf '%s\n' "$out" | grep -q '^Authority=Developer ID Application: ' ||
-       ! printf '%s\n' "$out" | grep -qx "TeamIdentifier=$sign_team"; then
-        printf '%s\n' "$out" | sed 's/^/  /' >&2
-        echo "  wanted: Authority=Developer ID Application: ..., TeamIdentifier=$sign_team" >&2
-        return 1
-    fi
-    printf '%s\n' "$out" | grep -E '^(Authority|TeamIdentifier|Timestamp)=' | sed 's/^/  /'
-}
 if [ "${#sign_cmd[@]}" -gt 0 ]; then
     echo "== signing the merged bundle"
     "${sign_cmd[@]}" "$app" || { echo "  the signing command failed" >&2; exit 1; }
-    really_signed "$app" || { echo "  the bundle is not signed for distribution after signing" >&2; exit 1; }
+    seabass_really_signed "$app" || { echo "  the bundle is not signed for distribution after signing" >&2; exit 1; }
     codesign --verify --deep --strict "$app" || { echo "  the signed bundle does not verify" >&2; exit 1; }
     # The signature is new, so the slices are run again under it.
     arch -arm64 "$cli" --help >/dev/null 2>&1 </dev/null || { echo "  the signed arm64 slice does not run" >&2; exit 1; }
@@ -345,7 +333,7 @@ hdiutil create -volname "$volume" -srcfolder "$staging" -fs HFS+ -ov -format UDZ
 if [ "${#sign_cmd[@]}" -gt 0 ]; then
     echo "== signing the image"
     "${sign_cmd[@]}" "$out_dmg" || { echo "  the signing command failed" >&2; exit 1; }
-    really_signed "$out_dmg" || { echo "  the image is not signed for distribution after signing" >&2; exit 1; }
+    seabass_really_signed "$out_dmg" || { echo "  the image is not signed for distribution after signing" >&2; exit 1; }
 fi
 if [ "${#notarize_cmd[@]}" -gt 0 ]; then
     echo "== notarising the image"
