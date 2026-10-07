@@ -412,8 +412,11 @@ macos:monterey:
     # Not cached: a venv's launchers name its Python by absolute path, and
     # a cache unpacked into another job directory would leave them pointing
     # at one that is gone -- on every run, until the key changed.
+    # ci-notary-service's own requirements too: with the venv first on
+    # PATH, its signing and notarising clients run in it, and the first
+    # signed run (job 5141646) stopped at "No module named 'yaml'".
     - python3 -m venv monterey-venv
-    - monterey-venv/bin/python -m pip install --quiet aqtinstall cmake ninja
+    - monterey-venv/bin/python -m pip install --quiet aqtinstall cmake ninja -r ci-notary-service/requirements.txt
     - export PATH="$PWD/monterey-venv/bin:$PATH"
     - |
       qt="$PWD/monterey-cache/qt/$SEABASS_QT_VERSION/macos"
