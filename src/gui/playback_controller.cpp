@@ -106,6 +106,23 @@ PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
             next();
         }
     });
+#if QT_VERSION < QT_VERSION_CHECK(6, 11, 0)
+    // Qt 6.8.3's FFmpeg player loads some files and then never starts
+    // them: play() reports playing, the position stays at 0, and only a
+    // seek sets it going. Every MP3 on a real stick that carries cover art
+    // did it, which on the macOS 12 build (Qt 6.8, see
+    // tools/macos-monterey-dmg.sh) made Play do nothing. 6.11 plays them
+    // as they are. One seek to where the player already is, once the file
+    // has loaded, is the same seek a click in the waveform made by hand.
+    connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        // Not only while playing: when a file finishes loading the player
+        // has not reported play() back yet, and a seek in place changes
+        // nothing for a paused one.
+        if (status == QMediaPlayer::LoadedMedia) {
+            m_player.setPosition(m_player.position());
+        }
+    });
+#endif
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     m_bufferOutput = new QAudioBufferOutput(this);
     m_player.setAudioBufferOutput(m_bufferOutput);
