@@ -142,6 +142,7 @@ set(SEABASS_GUI_QML_FILES
     qml/SampleRatesPage.qml
     qml/PlaylistSyncPage.qml
     qml/NoPlaylistTracksPage.qml
+    qml/CueTablePage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/PlaylistDiffPage.qml

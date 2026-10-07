@@ -121,6 +121,13 @@ What Seabass does with this:
   are one cue source. Sync pairs Engine with OneLibrary only for the rows
   no DeviceLibrary row speaks for (`oneLibraryRowsToPairWithEngine()`).
 
+- Seabass builds before `afa3dbdb` could write a row's `cue` table on its
+  own, with another copy's cues (#57). Library Health's "OneLibrary cue
+  tables" check lists every row whose table holds a cue its analysis file
+  does not (`domain::auditCueTables()`; an empty table, or one the file
+  holds more than, is fine), and its repair sets that row's table to the
+  file's cues, writing nothing else.
+
 Still unverified: where a CDJ-3000X writes a pad the DJ stores (the
 OMNIS-DUO writes the file), and what rekordbox desktop does with the
 `cue` table on import. Until the second is known, the table is written,

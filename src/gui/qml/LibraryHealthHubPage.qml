@@ -320,6 +320,23 @@ Page {
             ? counted + " in no playlist in any library. You can delete the ones you do not need."
             : counted + " listed because this stick has no playlists at all.";
     }
+    // #57. OneLibrary rows whose cue table holds cues their analysis
+    // file does not: see CueTablePage. Only on a stick with OneLibrary,
+    // once its leg has read it.
+    readonly property bool cueTablesShown: healthController.cueTablesChecked
+        || healthController.cueTablesError.length > 0
+    readonly property int cueTableRowCount: healthController.cueTableRowCount
+    readonly property string cueTableSummary: {
+        if (healthController.cueTablesError.length > 0) {
+            return healthController.cueTablesError;
+        }
+        if (root.cueTableRowCount === 0) {
+            return "Every OneLibrary cue table agrees with the analysis file the players read.";
+        }
+        return (root.cueTableRowCount === 1 ? "One track's" : root.cueTableRowCount + " tracks'")
+            + " OneLibrary cue table holds cues its analysis file does not, left there by an earlier Seabass "
+            + "build. Seabass can set the table to the file's cues.";
+    }
     readonly property int playlistDifferenceCount: healthController.playlistDifferenceCount
     readonly property int danglingPlaylistEntryCount: healthController.danglingPlaylistEntryCount
     readonly property string playlistSummary: {
@@ -628,6 +645,22 @@ Page {
                 ok: root.noPlaylistTrackCount === 0
                 actionLabel: root.noPlaylistTrackCount > 0 ? "Review tracks" : ""
                 onActionRequested: root.detailRequested("noplaylist")
+            }
+
+            HealthCheckCard {
+                objectName: "cueTableCard"
+                visible: root.cueTablesShown
+                fixableCount: root.cueTableRowCount
+                foundCount: root.cueTableRowCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "OneLibrary cue tables"
+                summary: root.cueTableSummary
+                running: root.scanning
+                ok: root.cueTableRowCount === 0 && healthController.cueTablesError.length === 0
+                failed: healthController.cueTablesError.length > 0
+                actionLabel: root.cueTableRowCount > 0 ? "Review cue tables" : ""
+                onActionRequested: root.detailRequested("cuetables")
             }
 
             // Inset to the card TEXT, not to the card edge. These three

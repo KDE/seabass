@@ -723,6 +723,11 @@ ApplicationWindow {
         NoPlaylistTracksPage {}
     }
 
+    Component {
+        id: cueTablePageComponent
+        CueTablePage {}
+    }
+
     // Library Health opens on its hub: every check run once, each
     // reporting in a sentence. Each card's check has a page of its own,
     // pushed from there and handed the hub's own controller so it shows
@@ -740,6 +745,7 @@ ApplicationWindow {
         case "artwork": return coverArtPageComponent;
         case "playlists": return playlistSyncPageComponent;
         case "noplaylist": return noPlaylistTracksPageComponent;
+        case "cuetables": return cueTablePageComponent;
         }
         console.warn("Library Health: no page for the check \"" + section + "\"");
         return null;

@@ -23,6 +23,7 @@
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "domain/playlist_sync.hpp"
 #include "domain/tracks_in_no_playlist.hpp"
+#include "domain/onelibrary_cue_table.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -253,6 +254,11 @@ struct LibraryConsistencyScanResult
     std::string playlistsError;
     // The same pass: files no library has in any playlist.
     domain::NoPlaylistScan noPlaylist;
+    // The OneLibrary leg: rows whose cue table holds cues their analysis
+    // file does not (#57, domain::auditCueTables).
+    domain::CueTableAudit cueTables;
+    bool cueTablesChecked = false;
+    std::string cueTablesError;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -412,6 +418,15 @@ private:
     Q_PROPERTY(QVariantList noPlaylistTracks READ noPlaylistTracks NOTIFY playlistsChanged)
     Q_PROPERTY(bool stickHasPlaylists READ stickHasPlaylists NOTIFY playlistsChanged)
     Q_PROPERTY(int noPlaylistStagedCount READ noPlaylistStagedCount NOTIFY playlistsChanged)
+    // OneLibrary rows whose cue table holds cues their analysis file does
+    // not (#57), checked in the OneLibrary leg. Each {contentId, title,
+    // artist, filePath, extra (what the table holds beyond the file),
+    // fileCues, staged}. The repair sets the table to the file's cues.
+    Q_PROPERTY(bool cueTablesChecked READ cueTablesChecked NOTIFY cueTablesChanged)
+    Q_PROPERTY(QString cueTablesError READ cueTablesError NOTIFY cueTablesChanged)
+    Q_PROPERTY(int cueTableRowCount READ cueTableRowCount NOTIFY cueTablesChanged)
+    Q_PROPERTY(QVariantList cueTableRows READ cueTableRows NOTIFY cueTablesChanged)
+    Q_PROPERTY(int cueTableStagedCount READ cueTableStagedCount NOTIFY cueTablesChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -533,6 +548,11 @@ public:
     QVariantList noPlaylistTracks() const;
     bool stickHasPlaylists() const { return m_noPlaylist.stickHasPlaylists; }
     int noPlaylistStagedCount() const { return static_cast<int>(m_stagedNoPlaylistFiles.size()); }
+    bool cueTablesChecked() const { return m_cueTablesChecked; }
+    QString cueTablesError() const { return m_cueTablesError; }
+    int cueTableRowCount() const { return static_cast<int>(m_cueTables.excess.size()); }
+    QVariantList cueTableRows() const;
+    int cueTableStagedCount() const { return static_cast<int>(m_stagedCueTables.size()); }
     QString playlistsError() const { return m_playlistsError; }
     int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
     QVariantList playlistDifferences() const;
@@ -602,6 +622,12 @@ public:
     // on a stick with no playlists.
     Q_INVOKABLE void deleteTracksInNoPlaylist(const QStringList &filePaths);
     Q_INVOKABLE void unstageTracksInNoPlaylist();
+    // Stages setting these rows' cue tables (by contentId, from
+    // cueTableRows) to their analysis files' cues, one change per row,
+    // added to what is staged. Empty: every listed row.
+    Q_INVOKABLE void repairCueTables(const QStringList &contentIds);
+    Q_INVOKABLE void unstageCueTable(const QString &contentId);
+    Q_INVOKABLE void unstageCueTables();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
     // Stages telling Engine the rekordbox library is already imported.
@@ -642,6 +668,7 @@ signals:
     void analysisStateChanged();
     void sampleRatesChanged();
     void playlistsChanged();
+    void cueTablesChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -722,6 +749,10 @@ private:
     bool m_danglingFixStaged = false;
     domain::NoPlaylistScan m_noPlaylist;
     std::set<std::string> m_stagedNoPlaylistFiles;
+    domain::CueTableAudit m_cueTables;
+    bool m_cueTablesChecked = false;
+    QString m_cueTablesError;
+    std::set<int64_t> m_stagedCueTables;  // content ids
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
