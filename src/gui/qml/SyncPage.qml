@@ -748,9 +748,11 @@ Page {
         WarningBanner {
             objectName: "importPromptRow"
             visible: syncController.playerWillOfferImport || syncController.importMarkStaged
-            text: "This stick's rekordbox library changed since the player last imported it, so the player "
-                + "will offer the import, and accepting it replaces the Engine side, cues included. Once the "
-                + "two are in sync, mark it imported and Save."
+            // One sentence: what to do, and what it gets rid of -- the
+            // player's import question, whose yes overwrites the cues
+            // this page just synced.
+            text: "After syncing, Mark As Already Imported and Save, so the Denon player stops asking to "
+                + "import rekordbox over Engine's cues."
             Button {
                 objectName: "markImportedButton"
                 text: syncController.importMarkStaged ? "Unstage" : "Mark As Already Imported"
