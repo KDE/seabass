@@ -434,8 +434,12 @@ macos:monterey:
       else
         echo "Signing: none, $CI_COMMIT_REF_NAME is not a Seabass/X.Y branch the key reaches; the package is signed ad hoc"
       fi
-      channel=dev
+      # A release tag says which channel; otherwise dev, unless whoever
+      # starts the job sets SEABASS_RELEASE_CHANNEL on its page -- a build
+      # handed to a person goes out on a testing channel, never dev.
+      channel="${SEABASS_RELEASE_CHANNEL:-dev}"
       case "${CI_COMMIT_TAG:-}" in releases/*/*) channel="$(echo "$CI_COMMIT_TAG" | cut -d/ -f2)" ;; esac
+      echo "Channel: $channel"
       SEABASS_RELEASE_CHANNEL="$channel" QT_DIR="$qt" src/tools/macos-monterey-dmg.sh src monterey-work \
           "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-12-x86_64.dmg"
     # The same read-only check as the universal package, for its one slice.
