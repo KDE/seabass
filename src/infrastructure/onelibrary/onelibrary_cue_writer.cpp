@@ -114,29 +114,57 @@ std::vector<std::string> analysisFilesOf(SqlCipherDb &db, const std::vector<int6
 
 }  // namespace
 
-std::vector<CuePoint> readCueTable(const SqlCipherDb &db, int64_t contentId)
+namespace
 {
-    std::vector<CuePoint> cues;
-    SqlCipherStatement select(db, "SELECT kind, inUsec, outUsec, isActiveLoop FROM cue WHERE content_id = ?");
+
+constexpr const char *CueTableColumns = "SELECT content_id, cue_id, kind, inUsec, outUsec, isActiveLoop FROM cue";
+
+domain::CueTableEntry cueTableEntry(SqlCipherStatement &select)
+{
+    domain::CueTableEntry entry;
+    entry.cueId = select.columnInt64(1);
+    entry.kind = select.columnInt64(2);
+    if (entry.understood()) {
+        CuePoint &cue = entry.cue;
+        cue.kind = entry.kind == 0 ? CuePoint::Kind::Memory : CuePoint::Kind::Hot;
+        cue.hotCueNumber = static_cast<int>(entry.kind);
+        cue.positionMs = static_cast<double>(select.columnInt64(3)) / 1000.0;
+        const int64_t out = select.columnInt64(4);
+        cue.isLoop = (!select.columnIsNull(5) && select.columnInt64(5) != 0) || out > select.columnInt64(3);
+        cue.loopEndMs = cue.isLoop ? static_cast<double>(out) / 1000.0 : 0.0;
+    }
+    return entry;
+}
+
+}  // namespace
+
+std::vector<domain::CueTableEntry> readCueTable(const SqlCipherDb &db, int64_t contentId)
+{
+    std::vector<domain::CueTableEntry> entries;
+    SqlCipherStatement select(db, std::string(CueTableColumns) + " WHERE content_id = ? ORDER BY cue_id");
     select.bindInt64(1, contentId);
     while (select.step()) {
-        CuePoint cue;
-        const int64_t kind = select.columnInt64(0);
-        cue.kind = kind == 0 ? CuePoint::Kind::Memory : CuePoint::Kind::Hot;
-        cue.hotCueNumber = static_cast<int>(kind);
-        cue.positionMs = static_cast<double>(select.columnInt64(1)) / 1000.0;
-        const int64_t out = select.columnInt64(2);
-        cue.isLoop = (!select.columnIsNull(3) && select.columnInt64(3) != 0) || out > select.columnInt64(1);
-        cue.loopEndMs = cue.isLoop ? static_cast<double>(out) / 1000.0 : 0.0;
-        cues.push_back(cue);
+        entries.push_back(cueTableEntry(select));
     }
-    return cues;
+    return entries;
 }
 
 OneLibraryCueTables::OneLibraryCueTables(const std::string &pioneerRoot)
-    : m_db(m_lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true)
 {
-    m_db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    SqlCipherLibrary lib;
+    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    SqlCipherStatement select(db, std::string(CueTableColumns) + " ORDER BY content_id, cue_id");
+    while (select.step()) {
+        m_tables[select.columnInt64(0)].push_back(cueTableEntry(select));
+    }
+}
+
+const std::vector<domain::CueTableEntry> &OneLibraryCueTables::of(int64_t contentId) const
+{
+    static const std::vector<domain::CueTableEntry> none;
+    const auto found = m_tables.find(contentId);
+    return found == m_tables.end() ? none : found->second;
 }
 
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
@@ -442,28 +470,89 @@ void OneLibraryCueWriter::writeCueRows(SqlCipherDb &db, const std::vector<int64_
     refreshStalenessBaseline();
 }
 
-void OneLibraryCueWriter::writeCueTableOf(int64_t contentId, const std::vector<CuePoint> &cues)
+void OneLibraryCueWriter::removeCueRows(const std::vector<std::pair<int64_t, int64_t>> &contentAndCueIds)
 {
+    if (contentAndCueIds.empty()) {
+        return;
+    }
     checkNotStale();
     SqlCipherDb &db = writeConnection();
-    SqlCipherStatement row(db, "SELECT count(*) FROM content WHERE content_id = ?");
-    row.bindInt64(1, contentId);
-    row.step();
-    if (row.columnInt64(0) != 1) {
-        throw OneLibraryRowMissing("onelibrary: no content row " + std::to_string(contentId));
+    // How many cue rows each content row has now, for the read-back.
+    std::map<int64_t, int64_t> before;
+    for (const auto &[contentId, cueId] : contentAndCueIds) {
+        SqlCipherStatement owned(db, "SELECT count(*) FROM cue WHERE cue_id = ? AND content_id = ?");
+        owned.bindInt64(1, cueId);
+        owned.bindInt64(2, contentId);
+        owned.step();
+        if (owned.columnInt64(0) != 1) {
+            throw OneLibraryRowMissing("onelibrary: cue " + std::to_string(cueId) + " is not a cue of content row "
+                                       + std::to_string(contentId));
+        }
+        if (!before.contains(contentId)) {
+            SqlCipherStatement count(db, "SELECT count(*) FROM cue WHERE content_id = ?");
+            count.bindInt64(1, contentId);
+            count.step();
+            before[contentId] = count.columnInt64(0);
+        }
     }
-    writeCueRows(db, {contentId}, cues);
+
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (const auto &[contentId, cueId] : contentAndCueIds) {
+            // The bank links first, while the cue they name is there, as
+            // writeCueRows() does.
+            SqlCipherStatement delBank(db, "DELETE FROM hotCueBankList_cue WHERE cue_id = ?");
+            delBank.bindInt64(1, cueId);
+            delBank.run();
+            SqlCipherStatement del(db, "DELETE FROM cue WHERE cue_id = ? AND content_id = ?");
+            del.bindInt64(1, cueId);
+            del.bindInt64(2, contentId);
+            del.run();
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+
+    // Read back on the other connection: those rows and their links gone,
+    // every other cue row of those content rows still there.
+    SqlCipherDb &verifyDb = verifyConnection();
+    std::map<int64_t, int64_t> removed;
+    for (const auto &[contentId, cueId] : contentAndCueIds) {
+        ++removed[contentId];
+        SqlCipherStatement gone(verifyDb, "SELECT (SELECT count(*) FROM cue WHERE cue_id = ?) + "
+                                          "(SELECT count(*) FROM hotCueBankList_cue WHERE cue_id = ?)");
+        gone.bindInt64(1, cueId);
+        gone.bindInt64(2, cueId);
+        gone.step();
+        if (gone.columnInt64(0) != 0) {
+            throw std::runtime_error("onelibrary: post-write verification failed, cue " + std::to_string(cueId)
+                                     + " or its bank link is still there");
+        }
+    }
+    for (const auto &[contentId, count] : before) {
+        SqlCipherStatement left(verifyDb, "SELECT count(*) FROM cue WHERE content_id = ?");
+        left.bindInt64(1, contentId);
+        left.step();
+        if (left.columnInt64(0) != count - removed[contentId]) {
+            throw std::runtime_error("onelibrary: post-write verification failed, content row "
+                                     + std::to_string(contentId) + " lost cues it was meant to keep");
+        }
+    }
+    refreshStalenessBaseline();
 }
 
-std::vector<CuePoint> OneLibraryCueWriter::cueTableOf(int64_t contentId)
+std::vector<domain::CueTableEntry> OneLibraryCueWriter::cueTableOf(int64_t contentId)
 {
-    checkNotStale();
     return readCueTable(writeConnection(), contentId);
 }
 
 std::optional<std::vector<CuePoint>> OneLibraryCueWriter::analysisFileCuesOf(int64_t contentId)
 {
-    checkNotStale();
     SqlCipherDb &db = writeConnection();
     const auto files = analysisFilesOf(db, {contentId}, hasAnalysisPathColumn(db));
     if (files.empty()) {

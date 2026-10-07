@@ -392,6 +392,13 @@ std::optional<size_t> planLeg(const QString &format, const QString &path,
         return std::nullopt;
     }
     size_t units = *read;
+    if (depth == LibraryConsistencyController::Full && format == QStringLiteral("onelibrary")) {
+        const auto rows = cache.countTracks(fmt, at, cancel);
+        if (!rows) {
+            return std::nullopt;
+        }
+        return units + *rows;  // "Checking OneLibrary cue tables"
+    }
     if (depth != LibraryConsistencyController::Full || format != QStringLiteral("engine")) {
         return units;
     }
@@ -654,11 +661,16 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
 
         if (full && format == QStringLiteral("onelibrary")) {
             // #57: each row's cue table beside the analysis file its cues
-            // came from. One read-only open and a query per row.
+            // came from.
+            // One query for every table, compared row by row; planLeg
+            // counts the rows.
+            progress.start("Checking OneLibrary cue tables", tracks.size());
             try {
                 const infrastructure::onelibrary::OneLibraryCueTables tables(path.toStdString());
+                size_t done = 0;
                 result.cueTables = domain::auditCueTables(tracks, [&](const domain::Track &t) {
                     cancel.throwIfCancelled();
+                    progress.tick(++done);
                     return tables.of(std::stoll(t.sourceId));
                 });
                 result.cueTablesChecked = true;
@@ -986,6 +998,13 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_cueTables = {};
     m_cueTablesChecked = false;
     m_cueTablesError.clear();
+    // Unlike the fixes above, the cue table repair is unstaged here: its
+    // rows are gone until the scan lists them again, and a staged repair
+    // must never outlive the row it was staged from.
+    if (m_session && !m_stagedCueTables.empty() && !m_session->writing()) {
+        m_session->unstage(LevelCueTableChange::idFor());
+    }
+    m_stagedCueTables.clear();
     emit cueTablesChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
@@ -1330,8 +1349,8 @@ void LibraryConsistencyController::attachSession()
                     emit playlistsChanged();
                     return;
                 }
-                if (changeId.startsWith(LevelCueTableChange::idFor(0).chopped(1))) {
-                    m_stagedCueTables.erase(changeId.section(QLatin1Char(':'), -1).toLongLong());
+                if (changeId == LevelCueTableChange::idFor()) {
+                    m_stagedCueTables.clear();
                     m_rescanAfterSave = true;
                     clearStagedStatusIfNothingStaged();
                     emit cueTablesChanged();
@@ -2145,26 +2164,6 @@ void LibraryConsistencyController::unstageTracksInNoPlaylist()
     clearStagedStatusIfNothingStaged();
 }
 
-namespace
-{
-
-// "pad B at 1:07.751, memory cue at 0:04.399", for the cue table page.
-QString cuePlaces(const std::vector<domain::CuePoint> &cues)
-{
-    QStringList parts;
-    for (const auto &c : cues) {
-        const QString what = c.kind == domain::CuePoint::Kind::Hot
-            ? QStringLiteral("pad %1").arg(QChar(QLatin1Char('A').unicode() + c.hotCueNumber - 1))
-            : QStringLiteral("memory cue");
-        parts << QStringLiteral("%1%2 at %3")
-                     .arg(what, c.isLoop ? QStringLiteral(" loop") : QString(),
-                          QString::fromStdString(domain::formatCuePosition(c.positionMs)));
-    }
-    return parts.join(QStringLiteral(", "));
-}
-
-}  // namespace
-
 QVariantList LibraryConsistencyController::cueTableRows() const
 {
     QVariantList out;
@@ -2174,12 +2173,49 @@ QVariantList LibraryConsistencyController::cueTableRows() const
         m["title"] = QString::fromStdString(e.row.title);
         m["artist"] = QString::fromStdString(e.row.artist);
         m["filePath"] = QString::fromStdString(e.row.filePath);
-        m["extra"] = cuePlaces(e.notInFile);
-        m["fileCues"] = e.row.cues.empty() ? QStringLiteral("none") : cuePlaces(e.row.cues);
+        m["extra"] = QString::fromStdString(domain::describeCuePlaces(domain::cuesOf(e.notInFile)));
+        m["fileCues"] = e.row.cues.empty() ? QStringLiteral("none")
+                                           : QString::fromStdString(domain::describeCuePlaces(e.row.cues));
         m["staged"] = m_stagedCueTables.count(std::stoll(e.row.sourceId)) > 0;
         out << m;
     }
     return out;
+}
+
+int LibraryConsistencyController::cueTableStagedCount() const
+{
+    int staged = 0;
+    for (const auto &e : m_cueTables.excess) {
+        staged += m_stagedCueTables.count(std::stoll(e.row.sourceId)) > 0 ? 1 : 0;
+    }
+    return staged;
+}
+
+bool LibraryConsistencyController::restageCueTables(std::set<int64_t> wanted)
+{
+    // Only rows the page lists: a staged repair never outlives its row.
+    std::vector<LevelCueTableChange::Row> rows;
+    std::set<int64_t> staged;
+    for (const auto &e : m_cueTables.excess) {
+        const int64_t contentId = std::stoll(e.row.sourceId);
+        if (wanted.count(contentId)) {
+            rows.push_back({contentId, e.row.filePath, e.row.title, e.row.bpm});
+            staged.insert(contentId);
+        }
+    }
+    if (m_session && !m_stagedCueTables.empty()) {
+        m_session->unstage(LevelCueTableChange::idFor());
+    }
+    m_stagedCueTables.clear();
+    bool ok = true;
+    if (!rows.empty()) {
+        ok = m_session->stage(std::make_unique<LevelCueTableChange>(m_rekordboxPath, std::move(rows)));
+        if (ok) {
+            m_stagedCueTables = std::move(staged);
+        }
+    }
+    emit cueTablesChanged();
+    return ok;
 }
 
 void LibraryConsistencyController::repairCueTables(const QStringList &contentIds)
@@ -2192,23 +2228,15 @@ void LibraryConsistencyController::repairCueTables(const QStringList &contentIds
     if (!ensureSessionForStaging()) {
         return;
     }
-    int added = 0;
+    std::set<int64_t> wanted = m_stagedCueTables;
     for (const auto &e : m_cueTables.excess) {
-        const QString id = QString::fromStdString(e.row.sourceId);
-        const int64_t contentId = id.toLongLong();
-        if ((!contentIds.isEmpty() && !contentIds.contains(id)) || m_stagedCueTables.count(contentId)) {
-            continue;
+        if (contentIds.isEmpty() || contentIds.contains(QString::fromStdString(e.row.sourceId))) {
+            wanted.insert(std::stoll(e.row.sourceId));
         }
-        LevelCueTableChange::Row row{contentId, e.row.filePath, e.row.title, e.row.bpm};
-        if (!m_session->stage(std::make_unique<LevelCueTableChange>(m_rekordboxPath, std::move(row)))) {
-            break;
-        }
-        m_stagedCueTables.insert(contentId);
-        ++added;
     }
-    emit cueTablesChanged();
-    if (added > 0) {
-        setStagedStatusMessage(QStringLiteral("Staged repairing the OneLibrary cue table of %1 track(s). Press Save to write it.")
+    if (restageCueTables(std::move(wanted)) && !m_stagedCueTables.empty()) {
+        setStagedStatusMessage(QStringLiteral("Staged removing the cues only the OneLibrary cue table holds, for %1 "
+                                              "track(s). Press Save to write it.")
                                    .arg(m_stagedCueTables.size()));
     }
 }
@@ -2216,14 +2244,12 @@ void LibraryConsistencyController::repairCueTables(const QStringList &contentIds
 void LibraryConsistencyController::unstageCueTable(const QString &contentId)
 {
     const int64_t id = contentId.toLongLong();
-    if (!m_stagedCueTables.count(id)) {
+    if (!m_stagedCueTables.count(id) || !ensureSessionForStaging()) {
         return;
     }
-    if (m_session) {
-        m_session->unstage(LevelCueTableChange::idFor(id));
-    }
-    m_stagedCueTables.erase(id);
-    emit cueTablesChanged();
+    std::set<int64_t> wanted = m_stagedCueTables;
+    wanted.erase(id);
+    restageCueTables(std::move(wanted));
     clearStagedStatusIfNothingStaged();
 }
 
@@ -2233,9 +2259,7 @@ void LibraryConsistencyController::unstageCueTables()
         return;
     }
     if (m_session) {
-        for (const int64_t id : m_stagedCueTables) {
-            m_session->unstage(LevelCueTableChange::idFor(id));
-        }
+        m_session->unstage(LevelCueTableChange::idFor());
     }
     m_stagedCueTables.clear();
     emit cueTablesChanged();

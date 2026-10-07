@@ -7,12 +7,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "domain/onelibrary_cue_table.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
@@ -100,24 +102,25 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// A content row's cue table as writeCuesForPath() writes it, in the
-// table's own order: kind 0 is a memory cue, otherwise the hot cue slot;
-// a loop has its out point past its in (or isActiveLoop set). Nothing
-// takes a track's cues from here (the analysis file is what players read,
-// #59); Library Health compares the two (#57).
-std::vector<domain::CuePoint> readCueTable(const SqlCipherDb &db, int64_t contentId);
+// A content row's cue table as writeCuesForPath() writes it, in cue_id
+// order: kind 0 is a memory cue, 1 to 8 the hot cue slot, and a loop has
+// its out point past its in (or isActiveLoop set). Any other kind is kept
+// as read and marked not understood. Nothing takes a track's cues from
+// here (the analysis file is what players read, #59); Library Health
+// compares the two (#57).
+std::vector<domain::CueTableEntry> readCueTable(const SqlCipherDb &db, int64_t contentId);
 
-// exportLibrary.db opened read-only for readCueTable(), for a caller that
-// reads every row's table and writes nothing.
+// Every row's cue table, in one query, for a caller that reads them all
+// and writes nothing: exportLibrary.db opened read-only, read, closed.
 class OneLibraryCueTables
 {
 public:
     explicit OneLibraryCueTables(const std::string &pioneerRoot);
-    std::vector<domain::CuePoint> of(int64_t contentId) const { return readCueTable(m_db, contentId); }
+    // Empty for a row with no cues in the table.
+    const std::vector<domain::CueTableEntry> &of(int64_t contentId) const;
 
 private:
-    SqlCipherLibrary m_lib;
-    SqlCipherDb m_db;
+    std::map<int64_t, std::vector<domain::CueTableEntry>> m_tables;
 };
 
 class OneLibraryCueWriter
@@ -174,16 +177,21 @@ public:
     // and setBeforeCueFileWrite() lets a save back each one up as it goes.
     void writeCuesForPath(const std::string &filePath, const std::vector<domain::CuePoint> &cues);
 
-    // Library Health's #57 repair: sets one content row's cue table to
-    // `cues` and writes nothing else, the analysis file included. For
-    // levelling a table to the file the players read, so `cues` is that
-    // file's. Colours are kept and the rows read back as writeCuesForPath()
-    // does. Throws OneLibraryRowMissing when no row has this id.
-    void writeCueTableOf(int64_t contentId, const std::vector<domain::CuePoint> &cues);
+    // Library Health's #57 repair: removes these cue rows, each named by
+    // (content_id, cue_id), with their hotCueBankList_cue links, in one
+    // transaction, and writes nothing else: every other cue row keeps its
+    // colour, comment and bank links, and no analysis file is touched.
+    // Checks the file is the one this writer opened once, before writing,
+    // and reads back that exactly those rows are gone. Throws
+    // OneLibraryRowMissing when a cue_id is no longer that row's.
+    void removeCueRows(const std::vector<std::pair<int64_t, int64_t>> &contentAndCueIds);
     // The row's cue table now (readCueTable()), and the cues in the
     // analysis file it names, read as OneLibraryReader reads them: nothing
     // when the row names none, or it is not on the stick or unreadable.
-    std::vector<domain::CuePoint> cueTableOf(int64_t contentId);
+    // Reads only, through the write connection, without the whole-file
+    // staleness check: a save asking this per row would read the database
+    // once per row. removeCueRows() checks before it writes.
+    std::vector<domain::CueTableEntry> cueTableOf(int64_t contentId);
     std::optional<std::vector<domain::CuePoint>> analysisFileCuesOf(int64_t contentId);
 
     // Every analysis file (.EXT and .DAT, absolute) writeCuesForPath()
