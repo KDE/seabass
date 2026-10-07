@@ -358,6 +358,97 @@ macos:universal:
     paths:
       - "kde-ci-universal/"
 
+# An Intel .dmg for macOS 12 Monterey, for the Intel Macs that stop there
+# (the 2017 MacBook Air, for one) and refuse the packages above: Craft's Qt
+# and every library in its cache need macOS 13.3. Qt 6.8 LTS is the last
+# Qt for macOS 12, so this builds against Qt's own 6.8 binaries, outside
+# Craft -- see tools/macos-monterey-dmg.sh for why not inside it.
+#
+# Same rules and the same signing as macos:universal: signed and notarised
+# on the Seabass/X.Y nightly (and its button), the only refs cleared for
+# macOS signing; ad hoc everywhere else. It needs nothing from the Craft
+# jobs, so it starts at once.
+#
+# Nothing outside the system is assumed on the runner: cmake and ninja come
+# from pip, Qt from aqtinstall, into the job's own directory. Qt and the
+# libraries the script builds (OpenSSL, SQLCipher, TagLib) are cached
+# between runs, keyed on the script, which pins their versions; the venv
+# holding the tools is not (see below).
+macos:monterey:
+  stage: deploy
+  tags:
+    - macOS
+  needs: []
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+      allow_failure: false
+      variables:
+        SEABASS_MONTEREY_SIGN: "yes"
+    - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+      when: manual
+      allow_failure: true
+      variables:
+        SEABASS_MONTEREY_SIGN: "yes"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
+    - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
+    - when: manual
+      allow_failure: true
+  variables:
+    GIT_STRATEGY: none
+    SEABASS_QT_VERSION: "6.8.3"
+  cache:
+    key:
+      files:
+        - tools/macos-monterey-dmg.sh
+      prefix: monterey-qt-6.8.3
+    paths:
+      - monterey-cache/
+  before_script:
+    - rm -rf src ci-utilities ci-notary-service monterey-venv monterey-work kde-ci-monterey kde-ci-unverified fixture-stick
+    - git clone https://invent.kde.org/sysadmin/ci-utilities.git --depth=1
+    - git clone https://invent.kde.org/sysadmin/ci-notary-service.git --depth=1
+    - python3 -u ci-utilities/gitlab-ci-clone.py src/
+  script:
+    # Not cached: a venv's launchers name its Python by absolute path, and
+    # a cache unpacked into another job directory would leave them pointing
+    # at one that is gone -- on every run, until the key changed.
+    - python3 -m venv monterey-venv
+    - monterey-venv/bin/python -m pip install --quiet aqtinstall cmake ninja
+    - export PATH="$PWD/monterey-venv/bin:$PATH"
+    - |
+      qt="$PWD/monterey-cache/qt/$SEABASS_QT_VERSION/macos"
+      if [ ! -x "$qt/bin/macdeployqt" ]; then
+        aqt install-qt mac desktop "$SEABASS_QT_VERSION" clang_64 -O monterey-cache/qt -m qtmultimedia qtshadertools || exit 1
+      fi
+      # The libraries are built once and kept: the script reuses
+      # <work>/deps whenever it finds them there.
+      mkdir -p monterey-work monterey-cache/deps kde-ci-unverified
+      ln -sfn "$PWD/monterey-cache/deps" monterey-work/deps
+      if [ "${SEABASS_MONTEREY_SIGN:-}" = "yes" ]; then
+        echo "Signing: $CI_COMMIT_REF_NAME is cleared, the bundle and image are signed and notarised"
+        export SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini"
+        export SEABASS_NOTARIZE_COMMAND="python3 ci-notary-service/notarizemacapp.py -v --config ci-utilities/signing/notarizemacapp.ini"
+      else
+        echo "Signing: none, $CI_COMMIT_REF_NAME is not a Seabass/X.Y branch the key reaches; the package is signed ad hoc"
+      fi
+      channel=dev
+      case "${CI_COMMIT_TAG:-}" in releases/*/*) channel="$(echo "$CI_COMMIT_TAG" | cut -d/ -f2)" ;; esac
+      SEABASS_RELEASE_CHANNEL="$channel" QT_DIR="$qt" src/tools/macos-monterey-dmg.sh src monterey-work \
+          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-12-x86_64.dmg"
+    # The same read-only check as the universal package, for its one slice.
+    - mkdir fixture-stick
+    - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
+    - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
+    - SEABASS_VERIFY_ARCHES=x86_64 src/tools/macos-verify-dmg.sh kde-ci-unverified/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
+    - mkdir kde-ci-monterey
+    - mv kde-ci-unverified/*.dmg kde-ci-unverified/*.dmg.sha256 kde-ci-monterey/
+  after_script:
+    - rm -rf src ci-utilities ci-notary-service monterey-venv monterey-work kde-ci-unverified fixture-stick
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - "kde-ci-monterey/"
+
 
 
 # --- Windows Craft build: still runs and still reports, but does not

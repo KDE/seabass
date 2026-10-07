@@ -25,6 +25,10 @@
 #
 # Read-only throughout: scan and sync --dry-run only, and the stick is
 # compared before and after.
+#
+# SEABASS_VERIFY_ARCHES names the architectures every Mach-O in the bundle
+# must carry, and nothing else: "x86_64 arm64" (the universal package)
+# when unset, "x86_64" for the Monterey one (tools/macos-monterey-dmg.sh).
 set -u
 set -o pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
@@ -121,21 +125,28 @@ xattr -dr com.apple.quarantine "$app" 2>/dev/null
 cli="$app/Contents/MacOS/seabass-cli"
 
 fail_early=0
-echo "== architectures in the bundle"
-total=0; fat=0; thin=""
+# Sorted, so "arm64 x86_64" and lipo's "x86_64 arm64" compare equal.
+sorted_arches() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
+wanted="$(printf '%s' "${SEABASS_VERIFY_ARCHES:-x86_64 arm64}" | sorted_arches)"
+echo "== architectures in the bundle (wanted in every binary: $wanted)"
+total=0; matching=0; wrong=""
 while IFS= read -r f; do
     archs="$(lipo -archs "$f" 2>/dev/null)" || continue
     [ -z "$archs" ] && continue
     total=$((total+1))
-    case "$archs" in
-        *" "*) fat=$((fat+1)) ;;
-        *) thin="$thin\n  thin: ${f#$app/} -> $archs" ;;
-    esac
+    if [ "$(printf '%s' "$archs" | sorted_arches)" = "$wanted" ]; then
+        matching=$((matching+1))
+    else
+        wrong="$wrong\n  ${f#$app/} -> $archs"
+    fi
 done < <(find "$app" -type f)
-echo "  $total Mach-O files, $fat with more than one architecture"
-if [ -n "$thin" ]; then
-    printf "%b\n" "$thin" >&2
-    echo "  a package whose binaries are not all universal is the defect this checks for" >&2
+echo "  $total Mach-O files, $matching carrying exactly $wanted"
+if [ -n "$wrong" ]; then
+    printf "%b\n" "$wrong" >&2
+    # For the universal package, a binary missing a slice is the defect
+    # this was written for; for a one-architecture one, a stray slice is
+    # a binary that was not thinned.
+    echo "  a binary without exactly these architectures is the defect this checks for" >&2
     fail_early=1
 fi
 [ "$total" -gt 0 ] || { echo "  no Mach-O files found in the bundle at all" >&2; exit 1; }
@@ -153,12 +164,12 @@ if [ -z "$arches" ]; then
     echo "  seabass-cli is not a Mach-O binary, so there is nothing to check" >&2; exit 1
 fi
 echo "  seabass-cli: $arches"
-# The package must carry both, and saying so is the entire point of this
-# branch: without it an arm64-only .dmg -- the defect being fixed -- passed.
-case "$arches" in
-    *x86_64*arm64*|*arm64*x86_64*) : ;;
-    *) echo "  NOT UNIVERSAL: seabass-cli carries only $arches" >&2; fail_early=1 ;;
-esac
+# The package must carry what was asked for, and saying so is the entire
+# point of this branch: without it an arm64-only .dmg -- the defect being
+# fixed -- passed.
+if [ "$(printf '%s' "$arches" | sorted_arches)" != "$wanted" ]; then
+    echo "  seabass-cli carries $arches, not $wanted" >&2; fail_early=1
+fi
 
 # A fingerprint of the stick, so "read-only" is checked rather than claimed.
 #
