@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/logging/file_operation_log.hpp"
+#include "infrastructure/utc_timestamp.hpp"
 
 #include <chrono>
 #include <filesystem>
-#include <format>
 #include <system_error>
 
 namespace seabass::infrastructure::logging
@@ -17,8 +17,7 @@ namespace
 
 std::string timestampNow()
 {
-    return std::format("{:%Y-%m-%dT%H:%M:%S}", std::chrono::floor<std::chrono::seconds>(
-                                                     std::chrono::system_clock::now()));
+    return utcTimestamp(std::chrono::system_clock::now(), "%Y-%m-%dT%H:%M:%S");
 }
 
 }  // namespace

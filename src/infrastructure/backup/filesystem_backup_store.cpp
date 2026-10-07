@@ -9,15 +9,16 @@
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/utc_timestamp.hpp"
 #include "infrastructure/work_counters.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <format>
 #include <limits>
 #include <map>
 #include <memory>
@@ -54,7 +55,7 @@ constexpr const char *OriginKey = "ORIGIN";
 
 std::string timestampNow()
 {
-    return std::format("{:%Y%m%dT%H%M%S}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+    return utcTimestamp(std::chrono::system_clock::now(), "%Y%m%dT%H%M%S");
 }
 
 std::string sanitize(const std::string &label)
@@ -182,7 +183,11 @@ Manifest readManifest(const fs::path &dir)
 
 std::string megabytes(std::uint64_t bytes)
 {
-    return std::format("{:.1f}", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    // snprintf, not std::format("{:.1f}"): a floating-point std::format
+    // needs macOS 13.3's libc++ (see utc_timestamp.hpp).
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.1f", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return buffer;
 }
 
 std::string originValue(BackupOrigin origin)
@@ -254,9 +259,7 @@ void cutArchiveBackTo(const fs::path &dir, std::uint64_t length)
 // user's own folder carries no archive and is left alone.
 void sweepDeadRecords(const fs::path &base)
 {
-    const std::string cutoff = std::format(
-        "{:%Y%m%dT%H%M%S}",
-        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now() - std::chrono::hours(24)));
+    const std::string cutoff = utcTimestamp(std::chrono::system_clock::now() - std::chrono::hours(24), "%Y%m%dT%H%M%S");
     std::error_code ec;
     for (const auto &entry : fs::directory_iterator(base, ec)) {
         if (!entry.is_directory(ec)) {
@@ -943,8 +946,9 @@ bool FilesystemBackupStore::restore(const std::string &id)
         measure(pathFromUtf8(path).parent_path());
     }
     if (available && *available < needed) {
-        m_lastRestoreError = std::format("not enough space on the stick to put {} file(s) back: needs about {} MB, {} MB free",
-                                         manifest.entries.size(), megabytes(needed), megabytes(*available));
+        m_lastRestoreError = "not enough space on the stick to put " + std::to_string(manifest.entries.size()) +
+                             " file(s) back: needs about " + megabytes(needed) + " MB, " + megabytes(*available) +
+                             " MB free";
         return false;
     }
     // Only now inflate every entry to check it: a record refused for space

@@ -11,7 +11,6 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <format>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -57,6 +56,7 @@
 #include "infrastructure/system/stick_hardware_info.hpp"
 
 #include "infrastructure/audio/duration_fill.hpp"
+#include "infrastructure/utc_timestamp.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include <QCoreApplication>
@@ -286,7 +286,7 @@ constexpr double MinFuzzyMatchScore = 0.4;
 
 std::string formatTimestamp(std::chrono::system_clock::time_point tp)
 {
-    return std::format("{:%Y-%m-%d}", std::chrono::floor<std::chrono::seconds>(tp));
+    return seabass::infrastructure::utcTimestamp(tp, "%Y-%m-%d");
 }
 
 void printTrackDetail(const Track &track)
