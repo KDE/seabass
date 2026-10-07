@@ -192,17 +192,34 @@ Window {
             readonly property bool hovered: previousButton.hovered || backButton.hovered || playButton.hovered
                 || forwardButton.hovered || nextButton.hovered
 
+            // Drawn here rather than left to the style: Material's own round
+            // button is a dark grey disc, and on this near-black window it
+            // and its grey glyph all but disappeared. Play is the one filled
+            // in the accent, with the ink Theme defines for it; the others
+            // are a light, outlined disc with the glyph at full strength.
             component TransportButton: RoundButton {
+                id: transportButton
                 required property string iconName
                 required property string what
+                property bool primary: false
                 display: AbstractButton.IconOnly
                 text: what
                 icon.source: Theme.iconUrl(iconName)
-                icon.color: enabled ? Theme.text : Theme.textMuted
+                icon.color: primary ? Theme.accentInk : Theme.text
                 icon.width: Theme.iconSizeLarge / 2
                 icon.height: Theme.iconSizeLarge / 2
                 implicitWidth: Theme.iconSizeLarge
                 implicitHeight: Theme.iconSizeLarge
+                opacity: enabled ? 1 : 0.35
+                background: Rectangle {
+                    radius: width / 2
+                    readonly property real lift: transportButton.pressed ? 2 : (transportButton.hovered ? 1 : 0)
+                    color: transportButton.primary
+                        ? Qt.lighter(Theme.accent, 1 + 0.12 * lift)
+                        : Qt.rgba(Theme.text.r, Theme.text.g, Theme.text.b, 0.14 + 0.08 * lift)
+                    border.width: transportButton.primary ? 0 : 1
+                    border.color: Qt.rgba(Theme.text.r, Theme.text.g, Theme.text.b, 0.4)
+                }
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
                 ToolTip.text: what
@@ -226,6 +243,7 @@ Window {
             TransportButton {
                 id: playButton
                 objectName: "fullscreenPlay"
+                primary: true
                 iconName: root.playbackController.playing === true ? "media-playback-pause" : "media-playback-start"
                 what: root.playbackController.playing === true ? "Pause (Space)" : "Play (Space)"
                 onClicked: root.playbackController.togglePlay()
