@@ -790,4 +790,24 @@ TestCase {
         f.contentHeight = 60;
         tryCompare(f.ScrollBar.vertical, "visible", false);
     }
+
+    // On a long list the thumb stays big enough to see and grab: without a
+    // minimum it is the visible fraction of the list, 2 px of this 100.
+    function test_theBigScrollBarThumbStaysVisibleOnALongList() {
+        const f = createTemporaryObject(scrollingComponent, testCase, {contentHeight: 5000});
+        const bar = f.ScrollBar.vertical;
+        tryCompare(bar, "visible", true);
+        waitForRendering(f);
+        verify(bar.contentItem.height >= 32, "the thumb is " + bar.contentItem.height + " px");
+    }
+
+    // Browse's track list scrolls with the same bar as every other list;
+    // it had none at all.
+    function test_theTrackListHasAScrollBar() {
+        const held = makeHeldPage(40);
+        const bar = held.list.ScrollBar.vertical;
+        verify(bar !== null, "a scroll bar is attached");
+        tryCompare(bar, "visible", true);
+        verify(bar.width > 0 && bar.contentItem.height >= 32, "and can be seen: " + bar.width + " x " + bar.contentItem.height);
+    }
 }

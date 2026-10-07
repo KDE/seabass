@@ -261,6 +261,7 @@ Page {
             // Not draggable when everything already fits.
             interactive: contentHeight > height
             clip: true
+            ScrollBar.vertical: BigScrollBar {}
             spacing: 8
             model: root.controller.backups
 

@@ -856,6 +856,7 @@ Page {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
+                ScrollBar.vertical: BigScrollBar {}
                 model: scanController.tracks
 
                 // A plain Rectangle, not an ItemDelegate. Overriding a

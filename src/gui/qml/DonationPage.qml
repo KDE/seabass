@@ -68,6 +68,7 @@ Page {
         contentWidth: width
         contentHeight: content.implicitHeight + 64
         clip: true
+        ScrollBar.vertical: BigScrollBar {}
         // See AboutPage: a Flickable with nothing to scroll still drags
         // into an elastic overshoot, which reads as a bug.
         interactive: contentHeight > height

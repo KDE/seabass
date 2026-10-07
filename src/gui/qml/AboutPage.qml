@@ -92,6 +92,7 @@ Page {
         contentWidth: width
         contentHeight: content.implicitHeight + 64
         clip: true
+        ScrollBar.vertical: BigScrollBar {}
         // A Flickable is draggable by default even when there's nothing
         // to scroll -- content shorter than the viewport still let you
         // click-drag it into an elastic overshoot and snap back, which
