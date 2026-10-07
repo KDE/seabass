@@ -52,8 +52,8 @@ Item {
 
     // Arriving home -- at start, or back from a stick's page or from
     // About, Preferences or Support -- the buttons make an entrance: they
-    // drop in one after another, spinning, overshooting their size and
-    // bursting a ring as they land (EntranceSlot). Only on the way in;
+    // drop in one after another, spinning and overshooting their size
+    // (EntranceSlot). Only on the way in;
     // moving between About, Preferences and Support they stay put.
     property string _previousPlace: ""
     readonly property bool entranceRunning: menuSlot.running || headerButtons.entranceRunning
