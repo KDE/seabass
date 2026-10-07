@@ -1119,9 +1119,15 @@ Page {
                 visible: plansListView.count === 0 && !syncController.busy && !plansListView.justSynced
                 tone: root.searching ? "info" : "good"
                 iconName: root.searching ? "edit-find" : "checkmark"
+                // Names the playlist when one is picked: the result is about
+                // that playlist only, and the picker above is easy to forget
+                // -- "nothing to sync" is not true of the whole library.
                 text: root.searching
                     ? "No track needing sync matches “" + toolbar.searchText + "”."
-                    : "Nothing to sync. Matched tracks' cues are already consistent."
+                    : root.selectedPlaylistName.length > 0
+                        ? "Nothing to sync in playlist “" + root.selectedPlaylistName
+                          + "”. Its matched tracks' cues are already consistent."
+                        : "Nothing to sync. Matched tracks' cues are already consistent."
             }
         }
     }

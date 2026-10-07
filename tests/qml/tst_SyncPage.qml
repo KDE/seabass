@@ -330,6 +330,23 @@ TestCase {
         compare(findChild(page, "syncedLabel").text, "1 cue synced");
     }
 
+    // With a playlist picked, "nothing to sync" is about that playlist, and
+    // says so: the picker is easy to forget, and the library may not be.
+    function test_nothingToSyncNamesThePickedPlaylist() {
+        var page = openPage(1100, 720);
+        var controller = findChild(page, "syncController");
+        verify(syncPageFixture.fillEmpty(controller));
+        var nothing = findChild(page, "nothingToSyncLabel");
+        tryCompare(nothing, "visible", true, 2000);
+        compare(nothing.text, "Nothing to sync. Matched tracks' cues are already consistent.");
+        page.selectedPlaylistName = "Warmup";
+        compare(nothing.text, "Nothing to sync in playlist “Warmup”. Its matched tracks' cues are already consistent.");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/SyncPage-nothing-in-playlist.png");
+        }
+    }
+
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(0);
