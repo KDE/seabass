@@ -831,6 +831,27 @@ TestCase {
     // and "214 cues sit at 0:00" read as 214 separate problems while
     // the rows also held cues up to two seconds in (Library Health
     // audit, 2026-10-04).
+    // #57: rows the cue table check could not compare are not a clean
+    // result. Content_id 392 given a cue kind Seabass does not know is
+    // left alone, so nothing is listed, and the card still says so and
+    // opens the page.
+    function test_cueTablesNotComparedKeepTheCardOpen() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        verify(stickFixture.plantCueTableRow(stick, 392, 12, 1000).contentId === "392");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy && controller.cueTablesChecked, 300000, "the check finishes");
+        compare(controller.cueTableRowCount, 0);
+        compare(controller.cueTableLeftAloneCount, 1);
+        const card = findByObjectName(page, "cueTableCard");
+        verify(card !== null && card.visible);
+        compare(card.ok, false, "tables not compared are not healthy");
+        verify(card.summary.indexOf("not compared") >= 0 && card.summary.indexOf("Every OneLibrary") < 0, card.summary);
+        compare(card.actionLabel, "Review cue tables");
+    }
+
     function test_theStrayCueHeadlineCountsTracks() {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");

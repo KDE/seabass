@@ -77,6 +77,12 @@ public:
     // CHANGES and labels them with unit(), so a save that removed 185
     // cues from 173 tracks reported "173 of 173 cues removed".
     virtual int unitsWritten() const { return 1; }
+    // Of those, how many the last apply() left alone because they had
+    // gone by the time the save reached them, when it did the rest: the
+    // summary counts them as skipped, not written. A change skipped as a
+    // whole (ChangeOutcome::skip) has all its units counted skipped and
+    // need not say so here.
+    virtual int unitsSkipped() const { return 0; }
     // Past-tense verb for the summary, in the user's terms rather than
     // the code's: what THEY asked for, not what the save did to make it
     // happen.

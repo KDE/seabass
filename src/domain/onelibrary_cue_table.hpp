@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,11 +41,29 @@ struct CueTableEntry
 std::vector<CueTableEntry> entriesNotInFile(const std::vector<CueTableEntry> &table, const std::vector<CuePoint> &file,
                                             double toleranceMs);
 
-// Whether OneLibraryReader read this row's cues from its analysis file:
-// the row names one, and it was there and decoded. A row it could not
-// read carries no cues, which says nothing about its table. Cautious: a
-// file whose cue lists could not be compared counts as not read.
+// Whether an analysis file read gave cues to compare a table with: both
+// halves there and every cue list in them decoded (the reader's own cue
+// list check, Examined or Disagree). Cautious on purpose: a file read
+// only in part could be missing cues the table rightly holds. The scan
+// and the repair at save time both decide by this.
+bool cueListsRead(Track::CueListsCheck check);
+// The same for a row OneLibraryReader read: it names a file, and the file
+// was read by that rule. A row it could not read carries no cues, which
+// says nothing about its table.
 bool analysisFileRead(const Track &row);
+
+// What the check makes of one row. A table holding any cue kind Seabass
+// does not understand is left alone as a whole, whatever else it holds.
+enum class CueTableVerdict { Empty, NoFileRead, NotUnderstood, WithinFile, Excess };
+struct CueTableCheck
+{
+    CueTableVerdict verdict = CueTableVerdict::Empty;
+    std::vector<CueTableEntry> notInFile;  // for Excess: what the repair removes
+};
+// `fileCues`: the analysis file's cues, or nothing when it was not read
+// (cueListsRead()).
+CueTableCheck checkCueTable(const std::vector<CueTableEntry> &table,
+                            const std::optional<std::vector<CuePoint>> &fileCues, double toleranceMs);
 
 // A row whose cue table holds cues its analysis file does not.
 struct CueTableExcess
@@ -63,7 +82,7 @@ struct CueTableAudit
     // Cues in the table and no analysis file read: left alone, since the
     // table may be the only copy of the track's cues.
     int noReadableFile = 0;
-    // Within the file but for cue kinds Seabass does not understand.
+    // Holding a cue kind Seabass does not understand, whatever else.
     int notUnderstood = 0;
     std::vector<CueTableExcess> excess;  // in the order the rows came
 };

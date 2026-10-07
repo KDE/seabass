@@ -69,7 +69,12 @@ QString LevelCueTableChange::verb() const
 
 int LevelCueTableChange::unitsWritten() const
 {
-    return m_repaired;
+    return static_cast<int>(m_rows.size());
+}
+
+int LevelCueTableChange::unitsSkipped() const
+{
+    return m_skipped;
 }
 
 QStringList LevelCueTableChange::formatsTouched() const
@@ -85,37 +90,40 @@ std::vector<BackupTarget> LevelCueTableChange::filesToBackup(SaveContext &) cons
 ChangeOutcome LevelCueTableChange::apply(SaveContext &ctx)
 {
     const std::string pioneer = m_pioneerRoot.toStdString();
-    m_repaired = 0;
+    m_skipped = 0;
     try {
         ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
         auto &writer = sharedOneLibraryWriter(ctx, pioneer);
         std::vector<std::pair<int64_t, int64_t>> doomed;  // (content_id, cue_id)
+        std::vector<std::string> removals;                 // logged once they are on the stick
         for (const Row &r : m_rows) {
             const std::string row = "content_id " + std::to_string(r.contentId) + " (" + r.filePath + ")";
-            const auto file = writer.analysisFileCuesOf(r.contentId);
-            if (!file) {
-                ctx.log().record(std::string(Label) + ": " + row + " has no analysis file to read, its cue table left alone");
+            // The scan's rule, row by row, on the stick as it is now.
+            const auto check = domain::checkCueTable(writer.cueTableOf(r.contentId), writer.analysisFileCuesOf(r.contentId),
+                                                     domain::cueToleranceMsFor(r.bpm, r.bpm));
+            if (check.verdict != domain::CueTableVerdict::Excess) {
+                ++m_skipped;
+                const char *why = check.verdict == domain::CueTableVerdict::NoFileRead ? "its analysis file could not be read"
+                    : check.verdict == domain::CueTableVerdict::NotUnderstood ? "its table holds a cue kind Seabass does not know"
+                                                                              : "its table holds no cue its analysis file does not";
+                ctx.log().record(std::string(Label) + ": " + row + " left alone: " + why);
                 continue;
             }
-            const auto excess = domain::entriesNotInFile(writer.cueTableOf(r.contentId), *file,
-                                                         domain::cueToleranceMsFor(r.bpm, r.bpm));
-            if (excess.empty()) {
-                ctx.log().record(std::string(Label) + ": " + row + " holds no cue its analysis file does not, left alone");
-                continue;
-            }
-            for (const auto &e : excess) {
+            for (const auto &e : check.notInFile) {
                 doomed.emplace_back(r.contentId, e.cueId);
             }
-            ++m_repaired;
-            ctx.log().record(std::string(Label) + ": " + row + " loses the cues only its table held: "
-                             + domain::describeCuePlaces(domain::cuesOf(excess)));
+            removals.push_back(std::string(Label) + ": " + row + " lost the cues only its table held: "
+                               + domain::describeCuePlaces(domain::cuesOf(check.notInFile)));
         }
         if (doomed.empty()) {
             return ChangeOutcome::skip();
         }
         writer.removeCueRows(doomed);
+        for (const auto &line : removals) {
+            ctx.log().record(line);
+        }
     } catch (const std::exception &e) {
-        m_repaired = 0;
+        m_skipped = 0;
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
     return ChangeOutcome::success();

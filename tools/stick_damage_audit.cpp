@@ -25,6 +25,7 @@
 //
 //   stick_damage_audit <root holding PIONEER/ and Engine Library/>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -37,8 +38,27 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/legacy_memory_list_audit.hpp"
+#include "infrastructure/sqlite_pending_journal.hpp"
 
 namespace fs = std::filesystem;
+
+namespace
+{
+
+// Reading a database with an unfinished save's journal beside it rolls
+// that save back, which is a write, and this tool only reads.
+bool refusedForJournal(const char *check, const fs::path &database)
+{
+    if (!seabass::infrastructure::hasPendingJournal(database)) {
+        return false;
+    }
+    std::cout << check << " not checked: " << seabass::pathToUtf8(database.filename())
+              << " holds an unfinished save's journal, and reading it would roll that back. Open the stick in "
+                 "Seabass first, or check a copy.\n";
+    return true;
+}
+
+}  // namespace
 
 int main(int argc, char **argv)
 {
@@ -48,7 +68,20 @@ int main(int argc, char **argv)
     }
     const fs::path root = seabass::pathFromUtf8(argv[1]);
     const std::string pioneer = seabass::pathToUtf8(root / "PIONEER");
-    if (fs::exists(root / "PIONEER" / "rekordbox" / "export.pdb")) {
+    // Each check on its own: one that cannot read its catalog says so, and
+    // the others still run.
+    const auto section = [](const char *check, const std::function<void()> &run) {
+        try {
+            run();
+        } catch (const std::exception &e) {
+            std::cout << check << " could not be checked: " << e.what() << "\n";
+        }
+    };
+
+    section("#55", [&] {
+        if (!fs::exists(root / "PIONEER" / "rekordbox" / "export.pdb")) {
+            return;
+        }
         namespace rb = seabass::infrastructure::rekordbox;
         const rb::AnlzPathIndex index(pioneer);
         const std::vector<std::string> paths(index.paths().begin(), index.paths().end());
@@ -74,15 +107,20 @@ int main(int argc, char **argv)
                 std::cout << "  " << f.analyzePath << (f.debris.empty() ? "" : " (+debris)") << "\n";
             }
         }
-    }
-    if (seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
+    });
+
+    section("#57", [&] {
         namespace ol = seabass::infrastructure::onelibrary;
+        namespace dm = seabass::domain;
+        if (!ol::OneLibraryCueWriter::existsFor(pioneer)
+            || refusedForJournal("#57", seabass::pathFromUtf8(ol::OneLibraryCueWriter::dbPathFor(pioneer)))) {
+            return;
+        }
         // Cues from each row's analysis file, the half the players read.
         const auto tracks = ol::OneLibraryReader(pioneer).readAll();
         const ol::OneLibraryCueTables tables(pioneer);
-        const auto audit = seabass::domain::auditCueTables(
-            tracks, [&tables](const seabass::domain::Track &t) { return tables.of(std::stoll(t.sourceId)); });
-        namespace dm = seabass::domain;
+        const auto audit =
+            dm::auditCueTables(tracks, [&tables](const dm::Track &t) { return tables.of(std::stoll(t.sourceId)); });
         std::cout << "#57 OneLibrary cue table against the analysis file: " << audit.rowsRead << " rows read; "
                   << audit.emptyTable << " with an empty table, " << audit.withinFile << " within the file, "
                   << audit.noReadableFile << " with no analysis file read (left alone), " << audit.notUnderstood
@@ -94,9 +132,13 @@ int main(int argc, char **argv)
                       << "\n    analysis file:     " << dm::describeCuePlaces(e.row.cues)
                       << "\n    only in the table: " << dm::describeCuePlaces(dm::cuesOf(e.notInFile)) << "\n";
         }
-    }
-    const fs::path engine = root / "Engine Library";
-    if (fs::exists(engine / "Database2" / "m.db")) {
+    });
+
+    section("#56", [&] {
+        const fs::path engine = root / "Engine Library";
+        if (!fs::exists(engine / "Database2" / "m.db") || refusedForJournal("#56", engine / "Database2" / "m.db")) {
+            return;
+        }
         seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engine));
         const auto tracks = reader.readAll();
         const auto hidden = seabass::domain::HiddenEngineCueFinder::find(tracks);
@@ -111,6 +153,6 @@ int main(int argc, char **argv)
         for (const auto &h : hidden) {
             std::cout << "  " << h.track.title << " / " << h.track.artist << ": " << h.hotCues << " hot cues, " << h.loops << " loops\n";
         }
-    }
+    });
     return 0;
 }

@@ -1000,11 +1000,15 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_cueTablesError.clear();
     // Unlike the fixes above, the cue table repair is unstaged here: its
     // rows are gone until the scan lists them again, and a staged repair
-    // must never outlive the row it was staged from.
-    if (m_session && !m_stagedCueTables.empty() && !m_session->writing()) {
-        m_session->unstage(LevelCueTableChange::idFor());
+    // must never outlive the row it was staged from. Not while a save
+    // runs: that save settles it (changeApplied), and clearing the rows
+    // here without the change would let the two disagree.
+    if (!m_session || !m_session->writing()) {
+        if (m_session && !m_stagedCueTables.empty()) {
+            m_session->unstage(LevelCueTableChange::idFor());
+        }
+        m_stagedCueTables.clear();
     }
-    m_stagedCueTables.clear();
     emit cueTablesChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button. Not on this thread,
@@ -1427,6 +1431,13 @@ void LibraryConsistencyController::attachSession()
                 }
             });
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &) {
+                // A rescan asked for during the save kept the staged rows
+                // for the save to settle; whatever it did not apply is
+                // still staged, and what it applied went in changeApplied.
+                if (!m_stagedCueTables.empty() && !m_session->hasChange(LevelCueTableChange::idFor())) {
+                    m_stagedCueTables.clear();
+                    emit cueTablesChanged();
+                }
                 if (m_rescanAfterSave) {
                     m_rescanAfterSave = false;
                     rescanAfterWrite();
@@ -2176,7 +2187,7 @@ QVariantList LibraryConsistencyController::cueTableRows() const
         m["extra"] = QString::fromStdString(domain::describeCuePlaces(domain::cuesOf(e.notInFile)));
         m["fileCues"] = e.row.cues.empty() ? QStringLiteral("none")
                                            : QString::fromStdString(domain::describeCuePlaces(e.row.cues));
-        m["staged"] = m_stagedCueTables.count(std::stoll(e.row.sourceId)) > 0;
+        m["staged"] = cueTableRowStaged(std::stoll(e.row.sourceId));
         out << m;
     }
     return out;
@@ -2186,9 +2197,16 @@ int LibraryConsistencyController::cueTableStagedCount() const
 {
     int staged = 0;
     for (const auto &e : m_cueTables.excess) {
-        staged += m_stagedCueTables.count(std::stoll(e.row.sourceId)) > 0 ? 1 : 0;
+        staged += cueTableRowStaged(std::stoll(e.row.sourceId)) ? 1 : 0;
     }
     return staged;
+}
+
+bool LibraryConsistencyController::cueTableRowStaged(int64_t contentId) const
+{
+    // Asked of the session too, so the page never shows a repair staged
+    // that the session does not hold.
+    return m_stagedCueTables.count(contentId) > 0 && m_session && m_session->hasChange(LevelCueTableChange::idFor());
 }
 
 bool LibraryConsistencyController::restageCueTables(std::set<int64_t> wanted)
@@ -2203,29 +2221,40 @@ bool LibraryConsistencyController::restageCueTables(std::set<int64_t> wanted)
             staged.insert(contentId);
         }
     }
-    if (m_session && !m_stagedCueTables.empty()) {
-        m_session->unstage(LevelCueTableChange::idFor());
-    }
-    m_stagedCueTables.clear();
-    bool ok = true;
-    if (!rows.empty()) {
-        ok = m_session->stage(std::make_unique<LevelCueTableChange>(m_rekordboxPath, std::move(rows)));
-        if (ok) {
-            m_stagedCueTables = std::move(staged);
+    if (rows.empty()) {
+        if (m_session) {
+            m_session->unstage(LevelCueTableChange::idFor());
         }
+        m_stagedCueTables.clear();
+        emit cueTablesChanged();
+        return true;
     }
+    // Staging the same id replaces what was staged; a refusal leaves it.
+    if (!m_session->stage(std::make_unique<LevelCueTableChange>(m_rekordboxPath, std::move(rows)))) {
+        setErrorMessage(QStringLiteral("The cue table repair could not be staged; what was staged before stays."));
+        emit cueTablesChanged();
+        return false;
+    }
+    m_stagedCueTables = std::move(staged);
     emit cueTablesChanged();
-    return ok;
+    return true;
+}
+
+bool LibraryConsistencyController::cueTableStagingAllowed()
+{
+    if (stickReadOnly()) {
+        return false;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    // Refused while a save runs, and said so (ensureSessionForStaging):
+    // the save settles what is staged, through changeApplied.
+    return !busy() && ensureSessionForStaging();
 }
 
 void LibraryConsistencyController::repairCueTables(const QStringList &contentIds)
 {
-    if (busy() || stickReadOnly()) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    if (!ensureSessionForStaging()) {
+    if (!cueTableStagingAllowed()) {
         return;
     }
     std::set<int64_t> wanted = m_stagedCueTables;
@@ -2244,7 +2273,7 @@ void LibraryConsistencyController::repairCueTables(const QStringList &contentIds
 void LibraryConsistencyController::unstageCueTable(const QString &contentId)
 {
     const int64_t id = contentId.toLongLong();
-    if (!m_stagedCueTables.count(id) || !ensureSessionForStaging()) {
+    if (!m_stagedCueTables.count(id) || !cueTableStagingAllowed()) {
         return;
     }
     std::set<int64_t> wanted = m_stagedCueTables;
@@ -2255,14 +2284,10 @@ void LibraryConsistencyController::unstageCueTable(const QString &contentId)
 
 void LibraryConsistencyController::unstageCueTables()
 {
-    if (m_stagedCueTables.empty()) {
+    if (m_stagedCueTables.empty() || !cueTableStagingAllowed()) {
         return;
     }
-    if (m_session) {
-        m_session->unstage(LevelCueTableChange::idFor());
-    }
-    m_stagedCueTables.clear();
-    emit cueTablesChanged();
+    restageCueTables({});
     clearStagedStatusIfNothingStaged();
 }
 

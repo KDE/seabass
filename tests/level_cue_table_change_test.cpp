@@ -10,13 +10,17 @@
 //
 // Planted on the copy: a comment on 392's pad A, hot cue bank links for
 // its pads A and B, a table cue on a row whose analysis file is not on the
-// stick, and a cue of kind 12 (no kind Seabass knows) on another row. The
+// stick, and a cue of kind 12 (no kind Seabass knows) beside a pad B its
+// file lacks on another row. The
 // check must list 392 alone and count the two planted rows apart. The
 // repair, staged for all three rows, must remove B and E and B's bank
 // link and nothing else: A, C, D and the memory cue keep their rows as
 // they were (cue_id, colour, comment, A's bank link), the planted rows are
 // untouched, no analysis file and no export.pdb is written, and the
 // database is backed up first. A second save finds nothing left to do.
+// Before that, a save with 392's .DAT moved away leaves 392 alone: the
+// save reads a file by the rule the check does. And removeCueRows takes a
+// pair named twice as one.
 //
 //   level_cue_table_change_test <tests/fixtures/anonymized_library>
 
@@ -190,7 +194,8 @@ int main(int argc, char **argv)
                   "WHERE content_id = " + std::to_string(noFileRow) + ";");
         d.db.exec("INSERT INTO cue (content_id, kind, colorTableIndex, isActiveLoop, inUsec, outUsec) VALUES ("
                   + std::to_string(noFileRow) + ", 3, 0, 0, 30000000, 30000000), (" + std::to_string(oddKindRow)
-                  + ", 12, 0, 0, 1000000, 1000000);");
+                  + ", 12, 0, 0, 1000000, 1000000), (" + std::to_string(oddKindRow)
+                  + ", 2, 0, 0, 200000000, 200000000);");
     }
 
     // 2. With the plants: still 392 alone listed, the two counted apart.
@@ -198,7 +203,8 @@ int main(int argc, char **argv)
     check(before.excess.size() == 1 && before.excess[0].row.sourceId == "392", "the planted rows are not listed");
     check(before.noReadableFile == 1, "the row with no analysis file is counted apart, got "
                                           + std::to_string(before.noReadableFile));
-    check(before.notUnderstood == 1, "the row with kind 12 is counted apart, got " + std::to_string(before.notUnderstood));
+    check(before.notUnderstood == 1, "the row with kind 12 is counted apart, whatever else its table holds, got "
+                                         + std::to_string(before.notUnderstood));
     check(before.rowsRead
               == before.emptyTable + before.withinFile + before.noReadableFile + before.notUnderstood
                      + static_cast<int>(before.excess.size()),
@@ -212,6 +218,14 @@ int main(int argc, char **argv)
     // each row again.
     const QString pioneerQ = pathToQString(pioneerDir);
     application::CancellationToken token;
+    struct Saved
+    {
+        SaveLoopResult result;
+        bool backedUp = false;
+        int unitsBefore = 0;
+        int units = 0;
+        int skipped = 0;
+    };
     const auto save = [&]() {
         SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, pioneerQ, QString());
         std::vector<LevelCueTableChange::Row> rows = {
@@ -219,18 +233,38 @@ int main(int argc, char **argv)
             {noFileRow, spare[0].filePath, spare[0].title, spare[0].bpm},
             {oddKindRow, spare[1].filePath, spare[1].title, spare[1].bpm}};
         auto change = std::make_shared<LevelCueTableChange>(pioneerQ, rows);
-        const SaveLoopResult result = runSaveLoop({change}, ctx);
-        const bool backedUp = !ctx.backupIdOf(ol::OneLibraryCueWriter::dbPathFor(pioneer)).empty();
-        return std::make_tuple(result, backedUp, change->unitsWritten());
+        Saved saved;
+        saved.unitsBefore = change->unitsWritten();
+        saved.result = runSaveLoop({change}, ctx);
+        saved.backedUp = !ctx.backupIdOf(ol::OneLibraryCueWriter::dbPathFor(pioneer)).empty();
+        saved.units = change->unitsWritten();
+        saved.skipped = change->unitsSkipped();
+        return saved;
     };
+
+    // 392's .DAT away: its EXT still reads, but not by the check's rule
+    // (both halves, every list decoded), so the save leaves it alone.
     {
-        const auto [result, backedUp, repaired] = save();
-        check(result.error.isEmpty(), "the save succeeds: " + result.error.toStdString());
-        check(result.appliedIds.size() == 1 && result.skippedIds.isEmpty(), "the repair is applied, not skipped");
-        check(backedUp, "exportLibrary.db is backed up before the write");
-        check(repaired == 1, "one track repaired, got " + std::to_string(repaired));
+        const fs::path dat = stick / pathFromUtf8(row392.analysisFile.substr(1));
+        const fs::path aside = stick / "aside.DAT";
+        check(fs::is_regular_file(dat), "392's .DAT is where its row says");
+        fs::rename(dat, aside);
+        const auto s = save();
+        fs::rename(aside, dat);
+        check(s.result.error.isEmpty() && s.result.skippedIds.size() == 1, "with its .DAT gone, 392 is left alone");
+        check(cueRows(pioneer) == rowsBefore, "and nothing is removed");
     }
-    std::cout << "case 2 (the save) done\n";
+    std::cout << "case 2 (a file the check would not read is not read at save time either) done\n";
+
+    {
+        const auto s = save();
+        check(s.result.error.isEmpty(), "the save succeeds: " + s.result.error.toStdString());
+        check(s.result.appliedIds.size() == 1 && s.result.skippedIds.isEmpty(), "the repair is applied, not skipped");
+        check(s.backedUp, "exportLibrary.db is backed up before the write");
+        check(s.unitsBefore == 3 && s.units == 3, "the change counts the three rows staged, before and after");
+        check(s.skipped == 2, "the two rows left alone are counted skipped, got " + std::to_string(s.skipped));
+    }
+    std::cout << "case 3 (the save) done\n";
 
     // 4. B and E gone with B's bank link; every other cue row exactly as
     // it was; no file but the database written.
@@ -260,17 +294,32 @@ int main(int argc, char **argv)
     check(links.count(padA) == 1, "pad A's bank link stays");
     check(filesUnder(pioneerDir / "USBANLZ") == usbanlzBefore, "every analysis file is byte-identical");
     check(fileBytes(pioneerDir / "rekordbox" / "export.pdb") == pdbBefore, "export.pdb is byte-identical");
-    std::cout << "case 3 (B and E removed, nothing else written) done\n";
+    std::cout << "case 4 (B and E removed, nothing else written) done\n";
 
     // 5. A second save finds nothing left to do.
     {
-        const auto [result, backedUp, repaired] = save();
-        (void)backedUp;
-        check(result.error.isEmpty() && result.skippedIds.size() == 1 && repaired == 0,
-              "a second repair finds nothing to do");
+        const auto s = save();
+        check(s.result.error.isEmpty() && s.result.skippedIds.size() == 1, "a second repair finds nothing to do");
     }
     check(cueRows(pioneer) == rowsAfter, "the skipped repair wrote nothing");
-    std::cout << "case 4 (nothing left to repair) done\n";
+    std::cout << "case 5 (nothing left to repair) done\n";
+
+    // 6. A pair named twice is removed once, on a fresh copy.
+    {
+        fs::remove_all(stick);
+        fs::create_directories(stick);
+        fs::copy(pathFromUtf8(argv[1]) / "rekordbox", pioneerDir, fs::copy_options::recursive);
+        const size_t rows = cueRows(pioneer).size();
+        try {
+            ol::OneLibraryCueWriter writer(pioneer);
+            writer.removeCueRows({{392, padB}, {392, padB}});
+            writer.finishWriting();
+            check(cueRows(pioneer).size() == rows - 1, "one row removed");
+        } catch (const std::exception &e) {
+            check(false, std::string("a duplicated pair is removed once, not refused: ") + e.what());
+        }
+    }
+    std::cout << "case 6 (a pair named twice) done\n";
 
     fs::remove_all(stick);
     if (failures > 0) {

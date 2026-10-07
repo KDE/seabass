@@ -48,3 +48,32 @@ if ! grep -qx '    cue table:         pad A at 0:00.247, pad C at 0:01.188, pad 
     exit 1
 fi
 echo "stick_damage_audit #57 on the fixture: OK"
+
+# The tool only reads. exportLibrary.db with an unfinished save's journal
+# beside it (a live header is enough) would be rolled back by a read, so
+# #57 is refused, nothing is written, and the Engine check still runs.
+journalled="$work/journalled"
+mkdir -p "$journalled" || exit 1
+cp -a "$fixture" "$journalled/PIONEER" || exit 1
+cp -a "$here/fixtures/anonymized_library/engine" "$journalled/Engine Library" || exit 1
+db="$journalled/PIONEER/rekordbox/exportLibrary.db"
+printf '\xd9\xd5\x05\xf9\x20\xa1\x63\xd7' > "$db-journal"
+head -c 504 /dev/zero >> "$db-journal"
+before="$(cd "$journalled/PIONEER/rekordbox" && cksum exportLibrary.db* | sort)"
+out="$("$audit" "$journalled" 2>&1)" || { echo "$out"; echo "FAIL: the audit exited non-zero over a journal"; exit 1; }
+after="$(cd "$journalled/PIONEER/rekordbox" && cksum exportLibrary.db* | sort)"
+if ! grep -q '^#57 not checked: exportLibrary.db holds an unfinished save' <<<"$out" || grep -q '^#57 OneLibrary' <<<"$out"; then
+    echo "$out"
+    echo "FAIL: #57 must refuse a database with a pending journal"
+    exit 1
+fi
+if [ "$before" != "$after" ]; then
+    echo "FAIL: the audit changed exportLibrary.db or its journal"
+    exit 1
+fi
+if ! grep -q '^#56 Engine cues the player hides: ' <<<"$out"; then
+    echo "$out"
+    echo "FAIL: #56 must still run when #57 is refused"
+    exit 1
+fi
+echo "stick_damage_audit refuses a pending journal and reads on: OK"

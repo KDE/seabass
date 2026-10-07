@@ -31,10 +31,34 @@ std::vector<CueTableEntry> entriesNotInFile(const std::vector<CueTableEntry> &ta
     return missing;
 }
 
+bool cueListsRead(Track::CueListsCheck check)
+{
+    return check == Track::CueListsCheck::Examined || check == Track::CueListsCheck::Disagree;
+}
+
 bool analysisFileRead(const Track &row)
 {
-    return !row.analysisFile.empty()
-        && (row.cueLists == Track::CueListsCheck::Examined || row.cueLists == Track::CueListsCheck::Disagree);
+    return !row.analysisFile.empty() && cueListsRead(row.cueLists);
+}
+
+CueTableCheck checkCueTable(const std::vector<CueTableEntry> &table,
+                            const std::optional<std::vector<CuePoint>> &fileCues, double toleranceMs)
+{
+    CueTableCheck check;
+    if (table.empty()) {
+        return check;
+    }
+    if (!fileCues) {
+        check.verdict = CueTableVerdict::NoFileRead;
+        return check;
+    }
+    if (!std::all_of(table.begin(), table.end(), [](const CueTableEntry &e) { return e.understood(); })) {
+        check.verdict = CueTableVerdict::NotUnderstood;
+        return check;
+    }
+    check.notInFile = entriesNotInFile(table, *fileCues, toleranceMs);
+    check.verdict = check.notInFile.empty() ? CueTableVerdict::WithinFile : CueTableVerdict::Excess;
+    return check;
 }
 
 CueTableAudit auditCueTables(const std::vector<Track> &rows,
@@ -44,21 +68,25 @@ CueTableAudit auditCueTables(const std::vector<Track> &rows,
     for (const auto &row : rows) {
         ++audit.rowsRead;
         auto table = tableOf(row);
-        if (table.empty()) {
+        const auto fileCues = analysisFileRead(row) ? std::optional<std::vector<CuePoint>>(row.cues) : std::nullopt;
+        auto check = checkCueTable(table, fileCues, cueToleranceMsFor(row.bpm, row.bpm));
+        switch (check.verdict) {
+        case CueTableVerdict::Empty:
             ++audit.emptyTable;
-            continue;
-        }
-        if (!analysisFileRead(row)) {
+            break;
+        case CueTableVerdict::NoFileRead:
             ++audit.noReadableFile;
-            continue;
+            break;
+        case CueTableVerdict::NotUnderstood:
+            ++audit.notUnderstood;
+            break;
+        case CueTableVerdict::WithinFile:
+            ++audit.withinFile;
+            break;
+        case CueTableVerdict::Excess:
+            audit.excess.push_back({row, std::move(table), std::move(check.notInFile)});
+            break;
         }
-        auto notInFile = entriesNotInFile(table, row.cues, cueToleranceMsFor(row.bpm, row.bpm));
-        if (!notInFile.empty()) {
-            audit.excess.push_back({row, std::move(table), std::move(notInFile)});
-            continue;
-        }
-        const bool allUnderstood = std::all_of(table.begin(), table.end(), [](const CueTableEntry &e) { return e.understood(); });
-        ++(allUnderstood ? audit.withinFile : audit.notUnderstood);
     }
     return audit;
 }
