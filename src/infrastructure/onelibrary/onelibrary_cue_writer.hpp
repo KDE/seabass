@@ -100,6 +100,26 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// A content row's cue table as writeCuesForPath() writes it, in the
+// table's own order: kind 0 is a memory cue, otherwise the hot cue slot;
+// a loop has its out point past its in (or isActiveLoop set). Nothing
+// takes a track's cues from here (the analysis file is what players read,
+// #59); Library Health compares the two (#57).
+std::vector<domain::CuePoint> readCueTable(const SqlCipherDb &db, int64_t contentId);
+
+// exportLibrary.db opened read-only for readCueTable(), for a caller that
+// reads every row's table and writes nothing.
+class OneLibraryCueTables
+{
+public:
+    explicit OneLibraryCueTables(const std::string &pioneerRoot);
+    std::vector<domain::CuePoint> of(int64_t contentId) const { return readCueTable(m_db, contentId); }
+
+private:
+    SqlCipherLibrary m_lib;
+    SqlCipherDb m_db;
+};
+
 class OneLibraryCueWriter
 {
 public:
