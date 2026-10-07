@@ -76,6 +76,7 @@ Item {
                 Layout.preferredHeight: body.implicitHeight
                 contentWidth: availableWidth
                 clip: true
+                ScrollBar.vertical: BigScrollBar {}
                 ColumnLayout {
                     id: body
                     width: scroller.availableWidth

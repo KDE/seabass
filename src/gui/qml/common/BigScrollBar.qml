@@ -29,6 +29,12 @@ ScrollBar {
              || (control.policy === ScrollBar.AsNeeded && control.size < 1.0)
     implicitWidth: 10
     padding: 2
+    // At least 32 px of thumb, whatever the list's length. Without it the
+    // thumb is the visible fraction of the list: 13 px for 100 rows, and
+    // a pixel or two for a library of a few thousand tracks -- a bar that
+    // is there and cannot be seen or grabbed.
+    // A fraction of the length the thumb moves along, inside the padding.
+    minimumSize: control.availableHeight > 0 ? Math.min(1.0, 32 / control.availableHeight) : 0
 
     contentItem: Rectangle {
         implicitWidth: 6
