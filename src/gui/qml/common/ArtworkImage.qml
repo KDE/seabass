@@ -11,6 +11,13 @@ import QtQuick
 // is empty or does not load, and nothing at all when neither does. Never
 // a broken-image frame: a failed image is simply not shown, and whatever
 // is behind this item (a row's placeholder square) shows through.
+//
+// Read and decoded off the GUI thread, at the size it is drawn. Every
+// list of tracks shows one of these per row, and a list rebuilt (a
+// playlist switched, a search typed) loaded every visible row's art from
+// the stick on the GUI thread, at the image's full size: a stick on
+// Windows can take far longer than a frame to answer, and the whole page
+// waited for it. Now a row appears at once and its art when it is read.
 Item {
     id: artwork
 
@@ -41,11 +48,20 @@ Item {
         anchors.fill: parent
         fillMode: artwork.fillMode
         visible: image.status === Image.Ready
+        asynchronous: true
+        // Decoded to the drawn square, at the screen's pixel ratio: a
+        // 1400 px cover shown at 32 px is a 32 px image's work. Square,
+        // since the art is cropped to fill one; the larger side, so a
+        // cropped non-square image still has the pixels it is cut from.
+        // Until the item has a size, the image's own.
+        readonly property real drawnSide: Math.ceil(Math.max(artwork.width, artwork.height) * Screen.devicePixelRatio)
+        sourceSize: image.drawnSide > 0 ? Qt.size(image.drawnSide, image.drawnSide) : undefined
         source: artwork.source.toString().length > 0 && !artwork.sourceFailed ? artwork.source : artwork.fallbackSource
-        // A local file loads synchronously, so its Error arrives while
-        // `source` is still being assigned; switching to the fallback
-        // right there is a binding loop that leaves the source as it was.
-        // Noted after the assignment instead.
+        // A load can fail while `source` is still being assigned (a local
+        // file used to load synchronously, and a cached failure still
+        // answers at once); switching to the fallback right there is a
+        // binding loop that leaves the source as it was. Noted after the
+        // assignment instead.
         onStatusChanged: {
             if (image.status === Image.Error && image.source === artwork.source) {
                 Qt.callLater(artwork.noteSourceFailed);
