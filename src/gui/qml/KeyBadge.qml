@@ -49,11 +49,10 @@ Item {
     readonly property string camelot: Theme.camelotLabel(root.keyName)
     readonly property string badgeLabel: root.notation === "traditional"
         ? Theme.traditionalLabel(root.keyName) : root.camelot
-    // Always the full spoken form regardless of notation -- the whole
-    // point of hovering is "how do I actually say this," which the
-    // short badge label (either "6A" or "F♯m") doesn't spell out on its
-    // own.
-    readonly property string spokenLabel: Theme.traditionalSpokenLabel(root.keyName)
+    // The badge's colour, worked out once: it was asked for twice per
+    // badge and again on every hover, each time parsing the key anew, in
+    // every row of every list of tracks.
+    readonly property color keyColor: Theme.colorForKey(root.keyName)
 
     Label {
         anchors.centerIn: parent
@@ -70,7 +69,7 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             visible: root.keyName.length > 0
-            onClicked: wheelPopup.openAt("")
+            onClicked: root.openWheel("")
         }
     }
 
@@ -78,9 +77,7 @@ Item {
         anchors.fill: parent
         visible: root.camelot.length > 0
         radius: height / 2
-        color: keyHover.containsMouse
-            ? Qt.lighter(Theme.colorForKey(root.keyName), 1.2)
-            : Theme.colorForKey(root.keyName)
+        color: keyHover.containsMouse ? Qt.lighter(root.keyColor, 1.2) : root.keyColor
 
         Label {
             anchors.centerIn: parent
@@ -95,17 +92,22 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             ToolTip.visible: containsMouse
-            ToolTip.text: "Key: " + root.spokenLabel
+            // Always the full spoken form regardless of notation -- the
+            // whole point of hovering is "how do I actually say this,"
+            // which the short badge label (either "6A" or "F♯m") doesn't
+            // spell out on its own. Worked out only while it is shown: it
+            // is one more parse of the key, for a tooltip most rows never
+            // show.
+            ToolTip.text: !containsMouse ? "" : "Key: " + Theme.traditionalSpokenLabel(root.keyName)
                 + (root.notation === "traditional" ? " (" + root.camelot + ")" : "")
                 + (root.additionalText.length > 0 ? "\n" + root.additionalText : "")
-            onClicked: wheelPopup.openAt(root.camelot)
+            onClicked: root.openWheel(root.camelot)
         }
     }
 
-    CamelotWheelPopup {
-        id: wheelPopup
-        notation: root.notation
-        onKeyHovered: (number, isMinor, hovering) => root.keyHovered(number, isMinor, hovering)
-        onRelationHovered: (relationLabel, hovering) => root.relationHovered(relationLabel, hovering)
+    // The app's one wheel (CamelotWheelHost.qml), opened for this badge:
+    // it reports its hovers back here while this badge has it open.
+    function openWheel(key) {
+        CamelotWheelHost.open(root, root.Window.contentItem, key, root.notation);
     }
 }

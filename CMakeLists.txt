@@ -1023,6 +1023,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # caught it because no test had rendered a component that calls
         # it until tst_UnreferencedFilesNotice did.
         set_source_files_properties(src/gui/qml/FormatLabels.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+        set_source_files_properties(src/gui/qml/CamelotWheelHost.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
         # The same module the app registers (see src/gui/CMakeLists.txt's
         # SEABASS_GUI_* lists): every page with its real controller, so

@@ -48,6 +48,8 @@ endif()
 # non-singleton qmldir entry even after a full clean rebuild).
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/FormatLabels.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+# The app's one Camelot wheel, which every key badge opens.
+set_source_files_properties(qml/CamelotWheelHost.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/CamelotWheelPosition.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 # The app's QML files and C++ sources, shared with seabass_qml_tests
@@ -154,6 +156,7 @@ set(SEABASS_GUI_QML_FILES
     qml/LibrarySourceToggle.qml
     qml/KeyBadge.qml
     qml/CamelotWheelPopup.qml
+    qml/CamelotWheelHost.qml
     qml/AboutPage.qml
     qml/DonationPage.qml
     qml/PlayerBar.qml
