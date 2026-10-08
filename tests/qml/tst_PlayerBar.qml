@@ -65,6 +65,12 @@ TestCase {
         verify(bar !== null);
         const art = findChild(bar, "playerArtwork");
         tryCompare(art, "visible", true, 3000);
+        // Visible is not yet clickable: the cover now loads in the
+        // background and becomes visible when it arrives, and the layout
+        // gives it its square a polish later. A click on its centre before
+        // then lands beside it -- the test failed that way now and then.
+        tryCompare(art, "width", 64, 3000);
+        waitForRendering(bar);
         const fullscreen = findChild(bar, "playerBarFullscreen");
         verify(fullscreen !== null);
         compare(fullscreen.visible, false);
