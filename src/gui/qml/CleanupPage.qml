@@ -597,14 +597,23 @@ Page {
             Layout.fillHeight: true
             clip: true
             model: cleanupController.plans
-            spacing: 4
+            spacing: Theme.tightSpacing
 
             ScrollBar.vertical: BigScrollBar {}
 
-            delegate: Column {
+            // One frame per group, round the header row and, opened, round
+            // the copies under it too: a group is one thing, and two boxes
+            // read as two. Its edge is the page's left line; what is inside
+            // sits one row spacing in from it.
+            delegate: Rectangle {
                 id: delegateRoot
+                objectName: "groupFrame"
                 width: ListView.view.width
-                spacing: 4
+                height: groupBody.implicitHeight
+                color: Theme.surface
+                border.color: Theme.borderSubtle
+                border.width: 1
+                radius: Theme.cornerRadius
 
                 required property int index
                 required property var survivor
@@ -622,247 +631,270 @@ Page {
 
                 property bool expanded: false
 
-                ItemDelegate {
+                Column {
+                    id: groupBody
                     width: parent.width
-                    hoverEnabled: true
-                    onClicked: delegateRoot.expanded = !delegateRoot.expanded
 
-                    contentItem: ColumnLayout {
-                        spacing: 2
-                        RowLayout {
-                            Layout.fillWidth: true
-                            SeabassCheckBox {
-                                checked: delegateRoot.included
-                                enabled: !delegateRoot.staged
-                                onToggled: cleanupController.setIncluded(delegateRoot.index, checked)
-                                ToolTip.visible: hovered
-                                ToolTip.text: delegateRoot.staged ? "Staged; unstage it first to change the selection"
-                                    : "Include this group when staging"
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.staged
-                                label: "Staged"
-                                badgeColor: Theme.warnText
-                                tooltipText: delegateRoot.stagedDescription + "\n\nNot on the stick yet: press Save."
-                            }
-                            ToolButton {
-                                visible: delegateRoot.staged
-                                text: "Unstage"
-                                enabled: !cleanupController.writing
-                                onClicked: cleanupController.unstage(delegateRoot.index)
-                            }
-                            Label {
-                                text: "Keeps: " + delegateRoot.survivor.title + " - " + delegateRoot.survivor.artist
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.preferredWidth: 320
-                            }
-                            Label {
-                                text: "(removes " + delegateRoot.toRemove.length + " cop"
-                                    + (delegateRoot.toRemove.length === 1 ? "y" : "ies") + ")"
-                                color: Theme.textMuted
-                            }
-                            StatusBadge {
-                                label: "what's conserved"
-                                iconName: "help-about"
-                                badgeColor: Theme.textMuted
-                                // Was 558 characters of prose. A hover
-                                // tooltip is read standing up, with the
-                                // mouse held still -- two labelled lists
-                                // can be taken in at a glance, a
-                                // paragraph cannot. The conditional
-                                // clauses that made it long are the ones
-                                // a reader cannot act on either way.
-                                tooltipText: "Kept: cues (merged), playlist membership, and any missing BPM"
-                                    + (root.format === "engine" ? " or key." : ", key or artwork.")
-                                    + "\nMerged: play counts (added up), last played (the latest)."
-                                    + "\nLost: rating, comment."
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.differs
-                                label: "copies differ"
-                                iconName: "dialog-warning"
-                                badgeColor: Theme.conflictText
-                                // The "why" (a shorter edit kept on
-                                // purpose) is what the exclusion is FOR,
-                                // not something the reader decides with.
-                                tooltipText: "The highest-bitrate copy is not the longest one, so this group is "
-                                    + "excluded by default. Tick it to include it."
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.unreferencedCount > 0
-                                label: delegateRoot.unreferencedCount + " uncatalogued file(s)"
-                                badgeColor: Theme.textMuted
-                                // What it is, then where it goes. The
-                                // re-check before deleting is a promise
-                                // the Delete Orphaned Files page makes;
-                                // it does not belong on a count badge.
-                                tooltipText: "Audio files on the stick that no catalog lists. Saving puts them "
-                                    + "under \"Delete Orphaned Files\"."
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.unreferencedHeldBackCount > 0
-                                label: delegateRoot.unreferencedHeldBackCount + " file(s) kept back"
-                                iconName: "dialog-warning"
-                                badgeColor: Theme.conflictText
-                                tooltipText: "Left on the stick either way: these copies may not be the same "
-                                    + "recording, and nothing is deleted on a guess."
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.hasUnpreservableDataAtRisk
-                                label: "data would be lost"
-                                iconName: "dialog-warning"
-                                badgeColor: Theme.conflictText
-                                tooltipText: "The copies' ratings or comments differ, and only one can be kept. "
-                                    + "Excluded by default; tick to include."
-                            }
-                            Item { Layout.fillWidth: true }
-                            SeabassIcon {
-                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
-                                size: Theme.iconSizeSmall * 0.75
-                                color: Theme.textMuted
-                            }
+                    ItemDelegate {
+                        id: groupHeader
+                        objectName: "groupHeader"
+                        width: parent.width
+                        hoverEnabled: true
+                        onClicked: delegateRoot.expanded = !delegateRoot.expanded
+                        horizontalPadding: Theme.rowSpacing
+                        verticalPadding: Theme.tightSpacing
+                        // Inside the frame's border, so hover never covers it.
+                        topInset: delegateRoot.border.width
+                        leftInset: delegateRoot.border.width
+                        rightInset: delegateRoot.border.width
+                        bottomInset: delegateRoot.expanded ? 0 : delegateRoot.border.width
+                        // A row that lights up a little under the pointer, the
+                        // way the playlist rows do, instead of the style's
+                        // accent fill: hovering says the row opens, and an
+                        // accent there read as a selection. The checkbox is
+                        // what says a group is selected.
+                        background: Rectangle {
+                            objectName: "groupHeaderShade"
+                            radius: Theme.cornerRadius
+                            color: groupHeader.down ? Theme.rowPressed
+                                : groupHeader.hovered ? Theme.rowHover : "transparent"
                         }
-                        // Which copy stays and which go, by file, before
-                        // anything is staged. Byte-identical copies share
-                        // every other field on this row, so the path and
-                        // the playlists are the only way to tell them
-                        // apart -- and the reason says whether the copies
-                        // really differ or a tie was broken.
-                        Label {
-                            visible: delegateRoot.survivorReason.length > 0
-                            text: delegateRoot.survivorReason
-                            color: Theme.textMuted
-                            wrapMode: Text.WordWrap
-                            Layout.fillWidth: true
-                        }
-                        GridLayout {
-                            columns: 3
-                            columnSpacing: Theme.pageMargin
-                            rowSpacing: 2
-                            Layout.fillWidth: true
 
-                            Repeater {
-                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
-                                delegate: Label {
-                                    required property var modelData
-                                    required property int index
-                                    // Same three outcomes as the cards'
-                                    // badges below, in the same words.
-                                    text: index === 0 ? "Keep"
-                                        : modelData.heldBack ? "Kept back"
-                                        : modelData.isUnreferenced ? "Remove file" : "Remove"
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SeabassCheckBox {
+                                    checked: delegateRoot.included
+                                    enabled: !delegateRoot.staged
+                                    onToggled: cleanupController.setIncluded(delegateRoot.index, checked)
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: delegateRoot.staged ? "Staged; unstage it first to change the selection"
+                                        : "Include this group when staging"
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.staged
+                                    label: "Staged"
+                                    badgeColor: Theme.warnText
+                                    tooltipText: delegateRoot.stagedDescription + "\n\nNot on the stick yet: press Save."
+                                }
+                                ToolButton {
+                                    visible: delegateRoot.staged
+                                    text: "Unstage"
+                                    enabled: !cleanupController.writing
+                                    onClicked: cleanupController.unstage(delegateRoot.index)
+                                }
+                                Label {
+                                    text: "Keeps: " + delegateRoot.survivor.title + " - " + delegateRoot.survivor.artist
                                     font.bold: true
-                                    color: index === 0 ? Theme.good
-                                        : modelData.heldBack ? Theme.textMuted : Theme.danger
-                                    Layout.row: index
-                                    Layout.column: 0
-                                }
-                            }
-                            Repeater {
-                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
-                                delegate: Label {
-                                    required property var modelData
-                                    required property int index
-                                    text: modelData.shownPath.length > 0 ? modelData.shownPath : "(file not found)"
-                                    elide: Text.ElideMiddle
-                                    Layout.maximumWidth: 420
-                                    Layout.row: index
-                                    Layout.column: 1
-
-                                    HoverHandler { id: pathHover }
-                                    ToolTip.visible: pathHover.hovered && modelData.filePath.length > 0
-                                    ToolTip.text: modelData.filePath
-                                    ToolTip.delay: 300
-                                }
-                            }
-                            Repeater {
-                                model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
-                                delegate: Label {
-                                    required property var modelData
-                                    required property int index
-                                    // A removed copy's own reason
-                                    // leads, when the group's sentence
-                                    // cannot cover every copy.
-                                    text: (modelData.removedReason ? modelData.removedReason + "; " : "")
-                                        + (modelData.playlists.length === 0 ? "in no playlist"
-                                        : "in " + modelData.playlists.length
-                                            + (modelData.playlists.length === 1 ? " playlist: " : " playlists: ")
-                                            + modelData.playlists.join(", "))
-                                    color: Theme.textMuted
                                     elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    Layout.row: index
-                                    Layout.column: 2
-
-                                    HoverHandler { id: playlistHover }
-                                    ToolTip.visible: playlistHover.hovered && modelData.playlists.length > 0
-                                    ToolTip.text: modelData.playlists.join("\n")
-                                    ToolTip.delay: 300
+                                    Layout.preferredWidth: 320
+                                }
+                                Label {
+                                    text: "(removes " + delegateRoot.toRemove.length + " cop"
+                                        + (delegateRoot.toRemove.length === 1 ? "y" : "ies") + ")"
+                                    color: Theme.textMuted
+                                }
+                                StatusBadge {
+                                    label: "what's conserved"
+                                    iconName: "help-about"
+                                    badgeColor: Theme.textMuted
+                                    // Was 558 characters of prose. A hover
+                                    // tooltip is read standing up, with the
+                                    // mouse held still -- two labelled lists
+                                    // can be taken in at a glance, a
+                                    // paragraph cannot. The conditional
+                                    // clauses that made it long are the ones
+                                    // a reader cannot act on either way.
+                                    tooltipText: "Kept: cues (merged), playlist membership, and any missing BPM"
+                                        + (root.format === "engine" ? " or key." : ", key or artwork.")
+                                        + "\nMerged: play counts (added up), last played (the latest)."
+                                        + "\nLost: rating, comment."
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.differs
+                                    label: "copies differ"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    // The "why" (a shorter edit kept on
+                                    // purpose) is what the exclusion is FOR,
+                                    // not something the reader decides with.
+                                    tooltipText: "The highest-bitrate copy is not the longest one, so this group is "
+                                        + "excluded by default. Tick it to include it."
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.unreferencedCount > 0
+                                    label: delegateRoot.unreferencedCount + " uncatalogued file(s)"
+                                    badgeColor: Theme.textMuted
+                                    // What it is, then where it goes. The
+                                    // re-check before deleting is a promise
+                                    // the Delete Orphaned Files page makes;
+                                    // it does not belong on a count badge.
+                                    tooltipText: "Audio files on the stick that no catalog lists. Saving puts them "
+                                        + "under \"Delete Orphaned Files\"."
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.unreferencedHeldBackCount > 0
+                                    label: delegateRoot.unreferencedHeldBackCount + " file(s) kept back"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    tooltipText: "Left on the stick either way: these copies may not be the same "
+                                        + "recording, and nothing is deleted on a guess."
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.hasUnpreservableDataAtRisk
+                                    label: "data would be lost"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    tooltipText: "The copies' ratings or comments differ, and only one can be kept. "
+                                        + "Excluded by default; tick to include."
+                                }
+                                Item { Layout.fillWidth: true }
+                                SeabassIcon {
+                                    iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
+                                    size: Theme.iconSizeSmall * 0.75
+                                    color: Theme.textMuted
                                 }
                             }
-                        }
-                        Label {
-                            text: delegateRoot.wastedBytesHuman + " freed"
-                                + (delegateRoot.newCueCount > 0 ? "; " + delegateRoot.newCueCount + " cue(s) merged onto the survivor" : "")
-                            color: Theme.textMuted
+                            // Which copy stays and which go, by file, before
+                            // anything is staged. Byte-identical copies share
+                            // every other field on this row, so the path and
+                            // the playlists are the only way to tell them
+                            // apart -- and the reason says whether the copies
+                            // really differ or a tie was broken.
+                            Label {
+                                visible: delegateRoot.survivorReason.length > 0
+                                text: delegateRoot.survivorReason
+                                color: Theme.textMuted
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                            GridLayout {
+                                columns: 3
+                                columnSpacing: Theme.pageMargin
+                                rowSpacing: 2
+                                Layout.fillWidth: true
+
+                                Repeater {
+                                    model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                    delegate: Label {
+                                        required property var modelData
+                                        required property int index
+                                        // Same three outcomes as the cards'
+                                        // badges below, in the same words.
+                                        text: index === 0 ? "Keep"
+                                            : modelData.heldBack ? "Kept back"
+                                            : modelData.isUnreferenced ? "Remove file" : "Remove"
+                                        font.bold: true
+                                        color: index === 0 ? Theme.good
+                                            : modelData.heldBack ? Theme.textMuted : Theme.danger
+                                        Layout.row: index
+                                        Layout.column: 0
+                                    }
+                                }
+                                Repeater {
+                                    model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                    delegate: Label {
+                                        required property var modelData
+                                        required property int index
+                                        text: modelData.shownPath.length > 0 ? modelData.shownPath : "(file not found)"
+                                        elide: Text.ElideMiddle
+                                        Layout.maximumWidth: 420
+                                        Layout.row: index
+                                        Layout.column: 1
+
+                                        HoverHandler { id: pathHover }
+                                        ToolTip.visible: pathHover.hovered && modelData.filePath.length > 0
+                                        ToolTip.text: modelData.filePath
+                                        ToolTip.delay: 300
+                                    }
+                                }
+                                Repeater {
+                                    model: [delegateRoot.survivor].concat(delegateRoot.toRemove)
+                                    delegate: Label {
+                                        required property var modelData
+                                        required property int index
+                                        // A removed copy's own reason
+                                        // leads, when the group's sentence
+                                        // cannot cover every copy.
+                                        text: (modelData.removedReason ? modelData.removedReason + "; " : "")
+                                            + (modelData.playlists.length === 0 ? "in no playlist"
+                                            : "in " + modelData.playlists.length
+                                                + (modelData.playlists.length === 1 ? " playlist: " : " playlists: ")
+                                                + modelData.playlists.join(", "))
+                                        color: Theme.textMuted
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        Layout.row: index
+                                        Layout.column: 2
+
+                                        HoverHandler { id: playlistHover }
+                                        ToolTip.visible: playlistHover.hovered && modelData.playlists.length > 0
+                                        ToolTip.text: modelData.playlists.join("\n")
+                                        ToolTip.delay: 300
+                                    }
+                                }
+                            }
+                            Label {
+                                text: delegateRoot.wastedBytesHuman + " freed"
+                                    + (delegateRoot.newCueCount > 0 ? "; " + delegateRoot.newCueCount + " cue(s) merged onto the survivor" : "")
+                                color: Theme.textMuted
+                            }
                         }
                     }
-                }
 
-                Rectangle {
-                    width: parent.width
-                    visible: delegateRoot.expanded
-                    height: delegateRoot.expanded ? groupColumn.implicitHeight + 16 : 0
-                    color: Theme.surface
-                    border.color: Theme.borderSubtle
-                    radius: Theme.cornerRadius
+                    Item {
+                        objectName: "groupCopies"
+                        width: parent.width
+                        visible: delegateRoot.expanded
+                        height: delegateRoot.expanded ? groupColumn.implicitHeight + Theme.rowSpacing : 0
 
-                    ColumnLayout {
-                        id: groupColumn
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
+                        ColumnLayout {
+                            id: groupColumn
+                            x: Theme.rowSpacing
+                            width: parent.width - 2 * Theme.rowSpacing
+                            spacing: Theme.tightSpacing
 
-                        // Richer per-copy view (waveform + real cues, not
-                        // just bitrate/duration/size) so it's directly
-                        // visible -- not just claimed in the text above --
-                        // that a removed copy's cues really do end up on
-                        // the kept one. Status pill makes which is which
-                        // impossible to miss at a glance.
-                        TrackWaveformCard {
-                            track: delegateRoot.survivor
-                            formatLabelText: root.formatLabel(delegateRoot.survivor.side) + " - "
-                                + (delegateRoot.survivor.bitrate > 0 ? delegateRoot.survivor.bitrate + " kbps, " : "")
-                                + root.formatDuration(delegateRoot.survivor.durationMs) + ", "
-                                + delegateRoot.survivor.sizeHuman
-                            statusBadgeText: "KEEPING"
-                            statusBadgeBg: Theme.groupBackground
-                            statusBadgeBorder: Theme.good
-                            statusBadgeTextColor: Theme.good
-                            playbackController: root.playbackController
-                            playbackPath: root.currentPath()
-                        }
-
-                        Repeater {
-                            model: delegateRoot.toRemove
-                            delegate: TrackWaveformCard {
-                                required property var modelData
-                                track: modelData
-                                formatLabelText: root.formatLabel(modelData.side) + " - "
-                                    + (modelData.bitrate > 0 ? modelData.bitrate + " kbps, " : "")
-                                    + root.formatDuration(modelData.durationMs) + ", " + modelData.sizeHuman
-                                // Three different things happen to a
-                                // copy here, so it says which: a catalog
-                                // row goes, a file is listed for
-                                // deletion, or nothing happens at all.
-                                statusBadgeText: modelData.heldBack ? "KEPT BACK"
-                                    : modelData.isUnreferenced ? "FILE ONLY" : "REMOVING"
-                                statusBadgeBg: modelData.heldBack ? Theme.groupBackground : Theme.dangerBg
-                                statusBadgeBorder: modelData.heldBack ? Theme.borderSubtle : Theme.dangerBorder
-                                statusBadgeTextColor: modelData.heldBack ? Theme.textMuted : Theme.dangerText
+                            // Richer per-copy view (waveform + real cues, not
+                            // just bitrate/duration/size) so it's directly
+                            // visible -- not just claimed in the text above --
+                            // that a removed copy's cues really do end up on
+                            // the kept one. Status pill makes which is which
+                            // impossible to miss at a glance.
+                            TrackWaveformCard {
+                                track: delegateRoot.survivor
+                                formatLabelText: root.formatLabel(delegateRoot.survivor.side) + " - "
+                                    + (delegateRoot.survivor.bitrate > 0 ? delegateRoot.survivor.bitrate + " kbps, " : "")
+                                    + root.formatDuration(delegateRoot.survivor.durationMs) + ", "
+                                    + delegateRoot.survivor.sizeHuman
+                                statusBadgeText: "KEEPING"
+                                statusBadgeBg: Theme.groupBackground
+                                statusBadgeBorder: Theme.good
+                                statusBadgeTextColor: Theme.good
                                 playbackController: root.playbackController
                                 playbackPath: root.currentPath()
+                            }
+
+                            Repeater {
+                                model: delegateRoot.toRemove
+                                delegate: TrackWaveformCard {
+                                    required property var modelData
+                                    track: modelData
+                                    formatLabelText: root.formatLabel(modelData.side) + " - "
+                                        + (modelData.bitrate > 0 ? modelData.bitrate + " kbps, " : "")
+                                        + root.formatDuration(modelData.durationMs) + ", " + modelData.sizeHuman
+                                    // Three different things happen to a
+                                    // copy here, so it says which: a catalog
+                                    // row goes, a file is listed for
+                                    // deletion, or nothing happens at all.
+                                    statusBadgeText: modelData.heldBack ? "KEPT BACK"
+                                        : modelData.isUnreferenced ? "FILE ONLY" : "REMOVING"
+                                    statusBadgeBg: modelData.heldBack ? Theme.groupBackground : Theme.dangerBg
+                                    statusBadgeBorder: modelData.heldBack ? Theme.borderSubtle : Theme.dangerBorder
+                                    statusBadgeTextColor: modelData.heldBack ? Theme.textMuted : Theme.dangerText
+                                    playbackController: root.playbackController
+                                    playbackPath: root.currentPath()
+                                }
                             }
                         }
                     }

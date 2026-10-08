@@ -306,6 +306,52 @@ TestCase {
         verify(!details.visible, "the header unfolded by itself");
     }
 
+    // An opened group is one frame round its header and its copies, not
+    // a framed header over a second framed box; and hovering the header
+    // lights it a little, in the rows' own hover shade, not the accent.
+    function test_anOpenedGroupIsOneFrameAndHoverIsSubtle() {
+        const engineCopy = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(engineCopy.length > 0, "the fixture copy must be made");
+        const page = createTemporaryObject(enginePageComponent, testCase,
+                                           {width: 1000, height: 700, enginePath: engineCopy});
+        verify(page, "page did not instantiate");
+        const list = findByObjectName(page, "plansList");
+        tryCompare(list, "count", 1, 5000, "the scan never showed the fixture's group");
+        waitForRendering(page);
+        const frame = findByObjectName(list, "groupFrame");
+        const header = findByObjectName(frame, "groupHeader");
+        const copies = findByObjectName(frame, "groupCopies");
+        verify(frame && header && copies, "the group's frame, header and copies were not found");
+        const shade = header.background;
+        verify(shade, "the header has no background");
+
+        mouseMove(header, header.width / 2, header.height / 2);
+        tryVerify(() => header.hovered, 2000, "the header never saw the pointer");
+        verify(Qt.colorEqual(shade.color, Theme.rowHover),
+               "hover shade is " + shade.color + ", not the rows' " + Theme.rowHover);
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/CleanupPage-group-hovered.png");
+        }
+
+        mouseClick(header, header.width / 2, header.height / 2);
+        tryVerify(() => copies.visible && copies.height > 0, 2000, "the group did not open");
+        waitForRendering(page);
+        // The copies sit inside the one frame, which is as tall as both...
+        const frameTop = frame.mapToItem(page, 0, 0).y;
+        const copiesTop = copies.mapToItem(page, 0, 0).y;
+        verify(copiesTop + copies.height <= frameTop + frame.height + 0.5,
+               "the copies run out of the group's frame");
+        compare(frame.height, header.height + copies.height, "the frame is not round header and copies");
+        // ...and the copies have no frame of their own round them.
+        verify(copies.border === undefined, "the copies are a framed box of their own");
+        mouseMove(page, 1, 1);
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/CleanupPage-group-opened.png");
+        }
+    }
+
     // A look at the narrow case, since the failure this file exists for
     // was found in a screenshot and not in a number.
     function test_screenshot() {
