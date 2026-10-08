@@ -248,21 +248,21 @@ PanelPopup {
             }
         }
         // Context on the left, what the pointer is over on the right. A
-        // fixed height, three lines, whether or not anything is hovered:
+        // fixed height, four lines, whether or not anything is hovered:
         // if the row grew with the text, the wheel below would shrink and
         // move while you hovered it, and the wedge under the pointer with
         // it.
         FontMetrics { id: infoMetrics; font.pointSize: Theme.fontSmall }
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.ceil(infoMetrics.lineSpacing * 3)
+            Layout.preferredHeight: Math.ceil(infoMetrics.lineSpacing * 4)
             spacing: 12
             Label {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 Layout.alignment: Qt.AlignTop
                 wrapMode: Text.WordWrap
-                maximumLineCount: 3
+                maximumLineCount: 4
                 elide: Text.ElideRight
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
@@ -277,7 +277,7 @@ PanelPopup {
                 Layout.alignment: Qt.AlignTop
                 horizontalAlignment: Text.AlignRight
                 wrapMode: Text.WordWrap
-                maximumLineCount: 3
+                maximumLineCount: 4
                 elide: Text.ElideRight
                 color: Theme.text
                 font.pointSize: Theme.fontSmall
@@ -590,8 +590,21 @@ PanelPopup {
                     id: legendItem
                     required property var modelData
                     spacing: 4
-                    Rectangle { width: 10; height: 10; radius: 5; color: legendItem.modelData.color }
-                    Label { text: legendItem.modelData.label; font.pointSize: Theme.fontTiny; color: Theme.textMuted }
+                    // A hovered entry answers the way a hovered segment
+                    // does: its swatch springs up (the segments' own
+                    // spring) and its name comes up from muted to text.
+                    Rectangle {
+                        width: 10; height: 10; radius: 5
+                        color: legendItem.modelData.color
+                        scale: legendHover.hovered ? 1.5 : 1.0
+                        Behavior on scale { SpringAnimation { spring: 4.5; damping: 0.22; epsilon: 0.01 } }
+                    }
+                    Label {
+                        text: legendItem.modelData.label
+                        font.pointSize: Theme.fontTiny
+                        color: legendHover.hovered ? Theme.text : Theme.textMuted
+                        Behavior on color { ColorAnimation { duration: Theme.shortTransitionDuration } }
+                    }
 
                     HoverHandler {
                         id: legendHover
