@@ -46,6 +46,8 @@ ColumnLayout {
     // change what Browse itself is showing.
     required property int browseSelectedPlaylistIndex
     signal closeRequested()
+    // A candidate's cover was clicked: play it, as a Browse row's cover does.
+    signal playRequested(var candidate)
 
     spacing: 0
 
@@ -629,6 +631,32 @@ ColumnLayout {
                         anchors.fill: parent
                         source: candidateDelegate.modelData.artworkPath || ""
                         fallbackSource: candidateDelegate.modelData.fallbackArtworkPath || ""
+                    }
+                    // Play from the cover, as in Browse: a play mark on
+                    // hover, and the click plays it. Not for a streaming
+                    // track, which has no file here to play.
+                    readonly property bool playable: (candidateDelegate.modelData.streamingSource || "").length === 0
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: candidateArtHover.hovered && parent.playable
+                        color: "#80000000"
+                        SeabassIcon {
+                            anchors.centerIn: parent
+                            iconName: "media-playback-start"
+                            size: Theme.iconSizeSmall * 0.6
+                            color: "white"
+                        }
+                    }
+                    HoverHandler { id: candidateArtHover }
+                    MouseArea {
+                        objectName: "candidatePlayArea"
+                        anchors.fill: parent
+                        cursorShape: parent.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: {
+                            if (parent.playable) {
+                                root.playRequested(candidateDelegate.modelData);
+                            }
+                        }
                     }
                 }
                 ColumnLayout {

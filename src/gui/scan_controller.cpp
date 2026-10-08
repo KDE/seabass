@@ -30,6 +30,28 @@
 namespace seabass::gui
 {
 
+namespace
+{
+// A track's cues as QML reads them (WaveformView, the player): one shape
+// for the list's rows and for Matching's candidates.
+QVariantList cuesToVariant(const domain::Track &track)
+{
+    QVariantList cues;
+    for (const auto &c : track.cues) {
+        QVariantMap m;
+        m["kind"] = c.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("hot") : QStringLiteral("memory");
+        m["hotCueNumber"] = c.hotCueNumber;
+        m["positionMs"] = c.positionMs;
+        m["isLoop"] = c.isLoop;
+        m["loopEndMs"] = c.loopEndMs;
+        m["color"] = QString::fromStdString(c.color);
+        m["comment"] = QString::fromStdString(c.comment);
+        cues << m;
+    }
+    return cues;
+}
+}  // namespace
+
 TrackListModel::TrackListModel(QObject *parent) : QAbstractListModel(parent) {}
 
 int TrackListModel::rowCount(const QModelIndex &parent) const
@@ -72,21 +94,8 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         return track.bpm;
     case KeyRole:
         return QString::fromStdString(track.key);
-    case CuesRole: {
-        QVariantList cues;
-        for (const auto &c : track.cues) {
-            QVariantMap m;
-            m["kind"] = c.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("hot") : QStringLiteral("memory");
-            m["hotCueNumber"] = c.hotCueNumber;
-            m["positionMs"] = c.positionMs;
-            m["isLoop"] = c.isLoop;
-            m["loopEndMs"] = c.loopEndMs;
-            m["color"] = QString::fromStdString(c.color);
-            m["comment"] = QString::fromStdString(c.comment);
-            cues << m;
-        }
-        return cues;
-    }
+    case CuesRole:
+        return cuesToVariant(track);
     case PlaylistNamesRole: {
         QStringList names;
         for (const auto &p : track.playlists) {
@@ -905,6 +914,10 @@ QVariantList ScanController::findCompatibleTracks(const QString &anchorSourceId,
         m["artworkPath"] = m_model.artworkFor(track);
         m["fallbackArtworkPath"] = m_model.fallbackArtworkFor(track);
         m["durationSeconds"] = track.durationSeconds;
+        // What playing a candidate from its cover needs, as a list row has.
+        m["filePath"] = QString::fromStdString(track.filePath);
+        m["streamingSource"] = QString::fromStdString(track.streamingSource);
+        m["cues"] = cuesToVariant(track);
         QStringList playlistNames;
         for (const auto &p : track.playlists) {
             playlistNames << QString::fromStdString(p.name);
