@@ -91,9 +91,11 @@ TestCase {
         compare(after.x, before.x); compare(after.y, before.y);
         compare(h.overlay.mapToItem(h, h.overlay.width, 0).x, rightBefore, "the right edge stays");
         compare(h.overlay.place, "about");
-        compare(findChild(h.overlay, "homeMenuButton").visible, false, "no menu away from the home");
+        // The menu slides away after the page has changed, and is shown
+        // until it has gone: how long after depends on the machine.
+        tryCompare(findChild(h.overlay, "homeMenuButton"), "visible", false, 5000, "no menu away from the home");
         compare(findChild(h.overlay, "aboutButton").enabled, false, "the page one is on is off");
-        verify(h.overlay.width < widthBefore, "narrower without the menu button");
+        tryVerify(() => h.overlay.width < widthBefore, 5000, "narrower without the menu button");
         compare(h.stack.currentItem.appHeaderReserve, h.overlay.width);
 
         h.stack.push(toolLike);
