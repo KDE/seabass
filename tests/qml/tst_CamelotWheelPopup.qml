@@ -99,6 +99,32 @@ TestCase {
         tryCompare(info, "text", "", 1000, "leaving the segments clears it");
     }
 
+    // Every legend tip is shown whole: the info area is sized to the
+    // tallest of them (five lines at this width), so none is elided, and
+    // the wheel does not move while they come and go.
+    function test_everyLegendTipFitsWithoutEliding() {
+        const t = opened();
+        const info = findChild(t.popup.contentItem, "wheelHoverInfo");
+        verify(info !== null);
+        waitForRendering(t.popup.contentItem);
+        const wheelY = t.wheel.mapToItem(t.popup.contentItem, 0, 0).y;
+        const entries = t.popup.legendEntries;
+        verify(entries.length >= 5);
+        for (let i = 0; i < entries.length; ++i) {
+            t.popup.showInfo(entries[i].tip, true);
+            waitForRendering(t.popup.contentItem);
+            compare(info.text, entries[i].tip);
+            verify(!info.truncated, "'" + entries[i].label + "' is shown whole, not elided");
+            verify(info.lineCount <= 6, entries[i].label + " takes " + info.lineCount + " lines");
+            verify(info.contentHeight <= info.height + 0.5, entries[i].label + " fits the row");
+            compare(t.wheel.mapToItem(t.popup.contentItem, 0, 0).y, wheelY, "the wheel stays put");
+            if (screenshotDir && screenshotDir.length > 0 && entries[i].label === "Relative") {
+                grabImage(t.popup.contentItem).save(screenshotDir + "/camelot-wheel-popup-tip.png");
+            }
+            t.popup.showInfo(entries[i].tip, false);
+        }
+    }
+
     // A seam belongs to the nearer segment, so crossing one never reads
     // as "nothing": not between neighbours, not between the rings.
     function test_theSeamsAreNotHoles() {
