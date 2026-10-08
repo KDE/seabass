@@ -648,6 +648,10 @@ TestCase {
         const action = findChild(card, "checkAction");
         verify(action.visible, "the button shows once the check is over");
         const summary = findChild(card, "checkSummary");
+        // The layout, not a frame: a frame already under way when the
+        // properties changed can be the one waited for, and the grid's
+        // polish then lands after it (seen under a loaded ctest -j4).
+        waitForItemPolished(summary.parent);
         verify(summary.x + summary.width <= action.x, "and the summary stays left of it");
         card.running = true;
         waitForRendering(card);
