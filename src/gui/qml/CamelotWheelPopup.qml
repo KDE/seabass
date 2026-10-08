@@ -90,6 +90,45 @@ PanelPopup {
     signal keyHovered(int number, bool isMinor, bool hovering)
     signal relationHovered(string relationLabel, bool hovering)
 
+    // The legend, bottom of the popup: each relation, its colour and the
+    // sentence the info area shows while it is hovered. Here rather than
+    // in the legend's Repeater because the info area measures these tips
+    // to size itself (see infoRowHeight).
+    readonly property var legendEntries: [
+        { label: "Same", relationLabel: "Same key", color: Theme.accent,
+            tip: "Identical key. The safest possible transition." },
+        { label: "Relative", relationLabel: "Relative major/minor", color: Theme.good,
+            tip: "Same wheel number, opposite mode (e.g. 8A/8B). A seamless swap between the major "
+                + "and minor version of the same key." },
+        { label: "Boost", relationLabel: "Energy Boost", color: Theme.warnIcon,
+            tip: "One step clockwise around the wheel, same mode. The classic harmonic-mixing move, "
+                + "with a subtle lift in energy." },
+        { label: "Drop", relationLabel: "Energy Drop", color: Theme.warnIcon,
+            tip: "One step counter-clockwise around the wheel, same mode. The classic harmonic-mixing "
+                + "move, with a subtle ease in energy." },
+        { label: "Energy mix", relationLabel: "Energy mix", color: Theme.danger,
+            tip: "One step around the wheel, opposite mode. A bigger mood/energy shift than Adjacent, "
+                + "while staying tonally related." },
+    ]
+
+    // The info area is as tall as the longest text it can ever show,
+    // measured at its own width: at least four lines, at most six, so
+    // none of them is elided. Fixed while the popup is open, whatever is hovered: if the
+    // row grew with the text, the wheel below would shrink and move
+    // while you hovered it, and the wedge under the pointer with it.
+    readonly property int infoMaxLines: 6
+    property real infoRowHeight: Math.ceil(infoMetrics.lineSpacing * 4)
+    function remeasureInfo() {
+        let tallest = Math.ceil(infoMetrics.lineSpacing * 4);
+        for (let i = 0; i < infoProbes.count; ++i) {
+            const probe = infoProbes.itemAt(i);
+            if (probe) {
+                tallest = Math.max(tallest, Math.ceil(probe.implicitHeight));
+            }
+        }
+        root.infoRowHeight = tallest;
+    }
+
     // What the pointer is over, shown in the info area top right instead
     // of a tooltip. Tooltips sat on the wheel itself, over the very
     // wedges and keys you were trying to read; the info area is in view
@@ -247,23 +286,19 @@ PanelPopup {
                 }
             }
         }
-        // Context on the left, what the pointer is over on the right. A
-        // fixed height, four lines, whether or not anything is hovered:
-        // if the row grew with the text, the wheel below would shrink and
-        // move while you hovered it, and the wedge under the pointer with
-        // it.
+        // Context on the left, what the pointer is over on the right. The
+        // row's height is root.infoRowHeight, measured below, not the text's.
         FontMetrics { id: infoMetrics; font.pointSize: Theme.fontSmall }
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.ceil(infoMetrics.lineSpacing * 4)
+            Layout.preferredHeight: root.infoRowHeight
             spacing: 12
             Label {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 Layout.alignment: Qt.AlignTop
                 wrapMode: Text.WordWrap
-                maximumLineCount: 4
-                elide: Text.ElideRight
+                maximumLineCount: root.infoMaxLines
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 text: root.originNumber === 0
@@ -271,17 +306,47 @@ PanelPopup {
                     : "Showing how every key relates to " + root.wedgeLabel(root.originNumber, root.originIsMinor) + "."
             }
             Label {
+                id: hoverInfoLabel
                 objectName: "wheelHoverInfo"
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 Layout.alignment: Qt.AlignTop
                 horizontalAlignment: Text.AlignRight
                 wrapMode: Text.WordWrap
-                maximumLineCount: 4
+                maximumLineCount: root.infoMaxLines
+                // Never reached by the legend's tips, which the row is
+                // sized for; a fallback for a text past six lines, so it
+                // ends in an ellipsis rather than mid-word.
                 elide: Text.ElideRight
                 color: Theme.text
                 font.pointSize: Theme.fontSmall
                 text: root.hoverInfo.length > 0 ? root.hoverInfo : root.pinnedInfo
+                onWidthChanged: root.remeasureInfo()
+            }
+        }
+        // The legend's tips laid out invisibly at the info label's own
+        // width and font: the tallest of them is the row's height. The
+        // wedge texts are one line each and never the tallest.
+        Item {
+            visible: false
+            width: 0
+            height: 0
+            Repeater {
+                id: infoProbes
+                model: root.legendEntries
+                delegate: Text {
+                    required property var modelData
+                    width: hoverInfoLabel.width
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: root.infoMaxLines
+                    // The label's own font object, not a Text default:
+                    // a Label takes the style's control font, and the
+                    // measurement has to be made in the same face.
+                    font: hoverInfoLabel.font
+                    text: modelData.tip
+                    onImplicitHeightChanged: root.remeasureInfo()
+                    Component.onCompleted: root.remeasureInfo()
+                }
             }
         }
 
@@ -570,22 +635,7 @@ PanelPopup {
             // 400px width.
             spacing: 9
             Repeater {
-                model: [
-                    { label: "Same", relationLabel: "Same key", color: Theme.accent,
-                        tip: "Identical key. The safest possible transition." },
-                    { label: "Relative", relationLabel: "Relative major/minor", color: Theme.good,
-                        tip: "Same wheel number, opposite mode (e.g. 8A/8B). A seamless swap between the major "
-                            + "and minor version of the same key." },
-                    { label: "Boost", relationLabel: "Energy Boost", color: Theme.warnIcon,
-                        tip: "One step clockwise around the wheel, same mode. The classic harmonic-mixing move, "
-                            + "with a subtle lift in energy." },
-                    { label: "Drop", relationLabel: "Energy Drop", color: Theme.warnIcon,
-                        tip: "One step counter-clockwise around the wheel, same mode. The classic harmonic-mixing "
-                            + "move, with a subtle ease in energy." },
-                    { label: "Energy mix", relationLabel: "Energy mix", color: Theme.danger,
-                        tip: "One step around the wheel, opposite mode. A bigger mood/energy shift than Adjacent, "
-                            + "while staying tonally related." },
-                ]
+                model: root.legendEntries
                 delegate: RowLayout {
                     id: legendItem
                     required property var modelData
