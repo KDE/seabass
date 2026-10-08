@@ -1443,6 +1443,11 @@ Page {
             anchorFallbackArtworkPath: root.anchorFallbackArtworkPath
             anchorPlaylistNames: root.anchorPlaylistNames
             onCloseRequested: root.matchingPanelOpen = false
+            // Just play it: the detail panel a Browse row opens shares
+            // this side of the page with Matching, which stays.
+            onPlayRequested: candidate => root.playbackController.load(root.format, root.currentPath(),
+                candidate.sourceId, candidate.filePath, candidate.title, candidate.artist,
+                candidate.artworkPath, candidate.cues)
         }
         } // SplitView
     }
