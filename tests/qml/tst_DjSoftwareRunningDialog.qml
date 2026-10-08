@@ -51,7 +51,7 @@ TestCase {
         var dialog = createTemporaryObject(dialogComponent, testCase, {guard: guard});
         verify(dialog !== null);
         compare(dialog.opened, false);
-        compare(dialog.closePolicy, Popup.NoAutoClose);
+        compare(dialog.closePolicy, Popup.CloseOnEscape, "Esc is Cancel; a click outside is not");
 
         guard.blocking = true;
         tryCompare(dialog, "opened", true);
@@ -78,5 +78,33 @@ TestCase {
         verify(findByObjectName(dialog, "messageLabel").text.indexOf("Engine DJ is running.") === 0);
         guard.blocking = false;
         tryCompare(dialog, "opened", false);
+    }
+
+    function footerButton(dialog, name) {
+        var kids = dialog.footer ? dialog.footer.contentChildren : [];
+        for (var i = 0; i < kids.length; ++i) {
+            if (kids[i].objectName === name) return kids[i];
+        }
+        return null;
+    }
+
+    // Cancel puts it away for as long as that app keeps running; once the
+    // app has gone and comes back, it warns again.
+    function test_cancelPutsItAwayUntilTheAppComesBack() {
+        var guard = createTemporaryObject(guardComponent, testCase, {blocking: true});
+        var dialog = createTemporaryObject(dialogComponent, testCase, {guard: guard});
+        tryCompare(dialog, "opened", true);
+        var cancel = footerButton(dialog, "djGuardCancelButton");
+        verify(cancel !== null, "a Cancel button");
+        cancel.clicked();
+        tryCompare(dialog, "opened", false);
+        compare(guard.dialogOpen, false, "the guard goes back to its slow poll");
+        dialog.sync();
+        wait(50);
+        compare(dialog.opened, false, "still blocking, still put away");
+        guard.blocking = false;
+        guard.blocking = true;
+        tryCompare(dialog, "opened", true, 2000, "the app came back: warned again");
+        guard.blocking = false;
     }
 }
