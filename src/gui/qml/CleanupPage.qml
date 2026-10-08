@@ -111,6 +111,17 @@ Page {
         return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
+    // Scrolling the groups folds the header's description away (the
+    // paragraph, the uncatalogued files, the space bar) and leaves the
+    // crumb, the filters, the counts and the buttons: what is read once
+    // gives its room to the list, what is used stays. Back at the top of
+    // the list it unfolds again. See ScrollCollapse for when.
+    ScrollCollapse {
+        id: headerCollapse
+        flickable: plansListView
+        collapsibleHeight: headerDetails.implicitHeight + headerLayout.spacing
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
@@ -138,11 +149,17 @@ Page {
             spacing: 8
 
             RowLayout {
+                id: crumbRow
+                objectName: "crumbRow"
                 Layout.fillWidth: true
                 spacing: 12
                 // The gap a one-row header shows under its crumb (Theme.crumbGap),
-                // kept here too, before this header's second row.
+                // kept here too, before this header's second row. While the
+                // description folds, its own spacing is taken off here as it
+                // goes, so the gap closes to exactly this and does not jump
+                // by a spacing when the folded part finally hides.
                 Layout.bottomMargin: Theme.crumbGap - headerLayout.spacing
+                    - (headerDetails.visible ? headerLayout.spacing * headerCollapse.progress : 0)
                 BackBreadcrumb {
                     stack: root.StackView.view
                     stickLabel: root.stickLabel
@@ -162,126 +179,164 @@ Page {
                 // Preferences still decides it.
             }
 
-            // What this page is for, in three sentences. Real libraries
-            // accumulate several files of one track through repeated
-            // exports, and someone about to let a tool merge their cue
-            // points deserves to know what it considers a duplicate
-            // before they trust a checkbox. The third sentence matters
-            // most: this page consolidates catalog rows and records what
-            // it orphaned, it does NOT delete audio -- "Delete Orphaned
-            // Files" does that, and saying so here stops the space
-            // figures above reading as a promise this page keeps.
-            RowLayout {
+            // Everything the header says rather than offers, in one block
+            // so it folds as one. Clipped while it folds; hidden once it
+            // has, so it gives back its spacing too.
+            Item {
+                id: headerDetails
+                objectName: "headerDetails"
                 Layout.fillWidth: true
-                spacing: 8
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.textMuted
-                    text: "Exporting the same track more than once leaves several copies of it on the stick, "
-                        + "each catalogued separately and each taking up space. In this step Seabass groups "
-                        + "the copies that agree on artist, track title and length, and consolidates their "
-                        + "metadata (cue points, ratings, playlist membership) onto the single copy it "
-                        + "keeps. No audio is deleted here: the files this leaves unneeded are removed "
-                        + "afterwards under \"Delete Orphaned Files\", which is where the space is actually "
-                        + "freed."
-                }
-                InfoButton {
-                    // The window is a setting now (Preferences, Music),
-                    // so the text asks for it rather than repeating the
-                    // old hardcoded "two seconds" -- which would have
-                    // gone on saying two the moment anybody changed it.
-                    readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
-                    readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
-                    readonly property bool audioCompared:
-                        audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
+                Layout.preferredHeight: detailsColumn.implicitHeight * (1 - headerCollapse.progress)
+                implicitHeight: detailsColumn.implicitHeight
+                visible: headerCollapse.progress < 1
+                opacity: 1 - headerCollapse.progress
+                clip: true
 
-                    explanationTitle: "What counts as a duplicate?"
-                    summaryText: "Same artist, same title, same length (within " + exactWindow
-                        + (exactWindow === 1 ? " second" : " seconds") + "). "
-                        + "Filenames are ignored, because a re-export renames the same recording."
-                    explanationText:
-                          "## Why filenames are ignored\n"
-                        + "A re-export writes the same recording out under a new name: the leading "
-                        + "track number follows playlist position, and a copy landing beside an "
-                        + "existing file gets `-1` or `-2` appended.\n\n"
-                        + "- `05_Kollektiv Turmstrasse-Flaschenpost.mp3`\n"
-                        + "- `21_Kollektiv Turmstrasse-Flaschenpost.mp3`\n"
-                        + "- `33_Kollektiv Turmstrasse-Flaschenpost.mp3`\n\n"
-                        + "One track, exported three times. The numbering is an artifact.\n\n"
-                        + "## Why length matters\n"
-                        + "It is what stops a real mistake. A radio edit and an extended mix share "
-                        + "artist and title, so matching on those alone would offer to delete one of "
-                        + "them. Paul Kalkbrenner's *No Goodbye* is here as both a 2:47 edit and a "
-                        + "6:31 extended mix. Those are never grouped.\n\n"
-                        + "Where a catalog recorded no length, Seabass reads it from the audio and "
-                        + "remembers it on the stick, so only the first scan pays for it. A track "
-                        + "whose length cannot be established is left alone rather than guessed at.\n\n"
-                        + (audioCompared
-                            ? "## When the lengths nearly agree\n"
-                              + "Two copies of one recording often differ by a few seconds that are "
-                              + "silence: encoder padding, a run out kept by a rip, a trimmed "
-                              + "re-export. Where the gap is more than " + exactWindow + " but no more "
-                              + "than " + audioWindow + " seconds, both files are decoded, the silence "
-                              + "at each end is measured, and the length of the music between them is "
-                              + "compared instead of the stored numbers. Decoding costs real time, so "
-                              + "it only runs for a pair that is genuinely in doubt, and the answers "
-                              + "are cached on the stick. Both windows are yours to set, under "
-                              + "Preferences, Music.\n\n"
-                            : "## When the lengths nearly agree\n"
-                              + "Seabass can decode two files whose lengths are close but not close "
-                              + "enough, measure the silence at each end, and compare the length of "
-                              + "the music itself. That is off right now. Turn it on under "
-                              + "Preferences, Music.\n\n")
-                        + "## Nothing here is the only way\n"
-                        + "Whatever this page finds or misses, two tracks can always be merged by "
-                        + "hand: open Browse Library, use the **Merge** button on a track, and pick "
-                        + "the other one. That path takes no notice of lengths at all, so it is the "
-                        + "answer for a pair Seabass will not group on its own.\n\n"
-                        + "## What is kept\n"
-                        + "- **Cues** are merged, never lost: the survivor gets every copy's cues\n"
-                        + "- **Playlist membership** is preserved in every catalog\n"
-                        + "- **Missing bpm, key and artwork** are filled in from whichever copy has them\n"
-                        + "- **Play counts** are added up, and the latest last-played date is kept\n\n"
-                        + "Use *what's conserved* on any group to see exactly what the surviving copy "
-                        + "would end up with.\n\n"
-                        + "## What is not kept\n"
-                        + "**Ratings and comments** are never discarded without "
-                        + "asking. A group whose copies disagree on either is left unchecked for you "
-                        + "to decide, as is one where the copies differ in a way that might be "
-                        + "deliberate.\n"
-                }
-            }
+                ColumnLayout {
+                    id: detailsColumn
+                    width: parent.width
+                    spacing: headerLayout.spacing
 
-            // The files no catalog references -- see the component for
-            // why this never shows a count without its basis.
-            UnreferencedFilesNotice {
-                Layout.fillWidth: true
-                info: cleanupController.unreferencedFiles
-            }
+                    // What this page is for, in three sentences. Real libraries
+                    // accumulate several files of one track through repeated
+                    // exports, and someone about to let a tool merge their cue
+                    // points deserves to know what it considers a duplicate
+                    // before they trust a checkbox. The third sentence matters
+                    // most: this page consolidates catalog rows and records what
+                    // it orphaned, it does NOT delete audio -- "Delete Orphaned
+                    // Files" does that, and saying so here stops the space
+                    // figures above reading as a promise this page keeps.
+                    RowLayout {
+                        id: explanationRow
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textMuted
+                            text: "Exporting the same track more than once leaves several copies of it on the stick, "
+                                + "each catalogued separately and each taking up space. In this step Seabass groups "
+                                + "the copies that agree on artist, track title and length, and consolidates their "
+                                + "metadata (cue points, ratings, playlist membership) onto the single copy it "
+                                + "keeps. No audio is deleted here: the files this leaves unneeded are removed "
+                                + "afterwards under \"Delete Orphaned Files\", which is where the space is actually "
+                                + "freed."
+                        }
+                        // Holds the InfoButton's place while it is up in the crumb row,
+                        // so the paragraph keeps its width and does not rewrap mid fold.
+                        Item {
+                            id: infoSlot
+                            implicitWidth: duplicateInfo.implicitWidth
+                            implicitHeight: duplicateInfo.implicitHeight
+                            InfoButton {
+                                id: duplicateInfo
+                                objectName: "duplicateInfo"
+                                // A control, so it stays when the description folds:
+                                // it moves up to the end of the crumb row, halfway
+                                // through the fold, where it is the only thing on the
+                                // right.
+                                parent: headerCollapse.progress > 0.5 ? crumbRow : infoSlot
+                                // The crumb row placed it; back in its slot
+                                // nothing does, so it goes to the corner.
+                                onParentChanged: if (parent === infoSlot) { x = 0; y = 0; }
+                                // The window is a setting now (Preferences, Music),
+                                // so the text asks for it rather than repeating the
+                                // old hardcoded "two seconds" -- which would have
+                                // gone on saying two the moment anybody changed it.
+                                readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
+                                readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
+                                readonly property bool audioCompared:
+                                    audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
 
-            // What all this actually buys, drawn against the stick's real
-            // capacity. A byte count alone says nothing about whether it
-            // matters; the same figure as a block on a nearly-full stick
-            // says it immediately.
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                visible: plansListView.count > 0 && spaceBar.known
-                implicitHeight: spaceBar.implicitHeight + 28
-                color: Theme.surface
-                border.color: Theme.borderSubtle
-                border.width: 1
-                radius: Theme.cornerRadius
+                                explanationTitle: "What counts as a duplicate?"
+                                summaryText: "Same artist, same title, same length (within " + exactWindow
+                                    + (exactWindow === 1 ? " second" : " seconds") + "). "
+                                    + "Filenames are ignored, because a re-export renames the same recording."
+                                explanationText:
+                                      "## Why filenames are ignored\n"
+                                    + "A re-export writes the same recording out under a new name: the leading "
+                                    + "track number follows playlist position, and a copy landing beside an "
+                                    + "existing file gets `-1` or `-2` appended.\n\n"
+                                    + "- `05_Kollektiv Turmstrasse-Flaschenpost.mp3`\n"
+                                    + "- `21_Kollektiv Turmstrasse-Flaschenpost.mp3`\n"
+                                    + "- `33_Kollektiv Turmstrasse-Flaschenpost.mp3`\n\n"
+                                    + "One track, exported three times. The numbering is an artifact.\n\n"
+                                    + "## Why length matters\n"
+                                    + "It is what stops a real mistake. A radio edit and an extended mix share "
+                                    + "artist and title, so matching on those alone would offer to delete one of "
+                                    + "them. Paul Kalkbrenner's *No Goodbye* is here as both a 2:47 edit and a "
+                                    + "6:31 extended mix. Those are never grouped.\n\n"
+                                    + "Where a catalog recorded no length, Seabass reads it from the audio and "
+                                    + "remembers it on the stick, so only the first scan pays for it. A track "
+                                    + "whose length cannot be established is left alone rather than guessed at.\n\n"
+                                    + (audioCompared
+                                        ? "## When the lengths nearly agree\n"
+                                          + "Two copies of one recording often differ by a few seconds that are "
+                                          + "silence: encoder padding, a run out kept by a rip, a trimmed "
+                                          + "re-export. Where the gap is more than " + exactWindow + " but no more "
+                                          + "than " + audioWindow + " seconds, both files are decoded, the silence "
+                                          + "at each end is measured, and the length of the music between them is "
+                                          + "compared instead of the stored numbers. Decoding costs real time, so "
+                                          + "it only runs for a pair that is genuinely in doubt, and the answers "
+                                          + "are cached on the stick. Both windows are yours to set, under "
+                                          + "Preferences, Music.\n\n"
+                                        : "## When the lengths nearly agree\n"
+                                          + "Seabass can decode two files whose lengths are close but not close "
+                                          + "enough, measure the silence at each end, and compare the length of "
+                                          + "the music itself. That is off right now. Turn it on under "
+                                          + "Preferences, Music.\n\n")
+                                    + "## Nothing here is the only way\n"
+                                    + "Whatever this page finds or misses, two tracks can always be merged by "
+                                    + "hand: open Browse Library, use the **Merge** button on a track, and pick "
+                                    + "the other one. That path takes no notice of lengths at all, so it is the "
+                                    + "answer for a pair Seabass will not group on its own.\n\n"
+                                    + "## What is kept\n"
+                                    + "- **Cues** are merged, never lost: the survivor gets every copy's cues\n"
+                                    + "- **Playlist membership** is preserved in every catalog\n"
+                                    + "- **Missing bpm, key and artwork** are filled in from whichever copy has them\n"
+                                    + "- **Play counts** are added up, and the latest last-played date is kept\n\n"
+                                    + "Use *what's conserved* on any group to see exactly what the surviving copy "
+                                    + "would end up with.\n\n"
+                                    + "## What is not kept\n"
+                                    + "**Ratings and comments** are never discarded without "
+                                    + "asking. A group whose copies disagree on either is left unchecked for you "
+                                    + "to decide, as is one where the copies differ in a way that might be "
+                                    + "deliberate.\n"
+                            }
+                        }
+                    }
 
-                SpaceReclaimBar {
-                    id: spaceBar
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    totalBytes: cleanupController.stickTotalBytes
-                    freeBytes: cleanupController.stickFreeBytes
-                    reclaimBytes: cleanupController.includedWastedBytes
-                    reclaimableBytes: cleanupController.totalWastedBytes
+                    // The files no catalog references -- see the component for
+                    // why this never shows a count without its basis.
+                    UnreferencedFilesNotice {
+                        Layout.fillWidth: true
+                        info: cleanupController.unreferencedFiles
+                    }
+
+                    // What all this actually buys, drawn against the stick's real
+                    // capacity. A byte count alone says nothing about whether it
+                    // matters; the same figure as a block on a nearly-full stick
+                    // says it immediately.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        visible: plansListView.count > 0 && spaceBar.known
+                        implicitHeight: spaceBar.implicitHeight + 28
+                        color: Theme.surface
+                        border.color: Theme.borderSubtle
+                        border.width: 1
+                        radius: Theme.cornerRadius
+
+                        SpaceReclaimBar {
+                            id: spaceBar
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            totalBytes: cleanupController.stickTotalBytes
+                            freeBytes: cleanupController.stickFreeBytes
+                            reclaimBytes: cleanupController.includedWastedBytes
+                            reclaimableBytes: cleanupController.totalWastedBytes
+                        }
+                    }
                 }
             }
 
@@ -343,6 +398,7 @@ Page {
                 }
                 TextField {
                     id: searchField
+                    objectName: "searchField"
                     placeholderText: "Search title or artist..."
                     // Proportional with a cap and a floor, matching the
                     // playlist picker above it. The floor is what lets a
@@ -398,16 +454,19 @@ Page {
                 Layout.fillWidth: true
                 spacing: 8
                 Button {
+                    objectName: "selectAllButton"
                     text: "Select All"
                     enabled: !cleanupController.busy && plansListView.count > 0
                     onClicked: confirmSelectAllDialog.open()
                 }
                 Button {
+                    objectName: "deselectAllButton"
                     text: "Deselect All"
                     enabled: !cleanupController.busy && plansListView.count > 0
                     onClicked: cleanupController.setAllIncluded(false)
                 }
                 Button {
+                    objectName: "stageButton"
                     text: "Stage Selected for Deletion"
                     enabled: !cleanupController.busy && !cleanupController.writing && cleanupController.includedCount > 0
                     ToolTip.visible: hovered
@@ -531,6 +590,7 @@ Page {
             // Room to scroll the last row clear of the Save overlay (bottom right).
             bottomMargin: 80
             id: plansListView
+            objectName: "plansList"
             // Not draggable when everything already fits.
             interactive: contentHeight > height
             Layout.fillWidth: true

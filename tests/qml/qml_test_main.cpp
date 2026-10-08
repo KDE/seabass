@@ -237,6 +237,42 @@ public:
         return written > 0 ? library : QString();
     }
 
+    // A copy with `groups` more duplicate pairs beside the fixture's own:
+    // "Song N" in folderA and in folderB, each pair its own length, so a
+    // Clean Up scan lists enough groups to scroll.
+    Q_INVOKABLE QString libraryWithDuplicateGroups(const QString &fromLibrary, int groups)
+    {
+        const QString library = copy(fromLibrary, false);
+        if (library.isEmpty()) {
+            return {};
+        }
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
+            != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        bool ok = true;
+        for (int i = 1; ok && i <= groups; ++i) {
+            for (const char *folder : {"folderA", "folderB"}) {
+                const std::string n = std::to_string(i);
+                const std::string sql =
+                    "INSERT INTO Track (length, path, filename, title, artist, albumArtId, rating, fileType, "
+                    "isAnalyzed, dateCreated, dateAdded, isAvailable, isMetadataOfPackedTrackChanged, "
+                    "isPerfomanceDataOfPackedTrackChanged, isMetadataImported, pdbImportKey, isBeatGridLocked, "
+                    "originDatabaseUuid, streamingFlags, explicitLyrics, lastEditTime, isPlayed) "
+                    "SELECT length + " + std::to_string(i * 10) + ", '../" + folder + "/Song " + n + ".mp3', 'Song "
+                    + n + ".mp3', 'Song " + n + "', artist, albumArtId, rating, fileType, isAnalyzed, dateCreated, "
+                    "dateAdded, isAvailable, isMetadataOfPackedTrackChanged, isPerfomanceDataOfPackedTrackChanged, "
+                    "isMetadataImported, pdbImportKey, isBeatGridLocked, originDatabaseUuid, streamingFlags, "
+                    "explicitLyrics, lastEditTime, isPlayed FROM Track WHERE id = 1;";
+                ok = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+            }
+        }
+        sqlite3_close(db);
+        return ok ? library : QString();
+    }
+
 private:
     QString copy(const QString &fromLibrary, bool eraseImages)
     {

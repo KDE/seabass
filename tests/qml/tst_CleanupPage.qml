@@ -199,6 +199,113 @@ TestCase {
         }
     }
 
+    // Scrolling the groups folds the header's description away and keeps
+    // its controls. Twelve more groups than the fixture's one, at a
+    // typical window, so the list has somewhere to scroll to.
+    readonly property var headerControls: ["selectAllButton", "deselectAllButton", "stageButton",
+                                           "playlistPicker", "searchField", "duplicateInfo"]
+
+    function scrollablePage() {
+        const library = artworkFixture.libraryWithDuplicateGroups(testCase.fixtureEngineRoot, 12);
+        verify(library.length > 0, "the fixture copy must be made");
+        const page = createTemporaryObject(enginePageComponent, testCase,
+                                           {width: 1000, height: 700, enginePath: library});
+        verify(page, "page did not instantiate");
+        const list = findByObjectName(page, "plansList");
+        verify(list, "the group list was not found");
+        tryCompare(list, "count", 13, 10000, "the scan never listed the fixture's groups");
+        waitForRendering(page);
+        verify(list.contentHeight > list.height * 2, "the list must have room to scroll");
+        return page;
+    }
+
+    // Shown, usable, and inside the header: a control the fold clipped
+    // or pushed under the list would still read visible and enabled.
+    function verifyInHeader(page, item, name) {
+        verify(item, name + " was not found");
+        verify(item.visible, name + " is hidden");
+        const top = item.mapToItem(page, 0, 0).y;
+        verify(top >= 0 && top + item.height <= page.header.height + 0.5,
+               name + " spans " + top + " to " + (top + item.height) + " in a " + page.header.height + " header");
+    }
+
+    function scrollDown(list, notches) {
+        for (let i = 0; i < notches; ++i) {
+            mouseWheel(list, list.width / 2, list.height / 2, 0, -120);
+            wait(30);
+        }
+    }
+
+    function test_scrollingFoldsTheHeaderAndKeepsItsControls() {
+        const page = scrollablePage();
+        const list = findByObjectName(page, "plansList");
+        const details = findByObjectName(page, "headerDetails");
+        verify(details && details.visible, "the description shows before any scroll");
+        const fullHeader = page.header.height;
+        const enabled = {};
+        for (const name of headerControls) {
+            const control = findByObjectName(page, name);
+            verifyInHeader(page, control, name);
+            enabled[name] = control.enabled;
+        }
+
+        if (screenshotDir) {
+            grabImage(page).save(screenshotDir + "/CleanupPage-header-full.png");
+        }
+
+        scrollDown(list, 3);
+        tryVerify(() => !details.visible, 2000, "scrolling never folded the description");
+        const topRow = list.indexAt(0, list.contentY + 1);
+        const contentY = list.contentY;
+        waitForRendering(page);
+        verify(page.header.height < fullHeader - 50,
+               "folded header is " + page.header.height + ", was " + fullHeader);
+        // Within a pixel: the wheel's own scroll can still be easing out.
+        fuzzyCompare(list.contentY, contentY, 1, "folding moved the list");
+        compare(list.indexAt(0, list.contentY + 1), topRow, "folding changed the row at the top");
+        for (const name of headerControls) {
+            const control = findByObjectName(page, name);
+            verifyInHeader(page, control, name);
+            compare(control.enabled, enabled[name], name + " changed whether it is usable");
+        }
+        verifyInHeader(page, findByObjectName(page, "crumbRow"), "the breadcrumb");
+        if (screenshotDir) {
+            grabImage(page).save(screenshotDir + "/CleanupPage-header-folded.png");
+        }
+
+        // Up to the very top again: unfolded, as it was.
+        for (let i = 0; i < 60 && !list.atYBeginning; ++i) {
+            mouseWheel(list, list.width / 2, list.height / 2, 0, 120);
+            wait(30);
+        }
+        verify(list.atYBeginning, "the wheel never got back to the top");
+        tryVerify(() => !list.moving, 2000, "the list never came to rest");
+        tryCompare(page.header, "height", fullHeader, 2000, "the header did not unfold at the top");
+        verify(details.visible);
+        verifyInHeader(page, findByObjectName(page, "duplicateInfo"), "duplicateInfo");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/CleanupPage-header-unfolded.png");
+        }
+    }
+
+    // A keypress moves contentY and nothing else; one notch past the
+    // point where it folds, it folds and stays folded.
+    function test_foldedHeaderIsStableJustPastTheThreshold() {
+        const page = scrollablePage();
+        const list = findByObjectName(page, "plansList");
+        const details = findByObjectName(page, "headerDetails");
+        list.contentY = list.originY + 40;
+        tryVerify(() => !details.visible, 2000, "the header did not fold");
+        const heights = [];
+        for (let i = 0; i < 10; ++i) {
+            wait(50);
+            heights.push(page.header.height);
+        }
+        verify(heights.every((h) => h === heights[0]), "the header kept resizing: " + heights);
+        verify(!details.visible, "the header unfolded by itself");
+    }
+
     // A look at the narrow case, since the failure this file exists for
     // was found in a screenshot and not in a number.
     function test_screenshot() {
