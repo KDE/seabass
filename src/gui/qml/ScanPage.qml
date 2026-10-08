@@ -939,17 +939,24 @@ Page {
                     // (rowMouseArea below sits on top and claims every
                     // click first), purely decorative; the PlayerBar's
                     // own waveform is still the real interactive one.
-                    WaveformView {
-                        visible: trackDelegate.isPlaying
+                    //
+                    // Made in the playing row only. Made in every row and
+                    // hidden, each visible row held a Canvas and followed
+                    // the player's position on every tick, and every list
+                    // rebuild made them all again.
+                    Loader {
+                        active: trackDelegate.isPlaying
                         anchors.fill: parent
                         anchors.margins: 2
-                        opacity: 0.35
-                        waveformData: playbackController.waveform
-                        format: playbackController.currentFormat
-                        cueData: playbackController.cues
-                        trackDurationMs: playbackController.duration
-                        progress: playbackController.duration > 0
-                            ? playbackController.position / playbackController.duration : 0
+                        sourceComponent: WaveformView {
+                            opacity: 0.35
+                            waveformData: playbackController.waveform
+                            format: playbackController.currentFormat
+                            cueData: playbackController.cues
+                            trackDurationMs: playbackController.duration
+                            progress: playbackController.duration > 0
+                                ? playbackController.position / playbackController.duration : 0
+                        }
                     }
 
                     // Opens the track details column -- playing now
