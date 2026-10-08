@@ -86,6 +86,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/PageTitle.qml
     qml/common/SeabassCheckBox.qml
     qml/common/SeabassDialog.qml
+    qml/common/ScrollCollapse.qml
     qml/common/SpaceReclaimBar.qml
     qml/common/CueCoveragePie.qml
     qml/common/UnreferencedFilesNotice.qml
