@@ -4,14 +4,16 @@
 #
 # SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-# Build an Intel Seabass.app that starts on macOS 12 Monterey, and wrap it
-# in a .dmg.
+# Build a Seabass.app that starts on macOS 12 Monterey -- universal, for
+# Intel and Apple Silicon alike -- and wrap it in a .dmg.
 #
 #   QT_DIR=<Qt 6.8 macos dir> tools/macos-monterey-dmg.sh <source dir> <work dir> <out.dmg>
 #
 # QT_DIR is an official Qt 6.8 LTS install (aqt install-qt mac desktop 6.8.3
 # clang_64 -m qtmultimedia qtshadertools), e.g. .../6.8.3/macos.
 # SEABASS_RELEASE_CHANNEL is passed through to the build (dev when unset).
+# SEABASS_MAC_ARCHES picks the architectures, "x86_64 arm64" (universal)
+# when unset; "x86_64" makes the Intel-only package this started as.
 # SEABASS_SIGN_COMMAND and SEABASS_NOTARIZE_COMMAND work as in
 # tools/macos-universal-dmg.sh: the first signs the .app and then the .dmg,
 # which must then carry KDE e.V.'s Developer ID; the second notarises the
@@ -27,7 +29,9 @@
 # this builds the four libraries Seabass needs beside Qt itself, against
 # 12.0, and deploys with macdeployqt.
 #
-# The libraries are built once into <work dir>/deps and reused:
+# The libraries are built once into <work dir>/deps and reused, one prefix
+# per set of architectures; OpenSSL and SQLCipher once per architecture
+# and joined with lipo, TagLib for all of them in one go:
 #   - OpenSSL, static, only to be linked into SQLCipher;
 #   - SQLCipher 4 (the version and options craft-blueprint/libs/sqlcipher4
 #     uses), as libsqlcipher.0.dylib, which Seabass dlopen()s from the
@@ -53,18 +57,23 @@ mkdir -p "$work" || exit 1
 work="$(cd "$work" && pwd)" || exit 1
 
 target=12.0
-arch=x86_64
+read -r -a arches <<< "${SEABASS_MAC_ARCHES:-x86_64 arm64}"
+[ "${#arches[@]}" -gt 0 ] || { echo "SEABASS_MAC_ARCHES names no architecture" >&2; exit 1; }
+for a in "${arches[@]}"; do
+    case "$a" in x86_64|arm64) ;; *) echo "unknown architecture: $a" >&2; exit 1 ;; esac
+done
+arch_list="${arches[*]}"          # "x86_64 arm64", for messages
+cmake_arches="$(IFS=';'; echo "${arches[*]}")"
 openssl_version=3.5.9
 sqlcipher_version=4.19.0
 sqlcipher_sha256=7075f96cbabe45b4ecfc2e6b1745a625f856f695b0827a5506ce9ed85b906aa0
 taglib_version=2.1.1
 
 deps="$work/deps"
-prefix="$deps/prefix"
+# One prefix per set of architectures: an Intel-only build's libraries in
+# a universal build's prefix would link and then fail on Apple Silicon.
+prefix="$deps/prefix-$(IFS=-; echo "${arches[*]}")"
 export MACOSX_DEPLOYMENT_TARGET="$target"
-# Every compile below goes through these, so nothing is built for the
-# host by accident: on an Apple Silicon Mac the default is arm64.
-cflags="-arch $arch -mmacosx-version-min=$target -O2"
 # Same SDK pin as the Craft roots (a stray newer SDK's ld cannot read it).
 export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
 jobs="$(sysctl -n hw.ncpu)"
@@ -81,54 +90,96 @@ fetch() {  # <url> <file> [sha256]
 
 mkdir -p "$deps" "$prefix" || exit 1
 
-if [ ! -f "$prefix/lib/libcrypto.a" ]; then
-    echo "== OpenSSL $openssl_version (static, $arch, macOS $target)"
+# Every compile below names its architecture, so nothing is built for the
+# host by accident: on an Apple Silicon Mac the default is arm64.
+build_openssl() {  # <arch> <prefix>
+    local a="$1" p="$2" target_name
+    case "$a" in x86_64) target_name=darwin64-x86_64-cc ;; arm64) target_name=darwin64-arm64-cc ;; esac
+    echo "== OpenSSL $openssl_version (static, $a, macOS $target)"
     fetch "https://github.com/openssl/openssl/releases/download/openssl-$openssl_version/openssl-$openssl_version.tar.gz" \
-        "openssl-$openssl_version.tar.gz" || exit 1
-    rm -rf "$deps/openssl-$openssl_version" && tar -xzf "$deps/openssl-$openssl_version.tar.gz" -C "$deps" || exit 1
-    (cd "$deps/openssl-$openssl_version" &&
-        ./Configure darwin64-x86_64-cc no-shared no-tests no-docs --prefix="$prefix" --libdir=lib \
-            -mmacosx-version-min="$target" >"$deps/openssl.log" 2>&1 &&
-        make -j"$jobs" >>"$deps/openssl.log" 2>&1 && make install_sw >>"$deps/openssl.log" 2>&1) ||
-        { echo "OpenSSL failed; see $deps/openssl.log" >&2; exit 1; }
-fi
+        "openssl-$openssl_version.tar.gz" || return 1
+    rm -rf "$deps/openssl-$a" && mkdir -p "$deps/openssl-$a" &&
+        tar -xzf "$deps/openssl-$openssl_version.tar.gz" -C "$deps/openssl-$a" --strip-components 1 || return 1
+    (cd "$deps/openssl-$a" &&
+        ./Configure "$target_name" no-shared no-tests no-docs --prefix="$p" --libdir=lib \
+            -mmacosx-version-min="$target" >"$deps/openssl-$a.log" 2>&1 &&
+        make -j"$jobs" >>"$deps/openssl-$a.log" 2>&1 && make install_sw >>"$deps/openssl-$a.log" 2>&1) ||
+        { echo "OpenSSL ($a) failed; see $deps/openssl-$a.log" >&2; return 1; }
+}
 
-if [ ! -f "$prefix/lib/libsqlcipher.0.dylib" ]; then
-    echo "== SQLCipher $sqlcipher_version ($arch, macOS $target)"
+build_sqlcipher() {  # <arch> <prefix>, with that arch's OpenSSL already in <prefix>
+    local a="$1" p="$2" host
+    case "$a" in x86_64) host=x86_64-apple-darwin ;; arm64) host=aarch64-apple-darwin ;; esac
+    echo "== SQLCipher $sqlcipher_version ($a, macOS $target)"
     fetch "https://github.com/sqlcipher/sqlcipher/archive/refs/tags/v$sqlcipher_version.tar.gz" \
-        "sqlcipher-$sqlcipher_version.tar.gz" "$sqlcipher_sha256" || exit 1
-    rm -rf "$deps/sqlcipher-$sqlcipher_version" && tar -xzf "$deps/sqlcipher-$sqlcipher_version.tar.gz" -C "$deps" || exit 1
+        "sqlcipher-$sqlcipher_version.tar.gz" "$sqlcipher_sha256" || return 1
+    rm -rf "$deps/sqlcipher-$a" && mkdir -p "$deps/sqlcipher-$a" &&
+        tar -xzf "$deps/sqlcipher-$sqlcipher_version.tar.gz" -C "$deps/sqlcipher-$a" --strip-components 1 || return 1
     # The feature set craft-blueprint/libs/sqlcipher4 builds with, so that
     # this package opens exactly what the regular one does.
-    features="-DSQLITE_HAS_CODEC -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS"
+    local features="-DSQLITE_HAS_CODEC -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS"
     features="$features -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_COLUMN_METADATA"
     features="$features -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-    (cd "$deps/sqlcipher-$sqlcipher_version" &&
-        CC="clang -arch $arch" CFLAGS="$cflags -I$prefix/include $features" \
-        LDFLAGS="-arch $arch -mmacosx-version-min=$target -L$prefix/lib -lcrypto" \
-        ./configure --host=x86_64-apple-darwin --prefix="$prefix" --disable-tcl --disable-static \
-            --with-tempstore=yes --dll-basename=libsqlcipher >"$deps/sqlcipher.log" 2>&1 &&
-        make -j"$jobs" TCLSH_CMD=/usr/bin/tclsh >>"$deps/sqlcipher.log" 2>&1 &&
-        make install TCLSH_CMD=/usr/bin/tclsh -j1 >>"$deps/sqlcipher.log" 2>&1) ||
-        { echo "SQLCipher failed; see $deps/sqlcipher.log" >&2; exit 1; }
+    (cd "$deps/sqlcipher-$a" &&
+        CC="clang -arch $a" CFLAGS="-arch $a -mmacosx-version-min=$target -O2 -I$p/include $features" \
+        LDFLAGS="-arch $a -mmacosx-version-min=$target -L$p/lib -lcrypto" \
+        ./configure --host="$host" --prefix="$p" --disable-tcl --disable-static \
+            --with-tempstore=yes --dll-basename=libsqlcipher >"$deps/sqlcipher-$a.log" 2>&1 &&
+        make -j"$jobs" TCLSH_CMD=/usr/bin/tclsh >>"$deps/sqlcipher-$a.log" 2>&1 &&
+        make install TCLSH_CMD=/usr/bin/tclsh -j1 >>"$deps/sqlcipher-$a.log" 2>&1) ||
+        { echo "SQLCipher ($a) failed; see $deps/sqlcipher-$a.log" >&2; return 1; }
     # Installed under libsqlite3's name, as Craft's recipe finds too.
-    for f in "$prefix"/lib/libsqlite3*.dylib; do
+    local f real
+    for f in "$p"/lib/libsqlite3*.dylib; do
         [ -e "$f" ] || continue
-        mv "$f" "$prefix/lib/$(basename "$f" | sed 's/sqlite3/sqlcipher/')" || exit 1
+        mv "$f" "$p/lib/$(basename "$f" | sed 's/sqlite3/sqlcipher/')" || return 1
     done
-    real="$(cd "$prefix/lib" && ls libsqlcipher.*.*.dylib 2>/dev/null | head -1)"
-    [ -n "$real" ] || real="$(cd "$prefix/lib" && ls libsqlcipher*.dylib | head -1)"
-    [ -f "$prefix/lib/$real" ] && [ ! -L "$prefix/lib/$real" ] || { echo "no SQLCipher library was installed" >&2; exit 1; }
-    cp "$prefix/lib/$real" "$prefix/lib/libsqlcipher.0.dylib.tmp" && mv "$prefix/lib/libsqlcipher.0.dylib.tmp" "$prefix/lib/libsqlcipher.0.dylib" || exit 1
-    install_name_tool -id "@rpath/libsqlcipher.0.dylib" "$prefix/lib/libsqlcipher.0.dylib" || exit 1
+    real="$(cd "$p/lib" && ls libsqlcipher.*.*.dylib 2>/dev/null | head -1)"
+    [ -n "$real" ] || real="$(cd "$p/lib" && ls libsqlcipher*.dylib | head -1)"
+    [ -f "$p/lib/$real" ] && [ ! -L "$p/lib/$real" ] || { echo "no SQLCipher library was installed ($a)" >&2; return 1; }
+    # Under a temporary name until it is finished: the name it ends up with
+    # is what tells a later run to skip this build, and a run cut short
+    # between here and the end must not leave that behind half done.
+    local lib="$p/lib/libsqlcipher.0.dylib.part"
+    cp "$p/lib/$real" "$lib" || return 1
+    install_name_tool -id "@rpath/libsqlcipher.0.dylib" "$lib" || return 1
+    # Its build leaves an LC_RPATH into this prefix: harmless where that
+    # does not exist, but a path from the build machine has no business in
+    # a package, and SQLCipher needs none (system libraries, and OpenSSL
+    # linked in). Cleared here, one architecture at a time: in the joined
+    # library each slice names its own prefix, and install_name_tool cannot
+    # take out of all slices what only one of them has.
+    local rpath
+    while IFS= read -r rpath; do
+        install_name_tool -delete_rpath "$rpath" "$lib" || return 1
+    done < <(otool -l "$lib" | awk '/LC_RPATH/{r=1} r&&/ path /{print $2; r=0}')
+    mv "$lib" "$p/lib/libsqlcipher.0.dylib" || return 1
+}
+
+mkdir -p "$prefix/lib" "$prefix/include" || exit 1
+if [ ! -f "$prefix/lib/libsqlcipher.0.dylib" ]; then
+    # Each architecture on its own, then one library with every slice.
+    for a in "${arches[@]}"; do
+        p="$deps/single-$a"
+        [ -f "$p/lib/libcrypto.a" ] || build_openssl "$a" "$p" || exit 1
+        [ -f "$p/lib/libsqlcipher.0.dylib" ] || build_sqlcipher "$a" "$p" || exit 1
+    done
+    echo "== joining OpenSSL and SQLCipher: $arch_list"
+    for lib in libcrypto.a libssl.a libsqlcipher.0.dylib; do
+        inputs=()
+        for a in "${arches[@]}"; do inputs+=("$deps/single-$a/lib/$lib"); done
+        lipo -create "${inputs[@]}" -output "$prefix/lib/$lib" || exit 1
+    done
+    # The headers are the same for every architecture.
+    cp -R "$deps/single-${arches[0]}/include/." "$prefix/include/" || exit 1
 fi
 
 if [ ! -f "$prefix/lib/libtag.a" ]; then
-    echo "== TagLib $taglib_version (static, $arch, macOS $target)"
+    echo "== TagLib $taglib_version (static, $arch_list, macOS $target)"
     fetch "https://taglib.org/releases/taglib-$taglib_version.tar.gz" "taglib-$taglib_version.tar.gz" || exit 1
-    rm -rf "$deps/taglib-$taglib_version" && tar -xzf "$deps/taglib-$taglib_version.tar.gz" -C "$deps" || exit 1
+    rm -rf "$deps/taglib-$taglib_version" "$deps/taglib-build" && tar -xzf "$deps/taglib-$taglib_version.tar.gz" -C "$deps" || exit 1
     cmake -S "$deps/taglib-$taglib_version" -B "$deps/taglib-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_OSX_SYSROOT="$SDKROOT" \
+        -DCMAKE_OSX_ARCHITECTURES="$cmake_arches" -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_OSX_SYSROOT="$SDKROOT" \
         -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BINDINGS=OFF \
         -DCMAKE_INSTALL_PREFIX="$prefix" >"$deps/taglib.log" 2>&1 &&
         cmake --build "$deps/taglib-build" >>"$deps/taglib.log" 2>&1 &&
@@ -148,15 +199,18 @@ if grep -q "AGL" "$wrap_gl"; then
     ! grep -q "AGL" "$wrap_gl" || { echo "could not drop AGL from $wrap_gl" >&2; exit 1; }
 fi
 
-echo "== Seabass ($arch, macOS $target, Qt $(basename "$(dirname "$qt")"))"
-build="$work/build"
+echo "== Seabass ($arch_list, macOS $target, Qt $(basename "$(dirname "$qt")"))"
+# One per set of architectures, like the prefix: a build configured for
+# another set keeps that set's library paths in its cache.
+build="$work/build-$(IFS=-; echo "${arches[*]}")"
 cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_OSX_SYSROOT="$SDKROOT" \
+    -DCMAKE_OSX_ARCHITECTURES="$cmake_arches" -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_OSX_SYSROOT="$SDKROOT" \
     -DCMAKE_PREFIX_PATH="$qt;$prefix" -DCMAKE_FIND_FRAMEWORK=LAST \
     -DSEABASS_TESTS=OFF -DSEABASS_LIBDJINTEROP_TESTS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Boost=ON \
     -DSEABASS_RELEASE_CHANNEL="${SEABASS_RELEASE_CHANNEL:-dev}" >"$work/configure.log" 2>&1 ||
     { echo "configure failed; see $work/configure.log" >&2; exit 1; }
-# A TagLib found anywhere but here would be the host's arm64 one.
+# A TagLib found anywhere but here would be the host's own, of one
+# architecture only.
 grep -q "TagLib_DIR:PATH=$prefix" "$build/CMakeCache.txt" ||
     { echo "the build did not find the TagLib built here" >&2; grep TagLib "$build/CMakeCache.txt" >&2; exit 1; }
 cmake --build "$build" >"$work/build.log" 2>&1 || { echo "build failed; see $work/build.log" >&2; exit 1; }
@@ -172,13 +226,10 @@ rm -rf "$app" && cp -R "$built_app" "$app" || exit 1
 cp "$cli" "$app/Contents/MacOS/seabass-cli" || exit 1
 mkdir -p "$app/Contents/Frameworks" || exit 1
 cp "$prefix/lib/libsqlcipher.0.dylib" "$app/Contents/Frameworks/" || exit 1
-# Its build left an LC_RPATH into <work>/deps: harmless where that does not
-# exist, but a path from the build machine has no business in a package,
-# and SQLCipher needs none (system libraries, and OpenSSL linked in).
-otool -l "$app/Contents/Frameworks/libsqlcipher.0.dylib" | awk '/LC_RPATH/{r=1} r&&/ path /{print $2; r=0}' |
-    while IFS= read -r rpath; do
-        install_name_tool -delete_rpath "$rpath" "$app/Contents/Frameworks/libsqlcipher.0.dylib" 2>/dev/null || exit 1
-    done || { echo "could not clear SQLCipher's rpaths" >&2; exit 1; }
+# No rpath left into the build machine (see build_sqlcipher), in any slice.
+if otool -arch all -l "$app/Contents/Frameworks/libsqlcipher.0.dylib" | grep -q LC_RPATH; then
+    echo "SQLCipher still names an rpath" >&2; exit 1
+fi
 "$qt/bin/macdeployqt" "$app" -qmldir="$src/src/gui/qml" -executable="$app/Contents/MacOS/seabass-cli" \
     >"$work/macdeployqt.log" 2>&1 || { echo "macdeployqt failed; see $work/macdeployqt.log" >&2; exit 1; }
 # macdeployqt deploys every Qt SQL driver it finds, and three of them need
@@ -191,17 +242,28 @@ if grep -i "^ERROR" "$work/macdeployqt.log" | grep -vE 'libmimerapi|libiodbc|lib
     echo "macdeployqt reported errors" >&2; exit 1
 fi
 
-# Qt's binaries are universal; the package is for Intel Macs only, and
-# carrying an arm64 slice nobody runs would double its size.
-echo "== thinning to $arch"
+# Every binary carries exactly the architectures asked for. Qt's are
+# universal, so a one-architecture package thins them (an arm64 slice
+# nobody runs would double an Intel package's size); a binary missing one
+# is a package that would not start on that kind of Mac.
+wanted="$(printf '%s\n' "${arches[@]}" | sort | tr '\n' ' ')"
+echo "== architectures: $arch_list"
 thinned=0
 while IFS= read -r f; do
     archs="$(lipo -archs "$f" 2>/dev/null)" || continue
-    case "$archs" in
-        "$arch") : ;;
-        *"$arch"*) lipo -thin "$arch" "$f" -output "$f.thin" && mv "$f.thin" "$f" || exit 1; thinned=$((thinned+1)) ;;
-        *) echo "  NO $arch SLICE: ${f#$app/} ($archs)" >&2; exit 1 ;;
-    esac
+    have="$(printf '%s\n' $archs | sort | tr '\n' ' ')"
+    [ "$have" = "$wanted" ] && continue
+    for a in "${arches[@]}"; do
+        case " $archs " in *" $a "*) ;; *) echo "  NO $a SLICE: ${f#$app/} ($archs)" >&2; exit 1 ;; esac
+    done
+    if [ "${#arches[@]}" -eq 1 ]; then
+        lipo -thin "${arches[0]}" "$f" -output "$f.thin" && mv "$f.thin" "$f" || exit 1
+    else
+        extract=()
+        for a in "${arches[@]}"; do extract+=(-extract "$a"); done
+        lipo "$f" "${extract[@]}" -output "$f.thin" && mv "$f.thin" "$f" || exit 1
+    fi
+    thinned=$((thinned+1))
 done < <(find "$app" -type f)
 echo "  $thinned thinned"
 
@@ -213,10 +275,14 @@ newer=0; total=0
 while IFS= read -r f; do
     lipo -archs "$f" >/dev/null 2>&1 || continue
     total=$((total+1))
-    minos="$(otool -l "$f" | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit} /LC_VERSION_MIN_MACOSX/{v=1} v&&/version/{print $2; exit}')"
-    if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$target" | sort -V | tail -1)" != "$target" ]; then
-        echo "  ${f#$app/}: minimum macOS ${minos:-unknown}" >&2; newer=$((newer+1))
-    fi
+    # Per slice: a universal binary whose arm64 half needs 13 does not
+    # start on an M1 that stayed on 12.
+    for a in "${arches[@]}"; do
+        minos="$(otool -arch "$a" -l "$f" | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit} /LC_VERSION_MIN_MACOSX/{v=1} v&&/version/{print $2; exit}')"
+        if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$target" | sort -V | tail -1)" != "$target" ]; then
+            echo "  ${f#$app/} ($a): minimum macOS ${minos:-unknown}" >&2; newer=$((newer+1))
+        fi
+    done
 done < <(find "$app" -type f)
 echo "  $total Mach-O files, $newer needing a newer macOS"
 [ "$newer" -eq 0 ] || exit 1
@@ -250,12 +316,18 @@ fi
 codesign --verify --deep --strict "$app" || { echo "  the bundle does not verify" >&2; exit 1; }
 echo "  verifies"
 
-# Run, under Rosetta on Apple Silicon: a bundle that loads nothing it
-# lacks still has to start.
+# Every slice run, the Intel one under Rosetta on Apple Silicon: a bundle
+# that loads nothing it lacks still has to start. Rosetta is asked about
+# first, so that a runner without it is named as the reason.
 echo "== the bundle starts"
-arch -x86_64 "$app/Contents/MacOS/seabass-cli" --help >/dev/null 2>&1 </dev/null ||
-    { echo "  seabass-cli does not run" >&2; exit 1; }
-echo "  seabass-cli runs"
+for a in "${arches[@]}"; do
+    if [ "$a" = x86_64 ] && [ "$(uname -m)" = arm64 ] && ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+        echo "  this Mac cannot run x86_64 code (no Rosetta), so the Intel slice is unchecked: refused" >&2; exit 1
+    fi
+    arch -"$a" "$app/Contents/MacOS/seabass-cli" --help >/dev/null 2>&1 </dev/null ||
+        { echo "  the $a slice of seabass-cli does not run" >&2; exit 1; }
+    echo "  $a slice runs"
+done
 
 echo "== building $out_dmg"
 rm -f "$out_dmg" || exit 1
