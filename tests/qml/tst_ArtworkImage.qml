@@ -43,6 +43,16 @@ TestCase {
         const image = findChild(art, "artworkImage");
         compare(image.visible, true);
         compare(image.status, Image.Ready);
+        // It fades in rather than popping in, and ends fully there.
+        tryCompare(image, "opacity", 1, 2000);
+    }
+
+    // Nothing loaded, nothing to fade: transparent, so no half-drawn frame
+    // shows before the art arrives.
+    function test_nothingLoadedIsTransparent() {
+        const art = make("", "");
+        const image = findChild(art, "artworkImage");
+        compare(image.opacity, 0);
     }
 
     // The case the readers leave to it: an Engine row naming art that is
