@@ -31,7 +31,7 @@ Item {
     visible: false
 
     required property Flickable flickable
-    // How much taller the list gets when the header folds.
+    // How much taller the list gets when the header folds, or more.
     property real collapsibleHeight: 0
     // How far the list has to be scrolled before the header folds.
     property real threshold: Theme.pageMargin * 2
