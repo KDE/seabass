@@ -97,7 +97,10 @@ TestCase {
         var cancel = footerButton(dialog, "djGuardCancelButton");
         verify(cancel !== null, "a Cancel button");
         cancel.clicked();
-        tryCompare(dialog, "opened", false);
+        // Gone, not only closing: under a style whose dialog fades out
+        // (org.kde.desktop), opened turns false when the fade starts and
+        // closed(), which tells the guard, comes when it ends.
+        tryCompare(dialog, "visible", false);
         compare(guard.dialogOpen, false, "the guard goes back to its slow poll");
         dialog.sync();
         wait(50);

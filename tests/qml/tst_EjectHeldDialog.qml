@@ -45,7 +45,10 @@ TestCase {
             grabImage(testCase).save(screenshotDir + "/eject-held-rekordbox.png");
         }
         footerButton(dialog, "ejectCancelButton").clicked();
-        tryCompare(dialog, "opened", false);
+        // Gone, not only closing: under a style whose dialog fades out
+        // (org.kde.desktop), opened turns false when the fade starts and
+        // closed(), which dismisses the held eject, comes when it ends.
+        tryCompare(dialog, "visible", false);
         compare(media.ejectHeldBy, "", "Cancel lets it be");
     }
 
