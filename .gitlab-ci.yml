@@ -840,6 +840,85 @@ linux:build-test:
     - chown -R runner build
     - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
 
+# The suite again, against Qt 6.8.3 -- the Qt Seabass ships on macOS and
+# stays on (Sebastian, 2026-10-08: Qt 6.8 for the foreseeable future, so
+# that Macs that stop at macOS 12 are served too). linux:build-test above
+# uses Ubuntu's Qt, which is newer; this is the lane that notices a newer Qt
+# API, or a behaviour only 6.8 has, before a package does. Qt's own 6.8.3
+# binaries through aqtinstall, everything else from Ubuntu as above, minus
+# Ubuntu's Qt and plus the system libraries Qt's binaries load -- the xcb
+# ones above all: the QML suites run on xcb under xvfb, and Qt's own xcb
+# plugin will not load without libxcb-cursor0 and its siblings, which
+# Ubuntu's Qt packages used to pull in. fontconfig (fc-cache) and
+# libudev-dev (the stick hardware probe) too: the same packages brought
+# them to linux:build-test.
+linux:qt68:
+  stage: build
+  image: ubuntu:26.04
+  timeout: 3h
+  variables:
+    CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+    CCACHE_MAXSIZE: "3G"
+    CCACHE_COMPILERCHECK: content
+    SEABASS_QT_VERSION: "6.8.3"
+  cache:
+    - key: linux-qt68-ccache-v1
+      paths:
+        - .ccache
+    - key: linux-qt68-qt-6.8.3
+      paths:
+        - qt68/
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends
+        ca-certificates
+        build-essential cmake ninja-build git pkg-config
+        libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev libudev-dev
+        python3 python3-venv
+        libgl1-mesa-dev libegl1 libxkbcommon-dev libxkbcommon-x11-0 libfontconfig1 libfreetype6 fontconfig
+        libdbus-1-3 libglib2.0-0 libpulse0
+        libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
+        libxcb-randr0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xinput0 libxcb-xkb1
+        xvfb unzip 7zip
+        ccache
+        fonts-noto-core
+    - fc-cache -f
+    - |
+      if [ ! -x "qt68/$SEABASS_QT_VERSION/gcc_64/bin/qmake" ]; then
+        python3 -m venv /tmp/aqt-venv
+        /tmp/aqt-venv/bin/python -m pip install --quiet aqtinstall
+        /tmp/aqt-venv/bin/aqt install-qt linux desktop "$SEABASS_QT_VERSION" linux_gcc_64 -O qt68 -m qtmultimedia qtshadertools
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      variables:
+        CTEST_LABEL_ARGS: ""
+    - if: '$CI_COMMIT_TAG'
+      variables:
+        CTEST_LABEL_ARGS: ""
+    - when: on_success
+      variables:
+        CTEST_LABEL_ARGS: "-LE integration"
+  script:
+    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64"
+      -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    # Not Ubuntu's: configure must have found the Qt asked for.
+    - grep -q "Qt6Core_DIR:PATH=$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64" build/CMakeCache.txt
+    - |
+      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
+      set -- $QUOTA
+      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
+      [ "$JOBS" -lt 1 ] && JOBS=1
+      cmake --build build -j"$JOBS"
+    - ccache --show-stats
+    - useradd -m runner
+    - chown -R runner build
+    - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
+
 # ---- Linux: the package, on a release tag only ----
 #
 # A tarball of the two binaries and the desktop/icon files, not an
