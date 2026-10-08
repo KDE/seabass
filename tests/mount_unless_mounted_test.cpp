@@ -153,6 +153,33 @@ int main()
         std::cout << "case (unmounting tries again before it reports a refusal) OK\n";
     }
 
+    // A refusal the mounter says will last -- rekordbox holding the
+    // library open -- is reported at once: no wait cures it, and on a Mac
+    // eight attempts made the eject take half a minute to fail.
+    {
+        struct HeldMounter : seabass::application::RemovableMediaMounter
+        {
+            int calls = 0;
+            std::optional<std::string> mount(const std::string &, std::string &) override { return std::nullopt; }
+            bool unmount(const std::string &, std::string &error) override
+            {
+                ++calls;
+                error = "rekordbox has files on this stick open.";
+                return false;
+            }
+            bool release(const std::string &, std::string &) override { return true; }
+            bool lastRefusalIsLasting() const override { return true; }
+        };
+        int slept = 0;
+        HeldMounter held;
+        std::string error;
+        assert(!seabass::application::unmountPersistently(held, "/dev/disk5", error, 8, std::chrono::milliseconds(1),
+                                                          [&slept](std::chrono::milliseconds) { ++slept; }));
+        assert(held.calls == 1 && slept == 0 && "asked once, no waiting");
+        assert(error == "rekordbox has files on this stick open.");
+        std::cout << "case (a lasting refusal is reported at once) OK\n";
+    }
+
     std::cout << "mount_unless_mounted_test: all passed\n";
     return 0;
 }

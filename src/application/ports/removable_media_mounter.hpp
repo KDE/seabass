@@ -31,6 +31,18 @@ public:
     // instead.
     virtual bool unmount(const std::string &devicePath, std::string &errorMessage) = 0;
 
+    // After unmount() has failed: true when asking again in a few seconds
+    // cannot help, because what holds the stick keeps it for as long as it
+    // runs -- rekordbox or Engine DJ with the library open. unmountPersistently()
+    // stops retrying then, and the message is the one to show. False, the
+    // default, for anything that may let go on its own.
+    virtual bool lastRefusalIsLasting() const { return false; }
+
+    // After unmount() has failed: the program that held the stick, when the
+    // system named one ("rekordbox", "Engine DJ", or an executable's name);
+    // empty when it did not. For telling the user what to close.
+    virtual std::string lastRefusalHolder() const { return {}; }
+
     // Releases the filesystem so the underlying disk can be safely
     // repartitioned/reformatted, without ejecting or otherwise signaling
     // physical removal. Callers that intend to keep operating on the same

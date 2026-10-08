@@ -190,17 +190,45 @@ bool isRekordboxRunning()
     return isProcessRunning("rekordbox");
 }
 
+namespace
+{
+// "Engine DJ" is the current name (and the Windows executable, "Engine
+// DJ.exe"); "Engine Prime" was the previous one. Linux's 15-byte comm
+// truncation is not a concern for any of these.
+constexpr const char *EngineDjProcessNames[] = {"Engine DJ", "EngineDJ", "Engine Prime", "EnginePrime", "Engine OS"};
+
+// Its own, not the platform branches' toLower: the fallback branch above
+// has none, and this is needed on every platform.
+std::string lowered(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+}  // namespace
+
 bool isEngineDjRunning()
 {
-    // "Engine DJ" is the current name (and the Windows executable, "Engine
-    // DJ.exe"); "Engine Prime" was the previous one. Linux's 15-byte comm
-    // truncation is not a concern for any of these.
-    for (const char *name : {"Engine DJ", "EngineDJ", "Engine Prime", "EnginePrime", "Engine OS"}) {
+    for (const char *name : EngineDjProcessNames) {
         if (isProcessRunning(name)) {
             return true;
         }
     }
     return false;
+}
+
+std::string djSoftwareForProcessName(const std::string &processName)
+{
+    const std::string name = lowered(processName);
+    if (name == "rekordbox" || name == "rekordbox.exe") {
+        return "rekordbox";
+    }
+    for (const char *engine : EngineDjProcessNames) {
+        const std::string candidate = lowered(engine);
+        if (name == candidate || name == candidate + ".exe") {
+            return "Engine DJ";
+        }
+    }
+    return {};
 }
 
 bool isConflictingDjSoftwareRunning()

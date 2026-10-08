@@ -6,6 +6,9 @@
 
 #include "infrastructure/media/macos_disk_description.hpp"
 #include "infrastructure/process/run_command.hpp"
+#include "infrastructure/system/rekordbox_process_detector.hpp"
+
+#include <regex>
 
 namespace seabass::infrastructure::media
 {
@@ -38,6 +41,28 @@ bool runDiskutil(const std::vector<std::string> &args, const char *what, std::st
 
 }  // namespace
 
+DiskutilRefusal describeDiskutilRefusal(const std::string &rawOutput)
+{
+    DiskutilRefusal refusal;
+    refusal.message = rawOutput;
+    static const std::regex dissent(R"(dissented by PID (\d+) \(([^)]*)\))");
+    std::smatch match;
+    if (!std::regex_search(rawOutput, match, dissent)) {
+        return refusal;
+    }
+    refusal.pid = std::stol(match[1].str());
+    const std::string path = match[2].str();
+    const std::string executable = path.substr(path.find_last_of('/') + 1);
+    const std::string djSoftware = system::djSoftwareForProcessName(executable);
+    refusal.holder = djSoftware.empty() ? executable : djSoftware;
+    refusal.lasting = !djSoftware.empty();
+    refusal.message = refusal.lasting
+        ? refusal.holder + " has files on this stick open. Quit " + refusal.holder + ", then eject again."
+        : refusal.holder + " (PID " + std::to_string(refusal.pid)
+              + ") still has files on this stick open. Close it, then eject again.";
+    return refusal;
+}
+
 std::optional<std::string> DiskutilMediaMounter::mount(const std::string &devicePath, std::string &errorMessage)
 {
     auto bsdName = checkedDevice(devicePath, errorMessage);
@@ -65,7 +90,16 @@ bool DiskutilMediaMounter::unmount(const std::string &devicePath, std::string &e
     if (auto description = describeDisk(*bsdName)) {
         disk = description->wholeBsdName;
     }
-    return runDiskutil({"diskutil", "eject", "/dev/" + disk}, "eject", errorMessage);
+    m_lastRefusalLasting = false;
+    m_lastRefusalHolder.clear();
+    if (runDiskutil({"diskutil", "eject", "/dev/" + disk}, "eject", errorMessage)) {
+        return true;
+    }
+    const DiskutilRefusal refusal = describeDiskutilRefusal(errorMessage);
+    errorMessage = refusal.message;
+    m_lastRefusalLasting = refusal.lasting;
+    m_lastRefusalHolder = refusal.holder;
+    return false;
 }
 
 bool DiskutilMediaMounter::release(const std::string &devicePath, std::string &errorMessage)

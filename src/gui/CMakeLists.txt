@@ -109,6 +109,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/TransferOverlay.qml
     qml/common/PageScrollView.qml
     qml/common/DjSoftwareRunningDialog.qml
+    qml/common/EjectHeldDialog.qml
     qml/common/SaveOverlayButton.qml
     qml/common/UnsavedChangesDialog.qml
     qml/common/WatermarkLayer.qml

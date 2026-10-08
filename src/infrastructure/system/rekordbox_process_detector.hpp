@@ -34,4 +34,9 @@ bool isEngineDjRunning();
 bool isConflictingDjSoftwareRunning();
 std::string conflictingDjSoftwareName();
 
+// "rekordbox" or "Engine DJ" when `processName` (an executable's name,
+// any case) is one of theirs, empty otherwise. The same names the checks
+// above look for, so a program the guard knows is one the eject knows.
+std::string djSoftwareForProcessName(const std::string &processName);
+
 }  // namespace seabass::infrastructure::system
