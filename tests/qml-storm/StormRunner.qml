@@ -817,7 +817,11 @@ Item {
     function warningCounts(w) {
         // The anonymized fixture carries no cover images: a cover the
         // catalog names and the stick lacks is a case ArtworkImage handles.
-        if (w.indexOf("QQuickImage: Cannot open") >= 0) {
+        // "QQuickImage*" since the art is read off the GUI thread
+        // (18244872): the asynchronous reader names the type with the
+        // pointer, and the plain match let every missing cover fail the
+        // storm on the first page with a list.
+        if (/QQuickImage\*?: Cannot open/.test(w)) {
             return false;
         }
         if (w.indexOf("qrc:/") >= 0 || w.indexOf(".qml:") >= 0 || w.indexOf("TypeError") >= 0
