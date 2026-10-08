@@ -150,6 +150,10 @@ struct MediaTaskResult
     // the stick already mounted: only these are unmounted on quit.
     bool mountedHere = false;
     QString errorMessage;
+    // An eject refused because a program holds the stick: which one, and
+    // whether it is DJ software that keeps it as long as it runs.
+    QString heldBy;
+    bool heldByDjSoftware = false;
 };
 
 class MediaController : public QObject
@@ -160,6 +164,11 @@ class MediaController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString busyDevicePath READ busyDevicePath NOTIFY busyChanged)
+    // An eject a program refused, for the dialog that says which program
+    // to close: empty heldBy when there is none to show.
+    Q_PROPERTY(QString ejectHeldBy READ ejectHeldBy NOTIFY ejectHeldChanged)
+    Q_PROPERTY(bool ejectHeldByDjSoftware READ ejectHeldByDjSoftware NOTIFY ejectHeldChanged)
+    Q_PROPERTY(QString ejectHeldLabel READ ejectHeldLabel NOTIFY ejectHeldChanged)
 
 public:
     explicit MediaController(QObject *parent = nullptr);
@@ -172,6 +181,17 @@ public:
     // own delegate show a spinner instead of the eject icon for just the
     // stick actually being acted on, not every row.
     QString busyDevicePath() const { return m_busyTask.devicePath; }
+
+    QString ejectHeldBy() const { return m_ejectHeldBy; }
+    bool ejectHeldByDjSoftware() const { return m_ejectHeldByDjSoftware; }
+    QString ejectHeldLabel() const { return m_ejectHeldLabel; }
+    // The held eject's dialog: ask again, or let it be.
+    Q_INVOKABLE void retryHeldEject();
+    Q_INVOKABLE void dismissHeldEject();
+    // Test seam: as though an eject of `devicePath` was just refused by
+    // `holder`.
+    Q_INVOKABLE void noteEjectHeldForTesting(const QString &devicePath, const QString &label, const QString &holder,
+                                             bool djSoftware);
 
     Q_INVOKABLE void detect();
     // Re-asks every stick row whether the player would offer the rekordbox
@@ -282,6 +302,7 @@ public:
 signals:
     void errorMessageChanged();
     void busyChanged();
+    void ejectHeldChanged();
     // A mounted stick disappeared / the exact same stick (StickIdentity::
     // isSameStick) is back, by library id. identityStrength is
     // StickIdentity::strengthName() of the match, so the UI can say how
@@ -351,6 +372,11 @@ public:
     std::unique_ptr<application::RemovableMediaMonitor> m_monitor;
     QTimer m_debounceTimer;
     QString m_errorMessage;
+    QString m_ejectHeldBy;
+    bool m_ejectHeldByDjSoftware = false;
+    QString m_ejectHeldLabel;
+    QString m_ejectHeldDevicePath;
+    void setEjectHeld(const QString &devicePath, const QString &label, const QString &holder, bool djSoftware);
     QFutureWatcher<MediaTaskResult> m_watcher;
     bool m_busy = false;
     PendingTask m_busyTask;

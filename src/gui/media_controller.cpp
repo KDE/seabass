@@ -60,6 +60,10 @@ MediaTaskResult runMediaTask(bool mount, QString devicePath)
         // Tried for a few seconds before it is called a failure: see
         // unmountPersistently().
         result.success = application::unmountPersistently(*mounter, devicePath.toStdString(), error);
+        if (!result.success) {
+            result.heldBy = QString::fromStdString(mounter->lastRefusalHolder());
+            result.heldByDjSoftware = mounter->lastRefusalIsLasting();
+        }
     }
     if (!result.success) {
         result.errorMessage = QString::fromStdString(error);
@@ -921,12 +925,47 @@ void MediaController::onTaskFinished()
     // so in words that land on screen as though something were wrong with
     // the stick. The failure is still remembered, and the row still shows
     // the stick as unmounted with a Mount button that reports properly.
-    if (!task.automatic || result.success) {
+    // An eject a named program refused gets a dialog saying which program
+    // to close (EjectHeldDialog), not a line of the system's own words.
+    const bool held = !task.mount && !result.success && !result.heldBy.isEmpty();
+    if (held) {
+        setEjectHeld(task.devicePath, labelOf(task.devicePath), result.heldBy, result.heldByDjSoftware);
+    } else if (!task.automatic || result.success) {
         setErrorMessage(result.errorMessage);
     }
     emit busyChanged();
     detect();
     processQueue();
+}
+
+void MediaController::setEjectHeld(const QString &devicePath, const QString &label, const QString &holder,
+                                   bool djSoftware)
+{
+    m_ejectHeldDevicePath = devicePath;
+    m_ejectHeldLabel = label;
+    m_ejectHeldBy = holder;
+    m_ejectHeldByDjSoftware = djSoftware;
+    emit ejectHeldChanged();
+}
+
+void MediaController::retryHeldEject()
+{
+    const QString devicePath = m_ejectHeldDevicePath;
+    setEjectHeld({}, {}, {}, false);
+    if (!devicePath.isEmpty()) {
+        unmountStick(devicePath);
+    }
+}
+
+void MediaController::dismissHeldEject()
+{
+    setEjectHeld({}, {}, {}, false);
+}
+
+void MediaController::noteEjectHeldForTesting(const QString &devicePath, const QString &label, const QString &holder,
+                                              bool djSoftware)
+{
+    setEjectHeld(devicePath, label, holder, djSoftware);
 }
 
 void MediaController::unmountOwnMounts()

@@ -64,7 +64,11 @@ inline MountOutcome mountUnlessMounted(RemovableMediaLocator &locator, Removable
 // is busy" and the same request two seconds later goes through. Reporting
 // that first refusal gave an error for a stick that then unmounted fine
 // when asked again. So: `attempts` tries, `pause` apart, and only the
-// last refusal is reported. `sleep` is the test seam.
+// last refusal is reported -- unless the mounter says the refusal will
+// last (a DJ program holding the library open), which no wait cures: on a
+// Mac each attempt takes over two seconds, and eight of them made an eject
+// rekordbox was blocking take half a minute to fail. `sleep` is the test
+// seam.
 inline bool unmountPersistently(
     RemovableMediaMounter &mounter, const std::string &devicePath, std::string &errorMessage, int attempts = 8,
     std::chrono::milliseconds pause = std::chrono::milliseconds(750),
@@ -79,7 +83,7 @@ inline bool unmountPersistently(
             return true;
         }
         errorMessage = error;
-        if (attempt >= attempts) {
+        if (attempt >= attempts || mounter.lastRefusalIsLasting()) {
             return false;
         }
         sleep(pause);

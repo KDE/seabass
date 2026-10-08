@@ -2202,6 +2202,15 @@ add_executable(stick_presence_diff_test tests/stick_presence_diff_test.cpp)
 target_include_directories(stick_presence_diff_test PRIVATE src)
 add_test(NAME stick_presence_diff_test COMMAND stick_presence_diff_test)
 
+if(APPLE)
+    # diskutil's refusals, read: which program holds the stick, and whether
+    # retrying the eject can help.
+    add_executable(diskutil_refusal_test tests/diskutil_refusal_test.cpp)
+    target_link_libraries(diskutil_refusal_test PRIVATE seabass_core)
+    target_include_directories(diskutil_refusal_test PRIVATE src)
+    add_test(NAME diskutil_refusal_test COMMAND diskutil_refusal_test)
+endif()
+
 add_executable(mount_unless_mounted_test tests/mount_unless_mounted_test.cpp)
 target_include_directories(mount_unless_mounted_test PRIVATE src)
 add_test(NAME mount_unless_mounted_test COMMAND mount_unless_mounted_test)

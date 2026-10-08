@@ -89,6 +89,11 @@ ApplicationWindow {
         guard: djGuardCtrl
     }
 
+    // An eject a program refused: which one to close (MediaController).
+    EjectHeldDialog {
+        mediaController: mediaCtrl
+    }
+
     // ---- Edit mode, window-level pieces (see docs/edit-mode-and-cancel.md) ----
 
     // Quitting with staged changes: save them or throw them away first.
