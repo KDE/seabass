@@ -358,11 +358,14 @@ macos:universal:
     paths:
       - "kde-ci-universal/"
 
-# An Intel .dmg for macOS 12 Monterey, for the Intel Macs that stop there
-# (the 2017 MacBook Air, for one) and refuse the packages above: Craft's Qt
-# and every library in its cache need macOS 13.3. Qt 6.8 LTS is the last
-# Qt for macOS 12, so this builds against Qt's own 6.8 binaries, outside
-# Craft -- see tools/macos-monterey-dmg.sh for why not inside it.
+# A universal .dmg for macOS 12 Monterey and later, Intel and Apple Silicon
+# alike -- for the Macs that stop at 12 (the 2017 MacBook Air, for one) and
+# refuse the packages above: Craft's Qt and every library in its cache need
+# macOS 13.3. Qt 6.8 LTS is the last Qt for macOS 12, and Seabass stays on
+# it (Sebastian, 2026-10-08), so this builds against Qt's own 6.8 binaries,
+# which are universal, outside Craft -- see tools/macos-monterey-dmg.sh for
+# why not inside it. Both slices are run and read the fixture, so the
+# runner needs Rosetta; the script refuses a package it could not check.
 #
 # Same rules and the same signing as macos:universal: signed and notarised
 # on the Seabass/X.Y nightly (and its button), the only refs cleared for
@@ -441,12 +444,12 @@ macos:monterey:
       case "${CI_COMMIT_TAG:-}" in releases/*/*) channel="$(echo "$CI_COMMIT_TAG" | cut -d/ -f2)" ;; esac
       echo "Channel: $channel"
       SEABASS_RELEASE_CHANNEL="$channel" QT_DIR="$qt" src/tools/macos-monterey-dmg.sh src monterey-work \
-          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-12-x86_64.dmg"
-    # The same read-only check as the universal package, for its one slice.
+          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-12-universal.dmg"
+    # The same read-only check as the Craft-made universal package, both slices.
     - mkdir fixture-stick
     - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
     - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
-    - SEABASS_VERIFY_ARCHES=x86_64 src/tools/macos-verify-dmg.sh kde-ci-unverified/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
+    - src/tools/macos-verify-dmg.sh kde-ci-unverified/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
     - mkdir kde-ci-monterey
     - mv kde-ci-unverified/*.dmg kde-ci-unverified/*.dmg.sha256 kde-ci-monterey/
   after_script:
