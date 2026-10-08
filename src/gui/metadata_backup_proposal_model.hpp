@@ -97,6 +97,8 @@ public:
 
 private:
     void rebuildVisible();
+    // In the picked playlist, or true when none is picked.
+    bool inPlaylist(const domain::MetadataBackupProposal &proposal) const;
     bool matchesFilter(const domain::MetadataBackupProposal &proposal) const;
 
     std::vector<domain::MetadataBackupProposal> m_proposals;

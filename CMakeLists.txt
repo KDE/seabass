@@ -2460,6 +2460,16 @@ if(TARGET seabass_edit)
 
     # Compare Playlists over the anonymized Engine fixture: the playlists
     # listed, the pair the page opens on, the counts and the folded rows.
+    # Metadata Backup's Select All stays inside the picked playlist.
+    add_executable(metadata_backup_select_all_test
+        src/gui/metadata_backup_proposal_model.cpp
+        tests/metadata_backup_select_all_test.cpp
+    )
+    target_include_directories(metadata_backup_select_all_test PRIVATE src tests)
+    target_link_libraries(metadata_backup_select_all_test PRIVATE seabass_edit Qt6::Core Qt6::Gui Qt6::Qml)
+    add_test(NAME metadata_backup_select_all_test COMMAND metadata_backup_select_all_test)
+    set_tests_properties(metadata_backup_select_all_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(playlist_diff_controller_test
         src/gui/playlist_diff_controller.cpp
         src/gui/stick_events.cpp

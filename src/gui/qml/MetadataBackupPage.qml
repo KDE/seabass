@@ -608,7 +608,9 @@ Page {
                 ? (controller.canLoadMore
                     ? "Mark every track loaded so far for deletion. Scroll to the end of the list to load the rest."
                     : "Mark every track in the list for deletion from the Metadata Backup")
-                : "Stage every track on this stick's list, including any the search or playlist is hiding"
+                : (controller.selectedPlaylist.length > 0
+                    ? "Stage every track in “" + controller.selectedPlaylist + "”, including any the search is hiding"
+                    : "Stage every track on this stick's list, including any the search is hiding")
             summary: {
                 if (!controller.browsingStore) {
                     if (controller.stagedAddCount > 0) {
