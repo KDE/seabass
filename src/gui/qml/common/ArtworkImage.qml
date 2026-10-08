@@ -48,6 +48,13 @@ Item {
         anchors.fill: parent
         fillMode: artwork.fillMode
         visible: image.status === Image.Ready
+        // Fades in when it arrives: read off the GUI thread, the art comes
+        // a moment after its row, and popping in reads as a glitch. Short,
+        // so a list scrolled past does not shimmer.
+        opacity: image.status === Image.Ready ? 1 : 0
+        Behavior on opacity {
+            NumberAnimation { duration: 160; easing.type: Easing.OutQuad }
+        }
         asynchronous: true
         // Decoded to the drawn square, at the screen's pixel ratio: a
         // 1400 px cover shown at 32 px is a 32 px image's work. Square,
