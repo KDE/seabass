@@ -264,11 +264,19 @@ void BackupProposalListModel::stageAll()
     if (m_proposals.empty()) {
         return;
     }
-    // Every proposal, not every visible one. A search narrows what you
-    // are looking at and must not silently narrow what a button called
-    // "Select All" acts on, because the difference is invisible the
-    // moment the search is cleared. The tooltip says so.
-    m_staged.assign(m_proposals.size(), true);
+    // Every proposal in the picked playlist, or every one when none is
+    // picked -- the picker says what this backup is for, as the Restore
+    // page's does, and Select All must not reach past it: it staged the
+    // whole stick while the list showed one playlist. A search is
+    // different: it narrows what you are looking at, not what the backup
+    // is of, and must not silently narrow what Select All acts on, because
+    // the difference is invisible the moment the search is cleared. The
+    // tooltip says both. What is already staged outside the playlist stays.
+    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (inPlaylist(m_proposals[i])) {
+            m_staged[i] = true;
+        }
+    }
     if (!m_visible.empty()) {
         emit dataChanged(index(0), index(static_cast<int>(m_visible.size()) - 1), {StagedRole});
     }
@@ -332,18 +340,22 @@ void BackupProposalListModel::setFilter(const QString &search, const QString &pl
     endResetModel();
 }
 
+bool BackupProposalListModel::inPlaylist(const MetadataBackupProposal &proposal) const
+{
+    if (m_playlist.isEmpty()) {
+        return true;
+    }
+    const std::string wanted = m_playlist.toStdString();
+    const auto &playlists = proposal.stickTrack.playlists;
+    return std::any_of(playlists.begin(), playlists.end(),
+                       [&wanted](const domain::PlaylistMembership &member) { return member.name == wanted; });
+}
+
 bool BackupProposalListModel::matchesFilter(const MetadataBackupProposal &proposal) const
 {
     const auto &track = proposal.stickTrack;
-    if (!m_playlist.isEmpty()) {
-        const std::string wanted = m_playlist.toStdString();
-        const bool inPlaylist = std::any_of(track.playlists.begin(), track.playlists.end(),
-                                             [&wanted](const domain::PlaylistMembership &member) {
-                                                 return member.name == wanted;
-                                             });
-        if (!inPlaylist) {
-            return false;
-        }
+    if (!inPlaylist(proposal)) {
+        return false;
     }
     if (m_search.isEmpty()) {
         return true;
