@@ -112,14 +112,19 @@ Page {
     }
 
     // Scrolling the groups folds the header's description away (the
-    // paragraph, the uncatalogued files, the space bar) and leaves the
-    // crumb, the filters, the counts and the buttons: what is read once
-    // gives its room to the list, what is used stays. Back at the top of
-    // the list it unfolds again. See ScrollCollapse for when.
+    // paragraph and the uncatalogued files), slims the space card down to
+    // a bar, and leaves the crumb and the one row of controls: what is
+    // read once gives its room to the list, what is used stays. Back at
+    // the top of the list it unfolds again. See ScrollCollapse for when.
     ScrollCollapse {
         id: headerCollapse
         flickable: plansListView
-        collapsibleHeight: headerDetails.implicitHeight + headerLayout.spacing
+        // At most what the header gives back: all of it but the crumb row,
+        // which never folds. An over-estimate only makes it fold a little
+        // later on a list that barely overflows, and header plus list is
+        // the same height at every point of the fold, so the bound holds
+        // mid-fold too.
+        collapsibleHeight: root.header ? root.header.height - crumbRow.height : 0
     }
 
     header: ToolBar {
@@ -312,69 +317,97 @@ Page {
                         Layout.fillWidth: true
                         info: cleanupController.unreferencedFiles
                     }
-
-                    // What all this actually buys, drawn against the stick's real
-                    // capacity. A byte count alone says nothing about whether it
-                    // matters; the same figure as a block on a nearly-full stick
-                    // says it immediately.
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.topMargin: 4
-                        visible: plansListView.count > 0 && spaceBar.known
-                        implicitHeight: spaceBar.implicitHeight + 28
-                        color: Theme.surface
-                        border.color: Theme.borderSubtle
-                        border.width: 1
-                        radius: Theme.cornerRadius
-
-                        SpaceReclaimBar {
-                            id: spaceBar
-                            anchors.fill: parent
-                            anchors.margins: 14
-                            totalBytes: cleanupController.stickTotalBytes
-                            freeBytes: cleanupController.stickFreeBytes
-                            reclaimBytes: cleanupController.includedWastedBytes
-                            reclaimableBytes: cleanupController.totalWastedBytes
-                        }
-                    }
                 }
             }
 
-            // Flow, not RowLayout: a row keeps every child at its natural
-            // width and simply runs off the edge of a narrow window,
-            // which is how the playlist picker and the group count came
-            // to be invisible rather than merely cramped. A Flow wraps
-            // onto a second line instead.
+            // What all this actually buys, drawn against the stick's real
+            // capacity. A byte count alone says nothing about whether it
+            // matters; the same figure as a block on a nearly-full stick
+            // says it immediately. Folded, it stays as a slim bar with the
+            // figure on one line above it, and goes on following the
+            // ticks: it is the one number the scrolling is for.
+            Rectangle {
+                objectName: "spaceCard"
+                Layout.fillWidth: true
+                Layout.topMargin: 4 * (1 - headerCollapse.progress)
+                visible: plansListView.count > 0 && spaceBar.known
+                readonly property real padding: 14 + (Theme.tightSpacing - 14) * headerCollapse.progress
+                implicitHeight: spaceBar.implicitHeight + 2 * padding
+                color: Theme.surface
+                border.color: Theme.borderSubtle
+                border.width: 1
+                radius: Theme.cornerRadius
+
+                SpaceReclaimBar {
+                    id: spaceBar
+                    anchors.fill: parent
+                    anchors.margins: parent.padding
+                    compactness: headerCollapse.progress
+                    totalBytes: cleanupController.stickTotalBytes
+                    freeBytes: cleanupController.stickFreeBytes
+                    reclaimBytes: cleanupController.includedWastedBytes
+                    reclaimableBytes: cleanupController.totalWastedBytes
+                }
+            }
+
+            // Every control on one row: the playlist, the search, what the
+            // scan found, and the buttons. It was two rows and a label,
+            // which the header could spare while it was showing its
+            // paragraph but not once it folds, and one row reads as well
+            // unfolded too, so it is one row both ways.
             //
-            // Layout.minimumWidth: 0 is what makes that true, and without
-            // it the Flow was the widest thing on the page at every
-            // window size. A Flow's implicitWidth is its children laid
-            // out on ONE line -- the unwrapped width, 701px here -- and a
-            // ColumnLayout will not shrink a child below its implicit
-            // width unless a minimum says it may. So the Flow was handed
-            // 701 whatever the window did, never reached its own wrap
-            // point, and overflowed instead. Measured, not reasoned:
-            // tst_CleanupPage renders the page at 960, 700, 520 and 380
-            // and the row was 701 wide at all four.
-            //
-            // Everything inside sizes with `width:`. Layout.* attached
-            // properties do nothing here -- a Flow is a positioner, it
-            // places children and never sizes them, and it does not read
-            // them at all.
+            // Still a Flow, so a window too narrow for one row wraps onto
+            // a second instead of clipping. The widths are decided below,
+            // from the page's width and never from the Flow's: a Flow's
+            // width comes from its children, and a child sized from it is
+            // a loop Qt breaks by leaving a stale number. Layout.minimumWidth
+            // 0 lets the column hand the Flow less than its one-line width,
+            // without which it never wraps at all (tst_CleanupPage renders
+            // the page at 960, 700, 520 and 380 to keep that true).
             Flow {
                 id: filterRow
                 objectName: "filterRow"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                spacing: 12
-                Label {
-                    text: "Playlist:"
-                    color: Theme.textMuted
-                    anchors.verticalCenter: undefined
+                spacing: Theme.rowSpacing
+
+                // Who gets what. The counts give way first, down to their
+                // first clause; then the picker and the search, down to
+                // their floors. Past that the row does not fit, and each
+                // takes its own width and the Flow wraps.
+                QtObject {
+                    id: rowWidths
+                    readonly property real available: root.width - 2 * Theme.pageMargin
+                    readonly property real buttons: selectAllButton.implicitWidth + deselectAllButton.implicitWidth
+                        + stageButton.implicitWidth + (undoButton.visible ? undoButton.implicitWidth + filterRow.spacing : 0)
+                        + (stagedLabel.visible ? stagedLabel.implicitWidth + filterRow.spacing : 0)
+                    // Picker, search, counts and three buttons: five gaps.
+                    readonly property real room: available - buttons - 5 * filterRow.spacing
+                    readonly property real pickerFull: Theme.snap(Math.max(160, Math.min(260, root.width * 0.28)))
+                    readonly property real searchFull: Theme.snap(Math.max(110, Math.min(280, root.width * 0.3)))
+                    readonly property real pickerFloor: 160
+                    readonly property real searchFloor: 110
+                    readonly property real countsFloor: Math.min(countsLabel.implicitWidth, countsFirstClause.width)
+                    readonly property bool oneRow: room >= pickerFloor + searchFloor + countsFloor
+                    // What the picker and the search have between them once
+                    // the counts have given way as far as they go.
+                    readonly property real controls: Math.min(pickerFull + searchFull, room - countsFloor)
+                    readonly property real shrink: (pickerFull + searchFull - controls)
+                        / Math.max(1, pickerFull - pickerFloor + searchFull - searchFloor)
+                    readonly property real picker: oneRow ? Theme.snap(pickerFull - (pickerFull - pickerFloor) * shrink) : pickerFull
+                    readonly property real search: oneRow ? Theme.snap(searchFull - (searchFull - searchFloor) * shrink) : searchFull
+                    readonly property real counts: oneRow ? Math.min(countsLabel.implicitWidth, room - picker - search)
+                                                          : Math.min(countsLabel.implicitWidth, available)
                 }
+                TextMetrics {
+                    id: countsFirstClause
+                    font: countsLabel.font
+                    text: plansListView.count + " duplicate group(s)"
+                }
+
                 PlaylistPickerCombo {
                     objectName: "playlistPicker"
-                    width: Theme.snap(Math.max(160, Math.min(260, root.width * 0.28)))
+                    width: rowWidths.picker
                     enabled: !cleanupController.busy && !cleanupController.writing
                     model: root.playlistPickerModel
                     currentIndex: {
@@ -400,72 +433,50 @@ Page {
                     id: searchField
                     objectName: "searchField"
                     placeholderText: "Search title or artist..."
-                    // Proportional with a cap and a floor, matching the
-                    // playlist picker above it. The floor is what lets a
-                    // genuinely narrow window still show a usable field
-                    // rather than a sliver.
-                    width: Theme.snap(Math.max(110, Math.min(280, root.width * 0.3)))
+                    width: rowWidths.search
                     onTextChanged: cleanupController.search(text)
                 }
+                // What the scan found, in one line that gives way first.
+                // The whole of it is on hover once it has had to.
                 Label {
-                    text: plansListView.count + " duplicate group(s) found"
+                    id: countsLabel
+                    objectName: "countsLabel"
+                    text: plansListView.count + " duplicate group(s)"
+                        + (cleanupController.includedCount > 0 ? ", " + cleanupController.includedCount + " selected" : "")
+                        + (plansListView.count > 0 ? ", " + cleanupController.totalWastedBytesHuman + " reclaimable" : "")
                     color: Theme.textMuted
                     elide: Text.ElideRight
-                    // Natural width until it would not fit on a line of
-                    // its own, then elided. Eliding needs a width to
-                    // elide within; without one the label just grows.
-                    //
-                    // Bound to the page, never to the Flow. A child of a
-                    // Flow that sizes itself from the Flow's width is a
-                    // loop -- the Flow's width comes from its children --
-                    // and Qt breaks a loop by leaving a stale number,
-                    // which is a frozen row rather than an error.
-                    width: Math.min(implicitWidth, root.width - 2 * Theme.pageMargin)
+                    width: rowWidths.counts
+                    height: stageButton.height
+                    verticalAlignment: Text.AlignVCenter
+                    HoverHandler { id: countsHover }
+                    ToolTip.visible: countsHover.hovered && truncated
+                    ToolTip.text: text
                 }
                 Label {
-                    visible: plansListView.count > 0
-                    // "4.2 GB total if every copy kept only one file" was
-                    // a sentence in a status line. The page is about
-                    // duplicates; what the number means is already the
-                    // subject.
-                    text: "(" + cleanupController.totalWastedBytesHuman + " reclaimable)"
-                    color: Theme.textMuted
-                    elide: Text.ElideRight
-                    width: Math.min(implicitWidth, root.width - 2 * Theme.pageMargin)
-                }
-                Label {
+                    id: stagedLabel
                     visible: cleanupController.stagedCount > 0
                     text: cleanupController.stagedCount + " staged, not saved yet"
                     color: Theme.warnText
+                    height: stageButton.height
+                    verticalAlignment: Text.AlignVCenter
                 }
-                Label {
-                    visible: cleanupController.includedCount > 0
-                    text: cleanupController.includedCount + " group(s) selected"
-                    color: Theme.textMuted
-                }
-            }
-
-            // A Flow, not a RowLayout: on a narrower window these four
-            // buttons plus the toggle above no longer all fit on one
-            // line, and a RowLayout just lets the trailing ones overflow
-            // past the header's edge instead of wrapping onto a second
-            // line the way this does.
-            Flow {
-                Layout.fillWidth: true
-                spacing: 8
                 Button {
+                    id: selectAllButton
                     objectName: "selectAllButton"
                     text: "Select All"
                     enabled: !cleanupController.busy && plansListView.count > 0
                     onClicked: confirmSelectAllDialog.open()
                 }
                 Button {
+                    id: deselectAllButton
                     objectName: "deselectAllButton"
                     text: "Deselect All"
                     enabled: !cleanupController.busy && plansListView.count > 0
                     onClicked: cleanupController.setAllIncluded(false)
                 }
                 Button {
+                    id: stageButton
                     objectName: "stageButton"
                     text: "Stage Selected for Deletion"
                     enabled: !cleanupController.busy && !cleanupController.writing && cleanupController.includedCount > 0
@@ -474,6 +485,8 @@ Page {
                     onClicked: confirmCleanupDialog.open()
                 }
                 Button {
+                    id: undoButton
+                    objectName: "undoButton"
                     text: "Undo Last Save"
                     visible: cleanupController.canUndo
                     enabled: !cleanupController.busy && !cleanupController.writing

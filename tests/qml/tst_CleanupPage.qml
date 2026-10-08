@@ -205,11 +205,11 @@ TestCase {
     readonly property var headerControls: ["selectAllButton", "deselectAllButton", "stageButton",
                                            "playlistPicker", "searchField", "duplicateInfo"]
 
-    function scrollablePage() {
+    function scrollablePage(pageWidth) {
         const library = artworkFixture.libraryWithDuplicateGroups(testCase.fixtureEngineRoot, 12);
         verify(library.length > 0, "the fixture copy must be made");
         const page = createTemporaryObject(enginePageComponent, testCase,
-                                           {width: 1000, height: 700, enginePath: library});
+                                           {width: pageWidth || 1000, height: 700, enginePath: library});
         verify(page, "page did not instantiate");
         const list = findByObjectName(page, "plansList");
         verify(list, "the group list was not found");
@@ -287,6 +287,79 @@ TestCase {
             waitForRendering(page);
             grabImage(page).save(screenshotDir + "/CleanupPage-header-unfolded.png");
         }
+    }
+
+    function foldedPage(pageWidth) {
+        const page = scrollablePage(pageWidth);
+        const list = findByObjectName(page, "plansList");
+        const details = findByObjectName(page, "headerDetails");
+        list.contentY = list.originY + 40;
+        tryVerify(() => !details.visible, 2000, "the header did not fold");
+        waitForRendering(page);
+        return page;
+    }
+
+    // Folded, every control is on one line: the picker, the search, the
+    // counts and the buttons. The counts give way before a control does.
+    function test_foldedControlsAreOneRow_data() {
+        return [{tag: "1000", pageWidth: 1000}, {tag: "1400", pageWidth: 1400}];
+    }
+    function test_foldedControlsAreOneRow(row) {
+        const page = foldedPage(row.pageWidth);
+        const filterRow = findByObjectName(page, "filterRow");
+        const tops = [];
+        for (const name of headerControls.concat(["countsLabel"])) {
+            if (name === "duplicateInfo") {
+                continue;
+            }
+            const item = findByObjectName(page, name);
+            verifyInHeader(page, item, name);
+            verify(item.width > 0, name + " has no width");
+            verify(item.mapToItem(page, item.width, 0).x <= page.width - Theme.pageMargin + 0.5,
+                   name + " runs past the page's margin");
+            verify(item.parent === filterRow, name + " is not in the controls row");
+            tops.push(name + "@" + item.y);
+        }
+        verify(tops.every((t) => t.endsWith("@0")), "not one row: " + tops);
+        compare(filterRow.height, findByObjectName(page, "stageButton").height, "the row is one control tall");
+    }
+
+    // Too narrow for one row: it wraps, and nothing is cut off.
+    function test_foldedControlsWrapWhenNarrow() {
+        const page = foldedPage(520);
+        const filterRow = findByObjectName(page, "filterRow");
+        verify(filterRow.height > findByObjectName(page, "stageButton").height, "520 is too narrow for one row");
+        for (const name of headerControls) {
+            const item = findByObjectName(page, name);
+            verifyInHeader(page, item, name);
+            verify(item.mapToItem(page, item.width, 0).x <= page.width + 0.5, name + " is cut off");
+        }
+    }
+
+    // Folded, the space card is a slim bar that still follows the ticks.
+    function test_foldedSpaceBarIsSlimAndFollowsTheSelection() {
+        const page = scrollablePage();
+        const card = findByObjectName(page, "spaceCard");
+        verify(card && card.visible, "the space card shows unfolded");
+        const fullHeight = card.height;
+        const list = findByObjectName(page, "plansList");
+        list.contentY = list.originY + 40;
+        tryVerify(() => !findByObjectName(page, "headerDetails").visible, 2000, "the header did not fold");
+        tryVerify(() => card.height < fullHeight / 2, 2000, "the card stayed " + card.height + " of " + fullHeight);
+        verifyInHeader(page, card, "the space card");
+        const bar = findByObjectName(card, "reclaimBar");
+        // Once the fold has finished: half way it is still on its way down.
+        tryCompare(bar, "height", Theme.tightSpacing, 2000, "the folded bar is a few pixels tall");
+        const segment = findByObjectName(card, "reclaimSegment");
+        const caption = findByObjectName(card, "reclaimCaption");
+        verify(segment.width > 0, "the ticked groups show in the slim bar");
+        verify(caption.text.startsWith("would be freed"), "the caption is about the ticks: " + caption.text);
+
+        mouseClick(findByObjectName(page, "deselectAllButton"));
+        tryCompare(segment, "width", 0, 2000, "the slim bar did not follow the selection");
+        verify(caption.text.startsWith("available to free"), "the caption did not follow: " + caption.text);
+        wait(Theme.arrivalTransitionDuration);
+        verify(!findByObjectName(page, "headerDetails").visible, "changing the selection unfolded the header");
     }
 
     // A keypress moves contentY and nothing else; one notch past the

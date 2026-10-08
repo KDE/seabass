@@ -238,8 +238,9 @@ public:
     }
 
     // A copy with `groups` more duplicate pairs beside the fixture's own:
-    // "Song N" in folderA and in folderB, each pair its own length, so a
-    // Clean Up scan lists enough groups to scroll.
+    // "Song N" in folderA and in folderB, each pair its own length and N MB
+    // big, so a Clean Up scan lists enough groups to scroll and ticking
+    // them frees something.
     Q_INVOKABLE QString libraryWithDuplicateGroups(const QString &fromLibrary, int groups)
     {
         const QString library = copy(fromLibrary, false);
@@ -267,6 +268,15 @@ public:
                     "isMetadataImported, pdbImportKey, isBeatGridLocked, originDatabaseUuid, streamingFlags, "
                     "explicitLyrics, lastEditTime, isPlayed FROM Track WHERE id = 1;";
                 ok = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+                // The file itself, sparse: sizes are read from the disk,
+                // never from the catalog.
+                const std::filesystem::path file =
+                    seabass::gui::pathFromQString(library).parent_path() / folder / ("Song " + n + ".mp3");
+                std::error_code ec;
+                std::filesystem::create_directories(file.parent_path(), ec);
+                std::ofstream(file, std::ios::binary).close();
+                std::filesystem::resize_file(file, static_cast<std::uintmax_t>(i) * 1024 * 1024, ec);
+                ok = ok && !ec;
             }
         }
         sqlite3_close(db);

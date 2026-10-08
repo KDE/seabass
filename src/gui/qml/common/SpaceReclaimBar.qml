@@ -51,6 +51,13 @@ Item {
     readonly property real untouchedBytes: Math.max(0, usedBytes - reclaimableClamped)
     readonly property real notTickedBytes: Math.max(0, reclaimableClamped - reclaimClamped)
 
+    // 0 is the full card; 1 is the slim one a folded page header keeps:
+    // the figure and its caption on one line, the bar a few pixels tall,
+    // no legend. Anything in between is on its way from one to the other,
+    // so a header can fold it along with everything else.
+    property real compactness: 0
+    function towards(full, slim) { return full + (slim - full) * root.compactness; }
+
     visible: known
     implicitHeight: known ? column.implicitHeight : 0
 
@@ -67,25 +74,31 @@ Item {
         return v.toFixed(1) + " " + units[u]
     }
 
+    // No spacing of its own: each gap is a margin that folds with the
+    // compactness, so nothing jumps when the legend finally hides.
     ColumnLayout {
         id: column
         width: parent.width
-        spacing: 10
+        spacing: 0
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
 
             Text {
+                objectName: "reclaimFigure"
                 text: root.human(root.reclaimBytes > 0 ? root.reclaimBytes : root.reclaimableBytes)
-                font.pixelSize: 30
+                font.pixelSize: root.towards(30, 13)
                 font.bold: true
                 color: Theme.good
             }
             Text {
                 objectName: "reclaimCaption"
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                // One line once it starts to fold: the slim card has room
+                // for one, and the stick's free space is what gets cut.
+                wrapMode: root.compactness > 0 ? Text.NoWrap : Text.WordWrap
+                elide: Text.ElideRight
                 font.pixelSize: 13
                 color: Theme.textMuted
                 text: root.reclaimBytes > 0
@@ -99,8 +112,10 @@ Item {
         // The bar itself. Widths are fractions of the real capacity, so
         // a sliver on screen is a sliver on the stick.
         Item {
+            objectName: "reclaimBar"
             Layout.fillWidth: true
-            implicitHeight: 26
+            Layout.topMargin: root.towards(10, Theme.tightSpacing)
+            implicitHeight: root.towards(26, Theme.tightSpacing)
 
             Rectangle {
                 anchors.fill: parent
@@ -149,6 +164,7 @@ Item {
                 }
                 // What the ticked groups give back.
                 Rectangle {
+                    objectName: "reclaimSegment"
                     width: segments.span(root.reclaimClamped)
                     height: parent.height
                     radius: 2
@@ -169,41 +185,53 @@ Item {
             }
         }
 
-        // Legend: identity never rests on colour alone.
-        Flow {
+        // Legend: identity never rests on colour alone. In the slim card
+        // the caption above still names the figure, and the full card is
+        // a scroll to the top away.
+        Item {
             Layout.fillWidth: true
-            spacing: 18
+            Layout.preferredHeight: (legend.implicitHeight + 10) * (1 - root.compactness)
+            visible: root.compactness < 1
+            opacity: 1 - root.compactness
+            clip: true
 
-            Repeater {
-                model: [
-                    { label: "In use", value: root.human(root.untouchedBytes),
-                      fill: Theme.info, outline: false, show: true },
-                    { label: "Reclaimable, not ticked", value: root.human(root.notTickedBytes),
-                      fill: Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.3), outline: true,
-                      show: root.notTickedBytes > 0 },
-                    { label: "Freed by your selection", value: root.human(root.reclaimClamped),
-                      fill: Theme.good, outline: false, show: root.reclaimClamped > 0 },
-                    { label: "Free", value: root.human(root.freeBytes),
-                      fill: Theme.mix(Theme.surface, Theme.text, 0.28), outline: false, show: true }
-                ]
+            Flow {
+                id: legend
+                y: 10
+                width: parent.width
+                spacing: 18
 
-                delegate: Row {
-                    visible: modelData.show
-                    spacing: 7
+                Repeater {
+                    model: [
+                        { label: "In use", value: root.human(root.untouchedBytes),
+                          fill: Theme.info, outline: false, show: true },
+                        { label: "Reclaimable, not ticked", value: root.human(root.notTickedBytes),
+                          fill: Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.3), outline: true,
+                          show: root.notTickedBytes > 0 },
+                        { label: "Freed by your selection", value: root.human(root.reclaimClamped),
+                          fill: Theme.good, outline: false, show: root.reclaimClamped > 0 },
+                        { label: "Free", value: root.human(root.freeBytes),
+                          fill: Theme.mix(Theme.surface, Theme.text, 0.28), outline: false, show: true }
+                    ]
 
-                    Rectangle {
-                        width: 10
-                        height: 10
-                        radius: 2
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: modelData.fill
-                        border.color: modelData.outline ? Theme.good : Theme.borderSubtle
-                        border.width: 1
-                    }
-                    Text {
-                        text: modelData.label + " " + modelData.value
-                        font.pixelSize: 12
-                        color: Theme.textMuted
+                    delegate: Row {
+                        visible: modelData.show
+                        spacing: 7
+
+                        Rectangle {
+                            width: 10
+                            height: 10
+                            radius: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: modelData.fill
+                            border.color: modelData.outline ? Theme.good : Theme.borderSubtle
+                            border.width: 1
+                        }
+                        Text {
+                            text: modelData.label + " " + modelData.value
+                            font.pixelSize: 12
+                            color: Theme.textMuted
+                        }
                     }
                 }
             }
