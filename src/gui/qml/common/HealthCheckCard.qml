@@ -157,7 +157,7 @@ Rectangle {
                 size: Theme.iconSizeSmall
                 color: Theme.good
             }
-            BusyIndicator {
+            SeabassBusyIndicator {
                 running: card.running
                 visible: card.running
                 implicitWidth: Theme.iconSizeSmall

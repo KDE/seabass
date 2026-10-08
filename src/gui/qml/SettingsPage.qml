@@ -99,7 +99,7 @@ Page {
                     + "Every change is staged first, and each file is backed up before it is written."
             }
             Item { Layout.fillWidth: true }
-            BusyIndicator {
+            SeabassBusyIndicator {
                 visible: settingsController.busy
                 running: settingsController.busy
                 implicitWidth: Theme.iconSizeSmall

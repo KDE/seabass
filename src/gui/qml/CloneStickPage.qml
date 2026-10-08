@@ -110,7 +110,7 @@ Page {
                 onBackRequested: root.StackView.view.pop()
             }
             Item { Layout.fillWidth: true }
-            BusyIndicator { running: root.controller.previewing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
+            SeabassBusyIndicator { running: root.controller.previewing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
         }
     }
 

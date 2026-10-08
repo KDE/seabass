@@ -315,7 +315,7 @@ Page {
                 onBackRequested: root.requestLeave(() => root.StackView.view.pop())
             }
             Item { Layout.fillWidth: true }
-            BusyIndicator {
+            SeabassBusyIndicator {
                 running: controller.busy
                 visible: controller.busy
                 implicitWidth: Theme.iconSizeSmall
