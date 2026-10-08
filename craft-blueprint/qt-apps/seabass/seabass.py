@@ -157,4 +157,23 @@ class Package(CMakePackageBase):
                     RMDir "$LOCALAPPDATA\seabass"
                 SectionEnd
                 """
+            # "Start Seabass" on the installer's last page, ticked: the
+            # template has no such option, and @{nsis_include} is the one
+            # place a blueprint gets to write before the pages are laid
+            # out. Craft's default for that slot is the !addincludedir that
+            # @{nsis_include_internal} already writes for the stock script.
+            #
+            # Started through explorer.exe rather than Exec'd: the
+            # installer runs elevated (MULTIUSER_EXECUTIONLEVEL Highest),
+            # and Seabass started from it directly would run as
+            # administrator, with its settings and files written under
+            # those rights. Explorer starts it as the signed-in user.
+            self.defines["nsis_include"] = r"""
+                !define MUI_FINISHPAGE_RUN
+                !define MUI_FINISHPAGE_RUN_TEXT "Start Seabass"
+                !define MUI_FINISHPAGE_RUN_FUNCTION StartSeabass
+                Function StartSeabass
+                    Exec '"$WINDIR\explorer.exe" "$INSTDIR\bin\seabass.exe"'
+                FunctionEnd
+                """
         return CMakePackageBase.createPackage(self)
