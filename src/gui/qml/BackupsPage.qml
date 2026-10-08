@@ -192,7 +192,7 @@ Page {
             }
             Item { Layout.fillWidth: true }
             // A delete only; the listing has the overlay below.
-            BusyIndicator {
+            SeabassBusyIndicator {
                 visible: root.controller.deleting === true
                 running: visible
                 implicitWidth: 24

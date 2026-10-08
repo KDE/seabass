@@ -1296,7 +1296,7 @@ Page {
                         visible: mergeController.busy
                         Layout.alignment: Qt.AlignHCenter
                         spacing: 8
-                        BusyIndicator { running: mergeController.busy; implicitWidth: 24; implicitHeight: 24 }
+                        SeabassBusyIndicator { running: mergeController.busy; implicitWidth: 24; implicitHeight: 24 }
                         Label { text: mergeController.writing ? "Merging..." : "Comparing tracks..."; color: Theme.textMuted }
                     }
 

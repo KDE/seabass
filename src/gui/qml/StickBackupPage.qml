@@ -171,7 +171,7 @@ Page {
                 objectName: "previewBanner"
                 visible: root.controller.previewing === true
                 spacing: Theme.tightSpacing
-                BusyIndicator { running: parent.visible; implicitWidth: Theme.scaled(24); implicitHeight: Theme.scaled(24) }
+                SeabassBusyIndicator { running: parent.visible; implicitWidth: Theme.scaled(24); implicitHeight: Theme.scaled(24) }
                 Label {
                     text: "Checking what has changed since the last backup"
                     color: Theme.text

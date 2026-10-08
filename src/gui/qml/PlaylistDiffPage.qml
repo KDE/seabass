@@ -117,7 +117,7 @@ Page {
                     onBackRequested: root.StackView.view.pop()
                 }
                 Item { Layout.fillWidth: true }
-                BusyIndicator { running: controller.busy; visible: controller.busy; implicitWidth: 20; implicitHeight: 20 }
+                SeabassBusyIndicator { running: controller.busy; visible: controller.busy; implicitWidth: 20; implicitHeight: 20 }
                 LibrarySourceToggle {
                     visible: root.hasRekordbox && root.hasEngine
                     current: root.format

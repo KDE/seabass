@@ -686,7 +686,7 @@ Page {
                             minimumSpin.restart();
                             root.updateChecker.checkNow();
                         }
-                        BusyIndicator {
+                        SeabassBusyIndicator {
                             id: checkSpinner
                             objectName: "checkForUpdatesSpinner"
                             anchors.left: parent.left

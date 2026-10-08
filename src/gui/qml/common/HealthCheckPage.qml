@@ -142,7 +142,7 @@ Page {
             RowLayout {
                 visible: consistencyController?.busy ?? false
                 spacing: Theme.tightSpacing
-                BusyIndicator {
+                SeabassBusyIndicator {
                     running: true
                     implicitWidth: Theme.iconSizeSmall
                     implicitHeight: Theme.iconSizeSmall

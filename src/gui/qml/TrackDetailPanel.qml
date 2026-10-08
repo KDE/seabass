@@ -615,7 +615,7 @@ Pane {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                BusyIndicator {
+                SeabassBusyIndicator {
                     visible: addCueController.busy
                     running: visible
                     implicitWidth: 20

@@ -257,7 +257,7 @@ Rectangle {
             // Mount and unmount run on a background thread and can take
             // a moment: while this row's own operation is in flight, a
             // spinner stands in the eject button's place.
-            BusyIndicator {
+            SeabassBusyIndicator {
                 objectName: "stickBusyIndicator"
                 visible: root.thisRowBusy
                 running: visible
