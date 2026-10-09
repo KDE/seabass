@@ -5,8 +5,11 @@
 // What the update check decides, without a network anywhere near it.
 // The rules it encodes are promises: a withdrawn release is never
 // offered, a release nobody has smoke-tested is never offered, a stable
-// build is never sent to a test build, and a development build is offered
-// nothing at all.
+// build is never sent to a test build, and a published development build
+// is offered what a test build is: the website lists the dev packages CI
+// builds on a train branch as test builds, so a tester running one hears
+// of the next. ("dev" here is always such a package: a working-tree build
+// never reaches these functions, see update_checker_test.)
 
 #include <QTest>
 
@@ -58,8 +61,11 @@ private Q_SLOTS:
         QCOMPARE(feedChannelFor(QStringLiteral("alpha")), QStringLiteral("testing"));
         QCOMPARE(feedChannelFor(QStringLiteral("beta")), QStringLiteral("testing"));
         QCOMPARE(feedChannelFor(QStringLiteral("stable")), QStringLiteral("stable"));
-        // Not published, so it has no channel to be on.
-        QVERIFY(feedChannelFor(QStringLiteral("dev")).isEmpty());
+        // The packages CI builds on a train branch are dev builds, and the
+        // website lists them as test builds.
+        QCOMPARE(feedChannelFor(QStringLiteral("dev")), QStringLiteral("testing"));
+        // A channel nothing knows is on no list at all.
+        QVERIFY(feedChannelFor(QStringLiteral("nightly")).isEmpty());
     }
 
     void aStableBuildStaysOnStable()
@@ -96,7 +102,8 @@ private Q_SLOTS:
         QVERIFY(isPreReleaseChannel(QStringLiteral("alpha")));
         QVERIFY(isPreReleaseChannel(QStringLiteral("beta")));
         QVERIFY(!isPreReleaseChannel(QStringLiteral("stable")));
-        QVERIFY(!isPreReleaseChannel(QStringLiteral("dev")));
+        QVERIFY(isPreReleaseChannel(QStringLiteral("dev")));
+        QVERIFY(!isPreReleaseChannel(QStringLiteral("nightly")));
     }
 
     void aStableBuildThatRanTestingBeforeHearsAboutTheNextOne()
@@ -116,11 +123,11 @@ private Q_SLOTS:
         QCOMPARE(channelsFor(QStringLiteral("stable"), true),
                  (QVector<QString>{QStringLiteral("stable"), QStringLiteral("testing")}));
         // The gates still hold for it: an untested test build is not
-        // offered, and nor is a development build anything at all.
+        // offered, and a channel nothing knows is offered nothing at all.
         QVector<ReleaseInfo> untested = feed;
         untested[0].released = false;
         QVERIFY(!chooseUpdate(QStringLiteral("0.8.0"), QStringLiteral("stable"), untested, true).has_value());
-        QVERIFY(channelsFor(QStringLiteral("dev"), true).isEmpty());
+        QVERIFY(channelsFor(QStringLiteral("nightly"), true).isEmpty());
     }
 
     void aSettingChangeOnlyRedecidesASettledAnswer()
@@ -135,7 +142,6 @@ private Q_SLOTS:
         // answer from an older feed.
         QVERIFY(!mayRedecideFrom(QStringLiteral("failed")));
         QVERIFY(!mayRedecideFrom(QStringLiteral("idle")));
-        QVERIFY(!mayRedecideFrom(QStringLiteral("notARelease")));
     }
 
     void theTapsOnlyClaimAChangeWhereTheyMakeOne()
@@ -146,8 +152,10 @@ private Q_SLOTS:
         // A test build follows everything anyway.
         QVERIFY(!tapsWouldEnableTesting(QStringLiteral("alpha"), true));
         QVERIFY(!tapsWouldEnableTesting(QStringLiteral("beta"), false));
-        // A development build is offered nothing, testing or not.
+        // A development build follows test builds anyway, like an alpha.
         QVERIFY(!tapsWouldEnableTesting(QStringLiteral("dev"), false));
+        // And a channel nothing knows is offered nothing, testing or not.
+        QVERIFY(!tapsWouldEnableTesting(QStringLiteral("nightly"), false));
     }
 
     void tenQuickTapsRevealTesting()
@@ -231,11 +239,79 @@ private Q_SLOTS:
         QVERIFY(!chooseUpdate(QStringLiteral("0.3.0"), QStringLiteral("stable"), feed).has_value());
     }
 
-    void aDevelopmentBuildIsOfferedNothing()
+    // The signed packages on the website come from a train branch's
+    // pipeline, which builds them as dev. Somebody running one is a
+    // tester, and is offered what an alpha or a beta would be.
+    void aDevelopmentBuildIsOfferedTheNewestTestOrStableBuild()
     {
-        const QVector<ReleaseInfo> feed{make(QStringLiteral("9.9.9"), QStringLiteral("stable"))};
-        QVERIFY(channelsFor(QStringLiteral("dev")).isEmpty());
-        QVERIFY(!chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("dev"), feed).has_value());
+        QCOMPARE(channelsFor(QStringLiteral("dev")),
+                 (QVector<QString>{QStringLiteral("stable"), QStringLiteral("testing")}));
+        const QVector<ReleaseInfo> feed{
+            make(QStringLiteral("0.7.16"), QStringLiteral("testing"), false, QStringLiteral("beta")),
+            make(QStringLiteral("0.8.0"), QStringLiteral("stable"))};
+        const auto newest = chooseUpdate(QStringLiteral("0.7.15"), QStringLiteral("dev"), feed);
+        QVERIFY(newest.has_value());
+        QCOMPARE(newest->version, QStringLiteral("0.8.0"));
+        // With no stable yet, the next test build.
+        const auto next = chooseUpdate(QStringLiteral("0.7.15"), QStringLiteral("dev"), {feed.at(0)});
+        QVERIFY(next.has_value());
+        QCOMPARE(next->version, QStringLiteral("0.7.16"));
+    }
+
+    void aDevelopmentBuildIsNotOfferedItselfNorAnUntestedOrPulledBuild()
+    {
+        ReleaseInfo untested = make(QStringLiteral("0.7.16"), QStringLiteral("testing"), false, QStringLiteral("beta"));
+        untested.released = false;
+        const QVector<ReleaseInfo> feed{
+            // The website lists a dev package under the build it stands
+            // in for, so the same number is the same build.
+            make(QStringLiteral("0.7.15"), QStringLiteral("testing"), false, QStringLiteral("beta")),
+            untested,
+            make(QStringLiteral("0.7.16"), QStringLiteral("testing"), true, QStringLiteral("beta")),
+            make(QStringLiteral("0.7.14"), QStringLiteral("stable"))};
+        QVERIFY(!chooseUpdate(QStringLiteral("0.7.15"), QStringLiteral("dev"), feed).has_value());
+        // And the number is what kept them out: released, 0.7.16 is offered.
+        QVector<ReleaseInfo> released = feed;
+        released[1].released = true;
+        const auto update = chooseUpdate(QStringLiteral("0.7.15"), QStringLiteral("dev"), released);
+        QVERIFY(update.has_value());
+        QCOMPARE(update->version, QStringLiteral("0.7.16"));
+        QVERIFY(!update->withdrawn);
+    }
+
+    // The website records what a dev package stands in for (a beta, say)
+    // rather than "dev", so a dev build finds itself by number alone.
+    void aDevelopmentBuildHearsItsVersionWasWithdrawn()
+    {
+        const QVector<ReleaseInfo> testing{
+            make(QStringLiteral("0.7.15"), QStringLiteral("testing"), true, QStringLiteral("beta"))};
+        const auto running = findRunning(QStringLiteral("0.7.15"), QStringLiteral("dev"), testing);
+        QVERIFY(running.has_value());
+        QVERIFY(running->withdrawn);
+        QVERIFY(!findRunning(QStringLiteral("0.7.14"), QStringLiteral("dev"), testing).has_value());
+        // Never on the stable list: a stable of the same number is a
+        // different build, and its withdrawal is not this one's.
+        const QVector<ReleaseInfo> stable{make(QStringLiteral("0.8.0"), QStringLiteral("stable"), true)};
+        QVERIFY(!findRunning(QStringLiteral("0.8.0"), QStringLiteral("dev"), stable).has_value());
+        const QVector<ReleaseInfo> both{make(QStringLiteral("0.8.0"), QStringLiteral("stable"), true),
+                                        make(QStringLiteral("0.8.0"), QStringLiteral("testing"), false,
+                                             QStringLiteral("beta"))};
+        const auto own = findRunning(QStringLiteral("0.8.0"), QStringLiteral("dev"), both);
+        QVERIFY(own.has_value());
+        QCOMPARE(own->channel, QStringLiteral("testing"));
+        QVERIFY(!own->withdrawn);
+    }
+
+    void anUnknownChannelIsOfferedNothing()
+    {
+        const QVector<ReleaseInfo> feed{make(QStringLiteral("9.9.9"), QStringLiteral("stable")),
+                                        make(QStringLiteral("9.9.9"), QStringLiteral("testing"), false,
+                                             QStringLiteral("beta"))};
+        QVERIFY(channelsFor(QStringLiteral("nightly")).isEmpty());
+        QVERIFY(channelsFor(QStringLiteral("nightly"), true).isEmpty());
+        QVERIFY(!chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("nightly"), feed).has_value());
+        QVERIFY(!chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("nightly"), feed, true).has_value());
+        QVERIFY(!isPreReleaseChannel(QStringLiteral("nightly")));
     }
 
     void theRunningBuildIsFoundByVersionAndBuildChannel()

@@ -207,7 +207,8 @@ cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES="$cmake_arches" -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_OSX_SYSROOT="$SDKROOT" \
     -DCMAKE_PREFIX_PATH="$qt;$prefix" -DCMAKE_FIND_FRAMEWORK=LAST \
     -DSEABASS_TESTS=OFF -DSEABASS_LIBDJINTEROP_TESTS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Boost=ON \
-    -DSEABASS_RELEASE_CHANNEL="${SEABASS_RELEASE_CHANNEL:-dev}" >"$work/configure.log" 2>&1 ||
+    -DSEABASS_RELEASE_CHANNEL="${SEABASS_RELEASE_CHANNEL:-dev}" -DSEABASS_PUBLISHED_BUILD=ON \
+    >"$work/configure.log" 2>&1 ||
     { echo "configure failed; see $work/configure.log" >&2; exit 1; }
 # A TagLib found anywhere but here would be the host's own, of one
 # architecture only.

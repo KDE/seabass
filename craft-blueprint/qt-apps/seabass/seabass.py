@@ -73,14 +73,19 @@ class Package(CMakePackageBase):
         # up: a packaged release build has no use for building Seabass's
         # own ~90 test binaries either.
         self.subinfo.options.configure.args += ["-DSEABASS_TESTS=OFF", "-DSEABASS_LIBDJINTEROP_TESTS=OFF"]
+        # A Craft build is always a package to hand out. For a dev build
+        # that is what makes it check for updates as a test build does,
+        # where one from a working tree never checks.
+        self.subinfo.options.configure.args += ["-DSEABASS_PUBLISHED_BUILD=ON"]
         # The channel the app reports and checks for updates on, which
         # CMake defaults to "dev". A release tag names it,
         # releases/<channel>/X.Y.Z, and CI hands the tag to Craft as
         # CI_COMMIT_TAG; a package built by hand takes it from
         # SEABASS_RELEASE_CHANNEL, which is how the universal .dmg is made
         # until the macOS job signs on Invent (docs/releasing.md). Anything
-        # else stays "dev": a wrong channel would send the app to the wrong
-        # place for updates, and dev is the one that never looks.
+        # else stays "dev", which, being published (above), checks for
+        # updates as a test build does: the packages a train branch's
+        # pipeline signs are dev builds, and testers run them.
         channel = os.environ.get("SEABASS_RELEASE_CHANNEL", "")
         tag = os.environ.get("CI_COMMIT_TAG", "")
         if not channel and tag.startswith("releases/"):

@@ -30,10 +30,14 @@ QString feedChannelFor(const QString &buildChannel)
     if (buildChannel == QLatin1String("stable")) {
         return QStringLiteral("stable");
     }
-    if (buildChannel == QLatin1String("alpha") || buildChannel == QLatin1String("beta")) {
+    // A published dev build is what CI packages from a train branch, and
+    // the website lists those packages as test builds: somebody running
+    // one is a tester, and hears of updates as one.
+    if (buildChannel == QLatin1String("alpha") || buildChannel == QLatin1String("beta")
+        || buildChannel == QLatin1String("dev")) {
         return QStringLiteral("testing");
     }
-    // dev, or anything unrecognised. Not published anywhere.
+    // Anything unrecognised. On no list, and offered nothing.
     return {};
 }
 
@@ -97,6 +101,20 @@ std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QStr
     // same number are different builds and must not inherit each other's
     // withdrawal, but they share one list.
     const QString feed = feedChannelFor(currentChannel);
+    if (currentChannel == QLatin1String("dev")) {
+        // The website lists a dev package under the build it stands in
+        // for (a beta, say), never as "dev", so by number alone, and on
+        // the testing list only: a stable of the same number is another
+        // build. One case this cannot tell apart: a dev package built
+        // after a tag but before the version bump carries the tag's
+        // number, and hears that tag's withdrawal as its own.
+        for (const ReleaseInfo &release : releases) {
+            if (release.version == currentVersion && release.channel == feed) {
+                return release;
+            }
+        }
+        return std::nullopt;
+    }
     for (const ReleaseInfo &release : releases) {
         if (release.version != currentVersion) {
             continue;

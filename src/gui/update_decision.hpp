@@ -43,21 +43,27 @@ struct ReleaseInfo
 int compareVersions(const QString &left, const QString &right);
 
 // Which website channel a build of this channel is published on. An
-// alpha and a beta are both "testing"; only stable is stable. Empty for
-// "dev", which is not published at all.
+// alpha, a beta and a dev build are all "testing"; only stable is stable.
+// Empty for a channel nothing knows.
+//
+// "dev" throughout this file means a dev package CI made to hand out
+// (SEABASS_PUBLISHED_BUILD): the signed packages from a Seabass/X.Y
+// pipeline are dev builds, and the website lists them as test builds. A
+// dev build from a working tree never gets here: UpdateChecker stops it
+// before it fetches anything.
 QString feedChannelFor(const QString &buildChannel);
 
-// Whether a build channel is a pre-release one: alpha or beta, the two
-// published on the website's "testing" list.
+// Whether a build channel is a pre-release one: alpha, beta or (a
+// published) dev, the ones on the website's "testing" list.
 bool isPreReleaseChannel(const QString &buildChannel);
 
 // Which channels a build of this channel should be offered, steadiest
 // first. A stable build is offered stables only: moving to a test build
 // is not an update. A testing build is offered both, and within testing
 // the version number decides, because the numbers only ever go up. A
-// "dev" build -- anything not built from a release tag -- is offered
-// nothing, because it is not any published version and comparing it to
-// one is meaningless.
+// published "dev" build is a testing build here: the packages testers
+// are handed are dev builds, and leaving them without updates would
+// strand them. A channel nothing knows is offered nothing.
 //
 // includeTesting widens a stable build's list to testing too. It is the
 // machine's memory of having run a pre-release (or of the hidden opt-in
@@ -79,7 +85,10 @@ std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QSt
 // data has to be told that, and it is the one thing worth saying even
 // when there is no newer version to move to. So this one does look at
 // entries that are not released yet: somebody handed a build to
-// smoke-test is exactly who needs to hear it was withdrawn.
+// smoke-test is exactly who needs to hear it was withdrawn. A dev build
+// is found by number alone on the testing list, because its entry on the
+// website names the build it stands in for rather than "dev"; never on
+// stable, whose entry of the same number is a different build.
 std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QString &currentChannel,
                                        const QVector<ReleaseInfo> &releases);
 
@@ -93,10 +102,11 @@ bool mayRedecideFrom(const QString &state);
 
 // Whether completing the tap sequence changes anything on a build of
 // this channel with the setting as it is: only on a stable build, and
-// only when test builds are not followed already. A pre-release build
-// follows them whatever the setting says, and a development build is
-// offered nothing at all, so for both the taps must neither claim a
-// change nor pop anything up.
+// only when test builds are not followed already. A pre-release or
+// development build follows them whatever the setting says (a dev build
+// from a working tree is offered nothing at all), and a build
+// of a channel nothing knows is offered nothing at all, so for those the
+// taps must neither claim a change nor pop anything up.
 bool tapsWouldEnableTesting(const QString &buildChannel, bool includeTestingNow);
 
 // The hidden switch for hearing about test builds on a stable build: ten

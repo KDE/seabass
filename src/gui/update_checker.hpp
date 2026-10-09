@@ -22,19 +22,22 @@ namespace seabass::gui
 // The build a checker speaks for: what it compares the feed against and
 // names in its messages. The app's checker is always this binary
 // (thisBuild); a test names another, because the test binary is itself a
-// development build, which never fetches anything, and every decision
-// past that point would be out of its reach.
+// development build from a working tree, which never fetches anything,
+// and every decision past that point would be out of its reach.
 struct RunningBuild
 {
     QString version;  // "0.7.12"
     QString channel;  // alpha, beta, stable, or dev
     QString commit;   // git describe, or empty
+    // A package CI made to hand out (SEABASS_PUBLISHED_BUILD). Only
+    // matters for dev: a tagged build is published either way.
+    bool published = false;
 
     // From seabass_version.hpp, set when this binary was configured.
     static RunningBuild thisBuild();
-    // Not a working-tree build: one a published release could be
-    // compared with.
-    bool isRelease() const { return channel != QLatin1String("dev"); }
+    // One a published release could be compared with: a tagged build, or
+    // a dev package from a Seabass/X.Y pipeline. Not a working-tree build.
+    bool isRelease() const { return published || channel != QLatin1String("dev"); }
 };
 
 // Asks the website whether there is a newer Seabass, when the user has
@@ -61,16 +64,18 @@ class UpdateChecker : public QObject
     // daily timer; turning it off stops it immediately.
     Q_PROPERTY(bool automatic READ automatic WRITE setAutomatic NOTIFY automaticChanged)
 
-    // Whether alphas and betas count on this machine. A pre-release
-    // build follows every channel whatever this says, and turns it on
-    // for good the first time it runs, so that a beta user who moves to
+    // Whether alphas and betas count on this machine. A pre-release or
+    // published dev build follows every channel whatever this says, and
+    // turns it on for good the first time it runs, so that a beta user who moves to
     // the stable it became still hears about the next alpha. On a
     // stable build it starts off and hidden: the checkbox for it only
     // appears once testingOptionRevealed is true, which either running a
     // pre-release or the hidden tap sequence (versionTapped) makes so.
     Q_PROPERTY(bool includeTesting READ includeTesting WRITE setIncludeTesting NOTIFY includeTestingChanged)
     Q_PROPERTY(bool testingOptionRevealed READ testingOptionRevealed NOTIFY includeTestingChanged)
-    // True for an alpha or beta build.
+    // True for an alpha, beta or published dev build: the ones that
+    // follow test builds whatever includeTesting says. Never for a dev
+    // build from a working tree, which writes no setting at all.
     Q_PROPERTY(bool runningPreRelease READ runningPreRelease CONSTANT)
 
     // idle, checking, upToDate, updateAvailable, withdrawn, failed, notARelease
