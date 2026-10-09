@@ -24,6 +24,8 @@
 //   forwards and backwards and libdjinterop's tracks() agreeing; an
 //   anchor that is not a member and no anchor both append; a member is
 //   left where it is; an unknown track and an ambiguous path are refused;
+//   insert at the start goes ahead of the old head, in a full list and in
+//   one of three, and leaves a member where it is;
 // - remove takes a mid-list member of "Playlist 000" out, whose entry
 //   ids (11083 up) are nowhere near its track ids (1574 at most), the
 //   other 99 walking whole both ways and libdjinterop's tracks()
@@ -457,6 +459,20 @@ int main(int argc, char **argv)
     assert(djinteropTracks(library, {renamed}) == expected);
     assert(expected.size() == 103);
 
+    // At the start: ahead of the old head, which keeps every entry after
+    // it; a member stays where it is.
+    assert(outsiders.size() >= 5 && !members.count(outsiders[4]));
+    assert(insertAtStartOfEnginePlaylist(library, renamed, outsiders[4]));
+    expected.insert(expected.begin(), outsiders[4]);
+    unchangedApartFrom({231}, {});
+    assert(entries.at(231) == expected);
+    assert(entries.at(231).at(0) == outsiders[4] && entries.at(231).at(1) == before.at(0));
+    assert(djinteropTracks(library, {renamed}) == expected);
+    assert(!insertAtStartOfEnginePlaylist(library, renamed, before.at(50)));
+    assert(!insertAtStartOfEnginePlaylist(library, renamed, outsiders[4]));
+    unchangedApartFrom({}, {});
+    assert(expected.size() == 104);
+
     // A member stays where it is, whatever the anchor.
     assert(!insertIntoEnginePlaylist(library, renamed, outsiders[0], before.at(50)));
     assert(!insertIntoEnginePlaylist(library, renamed, before.at(0), std::nullopt));
@@ -467,14 +483,19 @@ int main(int argc, char **argv)
     assert(insertIntoEnginePlaylist(library, "New Folder/Second List", outsiders[0], std::nullopt));
     assert(insertIntoEnginePlaylist(library, "New Folder/Second List", outsiders[1], outsiders[0]));
     assert(insertIntoEnginePlaylist(library, "New Folder/Second List", outsiders[2], outsiders[0]));
+    // And at its start, ahead of the first.
+    assert(insertAtStartOfEnginePlaylist(library, "New Folder/Second List", outsiders[3]));
     unchangedApartFrom({second}, {});
-    assert((entries.at(second) == std::vector<std::int64_t>{outsiders[0], outsiders[2], outsiders[1]}));
+    assert((entries.at(second) == std::vector<std::int64_t>{outsiders[3], outsiders[0], outsiders[2], outsiders[1]}));
     assert(djinteropTracks(library, {"New Folder", "Second List"}) == entries.at(second));
 
     assert(throws([&] { insertIntoEnginePlaylist(library, renamed, 999999, std::nullopt); }, "no track"));
     assert(throws([&] { insertIntoEnginePlaylist(library, "New Folder/New List", outsiders[0], std::nullopt); },
                   "ambiguous list"));
     assert(throws([&] { insertIntoEnginePlaylist(library, "Playlist 404", outsiders[0], std::nullopt); }, "no list"));
+    assert(throws([&] { insertAtStartOfEnginePlaylist(library, renamed, 999999); }, "no track at the start"));
+    assert(throws([&] { insertAtStartOfEnginePlaylist(library, "New Folder/New List", outsiders[0]); },
+                  "ambiguous list at the start"));
     unchangedApartFrom({}, {});
 
     // A list whose chain is already broken is refused: unlink the head of

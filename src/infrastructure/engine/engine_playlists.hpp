@@ -176,4 +176,14 @@ bool renameEnginePlaylist(const std::string &engineLibraryPath, const std::strin
 bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                               std::int64_t trackId, std::optional<std::int64_t> afterTrackId);
 
+// Puts the track first in the playlist at playlistPath: what a sync asks
+// for when no member before it in rekordbox's playlist is in Engine's
+// (MembershipEdit's empty anchor), which insertIntoEnginePlaylist cannot
+// say, since it appends without an anchor. The new entry points at the
+// old head and no entry points at it. Into an empty list it is the one
+// entry. A member stays where it is and false is returned. Refuses as
+// insertIntoEnginePlaylist does. Returns true when it added.
+bool insertAtStartOfEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
+                                   std::int64_t trackId);
+
 }  // namespace seabass::infrastructure::engine

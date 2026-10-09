@@ -779,8 +779,15 @@ bool renameEnginePlaylist(const std::string &engineLibraryPath, const std::strin
     return true;
 }
 
-bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
-                              std::int64_t trackId, std::optional<std::int64_t> afterTrackId)
+namespace
+{
+
+// Where insertEntry puts a track: after an anchor (appended when there is
+// none or it is not a member), or first.
+enum class Placement { AfterAnchor, AtStart };
+
+bool insertEntry(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId,
+                 Placement placement, std::optional<std::int64_t> afterTrackId)
 {
     splitPlaylistPath(playlistPath);
     PlaylistWriter db(engineLibraryPath);
@@ -816,7 +823,7 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
     // The anchor's entry when the anchor is in the list; otherwise the
     // track is appended.
     std::optional<ListEntry> anchor;
-    if (afterTrackId) {
+    if (placement == Placement::AfterAnchor && afterTrackId) {
         for (const auto &[id, e] : entries) {
             if (e.trackId == *afterTrackId) {
                 anchor = e;
@@ -824,10 +831,28 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
             }
         }
     }
+    // First: the new entry points at the head, the entry no other entry
+    // points at (0 in an empty list, which is an append). Nothing pointed
+    // at the head, so the UPDATE below finds no row, which is right: the
+    // new entry is the head now.
+    std::int64_t head = 0;
+    if (placement == Placement::AtStart) {
+        std::set<std::int64_t> pointedAt;
+        for (const auto &[id, e] : entries) {
+            pointedAt.insert(e.next);
+        }
+        for (const auto &[id, e] : entries) {
+            if (!pointedAt.count(id)) {
+                head = id;
+                break;
+            }
+        }
+    }
     // playlist_entity_table::add's two statements: the new entry takes
-    // the anchor's old next (0 to append), and the one entry that pointed
-    // there (the anchor, or the last entry) now points at the new one.
-    const std::int64_t next = anchor ? anchor->next : 0;
+    // the anchor's old next (0 to append, the head to go first), and the
+    // one entry that pointed there (the anchor, or the last entry; none
+    // for the head) now points at the new one.
+    const std::int64_t next = placement == Placement::AtStart ? head : anchor ? anchor->next : 0;
     db.run("INSERT INTO PlaylistEntity (listId, trackId, databaseUuid, nextEntityId, membershipReference) "
            "VALUES (?, ?, ?, ?, 0);",
            {listId, trackId, uuids.front(), next});
@@ -836,7 +861,9 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
            {added, listId, next, added});
 
     std::vector<std::int64_t> expected = *before;
-    if (anchor) {
+    if (placement == Placement::AtStart) {
+        expected.insert(expected.begin(), trackId);
+    } else if (anchor) {
         expected.insert(std::find(expected.begin(), expected.end(), *afterTrackId) + 1, trackId);
     } else {
         expected.push_back(trackId);
@@ -848,6 +875,20 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
     }
     db.commit();
     return true;
+}
+
+}  // namespace
+
+bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
+                              std::int64_t trackId, std::optional<std::int64_t> afterTrackId)
+{
+    return insertEntry(engineLibraryPath, playlistPath, trackId, Placement::AfterAnchor, afterTrackId);
+}
+
+bool insertAtStartOfEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
+                                   std::int64_t trackId)
+{
+    return insertEntry(engineLibraryPath, playlistPath, trackId, Placement::AtStart, std::nullopt);
 }
 
 bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
