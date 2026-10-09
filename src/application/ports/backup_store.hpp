@@ -33,6 +33,9 @@ struct BackupRecord
     // lets a caller tell whether a given backup included OneLibrary's
     // exportLibrary.db alongside export.pdb.
     std::vector<std::string> filePaths;
+    // Original paths of files that did not exist when this backup was
+    // made: restoring it removes them (FilesystemBackupStore::recordAbsent).
+    std::vector<std::string> absentPaths;
     // Defaults to Automatic because that is what a record with nothing
     // recorded actually is: until this field existed, every record in
     // this store was written by a save. See readOrigin() in
@@ -84,7 +87,8 @@ public:
     // Copies every file in the backup back to the original path it was
     // backed up from (recorded at backup() time). The current contents of
     // each target path are themselves backed up first (label
-    // "pre-restore"), so a restore can itself be undone. Returns false if
+    // "pre-restore"), so a restore can itself be undone. A file the
+    // backup holds as absent is removed. Returns false if
     // the backup can't be found, holds nothing, or is not a shape this
     // build wrote.
     virtual bool restore(const std::string &id) = 0;

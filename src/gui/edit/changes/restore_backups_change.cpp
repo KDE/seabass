@@ -60,6 +60,11 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
             for (const std::string &file : record.filePaths) {
                 ctx.protectForThisChange(file);
             }
+            // Files the save created, which the restore removes: a
+            // rollback has to bring them back too.
+            for (const std::string &file : record.absentPaths) {
+                ctx.protectForThisChange(file);
+            }
         }
     }
 

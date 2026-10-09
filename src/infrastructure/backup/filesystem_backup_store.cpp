@@ -52,6 +52,8 @@ namespace
 constexpr const char *ManifestFileName = ".manifest";
 constexpr const char *DescriptionFileName = ".description";
 constexpr const char *OriginKey = "ORIGIN";
+// One line per file the record holds as absent; see recordAbsent().
+constexpr const char *AbsentKey = "ABSENT";
 
 std::string timestampNow()
 {
@@ -120,6 +122,10 @@ struct Manifest
 {
     int version = 0;
     std::vector<std::pair<std::string, std::string>> entries;
+    // Recorded paths of files that did not exist when the record was
+    // made and that the save would create (recordAbsent()): restore()
+    // removes them, so it gives back a stick without them.
+    std::vector<std::string> absent;
     std::optional<BackupOrigin> origin;
     // False when the manifest is there and could not be read to its end.
     // Everything above is then a guess, the origin worst of all: with no
@@ -173,6 +179,8 @@ Manifest readManifest(const fs::path &dir)
             manifest.version = std::atoi(value.c_str());
         } else if (key == OriginKey) {
             manifest.origin = value == "user" ? BackupOrigin::UserRequested : BackupOrigin::Automatic;
+        } else if (key == AbsentKey) {
+            manifest.absent.push_back(std::move(value));
         } else {
             manifest.entries.emplace_back(std::move(key), std::move(value));
         }
@@ -209,6 +217,9 @@ bool writeManifest(const fs::path &dir, const Manifest &manifest)
     }
     for (const auto &[entryName, recorded] : manifest.entries) {
         out << entryName << '\t' << recorded << '\n';
+    }
+    for (const std::string &recorded : manifest.absent) {
+        out << AbsentKey << '\t' << recorded << '\n';
     }
     return writeFileDurablyAtomic(pathToUtf8(dir / ManifestFileName), out.str());
 }
@@ -599,6 +610,42 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     return record;
 }
 
+void FilesystemBackupStore::recordAbsent(const std::string &id, const std::vector<std::string> &filePaths)
+{
+    if (filePaths.empty()) {
+        return;
+    }
+    const fs::path dir = m_baseDirectory / pathFromUtf8(id);
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        throw std::runtime_error("no backup with id " + id + " to note an absent file in");
+    }
+    Manifest manifest = readManifest(dir);
+    if (manifest.version != ManifestFormatVersion) {
+        throw std::runtime_error("backup " + id + " is not a record this build wrote");
+    }
+    if (!manifest.readable) {
+        throw std::runtime_error("the manifest of backup " + id + " is damaged, so nothing is added to it");
+    }
+    for (const std::string &file : filePaths) {
+        const fs::path source = pathFromUtf8(file);
+        std::error_code existsEc;
+        // A file that is there is backed up, not noted absent: noted, its
+        // restore would delete what the stick held before the save. A
+        // stat that fails says nothing either way, and is refused too.
+        if (fs::exists(source, existsEc) || existsEc) {
+            throw std::runtime_error(pathToUtf8(source) + " is there, so it cannot be recorded as absent");
+        }
+        const std::string recorded = recordedPathFor(source);
+        if (std::find(manifest.absent.begin(), manifest.absent.end(), recorded) == manifest.absent.end()) {
+            manifest.absent.push_back(recorded);
+        }
+    }
+    if (!writeManifest(dir, manifest)) {
+        throw std::runtime_error("could not write the manifest of backup " + id + " under " + pathToUtf8(m_baseDirectory));
+    }
+}
+
 bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
                                                const std::vector<std::pair<std::string, std::string>> &entries,
                                                std::string *failure, std::size_t *filesWritten)
@@ -756,6 +803,9 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         for (const auto &[onDisk, originalPath] : manifest.entries) {
             record.filePaths.push_back(pathToUtf8(resolveRecordedPath(originalPath)));
         }
+        for (const std::string &recorded : manifest.absent) {
+            record.absentPaths.push_back(pathToUtf8(resolveRecordedPath(recorded)));
+        }
         records.push_back(std::move(record));
     }
 
@@ -859,7 +909,8 @@ bool FilesystemBackupStore::isRestorable(const std::string &id) const
         return false;
     }
     const Manifest manifest = readManifest(dir);
-    return manifest.readable && !manifest.entries.empty() && manifest.version == ManifestFormatVersion
+    return manifest.readable && (!manifest.entries.empty() || !manifest.absent.empty())
+           && manifest.version == ManifestFormatVersion
            && fs::is_regular_file(dir / ArchiveFileName, ec);
 }
 
@@ -874,7 +925,7 @@ bool FilesystemBackupStore::restore(const std::string &id)
         return false;
     }
     auto manifest = readManifest(dir);
-    if (manifest.entries.empty()) {
+    if (manifest.entries.empty() && manifest.absent.empty()) {
         m_lastRestoreError = "backup " + id + " lists no files";
         return false;  // nothing was ever backed up for this id
     }
@@ -914,6 +965,15 @@ bool FilesystemBackupStore::restore(const std::string &id)
         // so a target that is there but could not be examined must be
         // protected rather than quietly written over -- and it is also
         // what the free-space check is computed from.
+        std::error_code existsEc;
+        if (fs::exists(target, existsEc) || existsEc) {
+            currentPaths.push_back(pathToUtf8(target));
+        }
+    }
+    // A file the record holds as absent is removed below, so what is
+    // there now is kept the same way.
+    for (const std::string &recorded : manifest.absent) {
+        const fs::path target = resolveRecordedPath(recorded);
         std::error_code existsEc;
         if (fs::exists(target, existsEc) || existsEc) {
             currentPaths.push_back(pathToUtf8(target));
@@ -968,7 +1028,25 @@ bool FilesystemBackupStore::restore(const std::string &id)
     }
 
     std::size_t filesWritten = 0;
-    const bool restored = restoreFromArchive(opened, manifest.entries, &m_lastRestoreError, &filesWritten);
+    bool restored = restoreFromArchive(opened, manifest.entries, &m_lastRestoreError, &filesWritten);
+    // Then the files the record says were not there: the save created
+    // them, and the stick it gives back has none. After the entries, so a
+    // restore refused for a damaged entry removes nothing.
+    for (std::size_t i = 0; restored && i < manifest.absent.size(); ++i) {
+        const fs::path target = resolveRecordedPath(manifest.absent[i]);
+        std::error_code existsEc;
+        if (!fs::exists(target, existsEc) && !existsEc) {
+            continue;
+        }
+        std::string removeFailure;
+        if (!infrastructure::removeEntry(target, removeFailure)) {
+            m_lastRestoreError = "could not remove " + pathToUtf8(target)
+                                 + ", which the backed-up save created: " + removeFailure;
+            restored = false;
+            break;
+        }
+        ++filesWritten;
+    }
     if (!restored && filesWritten == 0 && m_lastPreRestoreId) {
         // Nothing was overwritten, so the copy protects nothing -- and on
         // a stick that has just run out of room it would be the thing
