@@ -209,6 +209,12 @@ addition a conflict on first use, which turns the page into a wall of
 questions on the one run where it is most useful. Sebastian may want the
 strict reading; it is one flag per section.
 
+**Decision (review of step 2, 2026-10-09):** in the fallback, an empty
+rekordbox value against a value Engine has (no comment while Engine has
+one, unrated while Engine is rated) is Engine's own, kept, not a
+conflict: removing a value is destructive and unattributed, so the first
+run must not offer it. Two differing non-empty values stay a conflict.
+
 **Decision:** rows Seabass creates keep `pdbImportKey` 0. Stamping the
 pdb sequence would make them look like player imports, which is a lie
 with unmeasured player semantics; the baseline is the provenance.
@@ -561,6 +567,20 @@ review in the main session.
    `DeleteTracksChange` (red test: PerformanceData left behind). 0.5 d
 6. `engine_track_rows` create path extracted from the creator, with the
    per-id analysis test. 1.5 d
+6b. The Engine reader takes the file's sample rate for rows that have
+   no analysis yet. Found in step 6: a row waiting for the player's
+   analysis has NULL `trackData`, so nothing in it records a rate, and
+   `LibdjinteropEngineReader` assumes 44.1 kHz; the cues of a 48 kHz
+   file then read 9 percent late until the player has analysed it. That
+   is true of every player-imported unanalysed row on a real stick (the
+   anonymized fixture has 1214 of them), not only of rows Seabass adds,
+   and it would make the planner propose phantom cue moves right after
+   a save. Fix: for a row with cues and no `trackData`, the reader asks
+   `TrackMetadataProbe` for the file's rate, cached per stick in the
+   existing metadata cache so a 1200-row stick is probed once, with the
+   rows that have no cues left alone (nothing to convert). Red test: the
+   step 6 case that pins the wrong value today goes green. Also fixes
+   today's Sync Cue Points on such rows. 1 d
 7. Engine playlist create, rename, insert-after, with tests. 1 d
 8. `OwnedChange` and the Add, Remove, Playlist and Membership changes,
    with save-loop tests including undo. 2 d
