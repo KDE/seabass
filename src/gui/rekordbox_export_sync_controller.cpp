@@ -291,6 +291,11 @@ QString RekordboxExportSyncController::introText() const
     return QStringLiteral("No earlier record of this stick: additions are assumed, removals are left to you");
 }
 
+bool RekordboxExportSyncController::proposalEmpty() const
+{
+    return m_analysis && m_analysis->proposal.empty();
+}
+
 bool RekordboxExportSyncController::onlyCues() const
 {
     return m_analysis && m_analysis->proposal.onlyCues();

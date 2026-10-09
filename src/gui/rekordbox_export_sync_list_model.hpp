@@ -83,6 +83,13 @@ public:
         // QStringList, one line each: what happens to this track or
         // playlist (details()).
         DetailsRole,
+        // Whether the row is about one track (its cover slot), and that
+        // track's cover as a local file URL (toLocalFileUrl), "" for none;
+        // the fallback is the other side's copy of it, where the row has
+        // both (a rating, cues, a conflict).
+        HasTrackRole,
+        ArtworkPathRole,
+        FallbackArtworkPathRole,
     };
 
     // The page's order: the questions first, then what a tick writes,
@@ -117,6 +124,10 @@ public:
         QString title;
         QString artist;
         QString detail;
+        // The row's track, for its cover: see HasTrackRole.
+        bool hasTrack = false;
+        std::string artworkPath;
+        std::string fallbackArtworkPath;
         bool included = false;
         QString resolvedSide;
         // Unique for the life of the model, never reused: what an answer's
@@ -176,6 +187,14 @@ public:
     // Ticked rows per section name, every section present: what a
     // section-wide checkbox shows (ticked when every row is).
     QVariantMap sectionCheckedCounts() const;
+    // What the proposal holds, for the page's overview bar, rows per
+    // category, every category present: "newTracks" (tracks to add),
+    // "newPlaylists" (playlist and folder creates), "changed" (membership
+    // adds, ratings and comments, cues to Engine, everything going back
+    // onto rekordbox), "removed" (tracks to remove, playlist and folder
+    // deletes, membership removes), "other" (renames). Conflicts, Engine's
+    // own and the refused adds are not in it.
+    QVariantMap categoryCounts() const;
     // Writable rows ticked.
     int checkedCount() const;
     // Conflicts not answered yet.

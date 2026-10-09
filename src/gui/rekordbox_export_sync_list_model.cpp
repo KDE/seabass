@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
+#include "gui/local_file_url.hpp"
 #include "gui/sync_plan_list_model.hpp"
 
 namespace seabass::gui
@@ -437,6 +438,12 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
         return row.fromConflictUid >= 0;
     case DetailsRole:
         return detailsOf(row);
+    case HasTrackRole:
+        return row.hasTrack;
+    case ArtworkPathRole:
+        return toLocalFileUrl(row.artworkPath);
+    case FallbackArtworkPathRole:
+        return toLocalFileUrl(row.fallbackArtworkPath);
     default:
         return {};
     }
@@ -464,6 +471,9 @@ QHash<int, QByteArray> RekordboxExportSyncListModel::roleNames() const
         {DirectionRole, "direction"},
         {FromConflictRole, "fromConflict"},
         {DetailsRole, "details"},
+        {HasTrackRole, "hasTrack"},
+        {ArtworkPathRole, "artworkPath"},
+        {FallbackArtworkPathRole, "fallbackArtworkPath"},
     };
 }
 
@@ -491,10 +501,13 @@ RekordboxExportSyncListModel::Row RekordboxExportSyncListModel::rowForEdit(const
     {
         Row &row;
         const std::string &root;
-        void track(const Track &t)
+        void track(const Track &t, const Track *other = nullptr)
         {
             row.title = q(t.title.empty() ? t.filename : t.title);
             row.artist = q(t.artist);
+            row.hasTrack = true;
+            row.artworkPath = t.artworkPath;
+            row.fallbackArtworkPath = other ? other->artworkPath : std::string();
         }
         void operator()(const PlaylistCreate &e)
         {
@@ -555,7 +568,7 @@ RekordboxExportSyncListModel::Row RekordboxExportSyncListModel::rowForEdit(const
         {
             const bool toEngine = e.direction == MetadataEdit::Direction::ToEngine;
             row.section = toEngine ? Section::MetadataToEngine : Section::RestoresToRekordbox;
-            track(toEngine ? e.rekordbox : e.engine);
+            track(toEngine ? e.rekordbox : e.engine, toEngine ? &e.engine : &e.rekordbox);
             if (e.field == MetadataEdit::Field::Rating) {
                 row.kind = QStringLiteral("rating");
                 row.detail = QStringLiteral("rating: %1").arg(stars(e.rating));
@@ -570,7 +583,7 @@ RekordboxExportSyncListModel::Row RekordboxExportSyncListModel::rowForEdit(const
             const bool toEngine = e.plan.direction == SyncPlan::Direction::ToB;
             row.section = toEngine ? Section::CuesToEngine : Section::RestoresToRekordbox;
             row.kind = QStringLiteral("cues");
-            track(e.plan.match.trackA);
+            track(e.plan.match.trackA, &e.plan.match.trackB);
             row.detail = SyncPlanListModel::cueSummary(e.plan);
         }
     };
@@ -615,6 +628,11 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
         }
         if (track) {
             row.title = q(track->title.empty() ? track->filename : track->title);
+            row.hasTrack = true;
+            row.artworkPath = track->artworkPath;
+            if (const std::optional<Track> other = trackOfChoice(c.engineChoice); other) {
+                row.fallbackArtworkPath = other->artworkPath;
+            }
             row.artist = q(track->artist);
             row.detail = pathOnStick(*track, stickRoot);
             if (!playlist.empty()) {
@@ -666,6 +684,8 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
             row.detail = quotedText(k.playlistPath);
         } else {
             row.title = q(k.engine.title.empty() ? k.engine.filename : k.engine.title);
+            row.hasTrack = true;
+            row.artworkPath = k.engine.artworkPath;
             row.artist = q(k.engine.artist);
             row.detail = pathOnStick(k.engine, stickRoot);
         }
@@ -1150,6 +1170,55 @@ QVariantMap RekordboxExportSyncListModel::sectionCheckedCounts() const
         counts.insert(QString::fromLatin1(SectionNames[i]), n[i]);
     }
     return counts;
+}
+
+QVariantMap RekordboxExportSyncListModel::categoryCounts() const
+{
+    int newTracks = 0;
+    int newPlaylists = 0;
+    int changed = 0;
+    int removed = 0;
+    int other = 0;
+    for (const auto &row : m_rows) {
+        switch (row.section) {
+        case Section::TracksToAdd:
+            ++newTracks;
+            break;
+        case Section::TracksToRemove:
+            ++removed;
+            break;
+        case Section::Playlists:
+            if (row.kind.startsWith(QLatin1String("create"))) {
+                ++newPlaylists;
+            } else if (row.kind.startsWith(QLatin1String("delete"))) {
+                ++removed;
+            } else {
+                ++other;
+            }
+            break;
+        case Section::Membership:
+            if (row.kind == QLatin1String("removeMember")) {
+                ++removed;
+            } else {
+                ++changed;
+            }
+            break;
+        case Section::MetadataToEngine:
+        case Section::CuesToEngine:
+        case Section::RestoresToRekordbox:
+            ++changed;
+            break;
+        case Section::Conflicts:
+        case Section::EngineOwnKept:
+        case Section::NotAdded:
+            break;
+        }
+    }
+    return {{QStringLiteral("newTracks"), newTracks},
+            {QStringLiteral("newPlaylists"), newPlaylists},
+            {QStringLiteral("changed"), changed},
+            {QStringLiteral("removed"), removed},
+            {QStringLiteral("other"), other}};
 }
 
 int RekordboxExportSyncListModel::checkedCount() const
