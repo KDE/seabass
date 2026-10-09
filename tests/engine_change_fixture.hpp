@@ -35,6 +35,7 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
@@ -71,6 +72,20 @@ inline EngineChangeStick makeEngineChangeStick(const std::filesystem::path &fixt
     assert(!ec && "the Engine side of the fixture copies");
     stick.db = pathToUtf8(stick.engine / "Database2" / "m.db");
     return stick;
+}
+
+// Engine's import counter put level with export.pdb (15132 in the
+// fixture, against Engine's 14204), as any earlier Seabass save with both
+// catalogs leaves a stick. Then a save with both catalogs leaves the
+// counter alone, and its Undo is byte for byte.
+inline void levelImportCounter(const EngineChangeStick &stick)
+{
+    const auto state = infrastructure::engine::readRekordboxImportState(pathToUtf8(stick.engine), pathToUtf8(stick.pioneer));
+    assert(state.error.empty() && state.librarySequence == 15132 && state.engineCounter == 14204);
+    std::string error;
+    const bool marked = infrastructure::engine::markRekordboxLibraryImported(pathToUtf8(stick.engine), 15132, &error);
+    assert(marked && error.empty());
+    (void)marked;
 }
 
 // Every row a query returns, each column as text (NULL as "<null>",
