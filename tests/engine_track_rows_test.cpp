@@ -39,9 +39,12 @@
 // - its cues sit at the file's own sample offsets: Engine keeps a cue as
 //   a sample offset (quickCues, loops, the main cue), so 1000 ms is 48000
 //   samples in a 48 kHz file and 44100 in a 44.1 kHz one. A row waiting
-//   for analysis has no trackData and so records no rate, and the reader
-//   then guesses 44.1 kHz: the 48 kHz row's cues read back 48000/44100
-//   times late. Pinned as what the reader does today, not as right;
+//   for analysis has no trackData and so records no rate. A reader with
+//   no sample rate source guesses 44.1 kHz, and the 48 kHz row's cues
+//   read back 48000/44100 times late; given a source that asks the file
+//   (TagLib), both rows read back at the times they were written, through
+//   readAll() and through a source-less read corrected by fillCues() as
+//   the catalog cache's Cues stage does;
 // - pdbImportKey 0, dateAdded the time of the call, the Information row
 //   single and byte for byte as before;
 // - a path the library already has, a write root with no library, a file
@@ -51,6 +54,7 @@
 // - a library whose one Information row is at id 2 takes a row and keeps
 //   its Information row at 2; one with two Information rows is refused.
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -639,11 +643,10 @@ int main(int argc, char **argv)
             check(id48, 48000.0, 72000.0, 96000.0, 144000.0);
             check(id44, 44100.0, 66150.0, 88200.0, 132300.0);
         }
-        // Through the reader: right at 44.1 kHz. At 48 kHz the row records
-        // no rate (no trackData until the player analyses), so the reader
-        // takes its 44.1 kHz guess and every cue reads 48000/44100 late:
-        // 1000 ms reads 1088.435... ms. What the reader does today, pinned
-        // so a reader that learns the file's rate turns this red.
+        // Through a reader with no sample rate source: right at 44.1 kHz.
+        // At 48 kHz the row records no rate (no trackData until the player
+        // analyses), so the reader takes its 44.1 kHz guess and every cue
+        // reads 48000/44100 late: 1000 ms reads 1088.435... ms.
         const auto cueAt = [](const domain::Track &t, bool loop, int pad) -> const domain::CuePoint * {
             for (const auto &c : t.cues) {
                 if (c.kind == domain::CuePoint::Kind::Hot && c.hotCueNumber == pad && c.isLoop == loop) {
@@ -666,8 +669,76 @@ int main(int argc, char **argv)
                    && near(cueAt(t, true, 2)->loopEndMs, 2176.8707482993197));
             assert(cueAt(t, false, 3) && near(cueAt(t, false, 3)->positionMs, 3265.3061224489797));
         }
-        std::cout << "case 11 (cues at the file's sample offsets, 48 kHz and 44.1 kHz; the reader's 44.1 kHz guess "
-                     "pinned) OK\n";
+        std::cout << "case 11 (cues at the file's sample offsets, 48 kHz and 44.1 kHz; with no sample rate source "
+                     "the reader's 44.1 kHz guess) OK\n";
+
+        // 11b. With a source that asks the file, as the catalog cache's
+        //      Cues stage gives one: both rows read back at the times they
+        //      were written. Through readAll(), and through a read with no
+        //      source whose cues fillCues() then corrects.
+        {
+            std::map<std::string, int> asked;
+            const LibdjinteropEngineReader::SampleRateSource source =
+                [&](const std::string &file) -> std::optional<double> {
+                ++asked[file];
+#if defined(SEABASS_HAVE_TAGLIB)
+                infrastructure::audio::TagLibMetadataProbe probe;
+                const auto meta = probe.read(file);
+                if (!meta || meta->sampleRate <= 0) {
+                    return std::nullopt;
+                }
+                return static_cast<double>(meta->sampleRate);
+#else
+                if (file == pathToUtf8(wav48)) {
+                    return rate48;
+                }
+                if (file == pathToUtf8(wav44)) {
+                    return rate44;
+                }
+                return std::nullopt;
+#endif
+            };
+            const auto rightTimes = [&](const std::vector<domain::Track> &read) {
+                for (const std::int64_t id : {id48, id44}) {
+                    const domain::Track &t = *byId(read, id);
+                    // Pad 1, the loop on pad 2, the memory cue on pad 3 and
+                    // as the main cue.
+                    assert(t.cues.size() == 4);
+                    assert(cueAt(t, false, 1) && near(cueAt(t, false, 1)->positionMs, 1000.0));
+                    assert(cueAt(t, true, 2) && near(cueAt(t, true, 2)->positionMs, 1500.0)
+                           && near(cueAt(t, true, 2)->loopEndMs, 2000.0));
+                    assert(cueAt(t, false, 3) && near(cueAt(t, false, 3)->positionMs, 3000.0));
+                    const auto memory =
+                        std::find_if(t.cues.begin(), t.cues.end(),
+                                     [](const domain::CuePoint &c) { return c.kind == domain::CuePoint::Kind::Memory; });
+                    assert(memory != t.cues.end() && near(memory->positionMs, 3000.0));
+                }
+            };
+
+            LibdjinteropEngineReader withSource(libUtf8);
+            withSource.setSampleRateSource(source);
+            const auto read = withSource.readAll();
+            assert(read.size() == 1566);
+            rightTimes(read);
+            assert(asked[pathToUtf8(wav48)] == 1 && asked[pathToUtf8(wav44)] == 1 && "each new row's file asked once");
+            // And the fixture's own: of its 1212 rows with no trackData, the
+            // 23 that carry a cue or a loop (ids 17, 73, 79, 100, 259, 281,
+            // 320, 322, 324, 343, 382, 383, 462, 548, 618, 640, 654, 684,
+            // 696, 704, 740, 751, 854), whose files this copy does not
+            // have; none of its 353 rows with a stored rate.
+            assert(asked.size() == 25);
+            for (const auto &[file, times] : asked) {
+                assert(times == 1);
+            }
+
+            auto corrected = tracks;  // case 10's read, with no source
+            asked.clear();
+            withSource.fillCues(corrected);
+            rightTimes(corrected);
+            assert(asked[pathToUtf8(wav48)] == 1 && asked[pathToUtf8(wav44)] == 1 && asked.size() == 25);
+        }
+        std::cout << "case 11b (given the file's rate, 1000 ms reads 1000 ms at 48 kHz and at 44.1 kHz, through "
+                     "readAll() and fillCues()) OK\n";
 
         // 12. Refused, adding nothing.
         const auto refused = [&](const std::string &writeRoot, const NewEngineTrack &t, const std::string &expect) {

@@ -28,11 +28,13 @@ namespace seabass::gui
 // library" means.
 //
 // pass: how far to read. Tracks is the catalog files alone, a fraction
-// of a second on a stick: the tracks and the playlists, and the cues of
-// a catalog that keeps them inside (Engine). rekordbox keeps its cues in
-// one ANLZ file per track, so a Tracks read of a stick with a rekordbox
-// catalog comes back with cuesKnown false. Cues reads those too: the
-// whole fingerprint, for as long as the Cues stage takes.
+// of a second on a stick: the tracks and the playlists. rekordbox keeps
+// its cues in one ANLZ file per track, and Engine's cues on a row the
+// player has not analysed yet are at a 44.1 kHz guess until the Cues
+// stage asks the file for its rate, so a Tracks read comes back with
+// cuesKnown false unless the cache had read the Cues stage already.
+// Cues reads them: the whole fingerprint, for as long as the Cues stage
+// takes.
 //
 // cancel: handed to the cache, which checks it while this waits for a
 // pass another thread is running and in the passes this call runs

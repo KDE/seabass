@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,22 +30,47 @@ std::string colorHex(const djinterop::pad_color &c);
 class LibdjinteropEngineReader : public application::LibraryReader
 {
 public:
+    // What an audio file says its sample rate is, in Hz, or nothing when
+    // it cannot say. Given the absolute path the reader resolved for the
+    // row (Track::filePath). May throw application::OperationCancelled;
+    // any other exception is taken as "cannot say".
+    using SampleRateSource = std::function<std::optional<double>(const std::string &filePath)>;
+
     // engineLibraryPath is the directory containing "Database2/"
     // (i.e. the "Engine Library" folder itself).
     explicit LibdjinteropEngineReader(std::string engineLibraryPath);
 
-    // The cues are in the catalog, so fillCues() has nothing to add (the
-    // LibraryReader default). readTracks() reads m.db alone: no audio
-    // file is stat'd for its size (application::fillFileSizes) and no
-    // artwork file for its existence; artworkPath is what the catalog
-    // names, whether or not the file is still there. fillArtwork() adds
-    // the covers that take more: an image file under Artwork/, looked for
-    // on the stick, and an image kept inside the database, written out
-    // once to paths::localEngineArtworkDir() on this computer. Only for a
-    // caller that shows covers (the catalog cache's Full stage): readAll()
-    // is readTracks() alone, as the checks and tools that call it want.
+    // readTracks() reads m.db alone: no audio file is stat'd for its size
+    // (application::fillFileSizes) and no artwork file for its existence;
+    // artworkPath is what the catalog names, whether or not the file is
+    // still there. fillArtwork() adds the covers that take more: an image
+    // file under Artwork/, looked for on the stick, and an image kept
+    // inside the database, written out once to
+    // paths::localEngineArtworkDir() on this computer. Only for a caller
+    // that shows covers (the catalog cache's Full stage): readAll() is
+    // readTracks() alone, as the checks and tools that call it want.
+    //
+    // The cues are in the catalog too, as sample offsets, and the row's
+    // sample rate turns them into times. A row the player has not
+    // analysed yet records no rate (no trackData), and a few real rows
+    // record 0. For such a row with at least one cue or loop the reader
+    // asks the sample rate source, when it has one; without one, or when
+    // the source cannot say, it takes 44.1 kHz, which puts the cues of a
+    // 48 kHz file 9 percent late (1000 ms reads 1088.4 ms). Nothing on
+    // the Track says which happened. A row with a stored rate, and a row
+    // with no cues, is never asked about, so the source costs nothing on
+    // a library whose unanalysed rows carry no cues.
+    //
+    // readTracks() asks the source inline. fillCues() is for tracks a
+    // reader without a source read (the catalog cache's Tracks stage,
+    // which opens no audio file): with a source, it looks up the stored
+    // rate of every row that has cues, asks the source for the ones with
+    // none, and reads those rows' cues again at the file's rate. Without
+    // a source it does nothing (the LibraryReader default).
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
+    void fillCues(std::vector<domain::Track> &tracks) override;
+    void setSampleRateSource(SampleRateSource source) { m_sampleRateSource = std::move(source); }
     // count(*) of m.db's Track table over a read-only connection: no
     // journal recovery, no libdjinterop. Nothing when m.db is not there
     // or cannot be read.
@@ -59,8 +85,11 @@ public:
     void setVolumeIdentity(std::string identity) { m_volumeIdentity = std::move(identity); }
 
 private:
+    std::optional<double> rateFromSource(const domain::Track &track);
+
     std::string m_engineLibraryPath;
     std::string m_volumeIdentity;
+    SampleRateSource m_sampleRateSource;
 };
 
 }  // namespace seabass::infrastructure::engine

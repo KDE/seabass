@@ -5,7 +5,6 @@
 #include "library_fingerprint_reader.hpp"
 
 #include <exception>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,7 +23,7 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
         pass == FingerprintPass::Tracks ? LibraryCatalogCache::Detail::Tracks : LibraryCatalogCache::Detail::Cues;
     std::vector<domain::Track> tracks;
     bool anyRead = false;
-    bool rekordboxCuesMissing = false;
+    bool cuesMissing = false;
     for (const auto &[format, path] : {std::pair{"rekordbox", rekordboxPath}, std::pair{"engine", enginePath}}) {
         if (path.isEmpty()) {
             continue;
@@ -37,12 +36,14 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
                 format, path.toStdString(), detail, application::NullProgressReporter::instance(), cancel);
             tracks.insert(tracks.end(), read.tracks.begin(), read.tracks.end());
             anyRead = true;
-            if (std::string_view(format) == "rekordbox") {
-                // A Tracks answer from an entry that had already read its
-                // cues carries them, and saying "checking cues" over it
-                // would be a flash of nothing: the stage says which.
-                rekordboxCuesMissing = read.stage < LibraryCatalogCache::Detail::Cues;
-            }
+            // A Tracks answer from an entry that had already read its cues
+            // carries them, and saying "checking cues" over it would be a
+            // flash of nothing: the stage says which. For Engine too,
+            // although its cues are in its catalog: a row the player has
+            // not analysed yet has them at a 44.1 kHz guess until the Cues
+            // stage asks the file for its rate, and a backup's
+            // fingerprint is taken from the Cues stage.
+            cuesMissing = cuesMissing || read.stage < LibraryCatalogCache::Detail::Cues;
         } catch (const std::exception &) {
             // A catalog that is there and could not be read (or a cancel):
             // no fingerprint at all. The other catalog alone is half the
@@ -54,10 +55,7 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
     if (!anyRead) {
         return std::nullopt;
     }
-    // Engine's cues are in its catalog, so a Tracks read of an Engine-only
-    // stick is already the whole fingerprint. rekordbox's are not, unless
-    // the cache had read that far before this call.
-    const bool cuesKnown = !rekordboxCuesMissing;
+    const bool cuesKnown = !cuesMissing;
     return domain::fingerprintLibrary(tracks, cuesKnown);
 }
 
