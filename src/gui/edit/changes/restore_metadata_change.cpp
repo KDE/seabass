@@ -392,6 +392,28 @@ std::vector<BackupTarget> RestoreMetadataChange::filesToBackup(SaveContext &ctx)
     return targets;
 }
 
+// What apply() writes for this proposal: the cues only when offered (an
+// empty set offered is a set written), the rating only when offered and
+// set, exactly as applyAnnotation() decides it.
+std::vector<RekordboxWrite> RestoreMetadataChange::rekordboxWrites() const
+{
+    if ((m_format != "rekordbox" && m_format != "onelibrary") || m_proposal.stickTrack.filePath.empty()) {
+        return {};
+    }
+    RekordboxWrite write;
+    write.filePath = m_proposal.stickTrack.filePath;
+    if (m_proposal.cuesOffered) {
+        write.cues = m_proposal.cues;
+    }
+    if (m_proposal.ratingOffered && m_proposal.rating) {
+        write.rating = *m_proposal.rating;
+    }
+    if (!write.cues && !write.rating) {
+        return {};
+    }
+    return {std::move(write)};
+}
+
 ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
 {
     const domain::Track &track = m_proposal.stickTrack;

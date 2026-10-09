@@ -41,6 +41,10 @@ public:
     QString verb() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    // The cues and the rating it puts back, for a rekordbox or OneLibrary
+    // track. The comment is not recorded: the baseline has no origin for
+    // it.
+    std::vector<RekordboxWrite> rekordboxWrites() const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
 private:

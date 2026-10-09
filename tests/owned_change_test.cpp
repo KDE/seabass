@@ -70,6 +70,37 @@ std::unique_ptr<PendingChange> syncChange(const testing::EngineChangeStick &stic
     return std::make_unique<SyncPlanChange>(stick.pioneerPath(), stick.enginePath(), padOntoEngine(EngineTrack), 2);
 }
 
+// The other way: Engine's cues onto a rekordbox track, which is a write
+// on the rekordbox side the wrapped change has to report as its own.
+std::unique_ptr<PendingChange> syncOntoRekordbox(const testing::EngineChangeStick &stick)
+{
+    domain::SyncPlan plan = padOntoEngine(EngineTrack);
+    plan.match.trackA.filePath = pathToUtf8(stick.root / "Contents" / "a.mp3");
+    plan.direction = domain::SyncPlan::Direction::ToA;
+    return std::make_unique<SyncPlanChange>(stick.pioneerPath(), stick.enginePath(), plan, 2);
+}
+
+bool sameWrites(const std::vector<RekordboxWrite> &a, const std::vector<RekordboxWrite> &b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].filePath != b[i].filePath || a[i].rating != b[i].rating || a[i].cues.has_value() != b[i].cues.has_value()) {
+            return false;
+        }
+        if (a[i].cues && (a[i].cues->size() != b[i].cues->size()
+                          || !std::equal(a[i].cues->begin(), a[i].cues->end(), b[i].cues->begin(),
+                                         [](const domain::CuePoint &x, const domain::CuePoint &y) {
+                                             return x.kind == y.kind && x.hotCueNumber == y.hotCueNumber
+                                                 && x.positionMs == y.positionMs;
+                                         }))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::unique_ptr<PendingChange> deleteChange(const testing::EngineChangeStick &stick)
 {
     return std::make_unique<DeletePlaylistChange>(QString(), stick.enginePath(), "Playlist 001",
@@ -135,9 +166,12 @@ int main(int argc, char **argv)
     {
         application::CancellationToken token;
         SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, QString(), stick.enginePath());
-        for (const bool sync : {true, false}) {
-            std::unique_ptr<PendingChange> bare = sync ? syncChange(stick) : deleteChange(stick);
-            const OwnedChange owned(rekordboxExportSyncOwner(), sync ? syncChange(stick) : deleteChange(stick));
+        const auto make = [&](int which) {
+            return which == 0 ? syncChange(stick) : which == 1 ? deleteChange(stick) : syncOntoRekordbox(stick);
+        };
+        for (const int which : {0, 1, 2}) {
+            std::unique_ptr<PendingChange> bare = make(which);
+            const OwnedChange owned(rekordboxExportSyncOwner(), make(which));
             assert(owned.id() == QStringLiteral("rekordbox-export-sync:") + bare->id());
             assert(owned.owner() == QStringLiteral("rekordbox-export-sync"));
             assert(owned.id().section(QLatin1Char(':'), 0, 0) == owned.owner() && "the id's prefix is the owner");
@@ -148,12 +182,25 @@ int main(int argc, char **argv)
             assert(owned.unitsSkipped() == bare->unitsSkipped());
             assert(owned.verb() == bare->verb());
             assert(owned.formatsTouched() == bare->formatsTouched());
+            assert(sameWrites(owned.rekordboxWrites(), bare->rekordboxWrites()));
             const auto ownedTargets = owned.filesToBackup(ctx);
             const auto bareTargets = bare->filesToBackup(ctx);
             assert(ownedTargets.size() == bareTargets.size() && !ownedTargets.empty());
             for (size_t i = 0; i < ownedTargets.size(); ++i) {
                 assert(ownedTargets[i].file == bareTargets[i].file && ownedTargets[i].label == bareTargets[i].label);
             }
+        }
+        // The rekordbox-side write, as the wrapped change reports it: one
+        // track, its file, the plan's one pad, no rating.
+        {
+            const auto writes = OwnedChange(rekordboxExportSyncOwner(), syncOntoRekordbox(stick)).rekordboxWrites();
+            assert(writes.size() == 1);
+            assert(writes[0].filePath == pathToUtf8(stick.root / "Contents" / "a.mp3"));
+            assert(writes[0].cues && writes[0].cues->size() == 1 && writes[0].cues->front().hotCueNumber == 1
+                   && writes[0].cues->front().positionMs == 1000.0);
+            assert(!writes[0].rating);
+            assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).rekordboxWrites().empty()
+                   && "a sync onto Engine wrote nothing on the rekordbox side");
         }
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).id()
                == QStringLiteral("rekordbox-export-sync:sync:engine:6"));

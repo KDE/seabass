@@ -32,6 +32,8 @@ public:
     QString verb() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    // The plan's cues, when the target is rekordbox or OneLibrary.
+    std::vector<RekordboxWrite> rekordboxWrites() const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
 private:

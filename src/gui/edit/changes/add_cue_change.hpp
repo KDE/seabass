@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <optional>
+
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::gui
@@ -35,7 +37,13 @@ public:
 
     ChangeOutcome apply(SaveContext &ctx) override;
 
+    // The track's whole cue set as the last apply() wrote it, on a
+    // rekordbox or OneLibrary track: the set is read at apply() time, so
+    // only then is it known.
+    std::vector<RekordboxWrite> rekordboxWrites() const override;
+
 private:
+    std::optional<RekordboxWrite> m_written;
     QString m_format;
     QString m_path;
     QString m_sourceId;

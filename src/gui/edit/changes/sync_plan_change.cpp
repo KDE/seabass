@@ -149,6 +149,18 @@ std::vector<BackupTarget> SyncPlanChange::filesToBackup(SaveContext &ctx) const
     return targets;
 }
 
+// The rekordbox target's whole set is the plan's cues, which apply()
+// hands its writer (and the OneLibrary mirror) as they are. A track with
+// no file to name has nothing the baseline could key it on.
+std::vector<RekordboxWrite> SyncPlanChange::rekordboxWrites() const
+{
+    const domain::Track &tgt = target();
+    if ((tgt.format != "rekordbox" && tgt.format != "onelibrary") || tgt.filePath.empty()) {
+        return {};
+    }
+    return {RekordboxWrite{tgt.filePath, m_plan.cuesToApply, std::nullopt}};
+}
+
 ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
 {
     const domain::Track &tgt = target();
