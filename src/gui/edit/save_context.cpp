@@ -209,21 +209,28 @@ SaveContext::BackupPlan SaveContext::planBackup(const std::vector<BackupTarget> 
 {
     BackupPlan plan;
     std::set<std::string> seen;
-    auto add = [&](const std::string &file, const std::string &label) {
+    auto add = [&](const std::string &file, const std::string &label, bool absent) {
         if (file.empty() || m_backedUp.contains(application::normalizedPathKey(file))
             || !seen.insert(application::normalizedPathKey(file)).second) {
             return;
         }
-        if (!plan.byLabel.contains(label)) {
+        if (!plan.byLabel.contains(label) && !plan.absentByLabel.contains(label)) {
             plan.labelOrder.push_back(label);
         }
-        plan.byLabel[label].push_back(file);
+        (absent ? plan.absentByLabel : plan.byLabel)[label].push_back(file);
     };
     for (const auto &target : targets) {
         for (const std::string &sidecar : walSidecarsOf(target.file)) {
-            add(sidecar, target.label);
+            add(sidecar, target.label, false);
         }
-        add(target.file, target.label);
+        bool absent = false;
+        if (target.removeOnRestoreIfAbsent && !target.file.empty()) {
+            // A stat that fails is not "absent": that file goes the
+            // ordinary way, and a removal is never recorded on a guess.
+            std::error_code ec;
+            absent = !fs::exists(pathFromUtf8(target.file), ec) && !ec;
+        }
+        add(target.file, target.label, absent);
     }
     return plan;
 }
@@ -276,20 +283,37 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
     try {
         for (const std::string &label : labelOrder) {
             const std::vector<std::string> &files = byLabel[label];
+            const std::vector<std::string> &absent = plan.absentByLabel[label];
             auto existing = m_recordByLabel.find(label);
             application::BackupRecord record;
             if (existing == m_recordByLabel.end()) {
+                // A label with only absent files still gets its record:
+                // backup() leaves an empty archive, and the absent lines
+                // are what its restore acts on.
                 record = archiveStore().backup(files, label);
                 madeHere.push_back(record.id);
                 m_recordByLabel[label] = record.id;
                 m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
                                      QString::fromStdString(record.id)});
                 noteSaveInProgress();
-            } else {
+            } else if (!files.empty()) {
                 record = archiveStore().addToArchive(existing->second, files);
+            } else {
+                // Nothing to copy into the record this save already has;
+                // only absent files to note in it. Logged by its id.
+                record.id = existing->second;
+                record.path = record.id;
             }
+            archiveStore().recordAbsent(record.id, absent);
             log().record(label + ": backed up " + std::to_string(files.size()) + " file(s) -> " + record.path);
+            for (const std::string &file : absent) {
+                log().record(label + ": " + pathToUtf8(pathFromUtf8(file).filename())
+                             + " is not there yet; undoing this save removes it");
+            }
             for (const std::string &file : files) {
+                m_backedUp[application::normalizedPathKey(file)] = record.id;
+            }
+            for (const std::string &file : absent) {
                 m_backedUp[application::normalizedPathKey(file)] = record.id;
             }
             filesBefore += files.size();

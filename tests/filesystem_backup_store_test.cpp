@@ -1072,6 +1072,49 @@ int main()
     }
 #endif
 
+    // A record can hold a file as absent: the save created it, and the
+    // restore removes it. Beside a copied file, and alone, in an empty
+    // archive. A file that is there is refused as absent: noted, its
+    // restore would delete what the stick held before the save.
+    {
+        fs::path stick = root / "absent";
+        fs::path kept = stick / "PIONEER" / "export.pdb";
+        fs::path created = stick / "Seabass" / "rekordbox-baseline.tsv.gz";
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        writeFile(kept, "before");
+        auto both = store.backup({pathToUtf8(kept)}, "sync");
+        store.recordAbsent(both.id, {pathToUtf8(created)});
+        auto alone = store.backup({}, "baseline");
+        store.recordAbsent(alone.id, {pathToUtf8(created)});
+        bool refused = false;
+        try {
+            store.recordAbsent(alone.id, {pathToUtf8(kept)});
+        } catch (const std::runtime_error &) {
+            refused = true;
+        }
+        assert(refused && "a file that is there is not recorded as absent");
+        assert(store.isRestorable(alone.id) && "a record holding only an absent file is restorable");
+        for (const auto &record : store.list()) {
+            if (record.id == both.id) {
+                assert(record.filePaths.size() == 1 && record.absentPaths.size() == 1);
+                assert(record.absentPaths[0] == pathToUtf8(fs::absolute(created)));
+            }
+        }
+
+        writeFile(kept, "after");
+        writeFile(created, "made by the save");
+        assert(store.restore(both.id));
+        assert(readFile(kept) == "before");
+        assert(!fs::exists(created) && "the file the save created is gone");
+
+        writeFile(created, "made again");
+        assert(store.restore(alone.id));
+        assert(!fs::exists(created));
+        // And restoring with the file already gone is no failure.
+        assert(store.restore(alone.id));
+        std::cout << "case: a record holds a file as absent and its restore removes it OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

@@ -284,6 +284,9 @@ private:
     {
         std::vector<std::string> labelOrder;
         std::map<std::string, std::vector<std::string>> byLabel;
+        // Declared removeOnRestoreIfAbsent and not there: noted in the
+        // label's record as absent, not copied, and not counted.
+        std::map<std::string, std::vector<std::string>> absentByLabel;
         size_t files() const;
     };
     BackupPlan planBackup(const std::vector<BackupTarget> &targets) const;

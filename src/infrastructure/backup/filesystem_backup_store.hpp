@@ -53,6 +53,17 @@ public:
     // Throws if `id` is not an archive record.
     application::BackupRecord addToArchive(const std::string &id, const std::vector<std::string> &filePaths);
 
+    // Notes in record `id` that these files did not exist when it was
+    // made, so restore() removes them and gives back a stick without them:
+    // the undo of a save that creates a file has to take it away again,
+    // and a copy cannot say "nothing was here". Opt-in, for a caller that
+    // knows the save creates the file (BackupTarget::removeOnRestoreIfAbsent);
+    // a declared file that is merely absent is still skipped by backup().
+    //
+    // Throws if `id` is not a record this build wrote, or a file is there
+    // after all (or cannot be examined): that one needs a copy.
+    void recordAbsent(const std::string &id, const std::vector<std::string> &filePaths);
+
     // Called with the number of files a backup() or addToArchive() has
     // dealt with so far, before each file and once more at the end, on
     // the thread doing the backup. A save backing up hundreds of analysis

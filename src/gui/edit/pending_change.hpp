@@ -22,6 +22,12 @@ struct BackupTarget
 {
     std::string file;
     std::string label;
+    // The change creates `file` when it is not there. Absent at backup
+    // time, it is then noted in the record as absent, and Undo removes it
+    // (FilesystemBackupStore::recordAbsent); without this an absent file
+    // is skipped, and Undo leaves whatever the save created. Opt-in: a
+    // file some other program might create later is not Undo's to delete.
+    bool removeOnRestoreIfAbsent = false;
 };
 
 struct ChangeOutcome
