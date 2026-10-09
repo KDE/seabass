@@ -238,6 +238,10 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
 // it ("image://fileart//media/<label>/..."), the label compared without
 // case. Exposed for the test.
 bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label);
+// Whether two stick labels are one name to a player: compared without
+// case. The one rule for every comparison of labels in the artwork code
+// and in the restore that calls it.
+bool sameStickLabel(std::string_view a, std::string_view b);
 
 // The label a stick is known by where the audit asks (see volumeLabelOf in
 // engine_artwork.cpp): what decides ImportedPathOnPlayer, and so what the

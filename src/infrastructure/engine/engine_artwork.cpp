@@ -324,7 +324,13 @@ std::optional<std::pair<std::size_t, std::size_t>> mountedLabelIn(std::string_vi
     return std::make_pair(reference.size() - path.size(), slash);
 }
 
-bool sameLabel(std::string_view a, std::string_view b)
+
+}  // namespace
+
+// Whether an imported path is one a Denon player wrote for this very
+// stick: "/media/<label>/..." with the stick's own label, compared
+// without case since FAT keeps labels in capitals and a player may not.
+bool sameStickLabel(std::string_view a, std::string_view b)
 {
     if (a.size() != b.size()) {
         return false;
@@ -337,18 +343,13 @@ bool sameLabel(std::string_view a, std::string_view b)
     return true;
 }
 
-}  // namespace
-
-// Whether an imported path is one a Denon player wrote for this very
-// stick: "/media/<label>/..." with the stick's own label, compared
-// without case since FAT keeps labels in capitals and a player may not.
 bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label)
 {
     if (label.empty()) {
         return false;
     }
     const auto at = mountedLabelIn(reference);
-    return at && sameLabel(reference.substr(at->first, at->second), label);
+    return at && sameStickLabel(reference.substr(at->first, at->second), label);
 }
 
 namespace
@@ -477,8 +478,14 @@ int relabelImportedArtworkLinks(const std::string &databaseFile, const std::stri
         }
         sqlite3_bind_int64(update, 2, row.id);
         if (sqlite3_step(update) != SQLITE_DONE) {
+            // The reason is read before the statement goes: finalize
+            // resets the handle's error to its own result.
+            const std::string why = sqlite3_errmsg(handle);
             sqlite3_finalize(update);
-            return fail("could not rename a cover link");
+            *error = "could not rename a cover link: " + why;
+            sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
+            sqlite3_close(handle);
+            return -1;
         }
         ++renamed;
     }
