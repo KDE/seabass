@@ -929,6 +929,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/owned_change.cpp
         src/gui/edit/changes/add_engine_track_change.hpp
         src/gui/edit/changes/add_engine_track_change.cpp
+        src/gui/edit/changes/remove_engine_track_change.hpp
+        src/gui/edit/changes/remove_engine_track_change.cpp
         src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
@@ -2835,6 +2837,14 @@ if(TARGET seabass_edit)
     add_test(NAME add_engine_track_change_test COMMAND add_engine_track_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(add_engine_track_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    add_executable(remove_engine_track_change_test tests/remove_engine_track_change_test.cpp)
+    target_include_directories(remove_engine_track_change_test PRIVATE src tests)
+    target_link_libraries(remove_engine_track_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME remove_engine_track_change_test COMMAND remove_engine_track_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(remove_engine_track_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(playlist_edit_changes_test tests/playlist_edit_changes_test.cpp)
