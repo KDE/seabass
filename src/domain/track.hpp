@@ -61,6 +61,11 @@ struct PlaylistMembership
 {
     std::string name;  // full path, e.g. "Techno/Peak Time"
     int position = -1;
+    // The catalog's own id of the playlist where the reader knows it
+    // (export.pdb's playlist id), 0 otherwise. Two playlists can share a
+    // name at one level, and only the id says which of them holds the
+    // track; with 0, the name decides.
+    std::uint32_t playlistId = 0;
 };
 
 // One format's row for a file: which format wrote it, and its row id

@@ -526,6 +526,198 @@ int main()
         std::cout << "ambiguous Engine path conflict OK\n";
     }
 
+    // Two rekordbox playlists spelled "Playlist" at the top level (ids 4
+    // and 14), Engine has none there, no baseline: one conflict for the
+    // path, keyed by the lowest id, and nothing else planned for it.
+    // rekordbox's choice is one playlist holding the union, list 4 first.
+    const auto sharedWorld = [] {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Playlist", 0, 4}}),
+                       rb("2", "Music/B.mp3", {{"Playlist", 1, 4}, {"Playlist", 1, 14}}),
+                       rb("3", "Music/C.mp3", {{"Playlist", 0, 14}}), rb("4", "Music/D.mp3", {{"Playlist", 2, 14}}),
+                       rb("5", "Music/E.mp3")};
+        w.engine = {en("e1", "Music/A.mp3"), en("e2", "Music/B.mp3"), en("e3", "Music/C.mp3"),
+                    en("e4", "Music/D.mp3"), en("e5", "Music/E.mp3")};
+        w.rekordboxPlaylists = {{"Playlist", false, 4}, {"Playlist", false, 14}};
+        return w;
+    };
+    const std::string sharedText =
+        "rekordbox has 2 playlists spelled \"Playlist\" here; Engine can hold one at this path";
+    {
+        const World w = sharedWorld();
+        const auto p = plan(w, std::nullopt);
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "playlist:4" && c.header.conflict && !c.header.checkedByDefault);
+        assert(c.header.reason == EngineUpdateReason::RekordboxPathShared);
+        assert(c.header.reasonText == sharedText);
+        assert(c.rekordboxSide
+               == "Create one Engine playlist holding the union of their members in rekordbox order (first list "
+                  "first)");
+        assert(c.engineSide == "Leave this path alone");
+        assert(c.engineChoice.empty());
+        assert(c.rekordboxChoice.size() == 5);
+        const auto &create = std::get<PlaylistCreate>(c.rekordboxChoice[0]);
+        assert(create.path == "Playlist" && create.pdbId == 4 && !create.folder);
+        const Deps unionOrder = {"music/a.mp3", "music/b.mp3", "music/c.mp3", "music/d.mp3"};
+        std::string after;
+        for (std::size_t i = 0; i < unionOrder.size(); ++i) {
+            const auto &add = std::get<MembershipEdit>(c.rekordboxChoice[i + 1]);
+            assert(add.kind == MembershipEdit::Kind::Add && add.playlistPath == "Playlist");
+            assert(add.pathKey == unionOrder[i] && add.afterPathKey == after);
+            assert(add.header.key == "member:4:" + unionOrder[i]);
+            after = add.pathKey;
+        }
+        assert(p.playlistsToCreate.empty() && p.membership.empty() && p.playlistsToDelete.empty());
+        assert(p.playlistsToRename.empty() && p.engineOwnKept.empty());
+        World after_ = w;
+        apply(after_, p, true);
+        assert(engineOrder(after_, "Playlist") == unionOrder);
+        std::cout << "two rekordbox playlists at one path, one conflict OK\n";
+    }
+
+    // The same with an Engine "Playlist" (E, B): still one conflict, no
+    // adds planned for it; the choice adds the union around what Engine
+    // holds.
+    {
+        World w = sharedWorld();
+        w.engine[4].playlists = {{"Playlist", 0}};
+        w.engine[1].playlists = {{"Playlist", 1}};
+        w.enginePlaylists = {{"Playlist", false, 1}};
+        const auto p = plan(w, std::nullopt);
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "playlist:4" && c.header.reason == EngineUpdateReason::RekordboxPathShared);
+        assert(c.header.reasonText == sharedText);
+        assert(c.rekordboxSide
+               == "Put the union of their members into Engine's playlist in rekordbox order (first list first)");
+        assert(c.rekordboxChoice.size() == 3);
+        const auto &a = std::get<MembershipEdit>(c.rekordboxChoice[0]);
+        const auto &cc = std::get<MembershipEdit>(c.rekordboxChoice[1]);
+        const auto &d = std::get<MembershipEdit>(c.rekordboxChoice[2]);
+        assert(a.pathKey == "music/a.mp3" && a.afterPathKey.empty());
+        assert(cc.pathKey == "music/c.mp3" && cc.afterPathKey == "music/b.mp3");
+        assert(d.pathKey == "music/d.mp3" && d.afterPathKey == "music/c.mp3");
+        assert(p.playlistsToCreate.empty() && p.membership.empty() && p.engineOwnKept.empty());
+        World after = w;
+        apply(after, p, true);
+        assert((engineOrder(after, "Playlist")
+                == Deps{"music/a.mp3", "music/e.mp3", "music/b.mp3", "music/c.mp3", "music/d.mp3"}));
+        std::cout << "two rekordbox playlists at one Engine path, one conflict OK\n";
+    }
+
+    // A baseline that knows id 4 as Engine's "Playlist": id 4 is planned
+    // as any playlist (E added), id 14 alone is the conflict, its choice
+    // after what id 4 puts there.
+    {
+        World w = sharedWorld();
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Playlist", 0, 4}}), rb("2", "Music/B.mp3", {{"Playlist", 1, 4}}),
+                       rb("3", "Music/C.mp3"), rb("4", "Music/D.mp3"), rb("5", "Music/E.mp3")};
+        w.engine[0].playlists = {{"Playlist", 0}};
+        w.engine[1].playlists = {{"Playlist", 1}};
+        w.rekordboxPlaylists = {{"Playlist", false, 4}};
+        w.enginePlaylists = {{"Playlist", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Playlist", 0, 4}}), rb("2", "Music/B.mp3", {{"Playlist", 1, 4}}),
+                       rb("3", "Music/C.mp3", {{"Playlist", 0, 14}}), rb("4", "Music/D.mp3", {{"Playlist", 1, 14}}),
+                       rb("5", "Music/E.mp3", {{"Playlist", 2, 4}})};
+        w.rekordboxPlaylists = {{"Playlist", false, 4}, {"Playlist", false, 14}};
+        const auto p = plan(w, base);
+        assert(p.membership.size() == 1);
+        const auto &e = p.membership[0];
+        assert(e.kind == MembershipEdit::Kind::Add && e.header.key == "member:4:music/e.mp3");
+        assert(e.afterPathKey == "music/b.mp3" && e.header.reason == EngineUpdateReason::RekordboxAdded);
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "playlist:14" && c.header.reason == EngineUpdateReason::RekordboxPathShared);
+        assert(c.header.reasonText == sharedText);
+        assert(c.rekordboxChoice.size() == 2);
+        const auto &cc = std::get<MembershipEdit>(c.rekordboxChoice[0]);
+        const auto &d = std::get<MembershipEdit>(c.rekordboxChoice[1]);
+        assert(cc.pathKey == "music/c.mp3" && cc.afterPathKey == "music/e.mp3" && cc.header.key == "member:14:music/c.mp3");
+        assert(d.pathKey == "music/d.mp3" && d.afterPathKey == "music/c.mp3");
+        assert(p.playlistsToCreate.empty() && p.playlistsToDelete.empty() && p.engineOwnKept.empty());
+        std::cout << "two rekordbox playlists at one path, the baseline pairs one OK\n";
+    }
+
+    // A rename onto a path a sibling already spells: the same conflict,
+    // no rename, and Engine's playlist at the old path is not "Engine's
+    // own".
+    {
+        World w = sharedWorld();
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Playlist", 0, 4}}), rb("2", "Music/B.mp3"),
+                       rb("3", "Music/C.mp3", {{"Other", 0, 14}}), rb("4", "Music/D.mp3"), rb("5", "Music/E.mp3")};
+        w.engine[0].playlists = {{"Playlist", 0}};
+        w.engine[2].playlists = {{"Other", 0}};
+        w.rekordboxPlaylists = {{"Playlist", false, 4}, {"Other", false, 14}};
+        w.enginePlaylists = {{"Playlist", false, 1}, {"Other", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox[2].playlists = {{"Playlist", 0, 14}};
+        w.rekordboxPlaylists = {{"Playlist", false, 4}, {"Playlist", false, 14}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.empty() && p.playlistsToCreate.empty() && p.membership.empty());
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "playlist:14" && c.header.reason == EngineUpdateReason::RekordboxPathShared);
+        assert(c.header.reasonText == sharedText);
+        assert(c.rekordboxChoice.size() == 1);
+        const auto &cc = std::get<MembershipEdit>(c.rekordboxChoice[0]);
+        assert(cc.pathKey == "music/c.mp3" && cc.afterPathKey == "music/a.mp3" && cc.playlistPath == "Playlist");
+        assert(p.engineOwnKept.empty() && p.playlistsToDelete.empty());
+        std::cout << "rename onto a sibling's path is a conflict OK\n";
+    }
+
+    // Declining it keeps it out until one of the member lists changes;
+    // what depends on its key goes with it.
+    {
+        World w = sharedWorld();
+        w.rekordboxPlaylists = {};
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        auto base = baselineOf(w);  // knows the tracks, neither playlist
+        w = sharedWorld();
+        w.rekordboxPlaylists.push_back({"Playlist/Sub", false, 20});
+        w.rekordbox[4].playlists = {{"Playlist/Sub", 0, 20}};
+        const auto first = plan(w, base);
+        assert(first.conflicts.size() == 1 && first.conflicts[0].header.key == "playlist:4");
+        // What sits under the path waits for the conflict.
+        assert(first.playlistsToCreate.size() == 1 && first.playlistsToCreate[0].path == "Playlist/Sub");
+        assert(first.playlistsToCreate[0].header.dependsOn == Deps{"playlist:4"});
+        assert(first.membership.size() == 1);
+        assert((first.membership[0].header.dependsOn == Deps{"playlist:4", "playlist:20"}));
+        base.declined["playlist:4"] = first.conflicts[0].header.rekordboxState;
+        const auto second = plan(w, base);
+        assert(second.conflicts.empty() && second.playlistsToCreate.empty() && second.membership.empty());
+        assert((second.declinedSuppressed
+                == Deps{"member:20:music/e.mp3", "playlist:20", "playlist:4"}));
+        // List 14 gains E: the conflict is back.
+        w.rekordbox[4].playlists.push_back({"Playlist", 3, 14});
+        const auto third = plan(w, base);
+        assert(third.conflicts.size() == 1 && third.conflicts[0].header.key == "playlist:4");
+        assert(third.conflicts[0].header.rekordboxState != first.conflicts[0].header.rekordboxState);
+        std::cout << "declined shared path stays out until a list changes OK\n";
+    }
+
+    // Two folders spelled "F": one folder, the lowest id, and what each
+    // holds under it planned as usual.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"F/X", 0, 7}}), rb("2", "Music/B.mp3", {{"F/Y", 0, 8}})};
+        w.engine = {en("e1", "Music/A.mp3"), en("e2", "Music/B.mp3")};
+        w.rekordboxPlaylists = {{"F", true, 5}, {"F", true, 6}, {"F/X", false, 7}, {"F/Y", false, 8}};
+        const auto p = plan(w, std::nullopt);
+        assert(p.conflicts.empty());
+        assert(p.playlistsToCreate.size() == 3);
+        assert(p.playlistsToCreate[0].path == "F" && p.playlistsToCreate[0].pdbId == 5);
+        assert(p.playlistsToCreate[0].folder);
+        assert(p.membership.size() == 2);
+        World after = w;
+        apply(after, p);
+        assert(engineOrder(after, "F/X") == Deps{"music/a.mp3"} && engineOrder(after, "F/Y") == Deps{"music/b.mp3"});
+        std::cout << "two rekordbox folders at one path are one folder OK\n";
+    }
+
     // Membership adds keep rekordbox's order through the "after" anchor,
     // the start of the playlist included.
     {

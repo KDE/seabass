@@ -2438,9 +2438,15 @@ seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
 #   filenames is one of Engine's 1469: no track to add and none refused.
 #   Engine's 308 others all carry pdbImportKey 14204: 308 conflicts
 #   ("Engine imported this track ..."), none of Engine's own tracks.
-#   8 rekordbox playlists have no Engine playlist of their name: 8
-#   creates; 17 Engine playlists have no rekordbox one: 17 kept.
-# The conflict and kept totals (1242, 1177) and the change total are the
+#   8 rekordbox playlists have no Engine playlist of their name, and 7 of
+#   them share a name with a sibling: "Playlist" 3 times, "Playlis" and
+#   "Playlist 0" twice each. Engine holds one playlist per path, so each
+#   of those 3 paths is one conflict ("rekordbox has 3 playlists spelled
+#   ...") with no create and none of its 294, 93 and 164 membership rows:
+#   1 create left ("Playlist 01"), membership 1476 - 551 = 925, conflicts
+#   1242 + 3 = 1245, changes 1511 - 7 - 551 = 953. 17 Engine playlists
+#   have no rekordbox one: 17 kept.
+# The conflict and kept totals (1245, 1177) and the change total are the
 # command's own answer, pinned against regressions. Exit 1: something to
 # do. No file in the copy appears, goes or changes.
 set(_cli_sae_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_sync_after_export")
@@ -2451,11 +2457,12 @@ seabass_cli_test(cli_sync_after_export EXIT 1
            "rekordbox playlists and folders: 24\\n" "engine playlists and folders:    33\\n"
            "rekordbox export now: 15132\\n"
            "\\nNo earlier record of this stick: additions are assumed, removals are left to you\\n"
-           "\\nPlaylists to create, rename, delete \\(8\\)\\n"
-           "\\nConflicts \\(1242\\)\\n" "\\nEngine's own, kept \\(1177\\)\\n"
-           "total: 1511 change\\(s\\), 1511 checked. 1242 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"
+           "\\nPlaylists to create, rename, delete \\(1\\)\\n" "\\nPlaylist membership \\(925\\)\\n"
+           "\\nConflicts \\(1245\\)\\n" "\\nEngine's own, kept \\(1177\\)\\n"
+           "total: 953 change\\(s\\), 953 checked. 1245 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"
            "read-only: nothing was written."
-    COUNT "8=\\n  \\[x\\] create playlist \""
+    COUNT "1=\\n  \\[x\\] create playlist \""
+          "3=\\n      why: rekordbox has [23] playlists spelled \"Playlist?( 0)?\" here"
           "308=\\n      why: Engine imported this track from rekordbox, which no longer lists it"
           "0=Engine's own track: no rekordbox import put it there"
           "17=\\n      why: Engine's own playlist: rekordbox has nothing at this path\\n"
