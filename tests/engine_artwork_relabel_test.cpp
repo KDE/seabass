@@ -12,6 +12,8 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
+#include <span>
 #include <iostream>
 #include <map>
 #include <string>
@@ -247,6 +249,85 @@ int main()
         assert(albumArt(db) == settled && "a refused relabel writes nothing");
         std::cout << "case 4 (missing database and impossible labels are errors) OK\n";
     }
+
+    // 5. Label-proof: on a stick called C, the links to A whose image
+    //    is here become stored covers; the one whose image is gone is
+    //    renamed; nothing else moves. Without room, nothing is copied
+    //    and every link is renamed.
+    for (const bool room : {true, false}) {
+        const fs::path stick = root / (room ? "proof" : "noroom") / "C";
+        fs::create_directories(stick);
+        fs::copy(pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine",
+                 stick / "Engine Library", fs::copy_options::recursive);
+        const fs::path proofDb = stick / "Engine Library" / "Database2" / "m.db";
+        std::int64_t withImage1 = 0, withImage2 = 0, without = 0;
+        {
+            sqlite3 *handle = nullptr;
+            assert(sqlite3_open(pathToUtf8(proofDb).c_str(), &handle) == SQLITE_OK);
+            withImage1 = plant(handle, "image://fileart//media/A/PIONEER/Artwork/00001/one.jpg", true);
+            withImage2 = plant(handle, "image://fileart//media/a/PIONEER/Artwork/00001/two.jpg", true);
+            without = plant(handle, "image://fileart//media/A/PIONEER/Artwork/00001/gone.jpg", true);
+            exec(handle, "UPDATE Track SET albumArtId = " + std::to_string(withImage1) + " WHERE id = 1;");
+            exec(handle, "UPDATE Track SET albumArtId = " + std::to_string(withImage2) + " WHERE id = 2;");
+            exec(handle, "UPDATE Track SET albumArtId = " + std::to_string(without) + " WHERE id = 3;");
+            sqlite3_close(handle);
+        }
+        for (const char *name : {"one.jpg", "two.jpg"}) {
+            const fs::path image = stick / "PIONEER" / "Artwork" / "00001" / name;
+            fs::create_directories(image.parent_path());
+            std::ofstream(image, std::ios::binary) << "\xFF\xD8\xFF" << name;
+        }
+        const std::map<std::int64_t, Row> rowsBefore = albumArt(proofDb);
+        const LabelProofArtwork proof = makeArtworkLinksLabelProof(pathToUtf8(stick / "Engine Library"), "A", "C",
+                                                                   room ? 0 : 80, room ? 0 : 64);
+        if (!proof.error.empty()) {
+            std::cerr << proof.error << "\n";
+        }
+        assert(proof.error.empty());
+        assert(proof.linkedTracks == 3);
+        assert(proof.bytesNeeded == 2 * (3 + 7));
+        assert(proof.noRoom == !room);
+        assert(proof.copied == (room ? 2 : 0));
+        assert(proof.renamed == (room ? 1 : 3));
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open_v2(pathToUtf8(proofDb).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+        const auto artOf = [&](int track) {
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(handle, "SELECT albumArtId FROM Track WHERE id = ?;", -1, &stmt, nullptr);
+            sqlite3_bind_int(stmt, 1, track);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            const std::int64_t id = sqlite3_column_int64(stmt, 0);
+            sqlite3_finalize(stmt);
+            return id;
+        };
+        const std::map<std::int64_t, Row> rowsAfter = albumArt(proofDb);
+        std::string error;
+        if (room) {
+            for (const int track : {1, 2}) {
+                const Row &row = rowsAfter.at(artOf(track));
+                assert(row.hashType == SQLITE_BLOB && row.hash.size() == 20 && "a hash naming a file");
+                bool fileThere = false;
+                for (const auto &entry : fs::directory_iterator(stick / "Engine Library" / "Artwork")) {
+                    fileThere = fileThere || entry.path().stem() == pathFromUtf8(artworkFileName(
+                        std::span(reinterpret_cast<const std::uint8_t *>(row.hash.data()), row.hash.size())));
+                }
+                assert(fileThere && "the image is in Engine Library/Artwork");
+            }
+        } else {
+            assert(artOf(1) == withImage1 && artOf(2) == withImage2);
+            assert(!fs::exists(stick / "Engine Library" / "Artwork") || fs::is_empty(stick / "Engine Library" / "Artwork"));
+        }
+        assert(artOf(3) == without);
+        assert(rowsAfter.at(without).hash == "image://fileart//media/C/PIONEER/Artwork/00001/gone.jpg");
+        assert(countImportedArtworkLinks(pathToUtf8(proofDb), "A", &error) == 0 && "no row names A any more");
+        for (const auto &[id, row] : rowsBefore) {
+            if (id != withImage1 && id != withImage2 && id != without) {
+                assert(rowsAfter.at(id) == row && "the library's other rows are untouched");
+            }
+        }
+        sqlite3_close(handle);
+    }
+    std::cout << "case 5 (label-proof copies what it can, renames the rest, refuses to fill a full stick) OK\n";
 
     std::cout << "All engine_artwork_relabel tests passed." << std::endl;
     return 0;

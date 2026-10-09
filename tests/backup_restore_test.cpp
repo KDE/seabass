@@ -1234,5 +1234,73 @@ int main()
         std::cout << "case exact-with-write-error (a restore that could not write everything removes nothing) OK\n";
     }
 
+    // ---- A backup restored onto a stick with another label ----
+    //
+    // The backup was taken off STICK, whose Engine library carries a
+    // player's links to /media/STICK/. Restored onto C, the links whose
+    // image is on the stick become stored covers and the imageless one is
+    // renamed to C; the summary says both.
+    {
+        Fixture f("labelproof");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.stick, "STICK", 3, 2);
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        RestoreOptions options = f.restore;
+        options.targetLabel = "C";
+        RestoreSummary summary = RestoreStickBackup::execute(options);
+        for (const std::string &warning : summary.warnings) {
+            std::cerr << "  " << warning << "\n";
+        }
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(summary.coversCopied == 2);
+        assert(summary.coverLinksRenamed == 1);
+        assert(coverLinksSentence(summary) == "2 covers copied into the Engine library, 1 renamed to C.");
+        assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[0])));
+        assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[1])));
+        assert(coverOf(f.target, tracks[2]).hash == "image://fileart//media/C/PIONEER/Artwork/00001/cover2.jpg");
+
+        // A restore onto a target whose library is already the backup's,
+        // byte for byte (one restored before this was done, as WS_NEW
+        // was): nothing to write, and the covers are still made
+        // label-proof.
+        Fixture g("labelproof-unchanged");
+        const std::vector<std::int64_t> again = plantPlayerCoverLinks(g.stick, "STICK", 2, 2);
+        assert(BackupStick::execute(g.backup).status == BackupOutcomeStatus::Complete);
+        assert(RestoreStickBackup::execute(g.restore).status == RestoreSummary::Status::Restored);
+        assert(coverOf(g.target, again[0]).hash == "image://fileart//media/STICK/PIONEER/Artwork/00001/cover0.jpg");
+        options = g.restore;
+        options.targetLabel = "C";
+        summary = RestoreStickBackup::execute(options);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(summary.filesWritten == 0);
+        assert(summary.coversCopied == 2 && summary.coverLinksRenamed == 0);
+        assert(coverLinksSentence(summary) == "2 covers copied into the Engine library, 0 renamed to C.");
+        assert(isStoredCoverFile(g.target, coverOf(g.target, again[0])));
+
+        // No room for the images: nothing is copied, every link is renamed,
+        // and the restore says so rather than call itself clean.
+        Fixture h("labelproof-noroom");
+        const std::vector<std::int64_t> full = plantPlayerCoverLinks(h.stick, "STICK", 2, 2);
+        assert(BackupStick::execute(h.backup).status == BackupOutcomeStatus::Complete);
+        // The files are put back first, so the run below has nothing to
+        // write and only the covers to find room for: 2000 bytes free
+        // passes the restore's own check (nothing to write, a 1000 byte
+        // margin) and not theirs (4006 bytes of images and the margin).
+        assert(RestoreStickBackup::execute(h.restore).status == RestoreSummary::Status::Restored);
+        options = h.restore;
+        options.targetLabel = "C";
+        options.freeSpaceMarginBytes = 1000;
+        options.freeBytesForTesting = [](const fs::path &) { return std::uint64_t(2000); };
+        summary = RestoreStickBackup::execute(options);
+        assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+        assert(summary.coversCopied == 0 && summary.coverLinksRenamed == 2);
+        assert(coverOf(h.target, full[0]).hash == "image://fileart//media/C/PIONEER/Artwork/00001/cover0.jpg");
+        bool said = false;
+        for (const std::string &warning : summary.warnings) {
+            said = said || warning.find("not enough room") != std::string::npos;
+        }
+        assert(said && "the restore says why the covers were not copied");
+        std::cout << "case label-proof (another label: covers stored, the rest renamed, no room refused) OK\n";
+    }
+
     return 0;
 }

@@ -263,6 +263,41 @@ std::string stickLabelForArtwork(const std::string &stickRoot);
 int relabelImportedArtworkLinks(const std::string &databaseFile, const std::string &oldLabel,
                                 const std::string &newLabel, std::string *error);
 
+// What making a library's player links label-proof did.
+struct LabelProofArtwork
+{
+    // Tracks that pointed at a link to the old label.
+    int linkedTracks = 0;
+    // Of those, the ones whose cover is now in the library's own storage.
+    int copied = 0;
+    // And the ones still on a link, renamed to the new label: the image
+    // was not on the stick, was no image, or there was no room.
+    int renamed = 0;
+    // What the images to copy take up, and whether the stick lacked it,
+    // in which case nothing was copied and every link was renamed.
+    std::uint64_t bytesNeeded = 0;
+    bool noRoom = false;
+    // Set when the database could not be read or written. A failed copy
+    // is rolled back whole; a failed rename after a copy that landed
+    // leaves the copied covers in place.
+    std::string error;
+};
+
+// For a library put on a stick whose label is not the one its player
+// links name (a restore or a clone onto a stick called something else):
+// every track on a link to `oldLabel` whose image this stick holds gets it
+// copied into the library's own storage by repairArtwork(), so the cover
+// no longer depends on any label. Only those tracks are handed to the
+// repair; no other row is looked at. What cannot be copied, and every
+// link when the images need more than `freeBytes` less `marginBytes`
+// (0 free means unknown, which never refuses), is renamed to `newLabel`
+// by relabelImportedArtworkLinks(), so a player finds it on this stick
+// for as long as it keeps that name. Two transactions on the library's
+// own m.db, the copy first.
+LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPath, const std::string &oldLabel,
+                                             const std::string &newLabel, std::uint64_t freeBytes,
+                                             std::uint64_t marginBytes);
+
 // How many AlbumArt rows are such links to `label`, read-only. -1 with
 // *error set when the database cannot be read (error must not be null).
 int countImportedArtworkLinks(const std::string &databaseFile, const std::string &label, std::string *error);

@@ -67,8 +67,19 @@ struct RestoreOptions
     CancellationToken cancel = CancellationToken::none();
     std::function<void(const RestoreProgress &)> onProgress;
     RestoredLibraryCheck libraryCheck;
+    // The label the target stick carries. A Denon player mounts a stick
+    // at /media/<label>, and the covers its rekordbox import wrote are
+    // links to that path, so on a stick with another label they lead
+    // nowhere. When this is not the label the backup was taken under
+    // (compared without case), the restored Engine library is made
+    // label-proof as the last thing written: see
+    // makeArtworkLinksLabelProof() in engine_artwork.hpp. Empty: not
+    // known (a folder, not a stick), and nothing is done.
+    std::string targetLabel;
     std::size_t chunkSize = 1u << 20;
     std::uint64_t freeSpaceMarginBytes = 64u << 20;
+    // Stands in for asking the target's volume how much room it has.
+    std::function<std::uint64_t(const std::filesystem::path &)> freeBytesForTesting;
 };
 
 struct RestorePreview
@@ -181,7 +192,19 @@ struct RestoreSummary
     std::vector<std::string> warnings;
     // Empty for every backup taken off a healthy stick.
     std::vector<PartiallyRestored> partial;
+    // Restored onto a stick called something else (RestoreOptions::
+    // targetLabel): of the tracks whose cover was a player's link to the
+    // backup's label, how many now keep it in the Engine library, and how
+    // many are still links, renamed to coverLinksLabel because their image
+    // could not be copied. coverLinksLabel is empty when nothing was done.
+    int coversCopied = 0;
+    int coverLinksRenamed = 0;
+    std::string coverLinksLabel;
 };
+
+// "1361 covers copied into the Engine library, 0 renamed to WS_NEW.",
+// or empty when the restore had no player links to deal with.
+std::string coverLinksSentence(const RestoreSummary &summary);
 
 // Streams entries out of the archive onto the target -- one seek and one
 // read per file, never an "extract everything first" step. Each file is

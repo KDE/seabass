@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "application/use_cases/clone_stick.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
@@ -197,6 +198,72 @@ int main()
         f.options.targetRoot = f.root / "missing";
         assert(!CloneStick::preview(f.options).error.empty());
         std::cout << "case 6 (missing target: preview error) OK\n";
+    }
+
+    // ---- Onto a stick with another label: the player's cover links become stored covers ----
+    //
+    // A Denon player's import writes covers as links to /media/<label>/, so
+    // a clone onto a stick called something else would show none of them
+    // (WS_NEW, cloned from WHALESHARK: 1361 dead links, 186 covers shown).
+    // Three links with their image on the stick are copied into the
+    // Engine library; the one whose image is gone is renamed to the new
+    // label, the one thing a player can still follow.
+    {
+        Fixture f("labelproof");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.source, "SOURCE", 4, 3);
+        // Long ago, so a database written just now would tell.
+        fs::last_write_time(f.source / "Engine Library" / "Database2" / "m.db",
+                            seabass::infrastructure::stick_backup::fromUnixSeconds(1'700'000'300));
+        f.options.targetLabel = "C";
+        CloneStickOutcome outcome = CloneStick::execute(f.options);
+        if (outcome.status != CloneStickOutcome::Status::Cloned) {
+            std::cerr << outcome.message << "\n";
+            for (const std::string &warning : outcome.restore.warnings) {
+                std::cerr << "  " << warning << "\n";
+            }
+        }
+        assert(outcome.status == CloneStickOutcome::Status::Cloned);
+        assert(outcome.restore.coversCopied == 3);
+        assert(outcome.restore.coverLinksRenamed == 1);
+        assert(outcome.restore.coverLinksLabel == "C");
+        assert(coverLinksSentence(outcome.restore) == "3 covers copied into the Engine library, 1 renamed to C.");
+        for (int i = 0; i < 3; ++i) {
+            assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[i])) && "a stored cover, file present");
+        }
+        const CoverRow renamed = coverOf(f.target, tracks[3]);
+        assert(renamed.hashType == SQLITE_BLOB);
+        assert(renamed.hash == "image://fileart//media/C/PIONEER/Artwork/00001/cover3.jpg");
+        // The database keeps the source's mtime: the stick list would
+        // otherwise call the target the newer library and offer to copy
+        // it back over the source.
+        using seabass::infrastructure::stick_backup::toUnixSeconds;
+        assert(toUnixSeconds(fs::last_write_time(f.target / "Engine Library" / "Database2" / "m.db"))
+               == toUnixSeconds(fs::last_write_time(f.source / "Engine Library" / "Database2" / "m.db")));
+        // The source and its backup are what they were.
+        assert(coverOf(f.source, tracks[0]).hash == "image://fileart//media/SOURCE/PIONEER/Artwork/00001/cover0.jpg");
+
+        // Run again: the target's library differs from the archive's, so
+        // it is written again and made label-proof again, to the same end.
+        outcome = CloneStick::execute(f.options);
+        assert(outcome.status == CloneStickOutcome::Status::Cloned);
+        assert(outcome.restore.coversCopied == 3 && outcome.restore.coverLinksRenamed == 1);
+        for (int i = 0; i < 3; ++i) {
+            assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[i])));
+        }
+        std::cout << "case 7 (another label: links become stored covers, the imageless one is renamed) OK\n";
+    }
+
+    // ---- Onto a stick with the same label, in another case: nothing is done ----
+    {
+        Fixture f("samelabel");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.source, "SOURCE", 2, 2);
+        f.options.targetLabel = "source";
+        CloneStickOutcome outcome = CloneStick::execute(f.options);
+        assert(outcome.status == CloneStickOutcome::Status::Cloned);
+        assert(outcome.restore.coverLinksLabel.empty());
+        assert(coverLinksSentence(outcome.restore).empty());
+        assert(snapshot(f.target) == snapshot(f.source) && "byte for byte the source");
+        std::cout << "case 8 (same label: the library is copied as it is) OK\n";
     }
 
     assert(toString(CloneStickOutcome::Status::Cloned) == "cloned");

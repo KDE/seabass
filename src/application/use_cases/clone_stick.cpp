@@ -57,6 +57,7 @@ RestoreOptions restoreOptionsFor(const CloneStickOptions &options)
     restore.exact = options.exact;
     restore.cancel = options.cancel;
     restore.libraryCheck = options.libraryCheck;
+    restore.targetLabel = options.targetLabel;
     restore.freeSpaceMarginBytes = options.freeSpaceMarginBytes;
     if (options.onProgress) {
         restore.onProgress = [&options](const RestoreProgress &progress) {

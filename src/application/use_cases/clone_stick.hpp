@@ -50,6 +50,9 @@ struct CloneStickOptions
     CancellationToken cancel = CancellationToken::none();
     std::function<void(const CloneProgress &)> onProgress;
     RestoredLibraryCheck libraryCheck;
+    // The target stick's label; see RestoreOptions::targetLabel. The
+    // source's is backup.stickLabel, which the archive's manifest carries.
+    std::string targetLabel;
     std::uint64_t freeSpaceMarginBytes = 64u << 20;
 };
 

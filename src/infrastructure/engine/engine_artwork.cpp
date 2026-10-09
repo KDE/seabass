@@ -1300,4 +1300,126 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     return result;
 }
 
+namespace
+{
+
+// The tracks pointing at a link to `label`, with the link.
+bool tracksOnLinksTo(sqlite3 *handle, const std::string &label, std::vector<std::pair<std::int64_t, std::string>> &out,
+                     std::string *error)
+{
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle,
+                           "SELECT t.id, a.hash FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+                           "WHERE a.hash IS NOT NULL;",
+                           -1, &stmt, nullptr)
+        != SQLITE_OK) {
+        *error = std::string("could not read the tracks' covers: ") + sqlite3_errmsg(handle);
+        return false;
+    }
+    int step = SQLITE_ROW;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const int type = sqlite3_column_type(stmt, 1);
+        const void *bytes = sqlite3_column_blob(stmt, 1);
+        const int size = sqlite3_column_bytes(stmt, 1);
+        if ((type != SQLITE_BLOB && type != SQLITE_TEXT) || bytes == nullptr || size <= 0) {
+            continue;
+        }
+        std::string hash(static_cast<const char *>(bytes), static_cast<size_t>(size));
+        if (importedPathIsThisStickOnAPlayer(hash, label)) {
+            out.emplace_back(sqlite3_column_int64(stmt, 0), std::move(hash));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        *error = std::string("could not read the tracks' covers: ") + sqlite3_errmsg(handle);
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPath, const std::string &oldLabel,
+                                             const std::string &newLabel, std::uint64_t freeBytes,
+                                             std::uint64_t marginBytes)
+{
+    LabelProofArtwork result;
+    const std::string db = pathToUtf8(databaseFile(engineLibraryPath));
+    const std::string stickRoot = pathToUtf8(pathFromUtf8(engineLibraryPath).parent_path());
+
+    std::vector<std::pair<std::int64_t, std::string>> linked;
+    {
+        sqlite3 *handle = openExisting(db, SQLITE_OPEN_READONLY, &result.error);
+        if (handle == nullptr) {
+            return result;
+        }
+        const bool read = tracksOnLinksTo(handle, oldLabel, linked, &result.error);
+        sqlite3_close(handle);
+        if (!read) {
+            return result;
+        }
+    }
+    result.linkedTracks = static_cast<int>(linked.size());
+    if (linked.empty()) {
+        return result;
+    }
+
+    // Only the link rows, each with its image on this stick: the repair
+    // decides per track from the database as it is, and is handed nothing
+    // that is not a link to the old label.
+    std::vector<ArtworkEntry> entries;
+    std::set<std::string> images;
+    for (const auto &[trackId, reference] : linked) {
+        ArtworkEntry entry;
+        entry.trackId = trackId;
+        entry.storage = ArtworkStorage::ImportedPath;
+        entry.reference = reference;
+        entry.imageOnStick = imageOnStickFor(reference, stickRoot);
+        std::error_code ec;
+        if (entry.imageOnStick.empty() || !fs::is_regular_file(pathFromUtf8(entry.imageOnStick), ec)
+            || !isImageARepairCanName(pathFromUtf8(entry.imageOnStick))) {
+            continue;  // renamed below, the one thing left that a player can follow
+        }
+        if (images.insert(entry.imageOnStick).second) {
+            result.bytesNeeded += fs::file_size(pathFromUtf8(entry.imageOnStick), ec);
+        }
+        entries.push_back(std::move(entry));
+    }
+    if (freeBytes != 0 && result.bytesNeeded + marginBytes > freeBytes) {
+        result.noRoom = true;
+        entries.clear();
+    }
+
+    if (!entries.empty()) {
+        const ArtworkRepair repair = repairArtwork(engineLibraryPath, entries);
+        if (!repair.error.empty()) {
+            result.error = "could not copy the covers into the Engine library: " + repair.error;
+            return result;
+        }
+        result.copied = repair.repaired;
+    }
+
+    // Whatever still points at a link to the old label, counted before
+    // the rename that follows it.
+    std::vector<std::pair<std::int64_t, std::string>> left;
+    {
+        sqlite3 *handle = openExisting(db, SQLITE_OPEN_READONLY, &result.error);
+        if (handle == nullptr) {
+            return result;
+        }
+        const bool read = tracksOnLinksTo(handle, oldLabel, left, &result.error);
+        sqlite3_close(handle);
+        if (!read) {
+            return result;
+        }
+    }
+    // Every link row, also the ones no track points at any more: a
+    // library that names the old stick nowhere.
+    if (relabelImportedArtworkLinks(db, oldLabel, newLabel, &result.error) < 0) {
+        return result;
+    }
+    result.renamed = static_cast<int>(left.size());
+    return result;
+}
+
 }  // namespace seabass::infrastructure::engine

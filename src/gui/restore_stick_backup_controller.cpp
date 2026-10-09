@@ -505,6 +505,17 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     options.exact = exact;
     options.cancel = m_cancel;
     options.libraryCheck = infrastructure::engine::checkRestoredEngineLibrary;
+    // The label the drive carries, from the same list the page picked it
+    // in: a restore onto a stick called something else than the backup's
+    // makes its Engine covers label-proof. A folder has none, and gets
+    // the library exactly as backed up.
+    for (const QVariant &disk : m_disks) {
+        const QVariantMap map = disk.toMap();
+        if (!targetRoot.isEmpty() && map["mountPoint"].toString() == targetRoot) {
+            options.targetLabel = map["label"].toString().toStdString();
+            break;
+        }
+    }
     QPointer<RestoreStickBackupController> self(this);
     auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>();
     options.onProgress = [self, lastPost](const RestoreProgress &progress) {
@@ -614,9 +625,13 @@ void RestoreStickBackupController::onRestoreFinished()
     map["partial"] = partial;
     map["missingTracks"] = s.missingTrackPaths ? toVariantList(*s.missingTrackPaths) : QVariantList{};
     map["databaseChecked"] = s.missingTrackPaths.has_value();
+    map["coverLinks"] = QString::fromStdString(application::coverLinksSentence(s));
     m_result = map;
     emit resultChanged();
 
+    // Said after the counts on a restore that got as far as the covers.
+    const QString covers = QString::fromStdString(application::coverLinksSentence(s));
+    const QString coversAfter = covers.isEmpty() ? QString() : QLatin1Char(' ') + covers;
     switch (s.status) {
     case RestoreSummary::Status::Restored:
         // "Already up to date" is only said about files that are. A
@@ -624,14 +639,15 @@ void RestoreStickBackupController::onRestoreFinished()
         // restored whole is not up to date -- it is the backup's copy
         // withheld -- and counting it here told the user the opposite of
         // the warning printed beside it.
-        setStatusMessage(s.filesHeldBack == 0
-                             ? QStringLiteral("Restored %1 files (%2 already up to date).")
-                                   .arg(s.filesWritten)
-                                   .arg(s.filesUnchanged)
-                             : QStringLiteral("Restored %1 files (%2 already up to date, %3 held back).")
-                                   .arg(s.filesWritten)
-                                   .arg(s.filesUnchanged)
-                                   .arg(s.filesHeldBack));
+        setStatusMessage((s.filesHeldBack == 0
+                              ? QStringLiteral("Restored %1 files (%2 already up to date).")
+                                    .arg(s.filesWritten)
+                                    .arg(s.filesUnchanged)
+                              : QStringLiteral("Restored %1 files (%2 already up to date, %3 held back).")
+                                    .arg(s.filesWritten)
+                                    .arg(s.filesUnchanged)
+                                    .arg(s.filesHeldBack))
+                         + coversAfter);
         emit actionFeedback(m_statusMessage, false);
         break;
     case RestoreSummary::Status::RestoredWithProblems:
@@ -646,8 +662,7 @@ void RestoreStickBackupController::onRestoreFinished()
                                  .arg(s.filesWritten)
                                  .arg(s.partial.size()));
         } else {
-            setStatusMessage(
-                QStringLiteral("Restored %1 files, but with problems.").arg(s.filesWritten));
+            setStatusMessage(QStringLiteral("Restored %1 files, but with problems.").arg(s.filesWritten) + coversAfter);
         }
         emit actionFeedback(m_statusMessage, true);
         break;
