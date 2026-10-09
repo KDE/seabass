@@ -69,6 +69,16 @@ const MetadataBackupProposal &only(const MetadataBackupPlan &plan)
     return plan.proposals.front();
 }
 
+// A plan made on the spot dies at the end of the line that made it, and a
+// reference into it with it: `const auto &p = only(planMetadataBackup(...))`
+// read freed memory. A temporary plan hands back a copy instead, which the
+// reference then keeps alive.
+MetadataBackupProposal only(MetadataBackupPlan &&plan)
+{
+    assert(plan.proposals.size() == 1);
+    return std::move(plan.proposals.front());
+}
+
 }  // namespace
 
 int main()
