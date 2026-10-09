@@ -515,6 +515,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_layout.cpp
     src/application/use_cases/unreferenced_tracks.cpp
     src/application/use_cases/plan_engine_update.cpp
+    src/application/use_cases/summarize_engine_update.cpp
     src/infrastructure/local/engine_update_stick_facts.cpp
     src/infrastructure/cleanup/audio_file_walk.cpp
     src/infrastructure/local/duration_cache.cpp
@@ -566,6 +567,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
     src/application/use_cases/plan_engine_update.cpp
+    src/application/use_cases/summarize_engine_update.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
@@ -1929,6 +1931,17 @@ target_link_libraries(plan_engine_update_test PRIVATE seabass_core_testing)
 target_include_directories(plan_engine_update_test PRIVATE src)
 add_test(NAME plan_engine_update_test COMMAND plan_engine_update_test)
 
+# The stick card badge's cheap answer for Sync after Rekordbox Export,
+# every branch from hand-built Tracks stage rows: with a baseline (paths,
+# playlists, ratings, declined items, the sequence) and without one (the
+# additive part of the fallback, the counter test).
+add_executable(summarize_engine_update_test
+    tests/summarize_engine_update_test.cpp
+)
+target_link_libraries(summarize_engine_update_test PRIVATE seabass_core_testing)
+target_include_directories(summarize_engine_update_test PRIVATE src)
+add_test(NAME summarize_engine_update_test COMMAND summarize_engine_update_test)
+
 add_executable(engine_cue_translation_test
     tests/engine_cue_translation_test.cpp
 )
@@ -2755,6 +2768,24 @@ if(TARGET seabass_edit)
     target_include_directories(open_folder_test PRIVATE src)
     target_link_libraries(open_folder_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME open_folder_test COMMAND open_folder_test)
+
+    # The stick card badge of Sync after Rekordbox Export: the model's
+    # engineUpdate and syncNeeded roles through the real MediaController
+    # on a copy of the anonymized fixture opened as a folder. data() reads
+    # no catalog (the cache's passes are counted), a current baseline is
+    # answered without one, and the role follows refreshSyncNeeded().
+    add_executable(engine_update_role_test
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/library_catalog_cache.cpp
+        tests/engine_update_role_test.cpp
+    )
+    target_include_directories(engine_update_role_test PRIVATE src tests)
+    target_link_libraries(engine_update_role_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    add_test(NAME engine_update_role_test COMMAND engine_update_role_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(engine_update_role_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(stick_backup_paths_test tests/stick_backup_paths_test.cpp)
     target_include_directories(stick_backup_paths_test PRIVATE src)

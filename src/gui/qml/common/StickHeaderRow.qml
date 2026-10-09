@@ -18,7 +18,8 @@ Rectangle {
     // The stick model's row: label, mountPoint, devicePath, mounted,
     // hasRekordbox, hasEngine, hasOneLibrary, rekordboxPath, enginePath,
     // isSdCard, isFolder, isBrowsedBackup, libraryId, safeToUnplug,
-    // readOnly and, when the locator could read it, capacityBytes.
+    // readOnly, syncNeeded, engineUpdate and, when the locator could read
+    // it, capacityBytes.
     required property var row
     required property var mediaController
     required property var playbackController
@@ -42,6 +43,10 @@ Rectangle {
     // rekordbox library over the Engine one, and Sync Cue Points is where
     // a save settles that.
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // The same badge when rekordbox changed tracks, playlists or ratings
+    // Engine has not caught up with (engineUpdate "library"): Sync after
+    // Rekordbox Export is where that is settled.
+    signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
 
     // How far the stick's name sits from this row's left edge, so the
     // pane can put its group heading and cards on the same line: read off
@@ -59,6 +64,9 @@ Rectangle {
     readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
     readonly property bool hasOneLibrary: root.hasRow && root.row.hasOneLibrary === true
     readonly property bool syncNeeded: root.hasRow && root.row.syncNeeded === true
+    // "", "cues" or "library": DetectedStickListModel's EngineUpdateRole.
+    readonly property string engineUpdate: root.hasRow ? String(root.row.engineUpdate || "") : ""
+    readonly property bool libraryNeedsSync: root.engineUpdate === "library"
     readonly property bool isSdCard: root.hasRow && root.row.isSdCard === true
     readonly property bool isFolder: root.hasRow && root.row.isFolder === true
     readonly property bool safeToUnplug: root.hasRow && root.row.safeToUnplug === true
@@ -238,16 +246,26 @@ Rectangle {
                             }
                             StatusBadge {
                                 objectName: "syncNeededBadge"
-                                visible: root.mounted && root.syncNeeded
-                                label: "Sync Needed"
+                                visible: root.mounted && (root.engineUpdate !== "" || root.syncNeeded)
+                                label: root.libraryNeedsSync ? "Engine needs syncing" : "Sync Needed"
                                 badgeColor: Theme.warnIcon
                                 clickable: true
-                                tooltipText: "The rekordbox library changed since the player last imported it, so "
-                                    + "the player will offer the import, which replaces the Engine side, cues "
-                                    + "included. A save on Sync Cue Points settles it."
-                                onClicked: root.syncRequested(root.label,
-                                                              root.hasRow ? String(root.row.rekordboxPath || "") : "",
-                                                              root.hasRow ? String(root.row.enginePath || "") : "")
+                                tooltipText: root.libraryNeedsSync
+                                    ? "Rekordbox changed tracks, playlists or ratings since Seabass last recorded "
+                                      + "this stick, and Engine has not caught up. Click to open Sync after "
+                                      + "Rekordbox Export, which brings Engine in line."
+                                    : "Rekordbox exported since Engine last caught up, so cue points may differ "
+                                      + "and the player may offer an import that replaces the Engine side. Click "
+                                      + "to open Sync Cue Points, where a save settles it."
+                                onClicked: {
+                                    const rekordboxPath = root.hasRow ? String(root.row.rekordboxPath || "") : "";
+                                    const enginePath = root.hasRow ? String(root.row.enginePath || "") : "";
+                                    if (root.libraryNeedsSync) {
+                                        root.rekordboxExportSyncRequested(root.label, rekordboxPath, enginePath);
+                                    } else {
+                                        root.syncRequested(root.label, rekordboxPath, enginePath);
+                                    }
+                                }
                             }
                         }
                     }

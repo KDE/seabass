@@ -573,6 +573,9 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
+            // Step 11 of docs/sync-after-rekordbox-export-plan.md pushes RekordboxExportSyncPage here.
+            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
+                console.info("Sync after Rekordbox Export requested for", stickLabel, rekordboxPath, enginePath)
             onAppSettingsRequested: stackView.push(appSettingsPageComponent)
             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
                 stickLabel: stickLabel,

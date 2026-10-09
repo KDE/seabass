@@ -104,7 +104,7 @@ Page {
     // takes a fresh copy of a row whenever the model says it changed, and
     // the stick row and the cards get the new object.
     readonly property var rowRoles: ["label", "mountPoint", "devicePath", "mounted", "hasRekordbox", "hasEngine",
-        "hasOneLibrary", "syncNeeded", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryId",
+        "hasOneLibrary", "syncNeeded", "engineUpdate", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryId",
         "safeToUnplug", "readOnly", "capacityBytes"]
     property var rows: []
     property bool rowsLoaded: false
@@ -466,6 +466,9 @@ Page {
     signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // The stick card's "Engine needs syncing" badge: Sync after Rekordbox
+    // Export for this stick.
+    signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal appSettingsRequested()
     signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal aboutRequested()
@@ -747,6 +750,8 @@ Page {
                             }
                             onSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.syncRequested(stickLabel, rekordboxPath, enginePath)
+                            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.rekordboxExportSyncRequested(stickLabel, rekordboxPath, enginePath)
                         }
 
                         GroupHeading {

@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 
+#include "application/ports/cancellation_token.hpp"
 #include "application/ports/removable_media_locator.hpp"
 #include "application/ports/removable_media_monitor.hpp"
 #include "application/ports/removable_media_mounter.hpp"
@@ -86,8 +87,9 @@ public:
         // over the Engine one (export.pdb moved on since the player last
         // imported it; engine_import_state.hpp). Accepting that replaces
         // the Engine side, so the stick card says "Sync Needed": a save on
-        // Sync Cue Points levels the two. Looked up when asked, like
-        // HasOneLibraryRole: 24 bytes of the pdb and one Engine row.
+        // Sync Cue Points levels the two. Read by the stick's engine-update
+        // request (see EngineUpdateRole), never in data(), which runs per
+        // binding evaluation: 24 bytes of the pdb and one Engine row.
         SyncNeededRole,
         // Whether the filesystem is mounted read-only -- what a stick
         // looks like after the kernel found damage on it (typically an
@@ -95,6 +97,23 @@ public:
         // a stick and points at Library Health, which can run the repair:
         // offering a save that the kernel will refuse teaches nothing.
         ReadOnlyRole,
+        // What Sync after Rekordbox Export would do for this stick, for
+        // the stick card's badge: "" (nothing, or not known yet), "cues"
+        // (rekordbox exported since Seabass's record, or without a record
+        // the player would offer its import) or "library" (rekordbox
+        // changed tracks, playlists or ratings Engine has not caught up
+        // with). application::summarizeEngineUpdate decides, on the
+        // Tracks stage the backup advisor reads on insert anyway, in one
+        // request per stick (MediaController::requestEngineUpdate); this
+        // model only holds the answer.
+        EngineUpdateRole,
+    };
+
+    // What one stick's engine-update request found: the two roles above.
+    struct EngineUpdateStatus
+    {
+        QString engineUpdate;
+        bool syncNeeded = false;
     };
 
     explicit DetectedStickListModel(QObject *parent = nullptr);
@@ -114,6 +133,11 @@ public:
     // Says every row's `role` may read differently now, without a reset:
     // for a role looked up when asked, after what it looks at changed.
     void refreshRole(int role);
+    // The request's answer for the stick mounted at `mountPoint`: stored,
+    // and that row's two roles say so. forget drops it, for a stick gone.
+    void setEngineUpdateStatus(const std::string &mountPoint, EngineUpdateStatus status);
+    void forgetEngineUpdateStatus(const std::string &mountPoint);
+    bool hasEngineUpdateStatus(const std::string &mountPoint) const { return m_engineUpdate.count(mountPoint) != 0; }
     const std::vector<application::DetectedStick> &sticks() const { return m_sticks; }
     int removableCount() const;
 
@@ -125,6 +149,25 @@ private:
     // Parallel to m_sticks: filled once per refresh so a delegate reading
     // the role does not pay a statvfs() per binding evaluation.
     std::vector<bool> m_readOnly;
+    // By mount point, filled by MediaController's requests.
+    std::map<std::string, EngineUpdateStatus> m_engineUpdate;
+};
+
+template <typename Result>
+class AsyncRequest;
+
+// What one engine-update request read, built on its worker thread from
+// plain paths (MediaController::readEngineUpdate).
+struct EngineUpdateReading
+{
+    QString engineUpdate;  // application::engineUpdateNeedName
+    bool syncNeeded = false;
+    // Why engineUpdate is "" although it may not be: a damaged baseline,
+    // an unreadable catalog. syncNeeded still holds the counter test.
+    QString error;
+    // Whether the LibraryCatalogCache was asked at all: not for a stick
+    // whose baseline is current, which is the answer with nothing to read.
+    bool readCatalogs = false;
 };
 
 // Wraps RemovableMediaLocator for QML: detects USB sticks (mounted or not),
@@ -196,7 +239,18 @@ public:
     Q_INVOKABLE void detect();
     // Re-asks every stick row whether the player would offer the rekordbox
     // import (DetectedStickListModel::SyncNeededRole); after a save.
+    // Also restarts every stick's engine-update request (EngineUpdateRole):
+    // the save may have recorded a baseline or moved either catalog.
     Q_INVOKABLE void refreshSyncNeeded();
+
+    // The engine-update request's work, on a worker thread: the counter
+    // test, the baseline's header, and only when that says the record is
+    // stale or missing, the baseline and the Tracks stage of the catalogs
+    // the summary needs, through LibraryCatalogCache (a hit after the
+    // backup advisor's insert read; a pass in flight is waited for). Then
+    // application::summarizeEngineUpdate. Public for tests.
+    static EngineUpdateReading readEngineUpdate(const std::string &rekordboxPath, const std::string &enginePath,
+                                                application::CancellationToken cancel);
 
     // Opens an ordinary directory as a library, listed alongside any
     // detected sticks. `path` is checked for the same PIONEER/Engine
@@ -348,6 +402,10 @@ public:
     void startTask(const PendingTask &task);
     void onTaskFinished();
     void queueAutoMounts();
+    // Starts the stick's engine-update request when it has both catalogs
+    // and is mounted; `restart` supersedes one already running (after a
+    // save), else a running one answers.
+    void requestEngineUpdate(const application::DetectedStick &stick, bool restart);
 
     // The opened folder survives a restart: nothing re-detects it, so
     // forgetting it on quit would mean opening a backup again every time.
@@ -362,6 +420,9 @@ public:
 
 
     DetectedStickListModel m_model;
+    // One request per stick, by mount point: kept after the stick goes
+    // (cancelled then), so going away never waits for a worker.
+    std::map<std::string, std::unique_ptr<AsyncRequest<EngineUpdateReading>>> m_engineUpdateRequests;
     // One folder at most: a local copy of a library, looked into now and
     // then. Kept apart from the model because detect() rebuilds that from
     // the locator, and no locator produces this row.
