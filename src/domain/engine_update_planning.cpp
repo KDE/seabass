@@ -5,10 +5,13 @@
 #include "domain/engine_update_planning.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <set>
 #include <utility>
 
+#include "domain/engine_cue_translation.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/playlist_sync.hpp"
 #include "domain/track_matching.hpp"
 
@@ -52,6 +55,79 @@ std::string starsText(std::optional<int> rating)
 std::string quoted(const std::string &text)
 {
     return "\"" + text + "\"";
+}
+
+bool isHotCue(const CuePoint &cue)
+{
+    return cue.kind == CuePoint::Kind::Hot;
+}
+
+std::string wholeMs(double ms)
+{
+    return std::to_string(std::llround(ms));
+}
+
+// The canonical spelling of one cue for a state hash: kind, place and a
+// loop's end, rounded to the millisecond. Colour and comment never take
+// part (colour is carried, never compared).
+std::string spellCue(const CuePoint &cue)
+{
+    return cue.isLoop ? "loop@" + wholeMs(cue.positionMs) + "-" + wholeMs(cue.loopEndMs)
+                      : "cue@" + wholeMs(cue.positionMs);
+}
+
+std::vector<CuePoint> byPosition(std::vector<CuePoint> cues)
+{
+    std::stable_sort(cues.begin(), cues.end(),
+                     [](const CuePoint &a, const CuePoint &b) { return a.positionMs < b.positionMs; });
+    return cues;
+}
+
+// rekordbox's state of a pad: what it holds there, or none.
+std::string padState(int pad, const std::vector<CuePoint> &cues)
+{
+    std::string state = "cue:hot:" + std::to_string(pad) + ":";
+    if (cues.empty()) {
+        return state + "none";
+    }
+    bool first = true;
+    for (const CuePoint &cue : byPosition(cues)) {
+        state += (first ? "" : ",") + spellCue(cue);
+        first = false;
+    }
+    return state;
+}
+
+// rekordbox's state of a memory cue's place: the cue there, or none.
+std::string memoryState(const CuePoint *cue)
+{
+    return cue ? std::string("cue:") + (cue->isLoop ? "loop:" : "memory:") + spellCue(*cue) : "cue:memory:none";
+}
+
+CuePoint padCue(int pad)
+{
+    CuePoint cue;
+    cue.kind = CuePoint::Kind::Hot;
+    cue.hotCueNumber = pad;
+    return cue;
+}
+
+// "1:00.000", "loop 1:00.000", several joined; "empty" for none.
+std::string places(const std::vector<CuePoint> &cues)
+{
+    if (cues.empty()) {
+        return "empty";
+    }
+    std::string text;
+    for (const CuePoint &cue : byPosition(cues)) {
+        text += (text.empty() ? "" : ", ") + std::string(cue.isLoop ? "loop " : "") + formatCuePosition(cue.positionMs);
+    }
+    return text;
+}
+
+std::string memoryName(const CuePoint &cue)
+{
+    return std::string(cue.isLoop ? "the memory loop at " : "the memory cue at ") + formatCuePosition(cue.positionMs);
 }
 
 // First occurrence of each key, in order. A track listed twice in one
@@ -159,6 +235,7 @@ public:
         planPlaylists();
         planMembership();
         planMetadata();
+        planCues();
         suppressDeclined();
         return std::move(out);
     }
@@ -190,6 +267,8 @@ private:
     std::map<std::uint32_t, PlaylistStatus> status;
     std::vector<std::pair<std::string, std::string>> renamesInOrder;
     std::set<std::string> claimedEnginePaths;
+    // Cue items left out of their rows because the user declined them.
+    std::set<std::string> cueSuppressed;
 
     std::string relativeOf(const std::string &filePath) const
     {
@@ -1109,13 +1188,32 @@ private:
                             toEngine(rv, true, EngineUpdateReason::BothChanged, "Use rekordbox's rating"));
                         out.conflicts.push_back(std::move(c));
                     }
-                } else {
+                } else if (rv && ev) {
+                    // No record: only two ratings that are both set and
+                    // differ are a question.
                     auto c = conflictOf(EngineUpdateReason::NoBaselineValuesDiffer,
                                         "Ratings differ (rekordbox " + starsText(rv) + ", " + engineName + " "
                                             + starsText(ev) + ") and no earlier record says which side changed");
                     c.rekordboxChoice.emplace_back(
                         toEngine(rv, true, EngineUpdateReason::NoBaselineValuesDiffer, "Use rekordbox's rating"));
                     out.conflicts.push_back(std::move(c));
+                } else if (ev) {
+                    // Clearing Engine's rating would be destructive and
+                    // unattributed: it is Engine's own until a record says
+                    // otherwise.
+                    EngineOwnItem kept;
+                    kept.engine = *e;
+                    kept.header = makeHeader(itemKeyText, false, false, EngineUpdateReason::NoBaselineEngineValue,
+                                             engineName + "'s own rating (" + starsText(ev)
+                                                 + "): rekordbox has none, and with no earlier record nothing is "
+                                                   "removed",
+                                             state);
+                    out.engineOwnKept.push_back(std::move(kept));
+                } else {
+                    out.metadataToEngine.push_back(toEngine(rv, true, EngineUpdateReason::NoBaselineAddition,
+                                                            "No earlier record of this stick: rekordbox has a rating ("
+                                                                + starsText(rv) + ") and " + engineName
+                                                                + " has none"));
                 }
             }
 
@@ -1157,32 +1255,607 @@ private:
                     out.conflicts.push_back(conflictOf(EngineUpdateReason::BothChanged,
                                                        "Both sides changed the comment since Seabass last recorded "
                                                        "the stick"));
-                } else {
+                } else if (!r->comment.empty() && !e->comment.empty()) {
                     out.conflicts.push_back(conflictOf(EngineUpdateReason::NoBaselineValuesDiffer,
                                                        "Comments differ and no earlier record says which side "
                                                        "changed"));
+                } else if (!e->comment.empty()) {
+                    EngineOwnItem kept;
+                    kept.engine = *e;
+                    kept.header = makeHeader(itemKeyText, false, false, EngineUpdateReason::NoBaselineEngineValue,
+                                             engineName
+                                                 + "'s own comment: rekordbox has none, and with no earlier record "
+                                                   "nothing is removed",
+                                             state);
+                    out.engineOwnKept.push_back(std::move(kept));
+                } else {
+                    out.metadataToEngine.push_back(toEngine(true, EngineUpdateReason::NoBaselineAddition,
+                                                            "No earlier record of this stick: rekordbox has a comment "
+                                                            "and "
+                                                                + engineName + " has none"));
                 }
             }
         }
     }
 
+    bool declinedAt(const CueItemState &item) const
+    {
+        if (!base) {
+            return false;
+        }
+        const auto it = base->declined.find(item.key);
+        return it != base->declined.end() && it->second == item.rekordboxState;
+    }
+
+    // A cue row's header: the first item names it, every item is listed.
+    static EngineUpdateItemHeader cueHeader(const std::vector<CueItemState> &items, bool checked, bool conflict,
+                                            EngineUpdateReason reason, std::string text,
+                                            std::vector<std::string> dependsOn = {})
+    {
+        EngineUpdateItemHeader header =
+            makeHeader(items.front().key, checked, conflict, reason, std::move(text), "", std::move(dependsOn));
+        header.rekordboxState = items.front().rekordboxState;
+        header.cueItems = items;
+        return header;
+    }
+
+    static SyncPlan cuePlan(const Track &r, const Track &e, SyncPlan::Direction direction, std::vector<CuePoint> cues,
+                            double toleranceMs)
+    {
+        SyncPlan plan;
+        plan.match = SyncMatch{r, e};
+        const bool targetEmpty = direction == SyncPlan::Direction::ToB ? e.cues.empty() : r.cues.empty();
+        const SyncPlan::Kind onlySource =
+            direction == SyncPlan::Direction::ToB ? SyncPlan::Kind::AOnly : SyncPlan::Kind::BOnly;
+        plan.kind = targetEmpty ? onlySource : SyncPlan::Kind::Conflict;
+        plan.direction = direction;
+        plan.cuesToApply = std::move(cues);
+        plan.positionToleranceMs = toleranceMs;
+        return plan;
+    }
+
+    // Cues of every pair whose two rows exist. A new track's cues ride in
+    // its TrackToAdd; a file Engine lists twice is its own conflict.
+    void planCues()
+    {
+        for (const auto &[key, r] : rByKey) {
+            const Track *e = engineRow(key);
+            if (!e || duplicateKeys.count(key) || addedKeys.count(key)) {
+                continue;
+            }
+            const BaselineTrack *b = base ? base->findTrack(key) : nullptr;
+            if (b) {
+                planTrackCues(key, *r, *e, *b);
+            } else {
+                planTrackCuesWithoutBaseline(key, *r, *e);
+            }
+        }
+    }
+
+    // Every cue item of a pair, for a row of the fallback: rekordbox's
+    // pads and memory cues, and the pads and cue point only Engine has.
+    std::vector<CueItemState> fallbackItems(const std::string &key, const Track &r, const Track &e,
+                                            double toleranceMs) const
+    {
+        const std::vector<CuePoint> rC = withoutJunkCues(r.cues);
+        std::vector<CuePoint> eHot;
+        std::vector<CuePoint> eMain;
+        for (const CuePoint &cue : withoutJunkCues(e.cues)) {
+            (isHotCue(cue) ? eHot : eMain).push_back(cue);
+        }
+        std::map<int, std::vector<CuePoint>> pads;
+        std::vector<CuePoint> memory;
+        for (const CuePoint &cue : rC) {
+            if (isHotCue(cue)) {
+                pads[cue.hotCueNumber].push_back(cue);
+            } else {
+                memory.push_back(cue);
+            }
+        }
+        for (const CuePoint &cue : cuesFromEngine(eHot, rC, toleranceMs).hotCues) {
+            pads[cue.hotCueNumber];
+        }
+        std::vector<CueItemState> items;
+        std::set<std::string> seen;
+        const auto add = [&](const std::string &itemKeyText, const std::string &state) {
+            if (seen.insert(itemKeyText).second) {
+                items.push_back(CueItemState{itemKeyText, engineUpdateStateHash(state)});
+            }
+        };
+        for (const auto &[pad, cues] : pads) {
+            add(cueItemKey(key, padCue(pad)), padState(pad, cues));
+        }
+        for (const CuePoint &cue : byPosition(memory)) {
+            add(cueItemKey(key, cue), memoryState(&cue));
+        }
+        for (const CuePoint &cue : eMain) {
+            const bool rekordboxHas = std::any_of(memory.begin(), memory.end(), [&](const CuePoint &own) {
+                return sameCuePlace(own, cue, toleranceMs);
+            });
+            if (!rekordboxHas) {
+                add(cueItemKey(key, cue), memoryState(nullptr));
+            }
+        }
+        return items;
+    }
+
+    // No record of the track: exactly what Sync Cue Points decides for the
+    // pair (SyncPlanner::plan), so the first run is that page's behaviour.
+    void planTrackCuesWithoutBaseline(const std::string &key, const Track &r, const Track &e)
+    {
+        const SyncPlan plan = SyncPlanner::plan(SyncMatch{r, e}, {}, {});
+        if (!plan.needsChoice && plan.direction == SyncPlan::Direction::None) {
+            return;
+        }
+        const std::vector<CueItemState> items = fallbackItems(key, r, e, plan.positionToleranceMs);
+        if (items.empty()) {
+            return;  // nothing to name it by; cannot happen with cues on either side
+        }
+        const std::string engineName = catalogDisplayName("engine");
+        if (plan.needsChoice) {
+            EngineUpdateConflict conflict;
+            conflict.header = cueHeader(items, false, true, EngineUpdateReason::NoBaselineCues, plan.reasonText);
+            conflict.pathKey = key;
+            conflict.rekordboxSide = "Use rekordbox's cues";
+            conflict.engineSide = "Use " + engineName + "'s cues";
+            SyncPlan toEngine = plan;
+            toEngine.needsChoice = false;
+            toEngine.direction = SyncPlan::Direction::ToB;
+            toEngine.cuesToApply = plan.cuesIfAWins;
+            conflict.rekordboxChoice.emplace_back(
+                CueEdit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, "Use rekordbox's cues"),
+                        toEngine, key});
+            SyncPlan toRekordbox = plan;
+            toRekordbox.needsChoice = false;
+            toRekordbox.direction = SyncPlan::Direction::ToA;
+            toRekordbox.cuesToApply = plan.cuesIfBWins;
+            conflict.engineChoice.emplace_back(CueEdit{
+                cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, "Use " + engineName + "'s cues"),
+                toRekordbox, key});
+            out.conflicts.push_back(std::move(conflict));
+            return;
+        }
+        const bool ontoEngine = plan.direction == SyncPlan::Direction::ToB;
+        CueEdit edit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues,
+                               ontoEngine ? "No earlier record of this stick: rekordbox's cues go to " + engineName
+                                       + ", as Sync Cue Points decides"
+                                          : "No earlier record of this stick: " + engineName
+                                       + "'s cues go to rekordbox, as Sync Cue Points decides"),
+                     plan, key};
+        (ontoEngine ? out.cuesToEngine : out.cuesToRekordbox).push_back(std::move(edit));
+    }
+
+    // The three-way merge of one track's cues. Each pad is an item, each
+    // memory cue or loop another, named by the baseline's place. Engine is
+    // read in rekordbox's terms (cuesFromEngine against rekordbox's cues
+    // and the baseline's memory cues): a pad at a memory cue's place is
+    // that memory cue. What rekordbox changed is applied onto Engine's
+    // set, which is translated back (translateCuesForEngine against
+    // Engine's cues, so nothing shuffles pads) and written only when it
+    // differs from what Engine has.
+    void planTrackCues(const std::string &key, const Track &r, const Track &e, const BaselineTrack &b)
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const CueTolerance tolerance = cueToleranceFor(r.bpm, e.bpm);
+        const double tol = tolerance.ms;
+        const std::vector<CuePoint> rC = withoutJunkCues(r.cues);
+        const std::vector<CuePoint> eC = withoutJunkCues(e.cues);
+
+        std::map<int, std::vector<CuePoint>> rHot;
+        std::map<int, std::vector<const BaselineCue *>> bHot;
+        std::vector<CuePoint> rMem;
+        std::vector<const BaselineCue *> bMem;
+        for (const CuePoint &cue : rC) {
+            if (isHotCue(cue)) {
+                rHot[cue.hotCueNumber].push_back(cue);
+            } else {
+                rMem.push_back(cue);
+            }
+        }
+        for (const BaselineCue &cue : b.cues) {
+            if (isJunkCue(cue.cue)) {
+                continue;
+            }
+            if (isHotCue(cue.cue)) {
+                bHot[cue.cue.hotCueNumber].push_back(&cue);
+            } else {
+                bMem.push_back(&cue);
+            }
+        }
+        rMem = byPosition(rMem);
+        std::stable_sort(bMem.begin(), bMem.end(), [](const BaselineCue *x, const BaselineCue *y) {
+            return x->cue.positionMs < y->cue.positionMs;
+        });
+
+        // Engine in rekordbox's terms. The cue point (Engine's one memory
+        // cue) is kept apart: it holds a memory cue rekordbox has, but no
+        // write removes it and none is planned for it.
+        std::vector<CuePoint> reference = rC;
+        for (const BaselineCue *cue : bMem) {
+            const bool inR = std::any_of(rMem.begin(), rMem.end(),
+                                         [&](const CuePoint &own) { return sameCuePlace(own, cue->cue, tol); });
+            if (!inR) {
+                reference.push_back(cue->cue);
+            }
+        }
+        std::vector<CuePoint> eHotCues;
+        std::vector<CuePoint> eMain;
+        for (const CuePoint &cue : eC) {
+            (isHotCue(cue) ? eHotCues : eMain).push_back(cue);
+        }
+        const CuesFromEngine seen = cuesFromEngine(eHotCues, reference, tol);
+        std::map<int, std::vector<CuePoint>> eHot;
+        for (const CuePoint &cue : seen.hotCues) {
+            eHot[cue.hotCueNumber].push_back(cue);
+        }
+        const std::vector<CuePoint> leftOut = translateCuesForEngine(rC, eC, tol).leftOut;
+
+        // The target in rekordbox's terms, Engine's set to begin with.
+        std::map<int, std::vector<CuePoint>> tHot = eHot;
+        std::vector<CuePoint> tMem = seen.memoryCues;
+
+        const auto samePad = [&](const std::vector<CuePoint> &x, const std::vector<CuePoint> &y) {
+            return sameCuesForSync(x, y, tol);
+        };
+        const auto within = [&](const std::vector<CuePoint> &list, const CuePoint &cue) {
+            return std::count_if(list.begin(), list.end(),
+                                 [&](const CuePoint &other) { return sameCuePlace(other, cue, tol); });
+        };
+        const auto cuesOf = [](const std::vector<const BaselineCue *> &list) {
+            std::vector<CuePoint> cues;
+            for (const BaselineCue *cue : list) {
+                cues.push_back(cue->cue);
+            }
+            return cues;
+        };
+        const auto originOf = [](const std::vector<const BaselineCue *> &list) {
+            // One origin for the pad: all its cues agree, else nobody knows.
+            const ValueOrigin origin = list.empty() ? ValueOrigin::Unknown : list.front()->origin;
+            for (const BaselineCue *cue : list) {
+                if (cue->origin != origin) {
+                    return ValueOrigin::Unknown;
+                }
+            }
+            return origin;
+        };
+        const auto removeMemory = [tol](std::vector<CuePoint> &list, const CuePoint &cue) {
+            std::erase_if(list, [&](const CuePoint &other) { return sameCuePlace(other, cue, tol); });
+        };
+        const auto keptAsEngineOwn = [&](const std::string &itemKeyText, const std::string &state, std::string text) {
+            EngineOwnItem kept;
+            kept.engine = e;
+            kept.header = makeHeader(itemKeyText, false, false, EngineUpdateReason::EngineOwn,
+                                     std::move(text) + " after Seabass last recorded the stick", state);
+            out.engineOwnKept.push_back(std::move(kept));
+        };
+
+        struct Pending
+        {
+            CueItemState item;
+            EngineUpdateReason reason;
+            std::string text;
+        };
+        using Target = std::pair<std::map<int, std::vector<CuePoint>> *, std::vector<CuePoint> *>;
+        std::vector<Pending> toEngine;
+        std::vector<Pending> restored;
+        std::vector<Pending> conflicting;
+        std::vector<std::function<void(Target)>> rekordboxWay;  // each conflict item resolved rekordbox's way
+        std::vector<CuePoint> restoreCues;  // checked restores
+        std::vector<CuePoint> unknownCues;  // Engine's way of the conflicts nobody recorded the origin of
+
+        // Pads.
+        std::set<int> pads;
+        for (const auto *map : {&rHot, &eHot}) {
+            for (const auto &[pad, _] : *map) {
+                pads.insert(pad);
+            }
+        }
+        for (const auto &[pad, _] : bHot) {
+            pads.insert(pad);
+        }
+        for (const int pad : pads) {
+            if (pad < 1 || pad > EngineHotCuePads) {
+                continue;  // Engine has eight pads; nothing beyond them is compared or written
+            }
+            const std::vector<CuePoint> rn = rHot.count(pad) ? rHot.at(pad) : std::vector<CuePoint>{};
+            const std::vector<CuePoint> en = eHot.count(pad) ? eHot.at(pad) : std::vector<CuePoint>{};
+            const std::vector<const BaselineCue *> bnRows =
+                bHot.count(pad) ? bHot.at(pad) : std::vector<const BaselineCue *>{};
+            const std::vector<CuePoint> bn = cuesOf(bnRows);
+            if (samePad(rn, en)) {
+                continue;
+            }
+            const std::string itemKeyText = cueItemKey(key, padCue(pad));
+            const std::string state = padState(pad, rn);
+            const CueItemState item{itemKeyText, engineUpdateStateHash(state)};
+            const std::string padName = "pad " + std::to_string(pad);
+            if (samePad(bn, rn)) {
+                keptAsEngineOwn(itemKeyText, state,
+                                bn.empty()   ? engineName + " set " + padName + " (" + places(en) + ")"
+                                : en.empty() ? engineName + " cleared " + padName + " (" + places(bn) + ")"
+                                             : engineName + " moved " + padName + " from " + places(bn) + " to "
+                                        + places(en));
+                continue;
+            }
+            if (declinedAt(item)) {
+                cueSuppressed.insert(item.key);
+                continue;
+            }
+            if (samePad(bn, en)) {
+                if (!rn.empty()) {
+                    tHot[pad] = rn;
+                    toEngine.push_back(bn.empty() ? Pending{item, EngineUpdateReason::RekordboxAdded,
+                                                            "rekordbox set " + padName + " (" + places(rn) + ")"}
+                                                  : Pending{item, EngineUpdateReason::RekordboxChanged,
+                                                            "rekordbox moved " + padName + " from " + places(bn)
+                                                                + " to " + places(rn)});
+                    continue;
+                }
+                switch (originOf(bnRows)) {
+                case ValueOrigin::Seabass:
+                    restoreCues.insert(restoreCues.end(), bn.begin(), bn.end());
+                    restored.push_back(Pending{item, EngineUpdateReason::ExportDropped, {}});
+                    break;
+                case ValueOrigin::Rekordbox:
+                    tHot.erase(pad);
+                    toEngine.push_back(Pending{item, EngineUpdateReason::RekordboxRemoved,
+                                               "rekordbox cleared " + padName + " (" + places(bn) + ")"});
+                    break;
+                case ValueOrigin::Unknown:
+                    conflicting.push_back(Pending{item, EngineUpdateReason::OriginUnknown,
+                                                  "rekordbox no longer has " + padName + " (" + places(bn)
+                                                      + "), which " + engineName
+                                                      + " has, and nothing recorded whether Seabass or rekordbox "
+                                                        "put it there"});
+                    rekordboxWay.push_back([pad](Target t) { t.first->erase(pad); });
+                    unknownCues.insert(unknownCues.end(), bn.begin(), bn.end());
+                    break;
+                }
+                continue;
+            }
+            // All three differ.
+            conflicting.push_back(Pending{item, EngineUpdateReason::BothChanged,
+                                          describePadDifference(rn, en, "rekordbox", engineName, tolerance)
+                                              + "; both sides changed it since Seabass last recorded the stick "
+                                                "(recorded "
+                                              + places(bn) + ")"});
+            rekordboxWay.push_back([pad, rn](Target t) {
+                if (rn.empty()) {
+                    t.first->erase(pad);
+                } else {
+                    (*t.first)[pad] = rn;
+                }
+            });
+        }
+
+        // Memory cues and loops: present or not, by place.
+        std::vector<bool> rUsed(rMem.size(), false);
+        for (const BaselineCue *row : bMem) {
+            const CuePoint &bc = row->cue;
+            std::size_t ri = rMem.size();
+            for (std::size_t i = 0; i < rMem.size(); ++i) {
+                if (!rUsed[i] && sameCuePlace(rMem[i], bc, tol)) {
+                    ri = i;
+                    break;
+                }
+            }
+            const std::string itemKeyText = cueItemKey(key, bc);
+            if (ri < rMem.size()) {
+                rUsed[ri] = true;
+                const CuePoint &rc = rMem[ri];
+                if (within(seen.memoryCues, rc) > 0 || within(eMain, rc) > 0 || within(leftOut, rc) > 0) {
+                    continue;
+                }
+                keptAsEngineOwn(itemKeyText, memoryState(&rc), engineName + " took out " + memoryName(bc));
+                continue;
+            }
+            // rekordbox lacks it. Engine's cue point alone is not a pad to
+            // take out, so only a pad counts as Engine having it.
+            const auto translations = within(seen.memoryCues, bc);
+            if (translations == 0) {
+                continue;
+            }
+            const CueItemState item{itemKeyText, engineUpdateStateHash(memoryState(nullptr))};
+            if (declinedAt(item)) {
+                cueSuppressed.insert(item.key);
+                continue;
+            }
+            // Every pad Engine has there sits on a pad Engine DJ's import
+            // would not have given the cue: a hot cue of Engine's own as
+            // likely as the translation.
+            const auto uncertainHere = std::count_if(seen.uncertain.begin(), seen.uncertain.end(),
+                                                     [&](const CuesFromEngine::Uncertain &u) {
+                                                         return sameCuePlace(u.memory, bc, tol);
+                                                     });
+            const bool uncertainOnly = uncertainHere >= translations;
+            if (row->origin == ValueOrigin::Seabass) {
+                restoreCues.push_back(bc);
+                restored.push_back(Pending{item, EngineUpdateReason::ExportDropped, {}});
+            } else if (uncertainOnly) {
+                int pad = 0;
+                for (const auto &u : seen.uncertain) {
+                    if (sameCuePlace(u.memory, bc, tol)) {
+                        pad = u.pad.hotCueNumber;
+                        break;
+                    }
+                }
+                conflicting.push_back(Pending{item, EngineUpdateReason::EngineMemoryOrHotCue,
+                                              engineName + " pad " + std::to_string(pad) + " sits where rekordbox had "
+                                                  + memoryName(bc)
+                                                  + ", which it no longer has: that cue on " + engineName
+                                                  + ", or a hot cue of " + engineName + "'s own?"});
+                rekordboxWay.push_back([removeMemory, bc](Target t) { removeMemory(*t.second, bc); });
+            } else if (row->origin == ValueOrigin::Rekordbox) {
+                removeMemory(tMem, bc);
+                toEngine.push_back(
+                    Pending{item, EngineUpdateReason::RekordboxRemoved, "rekordbox removed " + memoryName(bc)});
+            } else {
+                conflicting.push_back(Pending{item, EngineUpdateReason::OriginUnknown,
+                                              "rekordbox no longer has " + memoryName(bc) + ", which " + engineName
+                                                  + " has, and nothing recorded whether Seabass or rekordbox put "
+                                                    "it there"});
+                rekordboxWay.push_back([removeMemory, bc](Target t) { removeMemory(*t.second, bc); });
+                unknownCues.push_back(bc);
+            }
+        }
+        for (std::size_t i = 0; i < rMem.size(); ++i) {
+            const CuePoint &rc = rMem[i];
+            if (rUsed[i] || within(seen.memoryCues, rc) > 0 || within(eMain, rc) > 0 || within(leftOut, rc) > 0) {
+                continue;  // level, or no pad is free for it on Engine
+            }
+            const CueItemState item{cueItemKey(key, rc), engineUpdateStateHash(memoryState(&rc))};
+            if (declinedAt(item)) {
+                cueSuppressed.insert(item.key);
+                continue;
+            }
+            tMem.push_back(rc);
+            toEngine.push_back(Pending{item, EngineUpdateReason::RekordboxAdded, "rekordbox added " + memoryName(rc)});
+        }
+
+        // Rows.
+        const auto itemsOf = [](const std::vector<Pending> &list) {
+            std::vector<CueItemState> items;
+            for (const auto &p : list) {
+                items.push_back(p.item);
+            }
+            return items;
+        };
+        // The target written onto Engine, or nothing when Engine already
+        // holds it.
+        const auto ontoEngine = [&](const std::map<int, std::vector<CuePoint>> &hot,
+                                    const std::vector<CuePoint> &memory) -> std::optional<SyncPlan> {
+            std::vector<CuePoint> cues;
+            for (const auto &[pad, list] : hot) {
+                cues.insert(cues.end(), list.begin(), list.end());
+            }
+            cues.insert(cues.end(), memory.begin(), memory.end());
+            const EngineCueTranslation translation = translateCuesForEngine(cues, eC, tol);
+            if (sameCuesForSync(translation.cues, eC, tol)) {
+                return std::nullopt;
+            }
+            SyncPlan plan =
+                cuePlan(r, e, SyncPlan::Direction::ToB, keepExistingColours(translation.cues, eC, tol), tol);
+            plan.cuesLeftOut = translation.leftOut;
+            return plan;
+        };
+        const auto ontoRekordbox = [&](const std::vector<CuePoint> &extra) {
+            std::vector<CuePoint> cues = r.cues;
+            cues.insert(cues.end(), extra.begin(), extra.end());
+            return cuePlan(r, e, SyncPlan::Direction::ToA, std::move(cues), tol);
+        };
+
+        std::vector<std::string> written;
+        if (!toEngine.empty()) {
+            if (auto plan = ontoEngine(tHot, tMem)) {
+                const EngineUpdateReason firstReason = toEngine.front().reason;
+                const bool oneReason = std::all_of(toEngine.begin(), toEngine.end(),
+                                                   [&](const Pending &p) { return p.reason == firstReason; });
+                std::string text;
+                const std::size_t shown = std::min<std::size_t>(toEngine.size(), 3);
+                for (std::size_t i = 0; i < shown; ++i) {
+                    text += (i == 0 ? "" : "; ") + toEngine[i].text;
+                }
+                if (toEngine.size() > shown) {
+                    text += "; and " + std::to_string(toEngine.size() - shown) + " more";
+                }
+                CueEdit edit{cueHeader(itemsOf(toEngine), true, false,
+                                       oneReason ? toEngine.front().reason : EngineUpdateReason::RekordboxChanged,
+                                       text + since()),
+                             std::move(*plan), key};
+                written.push_back(edit.header.key);
+                out.cuesToEngine.push_back(std::move(edit));
+            }
+        }
+        if (!restored.empty()) {
+            const std::size_t n = restoreCues.size();
+            CueEdit edit{cueHeader(itemsOf(restored), true, false, EngineUpdateReason::ExportDropped,
+                                   "rekordbox's export dropped " + std::to_string(n)
+                                       + (n == 1 ? " cue Seabass had synced from " + engineName + "; it goes back"
+                                                 : " cues Seabass had synced from " + engineName + "; they go back")),
+                         ontoRekordbox(restoreCues), key};
+            written.push_back(edit.header.key);
+            out.cuesToRekordbox.push_back(std::move(edit));
+        }
+        if (!conflicting.empty()) {
+            std::string text = conflicting.front().text;
+            if (conflicting.size() > 1) {
+                const std::size_t more = conflicting.size() - 1;
+                text += "; and " + std::to_string(more) + (more == 1 ? " more cue differs" : " more cues differ");
+            }
+            EngineUpdateConflict conflict;
+            conflict.header =
+                cueHeader(itemsOf(conflicting), false, true, conflicting.front().reason, std::move(text), written);
+            conflict.pathKey = key;
+            conflict.rekordboxSide = "Follow rekordbox";
+            conflict.engineSide = unknownCues.empty() ? "Keep " + engineName + "'s cues"
+                                                      : "Put " + engineName + "'s cues back on rekordbox";
+            auto hot = tHot;
+            auto memory = tMem;
+            for (const auto &resolve : rekordboxWay) {
+                resolve(Target{&hot, &memory});
+            }
+            if (auto plan = ontoEngine(hot, memory)) {
+                if (conflicting.front().reason == EngineUpdateReason::EngineMemoryOrHotCue) {
+                    plan->reason = SyncPlan::Reason::EngineMemoryOrHotCue;
+                }
+                conflict.rekordboxChoice.emplace_back(CueEdit{
+                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason, "Follow rekordbox"),
+                    std::move(*plan), key});
+            }
+            if (!unknownCues.empty()) {
+                std::vector<CuePoint> back = restoreCues;
+                back.insert(back.end(), unknownCues.begin(), unknownCues.end());
+                conflict.engineChoice.emplace_back(CueEdit{
+                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason,
+                              "Put " + engineName + "'s cues back on rekordbox"),
+                    ontoRekordbox(back), key});
+            }
+            out.conflicts.push_back(std::move(conflict));
+        }
+    }
+
     // Declined items stay out while rekordbox's state of them is the one
     // recorded; a row depending on one that stays out stays out too.
+    //
+    // A cue row stays out when every cue item it covers is declined at its
+    // state; its declined items that rekordbox left alone were already
+    // kept out of the rows they would have joined (cueSuppressed).
     void suppressDeclined()
     {
         if (!base || base->declined.empty()) {
             return;
         }
+        const auto declined = [&](const std::string &key, const std::string &state) {
+            const auto it = base->declined.find(key);
+            return it != base->declined.end() && it->second == state;
+        };
         std::set<std::string> suppressed;
         eachDecidable(out, [&](auto &rows) {
             for (const auto &row : rows) {
-                const auto it = base->declined.find(row.header.key);
-                if (it != base->declined.end() && it->second == row.header.rekordboxState) {
+                const auto &items = row.header.cueItems;
+                if (items.empty() ? declined(row.header.key, row.header.rekordboxState)
+                                  : std::all_of(items.begin(), items.end(), [&](const CueItemState &item) {
+                                        return declined(item.key, item.rekordboxState);
+                                    })) {
                     suppressed.insert(row.header.key);
                 }
             }
         });
+        const auto record = [&](std::set<std::string> keys) {
+            keys.insert(cueSuppressed.begin(), cueSuppressed.end());
+            eachDecidable(out, [&](auto &rows) {
+                for (const auto &row : rows) {
+                    if (suppressed.count(row.header.key)) {
+                        for (const auto &item : row.header.cueItems) {
+                            keys.insert(item.key);
+                        }
+                    }
+                }
+            });
+            out.declinedSuppressed.assign(keys.begin(), keys.end());
+        };
         if (suppressed.empty()) {
+            record(suppressed);
             return;
         }
         bool grew = true;
@@ -1203,12 +1876,12 @@ private:
                 }
             });
         }
+        record(suppressed);
         eachDecidable(out, [&](auto &rows) {
             rows.erase(std::remove_if(rows.begin(), rows.end(),
                                       [&](const auto &row) { return suppressed.count(row.header.key) > 0; }),
                        rows.end());
         });
-        out.declinedSuppressed.assign(suppressed.begin(), suppressed.end());
     }
 };
 

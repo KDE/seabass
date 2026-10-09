@@ -35,6 +35,15 @@ namespace seabass::domain
 //   no B for the item          the fallback: additions checked, anything
 //                              destructive or unattributed a conflict
 //
+// Cues are items too: each pad (by number) and each memory cue or loop
+// (by the baseline's place). Places compare within half a beat
+// (cueToleranceFor), colour never counts, junk cues (isJunkCue) are not
+// cues, and Engine is read in rekordbox's terms (cuesFromEngine). A dropped
+// cue goes back onto rekordbox when Seabass wrote it, comes off Engine when
+// rekordbox did, and is a conflict when nobody recorded which. A pair with
+// no record falls back to what SyncPlanner::plan decides (Sync Cue
+// Points). A track's cue changes are one CueEdit per direction.
+//
 // Pure domain: the planner never reads a file. What only the stick can
 // say (does a file exist, how many Engine playlists share a path, each
 // Engine row's pdbImportKey) arrives in EngineUpdateInput as data.
@@ -48,7 +57,7 @@ enum class EngineUpdateReason {
     RekordboxRemoved,
     RekordboxRenamed,
     RekordboxMoved,    // a member's place in a playlist
-    RekordboxChanged,  // a rating or a comment
+    RekordboxChanged,  // a rating, a comment, a pad's cue moved, or several cue changes in one row
     // A track rekordbox lists in a playlist replaces another copy of the
     // same song in Engine's copy of it (sameSong()).
     SameSongCopy,
@@ -67,12 +76,26 @@ enum class EngineUpdateReason {
     NoBaselineEngineOnly,    // an Engine row with pdbImportKey 0, an Engine-only playlist: kept
     NoBaselineEngineMember,  // a member only Engine's playlist holds: conflict
     NoBaselineOrder,         // the two orders of one playlist differ: conflict
-    NoBaselineValuesDiffer,  // a rating or a comment: conflict
+    NoBaselineValuesDiffer,  // a rating or a comment, both set and different: conflict
+    NoBaselineEngineValue,   // a rating or a comment only Engine has: kept, removing it is unattributed
+    NoBaselineCues,          // cues without a record: what SyncPlanner::plan decides (Sync Cue Points)
     NoBaselineRenameGuess,   // an Engine-only playlist that looks like this one renamed: conflict
+    // An Engine pad sits where rekordbox had a memory cue it no longer
+    // has, on a pad Engine DJ's import would not have given it
+    // (cuesFromEngine's uncertain list): the translation, to remove, or a
+    // hot cue of Engine's own, to keep? Nothing on the stick says.
+    EngineMemoryOrHotCue,
     // Refusals and things to fix elsewhere first.
     EnginePathAmbiguous,  // enginePlaylistCountAtPath != 1
     DuplicateEngineRows,  // two Engine rows for one file: Clean Up first
     FileNotOnStick,       // rekordbox lists a file the stick does not have
+};
+
+// One cue item a cue row covers (rekordbox_baseline.hpp's cue keys).
+struct CueItemState
+{
+    std::string key;
+    std::string rekordboxState;  // engineUpdateStateHash of rekordbox's cue there
 };
 
 // What every row carries.
@@ -96,6 +119,15 @@ struct EngineUpdateItemHeader
     // declined item is recorded with in RekordboxBaseline::declined, and
     // what that record is compared against on the next plan.
     std::string rekordboxState;
+    // Cue rows only (CueEdit, and a conflict whose key is a cue key):
+    // every cue item the row covers, key and rekordboxState above being
+    // the first of them. A cue write replaces a track's whole cue set,
+    // so one row carries all of a track's cue items that go one way. A
+    // declined cue row records each of these in
+    // RekordboxBaseline::declined; the row stays out while every one of
+    // them is declined at its state, and a declined item is left out of
+    // the rows it would have joined.
+    std::vector<CueItemState> cueItems;
 };
 
 struct TrackToAdd
@@ -182,19 +214,27 @@ struct MetadataEdit
     std::string comment;
 };
 
-// Cues, either direction, as a SyncPlan that SyncPlanChange writes
-// unchanged.
-// TODO(step 3 of docs/sync-after-rekordbox-export-plan.md): the planner
-// fills cuesToEngine and cuesToRekordbox; step 2 leaves both empty.
+// One track's cues, either direction, as a SyncPlan that SyncPlanChange
+// writes unchanged: plan.match is {rekordbox, Engine}, so ToB writes
+// Engine and ToA writes rekordbox, and cuesToApply is the track's whole
+// new cue set on that side (Engine's in Engine's terms, colours kept).
+//
+// With a baseline, a track has at most one CueEdit per direction and at
+// most one cue conflict. Every choice of that conflict is computed from
+// the same Engine and rekordbox sets as the track's CueEdits and already
+// contains their changes (the conflict dependsOn their keys), so a writer
+// stages a conflict's chosen CueEdit after the track's CueEdits, never
+// instead of an earlier one, and the last write is the complete one.
 struct CueEdit
 {
     EngineUpdateItemHeader header;
     SyncPlan plan;
+    std::string pathKey;
 };
 
 // Any one write of the proposal, for a conflict's choices.
-using EngineUpdateEdit =
-    std::variant<TrackToAdd, TrackToRemove, PlaylistCreate, PlaylistRename, PlaylistDelete, MembershipEdit, MetadataEdit>;
+using EngineUpdateEdit = std::variant<TrackToAdd, TrackToRemove, PlaylistCreate, PlaylistRename, PlaylistDelete,
+                                      MembershipEdit, MetadataEdit, CueEdit>;
 
 // Something the planner cannot decide. Each choice is what staging it
 // writes; an empty choice writes nothing (Engine keeps what it has).
@@ -232,11 +272,11 @@ struct EngineUpdateProposal
     std::vector<PlaylistRename> playlistsToRename;
     std::vector<MembershipEdit> membership;
     std::vector<MetadataEdit> metadataToEngine;
-    std::vector<CueEdit> cuesToEngine;  // step 3
+    std::vector<CueEdit> cuesToEngine;
     std::vector<PlaylistDelete> playlistsToDelete;
     std::vector<TrackToRemove> tracksToRemove;
     std::vector<MetadataEdit> restoresToRekordbox;
-    std::vector<CueEdit> cuesToRekordbox;  // step 3
+    std::vector<CueEdit> cuesToRekordbox;  // restores, and the fallback's writes onto rekordbox
 
     std::vector<EngineUpdateConflict> conflicts;
     std::vector<EngineOwnItem> engineOwnKept;

@@ -126,6 +126,14 @@ std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut);
 // ends within `toleranceMs` (domain::sameCuePlace).
 bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs);
 
+// How two sets of hot cues differ pad by pad, in the words a Sync choice
+// uses ("Pad 3: rekordbox 1:07.751, Engine 0:30.251", "Pad 2 is 300 ms
+// apart (more than half a beat at 120 BPM): ..."), A named first. Empty
+// when they do not differ. Memory cues in either list are ignored.
+std::string describePadDifference(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
+                                  const std::string &labelA, const std::string &labelB,
+                                  const CueTolerance &tolerance);
+
 // A cue position the way reasons spell it: m:ss.mmm.
 std::string formatCuePosition(double positionMs);
 
