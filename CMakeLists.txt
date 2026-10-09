@@ -925,6 +925,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/delete_orphan_change.hpp
         src/gui/edit/changes/delete_orphan_change.cpp
         src/gui/edit/changes/align_playlist_change.cpp
+        src/gui/edit/changes/owned_change.hpp
+        src/gui/edit/changes/owned_change.cpp
         src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
@@ -2802,6 +2804,26 @@ if(TARGET seabass_edit)
         target_link_libraries(align_playlist_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME align_playlist_change_test COMMAND align_playlist_change_test)
+
+    # Sync after Rekordbox Export's changes, each through the save loop on a
+    # copy of the anonymized fixture, with Undo. OwnedChange first: the
+    # session refuses the bare pair of another page's changes and takes
+    # them wrapped.
+    add_executable(owned_change_test
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/owned_change_test.cpp
+    )
+    target_include_directories(owned_change_test PRIVATE src tests)
+    target_link_libraries(owned_change_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test
+        ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME owned_change_test COMMAND owned_change_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(owned_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(playlist_edit_changes_test tests/playlist_edit_changes_test.cpp)
     target_include_directories(playlist_edit_changes_test PRIVATE src tests)
