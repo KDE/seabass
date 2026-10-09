@@ -243,18 +243,29 @@ record of this stick: additions are assumed, removals are left to you"),
 then sections, each with a section-wide checkbox and one per row, each
 row with its reason:
 
-1. Playlists to create (parents first), rename, delete
-2. Tracks to add to Engine, with cues, rating, comment and cover riding
+1. Conflicts, unchecked, with two buttons in the style of Sync's "use
+   these cues", and in the section's header "Rekordbox's side for all",
+   "Engine's side for all" and "Clear all choices"
+2. Playlists to create (parents first), rename, delete
+3. Tracks to add to Engine, with cues, rating, comment and cover riding
    along
-3. Tracks to remove from Engine (how many playlists hold each)
-4. Playlist membership, added and removed, in rekordbox's order
-5. Ratings and comments to Engine
-6. Cues to Engine
-7. Cues and ratings back onto rekordbox (the restores), their own
+4. Tracks to remove from Engine (how many playlists hold each)
+5. Playlist membership, added and removed, in rekordbox's order
+6. Ratings and comments to Engine
+7. Cues to Engine
+8. Cues and ratings back onto rekordbox (the restores), their own
    section, so the user sees what the export had dropped
-8. Conflicts, unchecked, with two buttons in the style of Sync's "use
-   these cues"
 9. Engine's own, kept: shown, never written
+10. Not added: the adds refused because the file is not on the stick
+
+**Decision (first look, 2026-10-09):** conflicts come first, since they
+are the only rows that need an answer before staging. Under the intro a
+legend says what the three direction chips mean, and the intro and the
+legend fold away while the list scrolls (ScrollCollapse, as Clean Up
+Duplicates). A row opens on a click to say exactly what the save does
+with it, one line each, from the row's own payload (the model's
+`details` role). The button reads "Stage Selected", the counts
+"selected".
 
 Save label "Sync Engine". After the save the badge is gone, because the
 save loop levels the counter and the baseline is recorded.

@@ -24,12 +24,17 @@ namespace seabass::gui
 // The rows of Sync after Rekordbox Export's page: one per row of the
 // proposal (domain::EngineUpdateProposal), grouped by section in the
 // page's order (docs/sync-after-rekordbox-export-plan.md, "The page"), so
-// a ListView's section.property can head them.
+// a ListView's section.property can head them. Conflicts come first: they
+// are the only rows that need an answer before staging.
 //
 // A row of sections playlists to restoresToRekordbox is something the
 // save writes when it is ticked; a conflict is a question, ticked only by
 // answering it (resolveConflict); Engine's own and the refused adds are
 // shown and never written.
+//
+// Every row also says, line by line, exactly what the save does with it
+// (details), from its own payload and the rows beside it, never from a
+// file: built on demand, for the row the page expands.
 //
 // Ticks follow the planner's rules. Rows sharing a key are one item and
 // are ticked together. dependsOn holds both ways: unticking a row unticks
@@ -52,7 +57,7 @@ public:
     enum Roles {
         // The section's name (sectionName()), for section.property.
         SectionRole = Qt::UserRole + 1,
-        // Its place in the page's order, 0 for playlists.
+        // Its place in the page's order, 0 for conflicts.
         SectionIndexRole,
         KindRole,
         KeyRole,
@@ -75,10 +80,15 @@ public:
         DirectionRole,
         // A row an answer added (its conflict is resolvedSide's).
         FromConflictRole,
+        // QStringList, one line each: what happens to this track or
+        // playlist (details()).
+        DetailsRole,
     };
 
-    // The page's order.
+    // The page's order: the questions first, then what a tick writes,
+    // then what is only shown.
     enum class Section {
+        Conflicts,
         Playlists,
         TracksToAdd,
         TracksToRemove,
@@ -86,7 +96,6 @@ public:
         MetadataToEngine,
         CuesToEngine,
         RestoresToRekordbox,
-        Conflicts,
         EngineOwnKept,
         NotAdded,
     };
@@ -146,6 +155,21 @@ public:
     // written for while the other side can (a refusal: both empty).
     bool resolveConflict(int row, bool rekordboxSide);
     bool clearResolution(int row);
+    // Every conflict row, answered ones included, answered the one way (a
+    // refusal, which nothing answers, stays as it is), or every answer
+    // taken back. One model reset, not a row change per answer.
+    void resolveAllConflicts(bool rekordboxSide);
+    void clearAllResolutions();
+
+    // What the save does with row `row`, one line each: for a track to add
+    // its tags, cues, cover and the playlists it joins in this save; for a
+    // removal Engine's row and the playlists it leaves; for a membership
+    // the playlist, the place and the track it goes after; for cues each
+    // cue that changes, old and new; for a rating or a comment old and
+    // new; for a restore what goes back and why; for a conflict what each
+    // side's edits would write; for Engine's own and a refused add the
+    // reason in full.
+    QStringList details(int row) const;
 
     // Rows per section name, every section present (0 when empty).
     QVariantMap sectionCounts() const;
@@ -175,8 +199,14 @@ private:
     int endOfSection(Section section) const;
     void removeAnswerRows(int conflictUid);
     void announceIncluded();
+    QStringList detailsOf(const Row &row) const;
+    QStringList editLines(const domain::EngineUpdateEdit &edit) const;
+    QString titleByPathKey(const std::string &pathKey) const;
 
     std::vector<Row> m_rows;
+    // Set while resolveAllConflicts or clearAllResolutions runs inside one
+    // model reset: no row signals, no announcement until the end.
+    bool m_bulk = false;
     std::string m_stickRoot;
     int m_nextUid = 1;
     // Rows so far per planKey prefix, for the ordinal that ends a key.
