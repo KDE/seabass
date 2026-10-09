@@ -42,6 +42,10 @@ Button {
     property bool readOnly: false
     property string readOnlyReason: "Another Seabass instance is editing this library"
     signal readOnlyClicked()
+    // Why the card is disabled, in a few words ("No orphaned files"). A
+    // disabled control gets no hover of its own, so the page that holds
+    // the cards shows this on hover (StickToolCards); empty shows nothing.
+    property string disabledReason: ""
     // The home screen's bigger tile, two to a row beside the rail: a
     // bigger icon and title, more room around them and a taller floor.
     // Off everywhere else, where the card is exactly what it was.
@@ -76,6 +80,10 @@ Button {
         color: card.down ? Theme.rowPressed : (card.hovered ? Theme.rowHover : Theme.surface)
         border.color: Theme.border
         border.width: 1
+        // Greyed with its content when disabled: only the icon dimmed
+        // before, and a card that could not be opened looked like one
+        // that could.
+        opacity: card.enabled ? 1 : 0.5
     }
 
     Binding { target: card; property: "leftPadding"; value: Theme.cardPadding; when: card.large }
@@ -92,6 +100,7 @@ Button {
     contentItem: RowLayout {
         id: cardRow
         spacing: Theme.rowSpacing
+        opacity: card.enabled ? 1 : 0.4
         SeabassIcon {
             id: cardIconItem
             objectName: "cardIcon"

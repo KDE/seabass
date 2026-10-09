@@ -144,6 +144,8 @@ Item {
     // own devicePath, not the app-wide busy flag.
     readonly property bool thisRowBusy: root.mediaController.busy
         && root.mediaController.busyDevicePath === root.devicePath
+    // A disabled card's reason when the stick has no library at all.
+    readonly property string noLibraryReason: "No rekordbox or Engine library on this stick"
 
     // ---- Which card shows, one line each, the rules of the old list.
     // Every writing card is withheld for a browsed backup (`writable`):
@@ -292,6 +294,28 @@ Item {
             objectName: "actionGrid"
             Layout.fillWidth: true
             visible: !root.empty
+
+            // A disabled card says why on hover. It cannot itself: a
+            // disabled control gets no hover events, its handlers and
+            // children none either. The grid can, and finds the card under
+            // the pointer.
+            HoverHandler { id: disabledCardHover }
+            readonly property var disabledCardUnderPointer: {
+                if (!disabledCardHover.hovered) {
+                    return null;
+                }
+                const at = disabledCardHover.point.position;
+                const card = grid.childAt(at.x, at.y);
+                return card && card.disabledReason !== undefined && !card.enabled
+                    && card.disabledReason.length > 0 ? card : null;
+            }
+            ToolTip {
+                objectName: "disabledCardTip"
+                parent: grid.disabledCardUnderPointer ?? grid
+                visible: grid.disabledCardUnderPointer !== null
+                delay: 400
+                text: grid.disabledCardUnderPointer ? grid.disabledCardUnderPointer.disabledReason : ""
+            }
             columns: Math.max(1, root.columns)
             columnSpacing: Theme.rowSpacing
             rowSpacing: Theme.rowSpacing
@@ -314,6 +338,7 @@ Item {
                 cardIcon: "view-media-track"
                 visible: root.group === "explore" && root.showBrowse
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.browseRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -327,6 +352,7 @@ Item {
                 cardIcon: "vcs-diff"
                 visible: root.group === "explore" && root.showCompare
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.playlistDiffRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -340,6 +366,7 @@ Item {
                 cardIcon: "office-chart-bar"
                 visible: root.group === "explore" && root.showStatistics
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.stickStatisticsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -355,6 +382,7 @@ Item {
                 cardIcon: "view-media-equalizer"
                 visible: root.group === "explore" && root.showDeviceProfile
                 enabled: root.hasRekordbox
+                disabledReason: root.hasRekordbox ? "" : "No rekordbox library on this stick"
                 onClicked: root.settingsRequested(root.label, root.rekordboxPath)
             }
             ActionCard {
@@ -391,6 +419,7 @@ Item {
                 cardIcon: "exchange-positions"
                 visible: root.group === "sync" && root.showSync
                 enabled: root.hasRekordbox && root.hasEngine
+                disabledReason: !root.hasRekordbox && !root.hasEngine ? root.noLibraryReason : (!root.hasEngine ? "No Engine library on this stick to sync with" : "No rekordbox library on this stick to sync with")
                 onClicked: root.syncRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -410,6 +439,7 @@ Item {
                 // is no reason to refuse a copy of what is on it.
                 visible: root.group === "sync" && root.showMetadataBackup
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.metadataBackupRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
             }
             ActionCard {
@@ -426,6 +456,7 @@ Item {
                 cardIcon: "document-import"
                 visible: root.group === "sync" && root.showRestoreMetadata
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.metadataRestoreRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
             }
             ActionCard {
@@ -449,6 +480,7 @@ Item {
                 experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                 visible: root.group === "sync" && root.showCreateEngine
                 enabled: root.hasRekordbox
+                disabledReason: root.hasRekordbox ? "" : "No rekordbox library on this stick to create it from"
                 onClicked: root.engineLibraryCreatorRequested(root.label, root.rekordboxPath)
             }
 
@@ -483,6 +515,7 @@ Item {
                 // restoring and updating a stick from the backup.
                 visible: root.group === "backup" && root.showFullStickBackup
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.fullStickBackupRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -499,6 +532,7 @@ Item {
                 cardIcon: "view-refresh"
                 visible: root.group === "backup" && root.showUpdateStick
                 enabled: root.updateSource !== null && root.updateSource.enoughSpace !== false
+                disabledReason: root.updateSource === null ? "Nothing to update it from" : "Not enough free space on this stick for the update"
                 onClicked: {
                     if (root.updateSource.kind === "stick") {
                         root.cloneStickRequested(root.updateSource.label, root.updateSource.rekordboxPath,
@@ -539,6 +573,7 @@ Item {
                 cardIcon: "document-revert"
                 visible: root.group === "backup" && root.showRestoreBackup
                 enabled: root.hasKnownLibrary || !root.thisRowBusy
+                disabledReason: "Wait until the stick has finished mounting or ejecting"
                 onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
                     root.hasKnownLibrary ? root.currentArchivePath
                                          : (root.adviceState === "restore" ? root.advice.backupPath : ""),
@@ -583,6 +618,7 @@ Item {
                 // mounted sticks).
                 enabled: !root.thisRowBusy && root.cloneSource !== null
                     && root.mounted && root.cloneSource.enoughSpace !== false
+                disabledReason: root.thisRowBusy ? "Wait until the stick has finished mounting or ejecting" : !root.mounted ? "Mount the stick first" : root.cloneSource === null ? "Plug in the stick to copy from" : "Not enough free space on this stick for the copy"
                 onClicked: root.cloneStickRequested(root.cloneSource.label,
                     root.cloneSource.rekordboxPath, root.cloneSource.enginePath,
                     root.mountPoint, root.label, false)
@@ -603,6 +639,7 @@ Item {
                 // recognizable on it yet.
                 visible: root.group === "backup" && root.showFormat
                 enabled: !root.mediaController.busy
+                disabledReason: "Wait until the current mount or eject has finished"
                 onClicked: root.formatUsbRequested()
             }
 
@@ -624,6 +661,7 @@ Item {
                 cardIcon: "edit-clear-all"
                 visible: root.group === "maintain" && root.showCleanUp
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.cleanupRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -640,6 +678,7 @@ Item {
                 cardIcon: "edit-duplicate"
                 visible: root.group === "maintain" && root.showCleanUp
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.duplicatesStatsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -656,6 +695,7 @@ Item {
                 cardIcon: "draw-eraser"
                 visible: root.group === "maintain" && root.showCleanUp
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.junkCueCleanupRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -672,6 +712,7 @@ Item {
                 cardIcon: "media-record"
                 visible: root.group === "maintain" && root.showCleanUp
                 enabled: (root.hasRekordbox || root.hasEngine) && root.recordingCount > 0
+                disabledReason: !(root.hasRekordbox || root.hasEngine) ? root.noLibraryReason : "No recordings on this stick"
                 onClicked: root.recordingsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -690,6 +731,7 @@ Item {
                 cardIcon: "edit-delete"
                 visible: root.group === "maintain" && root.showCleanUp
                 enabled: (root.hasRekordbox || root.hasEngine) && root.pendingCount > 0
+                disabledReason: !(root.hasRekordbox || root.hasEngine) ? root.noLibraryReason : "No orphaned files"
                 onClicked: root.pendingDeletionsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
@@ -707,6 +749,7 @@ Item {
                 cardIcon: "kt-check-data"
                 visible: root.group === "maintain" && root.showLibraryHealth
                 enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.libraryHealthRequested(root.label, root.rekordboxPath, root.enginePath)
             }
         }

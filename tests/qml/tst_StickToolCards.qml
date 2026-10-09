@@ -944,4 +944,31 @@ TestCase {
         compare(c.enabled, data.enabled);
         verify(c.cardSubtitle.indexOf(data.text) === 0, c.cardSubtitle);
     }
+
+    // A disabled card looks it, and says why on hover: the grid finds it
+    // under the pointer, since the card itself gets no hover while
+    // disabled.
+    function test_aDisabledCardIsGreyedAndSaysWhy() {
+        // A stick with a library and nothing to clean up.
+        const cards = makeMaintain({count: 0, bytes: 0, sources: []}, 0);
+        compare(card(cards, "Library Health").enabled, true, "a stick with a library");
+        const orphans = card(cards, "Delete Orphaned Files");
+        verify(orphans !== null);
+        compare(orphans.enabled, false, "nothing orphaned on this stick");
+        compare(orphans.disabledReason, "No orphaned files");
+        verify(orphans.contentItem.opacity < 1, "greyed, not only its icon");
+        compare(card(cards, "Clean Up Recordings").disabledReason, "No recordings on this stick");
+
+        const grid = Live.findByObjectName(cards, "actionGrid");
+        mouseMove(orphans, orphans.width / 2, orphans.height / 2);
+        tryCompare(grid, "disabledCardUnderPointer", orphans, 2000, "the grid sees the disabled card under the pointer");
+        wait(600);
+        saveScreenshot(cards, "stick-tool-cards-disabled-reason");
+
+        // An enabled card is not the grid's business.
+        const health = card(cards, "Library Health");
+        compare(health.enabled, true);
+        mouseMove(health, health.width / 2, health.height / 2);
+        tryCompare(grid, "disabledCardUnderPointer", null, 2000);
+    }
 }
