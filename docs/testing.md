@@ -858,7 +858,14 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   deleting with that half of the check unproven.
 - `tools/rig-edits.sh <stick> [baseline]`: add a cue, Clean Up one group and
   a Library Health repair, each saved and undone (`rig_plant_repairable`
-  plants the repairable issue and puts the file back).
+  plants the repairable issue and puts the file back), and W10, Sync after
+  Rekordbox Export: `rig_engine_update` plants a baseline lacking one
+  track and removes that track's Engine row, syncs through the page's
+  controller, asserts the proposal is empty and the row is back in its
+  playlists, undoes, compares the catalogs byte for byte and puts the
+  plant back. `RIG_EDITS_PARTS` picks the checks (the round runs W10 as
+  a check of its own); `RIG_SCRATCH_STICK=1 RIG_EDITS_PARTS=W10` runs
+  W10 against a folder laid out as a stick, with no hardware.
 - `tools/rig-clones.sh`: the two-stick Backup USB Stick checks.
 - `tools/rig-interrupted-save.sh <stick> <device or ""> [shots] [baseline] [digests]`:
   check F6, issue #48. `tst_LiveInterruptedSave` starts a Sync save and
