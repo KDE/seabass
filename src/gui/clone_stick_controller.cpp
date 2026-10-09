@@ -337,6 +337,7 @@ void CloneStickController::start(bool exact)
     options.cancel = m_cancel;
     options.backup.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
     options.libraryCheck = infrastructure::engine::checkRestoredEngineLibrary;
+    options.targetLabel = m_targetLabel.toStdString();
     QPointer<CloneStickController> self(this);
     auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>();
     options.onProgress = [self, lastPost](const CloneProgress &progress) {
@@ -458,21 +459,27 @@ void CloneStickController::onRunFinished()
         map["warnings"] = toVariantList(s.warnings);
         map["missingTracks"] = s.missingTrackPaths ? toVariantList(*s.missingTrackPaths) : QVariantList{};
         map["databaseChecked"] = s.missingTrackPaths.has_value();
+        map["coverLinks"] = QString::fromStdString(application::coverLinksSentence(s));
     }
     m_result = map;
     emit resultChanged();
 
     const QString target = m_targetLabel.isEmpty() ? QStringLiteral("the target") : m_targetLabel;
+    const QString covers =
+        o.restoreStarted ? QString::fromStdString(application::coverLinksSentence(o.restore)) : QString();
+    const QString coversAfter = covers.isEmpty() ? QString() : QLatin1Char(' ') + covers;
     switch (o.status) {
     case CloneStickOutcome::Status::Cloned:
         setStatusMessage(QStringLiteral("%1 now holds %2's library: %3 files written, %4 already up to date.")
                              .arg(target, m_sourceLabel)
                              .arg(o.restore.filesWritten)
-                             .arg(o.restore.filesUnchanged));
+                             .arg(o.restore.filesUnchanged)
+                         + coversAfter);
         emit actionFeedback(m_statusMessage, false);
         break;
     case CloneStickOutcome::Status::ClonedWithProblems:
-        setStatusMessage(QStringLiteral("%1 was written, but with problems; see the report below.").arg(target));
+        setStatusMessage(QStringLiteral("%1 was written, but with problems; see the report below.").arg(target)
+                         + coversAfter);
         emit actionFeedback(m_statusMessage, true);
         break;
     case CloneStickOutcome::Status::Cancelled:

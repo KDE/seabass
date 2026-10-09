@@ -11,6 +11,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <fstream>
 #include <chrono>
@@ -24,6 +25,7 @@
 
 #include "application/path_key.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -445,6 +447,16 @@ bool extraIsBackupFile(const fs::path &targetRoot, const fs::path &extraPath, co
 
 using infrastructure::backup::availableBytes;
 
+// Whether two stick labels are the same name to a player: compared
+// without case, as the Engine artwork audit compares them.
+bool sameStickLabel(const std::string &a, const std::string &b)
+{
+    return a.size() == b.size()
+           && std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
+                  return std::tolower(x) == std::tolower(y);
+              });
+}
+
 // Streams one entry to `destination` via a temporary sibling, verifying
 // both the CRC from the central directory and the SHA-256 from the
 // manifest on what was read, flushing, then renaming into place and
@@ -537,6 +549,15 @@ bool folderIsWritable(const fs::path &folder)
 }
 
 }  // namespace
+
+std::string coverLinksSentence(const RestoreSummary &summary)
+{
+    if (summary.coverLinksLabel.empty()) {
+        return {};
+    }
+    return std::to_string(summary.coversCopied) + " covers copied into the Engine library, "
+           + std::to_string(summary.coverLinksRenamed) + " renamed to " + summary.coverLinksLabel + ".";
+}
 
 StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
 {
@@ -698,7 +719,11 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     summary.filesUnchanged = plan.unchanged;
     std::vector<std::string> extras = options.exact ? extrasOnTarget(options.targetRoot, plan) : std::vector<std::string>{};
 
-    std::uint64_t freeBytes = availableBytes(options.targetRoot);
+    const auto freeBytesAtTarget = [&options]() {
+        return options.freeBytesForTesting ? options.freeBytesForTesting(options.targetRoot)
+                                           : availableBytes(options.targetRoot);
+    };
+    std::uint64_t freeBytes = freeBytesAtTarget();
     if (freeBytes < plan.bytesToWrite + options.freeSpaceMarginBytes) {
         summary.message = "not enough free space on the target: needs " + std::to_string(plan.bytesToWrite + options.freeSpaceMarginBytes)
                           + " bytes, " + std::to_string(freeBytes) + " available";
@@ -947,6 +972,57 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             }
         }
     }
+
+    // The last write of all: the Engine library's player links made
+    // label-proof, when the target is called something else than the
+    // stick the backup was taken off. After the database set is in place
+    // and its directory flushed, and after the extras are gone, so an
+    // exact restore never counts its own work as one. Run whether or not
+    // this run wrote the database: a target that already holds the
+    // backup's library unchanged (an earlier restore, or one interrupted
+    // before getting here) still has the old label's links in it. A
+    // target where it already ran no longer matches the backup's
+    // database, so the set is written again and this runs again on it.
+    const fs::path targetDatabase = engine::engineMainDatabasePath(options.targetRoot);
+    if (!options.targetLabel.empty() && !opened.manifest->stickLabel.empty()
+        && !sameStickLabel(options.targetLabel, opened.manifest->stickLabel)
+        && fs::is_regular_file(longPathSafe(targetDatabase), ec)) {
+        // Still writing, as far as the steps a page shows go: a write,
+        // and one that only some restores make.
+        report(RestoreProgress::Phase::Writing);
+        const engine::LabelProofArtwork proof = engine::makeArtworkLinksLabelProof(
+            seabass::pathToUtf8(targetDatabase.parent_path().parent_path()), opened.manifest->stickLabel,
+            options.targetLabel, freeBytesAtTarget(), options.freeSpaceMarginBytes);
+        if (!proof.error.empty()) {
+            summary.warnings.push_back("the Engine library's covers still depend on the name "
+                                       + opened.manifest->stickLabel + ": " + proof.error);
+        } else if (proof.linkedTracks > 0) {
+            // The database keeps the backup's mtime, as everything a
+            // restore writes does: the stick list calls the copy with the
+            // later catalog the newer library, and a few rewritten cover
+            // rows must not make the target look newer than its source
+            // and offer to copy it back over it.
+            for (const PlannedEntry &file : plan.files) {
+                if ((options.targetRoot / file.relative).lexically_normal() == targetDatabase.lexically_normal()) {
+                    fs::last_write_time(longPathSafe(targetDatabase),
+                                        fromUnixSeconds(opened.reader->entries()[file.index].mtimeUnix), ec);
+                    ec.clear();
+                    break;
+                }
+            }
+            summary.coversCopied = proof.copied;
+            summary.coverLinksRenamed = proof.renamed;
+            summary.coverLinksLabel = options.targetLabel;
+            if (proof.noRoom) {
+                summary.warnings.push_back(
+                    "not enough room on this drive to copy " + std::to_string(proof.linkedTracks)
+                    + " covers (" + std::to_string(proof.bytesNeeded) + " bytes) into the Engine library; their "
+                    "links were renamed to " + options.targetLabel + " instead, so a player shows them only while "
+                    "the drive keeps that name");
+            }
+        }
+    }
+    ec.clear();
 
     if (options.libraryCheck) {
         report(RestoreProgress::Phase::Checking);

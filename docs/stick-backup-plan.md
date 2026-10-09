@@ -471,3 +471,48 @@ small restore, in sync again. Edit B instead -> A shows "Update from
 B". Edit both -> the diverged warning. Insert only B with `A.zip` on
 disk -> "Restore" as before; touch A's archive newer than B's catalog
 -> "Update from backup" via the restore page.
+
+## Restoring or cloning onto a stick with another label, added 2026-10-09
+
+A Denon player's rekordbox import keeps each cover as a link to the stick
+as the player mounts it, `image://fileart//media/<label>/PIONEER/Artwork/...`.
+A byte-exact copy onto a stick with another label leaves every such link
+naming a mount that stick never gets: WS_NEW, made from WHALESHARK's
+backup, showed only the 186 covers it stores. So when `RestoreOptions::targetLabel`
+(the clone passes `CloneStickOptions::targetLabel`) differs, without case,
+from the manifest's `stickLabel`, the restore's last write makes the
+Engine library label-proof (`makeArtworkLinksLabelProof`):
+
+- every track on a link to the old label whose image is on the target
+  gets it copied into the library's own storage by the cover repair
+  (`repairArtwork`, handed those link tracks and nothing else), one
+  transaction;
+- what cannot be copied (image missing or not JPEG/PNG), and every link
+  when the images need more than the free space less the restore margin,
+  is renamed to the new label (`relabelImportedArtworkLinks`), a second
+  transaction, so a player still finds it while the stick keeps its name;
+  the no-room case is a warning, so the restore reports problems;
+- the summary says both counts ("1361 covers copied into the Engine
+  library, 0 renamed to WS_NEW.").
+
+Where it runs: after every file is placed and its directory flushed, and
+after an exact restore's extras are gone, before the library check. It
+runs on every restore whose labels differ, whether or not that run wrote
+the database, so a restore interrupted before it is finished by running
+it again (the target's database still matches the backup, is not
+rewritten, and is made label-proof). Once it ran, the target's database
+no longer matches the backup's fingerprint, so a later restore or clone
+update writes the set again and makes it label-proof again. Interrupted
+inside, SQLite's own journal rolls the transaction back on the next open;
+copied image files are named by their content and are reused. The
+database keeps the backup's mtime afterwards, as every restored file
+does, so the stick list does not call the target the newer library.
+
+Known gap, not new: an overlay restore leaves a target-only `m.db-journal`
+beside a database set it rewrites. A label-proof step interrupted inside
+its transaction leaves exactly that; rolled back onto the same backup
+generation it writes the same bytes back, but onto a newer generation
+(a clone update after the source changed) it would not.
+
+Format USB erases the drive, so a new label there never meets an old
+library.
