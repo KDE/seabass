@@ -140,6 +140,9 @@ struct ArtworkAudit
     // Whether the library keeps its covers in the database, by the rule a
     // repair writes by (keepsCoversInDatabase in engine_artwork.cpp).
     bool coversInDatabase = false;
+    // The label this stick goes by, the one the playerOnly links name: a
+    // player shows those covers only while the stick keeps it.
+    std::string stickLabel;
     // Set when the database could not be read at all.
     std::string error;
 
@@ -235,6 +238,34 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
 // it ("image://fileart//media/<label>/..."), the label compared without
 // case. Exposed for the test.
 bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label);
+
+// The label a stick is known by where the audit asks (see volumeLabelOf in
+// engine_artwork.cpp): what decides ImportedPathOnPlayer, and so what the
+// Cover Art page names.
+std::string stickLabelForArtwork(const std::string &stickRoot);
+
+// A player's links follow the stick's name, so a library copied onto a
+// stick with another label shows none of them: every
+// "image://fileart//media/WHALESHARK/..." row names a mount that stick
+// never gets. WS_NEW, made from WHALESHARK's backup, had 1361 such rows
+// and showed 186 covers.
+//
+// Rewrites the label in every AlbumArt hash that is such a link to
+// `oldLabel` (compared without case, as importedPathIsThisStickOnAPlayer
+// does) to `newLabel`, in one transaction on `databaseFile` (an m.db).
+// Every other byte of the hash stays, and so does its storage class:
+// Engine's import writes these as blobs holding text, and a blob stays a
+// blob. Rows holding an image, rows naming a file by hash, and links to
+// any other label are not touched; neither is a row already spelled
+// `newLabel`. Returns how many rows were rewritten, or -1 with *error
+// set (error must not be null). A database that is not there is an
+// error, never created.
+int relabelImportedArtworkLinks(const std::string &databaseFile, const std::string &oldLabel,
+                                const std::string &newLabel, std::string *error);
+
+// How many AlbumArt rows are such links to `label`, read-only. -1 with
+// *error set when the database cannot be read (error must not be null).
+int countImportedArtworkLinks(const std::string &databaseFile, const std::string &label, std::string *error);
 
 struct ArtworkRepair
 {

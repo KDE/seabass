@@ -294,13 +294,16 @@ std::string volumeLabelOf(const std::string &stickRoot)
     return pathToUtf8(root.filename());
 }
 
-// Whether an imported path is one a Denon player wrote for this very
-// stick: "/media/<label>/..." with the stick's own label, compared
-// without case since FAT keeps labels in capitals and a player may not.
-bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label)
+namespace
 {
-    if (label.empty() || !reference.starts_with(ImportedPrefix)) {
-        return false;
+
+// Where the label sits in a link a Denon player wrote,
+// "image://fileart//media/<label>/...": its offset and length in
+// `reference`, or nothing when the reference is no such link.
+std::optional<std::pair<std::size_t, std::size_t>> mountedLabelIn(std::string_view reference)
+{
+    if (!reference.starts_with(ImportedPrefix)) {
+        return std::nullopt;
     }
     std::string_view path = reference.substr(ImportedPrefix.size());
     // "image://fileart//media/..." as Engine writes it: the scheme's own
@@ -311,23 +314,192 @@ bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::str
     }
     const std::string_view media = "/media/";
     if (!path.starts_with(media)) {
-        return false;
+        return std::nullopt;
     }
     path.remove_prefix(media.size());
     const auto slash = path.find('/');
-    if (slash == std::string_view::npos) {
+    if (slash == std::string_view::npos || slash == 0) {
+        return std::nullopt;
+    }
+    return std::make_pair(reference.size() - path.size(), slash);
+}
+
+bool sameLabel(std::string_view a, std::string_view b)
+{
+    if (a.size() != b.size()) {
         return false;
     }
-    const std::string_view mounted = path.substr(0, slash);
-    if (mounted.size() != label.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < label.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(mounted[i])) != std::tolower(static_cast<unsigned char>(label[i]))) {
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
             return false;
         }
     }
     return true;
+}
+
+}  // namespace
+
+// Whether an imported path is one a Denon player wrote for this very
+// stick: "/media/<label>/..." with the stick's own label, compared
+// without case since FAT keeps labels in capitals and a player may not.
+bool importedPathIsThisStickOnAPlayer(std::string_view reference, const std::string &label)
+{
+    if (label.empty()) {
+        return false;
+    }
+    const auto at = mountedLabelIn(reference);
+    return at && sameLabel(reference.substr(at->first, at->second), label);
+}
+
+namespace
+{
+
+// A label a player can mount a stick under: not empty, and one path
+// component.
+bool isMountableLabel(const std::string &label)
+{
+    return !label.empty() && label.find('/') == std::string::npos && label.find('\\') == std::string::npos;
+}
+
+// Opens `databaseFile` without ever creating it.
+sqlite3 *openExisting(const std::string &databaseFile, int flags, std::string *error)
+{
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(databaseFile.c_str(), &handle, flags, nullptr) != SQLITE_OK) {
+        *error = "could not open " + databaseFile + (handle ? std::string(": ") + sqlite3_errmsg(handle) : std::string());
+        if (handle) {
+            sqlite3_close(handle);
+        }
+        return nullptr;
+    }
+    sqlite3_busy_timeout(handle, 5000);
+    return handle;
+}
+
+// The AlbumArt rows that are links to `label`: id, the hash's storage
+// class and its bytes. Compared in C++ on the bytes: the column holds
+// blobs of text, which LIKE does not see as text. False with *error set
+// when the table cannot be read.
+struct LinkRow
+{
+    std::int64_t id = 0;
+    bool isText = false;
+    std::string hash;
+};
+
+bool linksTo(sqlite3 *handle, const std::string &label, std::vector<LinkRow> &rows, std::string *error)
+{
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle, "SELECT id, hash FROM AlbumArt WHERE hash IS NOT NULL;", -1, &stmt, nullptr)
+        != SQLITE_OK) {
+        *error = std::string("could not read the art rows: ") + sqlite3_errmsg(handle);
+        return false;
+    }
+    int step = SQLITE_ROW;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const int type = sqlite3_column_type(stmt, 1);
+        if (type != SQLITE_BLOB && type != SQLITE_TEXT) {
+            continue;
+        }
+        const void *bytes = sqlite3_column_blob(stmt, 1);
+        const int size = sqlite3_column_bytes(stmt, 1);
+        if (bytes == nullptr || size <= 0) {
+            continue;
+        }
+        std::string hash(static_cast<const char *>(bytes), static_cast<size_t>(size));
+        if (!importedPathIsThisStickOnAPlayer(hash, label)) {
+            continue;
+        }
+        rows.push_back({sqlite3_column_int64(stmt, 0), type == SQLITE_TEXT, std::move(hash)});
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        *error = std::string("could not read the art rows: ") + sqlite3_errmsg(handle);
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+std::string stickLabelForArtwork(const std::string &stickRoot)
+{
+    return volumeLabelOf(stickRoot);
+}
+
+int relabelImportedArtworkLinks(const std::string &databaseFile, const std::string &oldLabel,
+                                const std::string &newLabel, std::string *error)
+{
+    if (!isMountableLabel(oldLabel) || !isMountableLabel(newLabel)) {
+        *error = "a cover link can only be renamed from one stick name to another, not from \"" + oldLabel
+                 + "\" to \"" + newLabel + "\"";
+        return -1;
+    }
+    sqlite3 *handle = openExisting(databaseFile, SQLITE_OPEN_READWRITE, error);
+    if (handle == nullptr) {
+        return -1;
+    }
+    const auto fail = [&](const std::string &what) {
+        *error = what + ": " + sqlite3_errmsg(handle);
+        sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_close(handle);
+        return -1;
+    };
+    // IMMEDIATE: the rows are read and written under one write lock, so
+    // nothing commits between the list and the rewrite.
+    if (sqlite3_exec(handle, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        return fail("could not begin renaming the cover links");
+    }
+    std::vector<LinkRow> rows;
+    if (!linksTo(handle, oldLabel, rows, error)) {
+        sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_close(handle);
+        return -1;
+    }
+    sqlite3_stmt *update = nullptr;
+    if (sqlite3_prepare_v2(handle, "UPDATE AlbumArt SET hash = ? WHERE id = ?;", -1, &update, nullptr) != SQLITE_OK) {
+        return fail("could not rename the cover links");
+    }
+    int renamed = 0;
+    for (const LinkRow &row : rows) {
+        const auto at = mountedLabelIn(row.hash);
+        if (row.hash.compare(at->first, at->second, newLabel) == 0) {
+            continue;  // already spelled the new name
+        }
+        const std::string hash = row.hash.substr(0, at->first) + newLabel + row.hash.substr(at->first + at->second);
+        sqlite3_reset(update);
+        // In the storage class it had: Engine's import writes blobs of
+        // text, and a reader that asks for one must still find one.
+        if (row.isText) {
+            sqlite3_bind_text(update, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+        } else {
+            sqlite3_bind_blob(update, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+        }
+        sqlite3_bind_int64(update, 2, row.id);
+        if (sqlite3_step(update) != SQLITE_DONE) {
+            sqlite3_finalize(update);
+            return fail("could not rename a cover link");
+        }
+        ++renamed;
+    }
+    sqlite3_finalize(update);
+    if (sqlite3_exec(handle, "COMMIT;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        return fail("could not commit the renamed cover links");
+    }
+    sqlite3_close(handle);
+    return renamed;
+}
+
+int countImportedArtworkLinks(const std::string &databaseFile, const std::string &label, std::string *error)
+{
+    sqlite3 *handle = openExisting(databaseFile, SQLITE_OPEN_READONLY, error);
+    if (handle == nullptr) {
+        return -1;
+    }
+    std::vector<LinkRow> rows;
+    const bool read = linksTo(handle, label, rows, error);
+    sqlite3_close(handle);
+    return read ? static_cast<int>(rows.size()) : -1;
 }
 
 std::string imageOnStickFor(std::string_view reference, const std::string &stickRoot)
@@ -378,6 +550,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     const fs::path artwork = artworkDirectory(engineLibraryPath);
     const std::string stickRoot = pathToUtf8(pathFromUtf8(engineLibraryPath).parent_path());
     const std::string stickLabel = volumeLabelOf(stickRoot);
+    audit.stickLabel = stickLabel;
 
     sqlite3 *handle = nullptr;
     if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
