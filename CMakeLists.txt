@@ -2476,6 +2476,29 @@ if(TARGET seabass_edit)
     add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
     set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
+    # Full Stick Backup's Name field through its controller, against real
+    # archives in scratch: a new name starts a new backup and moves none,
+    # the old name goes back to the old one, another stick's is a collision.
+    add_executable(stick_backup_name_test
+        src/gui/stick_backup_controller.cpp
+        src/gui/backup_changelog_text.cpp
+        src/gui/library_fingerprint_reader.cpp
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/sleep_inhibitor.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/stick_backup_name_test.cpp
+    )
+    target_include_directories(stick_backup_name_test PRIVATE src tests)
+    target_link_libraries(stick_backup_name_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Gui)
+    add_test(NAME stick_backup_name_test COMMAND stick_backup_name_test)
+    set_tests_properties(stick_backup_name_test PROPERTIES
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+
     # Compare Playlists over the anonymized Engine fixture: the playlists
     # listed, the pair the page opens on, the counts and the folded rows.
     # Metadata Backup's Select All stays inside the picked playlist.
