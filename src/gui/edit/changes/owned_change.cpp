@@ -80,6 +80,11 @@ std::vector<BackupTarget> OwnedChange::filesToBackup(SaveContext &ctx) const
     return m_inner->filesToBackup(ctx);
 }
 
+std::vector<RekordboxWrite> OwnedChange::rekordboxWrites() const
+{
+    return m_inner->rekordboxWrites();
+}
+
 ChangeOutcome OwnedChange::apply(SaveContext &ctx)
 {
     return m_inner->apply(ctx);

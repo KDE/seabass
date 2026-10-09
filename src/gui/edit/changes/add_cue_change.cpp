@@ -113,8 +113,17 @@ std::vector<BackupTarget> AddCueChange::filesToBackup(SaveContext &ctx) const
     return targets;
 }
 
+std::vector<RekordboxWrite> AddCueChange::rekordboxWrites() const
+{
+    if (!m_written) {
+        return {};
+    }
+    return {*m_written};
+}
+
 ChangeOutcome AddCueChange::apply(SaveContext &ctx)
 {
+    m_written.reset();
     // Never trust whatever cue list the calling page had cached --
     // re-scan fresh (via the shared cache, which itself re-reads
     // whenever the catalog's mtime has moved) so the augmented list
@@ -175,6 +184,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
         sharedOneLibraryWriter(ctx, pioneerRoot).writeCuesForPath(track->filePath, cues);
         ctx.log().record("add-cue: added " + kind + " cue at " + positionText + "ms to OneLibrary track id=" + id
                          + " (\"" + track->title + "\")");
+        m_written = RekordboxWrite{track->filePath, cues, std::nullopt};
         return ChangeOutcome::success();
     }
 
@@ -246,6 +256,10 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
                                "in agreement.")
                     .arg(QString::fromUtf8(e.what())));
         }
+    }
+
+    if (m_format == "rekordbox" && !track->filePath.empty()) {
+        m_written = RekordboxWrite{track->filePath, cues, std::nullopt};
     }
 
     if (m_format == "engine" && newCue.kind == domain::CuePoint::Kind::Memory) {

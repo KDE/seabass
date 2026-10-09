@@ -7,8 +7,11 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
 #include <string>
 #include <vector>
+
+#include "domain/track.hpp"
 
 namespace seabass::gui
 {
@@ -28,6 +31,27 @@ struct BackupTarget
     // is skipped, and Undo leaves whatever the save created. Opt-in: a
     // file some other program might create later is not Undo's to delete.
     bool removeOnRestoreIfAbsent = false;
+};
+
+// What a change wrote onto the rekordbox side of a stick: a track's
+// DeviceLibrary analysis file or its OneLibrary row, the two formats of
+// one rekordbox library. The save loop gathers these from the changes that
+// landed into the stick's rekordbox baseline as Seabass's own writes (the
+// origin ledger, docs/sync-after-rekordbox-export-plan.md), which is what
+// later tells a cue an export dropped from one rekordbox never had.
+struct RekordboxWrite
+{
+    // The track's file as the catalog row names it (Track::filePath,
+    // absolute on today's mount point); the save maps it to the
+    // baseline's pathKey.
+    std::string filePath;
+    // The track's whole cue set as written, when cues were written. Every
+    // cue writer replaces a track's set, so this is the set, not a diff;
+    // nullopt when the change wrote no cues (a rating alone), which is
+    // not the same as writing none.
+    std::optional<std::vector<domain::CuePoint>> cues;
+    // The rating written, 0 to 5 stars; nullopt when none was.
+    std::optional<int> rating;
 };
 
 struct ChangeOutcome
@@ -127,6 +151,14 @@ public:
         (void)ctx;
         return {};
     }
+
+    // What this change wrote onto the rekordbox side (see RekordboxWrite),
+    // asked by the save loop after the commit for every change that
+    // landed and was not skipped. Nothing by default: a change that writes
+    // only Engine, or only playlists, has no cue or rating to record.
+    // A change that decides what it writes at apply() time answers with
+    // what its last apply() wrote.
+    virtual std::vector<RekordboxWrite> rekordboxWrites() const { return {}; }
 
     virtual ChangeOutcome apply(SaveContext &ctx) = 0;
 };
