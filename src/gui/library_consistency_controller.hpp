@@ -374,6 +374,9 @@ private:
     // ImportedPathOnPlayer). Not a fault; embedPlayerOnlyArtwork() makes
     // them self-contained for anyone who wants that.
     Q_PROPERTY(int artworkPlayerOnlyCount READ artworkPlayerOnlyCount NOTIFY artworkChanged)
+    // The label those covers depend on: the stick's own, as the audit
+    // read it. A player shows them only while the stick keeps it.
+    Q_PROPERTY(QString artworkPlayerOnlyLabel READ artworkPlayerOnlyLabel NOTIFY artworkChanged)
     Q_PROPERTY(int artworkUncheckedCount READ artworkUncheckedCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
     // Tracks whose Engine row does not say what sample rate they are, and
@@ -505,6 +508,7 @@ public:
     int artworkUnreadableCount() const { return static_cast<int>(m_artwork.unreadable.size()); }
     int artworkRepairableCount() const { return m_artwork.repairable(); }
     int artworkPlayerOnlyCount() const { return static_cast<int>(m_artwork.playerOnly.size()); }
+    QString artworkPlayerOnlyLabel() const { return QString::fromStdString(m_artwork.stickLabel); }
     // The two faults are different things to say to a person, and the
     // notice said the first one about both: an imported path points at the
     // importing computer and can be repaired from the rekordbox art beside

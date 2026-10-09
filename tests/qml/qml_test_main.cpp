@@ -193,48 +193,24 @@ public:
     // its button stages rather than writes.
     Q_INVOKABLE QString libraryWithRepairableArt(const QString &fromLibrary)
     {
-        namespace fs = std::filesystem;
         const QString library = copy(fromLibrary, false);
         if (library.isEmpty()) {
             return {};
         }
-        const fs::path stick = seabass::gui::pathFromQString(library).parent_path();
-        sqlite3 *db = nullptr;
-        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
-            != SQLITE_OK) {
-            sqlite3_close(db);
+        return writeLinkedImages(library) > 0 ? library : QString();
+    }
+
+    // A copy on a stick named WHALESHARK2, the label the fixture's links
+    // name, with every linked image beside it: what a Denon player's own
+    // import leaves, every cover shown by a player for as long as the
+    // stick keeps that name.
+    Q_INVOKABLE QString libraryOnItsPlayerStick(const QString &fromLibrary)
+    {
+        const QString library = copy(fromLibrary, false, QStringLiteral("WHALESHARK2"));
+        if (library.isEmpty()) {
             return {};
         }
-        sqlite3_stmt *stmt = nullptr;
-        if (sqlite3_prepare_v2(db, "SELECT hash FROM AlbumArt;", -1, &stmt, nullptr) != SQLITE_OK) {
-            sqlite3_close(db);
-            return {};
-        }
-        int written = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const void *blob = sqlite3_column_blob(stmt, 0);
-            const int size = sqlite3_column_bytes(stmt, 0);
-            if (blob == nullptr || size <= 0) {
-                continue;
-            }
-            const std::string reference(static_cast<const char *>(blob), static_cast<size_t>(size));
-            const auto at = reference.find("PIONEER/Artwork");
-            if (at == std::string::npos) {
-                continue;
-            }
-            const fs::path image = stick / reference.substr(at);
-            std::error_code ec;
-            fs::create_directories(image.parent_path(), ec);
-            std::ofstream out(image, std::ios::binary | std::ios::trunc);
-            // A real JPEG header: the audit reads the first bytes and
-            // refuses to name a repair after a file that is not an image.
-            // The name follows it, so each image hashes to its own row.
-            out << "\xFF\xD8\xFF" << seabass::pathToUtf8(image.filename());
-            written++;
-        }
-        sqlite3_finalize(stmt);
-        sqlite3_close(db);
-        return written > 0 ? library : QString();
+        return writeLinkedImages(library) > 0 ? library : QString();
     }
 
     // A copy with `groups` more duplicate pairs beside the fixture's own:
@@ -284,14 +260,64 @@ public:
     }
 
 private:
-    QString copy(const QString &fromLibrary, bool eraseImages)
+    // Every image the library's imported paths name, written under the
+    // stick's own PIONEER/Artwork. How many were written.
+    int writeLinkedImages(const QString &library)
+    {
+        namespace fs = std::filesystem;
+        const fs::path stick = seabass::gui::pathFromQString(library).parent_path();
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
+            != SQLITE_OK) {
+            sqlite3_close(db);
+            return 0;
+        }
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT hash FROM AlbumArt;", -1, &stmt, nullptr) != SQLITE_OK) {
+            sqlite3_close(db);
+            return 0;
+        }
+        int written = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const void *blob = sqlite3_column_blob(stmt, 0);
+            const int size = sqlite3_column_bytes(stmt, 0);
+            if (blob == nullptr || size <= 0) {
+                continue;
+            }
+            const std::string reference(static_cast<const char *>(blob), static_cast<size_t>(size));
+            const auto at = reference.find("PIONEER/Artwork");
+            if (at == std::string::npos) {
+                continue;
+            }
+            const fs::path image = stick / reference.substr(at);
+            std::error_code ec;
+            fs::create_directories(image.parent_path(), ec);
+            std::ofstream out(image, std::ios::binary | std::ios::trunc);
+            // A real JPEG header: the audit reads the first bytes and
+            // refuses to name a repair after a file that is not an image.
+            // The name follows it, so each image hashes to its own row.
+            out << "\xFF\xD8\xFF" << seabass::pathToUtf8(image.filename());
+            written++;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return written;
+    }
+
+    // `stickName`, when given, is the folder the library sits in, which is
+    // the label the audit reads for the stick.
+    QString copy(const QString &fromLibrary, bool eraseImages, const QString &stickName = {})
     {
         namespace fs = std::filesystem;
         std::error_code ec;
-        const fs::path root = seabass::testing::scratchRoot()
+        fs::path root = seabass::testing::scratchRoot()
             / ("seabass_qml_artwork_" + std::to_string(QCoreApplication::applicationPid()) + "_"
                + std::to_string(m_roots.size()));
         fs::remove_all(root, ec);
+        if (!stickName.isEmpty()) {
+            m_roots.append(seabass::gui::pathToQString(root));
+            root /= seabass::gui::pathFromQString(stickName);
+        }
         const fs::path library = root / "Engine Library";
         fs::create_directories(root, ec);
         fs::copy(seabass::gui::pathFromQString(fromLibrary), library, fs::copy_options::recursive, ec);
