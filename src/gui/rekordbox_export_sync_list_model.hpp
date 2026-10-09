@@ -149,6 +149,9 @@ public:
 
     // Rows per section name, every section present (0 when empty).
     QVariantMap sectionCounts() const;
+    // Ticked rows per section name, every section present: what a
+    // section-wide checkbox shows (ticked when every row is).
+    QVariantMap sectionCheckedCounts() const;
     // Writable rows ticked.
     int checkedCount() const;
     // Conflicts not answered yet.

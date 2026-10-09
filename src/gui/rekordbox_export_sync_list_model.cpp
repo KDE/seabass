@@ -698,6 +698,21 @@ QVariantMap RekordboxExportSyncListModel::sectionCounts() const
     return counts;
 }
 
+QVariantMap RekordboxExportSyncListModel::sectionCheckedCounts() const
+{
+    QVariantMap counts;
+    std::array<int, SectionNames.size()> n{};
+    for (const auto &row : m_rows) {
+        if (row.included) {
+            ++n[static_cast<std::size_t>(row.section)];
+        }
+    }
+    for (std::size_t i = 0; i < SectionNames.size(); ++i) {
+        counts.insert(QString::fromLatin1(SectionNames[i]), n[i]);
+    }
+    return counts;
+}
+
 int RekordboxExportSyncListModel::checkedCount() const
 {
     return static_cast<int>(
