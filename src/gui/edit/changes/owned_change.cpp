@@ -85,6 +85,11 @@ std::vector<RekordboxWrite> OwnedChange::rekordboxWrites() const
     return m_inner->rekordboxWrites();
 }
 
+void OwnedChange::beforeSave(SaveContext &ctx)
+{
+    m_inner->beforeSave(ctx);
+}
+
 ChangeOutcome OwnedChange::apply(SaveContext &ctx)
 {
     return m_inner->apply(ctx);

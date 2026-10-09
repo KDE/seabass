@@ -913,6 +913,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/save_context.cpp
         src/gui/edit/save_loop.hpp
         src/gui/edit/save_loop.cpp
+        src/gui/edit/rekordbox_baseline_ledger.hpp
+        src/gui/edit/rekordbox_baseline_ledger.cpp
         src/gui/sleep_inhibitor.hpp
         src/gui/sleep_inhibitor.cpp
         src/gui/edit/format_write_session.hpp
@@ -2894,6 +2896,17 @@ if(TARGET seabass_edit)
         ZLIB::ZLIB DjInterop SQLite::SQLite3)
     add_test(NAME owned_change_test COMMAND owned_change_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(owned_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    # The origin ledger every save keeps in the stick's rekordbox
+    # baseline, with Undo.
+    add_executable(rekordbox_baseline_ledger_test tests/rekordbox_baseline_ledger_test.cpp)
+    target_include_directories(rekordbox_baseline_ledger_test PRIVATE src tests)
+    target_link_libraries(rekordbox_baseline_ledger_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop
+        SQLite::SQLite3)
+    add_test(NAME rekordbox_baseline_ledger_test COMMAND rekordbox_baseline_ledger_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(rekordbox_baseline_ledger_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     # The WAV's rate is read through TagLib, as the page reads it, when

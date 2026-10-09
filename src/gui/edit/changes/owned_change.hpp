@@ -33,10 +33,10 @@ QString rekordboxExportSyncOwner();
 //
 // Everything else is the wrapped change's: the description, the subject,
 // the unit and the counts, the verb, the formats, the backup targets, the
-// rekordbox writes and the write itself. A virtual added to PendingChange
-// has to be forwarded here too, or a wrapped change silently answers with
-// the default (owned_change_test checks each one against its inner
-// change).
+// rekordbox writes, the step before the save and the write itself. A
+// virtual added to PendingChange has to be forwarded here too, or a
+// wrapped change silently answers with the default (owned_change_test
+// checks each one against its inner change).
 //
 // Nothing dynamic_casts a staged change today; a caller that needs the
 // wrapped change's own type asks inner().
@@ -60,6 +60,7 @@ public:
     QString owner() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     std::vector<RekordboxWrite> rekordboxWrites() const override;
+    void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
 private:

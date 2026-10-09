@@ -101,6 +101,23 @@ bool sameWrites(const std::vector<RekordboxWrite> &a, const std::vector<Rekordbo
     return true;
 }
 
+// Counts the step before the save, which no real change but the baseline
+// record takes, so the forwarding has something to show.
+class BeforeSaveProbe : public PendingChange
+{
+public:
+    explicit BeforeSaveProbe(int &calls) : m_calls(calls) {}
+    QString id() const override { return QStringLiteral("probe:1"); }
+    QString description() const override { return QStringLiteral("probe"); }
+    QString unit() const override { return QStringLiteral("probes"); }
+    QStringList formatsTouched() const override { return {}; }
+    void beforeSave(SaveContext &) override { ++m_calls; }
+    ChangeOutcome apply(SaveContext &) override { return ChangeOutcome::success(); }
+
+private:
+    int &m_calls;
+};
+
 std::unique_ptr<PendingChange> deleteChange(const testing::EngineChangeStick &stick)
 {
     return std::make_unique<DeletePlaylistChange>(QString(), stick.enginePath(), "Playlist 001",
@@ -201,6 +218,12 @@ int main(int argc, char **argv)
             assert(!writes[0].rating);
             assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).rekordboxWrites().empty()
                    && "a sync onto Engine wrote nothing on the rekordbox side");
+        }
+        {
+            int calls = 0;
+            OwnedChange probe(rekordboxExportSyncOwner(), std::make_unique<BeforeSaveProbe>(calls));
+            probe.beforeSave(ctx);
+            assert(calls == 1 && "the step before the save reaches the wrapped change");
         }
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).id()
                == QStringLiteral("rekordbox-export-sync:sync:engine:6"));

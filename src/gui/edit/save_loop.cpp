@@ -8,6 +8,7 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/format_write_session.hpp"
+#include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 
@@ -155,6 +156,20 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         }
     }
 
+    // The stick's rekordbox baseline, read before anything is written: the
+    // origin ledger after the commit needs to know whether it was current
+    // now. And the file joins the backups, under the first record's label,
+    // so Undo puts it back with the catalogs. Only when a change declared
+    // something to back up: a save that declares nothing (Undo Last Save
+    // itself) writes no rekordbox cue or rating, so its ledger step never
+    // writes the baseline, and an extra record would be a copy nothing
+    // restores. A save without a rekordbox path keeps out of it entirely.
+    const BaselineAtSaveStart baselineAtStart = readBaselineAtSaveStart(ctx);
+    const std::string baselineLabel = upfront.empty() ? std::string("rekordbox-baseline") : upfront.front().label;
+    if (baselineAtStart.exists && !upfront.empty()) {
+        upfront.push_back({baselineAtStart.file, baselineLabel});
+    }
+
     // One save, one bar (#58): announced once, with everything it will
     // do in its total, and ticked through to the end. The three stretches
     // used to be three announcements, and a bar that fills, empties and
@@ -181,6 +196,13 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             ctx.progress().finish();
             return result;
         }
+    }
+
+    // Before the first change, for every change: a record of what the save
+    // did registers here, so a save stopped before it still records what
+    // landed (PendingChange::beforeSave).
+    for (const auto &change : changes) {
+        change->beforeSave(ctx);
     }
 
     size_t done = 0;
@@ -267,6 +289,37 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     if (importLevelWanted && importWarning.isEmpty()) {
         importWarning = settleImportLevel(ctx);
     }
+
+    // The records of what the save did, read from the stick as the save
+    // left it: the after-commit hooks (the page's baseline), then, unless a
+    // change of this save recorded the baseline itself, the origin ledger.
+    // Warnings, never failures: everything they report on has landed.
+    QStringList afterCommitWarnings;
+    {
+        SaveContext::AfterCommit after;
+        if (!finish.error) {
+            after.appliedIds = result.appliedIds;
+            after.skippedIds = result.skippedIds;
+        }
+        after.succeeded = result.error.isEmpty() && !result.cancelled && !finish.error;
+        for (const auto &change : changes) {
+            if (after.appliedIds.contains(change->id()) && !after.skippedIds.contains(change->id())) {
+                for (auto &write : change->rekordboxWrites()) {
+                    after.rekordboxWrites.push_back(std::move(write));
+                }
+            }
+        }
+        for (const QString &warning : ctx.runAfterCommitHooks(after)) {
+            afterCommitWarnings << warning;
+        }
+        if (!ctx.rekordboxBaselineRecordedBySave()) {
+            const QString ledger = recordOriginLedger(ctx, baselineAtStart, after, baselineLabel);
+            if (!ledger.isEmpty()) {
+                ctx.log().record("save: " + ledger.toStdString());
+                afterCommitWarnings << ledger;
+            }
+        }
+    }
     // Everything this save left for the kernel to write later (the backup
     // archive, the log) is written now, while the dialog still says the
     // stick is being committed, and not at eject. See flushFilesystemOf().
@@ -275,6 +328,12 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     }
     if (!importWarning.isEmpty() && !finish.error && result.error.isEmpty()) {
         result.warning = result.warning.isEmpty() ? importWarning : result.warning + QStringLiteral("; ") + importWarning;
+    }
+    for (const QString &warning : afterCommitWarnings) {
+        // Beside an error it joins the error, as the import warning does.
+        if (!finish.error && result.error.isEmpty()) {
+            result.warning = result.warning.isEmpty() ? warning : result.warning + QStringLiteral("; ") + warning;
+        }
     }
     if (finish.error) {
         // Whatever the hooks were committing did not land: report every
@@ -289,6 +348,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // dropped above, and this one is worth reading.
     if (!importWarning.isEmpty() && !result.error.isEmpty()) {
         result.error += QStringLiteral("; ") + importWarning;
+    }
+    if (!result.error.isEmpty()) {
+        for (const QString &warning : afterCommitWarnings) {
+            result.error += QStringLiteral("; ") + warning;
+        }
     }
     // Only after the whole batch went through, and only if the stick is
     // actually tight. On a failure or a cancel the backups are the thing

@@ -160,6 +160,15 @@ public:
     // what its last apply() wrote.
     virtual std::vector<RekordboxWrite> rekordboxWrites() const { return {}; }
 
+    // Called once for every change of the save, in staging order, after
+    // the upfront backup and before the first change is applied, whether
+    // or not the loop later reaches this change. For a change whose work
+    // is a record of what the save did, which must still be made when a
+    // failure or a cancel stops the save before it: it registers an
+    // after-commit hook here (SaveContext::onAfterCommit). A change that
+    // writes the library must not write here; nothing is protected yet.
+    virtual void beforeSave(SaveContext &ctx) { (void)ctx; }
+
     virtual ChangeOutcome apply(SaveContext &ctx) = 0;
 };
 
