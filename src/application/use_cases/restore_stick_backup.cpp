@@ -447,16 +447,6 @@ bool extraIsBackupFile(const fs::path &targetRoot, const fs::path &extraPath, co
 
 using infrastructure::backup::availableBytes;
 
-// Whether two stick labels are the same name to a player: compared
-// without case, as the Engine artwork audit compares them.
-bool sameStickLabel(const std::string &a, const std::string &b)
-{
-    return a.size() == b.size()
-           && std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
-                  return std::tolower(x) == std::tolower(y);
-              });
-}
-
 // Streams one entry to `destination` via a temporary sibling, verifying
 // both the CRC from the central directory and the SHA-256 from the
 // manifest on what was read, flushing, then renaming into place and
@@ -985,7 +975,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // database, so the set is written again and this runs again on it.
     const fs::path targetDatabase = engine::engineMainDatabasePath(options.targetRoot);
     if (!options.targetLabel.empty() && !opened.manifest->stickLabel.empty()
-        && !sameStickLabel(options.targetLabel, opened.manifest->stickLabel)
+        && !infrastructure::engine::sameStickLabel(options.targetLabel, opened.manifest->stickLabel)
         && fs::is_regular_file(longPathSafe(targetDatabase), ec)) {
         // Still writing, as far as the steps a page shows go: a write,
         // and one that only some restores make.
