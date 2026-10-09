@@ -195,7 +195,7 @@ TestCase {
              expected: ["Browse Library", "Compare Playlists", "Library Statistics", "Device Profile",
                         "USB Stick Performance"]},
             {tag: "sync", group: "sync", stick: {},
-             expected: ["Sync Cue Points", "Metadata", "Restore Metadata"]},
+             expected: ["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]},
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
              expected: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"]},
             {tag: "backup", group: "backup", stick: {},
@@ -292,6 +292,7 @@ TestCase {
             {tag: "USB Stick Performance", group: "explore", signalName: "stickPerformanceRequested",
              args: main.concat(["/media/MAIN"])},
             {tag: "Sync Cue Points", group: "sync", signalName: "syncRequested", args: main},
+            {tag: "Sync after Rekordbox Export", group: "sync", signalName: "rekordboxExportSyncRequested", args: main},
             {tag: "Create Engine Library", group: "sync", noEngine: true, signalName: "engineLibraryCreatorRequested",
              args: ["MAIN", "/media/MAIN/PIONEER"]},
             {tag: "Full Stick Backup", group: "backup", signalName: "fullStickBackupRequested", args: main},
@@ -327,7 +328,7 @@ TestCase {
         const registry = fakeEditRegistry(["lib-main"]);
         const locked = {
             "explore": ["Device Profile"],
-            "sync": ["Sync Cue Points", "Restore Metadata"],
+            "sync": ["Sync Cue Points", "Sync after Rekordbox Export", "Restore Metadata"],
             "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
             "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
                  "Delete Orphaned Files", "Library Health"],
@@ -392,6 +393,13 @@ TestCase {
                 verify(c.readOnlyReason.indexOf("Library Health") >= 0, title + " should point at Library Health");
             }
         }
+        // Sync after Rekordbox Export needs both catalogs, so it is asked
+        // of a stick that has them.
+        const bothCatalogs = makeCards(makeStick({readOnly: true}), "sync", {});
+        const exportSync = card(bothCatalogs, "Sync after Rekordbox Export");
+        verify(exportSync !== null && exportSync.visible, "Sync after Rekordbox Export missing");
+        compare(exportSync.readOnly, true);
+        verify(exportSync.readOnlyReason.indexOf("Library Health") >= 0);
         // An empty stick's own two cards write too.
         const empty = makeCards(emptyStick({readOnly: true}), "backup",
                                 {"/media/SPARE": makeAdvice({cloneSource: mainCloneSource(true)})});
@@ -460,9 +468,10 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
-    // Only Create Engine Library still answers to the experimental
-    // setting; every card that used to be gated is there with it off.
-    function test_onlyCreateEngineLibraryAnswersToTheExperimentalSetting() {
+    // Two cards answer to the experimental setting, Create Engine Library
+    // and Sync after Rekordbox Export; every card that used to be gated
+    // is there with it off.
+    function test_onlyTheExperimentalCardsAnswerToTheSetting() {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
@@ -486,10 +495,22 @@ TestCase {
         const on = makeCards(stick, "sync", {});
         compare(card(on, "Create Engine Library").visible, true);
         compare(card(on, "Create Engine Library").experimental, true);
-        saveScreenshot(on, "stick-tools-sync");
         // And never once the stick has an Engine Library to overwrite.
         const withEngine = makeCards(makeStick({}), "sync", {});
         compare(card(withEngine, "Create Engine Library").visible, false);
+
+        // Sync after Rekordbox Export: both catalogs, and the setting on.
+        const bothOff = makeCards(makeStick({}), "sync", {}, {appSettingsController: settings});
+        compare(card(bothOff, "Sync after Rekordbox Export").visible, false,
+                "Sync after Rekordbox Export stays behind the setting");
+        compare(JSON.stringify(shownTitles(bothOff)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
+        compare(card(withEngine, "Sync after Rekordbox Export").visible, true);
+        compare(card(withEngine, "Sync after Rekordbox Export").experimental, true);
+        compare(card(on, "Sync after Rekordbox Export").visible, false, "not without an Engine library");
+        const engineOnly = makeCards(makeStick({hasRekordbox: false, rekordboxPath: ""}), "sync", {});
+        compare(card(engineOnly, "Sync after Rekordbox Export").visible, false, "not without a rekordbox export");
+        // Built last, so it is the one on top when grabbed.
+        saveScreenshot(makeCards(makeStick({}), "sync", {}), "stick-tools-sync");
     }
 
     function test_emptyStickOffersCloneFromThePeer() {
@@ -809,7 +830,8 @@ TestCase {
         compare(cards.empty, true);
         cards.row = makeStick({});
         compare(cards.empty, false);
-        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
+        compare(JSON.stringify(shownTitles(cards)),
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]));
     }
 
     // Format is the one card the app-wide busy flag disables: erasing a

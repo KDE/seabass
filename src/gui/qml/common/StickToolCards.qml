@@ -35,7 +35,8 @@ Item {
             return !(root.showBrowse || root.showCompare || root.showStatistics || root.showDeviceProfile
                      || root.showPerformance);
         case "sync":
-            return !(root.showSync || root.showMetadataBackup || root.showRestoreMetadata || root.showCreateEngine);
+            return !(root.showSync || root.showRekordboxExportSync || root.showMetadataBackup
+                     || root.showRestoreMetadata || root.showCreateEngine);
         case "backup":
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
                      || root.showManageBackups || root.showCreateBackupStick || root.showFormat);
@@ -67,6 +68,7 @@ Item {
     signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     // `currentArchivePath`: this stick's own full backup, when the advisor
     // matched one to it; Manage Backups lists it first.
@@ -161,6 +163,11 @@ Item {
     // folder is on this computer, and measuring it says nothing.
     readonly property bool showPerformance: root.mounted && !root.isBrowsedBackup && !root.isFolder
     readonly property bool showSync: root.writable
+    // Experimental (docs/experimental-features.md) until the hardware
+    // rounds of docs/sync-after-rekordbox-export-plan.md pass; needs both
+    // catalogs, so it is hidden rather than disabled without them.
+    readonly property bool showRekordboxExportSync: root.writable && root.hasRekordbox && root.hasEngine
+        && root.appSettingsController.experimentalFeaturesEnabled === true
     // Experimental (see docs/experimental-features.md), and hidden once
     // the stick has an Engine Library rather than shown disabled.
     readonly property bool showCreateEngine: root.writable && !root.hasEngine
@@ -421,6 +428,26 @@ Item {
                 enabled: root.hasRekordbox && root.hasEngine
                 disabledReason: !root.hasRekordbox && !root.hasEngine ? root.noLibraryReason : (!root.hasEngine ? "No Engine library on this stick to sync with" : "No rekordbox library on this stick to sync with")
                 onClicked: root.syncRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "rekordboxExportSyncCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Sync after Rekordbox Export"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Bring the Engine library in line with the latest changes after a Rekordbox export"
+                cardIcon: "document-import"
+                // Behind the experimental setting, as Create Engine
+                // Library is: a visible binding of our own replaces
+                // ActionCard's, so showRekordboxExportSync restates the gate.
+                experimental: true
+                experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                visible: root.group === "sync" && root.showRekordboxExportSync
+                onClicked: root.rekordboxExportSyncRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
                 objectName: "metadataBackupCard"

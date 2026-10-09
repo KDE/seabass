@@ -795,6 +795,8 @@ Page {
                             onSettingsRequested: (stickLabel, pioneerRoot) => root.settingsRequested(stickLabel, pioneerRoot)
                             onSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.syncRequested(stickLabel, rekordboxPath, enginePath)
+                            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.rekordboxExportSyncRequested(stickLabel, rekordboxPath, enginePath)
                             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.fullStickBackupRequested(stickLabel, rekordboxPath, enginePath)
                             onManageBackupsRequested: (stickLabel, currentArchivePath) =>
