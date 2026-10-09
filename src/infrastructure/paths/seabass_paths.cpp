@@ -127,6 +127,11 @@ fs::path stickMetadataCache(const fs::path &stickRoot)
     return stickCachesDir(stickRoot) / "metadata.jsonl";
 }
 
+fs::path stickRekordboxBaseline(const fs::path &stickRoot)
+{
+    return stickDir(stickRoot) / "rekordbox-baseline.tsv.gz";
+}
+
 fs::path stickDurationCache(const fs::path &stickRoot)
 {
     return stickCachesDir(stickRoot) / "durations.jsonl";

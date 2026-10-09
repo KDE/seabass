@@ -466,6 +466,7 @@ add_library(seabass_core STATIC
     src/infrastructure/logging/file_operation_log.cpp
     src/infrastructure/local/local_cue_store.cpp
     src/infrastructure/local/app_data_directory.cpp
+    src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/utc_timestamp.cpp
@@ -603,6 +604,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/hashing/sha1.cpp
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/browsed_backup_root.cpp
+    src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
@@ -1958,6 +1960,13 @@ add_executable(rekordbox_baseline_test
 )
 target_include_directories(rekordbox_baseline_test PRIVATE src)
 add_test(NAME rekordbox_baseline_test COMMAND rekordbox_baseline_test)
+
+# The baseline's file on the stick: gzip around BackupManifest-style TSV
+# with a #sha256 line. Round trip of every field, and every way the file
+# can be wrong refused with an error naming it.
+add_executable(rekordbox_baseline_file_test tests/rekordbox_baseline_file_test.cpp)
+target_link_libraries(rekordbox_baseline_file_test PRIVATE seabass_core_testing ZLIB::ZLIB)
+add_test(NAME rekordbox_baseline_file_test COMMAND rekordbox_baseline_file_test)
 
 add_executable(track_scope_test
     src/domain/track_scope.cpp
