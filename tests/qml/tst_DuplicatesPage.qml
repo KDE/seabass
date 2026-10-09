@@ -145,6 +145,29 @@ TestCase {
         check(summaryRow);
     }
 
+    // One frame round the whole group: the header and, opened, the copies
+    // below it. The frame used to be round the copies only, so an opened
+    // group was a bare header floating over a box.
+    function test_oneFrameRoundTheWholeGroup() {
+        const page = makePage(960);
+        const frame = findWhere(page, (item) => item.objectName === "groupFrame");
+        verify(frame, "no group frame");
+        const header = findWhere(frame, (item) => item.objectName === "groupHeader");
+        const copies = findWhere(frame, (item) => item.objectName === "groupCopies");
+        verify(header && copies, "the header and the copies must both sit inside the frame");
+        verify(!copies.visible, "a group starts closed");
+        compare(frame.height, header.height, "a closed frame is just its header");
+
+        mouseClick(header);
+        tryCompare(copies, "visible", true);
+        tryVerify(() => copies.height > 0 && frame.height >= header.height + copies.height,
+                  2000, "the opened frame must hold header and copies both");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/DuplicatesPage-group-open.png");
+        }
+    }
+
     function test_screenshot_data() {
         return test_theActionRowStaysInsideThePage_data();
     }

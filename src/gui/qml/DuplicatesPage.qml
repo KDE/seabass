@@ -375,10 +375,18 @@ Page {
 
             ScrollBar.vertical: BigScrollBar {}
 
-            delegate: Column {
+            // One frame round each group, header and opened copies alike, so
+            // several stacked groups read as distinct sets of the same track
+            // rather than one long list -- the same shape as CleanupPage's.
+            delegate: Rectangle {
                 id: delegateRoot
+                objectName: "groupFrame"
                 width: ListView.view.width
-                spacing: 4
+                height: groupBody.implicitHeight
+                color: Theme.surface
+                border.color: Theme.borderSubtle
+                border.width: 1
+                radius: Theme.cornerRadius
 
                 required property int index
                 required property string kind
@@ -392,124 +400,136 @@ Page {
 
                 property bool expanded: false
 
-                ItemDelegate {
+                Column {
+                    id: groupBody
                     width: parent.width
-                    hoverEnabled: true
-                    onClicked: delegateRoot.expanded = !delegateRoot.expanded
 
-                    ToolTip.visible: hovered
-                    ToolTip.text: delegateRoot.filename
+                    ItemDelegate {
+                        id: groupHeader
+                        objectName: "groupHeader"
+                        width: parent.width
+                        hoverEnabled: true
+                        onClicked: delegateRoot.expanded = !delegateRoot.expanded
+                        // Inside the frame's border, so the hover shade never
+                        // paints over it.
+                        topInset: delegateRoot.border.width
+                        leftInset: delegateRoot.border.width
+                        rightInset: delegateRoot.border.width
+                        bottomInset: delegateRoot.expanded ? 0 : delegateRoot.border.width
+                        background: Rectangle {
+                            radius: Theme.cornerRadius
+                            color: groupHeader.down ? Theme.rowPressed
+                                 : groupHeader.hovered ? Theme.rowHover : "transparent"
+                        }
 
-                    contentItem: ColumnLayout {
-                        spacing: 2
-                        RowLayout {
-                            Layout.fillWidth: true
+                        ToolTip.visible: hovered
+                        ToolTip.text: delegateRoot.filename
+
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label {
+                                    text: delegateRoot.tracks.length > 0
+                                        ? (delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist)
+                                        : delegateRoot.filename
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.preferredWidth: 320
+                                }
+                                StatusBadge {
+                                    label: delegateRoot.kind === "unambiguous" ? "Fixable" : "Conflict"
+                                    badgeColor: delegateRoot.kind === "unambiguous" ? Theme.good : Theme.conflictText
+                                    tooltipText: delegateRoot.actionable
+                                        ? "Kept: cues, copied onto the copies missing them.\nUntouched: files, playlists, everything else."
+                                        : "These copies disagree, so nothing is copied automatically; decide per-track with the "
+                                          + "Copy buttons below.\n\n" + root.conflictDetail(delegateRoot.tracks)
+                                }
+                                StatusBadge {
+                                    visible: delegateRoot.staged
+                                    label: "Staged"
+                                    badgeColor: Theme.warnText
+                                    tooltipText: delegateRoot.stagedDescription + "\n\nNot on the stick yet: press Save."
+                                }
+                                Item { Layout.fillWidth: true }
+                                Button {
+                                    text: delegateRoot.staged ? "Unstage" : "Copy Cues"
+                                    visible: delegateRoot.actionable || delegateRoot.staged
+                                    enabled: !duplicatesController.busy && !duplicatesController.writing
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: delegateRoot.staged
+                                        ? "Take this group back out of the changes to save"
+                                        : "Stage copying the one copy's cues onto every other copy of this track; Save writes it"
+                                    onClicked: delegateRoot.staged
+                                        ? duplicatesController.unstage(delegateRoot.index)
+                                        : duplicatesController.applyOne(delegateRoot.index)
+                                }
+                                SeabassIcon {
+                                    iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
+                                    size: Theme.iconSizeSmall * 0.75
+                                    color: Theme.textMuted
+                                }
+                            }
                             Label {
-                                text: delegateRoot.tracks.length > 0
-                                    ? (delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist)
-                                    : delegateRoot.filename
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.preferredWidth: 320
-                            }
-                            StatusBadge {
-                                label: delegateRoot.kind === "unambiguous" ? "Fixable" : "Conflict"
-                                badgeColor: delegateRoot.kind === "unambiguous" ? Theme.good : Theme.conflictText
-                                tooltipText: delegateRoot.actionable
-                                    ? "Kept: cues, copied onto the copies missing them.\nUntouched: files, playlists, everything else."
-                                    : "These copies disagree, so nothing is copied automatically; decide per-track with the "
-                                      + "Copy buttons below.\n\n" + root.conflictDetail(delegateRoot.tracks)
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.staged
-                                label: "Staged"
-                                badgeColor: Theme.warnText
-                                tooltipText: delegateRoot.stagedDescription + "\n\nNot on the stick yet: press Save."
-                            }
-                            Item { Layout.fillWidth: true }
-                            Button {
-                                text: delegateRoot.staged ? "Unstage" : "Copy Cues"
-                                visible: delegateRoot.actionable || delegateRoot.staged
-                                enabled: !duplicatesController.busy && !duplicatesController.writing
-                                ToolTip.visible: hovered
-                                ToolTip.text: delegateRoot.staged
-                                    ? "Take this group back out of the changes to save"
-                                    : "Stage copying the one copy's cues onto every other copy of this track; Save writes it"
-                                onClicked: delegateRoot.staged
-                                    ? duplicatesController.unstage(delegateRoot.index)
-                                    : duplicatesController.applyOne(delegateRoot.index)
-                            }
-                            SeabassIcon {
-                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
-                                size: Theme.iconSizeSmall * 0.75
+                                text: delegateRoot.description
                                 color: Theme.textMuted
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                text: delegateRoot.wastedBytesDescription
+                                color: Theme.textMuted
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
                             }
                         }
+                    }
+
+                    Item {
+                        objectName: "groupCopies"
+                        width: parent.width
+                        visible: delegateRoot.expanded
+                        height: delegateRoot.expanded ? groupColumn.implicitHeight + 16 : 0
+
+                        ColumnLayout {
+                            id: groupColumn
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 8
+
+                        // The "meta track" this whole frame is about -- the
+                        // logical song every copy below is a physical instance
+                        // of. Without this, the frame just contains a bare list
+                        // of copies with nothing tying them together as one
+                        // group.
                         Label {
-                            text: delegateRoot.description
-                            color: Theme.textMuted
                             Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
+                            text: (delegateRoot.tracks.length > 0
+                                ? delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist
+                                : delegateRoot.filename)
+                                + "  (" + delegateRoot.tracks.length + " copies)"
+                            font.bold: true
+                            elide: Text.ElideRight
                         }
-                        Label {
-                            text: delegateRoot.wastedBytesDescription
-                            color: Theme.textMuted
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
+
+                        Repeater {
+                            model: delegateRoot.tracks
+                            delegate: TrackWaveformCard {
+                                required property var modelData
+                                track: modelData
+                                formatLabelText: root.formatLabel(root.format)
+                                showPlaylists: true
+                                actionButtonText: delegateRoot.kind === "conflict" ? "Use These" : ""
+                                actionButtonTooltip: delegateRoot.kind === "conflict"
+                                    ? "Stage copying this copy's cue points onto the other copies; Save writes it" : ""
+                                actionButtonEnabled: modelData.cues.length > 0 && !duplicatesController.busy
+                                    && !duplicatesController.writing
+                                onActionTriggered: duplicatesController.copyFromTrack(delegateRoot.index, modelData.sourceId)
+                                playbackController: root.playbackController
+                                playbackPath: root.currentPath()
+                            }
                         }
-                    }
-                }
-
-                // Groups this duplicate set's copies visually -- without a
-                // shared border, several stacked expanded groups (each a
-                // Repeater of per-track Frames) read as one long undifferentiated
-                // list rather than distinct sets of the same track.
-                Rectangle {
-                    width: parent.width
-                    visible: delegateRoot.expanded
-                    height: delegateRoot.expanded ? groupColumn.implicitHeight + 16 : 0
-                    color: Theme.surface
-                    border.color: Theme.borderSubtle
-                    radius: Theme.cornerRadius
-
-                    ColumnLayout {
-                        id: groupColumn
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
-
-                    // The "meta track" this whole frame is about -- the
-                    // logical song every copy below is a physical instance
-                    // of. Without this, the frame just contains a bare list
-                    // of copies with nothing tying them together as one
-                    // group.
-                    Label {
-                        Layout.fillWidth: true
-                        text: (delegateRoot.tracks.length > 0
-                            ? delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist
-                            : delegateRoot.filename)
-                            + "  (" + delegateRoot.tracks.length + " copies)"
-                        font.bold: true
-                        elide: Text.ElideRight
-                    }
-
-                    Repeater {
-                        model: delegateRoot.tracks
-                        delegate: TrackWaveformCard {
-                            required property var modelData
-                            track: modelData
-                            formatLabelText: root.formatLabel(root.format)
-                            showPlaylists: true
-                            actionButtonText: delegateRoot.kind === "conflict" ? "Use These" : ""
-                            actionButtonTooltip: delegateRoot.kind === "conflict"
-                                ? "Stage copying this copy's cue points onto the other copies; Save writes it" : ""
-                            actionButtonEnabled: modelData.cues.length > 0 && !duplicatesController.busy
-                                && !duplicatesController.writing
-                            onActionTriggered: duplicatesController.copyFromTrack(delegateRoot.index, modelData.sourceId)
-                            playbackController: root.playbackController
-                            playbackPath: root.currentPath()
                         }
-                    }
                     }
                 }
             }
