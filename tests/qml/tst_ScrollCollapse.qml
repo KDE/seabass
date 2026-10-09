@@ -79,7 +79,9 @@ TestCase {
         // A keypress or the scroll bar: contentY moves, nothing else.
         page.list.contentY = page.collapse.threshold + 1;
         tryCompare(page.collapse, "progress", 1);
-        compare(page.list.height, testCase.height, "the list took the header's room");
+        // The layout hands the list its last pixel a frame after the fold
+        // ends, so wait for it rather than read it at once.
+        tryCompare(page.list, "height", testCase.height, 1000, "the list took the header's room");
         compare(page.list.contentY, page.collapse.threshold + 1, "folding did not move the list");
 
         // Back up, not yet at the top: stays folded.
