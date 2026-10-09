@@ -27,9 +27,11 @@ TestCase {
     // call: 120 to 130 ms on an idle machine, and several times that
     // when other builds share it. A stop may take that step plus a
     // margin, measured when the stop is (see withinBound()), and never
-    // less than the flat bound.
+    // less than the flat bound. The margin is 250 ms: on the shared CI
+    // runner a stop 25 ms into the rekordbox leg came in 160 to 200 ms
+    // past the key derivation, three measurements running, against 150.
     readonly property int stopBoundMs: 250
-    readonly property int stopMarginMs: 150
+    readonly property int stopMarginMs: 250
 
     readonly property string fixtureRoot: {
         const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
