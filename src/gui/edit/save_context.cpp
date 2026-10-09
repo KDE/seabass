@@ -822,6 +822,31 @@ void SaveContext::noteWalDatabase(const std::string &dbPath,
         {application::normalizedPathKey(dbPath), WalDatabase{dbPath, std::move(fold), std::move(wrote)}});
 }
 
+void SaveContext::onAfterCommit(std::function<void(const AfterCommit &)> hook)
+{
+    m_afterCommitHooks.push_back(std::move(hook));
+}
+
+std::vector<QString> SaveContext::runAfterCommitHooks(const AfterCommit &after)
+{
+    std::vector<QString> warnings;
+    if (m_afterCommitRan) {
+        return warnings;
+    }
+    m_afterCommitRan = true;
+    for (auto &hook : m_afterCommitHooks) {
+        try {
+            hook(after);
+        } catch (const std::exception &e) {
+            if (hasStick()) {
+                log().record(std::string("save: after the commit: ") + e.what());
+            }
+            warnings.push_back(QString::fromUtf8(e.what()));
+        }
+    }
+    return warnings;
+}
+
 void SaveContext::onFinish(std::function<void(bool)> hook)
 {
     m_finishHooks.push_back(std::move(hook));

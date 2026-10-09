@@ -255,6 +255,40 @@ public:
                          std::function<std::optional<std::uint64_t>(const std::string &)> fold,
                          std::function<bool()> wrote);
 
+    // What the save did, as a hook after the commit sees it.
+    struct AfterCommit
+    {
+        // The changes on the stick now, as SaveLoopResult::appliedIds has
+        // them after the commit: in order, skips included; empty when the
+        // commit itself failed and nothing it covered landed.
+        QStringList appliedIds;
+        QStringList skippedIds;
+        // No change failed, the save was not cancelled, and the commit
+        // landed.
+        bool succeeded = false;
+        // PendingChange::rekordboxWrites() of every applied change that
+        // was not skipped, in the order they were applied.
+        std::vector<RekordboxWrite> rekordboxWrites;
+    };
+    // A hook run once at the very end of runSaveLoop(), after the finish
+    // hooks have committed and the player's import record is settled, on
+    // the save's own thread: for a record of what the save did, which has
+    // to read the stick as the save left it (the rekordbox baseline). Runs
+    // after a stopped or failed save too; the hook decides from
+    // AfterCommit. A hook that throws does not stop the rest, and its
+    // message is a warning on the save, not a failure: by then every change
+    // it reports on has landed, and calling the save failed would have the
+    // user apply them a second time.
+    void onAfterCommit(std::function<void(const AfterCommit &)> hook);
+    // Runs every after-commit hook once, in the order registered; the
+    // messages of those that threw, in that order.
+    std::vector<QString> runAfterCommitHooks(const AfterCommit &after);
+    // A change of this save records the rekordbox baseline itself, the
+    // origin ledger included (RecordRekordboxBaselineChange), so the save
+    // loop's own ledger step leaves the file alone.
+    void noteRekordboxBaselineRecordedBySave() { m_baselineRecordedBySave = true; }
+    bool rekordboxBaselineRecordedBySave() const { return m_baselineRecordedBySave; }
+
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
     // the rest.
@@ -314,6 +348,9 @@ private:
     std::map<std::string, WalDatabase> m_walDatabases;  // normalizedPathKey -> how to fold it
     std::vector<std::function<void(bool)>> m_finishHooks;
     bool m_hooksRan = false;
+    std::vector<std::function<void(const AfterCommit &)>> m_afterCommitHooks;
+    bool m_afterCommitRan = false;
+    bool m_baselineRecordedBySave = false;
 
     // Whether this save has a stick to log to; tests run without one.
     bool hasStick() const { return !m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty(); }
