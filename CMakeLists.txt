@@ -1991,6 +1991,12 @@ add_executable(library_catalog_cache_test
 )
 target_include_directories(library_catalog_cache_test PRIVATE src)
 target_link_libraries(library_catalog_cache_test PRIVATE seabass_core Threads::Threads)
+# The real metadata probe, so the Engine Cues stage has files to ask for
+# their sample rate; without TagLib that case cannot run.
+if(TARGET seabass_taglib)
+    target_link_libraries(library_catalog_cache_test PRIVATE seabass_taglib)
+    target_compile_definitions(library_catalog_cache_test PRIVATE SEABASS_TEST_HAVE_PROBE)
+endif()
 # The fixture for the analysis-file freshness case (a pad stored on a
 # player moves an ANLZ file and neither catalog file).
 add_test(NAME library_catalog_cache_test COMMAND library_catalog_cache_test
@@ -3822,6 +3828,13 @@ add_executable(engine_reader_unset_cue_test tests/engine_reader_unset_cue_test.c
 target_include_directories(engine_reader_unset_cue_test PRIVATE src tests)
 target_link_libraries(engine_reader_unset_cue_test PRIVATE seabass_core DjInterop SQLite::SQLite3)
 add_test(NAME engine_reader_unset_cue_test COMMAND engine_reader_unset_cue_test)
+
+# The Engine reader asks its sample rate source only about a row with a
+# cue or a loop and no stored rate. See the test's own header.
+add_executable(engine_reader_sample_rate_source_test tests/engine_reader_sample_rate_source_test.cpp)
+target_include_directories(engine_reader_sample_rate_source_test PRIVATE src tests)
+target_link_libraries(engine_reader_sample_rate_source_test PRIVATE seabass_core DjInterop SQLite::SQLite3)
+add_test(NAME engine_reader_sample_rate_source_test COMMAND engine_reader_sample_rate_source_test)
 
 add_executable(engine_reader_paths_test tests/engine_reader_paths_test.cpp)
 target_include_directories(engine_reader_paths_test PRIVATE src)

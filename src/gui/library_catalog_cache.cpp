@@ -19,6 +19,7 @@
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -26,6 +27,10 @@
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 
 namespace seabass::gui
 {
@@ -231,7 +236,34 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         auto reader = makeReader(format, path);
         reader->setProgressReporter(progress);
         reader->setCancellationToken(cancel);
-        reader->fillCues(tracks);
+        auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineReader *>(reader.get());
+        if (engine == nullptr) {
+            reader->fillCues(tracks);
+            return;
+        }
+        // Engine's cues came with the Tracks stage, which opens no audio
+        // file, so a row the player has not analysed yet (no sample rate
+        // recorded) has them at the reader's 44.1 kHz guess. Here its file
+        // says: only for the rows that have cues and no rate, from the
+        // stick's metadata cache when it knows the file, probed once
+        // otherwise and cached for the next pass. The Full stage needs no
+        // source of its own: it always follows this one on the same rows.
+#ifdef SEABASS_HAVE_TAGLIB
+        infrastructure::audio::TagLibMetadataProbe probe;
+#else
+        application::NullTrackMetadataProbe probe;
+#endif
+        infrastructure::local::CachedSampleRates rates(infrastructure::paths::stickRootForCatalogPath(path), probe);
+        engine->setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+        try {
+            engine->fillCues(tracks);
+        } catch (...) {
+            // What was probed before a cancel is still true.
+            rates.save();
+            throw;
+        }
+        // A read-only or full stick costs a probe next time, never the pass.
+        rates.save();
         return;
     }
     case LibraryCatalogCache::Detail::Full:

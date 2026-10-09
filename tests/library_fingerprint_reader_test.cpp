@@ -174,9 +174,9 @@ void unreadableCatalogCases(const fs::path &fixture)
 
 // The lengths the Engine catalog does not record, with the stick's
 // duration cache empty: the Tracks stage opens no audio file (every such
-// track reads 0), the Full stage probes them, and the fingerprint is the
-// same either way, since a probed length is not part of a track's
-// identity. The fixture has no audio, so a short MP3 is planted where
+// track reads 0), the Full stage probes them, and the fingerprint names
+// the same tracks either way, since a probed length is not part of a
+// track's identity. Its cues are known only from the Cues stage on. The fixture has no audio, so a short MP3 is planted where
 // each untimed track's file should be: without it the probe would fail
 // at every stage and the comparison would prove nothing.
 void durationStageCases(const fs::path &fixture)
@@ -229,10 +229,15 @@ void durationStageCases(const fs::path &fixture)
     }
     assert(probed > 0 && "the Full stage probed the planted files: the precondition of the comparison below");
     const auto fromFull = seabass::gui::readLibraryFingerprint(QString(), enginePath, seabass::gui::FingerprintPass::Cues);
-    assert(fromTracks && fromFull && fromTracks->cuesKnown && fromFull->cuesKnown);
-    assert(*fromTracks == *fromFull && "a fingerprint from a Tracks read equals one from a Full read");
+    // Engine's cues are known from the Cues stage on: an unanalysed row's
+    // are at a 44.1 kHz guess before it.
+    assert(fromTracks && fromFull && !fromTracks->cuesKnown && fromFull->cuesKnown);
+    assert(fromTracks->trackCount == fromFull->trackCount && fromTracks->trackHashes == fromFull->trackHashes
+           && fromTracks->playlistCount == fromFull->playlistCount
+           && fromTracks->playlistHashes == fromFull->playlistHashes
+           && "a fingerprint from a Tracks read names the tracks one from a Full read names");
     std::cout << "the Tracks stage opens no audio file, Full probes " << probed << " rows of " << untimed.size()
-              << " files, and the fingerprint is the same at both OK\n";
+              << " files, and the fingerprint names the same tracks at both OK\n";
     cache.invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
     fs::remove_all(stick);
 }

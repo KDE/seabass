@@ -29,10 +29,15 @@ constexpr int FrameBytes = 417;  // 144 * 128000 / 44100, truncated
 constexpr int SamplesPerFrame = 1152;
 constexpr int SampleRate = 44100;
 
-inline std::vector<unsigned char> silentFrame()
+// The same at 48000 Hz: sampling-frequency index 01 instead of 00.
+constexpr unsigned char FrameHeader48k[4] = {0xFF, 0xFB, 0x94, 0x00};
+constexpr int FrameBytes48k = 384;  // 144 * 128000 / 48000
+
+inline std::vector<unsigned char> silentFrame(int sampleRate = SampleRate)
 {
-    std::vector<unsigned char> frame(FrameBytes, 0);
-    std::memcpy(frame.data(), FrameHeader, sizeof(FrameHeader));
+    const bool at48k = sampleRate == 48000;
+    std::vector<unsigned char> frame(at48k ? FrameBytes48k : FrameBytes, 0);
+    std::memcpy(frame.data(), at48k ? FrameHeader48k : FrameHeader, sizeof(FrameHeader));
     return frame;
 }
 
@@ -40,9 +45,9 @@ inline std::vector<unsigned char> silentFrame()
 // by version + channel mode: MPEG-1 stereo is 32 bytes past the 4-byte
 // frame header. Only the "frames" and "bytes" fields are filled in,
 // which is what a length calculation needs.
-inline std::vector<unsigned char> xingFrame(unsigned frames, unsigned bytes)
+inline std::vector<unsigned char> xingFrame(unsigned frames, unsigned bytes, int sampleRate = SampleRate)
 {
-    std::vector<unsigned char> frame = silentFrame();
+    std::vector<unsigned char> frame = silentFrame(sampleRate);
     size_t offset = 4 + 32;
     std::memcpy(frame.data() + offset, "Xing", 4);
     offset += 4;
@@ -67,15 +72,16 @@ inline void writeBytes(const fs::path &path, const std::vector<unsigned char> &d
 
 // frameCount silent frames, the first optionally carrying a Xing header
 // that honestly describes the file. Without one, a reader has to
-// estimate the length from the bitrate.
-inline void writeMp3(const fs::path &path, int frameCount, bool withXing)
+// estimate the length from the bitrate. sampleRate is 44100 or 48000.
+inline void writeMp3(const fs::path &path, int frameCount, bool withXing, int sampleRate = SampleRate)
 {
+    const int frameBytes = sampleRate == 48000 ? FrameBytes48k : FrameBytes;
     std::vector<unsigned char> data;
     for (int i = 0; i < frameCount; ++i) {
         std::vector<unsigned char> frame =
-            (i == 0 && withXing)
-                ? xingFrame(static_cast<unsigned>(frameCount), static_cast<unsigned>(frameCount * FrameBytes))
-                : silentFrame();
+            (i == 0 && withXing) ? xingFrame(static_cast<unsigned>(frameCount),
+                                             static_cast<unsigned>(frameCount * frameBytes), sampleRate)
+                                 : silentFrame(sampleRate);
         data.insert(data.end(), frame.begin(), frame.end());
     }
     writeBytes(path, data);

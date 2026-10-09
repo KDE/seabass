@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -633,6 +634,90 @@ std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &e
     return result;
 }
 
+// 44.1 kHz is by far the most common sample rate for the compressed
+// audio these libraries hold; for a row that records none, falling back
+// to it gives a position that's very likely close to right, instead of
+// treating a raw sample count as if it were milliseconds (which is wrong
+// by roughly a factor of 44). Wrong by 9 percent for a 48 kHz file, which
+// is why the reader asks the file first when it can.
+constexpr double FallbackSampleRate = 44100.0;
+
+// One row's hot cues, hot loops and main cue as times, at `sampleRate`
+// (positive).
+std::vector<domain::CuePoint> cuesOfRow(const std::vector<std::optional<djinterop::hot_cue>> &hotCues,
+                                        const std::vector<std::optional<djinterop::loop>> &loops,
+                                        std::optional<double> mainCue, double sampleRate)
+{
+    std::vector<domain::CuePoint> cues;
+    for (size_t i = 0; i < hotCues.size(); ++i) {
+        if (!hotCues[i]) {
+            continue;
+        }
+        const auto &hotCue = *hotCues[i];
+        if (hotCue.sample_offset < 0.0) {
+            continue;  // the same "not set" sentinel as the main cue below
+        }
+        domain::CuePoint cp;
+        cp.kind = domain::CuePoint::Kind::Hot;
+        cp.hotCueNumber = static_cast<int>(i) + 1;  // Engine slots are 0-based; rekordbox numbers from 1
+        cp.positionMs = hotCue.sample_offset / sampleRate * 1000.0;
+        cp.color = colorHex(hotCue.color);
+        cp.comment = hotCue.label;
+        cues.push_back(std::move(cp));
+    }
+
+    // Engine's hot loops live in their own 8-slot array (loops()),
+    // separate from hot_cues() above: indexed the same way, but a
+    // genuinely different column family, not a variant of hot_cue. On
+    // the hardware a given pad shows either the hot cue or the hot
+    // loop for its number depending on pad mode, never both; Seabass
+    // itself enforces that one-or-the-other rule when writing (see
+    // AddCueController), matching the design this reads back into.
+    for (size_t i = 0; i < loops.size(); ++i) {
+        if (!loops[i]) {
+            continue;
+        }
+        const auto &loop = *loops[i];
+        if (loop.start_sample_offset < 0.0 || loop.end_sample_offset < 0.0) {
+            continue;  // ditto: an empty loop slot, not a loop at 0
+        }
+        domain::CuePoint cp;
+        cp.kind = domain::CuePoint::Kind::Hot;
+        cp.hotCueNumber = static_cast<int>(i) + 1;
+        cp.isLoop = true;
+        cp.positionMs = loop.start_sample_offset / sampleRate * 1000.0;
+        cp.loopEndMs = loop.end_sample_offset / sampleRate * 1000.0;
+        cp.color = colorHex(loop.color);
+        cp.comment = loop.label;
+        cues.push_back(std::move(cp));
+    }
+
+    // Engine's format has exactly one memory-style cue point (called
+    // "Cue" in the app), stored as a plain sample offset with no
+    // color/comment, unlike rekordbox's unlimited, independently
+    // colored/commented memory cues. Represented here as a single
+    // Kind::Memory CuePoint (hotCueNumber 0, matching how rekordbox's
+    // own reader marks memory cues) so it can be matched/synced like
+    // any other cue; see libdjinterop_engine_cue_writer.cpp for the
+    // corresponding (necessarily lossy beyond one cue) write side.
+    //
+    // A track with no main cue carries -1 as its sample offset, which
+    // is libdjinterop's "not set" rather than a position: dividing it
+    // by the sample rate made a memory cue a fraction of a
+    // millisecond BEFORE the track starts. Every un-cued track on a
+    // stick grew one (958 of them in one real library) and they
+    // travelled into the metadata store, into restore offers and into
+    // every count of how many cues a track has. Anything at or before
+    // sample 0 that was not deliberately placed there is not a cue.
+    if (mainCue && *mainCue >= 0.0) {
+        domain::CuePoint cp;
+        cp.kind = domain::CuePoint::Kind::Memory;
+        cp.positionMs = *mainCue / sampleRate * 1000.0;
+        cues.push_back(std::move(cp));
+    }
+    return cues;
+}
+
 }  // namespace
 
 LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath)
@@ -643,6 +728,104 @@ LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath
 std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 {
     return readTracks();
+}
+
+std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Track &track)
+{
+    // A streaming row's path names a cache on some other computer, and a
+    // row with no path names no file: nothing to ask.
+    if (!m_sampleRateSource || track.filePath.empty() || !track.streamingSource.empty()) {
+        return std::nullopt;
+    }
+    std::optional<double> rate;
+    try {
+        rate = m_sampleRateSource(track.filePath);
+    } catch (const application::OperationCancelled &) {
+        throw;
+    } catch (const std::exception &e) {
+        m_progress->warn("track id=" + track.sourceId + ": the sample rate of its file could not be read ("
+                         + e.what() + ")");
+        return std::nullopt;
+    }
+    // Only a usable rate: the same zero and worse that a stored rate is
+    // refused for.
+    if (!rate || !std::isfinite(*rate) || *rate <= 0.0) {
+        return std::nullopt;
+    }
+    return rate;
+}
+
+void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
+{
+    if (!m_sampleRateSource) {
+        return;
+    }
+    // Only the rows read with cues: a row with none has nothing a rate
+    // would move, and is not looked up at all.
+    std::vector<domain::Track *> cued;
+    for (auto &track : tracks) {
+        if (!track.cues.empty() && !track.filePath.empty() && track.streamingSource.empty()) {
+            cued.push_back(&track);
+        }
+    }
+    if (cued.empty()) {
+        return;
+    }
+    int failures = 0;
+    try {
+        // As readTracks(): load_database() opens m.db read-write, so a
+        // journal a pulled stick left is recovered first, and a database
+        // still being written is not opened. Neither fails the stage: the
+        // cues keep the rate they were read at.
+        const std::string busy = recoverEnginePendingJournals(m_engineLibraryPath, std::chrono::seconds(10));
+        if (!busy.empty()) {
+            m_progress->warn("the sample rates of unanalysed tracks were not looked up: " + busy + " is locked");
+            return;
+        }
+        auto db = djinterop::engine::load_database(m_engineLibraryPath);
+        for (domain::Track *track : cued) {
+            m_cancel.throwIfCancelled();
+            std::int64_t id = 0;
+            try {
+                id = std::stoll(track->sourceId);
+            } catch (const std::logic_error &) {
+                continue;  // not a row id: not a track of this catalog
+            }
+            try {
+                const auto row = db.track_by_id(id);
+                if (!row) {
+                    continue;
+                }
+                std::optional<double> stored;
+                try {
+                    stored = row->sample_rate();
+                } catch (const std::exception &) {
+                    // Unreadable is no rate, as readTracks() takes it.
+                }
+                if (stored && *stored > 0.0) {
+                    continue;
+                }
+                const auto fileRate = rateFromSource(*track);
+                if (!fileRate) {
+                    continue;
+                }
+                track->cues = cuesOfRow(row->hot_cues(), row->loops(), row->main_cue(), *fileRate);
+            } catch (const application::OperationCancelled &) {
+                throw;
+            } catch (const std::exception &) {
+                ++failures;
+            }
+        }
+    } catch (const application::OperationCancelled &) {
+        throw;
+    } catch (const std::exception &e) {
+        m_progress->warn(std::string("the sample rates of unanalysed tracks were not looked up: ") + e.what());
+        return;
+    }
+    if (failures > 0) {
+        m_progress->warn(std::to_string(failures)
+                         + " unanalysed tracks keep their cues at 44.1 kHz: their rows could not be read again");
+    }
 }
 
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
@@ -836,86 +1019,17 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
             track.metadataModifiedAt = lastEditIt->second;
         }
 
-        auto sampleRate = snap.sample_rate;
-        // Or a stored zero, which real libraries carry: dividing by it
-        // gives inf (or NaN at offset 0), and an infinite cue position
-        // walks straight past every check that asks whether a cue is near
-        // the start.
-        if (!sampleRate || *sampleRate <= 0.0) {
-            // 44.1kHz is by far the most common sample rate for the
-            // compressed audio these libraries hold; falling back to it
-            // gives a position that's very likely close to right, instead
-            // of treating a raw sample count as if it were milliseconds
-            // (which is wrong by roughly a factor of 44).
-            sampleRate = 44100.0;
-        }
-        const auto &hotCues = snap.hot_cues;
-        for (size_t i = 0; i < hotCues.size(); ++i) {
-            if (!hotCues[i]) {
-                continue;
+        // A stored zero, which real libraries carry, is no rate either:
+        // dividing by it gives inf (or NaN at offset 0), and an infinite
+        // cue position walks straight past every check that asks whether
+        // a cue is near the start.
+        const std::optional<double> storedRate =
+            snap.sample_rate && *snap.sample_rate > 0.0 ? snap.sample_rate : std::nullopt;
+        track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, storedRate.value_or(FallbackSampleRate));
+        if (!storedRate && !track.cues.empty()) {
+            if (const auto fileRate = rateFromSource(track)) {
+                track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, *fileRate);
             }
-            const auto &hotCue = *hotCues[i];
-            if (hotCue.sample_offset < 0.0) {
-                continue;  // the same "not set" sentinel as main_cue below
-            }
-            domain::CuePoint cp;
-            cp.kind = domain::CuePoint::Kind::Hot;
-            cp.hotCueNumber = static_cast<int>(i) + 1;  // Engine slots are 0-based; rekordbox numbers from 1
-            cp.positionMs = hotCue.sample_offset / *sampleRate * 1000.0;
-            cp.color = colorHex(hotCue.color);
-            cp.comment = hotCue.label;
-            track.cues.push_back(std::move(cp));
-        }
-
-        // Engine's hot loops live in their own 8-slot array (loops()),
-        // separate from hot_cues() above -- indexed the same way, but a
-        // genuinely different column family, not a variant of hot_cue. On
-        // the hardware a given pad shows either the hot cue or the hot
-        // loop for its number depending on pad mode, never both; Seabass
-        // itself enforces that one-or-the-other rule when writing (see
-        // AddCueController), matching the design this reads back into.
-        const auto &loops = snap.loops;
-        for (size_t i = 0; i < loops.size(); ++i) {
-            if (!loops[i]) {
-                continue;
-            }
-            const auto &loop = *loops[i];
-            if (loop.start_sample_offset < 0.0 || loop.end_sample_offset < 0.0) {
-                continue;  // ditto: an empty loop slot, not a loop at 0
-            }
-            domain::CuePoint cp;
-            cp.kind = domain::CuePoint::Kind::Hot;
-            cp.hotCueNumber = static_cast<int>(i) + 1;
-            cp.isLoop = true;
-            cp.positionMs = loop.start_sample_offset / *sampleRate * 1000.0;
-            cp.loopEndMs = loop.end_sample_offset / *sampleRate * 1000.0;
-            cp.color = colorHex(loop.color);
-            cp.comment = loop.label;
-            track.cues.push_back(std::move(cp));
-        }
-
-        // Engine's format has exactly one memory-style cue point (called
-        // "Cue" in the app), stored as a plain sample offset with no
-        // color/comment, unlike rekordbox's unlimited, independently
-        // colored/commented memory cues. Represented here as a single
-        // Kind::Memory CuePoint (hotCueNumber 0, matching how rekordbox's
-        // own reader marks memory cues) so it can be matched/synced like
-        // any other cue; see libdjinterop_engine_cue_writer.cpp for the
-        // corresponding (necessarily lossy beyond one cue) write side.
-        const auto mainCue = snap.main_cue;
-        // A track with no main cue carries -1 as its sample offset, which
-        // is libdjinterop's "not set" rather than a position: dividing it
-        // by the sample rate made a memory cue a fraction of a
-        // millisecond BEFORE the track starts. Every un-cued track on a
-        // stick grew one -- 958 of them in one real library -- and they
-        // travelled into the metadata store, into restore offers and into
-        // every count of how many cues a track has. Anything at or before
-        // sample 0 that was not deliberately placed there is not a cue.
-        if (mainCue && *mainCue >= 0.0) {
-            domain::CuePoint cp;
-            cp.kind = domain::CuePoint::Kind::Memory;
-            cp.positionMs = *mainCue / *sampleRate * 1000.0;
-            track.cues.push_back(std::move(cp));
         }
 
         tracks.push_back(std::move(track));

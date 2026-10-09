@@ -10,6 +10,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -23,6 +24,7 @@
 #include "application/use_cases/fill_file_sizes.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "mp3_fixture.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
@@ -915,6 +917,132 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
     fs::remove_all(root);
 }
 
+#ifdef SEABASS_TEST_HAVE_PROBE
+// Engine's cues come with the Tracks stage, at the reader's 44.1 kHz
+// guess for a row the player has not analysed yet (no sample rate
+// recorded). The Cues stage asks each such row's file, through the
+// stick's metadata cache, and only for rows with a cue or a loop. Over a
+// copy of the fixture with a 48 kHz MP3 planted at the path of each of
+// its 1317 .mp3 rows (the other 247 are .m4a and .mp4, left absent):
+// of its 1212 rows with no trackData, 23 carry a cue or a loop, two of
+// them .m4a files this copy does not have (ids 79 and 100). So the Tracks
+// stage probes nothing, the Cues stage probes 23 files and caches the 21
+// that answer, and every other row reads as the Tracks stage read it.
+// Row 17 (Contents/a074e2.mp3) has one hot cue, pad 1 at sample
+// 435487.5: 9875 ms at 44.1 kHz, 9072.65625 ms at 48 kHz.
+void engineSampleRateCases(const std::filesystem::path &fixture)
+{
+    namespace fs = std::filesystem;
+    using seabass::domain::Track;
+    const fs::path stick = seabass::testing::scratchRoot() / "library_catalog_cache_test_sample_rates";
+    fs::remove_all(stick);
+    fs::create_directories(stick);
+    fs::copy(fixture / "engine", stick / "Engine Library", fs::copy_options::recursive);
+    const std::string engine = seabass::pathToUtf8(stick / "Engine Library");
+    const fs::path metadataCache = stick / "Seabass" / "caches" / "metadata.jsonl";
+
+    int catalogReads = 0;
+    const auto realStage = LibraryCatalogCache::realStageForTesting();
+    LibraryCatalogCache cache(
+        [&](Detail stage, const std::string &format, const std::string &path, std::vector<Track> &tracks,
+            LibraryCatalogCache::StageNotes &notes, seabass::application::ProgressReporter &progress,
+            CancellationToken cancel) {
+            if (stage == Detail::Tracks) {
+                ++catalogReads;
+            }
+            realStage(stage, format, path, tracks, notes, progress, std::move(cancel));
+        },
+        LibraryCatalogCache::realMtimeForTesting());
+    const auto byId = [](const std::vector<Track> &tracks, const std::string &id) -> const Track & {
+        const auto it = std::find_if(tracks.begin(), tracks.end(), [&](const Track &t) { return t.sourceId == id; });
+        assert(it != tracks.end());
+        return *it;
+    };
+
+    const auto atTracks = cache.tracksFor("engine", engine, Detail::Tracks);
+    assert(atTracks.size() == 1564);
+    size_t planted = 0;
+    for (const Track &t : atTracks) {
+        if (seabass::pathFromUtf8(t.filePath).extension() == ".mp3") {
+            seabass::test_fixture::mp3::writeMp3(seabass::pathFromUtf8(t.filePath), 10, true, 48000);
+            ++planted;
+        }
+    }
+    assert(planted == 1317 && "an MP3 at every .mp3 row's path: the rows not asked about could answer too");
+    assert(!fs::exists(metadataCache) && "the Tracks stage opens no audio file");
+    assert(byId(atTracks, "17").cues.size() == 1 && byId(atTracks, "17").cues[0].positionMs == 9875.0);
+
+    const auto atCues = cache.tracksFor("engine", engine, Detail::Cues);
+    assert(atCues.size() == atTracks.size());
+    assert(catalogReads == 1 && "the Cues stage worked on the Tracks stage's rows");
+    std::vector<std::string> lines;
+    {
+        std::ifstream in(metadataCache, std::ios::binary);
+        assert(in && "the Cues stage saved what it probed");
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty()) {
+                lines.push_back(line);
+            }
+        }
+    }
+    assert(lines.size() == 21 && "the 21 rows with cues, no rate and a readable file; nothing else");
+    for (const std::string &line : lines) {
+        assert(line.find("\"samplerate\":\"48000\"") != std::string::npos);
+    }
+    const auto row17 = std::find_if(lines.begin(), lines.end(), [](const std::string &line) {
+        return line.find("\"path\":\"Engine Library/Contents/a074e2.mp3\"") != std::string::npos;
+    });
+    assert(row17 != lines.end());
+    assert(byId(atCues, "17").cues.size() == 1 && byId(atCues, "17").cues[0].positionMs == 9072.65625);
+    // No file, no answer: the guess stays.
+    assert(byId(atCues, "79").cues.size() == 3);
+    assert(byId(atCues, "79").cues[0].positionMs == byId(atTracks, "79").cues[0].positionMs);
+    size_t moved = 0;
+    for (size_t i = 0; i < atCues.size(); ++i) {
+        assert(atCues[i].sourceId == atTracks[i].sourceId && atCues[i].cues.size() == atTracks[i].cues.size());
+        bool same = true;
+        for (size_t c = 0; c < atCues[i].cues.size(); ++c) {
+            same = same && atCues[i].cues[c].positionMs == atTracks[i].cues[c].positionMs;
+        }
+        moved += same ? 0 : 1;
+    }
+    assert(moved == 21 && "exactly the rows whose file answered moved");
+    assert(cache.tracksFor("engine", engine, Detail::Cues).size() == 1564 && catalogReads == 1
+           && "looking up the rates left the entry fresh");
+    std::cout << "stage 18 (Engine: the Cues stage asks the file's rate for the 23 rows with cues and no rate, "
+                 "caches the 21 that answer, moves only theirs) OK\n";
+
+    // The next pass answers from the cache, not the file: the entry says
+    // 44.1 kHz for row 17's file (size and mtime as they are), and row 17
+    // reads at 44.1 kHz. Nothing is probed, so nothing is written back.
+    std::string edited;
+    for (const std::string &line : lines) {
+        std::string copy = line;
+        if (copy == *row17) {
+            const std::string at48k = "\"samplerate\":\"48000\"";
+            copy.replace(copy.find(at48k), at48k.size(), "\"samplerate\":\"44100\"");
+        }
+        edited += copy + "\n";
+    }
+    {
+        std::ofstream out(metadataCache, std::ios::binary | std::ios::trunc);
+        out << edited;
+    }
+    cache.invalidate("engine", engine);
+    const auto again = cache.tracksFor("engine", engine, Detail::Cues);
+    assert(catalogReads == 2);
+    assert(byId(again, "17").cues[0].positionMs == 9875.0 && "the cached rate, not the file's");
+    {
+        std::ifstream in(metadataCache, std::ios::binary);
+        const std::string after((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(after == edited && "every answer came from the cache: no probe, no save");
+    }
+    std::cout << "stage 19 (Engine: a cached rate is used without opening the file) OK\n";
+    cache.invalidate("engine", engine);
+    fs::remove_all(stick);
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -1188,6 +1316,11 @@ int main(int argc, char **argv)
     rememberedCountCases();
     if (argc > 1) {
         analysisFileFreshnessCases(seabass::pathFromUtf8(argv[1]));
+#ifdef SEABASS_TEST_HAVE_PROBE
+        engineSampleRateCases(seabass::pathFromUtf8(argv[1]));
+#else
+        std::cout << "SKIP engineSampleRateCases: this build has no metadata probe\n";
+#endif
     } else {
         std::cerr << "no fixture given: the analysis-file freshness case did not run\n";
         return 1;

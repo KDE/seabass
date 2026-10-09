@@ -65,8 +65,11 @@ class LibraryCatalogCache
 public:
     // How much of a library a caller needs, in the order the cache reads
     // it: Tracks is the catalog file alone (about 0.1 s cold on a stick),
-    // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick),
-    // Full adds every audio file's size (3 s). A request for a stage the
+    // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick)
+    // and, for Engine, the cue times of rows the player has not analysed
+    // yet at their file's own sample rate (Tracks has them at a 44.1 kHz
+    // guess; see LibdjinteropEngineReader::fillCues), Full adds every
+    // audio file's size (3 s). A request for a stage the
     // entry already has returns at once, whatever pass is in flight; a
     // request for a stage being read waits for that pass rather than
     // starting another; a request for a stage nobody is reading runs the
