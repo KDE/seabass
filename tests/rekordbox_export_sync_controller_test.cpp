@@ -39,6 +39,7 @@
 #include <QCoreApplication>
 #include <QSignalSpy>
 #include <QTest>
+#include <QUrl>
 
 #include <cassert>
 #include <filesystem>
@@ -222,6 +223,35 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
             assert(static_cast<int>(row.section) >= last);
             last = static_cast<int>(row.section);
         }
+    }
+    // The overview bar's categories: membership split into its adds
+    // (changed) and its removes (removed), counted here off the rows.
+    {
+        int adds = 0;
+        int removes = 0;
+        int changedElsewhere = 0;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section == Section::Membership) {
+                (row.kind == QStringLiteral("addMember") ? adds : removes) += 1;
+            } else if (row.section == Section::MetadataToEngine || row.section == Section::CuesToEngine
+                       || row.section == Section::RestoresToRekordbox) {
+                ++changedElsewhere;
+            }
+        }
+        const QVariantMap categories = controller.categoryCounts();
+        std::cout << "  categories: new tracks " << categories.value("newTracks").toInt() << ", new playlists "
+                  << categories.value("newPlaylists").toInt() << ", changed " << categories.value("changed").toInt()
+                  << ", removed " << categories.value("removed").toInt() << ", other "
+                  << categories.value("other").toInt() << " (membership " << adds << " in, " << removes << " out)\n";
+        assert(adds + removes == FixtureMembership);
+        assert(categories.value("newTracks").toInt() == count(controller, "tracksToAdd"));
+        assert(categories.value("newPlaylists").toInt() == FixtureCreates);
+        assert(categories.value("changed").toInt() == adds + changedElsewhere);
+        assert(categories.value("removed").toInt() == removes + count(controller, "tracksToRemove"));
+        assert(categories.value("other").toInt() == 0);
+        // 925 membership adds, 1 rating or comment, 17 cue rows, 9 restores.
+        assert(categories.value("changed").toInt() == 952);
+        assert(!controller.proposalEmpty());
     }
     std::cout << "case 1 (the fixture's proposal: 1 create, 925 members, 1245 conflicts, 1177 kept, 953 ticked) OK\n";
 
@@ -680,6 +710,33 @@ void testOrderAndDetails()
     expect(rowOf(QStringLiteral("cues")),
            {QStringLiteral("Writes Engine's cues:"), QStringLiteral("Pad 1: was 0:01.500, now 0:01.000"),
             QStringLiteral("Pad 2: new, 0:05.000"), QStringLiteral("Pad 3: 1:30.000, cleared")});
+    // Covers: the add's is the rekordbox track's, as a local file URL; a
+    // playlist row has no track and no cover; a cue row falls back on the
+    // other side's copy.
+    {
+        const QModelIndex addAt = model.index(rowOf(QStringLiteral("addTrack")));
+        assert(addAt.data(RekordboxExportSyncListModel::HasTrackRole).toBool());
+        const QString url = addAt.data(RekordboxExportSyncListModel::ArtworkPathRole).toString();
+        assert(url.startsWith(QStringLiteral("file:")));
+        assert(QUrl(url).toLocalFile().toStdString() == night.artworkPath);
+        const QModelIndex createAt = model.index(rowOf(QStringLiteral("createPlaylist")));
+        assert(!createAt.data(RekordboxExportSyncListModel::HasTrackRole).toBool());
+        assert(createAt.data(RekordboxExportSyncListModel::ArtworkPathRole).toString().isEmpty());
+        const QModelIndex memberAt = model.index(rowOf(QStringLiteral("addMember")));
+        assert(QUrl(memberAt.data(RekordboxExportSyncListModel::ArtworkPathRole).toString()).toLocalFile().toStdString()
+               == night.artworkPath);
+        assert(model.index(rowOf(QStringLiteral("cues"))).data(RekordboxExportSyncListModel::HasTrackRole).toBool());
+    }
+    // The overview bar's categories, by hand: the add, the create, two
+    // membership adds and the cues.
+    {
+        const QVariantMap categories = model.categoryCounts();
+        assert(categories.value("newTracks").toInt() == 1);
+        assert(categories.value("newPlaylists").toInt() == 1);
+        assert(categories.value("changed").toInt() == 3);
+        assert(categories.value("removed").toInt() == 0);
+        assert(categories.value("other").toInt() == 0);
+    }
     // A playlist the add no longer joins in this save says so.
     model.setIncluded(rowOf(QStringLiteral("addMember")), false);
     assert(model.details(rowOf(QStringLiteral("addTrack"))).last() == QStringLiteral("Joins no playlist in this save"));
@@ -705,6 +762,12 @@ void testOrderAndDetails()
                QStringLiteral("  Takes Second Song out of \"Warm Up\" on Engine"), QStringLiteral("  Position on Engine: #2"),
                QStringLiteral("  The track stays in the library"), QStringLiteral("  File: Contents/second.mp3"),
                QStringLiteral("Engine's side (Keep it):"), QStringLiteral("  writes nothing; Engine keeps what it has")});
+    // Not in the bar until answered; answered toward rekordbox it is a
+    // membership remove, and removed.
+    assert(model.categoryCounts().value("removed").toInt() == 0);
+    assert(model.resolveConflict(0, true));
+    assert(model.categoryCounts().value("removed").toInt() == 1);
+    assert(model.categoryCounts().value("changed").toInt() == 3);
     std::cout << "case 7 (conflicts first, playlists first without them; details of an add, a membership, cues "
                  "and a conflict) OK\n";
 }

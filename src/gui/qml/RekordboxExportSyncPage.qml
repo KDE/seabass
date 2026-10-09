@@ -108,6 +108,24 @@ Page {
         {direction: "kept", text: "Engine's own, nothing is written"},
     ]
 
+    // What the overview bar draws, left to right: new, changed, removed,
+    // other (RekordboxExportSyncController::categoryCounts). Conflicts are
+    // not in it: they are questions, not changes yet.
+    readonly property var overviewSegments: {
+        const counts = root.controller.categoryCounts;
+        return [
+            // Both kinds of new in good: the playlists washed out with an
+            // outline, as SpaceReclaimBar tells two greens apart.
+            {key: "newTracks", label: (counts["newTracks"] || 0) === 1 ? "new track" : "new tracks", fill: Theme.good, outline: false, count: counts["newTracks"] || 0},
+            {key: "newPlaylists", label: (counts["newPlaylists"] || 0) === 1 ? "new playlist" : "new playlists", fill: Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.3),
+             outline: true, count: counts["newPlaylists"] || 0},
+            {key: "changed", label: "changed", fill: Theme.accent, outline: false, count: counts["changed"] || 0},
+            {key: "removed", label: "removed", fill: Theme.danger, outline: false, count: counts["removed"] || 0},
+            {key: "other", label: "other", fill: Theme.textMuted, outline: false, count: counts["other"] || 0},
+        ];
+    }
+    readonly property int overviewTotal: root.overviewSegments.reduce((sum, segment) => sum + segment.count, 0)
+
     // The one row open to show its details, by model row; -1 for none.
     // Kept on its row while rows come and go around it.
     property int expandedIndex: -1
@@ -165,6 +183,12 @@ Page {
     // box is a row gap from what follows it, in a row and in a section's
     // header alike, so a section's title stands over its rows' chips.
     readonly property real checkSlotWidth: Theme.scaled(18) + Theme.rowSpacing
+    // The cover's square, two lines of a row tall (its title and its
+    // reason), and its slot after the checkbox: every row keeps the slot,
+    // so the chips and titles stay in their columns, and a section's
+    // header keeps it too, so its title still stands over the chips.
+    readonly property real coverSide: Theme.scaled(40)
+    readonly property real coverSlotWidth: root.coverSide + Theme.rowSpacing
     TextMetrics {
         id: chipMetrics
         font.bold: true
@@ -254,6 +278,19 @@ Page {
                     width: parent.width
                     spacing: Theme.tightSpacing
 
+                    // What this page is for, in his words: the first line.
+                    Label {
+                        objectName: "explanationLabel"
+                        Layout.fillWidth: true
+                        visible: root.controller.analyzed
+                        wrapMode: Text.WordWrap
+                        color: Theme.text
+                        text: root.controller.proposalEmpty
+                            ? "Engine already matches this stick's rekordbox library."
+                            : "Rekordbox has changed the library on this stick. This page brings everything back "
+                              + "in step with Engine."
+                    }
+
                     Label {
                         id: introLabel
                         objectName: "introLabel"
@@ -294,6 +331,88 @@ Page {
                                 color: Theme.textMuted
                                 font.pointSize: Theme.fontSmall
                                 text: legendLine.modelData.text
+                            }
+                        }
+                    }
+
+                    // What the proposal holds, drawn to scale, in the
+                    // idiom of SpaceReclaimBar: the same ground, the same
+                    // height, a legend so nothing rests on colour alone.
+                    ColumnLayout {
+                        objectName: "overview"
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.tightSpacing
+                        spacing: 0
+                        visible: root.controller.analyzed && root.overviewTotal > 0
+
+                        Item {
+                            objectName: "overviewBar"
+                            Layout.fillWidth: true
+                            implicitHeight: 26
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 3
+                                color: Theme.groupBackground
+                                border.color: Theme.borderSubtle
+                                border.width: 1
+                            }
+                            Row {
+                                id: overviewSegmentsRow
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                spacing: 2
+                                function span(count) {
+                                    return count > 0 && root.overviewTotal > 0
+                                        ? Math.max(2, width * (count / root.overviewTotal) - 2) : 0;
+                                }
+                                Repeater {
+                                    model: root.overviewSegments
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        objectName: "overviewSegment_" + modelData.key
+                                        width: overviewSegmentsRow.span(modelData.count)
+                                        height: parent.height
+                                        radius: 2
+                                        color: modelData.fill
+                                        border.color: Theme.good
+                                        border.width: modelData.outline ? 1 : 0
+                                        visible: width > 0
+                                    }
+                                }
+                            }
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 10
+                            spacing: 18
+                            Repeater {
+                                model: root.overviewSegments
+                                delegate: Row {
+                                    id: swatchRow
+                                    required property var modelData
+                                    objectName: "overviewLegend_" + modelData.key
+                                    // A category with nothing in it is left out.
+                                    visible: modelData.count > 0
+                                    spacing: 7
+                                    readonly property int count: modelData.count
+                                    Rectangle {
+                                        width: 10
+                                        height: 10
+                                        radius: 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: swatchRow.modelData.fill
+                                        border.color: swatchRow.modelData.outline ? Theme.good : Theme.borderSubtle
+                                        border.width: 1
+                                    }
+                                    Label {
+                                        objectName: "overviewLegendText"
+                                        text: swatchRow.modelData.count + " " + swatchRow.modelData.label
+                                        font.pointSize: Theme.fontSmall
+                                        color: Theme.textMuted
+                                    }
+                                }
                             }
                         }
                     }
@@ -481,6 +600,10 @@ Page {
                             }
                         }
                     }
+                    Item {
+                        visible: sectionHeader.writable
+                        Layout.preferredWidth: root.coverSlotWidth
+                    }
                     Subtitle {
                         objectName: "sectionTitle"
                         Layout.alignment: Qt.AlignBaseline
@@ -563,14 +686,18 @@ Page {
                 required property string direction
                 required property bool fromConflict
                 required property var details
+                required property bool hasTrack
+                required property string artworkPath
+                required property string fallbackArtworkPath
 
                 readonly property bool writable: root.isWritable(section)
                 readonly property bool expanded: root.expandedIndex === index
                 // Where everything under the title row starts: the title's column.
-                readonly property real textIndent: root.checkSlotWidth + root.chipSlotWidth + Theme.tightSpacing
+                readonly property real textIndent: root.checkSlotWidth + root.coverSlotWidth + root.chipSlotWidth
+                    + Theme.tightSpacing
 
                 width: rowsList.delegateWidth
-                implicitHeight: rowColumn.implicitHeight + 2 * Theme.tightSpacing
+                implicitHeight: Math.max(rowColumn.implicitHeight, row.hasTrack ? root.coverSide : 0) + 2 * Theme.tightSpacing
                 height: implicitHeight
                 color: hover.hovered ? Theme.rowHover : (index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
                 HoverHandler {
@@ -584,11 +711,35 @@ Page {
                     onTapped: root.toggleExpanded(row.index)
                 }
 
+                // The track's cover, read off the GUI thread at the size it
+                // is drawn (ArtworkImage), on the square a row without one
+                // shows. A playlist's row leaves the slot empty.
+                Rectangle {
+                    objectName: "rowCoverSlot"
+                    visible: row.hasTrack
+                    x: root.checkSlotWidth
+                    y: Theme.tightSpacing
+                    width: root.coverSide
+                    height: root.coverSide
+                    radius: 2
+                    // Outlined: the surface is the odd rows' own tone.
+                    color: Theme.surface
+                    border.color: Theme.borderSubtle
+                    border.width: 1
+                    ArtworkImage {
+                        objectName: "rowArtwork"
+                        anchors.fill: parent
+                        source: row.artworkPath
+                        fallbackSource: row.fallbackArtworkPath
+                    }
+                }
+
                 ColumnLayout {
                     id: rowColumn
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: Theme.tightSpacing
                     spacing: 2
 
                     RowLayout {
@@ -612,6 +763,11 @@ Page {
                                     rowCheck.checked = Qt.binding(() => row.included);
                                 }
                             }
+                        }
+                        // The cover's slot; the cover itself is drawn over
+                        // it below, two lines tall.
+                        Item {
+                            Layout.preferredWidth: root.coverSlotWidth
                         }
                         Item {
                             Layout.preferredWidth: root.chipSlotWidth

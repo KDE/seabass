@@ -403,6 +403,43 @@ public:
         return m_roots.last();
     }
 
+    // stickCopy, with one real cover under the stick's PIONEER/Artwork that
+    // every Engine track names (the anonymized fixture has its art
+    // stripped): the Engine reader's AlbumArt.hash route, as Engine DJ's
+    // import writes it. Returns the stick root; the cover's path is
+    // stickRoot + "/PIONEER/Artwork/00001/seabass-test-cover.png".
+    Q_INVOKABLE QString stickCopyWithEngineCovers(const QString &fixtureRoot)
+    {
+        namespace fs = std::filesystem;
+        const QString stick = stickCopy(fixtureRoot);
+        if (stick.isEmpty()) {
+            return {};
+        }
+        const fs::path root = seabass::gui::pathFromQString(stick);
+        const fs::path cover = root / "PIONEER" / "Artwork" / "00001" / "seabass-test-cover.png";
+        std::error_code ec;
+        fs::create_directories(cover.parent_path(), ec);
+        QImage image(64, 64, QImage::Format_RGB32);
+        image.fill(QColor(40, 140, 200));
+        if (ec || !image.save(QString::fromStdString(seabass::pathToUtf8(cover)))) {
+            return {};
+        }
+        sqlite3 *db = nullptr;
+        const std::string file = seabass::pathToUtf8(root / "Engine Library" / "Database2" / "m.db");
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        const bool ok = sqlite3_exec(db,
+                                     "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES "
+                                     "(99998, '/PIONEER/Artwork/00001/seabass-test-cover.png', NULL); "
+                                     "UPDATE Track SET albumArtId = 99998;",
+                                     nullptr, nullptr, nullptr)
+            == SQLITE_OK;
+        sqlite3_close(db);
+        return ok ? stick : QString();
+    }
+
     Q_INVOKABLE QStringList rekordboxTrackIds(const QString &pioneerRoot, int count)
     {
         QStringList ids;

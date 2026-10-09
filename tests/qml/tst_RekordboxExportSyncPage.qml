@@ -45,7 +45,7 @@ TestCase {
         section: 257, sectionIndex: 258, kind: 259, key: 260, title: 261, artist: 262, detail: 263,
         reason: 264, isConflict: 265, rekordboxChoiceLabel: 266, engineChoiceLabel: 267, resolvedSide: 268,
         included: 269, dependsOn: 270, staged: 271, stagedDescription: 272, direction: 273, fromConflict: 274,
-        details: 275,
+        details: 275, hasTrack: 276, artworkPath: 277, fallbackArtworkPath: 278,
     })
 
     Component {
@@ -68,8 +68,11 @@ TestCase {
         failOnWarning(/Cannot read property/);
     }
 
-    function openOnAFreshCopy() {
-        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+    // withCovers: every Engine track names one real cover on the copy
+    // (StickFixture::stickCopyWithEngineCovers).
+    function openOnAFreshCopy(withCovers) {
+        const stick = withCovers ? stickFixture.stickCopyWithEngineCovers(testCase.fixtureRoot)
+                                 : stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");
         const page = createTemporaryObject(pageComponent, testCase,
             {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
@@ -278,6 +281,60 @@ TestCase {
         compare(answered, conflict);
     }
 
+    // The first line says what the page is for; the overview bar's legend
+    // counts what the model holds, by category, and leaves out what is
+    // empty; the conflicts are not in it.
+    function test_explanationAndOverview() {
+        const page = openOnAFreshCopy();
+        const explanation = findChild(page.header, "explanationLabel");
+        verify(explanation.visible);
+        compare(explanation.text, "Rekordbox has changed the library on this stick. This page brings everything back "
+                + "in step with Engine.");
+        compare(explanation.color, Theme.text);
+        verify(explanation.mapToItem(page, 0, 0).y < findChild(page.header, "introLabel").mapToItem(page, 0, 0).y,
+               "it comes before the intro");
+        // Counted here off the rows.
+        let added = 0, created = 0, changed = 0, removed = 0, other = 0;
+        for (let i = 0; i < rowCount(page); ++i) {
+            const section = rowData(page, i, "section");
+            const kind = rowData(page, i, "kind");
+            if (section === "tracksToAdd") {
+                ++added;
+            } else if (section === "tracksToRemove" || kind === "removeMember" || kind.startsWith("delete")) {
+                ++removed;
+            } else if (kind.startsWith("create")) {
+                ++created;
+            } else if (kind === "renamePlaylist") {
+                ++other;
+            } else if (["membership", "metadataToEngine", "cuesToEngine", "restoresToRekordbox"].indexOf(section) >= 0) {
+                ++changed;
+            }
+        }
+        compare(changed, 952);
+        compare(created, 1);
+        compare(findChild(findChildWhere(page.header, (o) => o.objectName === "overviewLegend_newPlaylists"),
+                          "overviewLegendText").text, "1 new playlist");
+        const expected = {newTracks: added, newPlaylists: created, changed: changed, removed: removed, other: other};
+        const labels = {newTracks: "new tracks", newPlaylists: "new playlists", changed: "changed", removed: "removed",
+                        other: "other"};
+        verify(findChild(page.header, "overview").visible);
+        for (const key in expected) {
+            compare(page.controller.categoryCounts[key], expected[key], key);
+            const entry = findChildWhere(page.header, (o) => o.objectName === "overviewLegend_" + key);
+            verify(entry !== null, key + " has a legend entry");
+            compare(entry.visible, expected[key] > 0, key + " shows only with something in it");
+            // One of a kind is said in the singular.
+            const label = expected[key] === 1 ? labels[key].replace(/s$/, "") : labels[key];
+            compare(findChild(entry, "overviewLegendText").text, expected[key] + " " + label);
+            const segment = findChildWhere(page.header, (o) => o.objectName === "overviewSegment_" + key);
+            compare(segment.visible, expected[key] > 0);
+        }
+        // To scale: changed is most of the bar.
+        const bar = findChild(page.header, "overviewBar");
+        const changedSegment = findChildWhere(page.header, (o) => o.objectName === "overviewSegment_changed");
+        verify(changedSegment.width > bar.width * 0.9, changedSegment.width + " of " + bar.width);
+    }
+
     // The conflicts' header answers every one of them, and takes every
     // answer back.
     function test_everyConflictAnsweredFromTheSectionHeader() {
@@ -436,6 +493,10 @@ TestCase {
         compare(findChild(page.header, "introLabel").text,
                 "Compared with how this stick looked when Seabass last saved it, export 15132.");
         compare(page.firstSection, "conflicts");
+        // Nothing left to write or decide but the conflicts: no bar, and
+        // the first line still asks.
+        compare(findChild(page.header, "overview").visible, false);
+        compare(page.controller.proposalEmpty, false);
         const undo = findChild(page.header, "undoButton");
         verify(undo.visible, "Undo is offered");
         verify(undo.enabled);
@@ -487,11 +548,60 @@ TestCase {
         compare(leftOf(page, findChild(rowItem(page, 0), "rowTitle")), leftOf(page, findChild(rowItem(page, create), "rowTitle")));
     }
 
+    // A track's row shows its cover where the model names one, the
+    // placeholder square where it names none; a playlist's row leaves the
+    // slot empty; the titles stay in one column either way.
+    function test_trackRowsShowTheirCovers() {
+        const page = openOnAFreshCopy(true);
+        // The conflicts at the top are Engine rows rekordbox no longer
+        // lists: Engine's copy, so Engine's cover.
+        compare(rowData(page, 0, "hasTrack"), true);
+        const url = rowData(page, 0, "artworkPath");
+        verify(url.indexOf("file:") === 0, url);
+        verify(url.indexOf("seabass-test-cover.png") > 0, url);
+        let item = rowItem(page, 0);
+        const slot = findChild(item, "rowCoverSlot");
+        verify(slot.visible);
+        const art = findChild(item, "rowArtwork");
+        compare(art.source.toString(), url);
+        tryCompare(art, "showing", "source", 5000, "the cover loads");
+        verify(findChild(art, "artworkImage").sourceSize.width > 0, "decoded at the size it is drawn");
+        compare(slot.width, page.coverSide);
+        // A membership's track is rekordbox's, whose cover the fixture
+        // names but does not have (the anonymizer strips the images): the
+        // load fails and the placeholder square shows, never a broken frame.
+        const member = firstRowWhere(page, (i) => rowData(page, i, "kind") === "addMember");
+        const memberUrl = rowData(page, member, "artworkPath");
+        verify(memberUrl.indexOf("/PIONEER/Artwork/") > 0, memberUrl);
+        item = rowItem(page, member);
+        verify(findChild(item, "rowCoverSlot").visible, "the placeholder square");
+        const memberArt = findChild(item, "rowArtwork");
+        compare(memberArt.source.toString(), memberUrl);
+        tryCompare(memberArt, "sourceFailed", true, 5000, "the named file is not there");
+        compare(memberArt.showing, "");
+        // A playlist's row: no slot drawn, its title in the same column.
+        const create = createRow(page);
+        compare(rowData(page, create, "hasTrack"), false);
+        compare(rowData(page, create, "artworkPath"), "");
+        const createItem = rowItem(page, create);
+        compare(findChild(createItem, "rowCoverSlot").visible, false);
+        compare(leftOf(page, findChild(createItem, "rowTitle")), leftOf(page, findChild(rowItem(page, member), "rowTitle")));
+        if (screenshotDir && screenshotDir.length > 0) {
+            listOf(page).positionViewAtBeginning();
+            const headerDetails = findChild(page.header, "headerDetails");
+            tryVerify(() => headerDetails.visible && headerDetails.height === headerDetails.implicitHeight, 2000);
+            tryCompare(findChild(rowItem(page, 0), "rowArtwork"), "showing", "source", 5000);
+            waitForRendering(page);
+            wait(300);
+            grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-covers.png");
+        }
+    }
+
     function test_screenshot() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");
         }
-        const page = openOnAFreshCopy();
+        const page = openOnAFreshCopy(true);
         waitForRendering(page);
         wait(100);
         grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page.png");
