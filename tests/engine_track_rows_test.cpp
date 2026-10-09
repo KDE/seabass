@@ -24,12 +24,42 @@
 // And over a fresh 2.18 database, where ChangeLog is a table naming
 // tracks and PerformanceData a view: the ChangeLog rows stay with their
 // trackId set to NULL, as the schema's ON DELETE SET NULL asks.
+//
+// createEngineTrack adds a row to an existing library, over a second copy
+// of the fixture with two WAV files written beside it (the fixture has no
+// audio), one at 48 kHz and one at 44.1 kHz, both read by TagLib for their
+// rate:
+//
+// - the row reads back through LibdjinteropEngineReader with the title,
+//   artist, BPM, key, duration, rating, comment and path it was given;
+// - it alone is left for the player to analyse (isAnalyzed 0, NULL
+//   trackData, overviewWaveFormData and beatData); the 350 analysed rows
+//   of the fixture stay 350 (the whole-library UPDATE the creator runs
+//   would make that 0: this is the red check for the per-id marking);
+// - its cues sit at the file's own sample offsets: Engine keeps a cue as
+//   a sample offset (quickCues, loops, the main cue), so 1000 ms is 48000
+//   samples in a 48 kHz file and 44100 in a 44.1 kHz one. A row waiting
+//   for analysis has no trackData and so records no rate, and the reader
+//   then guesses 44.1 kHz: the 48 kHz row's cues read back 48000/44100
+//   times late. Pinned as what the reader does today, not as right;
+// - pdbImportKey 0, dateAdded the time of the call, the Information row
+//   single and byte for byte as before;
+// - a path the library already has, a write root with no library, a file
+//   that is not there and a missing sample rate are refused, adding
+//   nothing; markForDeviceAnalysis refuses an unknown or repeated id and
+//   rolls back;
+// - a library whose one Information row is at id 2 takes a row and keeps
+//   its Information row at 2; one with two Information rows is refused.
 
 #include <cassert>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -40,6 +70,10 @@
 
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#if defined(SEABASS_HAVE_TAGLIB)
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
@@ -144,6 +178,100 @@ bool same(const std::vector<DanglingPlaylistEntries> &a, const std::vector<Dangl
         }
     }
     return true;
+}
+
+// A PCM WAV of silence: 16-bit stereo, `seconds` long, at `rate` Hz.
+void writeWav(const fs::path &file, std::uint32_t rate, std::uint32_t seconds)
+{
+    const std::uint16_t channels = 2;
+    const std::uint16_t bits = 16;
+    const std::uint32_t byteRate = rate * channels * bits / 8;
+    const std::uint32_t dataBytes = byteRate * seconds;
+    std::ofstream out(file, std::ios::binary);
+    const auto u32 = [&](std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) {
+            out.put(static_cast<char>((v >> (8 * i)) & 0xff));
+        }
+    };
+    const auto u16 = [&](std::uint16_t v) {
+        out.put(static_cast<char>(v & 0xff));
+        out.put(static_cast<char>(v >> 8));
+    };
+    out.write("RIFF", 4);
+    u32(36 + dataBytes);
+    out.write("WAVEfmt ", 8);
+    u32(16);
+    u16(1);  // PCM
+    u16(channels);
+    u32(rate);
+    u32(byteRate);
+    u16(static_cast<std::uint16_t>(channels * bits / 8));
+    u16(bits);
+    out.write("data", 4);
+    u32(dataBytes);
+    const std::string silence(dataBytes, '\0');
+    out.write(silence.data(), static_cast<std::streamsize>(silence.size()));
+    assert(out.good());
+}
+
+// A 1x1 PNG, the smallest image a cover check takes for one.
+void writePng(const fs::path &file)
+{
+    static const unsigned char Png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+        0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d,
+        0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char *>(Png), sizeof(Png));
+    assert(out.good());
+}
+
+// The file's own rate, through TagLib when the build has it.
+double probedRate(const fs::path &file, double written)
+{
+#if defined(SEABASS_HAVE_TAGLIB)
+    infrastructure::audio::TagLibMetadataProbe probe;
+    const auto meta = probe.read(pathToUtf8(file));
+    assert(meta.has_value() && "TagLib reads the WAV");
+    assert(meta->sampleRate == static_cast<int>(written) && "and its rate is the one written");
+    return meta->sampleRate;
+#else
+    std::cout << "(built without TagLib: using the rate written into " << pathToUtf8(file.filename()) << ")\n";
+    return written;
+#endif
+}
+
+bool near(double a, double b)
+{
+    return std::fabs(a - b) < 1e-6;
+}
+
+std::optional<std::string> text(const std::string &file, const std::string &sql)
+{
+    sqlite3 *handle = nullptr;
+    const int opened = sqlite3_open_v2(file.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr);
+    assert(opened == SQLITE_OK);
+    sqlite3_stmt *stmt = nullptr;
+    const int prepared = sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr);
+    assert(prepared == SQLITE_OK);
+    std::optional<std::string> out;
+    if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_type(stmt, 0) != SQLITE_NULL) {
+        out = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    return out;
+}
+
+const domain::Track *byId(const std::vector<domain::Track> &tracks, std::int64_t id)
+{
+    for (const auto &t : tracks) {
+        if (t.sourceId == std::to_string(id)) {
+            return &t;
+        }
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -340,6 +468,294 @@ int main(int argc, char **argv)
         assert(oldAfter.begin()->second == (std::vector<std::int64_t>{id['a'], id['c']}) && "a and c, in order");
     }
     std::cout << "case 7 (schema 2.18: ChangeLog kept with trackId NULL) OK\n";
+
+    // 8. createEngineTrack, over a second copy of the fixture with audio
+    //    files beside it, as on a stick: <root>/Engine Library and
+    //    <root>/Music.
+    {
+        const fs::path root = scratch / "create";
+        const fs::path lib = root / "Engine Library";
+        fs::create_directories(root / "Music");
+        fs::copy(fixture / "engine", lib, fs::copy_options::recursive);
+        const std::string libUtf8 = pathToUtf8(lib);
+        const std::string cdb = pathToUtf8(lib / "Database2" / "m.db");
+        const fs::path wav48 = root / "Music" / "Forty Eight.wav";
+        const fs::path wav44 = root / "Music" / pathFromUtf8("Caf\xc3\xa9 \xc3\x84.wav");
+        writeWav(wav48, 48000, 4);
+        writeWav(wav44, 44100, 4);
+        const fs::path png = root / "Music" / "cover.png";
+        writePng(png);
+        const double rate48 = probedRate(wav48, 48000.0);
+        const double rate44 = probedRate(wav44, 44100.0);
+
+        // The fixture as committed: 1564 tracks, 350 of them analysed, one
+        // Information row at id 1.
+        assert(scalar(cdb, "SELECT count(*) FROM Track;") == 1564);
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 1;") == 350);
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 0;") == 1214);
+        assert(scalar(cdb, "SELECT count(*) FROM Information;") == 1 && scalar(cdb, "SELECT id FROM Information;") == 1);
+        std::string err;
+        const auto infoBefore = readEngineInformation(cdb, &err);
+        assert(infoBefore && err.empty() && infoBefore->ids == std::vector<std::int64_t>{1});
+
+        // Hot cue on pad 1 at 1 s, a hot loop on pad 2 from 1.5 s to 2 s,
+        // a memory cue at 3 s (Engine: the first free pad, 3, and the main
+        // cue).
+        const auto makeTrack = [&](const fs::path &file, const std::string &title, double rate) {
+            NewEngineTrack t;
+            t.source.title = title;
+            t.source.artist = "Art\xc3\xafst";
+            t.source.bpm = 126.0;
+            t.source.key = "Fm";
+            t.source.durationSeconds = 4.0;
+            t.source.bitrate = 1411;
+            t.source.rating = 4;
+            t.source.comment = "made by hand";
+            t.source.filePath = pathToUtf8(file);
+            std::error_code sizeEc;
+            const auto size = fs::file_size(file, sizeEc);
+            t.source.fileSizeBytes = sizeEc ? 0 : size;
+            domain::CuePoint hot{domain::CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "one"};
+            domain::CuePoint loop{domain::CuePoint::Kind::Hot, 2, 1500.0, "#00FF00", "loop"};
+            loop.isLoop = true;
+            loop.loopEndMs = 2000.0;
+            domain::CuePoint memory{domain::CuePoint::Kind::Memory, 0, 3000.0, "", ""};
+            t.source.cues = {hot, loop, memory};
+            t.sampleRateHz = rate;
+            t.realEngineLibraryPath = libUtf8;
+            return t;
+        };
+
+        const auto callStart = std::chrono::system_clock::now();
+        const auto secondsNow = [](std::chrono::system_clock::time_point at) {
+            return std::chrono::duration_cast<std::chrono::seconds>(at.time_since_epoch()).count();
+        };
+        EngineTrackCover cover;
+        err = "stale";
+        const std::int64_t id48 = createEngineTrack(libUtf8, makeTrack(wav48, "Forty Eight", rate48), &cover, &err);
+        if (id48 < 0) {
+            std::cerr << "createEngineTrack: " << err << "\n";
+        }
+        assert(id48 == 1575 && err.empty() && "the next id after the fixture's 1574");
+        assert(!cover.written && cover.problem.empty() && cover.filesWritten.empty() && "no cover asked for");
+
+        std::vector<std::string> protectedFiles;
+        EngineTrackCover cover44;
+        cover44.beforeWrite = [&](const std::string &f) { protectedFiles.push_back(f); };
+        NewEngineTrack t44 = makeTrack(wav44, "Caf\xc3\xa9", rate44);
+        t44.source.artworkPath = pathToUtf8(png);
+        const std::int64_t id44 = createEngineTrack(libUtf8, t44, &cover44, &err);
+        if (id44 < 0) {
+            std::cerr << "createEngineTrack: " << err << "\n";
+        }
+        assert(id44 == 1576 && err.empty());
+        const auto callEnd = std::chrono::system_clock::now();
+        if (!cover44.written) {
+            std::cerr << "cover: " << cover44.problem << "\n";
+        }
+        assert(cover44.written && cover44.filesWritten.size() == 1 && protectedFiles == cover44.filesWritten
+               && "the cover went in, its one file announced before it was written");
+        assert(fs::exists(pathFromUtf8(cover44.filesWritten[0])));
+        assert(scalar(cdb, "SELECT count(*) FROM Track;") == 1566);
+        std::cout << "case 8 (two rows created, ids 1575 and 1576, the second with its cover) OK\n";
+
+        // 9. The rows as libdjinterop wrote them and Engine's triggers
+        //    finished them.
+        for (const std::int64_t id : {id48, id44}) {
+            const std::string where = " FROM Track WHERE id = " + std::to_string(id) + ";";
+            assert(scalar(cdb, "SELECT pdbImportKey" + where) == 0 && "no player import is faked");
+            assert(scalar(cdb, "SELECT isAnalyzed" + where) == 0);
+            assert(scalar(cdb, "SELECT originTrackId" + where) == id && "Engine's trigger gave it its own id");
+            assert(text(cdb, "SELECT originDatabaseUuid" + where) == std::optional<std::string>(
+                       "20e9f3a8-b5e1-424c-bed3-95cfcbab6655"));
+            assert(scalar(cdb, "SELECT dateCreated" + where) == 0);
+            assert(scalar(cdb, "SELECT isMetadataImported" + where) == 1 && "as libdjinterop writes it");
+            const std::int64_t added = scalar(cdb, "SELECT dateAdded" + where);
+            assert(added >= secondsNow(callStart) && added <= secondsNow(callEnd) + 1 && "dateAdded is the call");
+            const auto blobs = rows(cdb, "SELECT trackData, overviewWaveFormData, beatData, quickCues IS NOT NULL, "
+                                         "loops IS NOT NULL FROM PerformanceData WHERE trackId = "
+                                         + std::to_string(id) + ";");
+            assert(blobs.size() == 1);
+            assert(blobs[0][0] == -1 && blobs[0][1] == -1 && blobs[0][2] == -1 && "the analysis blobs are NULL");
+            assert(blobs[0][3] == 1 && blobs[0][4] == 1 && "the cues and loops are kept");
+        }
+        assert(text(cdb, "SELECT path FROM Track WHERE id = " + std::to_string(id48) + ";")
+               == std::optional<std::string>("../Music/Forty Eight.wav"));
+        assert(text(cdb, "SELECT path FROM Track WHERE id = " + std::to_string(id44) + ";")
+               == std::optional<std::string>("../Music/Caf\xc3\xa9 \xc3\x84.wav"));
+        assert(text(cdb, "SELECT filename FROM Track WHERE id = " + std::to_string(id44) + ";")
+               == std::optional<std::string>("Caf\xc3\xa9 \xc3\x84.wav"));
+        // Only these two: the 350 the player analysed are still analysed.
+        // A library-wide "UPDATE Track SET isAnalyzed = 0" leaves 0 here.
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 1;") == 350);
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 0;") == 1216);
+        assert(scalar(cdb, "SELECT count(*) FROM PerformanceData WHERE trackData IS NOT NULL;") == 1566 - 1213
+               && "every analysed blob of the fixture is still there");
+        const auto infoAfter = readEngineInformation(cdb, &err);
+        assert(infoAfter && infoAfter->ids == infoBefore->ids && infoAfter->values == infoBefore->values
+               && "the Information row, single and unchanged");
+        std::cout << "case 9 (pdbImportKey 0, dateAdded now, unanalysed alone, 350 analysed kept, Information unchanged) OK\n";
+
+        // 10. Read back as Seabass reads a stick.
+        LibdjinteropEngineReader reader(libUtf8);
+        const auto tracks = reader.readAll();
+        assert(tracks.size() == 1566);
+        for (const std::int64_t id : {id48, id44}) {
+            const domain::Track *t = byId(tracks, id);
+            assert(t != nullptr);
+            assert(t->artist == "Art\xc3\xafst");
+            assert(t->bpm == 126.0);
+            assert(t->key == "Fm");
+            assert(t->durationSeconds == 4.0);
+            assert(t->rating == std::optional<int>(4));
+            assert(t->comment == "made by hand");
+        }
+        assert(byId(tracks, id48)->title == "Forty Eight");
+        assert(byId(tracks, id44)->title == "Caf\xc3\xa9");
+        assert(byId(tracks, id48)->filePath == pathToUtf8(wav48));
+        assert(byId(tracks, id44)->filePath == pathToUtf8(wav44));
+        std::cout << "case 10 (title, artist, BPM, key, duration, rating, comment, path read back) OK\n";
+
+        // 11. The cues, as sample offsets: what the player reads. Engine
+        //     keeps them at the file's own rate, which is the assumption
+        //     the whole row rests on.
+        {
+            auto engine = djinterop::engine::load_database(libUtf8);
+            const auto check = [&](std::int64_t id, double pad1, double loopIn, double loopOut, double pad3) {
+                auto t = engine.track_by_id(id);
+                assert(t);
+                const auto hot = t->hot_cues();
+                assert(hot.size() == 8);
+                assert(hot[0] && hot[0]->sample_offset == pad1 && hot[0]->label == "one");
+                assert(!hot[1] && "pad 2 is a loop, not a cue");
+                assert(hot[2] && hot[2]->sample_offset == pad3 && "the memory cue took the first free pad");
+                for (size_t i = 3; i < 8; ++i) {
+                    assert(!hot[i]);
+                }
+                const auto loops = t->loops();
+                assert(loops[1] && loops[1]->start_sample_offset == loopIn && loops[1]->end_sample_offset == loopOut);
+                assert(t->main_cue() == std::optional<double>(pad3) && "the memory cue is the main cue too");
+            };
+            check(id48, 48000.0, 72000.0, 96000.0, 144000.0);
+            check(id44, 44100.0, 66150.0, 88200.0, 132300.0);
+        }
+        // Through the reader: right at 44.1 kHz. At 48 kHz the row records
+        // no rate (no trackData until the player analyses), so the reader
+        // takes its 44.1 kHz guess and every cue reads 48000/44100 late:
+        // 1000 ms reads 1088.435... ms. What the reader does today, pinned
+        // so a reader that learns the file's rate turns this red.
+        const auto cueAt = [](const domain::Track &t, bool loop, int pad) -> const domain::CuePoint * {
+            for (const auto &c : t.cues) {
+                if (c.kind == domain::CuePoint::Kind::Hot && c.hotCueNumber == pad && c.isLoop == loop) {
+                    return &c;
+                }
+            }
+            return nullptr;
+        };
+        {
+            const domain::Track &t = *byId(tracks, id44);
+            assert(cueAt(t, false, 1) && near(cueAt(t, false, 1)->positionMs, 1000.0));
+            assert(cueAt(t, true, 2) && near(cueAt(t, true, 2)->positionMs, 1500.0)
+                   && near(cueAt(t, true, 2)->loopEndMs, 2000.0));
+            assert(cueAt(t, false, 3) && near(cueAt(t, false, 3)->positionMs, 3000.0));
+        }
+        {
+            const domain::Track &t = *byId(tracks, id48);
+            assert(cueAt(t, false, 1) && near(cueAt(t, false, 1)->positionMs, 1088.4353741496598));
+            assert(cueAt(t, true, 2) && near(cueAt(t, true, 2)->positionMs, 1632.6530612244899)
+                   && near(cueAt(t, true, 2)->loopEndMs, 2176.8707482993197));
+            assert(cueAt(t, false, 3) && near(cueAt(t, false, 3)->positionMs, 3265.3061224489797));
+        }
+        std::cout << "case 11 (cues at the file's sample offsets, 48 kHz and 44.1 kHz; the reader's 44.1 kHz guess "
+                     "pinned) OK\n";
+
+        // 12. Refused, adding nothing.
+        const auto refused = [&](const std::string &writeRoot, const NewEngineTrack &t, const std::string &expect) {
+            EngineTrackCover c;
+            std::string e;
+            const std::int64_t got = createEngineTrack(writeRoot, t, &c, &e);
+            if (got != -1 || e.find(expect) == std::string::npos) {
+                std::cerr << "expected a refusal with \"" << expect << "\", got " << got << ": " << e << "\n";
+            }
+            assert(got == -1 && e.find(expect) != std::string::npos);
+            assert(scalar(cdb, "SELECT count(*) FROM Track;") == 1566);
+            assert(scalar(cdb, "SELECT count(*) FROM PerformanceData;") == 1568);
+        };
+        refused(libUtf8, makeTrack(wav48, "Again", rate48), "already names ../Music/Forty Eight.wav");
+        refused(pathToUtf8(root / "no such library"), makeTrack(wav48, "Nowhere", rate48), "no Engine 2.x or 3.x database");
+        refused(pathToUtf8(png), makeTrack(wav48, "A file", rate48), "no Engine 2.x or 3.x database");
+        refused(pathToUtf8(root), makeTrack(wav48, "Not a library", rate48), "no Engine 2.x or 3.x database");
+        assert(!fs::exists(root / "Database2") && "and nothing was created there");
+        refused(libUtf8, makeTrack(root / "Music" / "gone.wav", "Gone", rate48), "is not there");
+        {
+            fs::path fresh = root / "Music" / "No Rate.wav";
+            writeWav(fresh, 48000, 1);
+            refused(libUtf8, makeTrack(fresh, "No rate", 0.0), "no sample rate");
+        }
+        bool threw = false;
+        try {
+            std::string e;
+            (void)createEngineTrack(libUtf8, makeTrack(wav48, "x", rate48), nullptr, &e);
+        } catch (const std::invalid_argument &) {
+            threw = true;
+        }
+        assert(threw && "the cover out-parameter is required");
+        std::cout << "case 12 (an existing path, no library, a missing file, no rate: refused, nothing added) OK\n";
+
+        // 13. markForDeviceAnalysis refuses an unknown or repeated id, and
+        //     a refused call rolls back the good id in it.
+        const std::int64_t analysed = scalar(cdb, "SELECT min(id) FROM Track WHERE isAnalyzed = 1;");
+        err.clear();
+        assert(markForDeviceAnalysis(cdb, {analysed, 99999}, &err) == -1 && err.find("no track id=99999") != std::string::npos);
+        assert(scalar(cdb, "SELECT isAnalyzed FROM Track WHERE id = " + std::to_string(analysed) + ";") == 1);
+        assert(scalar(cdb, "SELECT trackData IS NOT NULL FROM PerformanceData WHERE trackId = " + std::to_string(analysed)
+                      + ";")
+               == 1 && "rolled back: its analysis is still there");
+        assert(markForDeviceAnalysis(cdb, {analysed, analysed}, &err) == -1 && !err.empty());
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 1;") == 350);
+        err = "stale";
+        assert(markForDeviceAnalysis(cdb, {analysed}, &err) == 1 && err.empty());
+        assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 1;") == 349 && "that one, and only that one");
+        std::cout << "case 13 (markForDeviceAnalysis: unknown and repeated ids refused and rolled back; one id marks one) OK\n";
+
+        // 14. The Information row's id is not assumed: a player's has been
+        //     seen at 2, and a library with one row there takes a new
+        //     track and keeps its row where it was. Two rows are refused
+        //     before anything is written.
+        {
+            const fs::path lib2 = root / "Engine Library 2";
+            fs::copy(fixture / "engine", lib2, fs::copy_options::recursive);
+            const std::string lib2Utf8 = pathToUtf8(lib2);
+            const std::string db2 = pathToUtf8(lib2 / "Database2" / "m.db");
+            const auto exec = [&](const std::string &sql) {
+                sqlite3 *h = nullptr;
+                assert(sqlite3_open_v2(db2.c_str(), &h, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+                assert(sqlite3_exec(h, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+                sqlite3_close(h);
+            };
+            exec("UPDATE Information SET id = 2;");
+            NewEngineTrack t = makeTrack(wav48, "At two", rate48);
+            t.realEngineLibraryPath = lib2Utf8;
+            EngineTrackCover c;
+            std::string e = "stale";
+            const std::int64_t id = createEngineTrack(lib2Utf8, t, &c, &e);
+            if (id < 0) {
+                std::cerr << "createEngineTrack: " << e << "\n";
+            }
+            assert(id == 1575 && e.empty());
+            assert(scalar(db2, "SELECT count(*) FROM Information;") == 1 && scalar(db2, "SELECT id FROM Information;") == 2);
+            exec("INSERT INTO Information (uuid, schemaVersionMajor, schemaVersionMinor, schemaVersionPatch, "
+                 "currentPlayedIndiciator, lastRekordBoxLibraryImportReadCounter) "
+                 "SELECT uuid, schemaVersionMajor, schemaVersionMinor, schemaVersionPatch, currentPlayedIndiciator, "
+                 "lastRekordBoxLibraryImportReadCounter FROM Information;");
+            const std::int64_t tracks = scalar(db2, "SELECT count(*) FROM Track;");
+            NewEngineTrack u = makeTrack(wav44, "Two rows", rate44);
+            u.realEngineLibraryPath = lib2Utf8;
+            assert(createEngineTrack(lib2Utf8, u, &c, &e) == -1 && e.find("Engine expects exactly one row") != std::string::npos);
+            assert(scalar(db2, "SELECT count(*) FROM Track;") == tracks && "nothing added");
+        }
+        std::cout << "case 14 (an Information row at id 2 is accepted and stays; two rows are refused) OK\n";
+    }
 
     std::cout << "engine_track_rows_test: all cases passed\n";
     return 0;

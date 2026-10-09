@@ -26,6 +26,14 @@ public:
 
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
+    // The same write at a sample rate the caller read from the audio file,
+    // for a row that does not record one: a row waiting for the player's
+    // analysis has no trackData, and writeHotCues() would then place
+    // every cue at its 44.1 kHz guess, 9% early in a 48 kHz file. A rate
+    // of 0 or less is refused (std::invalid_argument).
+    void writeHotCuesAtSampleRate(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
+                                  double sampleRateHz);
+
     // The two authored fields that are not cues. Rating in stars (0 to
     // 5, the scale domain::Track uses); Engine's own 0-to-100 scale is
     // applied here rather than by the caller. Either may be absent, and
@@ -51,6 +59,9 @@ public:
     void setLastPlayedAt(const std::string &trackSourceId, std::chrono::system_clock::time_point when);
 
 private:
+    void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
+                   std::optional<double> knownSampleRate);
+
     // The open library, kept rather than reopened per call.
     //
     // load_database() is a full SQLite open plus schema detection, and

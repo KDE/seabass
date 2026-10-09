@@ -109,6 +109,23 @@ void LibdjinteropEngineCueWriter::writeAnnotation(const std::string &trackSource
 void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
                                                 const std::vector<domain::CuePoint> &cues)
 {
+    writeCues(trackSourceId, cues, std::nullopt);
+}
+
+void LibdjinteropEngineCueWriter::writeHotCuesAtSampleRate(const std::string &trackSourceId,
+                                                            const std::vector<domain::CuePoint> &cues,
+                                                            double sampleRateHz)
+{
+    if (!(sampleRateHz > 0.0)) {
+        throw std::invalid_argument("writeHotCuesAtSampleRate: no sample rate for track id=" + trackSourceId);
+    }
+    writeCues(trackSourceId, cues, sampleRateHz);
+}
+
+void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
+                                             const std::vector<domain::CuePoint> &cues,
+                                             std::optional<double> knownSampleRate)
+{
     auto &db = database();
 
     auto track = db.track_by_id(std::stoll(trackSourceId));
@@ -116,18 +133,23 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
         throw std::runtime_error("no Engine track with id=" + trackSourceId);
     }
 
-    // Some tracks' sample_rate() throws even though set_hot_cues() below
-    // works fine (same libdjinterop decoder quirk documented in the Engine
-    // reader: it lives in a different blob than the one hot cues use).
-    // Fall back to 44.1kHz -- see libdjinterop_engine_reader.cpp for the
-    // same reasoning.
+    // The caller's rate when it read one from the file. Otherwise the
+    // row's: some tracks' sample_rate() throws even though set_hot_cues()
+    // below works fine (same libdjinterop decoder quirk documented in the
+    // Engine reader: it lives in a different blob than the one hot cues
+    // use). Fall back to 44.1kHz; see libdjinterop_engine_reader.cpp
+    // for the same reasoning.
     double sampleRate = 44100.0;
-    try {
-        if (auto rate = track->sample_rate()) {
-            sampleRate = *rate;
+    if (knownSampleRate) {
+        sampleRate = *knownSampleRate;
+    } else {
+        try {
+            if (auto rate = track->sample_rate()) {
+                sampleRate = *rate;
+            }
+        } catch (const std::exception &) {
+            // fall back to the default above
         }
-    } catch (const std::exception &) {
-        // fall back to the default above
     }
 
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);

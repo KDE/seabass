@@ -1574,10 +1574,16 @@ set_tests_properties(progressive_catalog_read_test PROPERTIES LABELS "integratio
 
 # removeEngineTrackRows takes a track out of m.db with every row naming it
 # (PerformanceData, playlist and prepare-list entries, ChangeLog on 2.18),
-# over a copy of the fixture's Engine library and a fresh 2.18 database.
+# over a copy of the fixture's Engine library and a fresh 2.18 database;
+# createEngineTrack adds rows to a copy, at 48 kHz and 44.1 kHz.
 add_executable(engine_track_rows_test tests/engine_track_rows_test.cpp)
 target_include_directories(engine_track_rows_test PRIVATE src)
 target_link_libraries(engine_track_rows_test PRIVATE seabass_core SQLite::SQLite3)
+# createEngineTrack's cases read their WAV files' rate with TagLib, as a
+# caller would; without it they use the rate the test wrote.
+if(TARGET seabass_taglib)
+    target_link_libraries(engine_track_rows_test PRIVATE seabass_taglib)
+endif()
 add_test(NAME engine_track_rows_test COMMAND engine_track_rows_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(engine_track_rows_test PROPERTIES LABELS "integration")

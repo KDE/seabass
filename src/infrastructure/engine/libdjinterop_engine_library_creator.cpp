@@ -7,6 +7,7 @@
 
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/engine/engine_track_rows.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -579,42 +580,23 @@ std::string verifyInformationRowAtIdOne(const std::filesystem::path &databaseDir
     if (databaseFile.empty()) {
         return "the new Engine database was not written where it was expected.";
     }
-    const std::string dbPath = pathToUtf8(databaseFile);
-    sqlite3 *db = nullptr;
-    // READONLY: nothing here writes, and a wrong path must fail rather
+    // Read-only (readEngineInformation): a wrong path must fail rather
     // than leave a stray empty database behind for the copy to carry onto
-    // the stick.
-    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
-        const std::string message = db ? sqlite3_errmsg(db) : "could not open the new database";
-        sqlite3_close(db);
-        return "could not open the new Engine database to check its Information row: " + message;
+    // the stick. Its error carries SQLite's own words: a missing
+    // Information table is exactly the corruption this guard exists to
+    // catch, and "no such table: Information" is the whole diagnosis.
+    std::string why;
+    const std::optional<EngineInformationRows> information = readEngineInformation(pathToUtf8(databaseFile), &why);
+    if (!information) {
+        return "could not read back the new Engine database's Information row: " + why;
     }
-
-    // Prepared by hand rather than through local::Statement, which throws
-    // when a statement will not prepare: an exception leaving here would
-    // close nothing.
-    std::string verified;
-    sqlite3_stmt *check = nullptr;
-    if (sqlite3_prepare_v2(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;", -1, &check, nullptr)
-            != SQLITE_OK
-        || sqlite3_step(check) != SQLITE_ROW) {
-        // Carry SQLite's own words: a missing Information table is exactly
-        // the corruption this guard exists to catch, and "no such table:
-        // Information" is the whole diagnosis.
-        verified = "could not read back the new Engine database's Information row: " +
-                   std::string(sqlite3_errmsg(db));
-    } else {
-        const int rows = sqlite3_column_int(check, 0);
-        const int firstId = sqlite3_column_int(check, 1);
-        verified = (rows == 1 && firstId == 1)
-                       ? std::string()
-                       : "the new Engine database has " + std::to_string(rows) +
-                             " Information row(s), the first at id " + std::to_string(firstId) +
-                             ". Engine expects exactly one, at id 1.";
+    if (information->ids.size() == 1 && information->ids.front() == 1) {
+        return {};
     }
-    sqlite3_finalize(check);
-    sqlite3_close(db);
-    return verified;
+    return "the new Engine database has " + std::to_string(information->ids.size())
+        + " Information row(s), the first at id "
+        + std::to_string(information->ids.empty() ? 0 : information->ids.front())
+        + ". Engine expects exactly one, at id 1.";
 }
 
 }  // namespace
@@ -717,31 +699,10 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                     snapshot.file_bytes = track.fileSizeBytes;
                 }
 
-                std::error_code relError;
-                fs::path relative = fs::relative(pathFromUtf8(track.filePath), pathFromUtf8(directory), relError);
-                // fs::relative() does NOT report "no relation possible" as
-                // an error: per the standard it is lexically_relative()
-                // underneath, which returns an empty path when the two
-                // paths share no root -- different Windows drives, here,
-                // since this project's own rig creates the library on C:
-                // from tracks read off a stick's own drive letter.
-                // relError stays clear either way, confirmed directly
-                // (its message on this run: "De bewerking is voltooid",
-                // Dutch for "the operation completed successfully"), so
-                // checking it was never going to catch this; emptiness is
-                // the only signal fs::relative() actually gives.
-                //
-                // The fallback needs the generic spelling too, not just the
-                // usual case: track.filePath is a platform-native
-                // absolute path -- backslashes on Windows -- and
-                // libdjinterop's own get_filename() only ever splits on
-                // '/' (its own TODO says as much), so a raw backslash
-                // path reads as one filename with no directory in it at
-                // all, and if that "filename" happens to carry no dot
-                // either, create_track() throws "cannot auto-determine
-                // file type based on extension" for a track whose
-                // extension was never in question.
-                snapshot.relative_path = pathToGenericUtf8(relative.empty() ? pathFromUtf8(track.filePath) : relative);
+                // Relative to the library, in the generic spelling; the
+                // file's own path when the two share no root (another
+                // Windows drive). See engineRelativePath for both cases.
+                snapshot.relative_path = engineRelativePath(track.filePath, directory);
 
                 // Simple, approximate two-point beatgrid: assumes the track
                 // starts exactly on a downbeat at sample 0, then a second
