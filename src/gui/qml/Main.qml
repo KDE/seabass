@@ -573,9 +573,12 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
-            // Step 11 of docs/sync-after-rekordbox-export-plan.md pushes RekordboxExportSyncPage here.
-            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
-                console.info("Sync after Rekordbox Export requested for", stickLabel, rekordboxPath, enginePath)
+            // From the Sync group's card and from the stick header's \"Engine needs syncing\" badge.
+            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(rekordboxExportSyncPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
             onAppSettingsRequested: stackView.push(appSettingsPageComponent)
             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
                 stickLabel: stickLabel,
@@ -822,6 +825,19 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
                 hubLabel: "Sync Cue Points",
+            })
+        }
+    }
+
+    Component {
+        id: rekordboxExportSyncPageComponent
+        RekordboxExportSyncPage {
+            appSettingsController: appSettingsCtrl
+            onSyncCuePointsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(syncPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+                hubLabel: "Sync after Rekordbox Export",
             })
         }
     }

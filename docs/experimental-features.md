@@ -45,6 +45,16 @@ from day one.
   created library works correctly on real Denon hardware (he has a Prime
   GO+ to test against).
 
+- **Sync after Rekordbox Export** (added 2026-10-09): a page from the
+  Sync group's card, for a stick with both catalogs, that brings the
+  Engine library in line with what a rekordbox export changed: playlists,
+  tracks, membership, ratings, comments and cues, with the conflicts
+  asked and Engine's own left alone, then one save ("Sync Engine") that
+  also records what this stick looked like for next time. Writes Engine
+  rows and playlists Seabass has not written before, so it stays behind
+  the setting until the hardware rounds of
+  `docs/sync-after-rekordbox-export-plan.md` pass on real players.
+
 ## Graduated to stable
 
 All of these graduated together on 2026-09-17, on Sebastian's call: the
