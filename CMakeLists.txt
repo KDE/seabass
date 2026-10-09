@@ -378,6 +378,7 @@ add_library(seabass_core STATIC
     src/domain/tracks_in_no_playlist.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/playlist_diff.cpp
+    src/domain/rekordbox_baseline.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -569,6 +570,7 @@ add_library(seabass_core_testing STATIC
     src/domain/engine_cue_translation.cpp
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
+    src/domain/rekordbox_baseline.cpp
     src/domain/tracks_in_no_playlist.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
@@ -1908,6 +1910,15 @@ add_executable(playlist_diff_test
 )
 target_include_directories(playlist_diff_test PRIVATE src)
 add_test(NAME playlist_diff_test COMMAND playlist_diff_test)
+
+# The rekordbox baseline of Sync after Rekordbox Export: the B of its
+# three-way merge, built from what the readers give. Pure domain.
+add_executable(rekordbox_baseline_test
+    src/domain/rekordbox_baseline.cpp
+    tests/rekordbox_baseline_test.cpp
+)
+target_include_directories(rekordbox_baseline_test PRIVATE src)
+add_test(NAME rekordbox_baseline_test COMMAND rekordbox_baseline_test)
 
 add_executable(track_scope_test
     src/domain/track_scope.cpp
