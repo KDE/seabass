@@ -379,6 +379,7 @@ add_library(seabass_core STATIC
     src/domain/onelibrary_cue_table.cpp
     src/domain/playlist_diff.cpp
     src/domain/rekordbox_baseline.cpp
+    src/domain/engine_update_planning.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -572,6 +573,7 @@ add_library(seabass_core_testing STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/rekordbox_baseline.cpp
+    src/domain/engine_update_planning.cpp
     src/domain/tracks_in_no_playlist.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
@@ -1872,6 +1874,15 @@ add_executable(sync_planning_test
 target_link_libraries(sync_planning_test PRIVATE seabass_core_testing)
 target_include_directories(sync_planning_test PRIVATE src)
 add_test(NAME sync_planning_test COMMAND sync_planning_test)
+
+# Sync after Rekordbox Export's planner: the three-way merge of baseline,
+# rekordbox and Engine for tracks, playlists, membership and metadata.
+add_executable(engine_update_planning_test
+    tests/engine_update_planning_test.cpp
+)
+target_link_libraries(engine_update_planning_test PRIVATE seabass_core_testing)
+target_include_directories(engine_update_planning_test PRIVATE src)
+add_test(NAME engine_update_planning_test COMMAND engine_update_planning_test)
 
 add_executable(engine_cue_translation_test
     tests/engine_cue_translation_test.cpp
