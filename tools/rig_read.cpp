@@ -47,6 +47,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
+#include "rig_catalog.hpp"
 #include "rig_parts.hpp"
 
 namespace fs = std::filesystem;
@@ -142,8 +143,8 @@ int main(int argc, char **argv)
             }
             const fs::path engine = root / "Engine Library";
             if (fs::exists(engine / "Database2" / "m.db")) {
-                infrastructure::engine::LibdjinteropEngineReader engineReader(pathToUtf8(engine));
-                list("engine", engineReader);
+                rig::EngineReaderAtFileRates engineReader(engine);
+                list("engine", engineReader.reader());
             }
         } catch (const std::exception &e) {
             std::cout << "error: " << e.what() << "\n";
@@ -200,8 +201,8 @@ int main(int argc, char **argv)
             read("onelibrary", reader);
         }
         if (fs::exists(engine / "Database2" / "m.db") || fs::exists(engine / "m.db")) {
-            infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(engine));
-            read("engine", reader);
+            rig::EngineReaderAtFileRates reader(engine);
+            read("engine", reader.reader());
         }
         if (catalogs.empty()) {
             std::cout << "no catalog on the stick\nRIG RESULT: FAIL\n";
