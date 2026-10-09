@@ -132,6 +132,7 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
     m_archiveAttempt = 1;
     m_nameCollidedWith.clear();
     m_archiveChosenByName = false;
+    m_retargetAfterRun = false;
     m_archivePath = archivePathForLabel(backupDirectory, stickLabel, m_archiveAttempt);
     // The field starts out holding the stick's name rather than empty: it
     // is what the backup would be called anyway, and a filled field says
@@ -833,6 +834,11 @@ void StickBackupController::onRunFinished()
     std::shared_ptr<RunResult> result = takeResult(m_runWatcher, &thrown);
     m_writeHold.release();
     setActivity({});
+    // A name typed while this run wrote its archive: the page now targets
+    // the archive that name picks, before any preview below looks.
+    if (m_retargetAfterRun) {
+        retargetToTypedName();
+    }
     if (!thrown.isEmpty()) {
         setErrorMessage(thrown);
         emit actionFeedback(thrown, true);
@@ -991,15 +997,28 @@ void StickBackupController::setBackupName(const QString &name)
     // name stays exactly as it is: giving a backup a new name is how a
     // second one is made. The preview says which it is, and steps off a
     // name another stick's backup already has. Not while a run is in
-    // flight: that run writes the archive it started with.
-    if (!busy() && !m_backupDirectory.isEmpty()) {
-        m_archiveChosenByName = true;
-        m_archiveAttempt = 1;
-        m_nameCollidedWith.clear();
-        m_archivePath = namedArchivePath(m_archiveAttempt);
-        emit configuredChanged();
-        refreshPreview(true);
+    // flight: that run writes the archive it started with, and the name
+    // takes effect the moment it ends (onRunFinished), so a name typed
+    // during a run can never turn into a quiet rename of the old archive.
+    if (m_backupDirectory.isEmpty()) {
+        return;
     }
+    if (busy()) {
+        m_retargetAfterRun = true;
+        return;
+    }
+    retargetToTypedName();
+}
+
+void StickBackupController::retargetToTypedName()
+{
+    m_retargetAfterRun = false;
+    m_archiveChosenByName = true;
+    m_archiveAttempt = 1;
+    m_nameCollidedWith.clear();
+    m_archivePath = namedArchivePath(m_archiveAttempt);
+    emit configuredChanged();
+    refreshPreview(true);
 }
 
 QString StickBackupController::namedArchivePath(int attempt) const

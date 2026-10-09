@@ -214,6 +214,9 @@ private:
     // name that same search would quietly swap the new backup the person
     // asked for back to the old one.
     bool m_archiveChosenByName = false;
+    // A name was typed while a run was writing: retarget when it ends.
+    bool m_retargetAfterRun = false;
+    void retargetToTypedName();
     // How many names were tried: 1 is the plain one. Kept so a refresh
     // does not walk the sequence again from the start each time.
     int m_archiveAttempt = 1;
