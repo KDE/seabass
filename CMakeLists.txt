@@ -927,6 +927,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/align_playlist_change.cpp
         src/gui/edit/changes/owned_change.hpp
         src/gui/edit/changes/owned_change.cpp
+        src/gui/edit/changes/add_engine_track_change.hpp
+        src/gui/edit/changes/add_engine_track_change.cpp
         src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
@@ -2823,6 +2825,16 @@ if(TARGET seabass_edit)
         ZLIB::ZLIB DjInterop SQLite::SQLite3)
     add_test(NAME owned_change_test COMMAND owned_change_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(owned_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    # The WAV's rate is read through TagLib, as the page reads it, when
+    # the build has it (seabass_edit carries seabass_taglib then).
+    add_executable(add_engine_track_change_test tests/add_engine_track_change_test.cpp)
+    target_include_directories(add_engine_track_change_test PRIVATE src tests)
+    target_link_libraries(add_engine_track_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME add_engine_track_change_test COMMAND add_engine_track_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(add_engine_track_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(playlist_edit_changes_test tests/playlist_edit_changes_test.cpp)
