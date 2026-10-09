@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <set>
 #include <utility>
 
@@ -31,9 +32,10 @@ using domain::TrackToAdd;
 using domain::TrackToRemove;
 using Section = RekordboxExportSyncListModel::Section;
 
+// In Section's order.
 constexpr std::array<const char *, 10> SectionNames = {
-    "playlists",  "tracksToAdd",         "tracksToRemove", "membership",    "metadataToEngine",
-    "cuesToEngine", "restoresToRekordbox", "conflicts",      "engineOwnKept", "notAdded",
+    "conflicts",    "playlists",           "tracksToAdd",   "tracksToRemove", "membership",
+    "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept", "notAdded",
 };
 
 QString q(const std::string &text)
@@ -145,6 +147,190 @@ std::string playlistOfChoice(const std::vector<EngineUpdateEdit> &choice)
     return {};
 }
 
+
+// The details lines (RekordboxExportSyncListModel::details). Plain
+// sentences in the data font: "Label: value", one fact a line.
+
+QString bpmText(double bpm)
+{
+    if (bpm <= 0.0) {
+        return QStringLiteral("unknown");
+    }
+    QString text = QString::number(bpm, 'f', 2);
+    while (text.endsWith(QLatin1Char('0'))) {
+        text.chop(1);
+    }
+    if (text.endsWith(QLatin1Char('.'))) {
+        text.chop(1);
+    }
+    return text;
+}
+
+QString lengthText(double seconds)
+{
+    if (seconds <= 0.0) {
+        return QStringLiteral("unknown");
+    }
+    const long long total = std::llround(seconds);
+    return QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
+}
+
+QString at(double positionMs)
+{
+    return q(domain::formatCuePosition(positionMs));
+}
+
+// "1:07.751", or "loop 1:07.751 to 1:11.751".
+QString cuePlace(const domain::CuePoint &cue)
+{
+    return cue.isLoop ? QStringLiteral("loop %1 to %2").arg(at(cue.positionMs), at(cue.loopEndMs)) : at(cue.positionMs);
+}
+
+QString cueName(const domain::CuePoint &cue)
+{
+    return cue.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("Pad %1").arg(cue.hotCueNumber)
+                                                   : QStringLiteral("Memory cue");
+}
+
+std::vector<domain::CuePoint> sortedCues(std::vector<domain::CuePoint> cues)
+{
+    std::stable_sort(cues.begin(), cues.end(), [](const domain::CuePoint &a, const domain::CuePoint &b) {
+        const bool aHot = a.kind == domain::CuePoint::Kind::Hot;
+        const bool bHot = b.kind == domain::CuePoint::Kind::Hot;
+        if (aHot != bHot) {
+            return aHot;
+        }
+        if (aHot && a.hotCueNumber != b.hotCueNumber) {
+            return a.hotCueNumber < b.hotCueNumber;
+        }
+        return a.positionMs < b.positionMs;
+    });
+    return cues;
+}
+
+// Every cue of a set, pads first.
+QStringList cueListLines(const std::vector<domain::CuePoint> &cues)
+{
+    QStringList lines;
+    for (const auto &cue : sortedCues(cues)) {
+        lines << cueName(cue) + QStringLiteral(": ") + cuePlace(cue);
+    }
+    if (lines.isEmpty()) {
+        lines << QStringLiteral("Cues: none");
+    }
+    return lines;
+}
+
+bool samePlace(const domain::CuePoint &a, const domain::CuePoint &b, double toleranceMs)
+{
+    return a.isLoop == b.isLoop && std::abs(a.positionMs - b.positionMs) < toleranceMs
+        && (!a.isLoop || std::abs(a.loopEndMs - b.loopEndMs) < toleranceMs);
+}
+
+// What a cue write changes on its side: each pad that differs, old and
+// new, and each memory cue that comes or goes. Colours never count.
+QStringList cueChangeLines(const std::vector<domain::CuePoint> &before, const std::vector<domain::CuePoint> &after,
+                           double toleranceMs)
+{
+    QStringList lines;
+    std::map<int, const domain::CuePoint *> padsBefore;
+    std::map<int, const domain::CuePoint *> padsAfter;
+    std::vector<const domain::CuePoint *> memoryBefore;
+    std::vector<const domain::CuePoint *> memoryAfter;
+    for (const auto &cue : before) {
+        if (cue.kind == domain::CuePoint::Kind::Hot) {
+            padsBefore.emplace(cue.hotCueNumber, &cue);
+        } else {
+            memoryBefore.push_back(&cue);
+        }
+    }
+    for (const auto &cue : after) {
+        if (cue.kind == domain::CuePoint::Kind::Hot) {
+            padsAfter.emplace(cue.hotCueNumber, &cue);
+        } else {
+            memoryAfter.push_back(&cue);
+        }
+    }
+    std::set<int> pads;
+    for (const auto &[pad, cue] : padsBefore) {
+        pads.insert(pad);
+    }
+    for (const auto &[pad, cue] : padsAfter) {
+        pads.insert(pad);
+    }
+    for (int pad : pads) {
+        const auto was = padsBefore.find(pad);
+        const auto now = padsAfter.find(pad);
+        const QString name = QStringLiteral("Pad %1: ").arg(pad);
+        if (was != padsBefore.end() && now != padsAfter.end()) {
+            if (!samePlace(*was->second, *now->second, toleranceMs)) {
+                lines << name + QStringLiteral("was %1, now %2").arg(cuePlace(*was->second), cuePlace(*now->second));
+            }
+        } else if (now != padsAfter.end()) {
+            lines << name + QStringLiteral("new, %1").arg(cuePlace(*now->second));
+        } else {
+            lines << name + QStringLiteral("%1, cleared").arg(cuePlace(*was->second));
+        }
+    }
+    const auto sortByPlace = [](std::vector<const domain::CuePoint *> &cues) {
+        std::sort(cues.begin(), cues.end(), [](const auto *a, const auto *b) { return a->positionMs < b->positionMs; });
+    };
+    sortByPlace(memoryBefore);
+    sortByPlace(memoryAfter);
+    const auto findIn = [toleranceMs](const std::vector<const domain::CuePoint *> &cues, const domain::CuePoint &cue) {
+        return std::any_of(cues.begin(), cues.end(), [&](const auto *c) { return samePlace(*c, cue, toleranceMs); });
+    };
+    for (const auto *cue : memoryAfter) {
+        if (!findIn(memoryBefore, *cue)) {
+            lines << QStringLiteral("Memory cue: new, %1").arg(cuePlace(*cue));
+        }
+    }
+    for (const auto *cue : memoryBefore) {
+        if (!findIn(memoryAfter, *cue)) {
+            lines << QStringLiteral("Memory cue: %1, cleared").arg(cuePlace(*cue));
+        }
+    }
+    if (lines.isEmpty()) {
+        lines << QStringLiteral("Cues: the same places, written again");
+    }
+    return lines;
+}
+
+// The cues a CueEdit writes, on the side it writes them, old and new.
+QStringList cueEditLines(const CueEdit &e)
+{
+    const bool toEngine = e.plan.direction == SyncPlan::Direction::ToB;
+    const Track &target = toEngine ? e.plan.match.trackB : e.plan.match.trackA;
+    QStringList lines;
+    lines << (toEngine ? QStringLiteral("Writes Engine's cues:") : QStringLiteral("Writes rekordbox's cues:"));
+    lines << cueChangeLines(target.cues, e.plan.cuesToApply, e.plan.positionToleranceMs);
+    if (!e.plan.cuesLeftOut.empty()) {
+        lines << q(domain::describeCuesLeftOut(e.plan.cuesLeftOut));
+    }
+    return lines;
+}
+
+QString commentText(const std::string &comment)
+{
+    return comment.empty() ? QStringLiteral("none") : quotedText(comment);
+}
+
+// A track as a catalog has it: what it is and where.
+QStringList trackLines(const Track &track, const std::string &stickRoot)
+{
+    QStringList lines;
+    lines << QStringLiteral("Title: ") + q(track.title.empty() ? track.filename : track.title);
+    if (!track.artist.empty()) {
+        lines << QStringLiteral("Artist: ") + q(track.artist);
+    }
+    lines << QStringLiteral("File: ") + pathOnStick(track, stickRoot);
+    lines << QStringLiteral("BPM: %1, key: %2, length: %3")
+                 .arg(bpmText(track.bpm), track.key.empty() ? QStringLiteral("unknown") : q(track.key),
+                      lengthText(track.durationSeconds));
+    lines << QStringLiteral("Rating: ") + stars(track.rating);
+    lines << QStringLiteral("Comment: ") + commentText(track.comment);
+    return lines;
+}
 }  // namespace
 
 RekordboxExportSyncListModel::RekordboxExportSyncListModel(QObject *parent) : QAbstractListModel(parent) {}
@@ -166,7 +352,21 @@ std::optional<RekordboxExportSyncListModel::Section> RekordboxExportSyncListMode
 
 bool RekordboxExportSyncListModel::writable(Section section)
 {
-    return static_cast<int>(section) <= static_cast<int>(Section::RestoresToRekordbox);
+    switch (section) {
+    case Section::Playlists:
+    case Section::TracksToAdd:
+    case Section::TracksToRemove:
+    case Section::Membership:
+    case Section::MetadataToEngine:
+    case Section::CuesToEngine:
+    case Section::RestoresToRekordbox:
+        return true;
+    case Section::Conflicts:
+    case Section::EngineOwnKept:
+    case Section::NotAdded:
+        break;
+    }
+    return false;
 }
 
 int RekordboxExportSyncListModel::rowCount(const QModelIndex &parent) const
@@ -235,6 +435,8 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
         return directionOf(row.section);
     case FromConflictRole:
         return row.fromConflictUid >= 0;
+    case DetailsRole:
+        return detailsOf(row);
     default:
         return {};
     }
@@ -261,6 +463,7 @@ QHash<int, QByteArray> RekordboxExportSyncListModel::roleNames() const
         {StagedDescriptionRole, "stagedDescription"},
         {DirectionRole, "direction"},
         {FromConflictRole, "fromConflict"},
+        {DetailsRole, "details"},
     };
 }
 
@@ -398,6 +601,34 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
     m_rows.clear();
     m_ordinals.clear();
     m_stickRoot = stickRoot;
+    // The questions first (Section's order).
+    for (const auto &c : proposal.conflicts) {
+        Row row = makeRow(Section::Conflicts, QStringLiteral("conflict"), c.header);
+        row.conflict = c;
+        std::optional<Track> track = trackOfChoice(c.rekordboxChoice);
+        if (!track) {
+            track = trackOfChoice(c.engineChoice);
+        }
+        std::string playlist = playlistOfChoice(c.rekordboxChoice);
+        if (playlist.empty()) {
+            playlist = playlistOfChoice(c.engineChoice);
+        }
+        if (track) {
+            row.title = q(track->title.empty() ? track->filename : track->title);
+            row.artist = q(track->artist);
+            row.detail = pathOnStick(*track, stickRoot);
+            if (!playlist.empty()) {
+                row.detail += QStringLiteral(" in ") + quotedText(playlist);
+            }
+        } else if (!playlist.empty()) {
+            row.title = q(playlist);
+            row.detail = quotedText(playlist);
+        } else {
+            row.title = q(c.pathKey.empty() ? c.header.key : c.pathKey);
+        }
+        assignPlanKey(row);
+        m_rows.push_back(std::move(row));
+    }
     for (const auto &e : proposal.playlistsToCreate) {
         appendEdit(e);
     }
@@ -427,33 +658,6 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
     }
     for (const auto &e : proposal.cuesToRekordbox) {
         appendEdit(e);
-    }
-    for (const auto &c : proposal.conflicts) {
-        Row row = makeRow(Section::Conflicts, QStringLiteral("conflict"), c.header);
-        row.conflict = c;
-        std::optional<Track> track = trackOfChoice(c.rekordboxChoice);
-        if (!track) {
-            track = trackOfChoice(c.engineChoice);
-        }
-        std::string playlist = playlistOfChoice(c.rekordboxChoice);
-        if (playlist.empty()) {
-            playlist = playlistOfChoice(c.engineChoice);
-        }
-        if (track) {
-            row.title = q(track->title.empty() ? track->filename : track->title);
-            row.artist = q(track->artist);
-            row.detail = pathOnStick(*track, stickRoot);
-            if (!playlist.empty()) {
-                row.detail += QStringLiteral(" in ") + quotedText(playlist);
-            }
-        } else if (!playlist.empty()) {
-            row.title = q(playlist);
-            row.detail = quotedText(playlist);
-        } else {
-            row.title = q(c.pathKey.empty() ? c.header.key : c.pathKey);
-        }
-        assignPlanKey(row);
-        m_rows.push_back(std::move(row));
     }
     for (const auto &k : proposal.engineOwnKept) {
         Row row = makeRow(Section::EngineOwnKept, QStringLiteral("kept"), k.header);
@@ -501,9 +705,12 @@ int RekordboxExportSyncListModel::rowIndexOfUid(int uid) const
 
 void RekordboxExportSyncListModel::announceIncluded()
 {
+    if (m_bulk) {
+        return;  // the reset at the end says it all
+    }
     if (!m_rows.empty()) {
         emit dataChanged(index(0), index(static_cast<int>(m_rows.size()) - 1),
-                         {IncludedRole, ResolvedSideRole, DirectionRole});
+                         {IncludedRole, ResolvedSideRole, DirectionRole, DetailsRole});
     }
     emit countsChanged();
 }
@@ -605,9 +812,13 @@ void RekordboxExportSyncListModel::removeAnswerRows(int conflictUid)
 {
     for (int i = static_cast<int>(m_rows.size()) - 1; i >= 0; --i) {
         if (m_rows[static_cast<std::size_t>(i)].fromConflictUid == conflictUid) {
-            beginRemoveRows(QModelIndex(), i, i);
+            if (!m_bulk) {
+                beginRemoveRows(QModelIndex(), i, i);
+            }
             m_rows.erase(m_rows.begin() + i);
-            endRemoveRows();
+            if (!m_bulk) {
+                endRemoveRows();
+            }
         }
     }
 }
@@ -652,9 +863,13 @@ bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxS
         row.included = false;  // ticked below, with what it depends on
         assignPlanKey(row);
         const int at = endOfSection(row.section);
-        beginInsertRows(QModelIndex(), at, at);
+        if (!m_bulk) {
+            beginInsertRows(QModelIndex(), at, at);
+        }
         m_rows.insert(m_rows.begin() + at, std::move(row));
-        endInsertRows();
+        if (!m_bulk) {
+            endInsertRows();
+        }
         added.push_back(m_rows[static_cast<std::size_t>(at)].uid);
     }
     const int conflictAt = rowIndexOfUid(conflictUid);
@@ -683,6 +898,230 @@ bool RekordboxExportSyncListModel::clearResolution(int rowIndex)
     removeAnswerRows(uid);
     announceIncluded();
     return true;
+}
+
+void RekordboxExportSyncListModel::resolveAllConflicts(bool rekordboxSide)
+{
+    std::vector<int> uids;
+    for (const auto &row : m_rows) {
+        if (row.section == Section::Conflicts) {
+            uids.push_back(row.uid);
+        }
+    }
+    if (uids.empty()) {
+        return;
+    }
+    beginResetModel();
+    m_bulk = true;
+    // By uid: every answer inserts rows, though after the conflicts.
+    for (int uid : uids) {
+        resolveConflict(rowIndexOfUid(uid), rekordboxSide);
+    }
+    m_bulk = false;
+    endResetModel();
+    emit countsChanged();
+}
+
+void RekordboxExportSyncListModel::clearAllResolutions()
+{
+    std::vector<int> uids;
+    for (const auto &row : m_rows) {
+        if (row.section == Section::Conflicts && !row.resolvedSide.isEmpty()) {
+            uids.push_back(row.uid);
+        }
+    }
+    if (uids.empty()) {
+        return;
+    }
+    beginResetModel();
+    m_bulk = true;
+    for (int uid : uids) {
+        clearResolution(rowIndexOfUid(uid));
+    }
+    m_bulk = false;
+    endResetModel();
+    emit countsChanged();
+}
+
+QStringList RekordboxExportSyncListModel::details(int rowIndex) const
+{
+    if (rowIndex < 0 || rowIndex >= static_cast<int>(m_rows.size())) {
+        return {};
+    }
+    return detailsOf(m_rows[static_cast<std::size_t>(rowIndex)]);
+}
+
+// A track's title (and artist) by its pathKey, from the rows that name
+// it; the key itself when none does (an Engine member this save leaves
+// alone).
+QString RekordboxExportSyncListModel::titleByPathKey(const std::string &pathKey) const
+{
+    for (const auto &row : m_rows) {
+        if (!row.edit) {
+            continue;
+        }
+        const Track *track = nullptr;
+        if (const auto *member = std::get_if<MembershipEdit>(&*row.edit); member && member->pathKey == pathKey) {
+            track = &member->track;
+        } else if (const auto *add = std::get_if<TrackToAdd>(&*row.edit); add && add->pathKey == pathKey) {
+            track = &add->rekordbox;
+        }
+        if (track) {
+            const QString title = q(track->title.empty() ? track->filename : track->title);
+            return track->artist.empty() ? title : title + QStringLiteral(" by ") + q(track->artist);
+        }
+    }
+    return q(pathKey);
+}
+
+// One edit, as the lines it writes: a conflict's choices are told with
+// these, each under its side.
+QStringList RekordboxExportSyncListModel::editLines(const EngineUpdateEdit &edit) const
+{
+    QStringList lines;
+    if (const auto *e = std::get_if<PlaylistCreate>(&edit)) {
+        int members = 0;
+        for (const auto &row : m_rows) {
+            if (row.edit) {
+                if (const auto *m = std::get_if<MembershipEdit>(&*row.edit);
+                    m && m->kind == MembershipEdit::Kind::Add && m->playlistPath == e->path) {
+                    ++members;
+                }
+            }
+        }
+        lines << QStringLiteral("Creates %1 %2 on Engine")
+                     .arg(e->folder ? QStringLiteral("folder") : QStringLiteral("playlist"), quotedText(e->path));
+        if (!e->folder) {
+            lines << QStringLiteral("Members added in this save: %1").arg(members);
+        }
+    } else if (const auto *e = std::get_if<PlaylistRename>(&edit)) {
+        lines << QStringLiteral("Renames %1 on Engine").arg(quotedText(e->fromPath));
+        lines << QStringLiteral("New name: ") + quotedText(e->toPath);
+    } else if (const auto *e = std::get_if<PlaylistDelete>(&edit)) {
+        lines << QStringLiteral("Deletes %1 %2 from Engine")
+                     .arg(e->folder ? QStringLiteral("folder") : QStringLiteral("playlist"), quotedText(e->path));
+        lines << QStringLiteral("Engine members it holds: %1 (the tracks stay in the library)").arg(e->engineMembers);
+    } else if (const auto *e = std::get_if<TrackToAdd>(&edit)) {
+        lines << QStringLiteral("Adds this track to Engine, as rekordbox has it:");
+        lines << trackLines(e->rekordbox, m_stickRoot);
+        lines << cueListLines(e->rekordbox.cues);
+        lines << (e->rekordbox.artworkPath.empty() ? QStringLiteral("Cover: none") : QStringLiteral("Cover: yes"));
+        QStringList joins;
+        for (const auto &row : m_rows) {
+            if (row.edit && row.included) {
+                if (const auto *m = std::get_if<MembershipEdit>(&*row.edit);
+                    m && m->kind == MembershipEdit::Kind::Add && m->pathKey == e->pathKey) {
+                    joins << QStringLiteral("Joins ") + quotedText(m->playlistPath) + positionIn(m->track, m->playlistPath);
+                }
+            }
+        }
+        if (joins.isEmpty()) {
+            joins << QStringLiteral("Joins no playlist in this save");
+        }
+        lines << joins;
+    } else if (const auto *e = std::get_if<TrackToRemove>(&edit)) {
+        lines << QStringLiteral("Removes this track from Engine's library, as Engine has it:");
+        lines << trackLines(e->engine, m_stickRoot);
+        lines << QStringLiteral("Cues on Engine: %1").arg(e->engine.cues.size());
+        QStringList leaves;
+        for (const auto &membership : e->engine.playlists) {
+            leaves << QStringLiteral("Leaves ") + quotedText(membership.name);
+        }
+        if (leaves.isEmpty()) {
+            leaves << (e->playlistCount > 0 ? QStringLiteral("Leaves %1 playlist entries").arg(e->playlistCount)
+                                            : QStringLiteral("In no Engine playlist"));
+        }
+        lines << leaves;
+        lines << QStringLiteral("The file stays on the stick");
+    } else if (const auto *e = std::get_if<MembershipEdit>(&edit)) {
+        const QString title = q(e->track.title.empty() ? e->track.filename : e->track.title);
+        const QString place = positionIn(e->track, e->playlistPath).trimmed();
+        if (e->kind == MembershipEdit::Kind::Add) {
+            lines << QStringLiteral("Puts %1 into %2 on Engine").arg(title, quotedText(e->playlistPath));
+            lines << QStringLiteral("Position in rekordbox: ") + (place.isEmpty() ? QStringLiteral("unknown") : place);
+            lines << (e->afterPathKey.empty() ? QStringLiteral("Goes first in the playlist")
+                                              : QStringLiteral("Goes after ") + titleByPathKey(e->afterPathKey));
+            if (!e->afterPathKey.empty()) {
+                lines << QStringLiteral("If that track is left out, it goes at the end");
+            }
+        } else {
+            lines << QStringLiteral("Takes %1 out of %2 on Engine").arg(title, quotedText(e->playlistPath));
+            if (!place.isEmpty()) {
+                lines << QStringLiteral("Position on Engine: ") + place;
+            }
+            lines << QStringLiteral("The track stays in the library");
+        }
+        lines << QStringLiteral("File: ") + pathOnStick(e->track, m_stickRoot);
+    } else if (const auto *e = std::get_if<MetadataEdit>(&edit)) {
+        const bool toEngine = e->direction == MetadataEdit::Direction::ToEngine;
+        const Track &target = toEngine ? e->engine : e->rekordbox;
+        const QString side = toEngine ? QStringLiteral("Engine's") : QStringLiteral("rekordbox's");
+        if (e->field == MetadataEdit::Field::Rating) {
+            lines << QStringLiteral("Sets %1 rating").arg(side);
+            lines << QStringLiteral("Rating: was %1, now %2").arg(stars(target.rating), stars(e->rating));
+        } else {
+            lines << QStringLiteral("Sets %1 comment").arg(side);
+            lines << QStringLiteral("Comment: was %1, now %2").arg(commentText(target.comment), commentText(e->comment));
+        }
+    } else if (const auto *e = std::get_if<CueEdit>(&edit)) {
+        lines << cueEditLines(*e);
+    }
+    return lines;
+}
+
+QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const
+{
+    QStringList lines;
+    const QString why = q(row.header.reasonText);
+    if (row.section == Section::Conflicts && row.conflict) {
+        const auto &c = *row.conflict;
+        if (!why.isEmpty()) {
+            lines << QStringLiteral("Why: ") + why;
+        }
+        const auto side = [&](const QString &name, const std::string &label,
+                              const std::vector<EngineUpdateEdit> &choice) {
+            lines << name + (label.empty() ? QString() : QStringLiteral(" (") + q(label) + QLatin1Char(')'))
+                    + QLatin1Char(':');
+            if (choice.empty()) {
+                lines << QStringLiteral("  writes nothing; Engine keeps what it has");
+            }
+            for (const auto &edit : choice) {
+                for (const QString &line : editLines(edit)) {
+                    lines << QStringLiteral("  ") + line;
+                }
+            }
+        };
+        if (c.rekordboxChoice.empty() && c.engineChoice.empty()) {
+            lines << QStringLiteral("Neither side can be written here; the reason says what to do instead");
+            return lines;
+        }
+        side(QStringLiteral("Rekordbox's side"), c.rekordboxSide, c.rekordboxChoice);
+        side(QStringLiteral("Engine's side"), c.engineSide, c.engineChoice);
+        return lines;
+    }
+    if (row.section == Section::EngineOwnKept) {
+        lines << QStringLiteral("Kept as Engine has it; nothing is written");
+        lines << QStringLiteral("Why: ") + (why.isEmpty() ? QStringLiteral("Engine changed it") : why);
+        lines << QStringLiteral("Item: ") + row.detail;
+        return lines;
+    }
+    if (row.section == Section::NotAdded) {
+        lines << QStringLiteral("Not added; nothing is written");
+        lines << QStringLiteral("Why: ") + why;
+        lines << QStringLiteral("Rekordbox expects: ") + row.detail;
+        return lines;
+    }
+    if (!row.edit) {
+        return lines;
+    }
+    lines << editLines(*row.edit);
+    if (row.section == Section::RestoresToRekordbox && !why.isEmpty()) {
+        lines << QStringLiteral("Why: ") + why;
+    }
+    if (row.fromConflictUid >= 0) {
+        lines << QStringLiteral("From an answered conflict");
+    }
+    return lines;
 }
 
 QVariantMap RekordboxExportSyncListModel::sectionCounts() const

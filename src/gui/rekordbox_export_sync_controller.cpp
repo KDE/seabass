@@ -445,6 +445,16 @@ void RekordboxExportSyncController::clearConflictResolution(int row)
     m_model.clearResolution(row);
 }
 
+void RekordboxExportSyncController::resolveAllConflicts(bool rekordboxSide)
+{
+    m_model.resolveAllConflicts(rekordboxSide);
+}
+
+void RekordboxExportSyncController::clearAllConflictResolutions()
+{
+    m_model.clearAllResolutions();
+}
+
 void RekordboxExportSyncController::unstageAll()
 {
     if (m_stagedIds.isEmpty() && m_stagedByKey.empty()) {
@@ -779,7 +789,7 @@ void RekordboxExportSyncController::stageSelected()
     }
 
     if (changes.empty() && declined.empty() && analysis.proposal.hasBaseline) {
-        setStatusMessage(QStringLiteral("Nothing is ticked, so there is nothing to stage."));
+        setStatusMessage(QStringLiteral("Nothing is selected, so there is nothing to stage."));
         return;
     }
 
@@ -825,7 +835,7 @@ void RekordboxExportSyncController::stageSelected()
     setStagedStatusMessage(changeCount > 0
                                ? QStringLiteral("Staged %1 change(s). Press Sync Engine to write them to the stick.")
                                      .arg(changeCount)
-                               : QStringLiteral("Staged the record of what was left unticked. Press Sync Engine to "
+                               : QStringLiteral("Staged the record of what was left unselected. Press Sync Engine to "
                                                 "write it to the stick."));
 }
 

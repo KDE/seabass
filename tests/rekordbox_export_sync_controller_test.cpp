@@ -28,6 +28,11 @@
 //    takes the record away.
 // 5. A damaged record fails the analysis with its reason and an empty
 //    list: refused, never a fallback.
+// 6. Every conflict answered at once: toward rekordbox every import
+//    conflict has its ticked removal row, cleared none has.
+// 7. The section order (conflicts first when there are any, playlists
+//    first when there are none) and the details of an add, a membership
+//    and a cue row, pinned by hand on a proposal built here.
 //
 // argv[1]: tests/fixtures/anonymized_library.
 
@@ -206,6 +211,10 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         }
         return total;
     }());
+    // Conflicts come first: they are the only rows that need an answer.
+    assert(rowsOf(controller).front().section == Section::Conflicts);
+    assert(controller.rows()->index(0).data(RekordboxExportSyncListModel::SectionRole).toString()
+           == QStringLiteral("conflicts"));
     // Sections are contiguous and in the page's order, for section.property.
     {
         int last = -1;
@@ -289,20 +298,65 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(at.data(RekordboxExportSyncListModel::DirectionRole).toString() == QStringLiteral("to Engine"));
         assert(at.data(RekordboxExportSyncListModel::KindRole).toString() == QStringLiteral("removeTrack"));
     }
-    // The conflict row moved by nothing: answers go into their own section,
-    // which comes before the conflicts.
-    conflict += 1;
+    // The conflict row did not move: answers go into their own sections,
+    // which come after the conflicts.
     assert(rowsOf(controller)[static_cast<std::size_t>(conflict)].header.key == conflictKey);
     controller.resolveConflict(conflict, false);
     assert(count(controller, "tracksToRemove") == removalsBefore);
     assert(controller.conflictCount() == FixtureConflicts - 1);
-    conflict -= 1;
     assert(controller.rows()->index(conflict).data(RekordboxExportSyncListModel::ResolvedSideRole).toString()
            == QStringLiteral("engine"));
     controller.clearConflictResolution(conflict);
     assert(controller.conflictCount() == FixtureConflicts);
     assert(controller.checkedCount() == checkedBefore);
     std::cout << "case 3 (an import conflict answered: a removal toward rekordbox, nothing toward Engine) OK\n";
+
+    // 6. Every conflict at once, the one answered above included.
+    controller.resolveConflict(conflict, false);
+    std::set<std::string> importConflicts;
+    for (const auto &row : rowsOf(controller)) {
+        if (row.section == Section::Conflicts
+            && row.header.reason == seabass::domain::EngineUpdateReason::NoBaselineImportedRow) {
+            importConflicts.insert(row.header.key);
+        }
+    }
+    assert(!importConflicts.empty());
+    const auto tickedRemovalKeys = [&controller] {
+        std::set<std::string> keys;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section == Section::TracksToRemove && row.fromConflictUid >= 0 && row.included) {
+                keys.insert(row.header.key);
+            }
+        }
+        return keys;
+    };
+    {
+        QSignalSpy listChanged(&controller, &RekordboxExportSyncController::listChanged);
+        controller.resolveAllConflicts(true);
+        assert(!listChanged.isEmpty());
+    }
+    const std::set<std::string> removalsAnswered = tickedRemovalKeys();
+    for (const auto &key : importConflicts) {
+        assert(removalsAnswered.count(key) == 1 && "every import conflict has its ticked removal");
+    }
+    for (const auto &row : rowsOf(controller)) {
+        if (row.section == Section::Conflicts && row.conflict
+            && !(row.conflict->rekordboxChoice.empty() && row.conflict->engineChoice.empty())) {
+            assert(row.resolvedSide == QStringLiteral("rekordbox"));
+        }
+    }
+    std::cout << "  rekordbox's side for all: " << importConflicts.size() << " import conflicts, "
+              << controller.conflictCount() << " left open, " << controller.checkedCount() << " ticked\n";
+    controller.clearAllConflictResolutions();
+    assert(tickedRemovalKeys().empty());
+    assert(controller.conflictCount() == FixtureConflicts);
+    assert(controller.checkedCount() == checkedBefore);
+    controller.resolveAllConflicts(false);
+    assert(tickedRemovalKeys().empty() && "Engine's side removes nothing");
+    assert(controller.conflictCount() < FixtureConflicts);
+    controller.clearAllConflictResolutions();
+    assert(controller.conflictCount() == FixtureConflicts);
+    std::cout << "case 6 (every conflict answered at once, and every answer cleared) OK\n";
 
     // 5. A damaged record on this stick: the analysis fails with its
     //    reason, and the list it had is gone.
@@ -504,6 +558,157 @@ void testSmallSave(const fs::path &fixture)
     std::cout << "case 4b (Undo puts m.db back and takes the record away) OK\n";
 }
 
+// 7. On a proposal built here, no stick: the order without conflicts and
+//    with one, and what an add, a membership and a cue row say they do.
+void testOrderAndDetails()
+{
+    namespace d = seabass::domain;
+    using Cue = d::CuePoint;
+    const auto header = [](const std::string &key, std::vector<std::string> dependsOn = {}) {
+        d::EngineUpdateItemHeader h;
+        h.key = key;
+        h.checkedByDefault = true;
+        h.reasonText = "test";
+        h.dependsOn = std::move(dependsOn);
+        return h;
+    };
+    const auto hot = [](int pad, double ms) {
+        Cue cue;
+        cue.kind = Cue::Kind::Hot;
+        cue.hotCueNumber = pad;
+        cue.positionMs = ms;
+        return cue;
+    };
+
+    d::Track night;
+    night.title = "Night Drive";
+    night.artist = "Ana Example";
+    night.filename = "night.mp3";
+    night.filePath = "/stick/Contents/night.mp3";
+    night.bpm = 124.0;
+    night.key = "Am";
+    night.durationSeconds = 391.4;
+    night.rating = 4;
+    night.comment = "warm up";
+    night.artworkPath = "/stick/PIONEER/Artwork/00001/a1.jpg";
+    Cue loop = hot(2, 30000);
+    loop.isLoop = true;
+    loop.loopEndMs = 34000;
+    Cue memory;
+    memory.positionMs = 60500;
+    night.cues = {hot(1, 1000), loop, memory};
+    night.playlists = {{"Warm Up", 1, 7}};
+
+    d::Track second;
+    second.title = "Second Song";
+    second.filename = "second.mp3";
+    second.filePath = "/stick/Contents/second.mp3";
+    second.playlists = {{"Warm Up", 2, 7}};
+
+    d::EngineUpdateProposal proposal;
+    d::PlaylistCreate create;
+    create.header = header("playlist|7");
+    create.pdbId = 7;
+    create.path = "Warm Up";
+    proposal.playlistsToCreate.push_back(create);
+    d::TrackToAdd add;
+    add.header = header("track|contents/night.mp3");
+    add.rekordbox = night;
+    add.stickRelativePath = "Contents/night.mp3";
+    add.pathKey = "contents/night.mp3";
+    proposal.tracksToAdd.push_back(add);
+    d::MembershipEdit first;
+    first.header = header("member|7|contents/night.mp3", {"playlist|7", "track|contents/night.mp3"});
+    first.pdbId = 7;
+    first.playlistPath = "Warm Up";
+    first.pathKey = "contents/night.mp3";
+    first.track = night;
+    d::MembershipEdit after = first;
+    after.header = header("member|7|contents/second.mp3", {"playlist|7"});
+    after.pathKey = "contents/second.mp3";
+    after.track = second;
+    after.afterPathKey = "contents/night.mp3";
+    proposal.membership = {first, after};
+    d::CueEdit cues;
+    cues.header = header("cue|contents/second.mp3|pad1");
+    cues.plan.direction = d::SyncPlan::Direction::ToB;
+    cues.plan.match.trackA = second;
+    cues.plan.match.trackB = second;
+    cues.plan.match.trackB.cues = {hot(1, 1500), hot(3, 90000)};
+    cues.plan.cuesToApply = {hot(1, 1000), hot(2, 5000)};
+    cues.plan.positionToleranceMs = 50;
+    cues.pathKey = "contents/second.mp3";
+    proposal.cuesToEngine.push_back(cues);
+
+    RekordboxExportSyncListModel model;
+    model.setProposal(proposal, "/stick");
+    assert(model.rowCount() == 5);
+    assert(model.index(0).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("playlists"));
+    assert(model.index(0).data(RekordboxExportSyncListModel::SectionIndexRole).toInt() == 1);
+
+    const auto rowOf = [&model](const QString &kind, int nth = 0) {
+        for (int i = 0; i < model.rowCount(); ++i) {
+            if (model.rows()[static_cast<std::size_t>(i)].kind == kind && nth-- == 0) {
+                return i;
+            }
+        }
+        return -1;
+    };
+    const auto expect = [&model](int row, const QStringList &lines) {
+        const QStringList got = model.index(row).data(RekordboxExportSyncListModel::DetailsRole).toStringList();
+        if (got != lines) {
+            std::cerr << "details of row " << row << ":\n";
+            for (const auto &line : got) {
+                std::cerr << "  " << line.toStdString() << "\n";
+            }
+        }
+        assert(got == lines);
+        assert(model.details(row) == lines);
+    };
+    expect(rowOf(QStringLiteral("addTrack")),
+           {QStringLiteral("Adds this track to Engine, as rekordbox has it:"), QStringLiteral("Title: Night Drive"),
+            QStringLiteral("Artist: Ana Example"), QStringLiteral("File: Contents/night.mp3"),
+            QStringLiteral("BPM: 124, key: Am, length: 6:31"), QStringLiteral("Rating: 4 stars"),
+            QStringLiteral("Comment: \"warm up\""), QStringLiteral("Pad 1: 0:01.000"),
+            QStringLiteral("Pad 2: loop 0:30.000 to 0:34.000"), QStringLiteral("Memory cue: 1:00.500"),
+            QStringLiteral("Cover: yes"), QStringLiteral("Joins \"Warm Up\" #1")});
+    expect(rowOf(QStringLiteral("addMember"), 1),
+           {QStringLiteral("Puts Second Song into \"Warm Up\" on Engine"),
+            QStringLiteral("Position in rekordbox: #2"), QStringLiteral("Goes after Night Drive by Ana Example"),
+            QStringLiteral("If that track is left out, it goes at the end"),
+            QStringLiteral("File: Contents/second.mp3")});
+    expect(rowOf(QStringLiteral("cues")),
+           {QStringLiteral("Writes Engine's cues:"), QStringLiteral("Pad 1: was 0:01.500, now 0:01.000"),
+            QStringLiteral("Pad 2: new, 0:05.000"), QStringLiteral("Pad 3: 1:30.000, cleared")});
+    // A playlist the add no longer joins in this save says so.
+    model.setIncluded(rowOf(QStringLiteral("addMember")), false);
+    assert(model.details(rowOf(QStringLiteral("addTrack"))).last() == QStringLiteral("Joins no playlist in this save"));
+
+    // With a conflict, it heads the list.
+    d::EngineUpdateConflict conflict;
+    conflict.header = header("member|7|contents/third.mp3");
+    conflict.header.checkedByDefault = false;
+    conflict.header.conflict = true;
+    conflict.rekordboxSide = "Take it out";
+    conflict.engineSide = "Keep it";
+    d::MembershipEdit takeOut = first;
+    takeOut.kind = d::MembershipEdit::Kind::Remove;
+    takeOut.track = second;
+    takeOut.header.dependsOn.clear();
+    conflict.rekordboxChoice = {takeOut};
+    proposal.conflicts.push_back(conflict);
+    model.setProposal(proposal, "/stick");
+    assert(model.index(0).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("conflicts"));
+    assert(model.index(0).data(RekordboxExportSyncListModel::SectionIndexRole).toInt() == 0);
+    assert(model.index(1).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("playlists"));
+    expect(0, {QStringLiteral("Why: test"), QStringLiteral("Rekordbox's side (Take it out):"),
+               QStringLiteral("  Takes Second Song out of \"Warm Up\" on Engine"), QStringLiteral("  Position on Engine: #2"),
+               QStringLiteral("  The track stays in the library"), QStringLiteral("  File: Contents/second.mp3"),
+               QStringLiteral("Engine's side (Keep it):"), QStringLiteral("  writes nothing; Engine keeps what it has")});
+    std::cout << "case 7 (conflicts first, playlists first without them; details of an add, a membership, cues "
+                 "and a conflict) OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -521,6 +726,7 @@ int main(int argc, char **argv)
     testing::sandboxSettings(scratch / "config");
     QCoreApplication app(argc, argv);
 
+    testOrderAndDetails();
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";

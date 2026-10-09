@@ -103,6 +103,10 @@ public:
     // nothing is staged until stageSelected().
     Q_INVOKABLE void resolveConflict(int row, bool rekordboxSide);
     Q_INVOKABLE void clearConflictResolution(int row);
+    // Every conflict of the list, answered ones included, answered the one
+    // way (refusals stay open), or every answer taken back.
+    Q_INVOKABLE void resolveAllConflicts(bool rekordboxSide);
+    Q_INVOKABLE void clearAllConflictResolutions();
 
     // Stages the ticked rows, and the record of this save, replacing what
     // an earlier call staged; the page's Save ("Sync Engine") writes them.
