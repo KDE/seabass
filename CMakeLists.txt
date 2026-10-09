@@ -932,6 +932,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/align_playlist_change.cpp
         src/gui/edit/changes/owned_change.hpp
         src/gui/edit/changes/owned_change.cpp
+        src/gui/edit/changes/record_rekordbox_baseline_change.hpp
+        src/gui/edit/changes/record_rekordbox_baseline_change.cpp
         src/gui/edit/changes/add_engine_track_change.hpp
         src/gui/edit/changes/add_engine_track_change.cpp
         src/gui/edit/changes/remove_engine_track_change.hpp
@@ -2898,8 +2900,17 @@ if(TARGET seabass_edit)
     set_tests_properties(owned_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
-    # The origin ledger every save keeps in the stick's rekordbox
-    # baseline, with Undo.
+    # The rekordbox baseline the page's save records after its commit, and
+    # the origin ledger every other save keeps in it, with Undo.
+    add_executable(record_rekordbox_baseline_change_test tests/record_rekordbox_baseline_change_test.cpp)
+    target_include_directories(record_rekordbox_baseline_change_test PRIVATE src tests)
+    target_link_libraries(record_rekordbox_baseline_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop
+        SQLite::SQLite3)
+    add_test(NAME record_rekordbox_baseline_change_test COMMAND record_rekordbox_baseline_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(record_rekordbox_baseline_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     add_executable(rekordbox_baseline_ledger_test tests/rekordbox_baseline_ledger_test.cpp)
     target_include_directories(rekordbox_baseline_ledger_test PRIVATE src tests)
     target_link_libraries(rekordbox_baseline_ledger_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop
