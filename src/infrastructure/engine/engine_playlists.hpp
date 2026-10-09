@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,5 +76,95 @@ int removeEngineTracks(const std::string &engineLibraryPath, const std::vector<s
 // playlists went (0 when there is no such playlist); throws when the
 // database cannot be written or an entry survives.
 int deleteEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath);
+
+// Creating, renaming and ordered inserting, for a sync that follows
+// rekordbox's playlist tree. Like the writers above they work on a write
+// root (the stick's library or a save's scratch copy), name a playlist by
+// the path the Engine reader spells ("Folder/List", titles joined by
+// "/"), and throw std::runtime_error for every refusal, before anything
+// is written, as well as when the database cannot be written or a write
+// does not read back as asked.
+//
+// A path must name exactly one playlist to be used. m.db keeps titles
+// unique within one parent (C_NAME_UNIQUE_FOR_PARENT), so two playlists
+// spell one path only when a title holds a "/": a root playlist titled
+// "A/B" and a list "B" in a folder "A" both read as "A/B". These functions
+// count every playlist that spells a path (enginePlaylistCountAtPath's
+// reading) and refuse when it is not exactly one; a write that would make
+// a path ambiguous is refused the same way.
+//
+// How the chains stay walkable. Engine orders playlists and their entries
+// as linked lists: Playlist.nextListId among the children of one parent,
+// PlaylistEntity.nextEntityId within one list, 0 ending each. libdjinterop
+// reads both by starting at the row whose next is 0 and following, for
+// each row, the one row that points at it, back to the head
+// (playlist_entity_table::get_for_list, playlist_table's sort_ids). A
+// broken link therefore does not fail: everything ahead of the break is
+// silently left out, and the player shows the list shortened. A list with
+// no row ending in 0 trips an assert, undefined in a release build.
+//
+// These three write m.db with SQL, the statements libdjinterop's
+// playlist_table and playlist_entity_table run, in one transaction per
+// call: its public playlist handles carry no id, its table classes come
+// in a 2.x and a 3.x flavour (the 2.x one will not open a 3.x library),
+// and its set_parent is wrong (below).
+//
+// - createEnginePlaylist inserts each new playlist with nextListId 0 and
+//   Engine's own triggers (trigger_before_insert_List and
+//   trigger_after_insert_List) point the parent's previous last child at
+//   it, as create_root_playlist and create_sub_playlist do.
+// - renameEnginePlaylist within one parent changes the title only. A move
+//   runs playlist_table::update's four statements with nextListId 0 (Engine
+//   has no UPDATE trigger for this): the playlist is unlinked from its old
+//   siblings and appended to the new parent's children. It is not
+//   playlist::set_parent: that keeps the old nextListId, so a playlist
+//   that was not its old parent's last child points into the old folder
+//   from the new one and is missing from the new folder's children
+//   (engine_playlists_test pins it).
+// - insertIntoEnginePlaylist adds the entry with the anchor's old
+//   nextEntityId (or 0 to append) and points the one entry that had that
+//   next (the anchor, or the old last entry) at it, as add_track_after and
+//   add_track_back do through playlist_entity_table::add. Entries have no
+//   insert trigger; trigger_before_delete_PlaylistEntity relinks around a
+//   deleted one.
+//
+// Each function walks the chains it touched itself afterwards, from the
+// head, and throws (rolling the transaction back) when one does not reach
+// every row or the result is not what was asked.
+
+// Creates the playlist at playlistPath ("A/B/C"), and every playlist above
+// it that does not exist yet, as an empty folder. In Engine a folder is
+// any playlist with children, so an existing playlist with entries can
+// hold the new one. Each new playlist goes last among its siblings.
+// Refuses an empty path or segment, a title with ";" (Engine will not
+// take one), a path that already names a playlist, a prefix that names
+// more than one, and a missing prefix some playlist already spells
+// further down (creating it would make that spelling ambiguous). Returns
+// the new playlist's id.
+std::int64_t createEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath);
+
+// Renames the playlist at fromPath to toPath: a new title within the same
+// parent, or a move into the existing playlist named by toPath's parent
+// path (moved last among its new siblings). The playlist keeps its id,
+// its entries in their order, and its own children, which move with it.
+// Refuses a fromPath that does not name exactly one playlist, a toPath
+// that already names one, a new parent that does not exist or is
+// ambiguous (the sync creates parents first, through create rows the
+// rename depends on), a move into the playlist itself or below it, and a
+// rename that would make one of its children's paths ambiguous. Returns
+// false when fromPath and toPath are the same, true when it renamed.
+bool renameEnginePlaylist(const std::string &engineLibraryPath, const std::string &fromPath, const std::string &toPath);
+
+// Puts the track into the playlist at playlistPath right after the entry
+// for afterTrackId. With no anchor, or an anchor that is not in the list
+// (the plan's rule: a writer appends when its anchor is missing), it goes
+// last. A track already in the list stays where it is and false is
+// returned, as addToEnginePlaylist does: m.db cannot hold a track twice in
+// one list (C_NAME_UNIQUE_FOR_LIST), so there is no duplicate to ask for.
+// Refuses a playlist path that does not name exactly one playlist, a
+// track id with no track, and a list whose entry chain is already broken
+// (an insert would hide or lose part of it). Returns true when it added.
+bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
+                              std::int64_t trackId, std::optional<std::int64_t> afterTrackId);
 
 }  // namespace seabass::infrastructure::engine

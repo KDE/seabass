@@ -1588,6 +1588,16 @@ add_test(NAME engine_track_rows_test COMMAND engine_track_rows_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(engine_track_rows_test PROPERTIES LABELS "integration")
 
+# createEnginePlaylist, renameEnginePlaylist and insertIntoEnginePlaylist
+# over a copy of the fixture's Engine library, every chain walked both
+# ways after each call.
+add_executable(engine_playlists_test tests/engine_playlists_test.cpp)
+target_include_directories(engine_playlists_test PRIVATE src)
+target_link_libraries(engine_playlists_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME engine_playlists_test COMMAND engine_playlists_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(engine_playlists_test PROPERTIES LABELS "integration")
+
 # The Linux formatter only builds into seabass_core on Linux, but the value
 # this pins is one a second operating system has to agree with -- that is the
 # whole point of it -- so the test compiles the source directly and runs
