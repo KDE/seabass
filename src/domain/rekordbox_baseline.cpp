@@ -319,4 +319,229 @@ std::string cueItemKey(const std::string &pathKey, const CuePoint &cue)
     return itemKey(key);
 }
 
+namespace
+{
+
+// Colour and comment do not decide a cue's identity (the rule everywhere
+// in Seabass): two cues are the same when they sit at the same place.
+bool sameCue(const CuePoint &a, const CuePoint &b)
+{
+    return a.kind == b.kind && a.hotCueNumber == b.hotCueNumber && a.positionMs == b.positionMs
+        && a.isLoop == b.isLoop && (!a.isLoop || a.loopEndMs == b.loopEndMs);
+}
+
+int keyOrder(ItemKey::Kind kind)
+{
+    switch (kind) {
+    case ItemKey::Kind::Track:
+        return 0;
+    case ItemKey::Kind::Playlist:
+        return 1;
+    case ItemKey::Kind::Member:
+        return 2;
+    default:
+        return 3;
+    }
+}
+
+void keepTrack(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::string &pathKey)
+{
+    const bool inNext = next.findTrack(pathKey) != nullptr;
+    const bool inPrevious = previous && previous->findTrack(pathKey) != nullptr;
+    if (inNext && !inPrevious) {
+        std::erase_if(next.tracks, [&](const BaselineTrack &t) { return t.pathKey == pathKey; });
+    } else if (!inNext && inPrevious) {
+        for (const auto &row : previous->tracks) {
+            if (row.pathKey == pathKey) {
+                next.tracks.push_back(row);
+            }
+        }
+    }
+}
+
+void keepPlaylist(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id)
+{
+    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
+        return p.id == id;
+    });
+    if (it == next.playlists.end()) {
+        if (before) {
+            BaselinePlaylist restored = *before;
+            restored.members.clear();
+            next.playlists.push_back(std::move(restored));
+        }
+        return;
+    }
+    if (!before) {
+        next.playlists.erase(it);
+        return;
+    }
+    it->path = before->path;
+    it->parentId = before->parentId;
+    it->folder = before->folder;
+}
+
+void keepMember(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id,
+                const std::string &pathKey)
+{
+    const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
+        return p.id == id;
+    });
+    if (it == next.playlists.end()) {
+        return;  // no playlist to hold it
+    }
+    std::erase(it->members, pathKey);
+    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    if (!before) {
+        return;
+    }
+    for (std::size_t i = 0; i < before->members.size(); ++i) {
+        if (before->members[i] == pathKey) {
+            const std::size_t at = std::min(i, it->members.size());
+            it->members.insert(it->members.begin() + static_cast<std::ptrdiff_t>(at), pathKey);
+        }
+    }
+}
+
+void keepValue(RekordboxBaseline &next, const RekordboxBaseline *previous, const ItemKey &key,
+               const std::string &text)
+{
+    const BaselineTrack *before = previous ? previous->findTrack(key.pathKey) : nullptr;
+    for (auto &row : next.tracks) {
+        if (row.pathKey != key.pathKey) {
+            continue;
+        }
+        switch (key.kind) {
+        case ItemKey::Kind::Rating:
+            row.rating = before ? before->rating : std::nullopt;
+            row.ratingOrigin = before ? before->ratingOrigin : ValueOrigin::Unknown;
+            break;
+        case ItemKey::Kind::Comment:
+            row.comment = before ? before->comment : std::string();
+            break;
+        default:
+            std::erase_if(row.cues, [&](const BaselineCue &c) { return cueItemKey(key.pathKey, c.cue) == text; });
+            if (before) {
+                for (const auto &cue : before->cues) {
+                    if (cueItemKey(key.pathKey, cue.cue) == text) {
+                        row.cues.push_back(cue);
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
+}  // namespace
+
+std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const std::vector<SeabassWrite> &writes)
+{
+    std::vector<std::string> unlisted;
+    for (const auto &write : writes) {
+        bool found = false;
+        for (auto &row : baseline.tracks) {
+            if (row.pathKey != write.pathKey) {
+                continue;
+            }
+            found = true;
+            if (write.cues) {
+                row.cues.clear();
+                for (const auto &cue : *write.cues) {
+                    row.cues.push_back(BaselineCue{cue, ValueOrigin::Seabass});
+                }
+            }
+            if (write.rating) {
+                row.rating = *write.rating > 0 ? write.rating : std::nullopt;
+                row.ratingOrigin = ValueOrigin::Seabass;
+            }
+        }
+        if (!found) {
+            unlisted.push_back(write.pathKey);
+        }
+    }
+    return unlisted;
+}
+
+void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys)
+{
+    std::vector<std::pair<ItemKey, std::string>> parsed;
+    for (const auto &text : keys) {
+        if (auto key = parseItemKey(text)) {
+            parsed.emplace_back(std::move(*key), text);
+        }
+    }
+    std::stable_sort(parsed.begin(), parsed.end(), [](const auto &a, const auto &b) {
+        return keyOrder(a.first.kind) < keyOrder(b.first.kind);
+    });
+    for (const auto &[key, text] : parsed) {
+        switch (key.kind) {
+        case ItemKey::Kind::Track:
+            keepTrack(next, previous, key.pathKey);
+            break;
+        case ItemKey::Kind::Playlist:
+            keepPlaylist(next, previous, key.playlistId);
+            break;
+        case ItemKey::Kind::Member:
+            keepMember(next, previous, key.playlistId, key.pathKey);
+            break;
+        default:
+            keepValue(next, previous, key, text);
+            break;
+        }
+    }
+}
+
+RekordboxBaseline nextBaseline(const RekordboxBaseline *previous, const std::vector<Track> &rekordboxNow,
+                               const std::vector<PlaylistInfo> &playlists, std::uint64_t sequence,
+                               const std::set<std::string> &offered, const std::set<std::string> &applied,
+                               const std::map<std::string, std::string> &declined,
+                               const std::function<std::string(const std::string &)> &stickRelativeOf,
+                               const std::function<std::string(const std::string &)> &pathKeyOf, BaselineGaps *gaps)
+{
+    RekordboxBaseline next = baselineFrom(rekordboxNow, playlists, sequence, stickRelativeOf, pathKeyOf, gaps);
+    if (previous) {
+        next.engineUuid = previous->engineUuid;
+        for (auto &row : next.tracks) {
+            const BaselineTrack *before = previous->findTrack(row.pathKey);
+            if (!before) {
+                continue;
+            }
+            if (row.rating == before->rating) {
+                row.ratingOrigin = before->ratingOrigin;
+            }
+            for (auto &cue : row.cues) {
+                const auto same = std::find_if(before->cues.begin(), before->cues.end(), [&](const BaselineCue &b) {
+                    return sameCue(b.cue, cue.cue);
+                });
+                if (same != before->cues.end()) {
+                    cue.origin = same->origin;
+                }
+            }
+        }
+    }
+
+    std::set<std::string> kept;
+    for (const auto &key : offered) {
+        if (!applied.contains(key)) {
+            kept.insert(key);
+        }
+    }
+    for (const auto &[key, hash] : declined) {
+        kept.insert(key);
+    }
+    keepPreviousItems(next, previous, kept);
+
+    next.declined = declined;
+    if (previous) {
+        for (const auto &[key, hash] : previous->declined) {
+            if (kept.contains(key)) {
+                next.declined.emplace(key, hash);  // a new decline of the same key wins
+            }
+        }
+    }
+    return next;
+}
+
 }  // namespace seabass::domain

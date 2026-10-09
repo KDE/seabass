@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -190,5 +191,75 @@ std::string ratingItemKey(const std::string &pathKey);
 std::string commentItemKey(const std::string &pathKey);
 // Hot cue by pad, memory cue or loop by rounded position.
 std::string cueItemKey(const std::string &pathKey, const CuePoint &cue);
+
+// One write Seabass made onto the rekordbox side of a stick (a sync
+// from Engine, a restore, the cue editor), keyed for the baseline.
+struct SeabassWrite
+{
+    std::string pathKey;
+    // The track's whole cue set as written; nullopt when no cues were
+    // written, which is not the same as writing none.
+    std::optional<std::vector<CuePoint>> cues;
+    // The stars written, 0 to 5; nullopt when no rating was.
+    std::optional<int> rating;
+};
+
+// The origin ledger: each written track's cues become the written set,
+// every cue of Seabass origin, and its rating the written one (0 stars
+// recorded as unrated, as the readers give it), of Seabass origin. Every
+// row of the track's pathKey is updated. The written values are what the
+// rekordbox side holds for those items now, so they are a valid base for
+// them whether or not the baseline is current. Returns the pathKeys of
+// writes for a track the baseline does not list, which are left out: a
+// track row needs more than a write knows.
+std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const std::vector<SeabassWrite> &writes);
+
+// Puts back, in `next`, the value `previous` had for each item in `keys`
+// (itemKey grammar; anything else is ignored), so the item comes up again
+// next time as it did this time. No previous baseline, or one without the
+// item, means the item was absent from it and is taken out of `next`. Per
+// kind:
+//
+//   track       presence only: a row previous had and next lacks is put
+//               back whole, a row next has and previous lacked is taken
+//               out; a row both have is left as next has it
+//   playlist    path, parent and folder flag; put back with no members
+//               (each member is an item of its own) or taken out
+//   member      the track's entries in that playlist: next's taken out,
+//               previous's put back at their indexes (clamped)
+//   rating, comment, cue
+//               the value on every row of the track next has; a cue is
+//               every cue of that key, with its origin
+//
+// Tracks and playlists are settled before members and values, whatever
+// the order of `keys`.
+void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys);
+
+// The baseline a save of Sync after Rekordbox Export records (plan, "When
+// the baseline is written", case 1): every item advances to rekordbox as
+// it is now (`rekordboxNow`, `playlists`, `sequence`, through
+// baselineFrom and the same two path functions), except the items the
+// proposal `offered` that the save did not apply (`applied`) and every
+// `declined` one, which keep their value from `previous`
+// (keepPreviousItems). Already-level items are in neither list and
+// advance.
+//
+// `declined` maps itemKey to rekordbox's state hash when declined, and
+// becomes the x entries; an x entry of `previous` for an item kept here
+// and not declined again is carried, so an item the planner suppressed
+// as declined stays declined. A cue or rating that advances with the
+// value `previous` had keeps `previous`'s origin: the value did not
+// change, so neither did who put it there. engineUuid is `previous`'s;
+// recordedAtUnix and writer are left for the writer to fill.
+//
+// Seabass's own writes of the same save (restores onto rekordbox) are not
+// known here; the save merges them afterwards (recordSeabassWrites).
+RekordboxBaseline nextBaseline(const RekordboxBaseline *previous, const std::vector<Track> &rekordboxNow,
+                               const std::vector<PlaylistInfo> &playlists, std::uint64_t sequence,
+                               const std::set<std::string> &offered, const std::set<std::string> &applied,
+                               const std::map<std::string, std::string> &declined,
+                               const std::function<std::string(const std::string &)> &stickRelativeOf,
+                               const std::function<std::string(const std::string &)> &pathKeyOf,
+                               BaselineGaps *gaps = nullptr);
 
 }  // namespace seabass::domain
