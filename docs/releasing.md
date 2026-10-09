@@ -138,14 +138,14 @@ release number. On a `Seabass/X.Y` branch every package job is available
 as a button in the pipeline:
 
 - `linux:package` -- the Linux tarball.
-- `craft_windows_qt6_x86_64`, `craft_macos_qt6_arm64`,
-  `craft_macos_qt6_x86_64` -- the Craft packages. They sit in the last
-  stage, `deploy`, so their buttons appear once the build and test stages
-  have finished.
-- `macos:universal` -- the two macOS halves merged into one universal
-  `.dmg` (see "A universal macOS package"). It is offered wherever the
-  halves are and runs once both have run in the same pipeline; only on
-  `Seabass/X.Y` is the result signed and notarised.
+- `craft_windows_qt6_x86_64` -- the Craft Windows package. It sits in
+  the last stage, `deploy`, so its button appears once the build and test
+  stages have finished.
+- `macos:universal` -- the universal macOS `.dmg`, Intel and Apple
+  Silicon, macOS 12 and later, built on Qt 6.8 outside Craft (see "A
+  universal macOS package"). It needs no other job, so its button is
+  there at once; only on `Seabass/X.Y` is the result signed and
+  notarised. The Craft macOS jobs are parked, see `.gitlab-ci.yml`.
 
 **Signing depends on the ref, and tags are not signed.** KDE's signing
 service clears a request by project and exact ref name
@@ -172,27 +172,22 @@ does not check for updates. That is what a pre-tag test build is.
 
 A release tag runs the full lane: Linux build and the whole `ctest`
 suite including the `integration` label, Windows build, test, installer
-and installer test, and the two Craft macOS halves. None of them is
+and installer test, and the universal macOS package. None of them is
 signed on a tag: see "Signing depends on the ref" above.
 
 | Platform | Job | Package |
 |---|---|---|
 | Linux | `linux:package` | `seabass-<version>_<channel>_linux.tar.gz` |
 | Windows | `craft_windows_qt6_x86_64` (Craft; the MSYS2 `windows:package` only once a Windows runner exists) | `seabass-<version>_<channel>_windows.exe` |
-| macOS | `craft_macos_qt6_arm64` | `seabass-<version>_<channel>_macos-arm64.dmg` |
-| macOS | `craft_macos_qt6_x86_64` | `seabass-<version>_<channel>_macos-x86_64.dmg` |
-| macOS | `macos:universal` (a button once both halves are green) | `seabass-<version>_<channel>_macos.dmg` |
+| macOS | `macos:universal` (a button on a tag, see above) | `seabass-<version>_<channel>_macos.dmg` |
 
 The `<channel>` in a filename is the build channel, which is what the
 binary reports in its own Settings. The directory it is served from is the
 website channel.
 
-The first two macOS rows are halves. Neither is published: see "A
-universal macOS package" below. `fetch-release.sh` brings both down as
-evidence that both architectures build, and then takes
-`seabass-<version>_<channel>_macos.dmg`, the merged package, from
-`macos:universal`, unless one merged by hand on a Mac is already in
-place. It refuses to call the release complete without it.
+`fetch-release.sh` takes the macOS package from `macos:universal`,
+unless one built by hand on a Mac is already in place, and refuses to
+call the release complete without it.
 
 `tools/fetch-release.sh` puts them in
 `~/Seabass/releases/<channel>/` under exactly those names, which are also
@@ -225,28 +220,39 @@ Before flipping that flag, on each platform:
 
 ## A universal macOS package
 
-Craft builds one architecture per root and has no universal mode, so the
-two packages are built separately and merged afterwards. Both steps run on
-a Mac -- `lipo` has a Linux equivalent in `llvm-lipo`, and `rcodesign` can
-sign there, but the `.dmg` itself needs `hdiutil`, and both halves are
-produced on Macs anyway -- while being scriptable from the Linux publisher
-over ssh: each script is non-interactive and exits non-zero on any fault.
+Since 2026-10-09 the Mac package is built on Qt 6.8, which is the last Qt
+for macOS 12 and which Seabass stays on (so older Macs keep working), and
+not in Craft: Craft's Qt and every library in its cache need macOS 13.3.
+Qt's own 6.8 binaries are universal already, so
+`tools/macos-monterey-dmg.sh` builds both architectures in one go: Qt from
+aqtinstall, OpenSSL, SQLCipher and TagLib built by the script for both,
+then Seabass, one bundle, one `.dmg`, checked to need nothing newer than
+macOS 12.0.
 
-CI does the same in `macos:universal`: it takes the two halves' `.dmg`
-files and the `install.db` each Craft job keeps, merges them with
-`--from-dmgs`, and runs `tools/macos-verify-dmg.sh` against the committed
-fixture laid out as a stick, with the fixture's `SET-EXPECTATIONS.txt`: each
-slice must report exactly its rekordbox track and cue counts and its
-OneLibrary track count, and a `sync --dry-run` that fails or prints no
-OneLibrary count fails the job. On a `Seabass/X.Y` branch it also has the
-merged bundle and the image signed and the image notarised by KDE's
-signing service; on any other ref the package is signed ad hoc, as the
-halves are. It refuses when the runner cannot execute x86_64 code, rather
-than check one slice and pass. The nightly runs it by itself, so two
-Craft roots that have drifted apart show up as a red job before a
-release rather than on the day of one. On a `Seabass/X.Y` branch the
-nightly also signs and notarises it, and a failure there fails the
-pipeline; a push to that branch offers it as a button, signed as well.
+CI runs exactly that in `macos:universal` and then
+`tools/macos-verify-dmg.sh` against the committed fixture laid out as a
+stick, with the fixture's `SET-EXPECTATIONS.txt`: each slice must report
+exactly its rekordbox track and cue counts and its OneLibrary track count,
+and a `sync --dry-run` that fails or prints no OneLibrary count fails the
+job. It refuses when the runner cannot execute x86_64 code, rather than
+check one slice and pass. On a `Seabass/X.Y` branch it also has the bundle
+and the image signed and the image notarised by KDE's signing service, the
+nightly runs it by itself, and a failure there fails the pipeline; a push
+to that branch offers it as a button, signed as well. Everywhere else it
+is a button and the package is signed ad hoc. master's nightly does not
+run it: there is one macOS runner, and `linux:qt68` builds and tests every
+push against the same Qt.
+
+By hand, on a Mac:
+
+```sh
+# QT_DIR: aqt install-qt mac desktop 6.8.3 clang_64 -m qtmultimedia qtshadertools
+QT_DIR=<qt>/6.8.3/macos SEABASS_RELEASE_CHANNEL=<channel> \
+    tools/macos-monterey-dmg.sh <source tree> <work dir> seabass-<version>_<channel>_macos.dmg
+```
+
+The Craft route, parked with its CI jobs, merged two one-architecture
+Craft bundles instead:
 
 ```sh
 # on the Mac, once per architecture, from the same source tree
@@ -341,16 +347,16 @@ the download directory.
   release aimed at DJs; that needs a self-contained build, and it is not
   written yet.
 - **The macOS package has to be universal, and CI signs it only on a
-  `Seabass/X.Y` branch.** `macos:universal` merges it on every ref, a tag
+  `Seabass/X.Y` branch.** `macos:universal` builds it on every ref, a tag
   included, but a tag's package is signed ad hoc, and Gatekeeper will say
   it cannot be verified.
   Rosetta translates x86_64 to ARM and never the reverse, so an arm64-only
   `.dmg` mounts on an Intel Mac and refuses to launch -- and
   `publish-release.py` has one macOS slot, which is the right shape only if
-  what goes in it carries both architectures. `tools/macos-universal-dmg.sh`
-  merges an arm64 and an x86_64 Craft bundle into one package; see "A
-  universal macOS package" above. A `.dmg` merged by hand is not the build
-  CI tested, and the release notes have to say so.
+  what goes in it carries both architectures. `tools/macos-monterey-dmg.sh`
+  builds both into one package; see "A universal macOS package" above. A
+  `.dmg` built by hand is not the build CI tested, and the release notes
+  have to say so.
 - **The release text.** `publish-release.py` proposes one from the
   commits on the tag, grouped and trimmed, and will not publish until a
   person has edited it. A changelog nobody read is a changelog nobody

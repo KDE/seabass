@@ -232,14 +232,27 @@ reuse:
       - "kde-ci-logs/"
       - "kde-ci-craft/"
 
+# PARKED 2026-10-09: the Mac package is macos:universal below, built on
+# Qt 6.8 outside Craft, and Seabass stays on Qt 6.8 (Sebastian,
+# 2026-10-08). Craft's Qt and its libraries need macOS 13.3, so these
+# halves cannot make a package for the Macs that stop at 12, and running
+# them anyway would spend the one macOS runner on a package nobody ships.
+# Kept, not deleted: put `rules: *craft_lane_rules` back on both, and
+# rename .macos:universal-craft to a job name, to bring the lane back.
 craft_macos_qt6_arm64:
-  rules: *craft_lane_rules
+  rules:
+    - when: never
   <<: *craft_macos_keep_install_db
 
 craft_macos_qt6_x86_64:
-  rules: *craft_lane_rules
+  rules:
+    - when: never
   <<: *craft_macos_keep_install_db
 
+# PARKED with the two halves above (see there): one universal .dmg merged
+# from Craft's arm64 and x86_64 packages. The leading dot hides the job;
+# everything below describes it as it ran until 2026-10-09.
+#
 # One universal .dmg from the two halves above.
 #
 # It runs wherever the halves do, by the same rules: automatic on the
@@ -267,7 +280,7 @@ craft_macos_qt6_x86_64:
 # Signing happens after the merge because lipo invalidates the halves'
 # signatures. The same ci-notary-service clients the template uses sign
 # the merged .app and the .dmg, and notarise the .dmg.
-macos:universal:
+.macos:universal-craft:
   stage: deploy
   tags:
     - macOS
@@ -360,24 +373,35 @@ macos:universal:
 
 # A universal .dmg for macOS 12 Monterey and later, Intel and Apple Silicon
 # alike -- for the Macs that stop at 12 (the 2017 MacBook Air, for one) and
-# refuse the packages above: Craft's Qt and every library in its cache need
+# refuse the parked Craft packages above: Craft's Qt and every library in its cache need
 # macOS 13.3. Qt 6.8 LTS is the last Qt for macOS 12, and Seabass stays on
 # it (Sebastian, 2026-10-08), so this builds against Qt's own 6.8 binaries,
 # which are universal, outside Craft -- see tools/macos-monterey-dmg.sh for
 # why not inside it. Both slices are run and read the fixture, so the
 # runner needs Rosetta; the script refuses a package it could not check.
 #
-# Same rules and the same signing as macos:universal: signed and notarised
-# on the Seabass/X.Y nightly (and its button), the only refs cleared for
-# macOS signing; ad hoc everywhere else. It needs nothing from the Craft
-# jobs, so it starts at once.
+# THE Mac package since 2026-10-09 (it was macos:monterey): Seabass is on
+# Qt 6.8 on the Mac only, and this one .dmg covers macOS 12 and later on
+# both architectures. The Craft-built halves and their merge are parked
+# above.
+#
+# Signed and notarised on the Seabass/X.Y nightly (and its button), the
+# only refs cleared for macOS signing (see .macos:universal-craft for
+# why); ad hoc everywhere else.
+#
+# Runs by itself only where a package is wanted: the Seabass/X.Y nightly
+# and release tags. Everywhere else, master's nightly included, it is a
+# button: there is one macOS runner, and linux:qt68 already builds and
+# tests every push against the same Qt.
 #
 # Nothing outside the system is assumed on the runner: cmake and ninja come
-# from pip, Qt from aqtinstall, into the job's own directory. Qt and the
-# libraries the script builds (OpenSSL, SQLCipher, TagLib) are cached
-# between runs, keyed on the script, which pins their versions; the venv
-# holding the tools is not (see below).
-macos:monterey:
+# from pip, Qt from aqtinstall, into the job's own directory. Qt is cached
+# on its version alone, and the libraries the script builds (OpenSSL,
+# SQLCipher, TagLib) on the script, which pins their versions -- so editing
+# the script does not throw Qt away. KDE's runners have no shared cache
+# server, so a cache lives on the one Mac that wrote it; there is only the
+# one. The venv holding the tools is not cached (see below).
+macos:universal:
   stage: deploy
   tags:
     - macOS
@@ -386,13 +410,12 @@ macos:monterey:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       allow_failure: false
       variables:
-        SEABASS_MONTEREY_SIGN: "yes"
+        SEABASS_UNIVERSAL_SIGN: "yes"
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       when: manual
       allow_failure: true
       variables:
-        SEABASS_MONTEREY_SIGN: "yes"
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
+        SEABASS_UNIVERSAL_SIGN: "yes"
     - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
     - when: manual
       allow_failure: true
@@ -400,14 +423,17 @@ macos:monterey:
     GIT_STRATEGY: none
     SEABASS_QT_VERSION: "6.8.3"
   cache:
-    key:
-      files:
-        - tools/macos-monterey-dmg.sh
-      prefix: monterey-qt-6.8.3
-    paths:
-      - monterey-cache/
+    - key: macos-qt-6.8.3
+      paths:
+        - macos-qt/
+    - key:
+        files:
+          - tools/macos-monterey-dmg.sh
+        prefix: macos-deps
+      paths:
+        - macos-deps/
   before_script:
-    - rm -rf src ci-utilities ci-notary-service monterey-venv monterey-work kde-ci-monterey kde-ci-unverified fixture-stick
+    - rm -rf src ci-utilities ci-notary-service macos-venv macos-work kde-ci-universal kde-ci-unverified fixture-stick
     - git clone https://invent.kde.org/sysadmin/ci-utilities.git --depth=1
     - git clone https://invent.kde.org/sysadmin/ci-notary-service.git --depth=1
     - python3 -u ci-utilities/gitlab-ci-clone.py src/
@@ -418,19 +444,19 @@ macos:monterey:
     # ci-notary-service's own requirements too: with the venv first on
     # PATH, its signing and notarising clients run in it, and the first
     # signed run (job 5141646) stopped at "No module named 'yaml'".
-    - python3 -m venv monterey-venv
-    - monterey-venv/bin/python -m pip install --quiet aqtinstall cmake ninja -r ci-notary-service/requirements.txt
-    - export PATH="$PWD/monterey-venv/bin:$PATH"
+    - python3 -m venv macos-venv
+    - macos-venv/bin/python -m pip install --quiet aqtinstall cmake ninja -r ci-notary-service/requirements.txt
+    - export PATH="$PWD/macos-venv/bin:$PATH"
     - |
-      qt="$PWD/monterey-cache/qt/$SEABASS_QT_VERSION/macos"
+      qt="$PWD/macos-qt/$SEABASS_QT_VERSION/macos"
       if [ ! -x "$qt/bin/macdeployqt" ]; then
-        aqt install-qt mac desktop "$SEABASS_QT_VERSION" clang_64 -O monterey-cache/qt -m qtmultimedia qtshadertools || exit 1
+        aqt install-qt mac desktop "$SEABASS_QT_VERSION" clang_64 -O macos-qt -m qtmultimedia qtshadertools || exit 1
       fi
       # The libraries are built once and kept: the script reuses
       # <work>/deps whenever it finds them there.
-      mkdir -p monterey-work monterey-cache/deps kde-ci-unverified
-      ln -sfn "$PWD/monterey-cache/deps" monterey-work/deps
-      if [ "${SEABASS_MONTEREY_SIGN:-}" = "yes" ]; then
+      mkdir -p macos-work macos-deps kde-ci-unverified
+      ln -sfn "$PWD/macos-deps" macos-work/deps
+      if [ "${SEABASS_UNIVERSAL_SIGN:-}" = "yes" ]; then
         echo "Signing: $CI_COMMIT_REF_NAME is cleared, the bundle and image are signed and notarised"
         export SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini"
         export SEABASS_NOTARIZE_COMMAND="python3 ci-notary-service/notarizemacapp.py -v --config ci-utilities/signing/notarizemacapp.ini"
@@ -443,21 +469,23 @@ macos:monterey:
       channel="${SEABASS_RELEASE_CHANNEL:-dev}"
       case "${CI_COMMIT_TAG:-}" in releases/*/*) channel="$(echo "$CI_COMMIT_TAG" | cut -d/ -f2)" ;; esac
       echo "Channel: $channel"
-      SEABASS_RELEASE_CHANNEL="$channel" QT_DIR="$qt" src/tools/macos-monterey-dmg.sh src monterey-work \
-          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-12-universal.dmg"
-    # The same read-only check as the Craft-made universal package, both slices.
+      SEABASS_RELEASE_CHANNEL="$channel" QT_DIR="$qt" src/tools/macos-monterey-dmg.sh src macos-work \
+          "kde-ci-unverified/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
+    # The same read-only check a release gets on a Mac, against the committed
+    # fixture laid out as a stick: both slices read the encrypted OneLibrary,
+    # and each must report the fixture's own counts.
     - mkdir fixture-stick
     - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
     - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
     - src/tools/macos-verify-dmg.sh kde-ci-unverified/*.dmg fixture-stick src/tests/fixtures/anonymized_library/SET-EXPECTATIONS.txt
-    - mkdir kde-ci-monterey
-    - mv kde-ci-unverified/*.dmg kde-ci-unverified/*.dmg.sha256 kde-ci-monterey/
+    - mkdir kde-ci-universal
+    - mv kde-ci-unverified/*.dmg kde-ci-unverified/*.dmg.sha256 kde-ci-universal/
   after_script:
-    - rm -rf src ci-utilities ci-notary-service monterey-venv monterey-work kde-ci-unverified fixture-stick
+    - rm -rf src ci-utilities ci-notary-service macos-venv macos-work kde-ci-unverified fixture-stick
   artifacts:
     expire_in: 1 week
     paths:
-      - "kde-ci-monterey/"
+      - "kde-ci-universal/"
 
 
 
