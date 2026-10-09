@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "domain/engine_update_planning.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -64,6 +66,14 @@ std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot,
 // more than one when two share a name in one folder, or a name holds a
 // "/" that reads as a folder. Only exactly one can be edited by path.
 int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath);
+
+// Every playlist and folder in the library, depth first in Engine's
+// order, each with its path as the Engine reader spells it, whether it
+// has children (Engine's only notion of a folder), and how many
+// playlists spell that path (enginePlaylistCountAtPath's reading, taken
+// in the same walk). For Sync after Rekordbox Export's planner. Throws
+// when the library cannot be opened.
+std::vector<domain::EnginePlaylistInfo> listEnginePlaylists(const std::string &engineLibraryPath);
 
 // The ids of every track some playlist in the library holds.
 std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLibraryPath);

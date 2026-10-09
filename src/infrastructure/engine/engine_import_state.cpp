@@ -4,6 +4,7 @@
 
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 namespace seabass::infrastructure::engine
 {
@@ -114,6 +116,46 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
     sqlite3_finalize(stmt);
     sqlite3_close(handle);
     return state;
+}
+
+std::map<std::string, std::int64_t> readEnginePdbImportKeys(const std::string &engineLibraryPath)
+{
+    const std::string database = pathToUtf8(engineDatabase(engineLibraryPath));
+    sqlite3 *handle = nullptr;
+    const auto fail = [&handle, &database](const std::string &what) {
+        const std::string why = handle != nullptr ? sqlite3_errmsg(handle) : "out of memory";
+        sqlite3_close(handle);
+        throw std::runtime_error("could not read pdbImportKey from " + database + ": " + what + ": " + why);
+    };
+    if (sqlite3_open_v2(database.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        fail("open");
+    }
+    std::map<std::string, std::int64_t> keys;
+    bool present = false;
+    try {
+        present = hasColumn(handle, "Track", "pdbImportKey");
+    } catch (const std::exception &) {
+        fail("list the Track columns");
+    }
+    if (!present) {
+        sqlite3_close(handle);
+        return keys;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle, "SELECT id, coalesce(pdbImportKey, 0) FROM Track;", -1, &stmt, nullptr)
+        != SQLITE_OK) {
+        fail("query");
+    }
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        keys[std::to_string(sqlite3_column_int64(stmt, 0))] = sqlite3_column_int64(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        fail("read");
+    }
+    sqlite3_close(handle);
+    return keys;
 }
 
 bool markRekordboxLibraryImported(const std::string &engineLibraryPath, std::uint64_t librarySequence,
