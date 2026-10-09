@@ -145,6 +145,11 @@ Page {
                 var parts = [];
                 const playerOnly = consistencyController?.artworkPlayerOnlyCount;
                 if (playerOnly > 0) {
+                    const label = consistencyController?.artworkPlayerOnlyLabel;
+                    if (label.length > 0) {
+                        parts.push(playerOnly + " covers are shown by a player only while this stick is called "
+                            + label + ".");
+                    }
                     parts.push(playerOnly + " keep their cover as the path a Denon player wrote when it imported "
                         + "the rekordbox library (/media/<stick name>/PIONEER/Artwork/...). Every Denon player "
                         + "mounts the stick there and shows them, for as long as the stick keeps its name. Engine "

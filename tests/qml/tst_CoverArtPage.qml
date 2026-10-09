@@ -268,6 +268,40 @@ TestCase {
         compare(controller.artworkRepairStaged, false, "unstaging takes it back out");
     }
 
+    // Covers a player shows only through the stick's own name: the page
+    // says so in those words, and offers the copy that makes them
+    // independent of it, so a library can be made label-proof before it
+    // is cloned onto a stick called something else.
+    property string playerStickLibrary: ""
+
+    Component {
+        id: playerStickPageComponent
+        CoverArtPage {
+            width: 980
+            height: 660
+            stickLabel: "WHALESHARK2"
+            rekordboxPath: ""
+            enginePath: testCase.playerStickLibrary
+        }
+    }
+
+    function test_coversThatDependOnTheStickNameSaySo() {
+        testCase.playerStickLibrary = artworkFixture.libraryOnItsPlayerStick(testCase.fixtureEngineRoot);
+        verify(testCase.playerStickLibrary.length > 0, "the fixture library must be built");
+        const page = createTemporaryObject(playerStickPageComponent, testCase);
+        const controller = page.consistencyController;
+        tryVerify(function() { return controller.busy === false; }, 300000, "the scan must finish");
+        const playerOnly = controller.artworkPlayerOnlyCount;
+        verify(playerOnly > 1000, "the fixture's links name this stick: " + playerOnly);
+        compare(controller.artworkPlayerOnlyLabel, "WHALESHARK2");
+
+        const text = findChild(page, "coverArtExplanation").text;
+        verify(text.indexOf(playerOnly + " covers are shown by a player only while this stick is called WHALESHARK2.")
+               === 0, "the sentence leads: " + text);
+        const button = findChild(page, "embedCoverArtButton");
+        verify(button !== null && button.visible, "the copy that makes them label-proof is offered");
+    }
+
     // "Press Save to write it to the stick" is only true while something is
     // waiting to be saved. It used to be set once and left there, so a page
     // whose work had already landed -- or been taken back -- went on telling
