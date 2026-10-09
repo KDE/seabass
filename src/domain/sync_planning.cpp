@@ -786,6 +786,20 @@ std::string formatCuePosition(double positionMs)
     return text;
 }
 
+std::string describePadDifference(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
+                                  const std::string &labelA, const std::string &labelB,
+                                  const CueTolerance &tolerance)
+{
+    // HotDifference points into these: they outlive it.
+    const std::vector<CuePoint> hotA = cuesOfKind(a, CuePoint::Kind::Hot);
+    const std::vector<CuePoint> hotB = cuesOfKind(b, CuePoint::Kind::Hot);
+    const HotDifference difference = compareHotCues(hotA, hotB, tolerance.ms);
+    if (!difference.any()) {
+        return {};
+    }
+    return describeHotDifference(difference, labelA, labelB, tolerance).second;
+}
+
 bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b, double toleranceMs)
 {
     return !compareHotCues(cuesOfKind(a, CuePoint::Kind::Hot), cuesOfKind(b, CuePoint::Kind::Hot), toleranceMs).any()
