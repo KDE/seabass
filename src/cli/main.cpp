@@ -443,6 +443,32 @@ std::vector<Track> scanPath(std::unique_ptr<LibraryReader> reader, const std::st
     return tracks;
 }
 
+// scanPath for an Engine library, with Engine's cues at each file's own
+// sample rate (docs/sync-after-rekordbox-export-plan.md, step 6b): a row
+// the player has not analysed yet records no rate, and without a source
+// the reader takes 44.1 kHz, which reads a 48 kHz file's cues 9 percent
+// late. The rate comes from the stick's metadata cache, or a probe of the
+// file, as the app's Cues stage and sync-after-export take it.
+//
+// What was probed is never saved: scan, sync and export-xml read the
+// stick before anything is asked, and the cache file is the app's to
+// keep. A stick the app has read has most rates cached already.
+std::vector<Track> scanEnginePath(const std::string &enginePath)
+{
+#ifdef SEABASS_HAVE_TAGLIB
+    seabass::infrastructure::audio::TagLibMetadataProbe probe;
+#else
+    seabass::application::NullTrackMetadataProbe probe;
+#endif
+    seabass::infrastructure::local::CachedSampleRates rates(
+        seabass::infrastructure::paths::stickRootForCatalogPath(enginePath), probe);
+    auto reader = std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(enginePath);
+    reader->setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+    std::vector<Track> tracks = scanPath(std::move(reader), enginePath);
+    Console::verbose("sample rates probed: " + std::to_string(rates.probes()));
+    return tracks;
+}
+
 // Last step of a scan: find duplicate tracks and, where an unambiguous
 // consolidation is possible and a CueWriter exists for this format, offer
 // to apply it (backing up first). writer/backupStore/log may be null when
@@ -1318,9 +1344,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         }
         if (hasEngine) {
             engineDbFile = seabass::pathToUtf8(seabass::pathFromUtf8(*resolved.enginePath) / "Database2" / "m.db");
-            engineTracks = scanPath(
-                std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(*resolved.enginePath),
-                *resolved.enginePath);
+            engineTracks = scanEnginePath(*resolved.enginePath);
             // Streaming tracks (TIDAL) have no real local file. Never sync
             // cues onto/from one, same as the app. See
             // domain::Track::streamingSource's own doc comment.
@@ -1760,9 +1784,7 @@ int runExportXmlCommand(bool wantRekordbox, bool wantEngine, const std::optional
                 *resolved.rekordboxPath);
         }
         if (resolved.enginePath) {
-            engineRows = scanPath(
-                std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(*resolved.enginePath),
-                *resolved.enginePath);
+            engineRows = scanEnginePath(*resolved.enginePath);
         }
     } catch (const std::exception &e) {
         Console::error(e.what());
@@ -2194,9 +2216,7 @@ int main(int argc, char **argv)
         bool multipleEngine = scanTargets.engineTargets.size() > 1;
         for (const auto &target : scanTargets.engineTargets) {
             std::string heading = multipleEngine ? "engine (" + target.label + ")" : "engine";
-            auto tracks = scanPath(
-                std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(target.path),
-                target.path);
+            auto tracks = scanEnginePath(target.path);
             printReport(heading, tracks, reportOptions);
             if (refuseIfLockedByGui(target.path, force)) {
                 continue;

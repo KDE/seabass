@@ -3975,6 +3975,15 @@ add_executable(rig_advise tools/rig_advise.cpp)
 target_include_directories(rig_advise PRIVATE src)
 target_link_libraries(rig_advise PRIVATE seabass_core)
 
+# The rig tools that read Engine's cues do it at each file's own sample
+# rate, through rig_catalog.hpp's EngineReaderAtFileRates, which probes a
+# file with TagLib where the stick's metadata cache does not know it.
+if(TARGET seabass_taglib)
+    foreach(rig_tool rig_read rig_restore rig_backup rig_salvage rig_plant_repairable rig_clone rig_advise)
+        target_link_libraries(${rig_tool} PRIVATE seabass_taglib)
+    endforeach()
+endif()
+
 # Issue #59 on hardware: plants five tracks on a test stick that say where
 # a OneLibrary player takes its cues from (table or analysis file, PCOB or
 # PCO2, file-only loops, Seabass's own Add Cue, table against file), and

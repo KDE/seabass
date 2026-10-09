@@ -25,11 +25,16 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 
 namespace seabass::rig
 {
@@ -59,6 +64,38 @@ inline std::string stickLabelFor(const std::filesystem::path &root)
     return label;
 }
 
+// An Engine reader that reads each row's cues at its file's own sample
+// rate, as the app does (docs/sync-after-rekordbox-export-plan.md, step
+// 6b): a row the player has not analysed yet records no rate, and the
+// reader alone takes 44.1 kHz, which reads a 48 kHz file's cues 9 percent
+// late. The rate comes from the stick's metadata cache, or a probe of the
+// file. What was probed is never saved: a check must not change what it
+// checks.
+class EngineReaderAtFileRates
+{
+public:
+    explicit EngineReaderAtFileRates(const std::filesystem::path &engineLibrary)
+        : m_rates(infrastructure::paths::stickRootForCatalogPath(pathToUtf8(engineLibrary)), m_probe),
+          m_reader(pathToUtf8(engineLibrary))
+    {
+        m_reader.setSampleRateSource([this](const std::string &file) { return m_rates.rateOf(file); });
+    }
+    EngineReaderAtFileRates(const EngineReaderAtFileRates &) = delete;
+    EngineReaderAtFileRates &operator=(const EngineReaderAtFileRates &) = delete;
+
+    infrastructure::engine::LibdjinteropEngineReader &reader() { return m_reader; }
+    std::size_t probes() const { return m_rates.probes(); }
+
+private:
+#ifdef SEABASS_HAVE_TAGLIB
+    infrastructure::audio::TagLibMetadataProbe m_probe;
+#else
+    application::NullTrackMetadataProbe m_probe;
+#endif
+    infrastructure::local::CachedSampleRates m_rates;
+    infrastructure::engine::LibdjinteropEngineReader m_reader;
+};
+
 // The stick's library fingerprint, for information: rekordbox and Engine
 // tracks together, as the app fingerprints them -- but without filling in
 // missing lengths. The fill probes audio files and writes its results to a
@@ -78,8 +115,8 @@ inline std::optional<domain::LibraryFingerprint> fingerprintStick(const std::fil
     }
     const std::filesystem::path engine = root / "Engine Library";
     if (std::filesystem::exists(engine / "Database2" / "m.db") || std::filesystem::exists(engine / "m.db")) {
-        infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(engine));
-        std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
+        EngineReaderAtFileRates engineAtRates(engine);
+        std::vector<domain::Track> read = application::ScanLibrary(engineAtRates.reader()).execute();
         std::cout << "  engine: " << read.size() << " tracks\n";
         tracks.insert(tracks.end(), read.begin(), read.end());
         anyRead = true;
