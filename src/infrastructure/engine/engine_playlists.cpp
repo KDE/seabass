@@ -13,6 +13,7 @@
 #include <djinterop/djinterop.hpp>
 #include <sqlite3.h>
 
+#include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::engine
@@ -246,22 +247,33 @@ std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLib
 
 int removeEngineTracks(const std::string &engineLibraryPath, const std::vector<std::int64_t> &trackIds)
 {
-    auto db = djinterop::engine::load_database(engineLibraryPath);
-    const auto listed = tracksInPlaylists(db);
-    int removed = 0;
-    for (const std::int64_t id : trackIds) {
-        if (listed.count(id)) {
-            throw std::runtime_error("engine: track id=" + std::to_string(id) + " is in a playlist; not removing it");
+    std::vector<std::int64_t> present;
+    {
+        auto db = djinterop::engine::load_database(engineLibraryPath);
+        const auto listed = tracksInPlaylists(db);
+        // Every id checked before anything is written: Delete Tracks
+        // leaves a listed track alone, and this guard backs that rule even
+        // for a caller that did not apply it. removeEngineTrackRows itself
+        // would take the playlist entries along.
+        for (const std::int64_t id : trackIds) {
+            if (listed.count(id)) {
+                throw std::runtime_error("engine: track id=" + std::to_string(id) + " is in a playlist; not removing it");
+            }
         }
-        auto track = db.track_by_id(id);
-        if (!track) {
-            continue;
+        for (const std::int64_t id : trackIds) {
+            if (db.track_by_id(id)) {
+                present.push_back(id);
+            }
         }
-        db.remove_track(*track);
-        if (db.track_by_id(id)) {
-            throw std::runtime_error("engine: track id=" + std::to_string(id) + " is still there after removing it");
-        }
-        ++removed;
+    }
+    if (present.empty()) {
+        return 0;
+    }
+    std::string error;
+    const int removed =
+        removeEngineTrackRows(pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db"), present, &error);
+    if (removed < 0) {
+        throw std::runtime_error("engine: could not remove tracks: " + error);
     }
     return removed;
 }

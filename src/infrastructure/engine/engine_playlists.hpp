@@ -59,9 +59,13 @@ int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::s
 std::vector<std::int64_t> engineTracksInAnyPlaylist(const std::string &engineLibraryPath);
 
 // Removes the tracks with these ids from the library (rows only; the
-// files are the caller's). A track still in a playlist is refused with a
-// throw, since removing it would leave the playlist pointing at nothing.
-// Returns how many were removed.
+// files are the caller's), each with every row that names it, through
+// removeEngineTrackRows (engine_track_rows.hpp) in one transaction. A
+// track still in a playlist is refused with a throw before anything is
+// written: Delete Tracks leaves listed tracks alone, and this keeps that
+// rule for every caller; removeEngineTrackRows is the removal without it.
+// An id with no track is skipped. Returns how many were removed; throws
+// when the database cannot be written.
 int removeEngineTracks(const std::string &engineLibraryPath, const std::vector<std::int64_t> &trackIds);
 
 // Deletes the playlist at playlistPath ("Folder/List") with every playlist

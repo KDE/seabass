@@ -33,6 +33,7 @@
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
+#include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
@@ -81,6 +82,16 @@ std::vector<std::int64_t> engineMembers(const fs::path &library, const std::stri
         ids.push_back(t.id());
     }
     return ids;
+}
+
+// How many rows of the library's m.db name `trackId`: its Track row plus
+// every PerformanceData, PlaylistEntity, PreparelistEntity row.
+int engineRowsNaming(const fs::path &library, std::int64_t trackId)
+{
+    std::string error;
+    const int rows = infrastructure::engine::engineRowsNamingTrack(pathToUtf8(library / "Database2" / "m.db"), trackId, &error);
+    assert(rows >= 0 && error.empty());
+    return rows;
 }
 
 }  // namespace
@@ -223,6 +234,9 @@ int main(int argc, char **argv)
                                                      .trackIdsWithFilePath("/Contents/" + std::string(A01.relative)).front());
         std::vector<DeleteTracksChange::Entry> entries = {{file(A10), "Tone A10", "Tone Artist 05", rowsFor(A10, a01Id)},
                                                           {file(A01), "Tone A01", "Tone Artist 01", rowsFor(A01, a01Id)}};
+        // a10 is its Track row and the PerformanceData row Engine's insert
+        // trigger gave it; Delete Tracks has to take both.
+        assert(engineRowsNaming(library, engineId[A10.relative]) == 2 && "a10: Track and PerformanceData");
         const auto result = save(std::make_shared<DeleteTracksChange>(pioneerQ, libraryQ, entries));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
 
@@ -241,6 +255,8 @@ int main(int argc, char **argv)
         auto db = djinterop::engine::load_database(pathToUtf8(library));
         assert(!db.track_by_id(engineId[A10.relative]).has_value() && "a10 out of Engine");
         assert(db.track_by_id(engineId[A01.relative]).has_value() && "a01 kept in Engine");
+        assert(engineRowsNaming(library, engineId[A10.relative]) == 0 && "no PerformanceData row left behind for a10");
+        assert(engineRowsNaming(library, engineId[A01.relative]) == 3 && "a01 keeps its rows and its Q1 entry");
         std::ifstream manifest(stick / "Seabass" / "orphaned" / "pending-deletions.jsonl");
         std::stringstream lines;
         lines << manifest.rdbuf();
