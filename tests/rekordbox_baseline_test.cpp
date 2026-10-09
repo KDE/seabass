@@ -11,10 +11,13 @@
 
 #include <cassert>
 #include <iostream>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 using seabass::domain::baselineFrom;
+using seabass::domain::nextBaseline;
 using seabass::domain::BaselineGaps;
 using seabass::domain::CuePoint;
 using seabass::domain::ItemKey;
@@ -285,6 +288,150 @@ void testItemKeys()
     }
 }
 
+// nextBaseline: the stick as Seabass last recorded it, and rekordbox as
+// it is now after an export that changed track One's rating, comment and
+// cues, rated Two, added Three, renamed "Peak", deleted "Warmup" and
+// created "New".
+struct NextInput
+{
+    RekordboxBaseline previous;
+    std::vector<Track> now;
+    std::vector<PlaylistInfo> playlists;
+};
+
+const std::string One = "contents/a/one.mp3";
+const std::string Two = "contents/b/two.mp3";
+const std::string Three = "contents/c/three.mp3";
+
+NextInput nextInput()
+{
+    NextInput in;
+    Track one = rekordboxTrack("1", "Contents/A/One.mp3", {{"Peak", 0}});
+    one.rating = 3;
+    one.comment = "old";
+    one.cues = {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""}, CuePoint{CuePoint::Kind::Memory, 0, 500.0, "", ""}};
+    Track two = rekordboxTrack("2", "Contents/B/Two.mp3", {{"Peak", 1}, {"Warmup", 0}});
+    in.previous = baselineFrom({one, two}, {{"Peak", false, 11}, {"Warmup", false, 12}}, 100, stickRelative,
+                               lowerKey);
+    in.previous.engineUuid = "uuid-1";
+    in.previous.tracks[0].cues[0].origin = ValueOrigin::Seabass;    // a pad Seabass synced
+    in.previous.tracks[0].cues[1].origin = ValueOrigin::Rekordbox;  // the export's memory cue
+    in.previous.tracks[1].ratingOrigin = ValueOrigin::Rekordbox;
+    in.previous.declined = {{"rating:" + Two, "h-old"}, {"comment:" + Three, "h-stale"}};
+
+    Track oneNow = rekordboxTrack("1", "Contents/A/One.mp3", {{"Peak Time", 1}});
+    oneNow.rating = 5;
+    oneNow.comment = "new";
+    oneNow.cues = {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#00FF00", ""},
+                   CuePoint{CuePoint::Kind::Hot, 2, 2000.0, "", ""}};
+    Track twoNow = rekordboxTrack("2", "Contents/B/Two.mp3", {{"Peak Time", 0}});
+    twoNow.rating = 2;
+    Track threeNow = rekordboxTrack("3", "Contents/C/Three.mp3", {{"Peak Time", 2}, {"New", 0}});
+    in.now = {oneNow, twoNow, threeNow};
+    in.playlists = {{"Peak Time", false, 11}, {"New", false, 13}};
+    return in;
+}
+
+void testNextBaseline()
+{
+    const NextInput in = nextInput();
+    const std::set<std::string> offered = {
+        "track:" + Three,  "playlist:11", "playlist:12", "playlist:13", "member:11:" + Three,
+        "member:13:" + Three, "rating:" + One, "comment:" + One, "cue:hot:2:" + One, "cue:memory:500:" + One,
+        "rating:" + Two,
+    };
+    const std::set<std::string> applied = {"track:" + Three, "playlist:11", "member:11:" + Three, "rating:" + One,
+                                           "cue:hot:2:" + One};
+    const std::map<std::string, std::string> declined = {{"comment:" + One, "h1"}, {"playlist:12", "h2"}};
+    const RekordboxBaseline next =
+        nextBaseline(&in.previous, in.now, in.playlists, 200, offered, applied, declined, stickRelative, lowerKey);
+
+    assert(next.pdbSequence == 200);
+    assert(next.engineUuid == "uuid-1");
+    assert(next.tracks.size() == 3);
+
+    const auto &one = *next.findTrack(One);
+    assert(one.rating == 5 && "applied: rekordbox's value now");
+    assert(one.ratingOrigin == ValueOrigin::Unknown && "a new value carries no origin");
+    assert(one.comment == "old" && "declined: the previous value");
+    // The pad that did not move keeps Seabass's origin (its colour changed,
+    // which does not make it another cue); the applied pad is rekordbox's
+    // now; the memory cue rekordbox dropped, unresolved, is put back with
+    // the export's origin, after the cues of the read.
+    assert(one.cues.size() == 3);
+    assert(one.cues[0].cue.hotCueNumber == 1 && one.cues[0].cue.color == "#00FF00"
+           && one.cues[0].origin == ValueOrigin::Seabass);
+    assert(one.cues[1].cue.hotCueNumber == 2 && one.cues[1].cue.positionMs == 2000.0
+           && one.cues[1].origin == ValueOrigin::Unknown);
+    assert(one.cues[2].cue.kind == CuePoint::Kind::Memory && one.cues[2].cue.positionMs == 500.0
+           && one.cues[2].origin == ValueOrigin::Rekordbox);
+
+    const auto &two = *next.findTrack(Two);
+    assert(!two.rating && two.ratingOrigin == ValueOrigin::Rekordbox && "unresolved: the previous value and origin");
+    assert(next.findTrack(Three) && "the added track is there");
+
+    // "Peak" renamed (applied) with rekordbox's order; "New" (unresolved)
+    // taken out; "Warmup" (declined delete) put back, empty, after them.
+    assert(next.playlists.size() == 2);
+    assert(next.playlists[0].id == 11 && next.playlists[0].path == "Peak Time");
+    assert((next.playlists[0].members == Members{Two, One, Three}));
+    assert(next.playlists[1].id == 12 && next.playlists[1].path == "Warmup" && next.playlists[1].members.empty());
+    assert(!next.findPlaylist(13));
+
+    // The two new declines, and the earlier decline of an item kept again;
+    // the stale one of an item not kept is dropped.
+    assert((next.declined
+            == std::map<std::string, std::string>{
+                {"comment:" + One, "h1"}, {"playlist:12", "h2"}, {"rating:" + Two, "h-old"}}));
+
+    // Everything level or applied: rekordbox now, origins carried.
+    const RekordboxBaseline level =
+        nextBaseline(&in.previous, in.now, in.playlists, 200, {}, {}, {}, stickRelative, lowerKey);
+    assert(level.tracks.size() == 3 && level.playlists.size() == 2 && level.declined.empty());
+    assert(level.findTrack(One)->cues.size() == 2 && level.findTrack(Two)->rating == 2);
+
+    // No previous baseline: a kept item was absent from it, so it is
+    // taken out.
+    const RekordboxBaseline first = nextBaseline(nullptr, in.now, in.playlists, 200, {"track:" + Three, "rating:" + Two},
+                                                 {}, {}, stickRelative, lowerKey);
+    assert(first.tracks.size() == 2 && !first.findTrack(Three));
+    assert(!first.findTrack(Two)->rating && first.engineUuid.empty());
+    std::cout << "nextBaseline (applied advance, declined and unresolved keep, x entries, origins) OK\n";
+}
+
+void testKeepMemberOrder()
+{
+    const NextInput in = nextInput();
+    RekordboxBaseline next = baselineFrom(in.now, in.playlists, 200, stickRelative, lowerKey);
+    assert((next.findPlaylist(11)->members == Members{Two, One, Three}));
+    // One sat first in "Peak": taken out of next's list and put back at 0.
+    seabass::domain::keepPreviousItems(next, &in.previous, {"member:11:" + One, "not a key"});
+    assert((next.findPlaylist(11)->members == Members{One, Two, Three}));
+    // Three was in no previous list: taken out.
+    seabass::domain::keepPreviousItems(next, &in.previous, {"member:11:" + Three});
+    assert((next.findPlaylist(11)->members == Members{One, Two}));
+    std::cout << "keepPreviousItems (member order) OK\n";
+}
+
+void testRecordSeabassWrites()
+{
+    const NextInput in = nextInput();
+    RekordboxBaseline b = baselineFrom(in.now, in.playlists, 200, stickRelative, lowerKey);
+    const auto unlisted = seabass::domain::recordSeabassWrites(
+        b, {{One, std::vector<CuePoint>{CuePoint{CuePoint::Kind::Hot, 3, 3000.0, "", ""}}, 0},
+            {Two, std::nullopt, 4},
+            {"contents/x/none.mp3", std::vector<CuePoint>{}, std::nullopt}});
+    assert((unlisted == std::vector<std::string>{"contents/x/none.mp3"}));
+    const auto &one = *b.findTrack(One);
+    assert(one.cues.size() == 1 && one.cues[0].cue.hotCueNumber == 3 && one.cues[0].origin == ValueOrigin::Seabass);
+    assert(!one.rating && one.ratingOrigin == ValueOrigin::Seabass && "0 stars is unrated, written by Seabass");
+    const auto &two = *b.findTrack(Two);
+    assert(two.rating == 4 && two.ratingOrigin == ValueOrigin::Seabass);
+    assert(two.cues.empty() && "no cues written, none touched");
+    assert(b.findTrack(Three)->ratingOrigin == ValueOrigin::Unknown && "a track not written is left alone");
+    std::cout << "recordSeabassWrites (cues and rating of Seabass origin, unlisted reported) OK\n";
+}
+
 }  // namespace
 
 int main()
@@ -293,6 +440,9 @@ int main()
     testPlaylistsTreeAndOrder();
     testLookups();
     testItemKeys();
+    testNextBaseline();
+    testKeepMemberOrder();
+    testRecordSeabassWrites();
     std::cout << "rekordbox_baseline_test: all passed\n";
     return 0;
 }
