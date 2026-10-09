@@ -215,6 +215,14 @@ one, unrated while Engine is rated) is Engine's own, kept, not a
 conflict: removing a value is destructive and unattributed, so the first
 run must not offer it. Two differing non-empty values stay a conflict.
 
+**Decision (review of step 10, 2026-10-09):** a conflict left unanswered
+on a baseline-less run is recorded as the rekordbox side stands, so on the
+next run the item reads as Engine's own and is kept, not asked again. No
+later information could answer the question, nothing is written, and a
+page that repeats a thousand unanswerable questions is worse than one
+that says, once, that undecided items count as Engine's own from now on.
+The first-run intro says exactly that.
+
 **Decision:** rows Seabass creates keep `pdbImportKey` 0. Stamping the
 pdb sequence would make them look like player imports, which is a lie
 with unmeasured player semantics; the baseline is the provenance.
