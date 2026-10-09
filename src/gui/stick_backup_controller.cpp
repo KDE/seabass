@@ -82,6 +82,10 @@ struct StickBackupController::PreviewResult
     // Set when this stick's backup was found in the folder under a name
     // other than the one the page assumed. See findStickArchive().
     QString adoptedArchivePath;
+    // Set when a typed name points at no archive yet while this stick has
+    // one under another name: the backup that stays as it is, for the
+    // page to name. Never adopted, see m_archiveChosenByName.
+    QString keptArchivePath;
     double readMbps = 0.0;  // last measured audio read speed for this stick, 0 = unknown
     QString blockedBy;
     bool stickReadOnly = false;
@@ -127,6 +131,7 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
     m_backupDirectory = backupDirectory;
     m_archiveAttempt = 1;
     m_nameCollidedWith.clear();
+    m_archiveChosenByName = false;
     m_archivePath = archivePathForLabel(backupDirectory, stickLabel, m_archiveAttempt);
     // The field starts out holding the stick's name rather than empty: it
     // is what the backup would be called anyway, and a filled field says
@@ -195,7 +200,8 @@ void StickBackupController::refreshPreview(bool restart)
     QString label = m_stickLabel;
     QString root = m_stickRoot;
     const QString key = m_archivePath + QLatin1Char('\n') + root + QLatin1Char('\n') + m_backupName;
-    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options, label, root](application::CancellationToken cancel) mutable {
+    const bool chosenByName = m_archiveChosenByName;
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options, label, root, chosenByName](application::CancellationToken cancel) mutable {
         // Superseded, cancelled or left before it got going: nothing to
         // read. And the walk inside the preview stops on the same token.
         cancel.throwIfCancelled();
@@ -212,12 +218,18 @@ void StickBackupController::refreshPreview(bool restart)
         // at the expected path is this stick's by construction, and
         // opening every file in the folder to confirm it would cost a
         // read of each on every page open.
+        //
+        // After a typed name the path is not a guess but the choice, so
+        // the backup found elsewhere is only named, never taken: the
+        // next run is a new backup, and that one stays.
         std::error_code archiveEc;
         if (!fs::exists(options.archivePath, archiveEc)) {
             const fs::path found = application::findStickArchive(
                 options.archivePath.parent_path(), options.stickIdentifier, label.toStdString(),
                 options.legacyStickIdentifier);
-            if (!found.empty()) {
+            if (!found.empty() && chosenByName) {
+                result->keptArchivePath = pathToQString(found);
+            } else if (!found.empty()) {
                 options.archivePath = found;
                 result->adoptedArchivePath = pathToQString(found);
             }
@@ -276,6 +288,9 @@ void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResul
         QVariantMap last;
         last["exists"] = p.archiveExists;
         last["error"] = QString::fromStdString(p.error);
+        last["keptArchiveName"] = p.archiveExists || result->keptArchivePath.isEmpty()
+                                      ? QString()
+                                      : QFileInfo(result->keptArchivePath).fileName();
         if (p.previousStatus) {
             last["status"] = statusToString(*p.previousStatus);
             last["createdAt"] = QDateTime::fromSecsSinceEpoch(p.previousCreatedAtUnix).toString(Qt::ISODate);
@@ -283,7 +298,7 @@ void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResul
             last["identifierMismatch"] = p.identifierMismatch;
         }
 
-        // "<label>.zip" is already a different stick's backup. Updating it
+        // "<name>.zip" is already a different stick's backup. Updating it
         // with this stick would diff the newcomer against it and record
         // every file of the other stick as removed, so the default is to
         // step to the next free name rather than to refuse and stop. The
@@ -296,7 +311,7 @@ void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResul
         if (p.identifierMismatch && m_archiveAttempt < MaxNameAttempts) {
             m_nameCollidedWith = QString::fromStdString(p.previousLabel);
             ++m_archiveAttempt;
-            m_archivePath = archivePathForLabel(m_backupDirectory, m_stickLabel, m_archiveAttempt);
+            m_archivePath = namedArchivePath(m_archiveAttempt);
             emit configuredChanged();
             refresh();
             return;
@@ -325,8 +340,9 @@ void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResul
         // still sits under the stick's label. Move it once, so the file a
         // person finds in the folder is the one they named -- and only
         // when the destination is free, since renaming over another
-        // backup would destroy it.
-        if (!stored.isEmpty() && !busy() && !m_backupDirectory.isEmpty()) {
+        // backup would destroy it. Never after a typed name: that name
+        // chose this file, and a move would point it at another.
+        if (!m_archiveChosenByName && !stored.isEmpty() && !busy() && !m_backupDirectory.isEmpty()) {
             const QString target = archivePathFor(m_backupDirectory, stored, m_stickLabel, 1);
             // Never back onto the plain label when this page stepped off
             // it on purpose: that file is the other stick's backup, and
@@ -714,7 +730,7 @@ void StickBackupController::replaceCollidingBackup()
     // the point: an update would keep that stick's manifest and call
     // every one of its files removed, producing something that looks
     // like a backup of neither stick.
-    const QString colliding = archivePathForLabel(m_backupDirectory, m_stickLabel, 1);
+    const QString colliding = namedArchivePath(1);
     std::error_code ec;
     fs::remove(pathFromQString(colliding), ec);
     if (ec) {
@@ -970,16 +986,26 @@ void StickBackupController::setBackupName(const QString &name)
     m_backupName = trimmed;
     emit backupNameChanged();
 
-    // The file on disk is called after the name, so changing the name
-    // moves it. Not while a run is in flight: the archive is open.
+    // The name picks the archive; it never moves one. A name with no
+    // archive yet is a new backup, and this stick's backup under its old
+    // name stays exactly as it is: giving a backup a new name is how a
+    // second one is made. The preview says which it is, and steps off a
+    // name another stick's backup already has. Not while a run is in
+    // flight: that run writes the archive it started with.
     if (!busy() && !m_backupDirectory.isEmpty()) {
-        const QString target = archivePathFor(m_backupDirectory, m_backupName, m_stickLabel, 1);
-        if (renameArchiveTo(target)) {
-            m_archiveAttempt = 1;
-            m_nameCollidedWith.clear();
-            refreshPreview(true);
-        }
+        m_archiveChosenByName = true;
+        m_archiveAttempt = 1;
+        m_nameCollidedWith.clear();
+        m_archivePath = namedArchivePath(m_archiveAttempt);
+        emit configuredChanged();
+        refreshPreview(true);
     }
+}
+
+QString StickBackupController::namedArchivePath(int attempt) const
+{
+    return m_archiveChosenByName ? archivePathFor(m_backupDirectory, m_backupName, m_stickLabel, attempt)
+                                 : archivePathForLabel(m_backupDirectory, m_stickLabel, attempt);
 }
 
 void StickBackupController::setStatusMessage(const QString &message)

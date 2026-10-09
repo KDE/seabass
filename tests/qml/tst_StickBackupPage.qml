@@ -120,11 +120,38 @@ TestCase {
         compare(findChild(page, "experimentalBadge"), null);
     }
 
-    // The hint beside the name field, word for word: an example in the
-    // shape of a stick label, not a sentence.
-    function test_backupNameHintNamesAnExampleLabel() {
+    // The hint beside the name field, word for word: changing the name
+    // makes a second backup, it does not rename the first. One line, and
+    // the field beside it keeps room to type in.
+    function test_backupNameHintSaysANewNameIsANewBackup() {
         const page = makePage({});
-        compare(findChild(page, "backupNameHint").text, "Optional, e.g. MYLIBRARY");
+        const hint = findChild(page, "backupNameHint");
+        compare(hint.text, "A different name starts a new backup; the current one stays.");
+        compare(hint.lineCount, 1);
+        compare(hint.truncated, false);
+        verify(findChild(page, "backupNameField").width >= 120,
+               "the field is " + findChild(page, "backupNameField").width + " px wide");
+    }
+
+    // A typed name with no backup under it yet while this stick has one:
+    // the page says the next run is a new backup and names the one that
+    // stays. Without another backup it is this stick's first, as before.
+    function test_aNewNameSaysANewBackupIsMadeAndWhichStays() {
+        const page = makePage({lastBackup: {exists: false, keptArchiveName: "MYSTICK.zip"},
+                               deadSpace: {deadBytes: 0}, backupName: "B",
+                               archivePath: "/home/u/Seabass Backups/B.zip"});
+        compare(findChild(page, "lastBackupLabel").text, "No backup under this name yet.");
+        const notice = findChild(page, "newBackupNotice");
+        compare(notice.visible, true);
+        compare(notice.text, "Back Up Now creates a new backup under this name. MYSTICK.zip stays as it is.");
+        compare(findChild(page, "backUpButton").enabled, true);
+
+        const first = makePage({lastBackup: {exists: false}, deadSpace: {deadBytes: 0}});
+        compare(findChild(first, "lastBackupLabel").text, "No backup of this stick yet.");
+        compare(findChild(first, "newBackupNotice").visible, false);
+
+        const existing = makePage({});
+        compare(findChild(existing, "newBackupNotice").visible, false);
     }
 
     function calls(page) {

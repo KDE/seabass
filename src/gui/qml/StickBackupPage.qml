@@ -37,6 +37,10 @@ Page {
     readonly property var since: controller.sinceLastBackup || ({})
     readonly property var dead: controller.deadSpace || ({})
     readonly property bool hasBackup: lastBackup.exists === true
+    // The name in the field points at no backup yet while this stick has
+    // one under another name: Back Up Now starts a second backup, and
+    // this is the file that stays as it is.
+    readonly property string keptArchiveName: (!root.hasBackup && lastBackup.keptArchiveName) ? lastBackup.keptArchiveName : ""
     readonly property string blockedBy: root.conflictingSoftware.length > 0 ? root.conflictingSoftware : (controller.blockedBy || "")
     // Not while the page is still working out what changed since the last
     // backup: the plan Back Up Now would run is that answer.
@@ -510,7 +514,9 @@ Page {
                         spacing: 8
                         Label {
                             objectName: "lastBackupLabel"
-                            text: root.hasBackup ? root.friendlyTimestamp(root.lastBackup.createdAt) : "No backup of this stick yet."
+                            text: root.hasBackup ? root.friendlyTimestamp(root.lastBackup.createdAt)
+                                : root.keptArchiveName.length > 0 ? "No backup under this name yet."
+                                : "No backup of this stick yet."
                             color: root.hasBackup ? Theme.text : Theme.textMuted
                         }
                         Label { visible: root.hasBackup; text: "·"; color: Theme.textMuted }
@@ -532,6 +538,17 @@ Page {
                                 + "backup is untouched."
                         }
                         Item { Layout.fillWidth: true }
+                    }
+                    Item { visible: newBackupNotice.visible }
+                    Label {
+                        id: newBackupNotice
+                        objectName: "newBackupNotice"
+                        visible: root.keptArchiveName.length > 0
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textMuted
+                        text: "Back Up Now creates a new backup under this name. " + root.keptArchiveName
+                            + " stays as it is."
                     }
                     Label { text: "Archive"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                     RowLayout {
@@ -605,9 +622,9 @@ Page {
                             // there is no afterwards: the name is written
                             // into the archive's manifest as it is built,
                             // and a zip cannot have one entry rewritten
-                            // without repacking the whole file. Editing it
-                            // on a stick that already has a backup is fine
-                            // -- the next update carries the change.
+                            // without repacking the whole file. The name
+                            // also picks the archive: a new one starts a
+                            // new backup, and the old one stays.
                             RowLayout {
                                 visible: root.controller.backingUp !== true
                                 Layout.fillWidth: true
@@ -633,17 +650,16 @@ Page {
                                     onEditingFinished: root.controller.backupName = text
                                 }
                                 Label {
-                                    // Says the name may be changed or
-                                    // cleared, which an already-filled box
-                                    // no longer says for itself. Sized like
-                                    // this page's other hints rather than
-                                    // by a width of its own: a literal wide
-                                    // enough here elides the hint on the
-                                    // next font or screen.
-                                    // The example is a name in the shape
-                                    // stick labels have, not a sentence.
+                                    // Says what changing the name does,
+                                    // before anybody finds out by
+                                    // pressing Back Up Now: a second
+                                    // backup, the first one kept. Sized
+                                    // like this page's other hints rather
+                                    // than by a width of its own: a
+                                    // literal wide enough here elides the
+                                    // hint on the next font or screen.
                                     objectName: "backupNameHint"
-                                    text: "Optional, e.g. MYLIBRARY"
+                                    text: "A different name starts a new backup; the current one stays."
                                     color: Theme.textMuted
                                     font.pointSize: Theme.fontSmall
                                 }

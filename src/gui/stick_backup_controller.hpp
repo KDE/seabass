@@ -39,13 +39,15 @@ class StickBackupController : public QObject
     Q_PROPERTY(QString stickLabel READ stickLabel NOTIFY configuredChanged)
     Q_PROPERTY(QString stickRoot READ stickRoot NOTIFY configuredChanged)
     Q_PROPERTY(QString archivePath READ archivePath NOTIFY configuredChanged)
-    // What this backup is called. Set before a run and it is written into
-    // the new generation; edited on a stick that already has a backup and
-    // the next update carries the change. Display and identity are
-    // separate on purpose: the archive is still found by its path and its
-    // stick, never by this.
+    // What this backup is called, and so which archive the next run
+    // writes: setting it never moves or renames a file. A name no archive
+    // carries yet starts a new full backup under it, while the stick's
+    // existing backup stays as it is; a name one of this stick's archives
+    // carries goes back to that one and updates it; a name another
+    // stick's archive carries is the collision nameCollidedWith reports.
+    // Written into the manifest of the archive it names.
     Q_PROPERTY(QString backupName READ backupName WRITE setBackupName NOTIFY backupNameChanged)
-    // Non-empty when the plain "<label>.zip" is already another stick's
+    // Non-empty when the plain "<name>.zip" is already another stick's
     // backup: the label of that other stick. The archive path has been
     // moved to the next free name, and this is what to say about it.
     Q_PROPERTY(QString nameCollidedWith READ nameCollidedWith NOTIFY configuredChanged)
@@ -89,7 +91,6 @@ public:
     QString backupName() const { return m_backupName; }
     QString nameCollidedWith() const { return m_nameCollidedWith; }
     void setBackupName(const QString &name);
-    bool renameArchiveTo(const QString &target);
     bool busy() const { return !m_activity.isEmpty(); }
     bool backingUp() const { return m_activity == QStringLiteral("backup"); }
     bool previewing() const { return m_preview.busy(); }
@@ -186,6 +187,12 @@ private:
     void onPreviewFinished(const std::shared_ptr<PreviewResult> &result, const QString &thrown);
     void onRunFinished();
     void finishOutcome(const application::BackupStickOutcome &outcome);
+    // The archive the page's name points at, numbered for a collision
+    // (1 is the plain name). See m_archiveChosenByName.
+    QString namedArchivePath(int attempt) const;
+    // Only for an archive found under the stick's label whose manifest
+    // carries a name of its own: see onPreviewFinished.
+    bool renameArchiveTo(const QString &target);
 
     QString m_stickLabel;
     QString m_stickRoot;
@@ -200,6 +207,13 @@ private:
     // not something to write down: see baseOptions().
     bool m_previewSettled = false;
     QString m_nameCollidedWith;
+    // True once a name was typed: the archive is then the one that name
+    // points at, and nothing else. Until then the page targets the
+    // stick's label and adopts this stick's backup wherever the folder
+    // has it, which is how a page that just opened finds it; after a typed
+    // name that same search would quietly swap the new backup the person
+    // asked for back to the old one.
+    bool m_archiveChosenByName = false;
     // How many names were tried: 1 is the plain one. Kept so a refresh
     // does not walk the sequence again from the start each time.
     int m_archiveAttempt = 1;

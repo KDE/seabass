@@ -114,7 +114,7 @@ void testTheFieldStartsOutHoldingTheStickName()
     // person guess what the backup would end up called.
     assert(backupNameFor(QString(), QStringLiteral("SANDISK_1")) == QStringLiteral("SANDISK_1"));
     // A backup that already carries a name keeps it: that name is the one
-    // its owner chose, and the field is also how they rename it.
+    // its owner chose, and a different one in the field is a new backup.
     assert(backupNameFor(QStringLiteral("Seabass test fixture A"), QStringLiteral("SANDISK_1"))
            == QStringLiteral("Seabass test fixture A"));
     // A stored name of nothing but spaces is no name at all.

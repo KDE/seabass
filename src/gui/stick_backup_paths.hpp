@@ -63,11 +63,12 @@ inline QString archiveFileNameForLabel(const QString &stickLabel, int attempt)
 //
 // The name is what a person recognises the backup by, so it is what they
 // look for in a folder -- "TESTRIG_ABC.zip", not "SANDISK_1.zip" after a
-// factory label nobody chose. The cost is that renaming a backup has to
-// move the file, and with it the .journal and .lock siblings, which are
-// derived from the archive path by appending a suffix. Nothing may rename
-// an archive that is open for browsing: .seabass-backup-source stores the
-// absolute path and would be left pointing at nothing.
+// factory label nobody chose. So the name also picks the file: typing a
+// new one on the backup page starts a new backup under it and leaves the
+// old archive where it is. Nothing renames an archive to follow a typed
+// name; the .journal and .lock siblings are derived from the archive path
+// by appending a suffix, and .seabass-backup-source stores the absolute
+// path of a browsed one.
 inline QString archiveFileNameFor(const QString &backupName, const QString &stickLabel, int attempt = 1)
 {
     const QString chosen = backupName.trimmed().isEmpty() ? stickLabel : backupName;
@@ -78,8 +79,8 @@ inline QString archiveFileNameFor(const QString &backupName, const QString &stic
 // label, so the field a person looks at already says what the backup is
 // of, and the archive and the manifest agree with it without anybody
 // typing. A backup that was named before keeps that name -- the stored
-// name is the one its owner chose, and adopting it is what lets the field
-// double as "rename this backup".
+// name is the one its owner chose, and showing it is what makes a
+// different name in the field read as a different backup.
 //
 // Deliberately NOT the same thing as archiveFileNameFor's fallback: that
 // one decides a filename when the name is empty, which stays true; this

@@ -257,6 +257,15 @@ UUID mismatch (same label, different stick -- e.g. after Format USB, which
 issues a new UUID) warns and lets the user continue with this archive or
 pick another file; it never silently mixes two sticks' histories.
 
+A backup can be given a name on the backup page, and the archive file is
+called after it (`<name>.zip`). The name picks the archive; it never moves
+one. A name no archive carries starts a new full backup under it while the
+stick's existing backup stays as it is, so one stick can have several
+backups side by side, each listed in Manage Backups. A name one of this
+stick's archives carries goes back to that archive and updates it; a name
+another stick's archive carries steps to the next free name, as a label
+collision does.
+
 ## Database capture (`m.db`, `hm.db`, `Database2/m.db`, legacy `p.db`)
 
 The smallest and most important files on the stick. Decision: **raw,
