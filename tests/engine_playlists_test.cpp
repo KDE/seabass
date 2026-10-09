@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// createEnginePlaylist, renameEnginePlaylist and insertIntoEnginePlaylist
-// over a copy of the committed anonymized fixture's Engine library: 33
+// createEnginePlaylist, renameEnginePlaylist, insertIntoEnginePlaylist
+// and removeFromEnginePlaylist over a copy of the committed anonymized fixture's Engine library: 33
 // root playlists "Playlist 000" (id 231, 100 entries) to "Playlist 032",
 // no folders, 2074 entries, 8 of them dangling in "Playlist 002".
 //
@@ -24,6 +24,14 @@
 //   forwards and backwards and libdjinterop's tracks() agreeing; an
 //   anchor that is not a member and no anchor both append; a member is
 //   left where it is; an unknown track and an ambiguous path are refused;
+// - remove takes a mid-list member of "Playlist 000" out, whose entry
+//   ids (11083 up) are nowhere near its track ids (1574 at most), the
+//   other 99 walking whole both ways and libdjinterop's tracks()
+//   agreeing; with an entry planted whose own id is another member's
+//   track id, removing that member takes its own entry and leaves the
+//   planted one (libdjinterop's playlist::remove_track deletes by entry
+//   id and fails both); head and tail go too; an unknown track or list
+//   is refused;
 // - after every call the dangling entries are the fixture's 8, every
 //   list's chain is whole, and every playlist and entry the call was not
 //   about is as it was;
@@ -512,6 +520,119 @@ int main(int argc, char **argv)
         assert(rowsUnder == 2);
         assert(children.size() == 1 && children[0].name() == "Already There"
                && "set_parent left the moved playlist out of its new parent's children");
+    }
+
+    // --- remove ---------------------------------------------------------
+    // On a fresh copy: the fixture's entry ids (11083 up) are far from its
+    // track ids (1574 at most), the arrangement libdjinterop's
+    // playlist::remove_track gets wrong (it deletes by the entry's id).
+    std::cout << "remove\n";
+    {
+        const fs::path removePath = scratch / "remove" / "Engine Library";
+        fs::create_directories(removePath.parent_path());
+        fs::copy(fixture / "engine", removePath, fs::copy_options::recursive);
+        const std::string lib = pathToUtf8(removePath);
+        const std::string rdb = pathToUtf8(removePath / "Database2" / "m.db");
+        const auto entriesBefore = entryChains(rdb);
+        const auto playlistsBefore = playlistChains(rdb);
+        const auto danglingBefore = dangling(lib);
+        assert(danglingBefore == fixtureDangling);
+        const std::vector<std::int64_t> members = entriesBefore.at(231);
+        assert(members.size() == 100);
+        assert(scalar(rdb, "SELECT min(id) FROM PlaylistEntity WHERE listId = 231;")
+               > scalar(rdb, "SELECT max(id) FROM Track;"));
+
+        // Lists other than `touched` as they were, every chain whole,
+        // the dangling entries the fixture's.
+        const auto othersUnchanged = [&](std::int64_t touched) {
+            const auto e = entryChains(rdb);
+            for (const auto &[listId, order] : entriesBefore) {
+                if (listId != touched) {
+                    assert(e.count(listId) && e.at(listId) == order);
+                }
+            }
+            assert(e.size() == entriesBefore.size() || (e.size() + 1 == entriesBefore.size() && !e.count(touched)));
+            assert(playlistChains(rdb) == playlistsBefore);
+            assert(dangling(lib) == danglingBefore);
+            return e;
+        };
+
+        // A mid-list member goes; the other 99 keep their order.
+        const std::int64_t victim = members.at(42);
+        std::vector<std::int64_t> expected = members;
+        expected.erase(expected.begin() + 42);
+        bool removed = false;
+        try {
+            removed = removeFromEnginePlaylist(lib, "Playlist 000", victim);
+        } catch (const std::exception &e) {
+            std::cerr << "remove mid-list member " << victim << " threw: " << e.what() << "\n";
+        }
+        assert(removed && "the mid-list member is removed");
+        {
+            const auto e = othersUnchanged(231);
+            assert(e.at(231) == expected && "the other 99 remain, in order (walked both ways)");
+            assert(djinteropTracks(lib, {"Playlist 000"}) == expected);
+        }
+        assert(!removeFromEnginePlaylist(lib, "Playlist 000", victim));
+        othersUnchanged(231);
+
+        // An entry whose own id is another member's track id. Planted:
+        // track `outsider` appended to Playlist 000 as an entry with id
+        // `coincidence`, a track id already in the list. Removing track
+        // `coincidence` must take its own entry, not the planted one.
+        const std::int64_t coincidence = expected.at(10);
+        std::int64_t outsider = 0;
+        for (const auto &r : rows(rdb, "SELECT id FROM Track ORDER BY id;")) {
+            if (std::find(expected.begin(), expected.end(), r[0]) == expected.end()) {
+                outsider = r[0];
+                break;
+            }
+        }
+        assert(outsider > 0);
+        assert(scalar(rdb, "SELECT count(*) FROM PlaylistEntity WHERE id = " + std::to_string(coincidence) + ";") == 0);
+        assert(exec(rdb, "INSERT INTO PlaylistEntity (id, listId, trackId, databaseUuid, nextEntityId, "
+                         "membershipReference) SELECT "
+                             + std::to_string(coincidence) + ", 231, " + std::to_string(outsider)
+                             + ", databaseUuid, 0, 0 FROM PlaylistEntity WHERE listId = 231 LIMIT 1;"));
+        assert(exec(rdb, "UPDATE PlaylistEntity SET nextEntityId = " + std::to_string(coincidence)
+                             + " WHERE listId = 231 AND nextEntityId = 0 AND id <> " + std::to_string(coincidence)
+                             + ";"));
+        expected.push_back(outsider);
+        assert(entryChains(rdb).at(231) == expected);
+
+        removed = false;
+        try {
+            removed = removeFromEnginePlaylist(lib, "Playlist 000", coincidence);
+        } catch (const std::exception &e) {
+            std::cerr << "remove member " << coincidence << " threw: " << e.what() << "\n";
+        }
+        const auto after = entryChains(rdb).at(231);
+        const bool plantedStays = std::find(after.begin(), after.end(), outsider) != after.end();
+        std::cout << "  planted entry id=" << coincidence << " (track " << outsider << ") "
+                  << (plantedStays ? "stays" : "was deleted") << "\n";
+        assert(plantedStays && "the entry whose id coincides with the track id stays");
+        assert(removed && "the member is removed");
+        expected.erase(std::find(expected.begin(), expected.end(), coincidence));
+        {
+            const auto e = othersUnchanged(231);
+            assert(e.at(231) == expected);
+            assert(djinteropTracks(lib, {"Playlist 000"}) == expected);
+        }
+        assert(scalar(rdb, "SELECT trackId FROM PlaylistEntity WHERE id = " + std::to_string(coincidence) + ";")
+               == outsider);
+
+        // Head and tail too.
+        assert(removeFromEnginePlaylist(lib, "Playlist 000", expected.front()));
+        expected.erase(expected.begin());
+        assert(removeFromEnginePlaylist(lib, "Playlist 000", expected.back()));
+        expected.pop_back();
+        assert(othersUnchanged(231).at(231) == expected);
+        assert(djinteropTracks(lib, {"Playlist 000"}) == expected);
+
+        // Refusals change nothing.
+        assert(throws([&] { removeFromEnginePlaylist(lib, "Playlist 000", 999999); }, "no track"));
+        assert(throws([&] { removeFromEnginePlaylist(lib, "Playlist 404", expected.front()); }, "no list"));
+        assert(othersUnchanged(231).at(231) == expected);
     }
 
     std::cout << "engine_playlists_test: all passed\n";

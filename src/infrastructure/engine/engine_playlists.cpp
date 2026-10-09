@@ -153,21 +153,6 @@ bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string
     return true;
 }
 
-bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
-                              std::int64_t trackId)
-{
-    Resolved r = resolve(engineLibraryPath, playlistPath, trackId);
-    if (!isMember(r.playlist, trackId)) {
-        return false;
-    }
-    r.playlist.remove_track(r.track);
-    if (isMember(r.playlist, trackId)) {
-        throw std::runtime_error("engine: track id=" + std::to_string(trackId) + " is still in \"" + playlistPath
-                                 + "\" after removing it");
-    }
-    return true;
-}
-
 bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath)
 {
     try {
@@ -859,6 +844,51 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
     if (listInOrder(listEntries(db, listId)) != expected) {
         throw std::runtime_error("engine: \"" + playlistPath
                                  + "\" does not read back in the order asked after adding track id="
+                                 + std::to_string(trackId));
+    }
+    db.commit();
+    return true;
+}
+
+bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
+                              std::int64_t trackId)
+{
+    splitPlaylistPath(playlistPath);
+    PlaylistWriter db(engineLibraryPath);
+    const std::int64_t listId = uniquePlaylist(readPlaylistTree(db), playlistPath);
+    bool trackExists = false;
+    db.run("SELECT 1 FROM Track WHERE id = ?;", {trackId}, [&](sqlite3_stmt *) { trackExists = true; });
+    if (!trackExists) {
+        throw std::runtime_error("engine: no track id=" + std::to_string(trackId));
+    }
+
+    const auto before = listInOrder(listEntries(db, listId));
+    if (!before) {
+        throw std::runtime_error("engine: the entries of \"" + playlistPath
+                                 + "\" do not form one chain; refusing to remove from it");
+    }
+    std::vector<std::int64_t> expected = *before;
+    std::erase(expected, trackId);
+    if (expected.size() == before->size()) {
+        return false;
+    }
+    // By the entry's track, not its own id (see the header). Engine's
+    // trigger_before_delete_PlaylistEntity points the entry before each
+    // deleted one at the entry after it.
+    db.run("DELETE FROM PlaylistEntity WHERE listId = ? AND trackId = ?;", {listId, trackId});
+
+    const auto after = listInOrder(listEntries(db, listId));
+    if (!after) {
+        throw std::runtime_error("engine: the entries of \"" + playlistPath
+                                 + "\" do not form one chain after removing track id=" + std::to_string(trackId));
+    }
+    if (std::find(after->begin(), after->end(), trackId) != after->end()) {
+        throw std::runtime_error("engine: track id=" + std::to_string(trackId) + " is still in \"" + playlistPath
+                                 + "\" after removing it");
+    }
+    if (*after != expected) {
+        throw std::runtime_error("engine: \"" + playlistPath
+                                 + "\" does not read back in its old order after removing track id="
                                  + std::to_string(trackId));
     }
     db.commit();

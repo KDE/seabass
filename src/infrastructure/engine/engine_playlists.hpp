@@ -36,6 +36,15 @@ int removeDanglingPlaylistEntries(const std::string &databaseFile);
 // appends at the end unless the track is already a member; remove takes
 // the track out. Throw when the playlist or the track does not exist.
 // Return whether anything changed.
+//
+// Remove deletes the track's PlaylistEntity rows in one transaction and
+// commits only when the rest of the list still walks as one chain in its
+// old order (refusing a list whose chain is already broken, or a path two
+// playlists spell). It does not use libdjinterop's playlist::remove_track,
+// which deletes by the entry's own id while handed the track's (the note
+// in libdjinterop_engine_cleanup_writer.cpp). m.db keeps one entry per
+// (list, databaseUuid, track), so a track sits in a list once per
+// databaseUuid; remove takes out every one.
 bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId);
 bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                               std::int64_t trackId);
