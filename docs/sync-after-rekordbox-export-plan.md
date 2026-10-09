@@ -364,12 +364,22 @@ with its Windows and UTF-8 cases, the `ensure()` folder walk,
 `src/infrastructure/engine/engine_track_rows.{hpp,cpp}`:
 
 ```cpp
-struct NewEngineTrack { domain::Track source; double sampleRateHz; };
+struct NewEngineTrack { domain::Track source; double sampleRateHz; std::string realEngineLibraryPath; };
+struct EngineTrackCover { std::function<void(const std::string &)> beforeWrite; bool written; std::vector<std::string> filesWritten; std::string problem; };
 std::string engineRelativePath(const std::string &trackFile, const std::string &realEngineLibraryPath);
-std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrack &);
-int markForDeviceAnalysis(const std::string &databaseFile, const std::vector<std::int64_t> &ids);  // WHERE id IN
-int removeEngineTrackRows(const std::string &databaseFile, const std::vector<std::int64_t> &ids);
+std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrack &, EngineTrackCover *, std::string *error);
+int markForDeviceAnalysis(const std::string &databaseFile, const std::vector<std::int64_t> &ids, std::string *error);  // per id
+int removeEngineTrackRows(const std::string &databaseFile, const std::vector<std::int64_t> &ids, std::string *error);
 ```
+
+(As delivered in step 6: the real library path rides on NewEngineTrack
+because a save writes a scratch copy while the row's path is relative to
+the stick; the cover's hook and outcome are a required out-parameter.
+The cues are written at the file's rate through
+`LibdjinteropEngineCueWriter::writeHotCuesAtSampleRate`. A new row has
+no trackData until the player analyses it, so it records no rate, and
+`LibdjinteropEngineReader` reads its cues at the 44.1 kHz guess: 9% late
+for a 48 kHz file until then.)
 
 Cues are written after creation by the shared
 `LibdjinteropEngineCueWriter`, one Engine cue path. The sample rate
