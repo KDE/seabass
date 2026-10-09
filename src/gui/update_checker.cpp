@@ -42,7 +42,7 @@ const auto TestingRevealedKey = QStringLiteral("updates/testingOptionRevealed");
 RunningBuild RunningBuild::thisBuild()
 {
     return RunningBuild{QString::fromLatin1(version::Number), QString::fromLatin1(version::Channel),
-                        QString::fromLatin1(version::Commit)};
+                        QString::fromLatin1(version::Commit), version::Published};
 }
 
 UpdateChecker::UpdateChecker(QObject *parent)
@@ -103,14 +103,18 @@ QString UpdateChecker::downloadPage() const
 
 bool UpdateChecker::runningPreRelease() const
 {
-    return isPreReleaseChannel(currentChannel());
+    // A dev build from a working tree is no test build anybody was handed:
+    // it must not opt the machine into test builds, and every stable
+    // Seabass installed on it would inherit that.
+    return m_build.isRelease() && isPreReleaseChannel(currentChannel());
 }
 
 void UpdateChecker::setIncludeTesting(bool on)
 {
     if (runningPreRelease()) {
-        // A beta build follows every channel whatever the box says; the
-        // Settings page shows the box ticked and disabled for it.
+        // A beta or published dev build follows every channel whatever
+        // the box says; the Settings page shows the box ticked and
+        // disabled for it.
         on = true;
     }
     // Turning it off leaves the checkbox where it is: once found, the
@@ -124,9 +128,10 @@ bool UpdateChecker::versionTapped()
         return false;
     }
     // True only when this actually switched something on: the page shows
-    // a popup saying so, and on a development build (offered nothing)
-    // or a test build (already following everything) that would be a
-    // claim about a change that did not happen.
+    // a popup saying so, and on a test or development build (already
+    // following everything, or offered nothing) or one of a channel
+    // nothing knows (offered nothing) that would be a claim about a
+    // change that did not happen.
     if (!tapsWouldEnableTesting(currentChannel(), m_includeTesting)) {
         return false;
     }
@@ -205,7 +210,8 @@ void UpdateChecker::checkNow()
     if (!m_build.isRelease()) {
         // A build from a working tree is not any published version.
         // Comparing it to one would either nag forever or claim it is up
-        // to date, and both are lies.
+        // to date, and both are lies. A dev package CI made is published,
+        // and does check (RunningBuild::published).
         m_failure.clear();
         setState(QStringLiteral("notARelease"));
         return;

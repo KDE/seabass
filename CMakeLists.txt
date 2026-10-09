@@ -23,6 +23,20 @@ project(seabass VERSION 0.8.8 LANGUAGES CXX C)
 set(SEABASS_RELEASE_CHANNEL "dev" CACHE STRING "alpha, beta, stable or dev")
 set_property(CACHE SEABASS_RELEASE_CHANNEL PROPERTY STRINGS dev alpha beta stable)
 
+# A package made to be handed out: every place CI packages the app turns
+# this on (the Craft blueprint, linux:package, windows:build and
+# tools/macos-monterey-dmg.sh). It matters for a "dev" build only. A dev
+# package from a Seabass/X.Y pipeline is what testers run, so it checks
+# for updates as an alpha or a beta does; a dev build from somebody's
+# working tree is no published version and never checks. A tagged build
+# is published whatever this says.
+option(SEABASS_PUBLISHED_BUILD "A package CI makes to hand out, which checks for updates even as dev" OFF)
+if(SEABASS_PUBLISHED_BUILD)
+    set(SEABASS_PUBLISHED_BUILD_CXX true)
+else()
+    set(SEABASS_PUBLISHED_BUILD_CXX false)
+endif()
+
 # The commit, for a bug report to be actionable. Not fatal when git is
 # absent (a source tarball, a Craft build from an export): the version
 # above is what identifies the release, this only sharpens it.

@@ -1091,9 +1091,11 @@ linux:package:
     # Refuses a tag whose version disagrees with CMakeLists.txt, before
     # anything is built under a name that would then be wrong.
     - seabass_release_from_tag . "$CI_COMMIT_TAG"
+    # SEABASS_PUBLISHED_BUILD: a package to hand out, so even a dev one
+    # checks for updates (see CMakeLists.txt).
     - cmake -S . -B build-rel -G Ninja -DCMAKE_BUILD_TYPE=Release
         -DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_TESTS=OFF
-        -DSEABASS_RELEASE_CHANNEL="$SEABASS_CHANNEL"
+        -DSEABASS_RELEASE_CHANNEL="$SEABASS_CHANNEL" -DSEABASS_PUBLISHED_BUILD=ON
     - cmake --build build-rel --target seabass seabass-cli
     - name="seabass-${SEABASS_VERSION}_${SEABASS_CHANNEL}_linux"
     - mkdir -p "stage/$name/bin" package-out
@@ -1152,7 +1154,8 @@ windows:build:
   rules: *windows_lane_manual_rules
   script:
     - $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
-    - cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release
+    # Published: windows:package makes the installer from this build.
+    - cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DSEABASS_PUBLISHED_BUILD=ON
     - cmake --build build-win --target seabass-cli
     - cmake --build build-win --target seabass
   artifacts:

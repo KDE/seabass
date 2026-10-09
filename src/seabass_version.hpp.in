@@ -16,9 +16,14 @@ inline constexpr int Major = @PROJECT_VERSION_MAJOR@;
 inline constexpr int Minor = @PROJECT_VERSION_MINOR@;
 inline constexpr int Patch = @PROJECT_VERSION_PATCH@;
 
-// "alpha", "beta", "stable", or "dev" for a build from a working tree,
-// which is no published release and must never be compared against one.
+// "alpha", "beta", "stable", or "dev" for a build from no release tag.
 inline constexpr const char *Channel = "@SEABASS_RELEASE_CHANNEL@";
+
+// Set where CI packages the app (SEABASS_PUBLISHED_BUILD). A dev build
+// with it is a package testers are handed, and checks for updates as a
+// test build does; a dev build without it comes from a working tree, is
+// no published release and must never be compared against one.
+inline constexpr bool Published = @SEABASS_PUBLISHED_BUILD_CXX@;
 
 // git describe --always --dirty, or empty where git was not there.
 inline constexpr const char *Commit = "@SEABASS_GIT_DESCRIBE@";
@@ -26,7 +31,7 @@ inline constexpr const char *Commit = "@SEABASS_GIT_DESCRIBE@";
 inline constexpr bool isRelease()
 {
     // A char-by-char compare: constexpr, and no <cstring> for three letters.
-    return !(Channel[0] == 'd' && Channel[1] == 'e' && Channel[2] == 'v' && Channel[3] == '\0');
+    return Published || !(Channel[0] == 'd' && Channel[1] == 'e' && Channel[2] == 'v' && Channel[3] == '\0');
 }
 
 }  // namespace seabass::version

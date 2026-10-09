@@ -647,9 +647,10 @@ Page {
 
                 // Which releases count. A stable Seabass hears about stable
                 // releases only, unless this is on. Not shown until it has
-                // been switched on once, by running an alpha or beta or by
-                // the tap sequence above; from then on it stays, so it can
-                // be switched off again (see UpdateChecker::includeTesting).
+                // been switched on once, by running an alpha, a beta or a
+                // published dev package, or by the tap sequence above; from
+                // then on it stays, so it can be switched off again (see
+                // UpdateChecker::includeTesting).
                 SeabassCheckBox {
                     Layout.leftMargin: root.settingIndent
                     objectName: "includeTestingUpdates"

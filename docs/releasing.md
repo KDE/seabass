@@ -56,11 +56,14 @@ them bought nothing. `releases.json` has those two lists, each entry
 recording under `build` what it was actually built as. A stable build is
 offered stable releases only. An alpha or a beta follows both lists, and
 within testing the version number decides, because the numbers only ever
-go up.
+go up. A published `dev` package follows both lists as well (see
+"Packages before the tag"); a `dev` build from a working tree never
+checks.
 
-Running an alpha or a beta is remembered on that machine (the
-`updates/includeTesting` setting), so somebody who tried a beta and moved
-to the stable it became is still offered the next test build; somebody
+Running an alpha, a beta or a published dev package is remembered on
+that machine (the `updates/includeTesting` setting), so somebody who
+tried a beta and moved to the stable it became is still offered the next
+test build; somebody
 who has only ever run stable releases stays on stable. Preferences shows
 a checkbox for it only once it has been on: running a test build does
 that, and so does the hidden way in, ten taps on the version line in
@@ -165,8 +168,17 @@ not run anywhere until `SEABASS_WINDOWS_RUNNER: "yes"` is set in
 fail, it waits forever, and holds every later stage with it.
 
 Built without a tag they are channel `dev`, named
-`seabass-<version>_dev_<os>`, never published, and the app they contain
-does not check for updates. That is what a pre-tag test build is.
+`seabass-<version>_dev_<os>`. That is what a pre-tag test build is, and
+what testers are handed when one goes on the website's testing list
+(entered under the build it stands in for, a beta say). Every package
+job configures with `SEABASS_PUBLISHED_BUILD=ON`, so the app in a dev
+package checks for updates as an alpha or a beta does, on both lists,
+and finds its own entry by version on the testing list, which is how it
+hears that its version was withdrawn. A dev package built after a tag
+but before the version bump carries the tag's number and would hear
+that tag's withdrawal as its own. A `dev` build from a working tree
+(the flag off, the default) never checks: Settings says it is a
+development build.
 
 ## What CI builds
 

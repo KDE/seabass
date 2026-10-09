@@ -12,7 +12,8 @@
 // entries it keeps, what it says, what it remembers, and that a feed it
 // cannot read is reported rather than acted on. The running build is
 // named per case (RunningBuild), because the test binary itself is a
-// development build, which rightly never fetches anything.
+// development build from a working tree, which rightly never fetches
+// anything.
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -97,9 +98,10 @@ void check(UpdateChecker &checker, const QString &url)
     assert(checker.state() != QStringLiteral("checking") && "the check never finished");
 }
 
-RunningBuild build(const char *version, const char *channel, const char *commit = "")
+RunningBuild build(const char *version, const char *channel, const char *commit = "", bool published = false)
 {
-    return RunningBuild{QString::fromLatin1(version), QString::fromLatin1(channel), QString::fromLatin1(commit)};
+    return RunningBuild{QString::fromLatin1(version), QString::fromLatin1(channel), QString::fromLatin1(commit),
+                        published};
 }
 
 }  // namespace
@@ -132,29 +134,115 @@ int main(int argc, char **argv)
         assert(checker.state() == QStringLiteral("idle"));
         assert(checker.message() == QStringLiteral("Not checked yet."));
         assert(!checker.automatic());
+        // The suite is configured without SEABASS_PUBLISHED_BUILD.
+        assert(!RunningBuild::thisBuild().published);
         std::cout << "case 1 (the default checker is this build, idle, off) OK\n";
     }
 
-    // A development build is no published version: no request, and a
-    // message naming the commit, or the version where there is none.
+    // A development build from a working tree is no published version:
+    // no request, a message naming the commit (or the version where there
+    // is none), and nothing written to this machine's settings, which the
+    // installed Seabass shares.
     {
         forgetSettings();
         UpdateChecker checker(build("0.8.8", "dev", "1a391f9c-dirty"));
-        checker.setFeedUrl(feed(channels(entry("9.9.9", "stable", true), "")));
+        assert(!checker.runningPreRelease());
+        assert(!checker.includeTesting() && !checker.testingOptionRevealed());
+        checker.setFeedUrl(feed(channels(entry("9.9.9", "stable", true), entry("9.9.9", "beta", true))));
         checker.checkNow();
         assert(checker.state() == QStringLiteral("notARelease"));
-        assert(checker.message().contains(QStringLiteral("development build (1a391f9c-dirty)")));
+        assert(checker.message()
+               == QStringLiteral("This is a development build (1a391f9c-dirty), not a released version, so there is "
+                                 "nothing to compare it with."));
         assert(!checker.lastChecked().isValid() && "nothing was fetched, so nothing was checked");
         UpdateChecker bare(build("0.8.8", "dev"));
         bare.checkNow();
         assert(bare.message().contains(QStringLiteral("development build (0.8.8)")));
-        // Ten taps on a development build switch nothing on: it is
-        // offered nothing whatever the setting says.
+        // Ten taps switch nothing on: it is offered nothing whatever the
+        // setting says.
         for (int i = 0; i < 12; ++i) {
             assert(!bare.versionTapped());
         }
         assert(!bare.includeTesting() && !bare.testingOptionRevealed());
-        std::cout << "case 2 (a dev build never fetches) OK\n";
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.allKeys().isEmpty() && "a working-tree build writes no setting at all");
+        }
+        std::cout << "case 2a (a working-tree dev build never fetches and writes nothing) OK\n";
+    }
+
+    // A published development build checks like a test build: the signed
+    // packages on the website come from a train branch's pipeline, which
+    // builds them as dev, and the people running them are testers.
+    // Running one opts the machine into test builds for good, like a beta
+    // does.
+    {
+        forgetSettings();
+        UpdateChecker checker(build("0.7.15", "dev", "v0.7.15-3-g1a391f9c", true));
+        assert(checker.runningPreRelease());
+        assert(checker.includeTesting() && checker.testingOptionRevealed());
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.value(QStringLiteral("updates/includeTesting")).toBool()
+                   && "written at once, so the stable a tester moves to still hears of the next test build");
+        }
+        checker.setIncludeTesting(false);
+        assert(checker.includeTesting());
+        // Ten taps switch nothing on and claim nothing: it follows test
+        // builds already.
+        for (int i = 0; i < 12; ++i) {
+            assert(!checker.versionTapped());
+        }
+
+        // The website lists the dev packages under the build they stand
+        // in for, so its own number, as a beta, is not an update; nor is
+        // an untested or a pulled 0.7.16.
+        const std::string pulled = R"(, "withdrawn": true, "withdrawnReason": "It can lose hot cues.")";
+        check(checker, feed(channels(entry("0.7.14", "stable", true),
+                                     entry("0.7.16", "beta", false) + ", " + entry("0.7.16", "beta", true, pulled)
+                                         + ", " + entry("0.7.15", "beta", true))));
+        assert(checker.state() == QStringLiteral("upToDate"));
+        assert(checker.lastChecked().isValid() && "it fetched");
+        assert(checker.message() == QStringLiteral("Seabass 0.7.15 is the newest release on any channel."));
+
+        // A released test build is offered, and a newer stable over it.
+        check(checker, feed(channels("", entry("0.7.16", "beta", true))));
+        assert(checker.state() == QStringLiteral("updateAvailable"));
+        assert(checker.message() == QStringLiteral("Seabass 0.7.16 (beta) is available. You have 0.7.15."));
+        check(checker, feed(channels(entry("0.8.0", "stable", true), entry("0.7.16", "beta", true))));
+        assert(checker.latestVersion() == QStringLiteral("0.8.0"));
+
+        // Its own number withdrawn: it is told, found by number alone.
+        check(checker, feed(channels("", entry("0.7.15", "beta", true, pulled))));
+        assert(checker.state() == QStringLiteral("withdrawn"));
+        assert(checker.runningWithdrawnReason() == QStringLiteral("It can lose hot cues."));
+        // But not by a stable of the same number: that is another build.
+        check(checker, feed(channels(entry("0.7.15", "stable", true, pulled), "")));
+        assert(!checker.runningWithdrawn());
+        assert(checker.state() == QStringLiteral("upToDate"));
+
+        // And the stable a tester moves to still hears of the next one.
+        UpdateChecker after(build("0.8.0", "stable"));
+        assert(after.includeTesting() && after.testingOptionRevealed());
+        check(after, feed(channels(entry("0.8.0", "stable", true), entry("0.8.9", "alpha", true))));
+        assert(after.latestVersion() == QStringLiteral("0.8.9"));
+        std::cout << "case 2 (a published dev build checks like a test build) OK\n";
+    }
+
+    // A channel nothing knows is offered nothing, and changes nothing.
+    {
+        forgetSettings();
+        UpdateChecker checker(build("0.7.15", "nightly"));
+        assert(!checker.runningPreRelease());
+        assert(!checker.includeTesting() && !checker.testingOptionRevealed());
+        check(checker, feed(channels(entry("9.9.9", "stable", true), entry("9.9.9", "beta", true))));
+        assert(checker.state() == QStringLiteral("upToDate"));
+        assert(checker.latestVersion().isEmpty());
+        for (int i = 0; i < 12; ++i) {
+            assert(!checker.versionTapped());
+        }
+        assert(!checker.includeTesting());
+        std::cout << "case 2b (an unknown channel is offered nothing) OK\n";
     }
 
     // A stable build is offered the newer stable, and 0.7.10 is newer
