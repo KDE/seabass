@@ -169,6 +169,27 @@ int main(int argc, char **argv)
     const QByteArray bSha = sha(b);
     std::cout << "ok: Back Up Now wrote B.zip beside MYSTICK.zip, both listed\n";
 
+    // ---- a name typed while a run writes: it takes effect when the run ends ----
+    // The field is disabled while a run is in flight, but the rule lives in
+    // the controller: the run writes the archive it started with (B.zip),
+    // and the moment it ends the page targets the typed name, so the next
+    // Back Up Now cannot update B.zip under the name C.
+    controller.backUp();
+    assert(controller.busy() && "the run is in flight");
+    controller.setBackupName(QStringLiteral("C"));
+    assert(endsWith(controller.archivePath(), "B.zip") && "the running update keeps its archive");
+    settle(controller, previews);
+    assert(endsWith(controller.archivePath(), "C.zip") && "the typed name took effect when the run ended");
+    assert(!fs::exists(backups / "C.zip") && "and nothing was written under it yet");
+    assert(fs::exists(b) && "B.zip is the one the run wrote");
+    assert(sha(a) == aSha);
+    {
+        const QVariantMap last = controller.lastBackup();
+        assert(!last.value("exists").toBool());
+        assert(!last.value("keptArchiveName").toString().isEmpty() && "the page names a backup that stays");
+    }
+    std::cout << "ok: a name typed during a run targets a new backup once the run ends\n";
+
     // ---- the old name again: back to the old backup, as an update ----
     controller.setBackupName(QStringLiteral("MYSTICK"));
     settle(controller, previews);
