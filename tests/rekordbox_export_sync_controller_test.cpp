@@ -242,8 +242,11 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(included(controller, m));
     }
     assert(controller.checkedCount() == FixtureChecked);
+    assert(controller.sectionCheckedCounts().value(QStringLiteral("membership")).toInt() == FixtureMembership);
     controller.setSectionIncluded(QStringLiteral("membership"), false);
     assert(controller.checkedCount() == FixtureChecked - FixtureMembership);
+    assert(controller.sectionCheckedCounts().value(QStringLiteral("membership")).toInt() == 0);
+    assert(controller.sectionCheckedCounts().value(QStringLiteral("playlists")).toInt() == FixtureCreates);
     assert(included(controller, create) && "unticking members leaves their playlist");
     controller.setSectionIncluded(QStringLiteral("playlists"), false);
     controller.setSectionIncluded(QStringLiteral("membership"), true);

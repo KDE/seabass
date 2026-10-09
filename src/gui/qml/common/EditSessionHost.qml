@@ -411,6 +411,7 @@ Item {
         switch (owner) {
         case "settings": return "Device Profile";
         case "sync": return "Sync Cue Points";
+        case "rekordbox-export-sync": return "Sync after Rekordbox Export";
         case "library-health": return "Library Health";
         case "cleanup": return "Clean Up Duplicates";
         case "dup": return "Cues on Duplicate Copies";

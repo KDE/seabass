@@ -116,6 +116,7 @@ TestCase {
             {name: "ImportPromptPage", props: stickProps({})},
             {name: "SampleRatesPage", props: stickProps({})},
             {name: "SyncPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
+            {name: "RekordboxExportSyncPage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "ScanPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "DuplicatesPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "CleanupPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},

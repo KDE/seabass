@@ -66,6 +66,8 @@ class RekordboxExportSyncController : public StagedCueEditController
     // Rows per section name (RekordboxExportSyncListModel::sectionName),
     // every section present.
     Q_PROPERTY(QVariantMap sectionCounts READ sectionCounts NOTIFY listChanged)
+    // Ticked rows per section name, for the section-wide checkboxes.
+    Q_PROPERTY(QVariantMap sectionCheckedCounts READ sectionCheckedCounts NOTIFY listChanged)
     // Writable rows ticked.
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY listChanged)
     // Conflicts not answered yet.
@@ -83,6 +85,7 @@ public:
     bool onlyCues() const;
     bool analyzed() const { return m_analysis != nullptr; }
     QVariantMap sectionCounts() const { return m_model.sectionCounts(); }
+    QVariantMap sectionCheckedCounts() const { return m_model.sectionCheckedCounts(); }
     int checkedCount() const { return m_model.checkedCount(); }
     int conflictCount() const { return m_model.unresolvedConflictCount(); }
 
