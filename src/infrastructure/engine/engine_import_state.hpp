@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -50,6 +51,16 @@ struct RekordboxImportState
 
 RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPath,
                                                const std::string &pioneerPath);
+
+// Track.pdbImportKey of every row of the library, by the row's id as the
+// Engine reader spells Track::sourceId. Not 0 when a player's rekordbox
+// import made the row (the rekordbox track id it came from), 0 when
+// Engine itself, or Seabass, did. Raw SQLite, read-only: libdjinterop's
+// track API does not expose the column. An empty map when the schema has
+// no such column (an Engine generation without the import), which the
+// planner reads as "imported" for every row: unsure means conflict.
+// Throws when the database cannot be opened or read.
+std::map<std::string, std::int64_t> readEnginePdbImportKeys(const std::string &engineLibraryPath);
 
 // Writes the library's current sequence into Engine's Information row:
 // "this is imported, do not ask". Returns false with `error` set when the

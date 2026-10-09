@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "application/ports/library_reader.hpp"
+#include "domain/rekordbox_baseline.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
 
@@ -113,6 +114,13 @@ private:
     // same reader does not parse export.pdb a second time.
     std::unordered_map<std::string, std::string> m_analyzePathBySourceId;
 };
+
+// export.pdb's whole playlist tree, folders included, as baselineFrom and
+// the Sync after Rekordbox Export planner take it: each playlist's and
+// folder's id and its full path ("Folder/List"), spelled as the reader
+// spells PlaylistMembership::name, sorted by id. Throws when export.pdb
+// cannot be opened.
+std::vector<domain::PlaylistInfo> rekordboxPlaylistTree(const std::string &pioneerRoot);
 
 // Every playlist's id in export.pdb by its full path ("Folder/List"),
 // spelled as the reader spells PlaylistMembership::name. Folders are

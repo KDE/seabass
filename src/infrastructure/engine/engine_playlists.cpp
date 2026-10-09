@@ -208,6 +208,39 @@ int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::s
 namespace
 {
 
+void collectPlaylists(const djinterop::playlist &pl, const std::string &prefix,
+                      std::vector<domain::EnginePlaylistInfo> &out)
+{
+    const std::string spelled = prefix.empty() ? pl.name() : prefix + "/" + pl.name();
+    const auto children = pl.children();
+    out.push_back(domain::EnginePlaylistInfo{spelled, !children.empty(), 1});
+    for (const auto &child : children) {
+        collectPlaylists(child, spelled, out);
+    }
+}
+
+}  // namespace
+
+std::vector<domain::EnginePlaylistInfo> listEnginePlaylists(const std::string &engineLibraryPath)
+{
+    auto db = djinterop::engine::load_database(engineLibraryPath);
+    std::vector<domain::EnginePlaylistInfo> out;
+    for (const auto &root : db.root_playlists()) {
+        collectPlaylists(root, "", out);
+    }
+    std::map<std::string, int> spellings;
+    for (const auto &playlist : out) {
+        ++spellings[playlist.path];
+    }
+    for (auto &playlist : out) {
+        playlist.countAtPath = spellings[playlist.path];
+    }
+    return out;
+}
+
+namespace
+{
+
 void collectPlaylistTracks(const djinterop::playlist &pl, std::set<std::int64_t> &ids)
 {
     for (const auto &t : pl.tracks()) {

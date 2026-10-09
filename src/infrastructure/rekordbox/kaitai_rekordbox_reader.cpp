@@ -783,9 +783,8 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
     progress.finish();
 }
 
-std::map<std::string, uint32_t> rekordboxPlaylistIdsByPath(const std::string &pioneerRoot)
+std::vector<domain::PlaylistInfo> rekordboxPlaylistTree(const std::string &pioneerRoot)
 {
-    std::map<std::string, uint32_t> ids;
     const std::filesystem::path pdbPath = pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
@@ -811,9 +810,21 @@ std::map<std::string, uint32_t> rekordboxPlaylistIdsByPath(const std::string &pi
             }
         });
     }
+    std::vector<domain::PlaylistInfo> out;
+    out.reserve(tree.size());
     for (const auto &[id, info] : tree) {
-        if (!info.isFolder) {
-            ids.emplace(playlistPath(id, tree), id);
+        out.push_back(domain::PlaylistInfo{playlistPath(id, tree), info.isFolder, id});
+    }
+    std::sort(out.begin(), out.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
+    return out;
+}
+
+std::map<std::string, uint32_t> rekordboxPlaylistIdsByPath(const std::string &pioneerRoot)
+{
+    std::map<std::string, uint32_t> ids;
+    for (const auto &playlist : rekordboxPlaylistTree(pioneerRoot)) {
+        if (!playlist.folder) {
+            ids.emplace(playlist.path, playlist.id);
         }
     }
     return ids;

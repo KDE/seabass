@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "application/use_cases/onelibrary_sync_rows.hpp"
@@ -32,10 +33,13 @@
 #include "application/use_cases/consolidate_duplicate_cues.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "application/use_cases/sync_libraries.hpp"
+#include "application/use_cases/fill_file_sizes.hpp"
+#include "application/use_cases/plan_engine_update.hpp"
 #include "cli/console.hpp"
 #include "cli/terminal_progress_reporter.hpp"
 #include "domain/cue_list_count.hpp"
 #include "domain/cross_source_sync_conflict.hpp"
+#include "domain/engine_update_planning.hpp"
 #include "domain/fuzzy_matcher.hpp"
 #include "domain/track_queries.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
@@ -43,6 +47,8 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/local/engine_update_stick_facts.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
 #include "infrastructure/media/media_factory.hpp"
@@ -56,6 +62,9 @@
 #include "infrastructure/system/stick_hardware_info.hpp"
 
 #include "infrastructure/audio/duration_fill.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 #include "infrastructure/utc_timestamp.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
@@ -101,6 +110,7 @@ void printUsage()
     Console::info("  seabass-cli scan [--rekordbox [PATH]] [--engine [PATH]] [--verbose] [--auto]");
     Console::info("                 [--track NAME] [--needs-cues [N]]");
     Console::info("  seabass-cli sync --rekordbox [PATH] --engine [PATH] [--dry-run] [--auto]");
+    Console::info("  seabass-cli sync-after-export [--rekordbox [PATH]] [--engine [PATH]]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
@@ -122,6 +132,14 @@ void printUsage()
     Console::info("           full proposal (what would move where, and what can't be applied");
     Console::info("           yet) without touching anything; only then does it ask you to");
     Console::info("           confirm (unless --auto or --dry-run) before writing anything.");
+    Console::info("  sync-after-export  Compares one stick's rekordbox export with its Engine");
+    Console::info("           library and prints what Sync after Rekordbox Export would bring");
+    Console::info("           into Engine: playlists, tracks, membership, ratings and comments,");
+    Console::info("           cues, what goes back onto rekordbox, the choices only you can make,");
+    Console::info("           and what Engine keeps as its own. Each row says why, and [x] marks");
+    Console::info("           what the app ticks by default. Read-only, always: it never prompts");
+    Console::info("           and never writes. Both catalogs must be on the same stick. Exits 0");
+    Console::info("           when there is nothing to do, 1 when there is, 2 on an error.");
     Console::info("  backups  Lists the backups seabass-cli has made on a stick (see \"Backups\"");
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
     Console::info("           N remain (default " + std::to_string(DefaultKeepBackups) +
@@ -270,6 +288,7 @@ void printUsage()
     Console::info("  seabass-cli export-xml --engine --exclude-ext flac --out rb.xml  # no FLAC for the RX2");
     Console::info("  seabass-cli sync --rekordbox --engine --dry-run  # see the proposal, change nothing");
     Console::info("  seabass-cli sync --rekordbox --engine            # analyze, then confirm before writing");
+    Console::info("  seabass-cli sync-after-export                    # what a rekordbox export changed for Engine");
 }
 
 // Which tracks printReport shows detail for, beyond the always-printed
@@ -936,6 +955,325 @@ std::string describeCues(const std::vector<seabass::domain::CuePoint> &cues)
         result += ", " + std::to_string(memory) + " memory";
     }
     return result;
+}
+
+// "sync-after-export": what Sync after Rekordbox Export would propose for
+// one stick, printed and never applied
+// (docs/sync-after-rekordbox-export-plan.md, "Hardware checks owed" 6).
+// The same input the app builds
+// (application::buildEngineUpdateInput over infrastructure::local::
+// readEngineUpdateStickFacts) and the same planner, so after a hardware
+// round an empty proposal here is an empty page there.
+//
+// Read-only, more strictly than a scan: no duration fill and no sample-rate
+// cache save, since both write their caches onto the stick. Engine's cues
+// are read at each file's own rate (the stick's metadata cache, or a probe
+// of the file), as the app's Cues stage does; what was probed is not kept.
+//
+// Exit codes, as diff(1) has them, for a script that asks "is the stick in
+// line": 0 nothing to do, 1 something to write or decide, 2 an error. The
+// other commands exit 1 on an error; this one cannot, since 1 is an answer.
+constexpr int SyncAfterExportNothingToDo = 0;
+constexpr int SyncAfterExportSomethingToDo = 1;
+constexpr int SyncAfterExportError = 2;
+
+std::string checkbox(const seabass::domain::EngineUpdateItemHeader &header)
+{
+    return header.checkedByDefault ? "[x] " : "[ ] ";
+}
+
+std::string trackLine(const Track &track, const std::string &stickRoot)
+{
+    std::string path = seabass::application::stickRelativePathOf(track.filePath, stickRoot);
+    if (path.empty()) {
+        path = track.filePath.empty() ? "(no file)" : track.filePath;
+    }
+    return path + "  " + track.title + " (" + track.artist + ")";
+}
+
+// Where a track sits in one of its playlists, 1 for the first, as the
+// reader numbers it; empty when it is not there or the reader could not say.
+std::string positionIn(const Track &track, const std::string &playlistPath)
+{
+    for (const auto &membership : track.playlists) {
+        if (membership.name == playlistPath && membership.position >= 0) {
+            return " #" + std::to_string(membership.position);
+        }
+    }
+    return {};
+}
+
+std::string describeEngineUpdateEdit(const seabass::domain::EngineUpdateEdit &edit, const std::string &stickRoot)
+{
+    using namespace seabass::domain;
+    struct Describe
+    {
+        const std::string &root;
+        std::string operator()(const TrackToAdd &e) const
+        {
+            return "add " + e.stickRelativePath + "  " + e.rekordbox.title + " (" + e.rekordbox.artist + ")";
+        }
+        std::string operator()(const TrackToRemove &e) const
+        {
+            return "remove " + trackLine(e.engine, root) + ", in " + std::to_string(e.playlistCount)
+                + " playlist(s)";
+        }
+        std::string operator()(const PlaylistCreate &e) const
+        {
+            return std::string("create ") + (e.folder ? "folder" : "playlist") + " \"" + e.path + "\"";
+        }
+        std::string operator()(const PlaylistRename &e) const
+        {
+            return "rename \"" + e.fromPath + "\" to \"" + e.toPath + "\"";
+        }
+        std::string operator()(const PlaylistDelete &e) const
+        {
+            return std::string("delete ") + (e.folder ? "folder" : "playlist") + " \"" + e.path + "\" ("
+                + std::to_string(e.engineMembers) + " member(s))";
+        }
+        std::string operator()(const MembershipEdit &e) const
+        {
+            if (e.kind == MembershipEdit::Kind::Remove) {
+                return "take out of \"" + e.playlistPath + "\"" + positionIn(e.track, e.playlistPath) + ": "
+                    + trackLine(e.track, root);
+            }
+            return "put into \"" + e.playlistPath + "\"" + positionIn(e.track, e.playlistPath) + ": "
+                + trackLine(e.track, root) + (e.afterPathKey.empty() ? ", first" : ", after " + e.afterPathKey);
+        }
+        std::string operator()(const MetadataEdit &e) const
+        {
+            const Track &named = e.direction == MetadataEdit::Direction::ToEngine ? e.rekordbox : e.engine;
+            const std::string target =
+                e.direction == MetadataEdit::Direction::ToEngine ? catalogDisplayName("engine") : "rekordbox";
+            if (e.field == MetadataEdit::Field::Rating) {
+                return "rating on " + target + " of " + trackLine(named, root) + ": "
+                    + (e.rating ? std::to_string(*e.rating) : std::string("none"));
+            }
+            return "comment on " + target + " of " + trackLine(named, root) + ": "
+                + (e.comment.empty() ? std::string("none") : "\"" + e.comment + "\"");
+        }
+        std::string operator()(const CueEdit &e) const
+        {
+            const bool toEngine = e.plan.direction == SyncPlan::Direction::ToB;
+            return std::string("cues onto ") + (toEngine ? catalogDisplayName("engine") : "rekordbox") + " for "
+                + trackLine(e.plan.match.trackA, root) + ": " + describeCues(e.plan.cuesToApply);
+        }
+    };
+    return std::visit(Describe{stickRoot}, edit);
+}
+
+template <typename Row>
+void printEngineUpdateRows(const std::vector<Row> &rows, const std::string &stickRoot)
+{
+    for (const auto &row : rows) {
+        Console::info("  " + checkbox(row.header) + describeEngineUpdateEdit(row, stickRoot));
+        Console::info("      why: " + row.header.reasonText);
+    }
+}
+
+int runSyncAfterExportCommand(const std::optional<std::string> &rekordboxPathArg,
+                              const std::optional<std::string> &enginePathArg)
+{
+    using namespace seabass::domain;
+    // Both catalogs, always: a bare invocation means both, and one flag
+    // alone still needs the other catalog of the same stick.
+    bool wantRekordbox = true;
+    bool wantEngine = true;
+    auto resolved = resolveLibraryPaths(wantRekordbox, wantEngine, rekordboxPathArg, enginePathArg);
+    if (!resolved.ok || !resolved.rekordboxPath || !resolved.enginePath) {
+        Console::error("sync-after-export needs a stick with both a rekordbox export and an Engine library");
+        return SyncAfterExportError;
+    }
+    // Absolute and without a trailing separator, so the stick root is
+    // the catalogs' parent and every Track::filePath lies under it.
+    const auto catalogDir = [](const std::string &given) {
+        fs::path path = fs::absolute(seabass::pathFromUtf8(given)).lexically_normal();
+        if (path.filename().empty() && path.has_parent_path()) {
+            path = path.parent_path();
+        }
+        return seabass::pathToUtf8(path);
+    };
+    const std::string pioneerRoot = catalogDir(*resolved.rekordboxPath);
+    const std::string engineRoot = catalogDir(*resolved.enginePath);
+    const fs::path pdb = seabass::pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
+    const fs::path mdb = seabass::pathFromUtf8(engineRoot) / "Database2" / "m.db";
+    std::error_code ec;
+    if (!fs::is_regular_file(pdb, ec) || !fs::is_regular_file(mdb, ec)) {
+        Console::error("sync-after-export needs both catalogs on the stick, found: "
+                       + std::string(fs::is_regular_file(pdb, ec) ? "rekordbox" : "no rekordbox") + ", "
+                       + std::string(fs::is_regular_file(mdb, ec) ? "engine" : "no engine"));
+        return SyncAfterExportError;
+    }
+
+    seabass::application::EngineUpdateStickFacts facts;
+    std::vector<Track> rekordboxTracks;
+    std::vector<Track> engineTracks;
+    try {
+        facts = seabass::infrastructure::local::readEngineUpdateStickFacts(pioneerRoot, engineRoot);
+
+        seabass::cli::TerminalProgressReporter progress;
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordboxReader(pioneerRoot);
+        rekordboxReader.setProgressReporter(progress);
+        rekordboxTracks = rekordboxReader.readAll();
+
+#ifdef SEABASS_HAVE_TAGLIB
+        seabass::infrastructure::audio::TagLibMetadataProbe probe;
+#else
+        seabass::application::NullTrackMetadataProbe probe;
+#endif
+        // Never saved: this command writes nothing onto the stick.
+        seabass::infrastructure::local::CachedSampleRates rates(facts.stickRoot, probe);
+        seabass::infrastructure::engine::LibdjinteropEngineReader engineReader(engineRoot);
+        engineReader.setProgressReporter(progress);
+        engineReader.setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+        engineTracks = engineReader.readTracks();
+        Console::verbose("sample rates probed: " + std::to_string(rates.probes()));
+
+        // The sizes: a row whose file is on the stick is that file, and
+        // only a row without one is matched by name (MatchScope::OneStick).
+        seabass::application::completeTracks(rekordboxTracks);
+        seabass::application::completeTracks(engineTracks);
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return SyncAfterExportError;
+    }
+
+    const std::string stickRoot = facts.stickRoot;
+    const bool hasBaseline = facts.baseline.has_value();
+    const std::size_t rekordboxPlaylists = facts.rekordboxPlaylists.size();
+    const std::size_t enginePlaylists = facts.enginePlaylists.size();
+    const std::size_t rekordboxCount = rekordboxTracks.size();
+    const std::size_t engineCount = engineTracks.size();
+    const auto streaming = static_cast<std::size_t>(std::count_if(
+        engineTracks.begin(), engineTracks.end(), [](const Track &t) { return !t.streamingSource.empty(); }));
+    const EngineUpdateProposal proposal = EngineUpdatePlanner::plan(
+        seabass::application::buildEngineUpdateInput(std::move(rekordboxTracks), std::move(engineTracks),
+                                                      std::move(facts)));
+
+    const std::string engineName = catalogDisplayName("engine");
+    Console::info("");
+    Console::heading("sync after rekordbox export");
+    Console::info("  rekordbox tracks:  " + std::to_string(rekordboxCount));
+    Console::info("  engine tracks:     " + std::to_string(engineCount)
+                  + (streaming > 0 ? " (" + std::to_string(streaming) + " streaming, left out)" : ""));
+    Console::info("  rekordbox playlists and folders: " + std::to_string(rekordboxPlaylists));
+    Console::info("  engine playlists and folders:    " + std::to_string(enginePlaylists));
+    Console::info("  rekordbox export now: " + std::to_string(proposal.currentSequence));
+    Console::info("");
+    if (hasBaseline) {
+        Console::info("Compared with how this stick looked when Seabass last saved it (export "
+                      + std::to_string(proposal.baselineSequence) + ")");
+    } else {
+        Console::info("No earlier record of this stick: additions are assumed, removals are left to you");
+    }
+
+    std::size_t rows = 0;
+    std::size_t checked = 0;
+    const auto section = [&](const std::string &title, std::size_t count) {
+        if (count == 0) {
+            return false;
+        }
+        Console::info("");
+        Console::heading(title + " (" + std::to_string(count) + ")");
+        return true;
+    };
+    const auto tally = [&](const auto &list) {
+        for (const auto &row : list) {
+            ++rows;
+            checked += row.header.checkedByDefault ? 1 : 0;
+        }
+    };
+
+    // The page's order (the plan's "The page"), not the staging order.
+    const std::size_t playlistRows =
+        proposal.playlistsToCreate.size() + proposal.playlistsToRename.size() + proposal.playlistsToDelete.size();
+    if (section("Playlists to create, rename, delete", playlistRows)) {
+        printEngineUpdateRows(proposal.playlistsToCreate, stickRoot);
+        printEngineUpdateRows(proposal.playlistsToRename, stickRoot);
+        printEngineUpdateRows(proposal.playlistsToDelete, stickRoot);
+    }
+    if (section("Tracks to add to " + engineName, proposal.tracksToAdd.size())) {
+        printEngineUpdateRows(proposal.tracksToAdd, stickRoot);
+    }
+    if (section("Tracks to remove from " + engineName, proposal.tracksToRemove.size())) {
+        printEngineUpdateRows(proposal.tracksToRemove, stickRoot);
+    }
+    if (section("Playlist membership", proposal.membership.size())) {
+        printEngineUpdateRows(proposal.membership, stickRoot);
+    }
+    if (section("Ratings and comments to " + engineName, proposal.metadataToEngine.size())) {
+        printEngineUpdateRows(proposal.metadataToEngine, stickRoot);
+    }
+    if (section("Cues to " + engineName, proposal.cuesToEngine.size())) {
+        printEngineUpdateRows(proposal.cuesToEngine, stickRoot);
+    }
+    if (section("Cues and ratings back onto rekordbox",
+                proposal.restoresToRekordbox.size() + proposal.cuesToRekordbox.size())) {
+        printEngineUpdateRows(proposal.restoresToRekordbox, stickRoot);
+        printEngineUpdateRows(proposal.cuesToRekordbox, stickRoot);
+    }
+    tally(proposal.playlistsToCreate);
+    tally(proposal.playlistsToRename);
+    tally(proposal.playlistsToDelete);
+    tally(proposal.tracksToAdd);
+    tally(proposal.tracksToRemove);
+    tally(proposal.membership);
+    tally(proposal.metadataToEngine);
+    tally(proposal.cuesToEngine);
+    tally(proposal.restoresToRekordbox);
+    tally(proposal.cuesToRekordbox);
+
+    if (section("Conflicts", proposal.conflicts.size())) {
+        for (const auto &conflict : proposal.conflicts) {
+            std::string subject;
+            if (!conflict.rekordboxChoice.empty()) {
+                subject = describeEngineUpdateEdit(conflict.rekordboxChoice.front(), stickRoot);
+            } else if (!conflict.engineChoice.empty()) {
+                subject = describeEngineUpdateEdit(conflict.engineChoice.front(), stickRoot);
+            } else {
+                subject = conflict.pathKey.empty() ? conflict.header.key : conflict.pathKey;
+            }
+            Console::info("  " + checkbox(conflict.header) + subject);
+            Console::info("      why: " + conflict.header.reasonText);
+            Console::info("      rekordbox's side: " + conflict.rekordboxSide);
+            Console::info("      " + engineName + "'s side: " + conflict.engineSide);
+            if (conflict.rekordboxChoice.empty() && conflict.engineChoice.empty()) {
+                Console::info("      neither choice writes anything: settle it elsewhere first");
+            }
+        }
+    }
+    if (section(engineName + "'s own, kept", proposal.engineOwnKept.size())) {
+        for (const auto &kept : proposal.engineOwnKept) {
+            const std::string subject = kept.playlistPath.empty() ? trackLine(kept.engine, stickRoot)
+                                                                  : "\"" + kept.playlistPath + "\"";
+            Console::info("  " + subject);
+            Console::info("      why: " + kept.header.reasonText);
+        }
+    }
+    if (section("Not added", proposal.notAdded.size())) {
+        for (const auto &add : proposal.notAdded) {
+            Console::info("  " + add.stickRelativePath + "  " + add.rekordbox.title + " (" + add.rekordbox.artist
+                          + ")");
+            Console::info("      why: " + add.header.reasonText);
+        }
+    }
+    if (!proposal.declinedSuppressed.empty()) {
+        Console::info("");
+        Console::info(std::to_string(proposal.declinedSuppressed.size())
+                      + " item(s) you declined before are left out: rekordbox has not changed them since.");
+    }
+
+    Console::info("");
+    Console::info("total: " + std::to_string(rows) + " change(s), " + std::to_string(checked) + " checked; "
+                  + std::to_string(proposal.conflicts.size()) + " conflict(s); "
+                  + std::to_string(proposal.engineOwnKept.size()) + " of " + engineName + "'s own kept; "
+                  + std::to_string(proposal.notAdded.size()) + " not added");
+    if (proposal.empty()) {
+        Console::info("nothing to do: " + engineName + " is in line with this rekordbox export.");
+        return SyncAfterExportNothingToDo;
+    }
+    Console::info("read-only: nothing was written.");
+    return SyncAfterExportSomethingToDo;
 }
 
 // "sync": two phases. First, analyze both libraries and print the full
@@ -1771,6 +2109,7 @@ int main(int argc, char **argv)
     }
     if (commands.size() != 1 ||
         (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
+         commands[0] != "sync-after-export" &&
          commands[0] != "export-xml" && commands[0] != "digest"
          && commands[0] != "damage-filesystem")) {
         Console::error("unknown command: " + commands[0]);
@@ -1784,6 +2123,10 @@ int main(int argc, char **argv)
 
     if (commands[0] == "sync") {
         return runSyncCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, autoMode, dryRun, force);
+    }
+
+    if (commands[0] == "sync-after-export") {
+        return runSyncAfterExportCommand(rekordboxPath, enginePath);
     }
 
     if (commands[0] == "export-xml") {

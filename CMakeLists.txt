@@ -514,6 +514,8 @@ add_library(seabass_core STATIC
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
     src/application/use_cases/unreferenced_tracks.cpp
+    src/application/use_cases/plan_engine_update.cpp
+    src/infrastructure/local/engine_update_stick_facts.cpp
     src/infrastructure/cleanup/audio_file_walk.cpp
     src/infrastructure/local/duration_cache.cpp
     src/infrastructure/local/silence_cache.cpp
@@ -563,6 +565,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
+    src/application/use_cases/plan_engine_update.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
@@ -1912,6 +1915,16 @@ target_link_libraries(engine_update_planning_test PRIVATE seabass_core_testing)
 target_include_directories(engine_update_planning_test PRIVATE src)
 add_test(NAME engine_update_planning_test COMMAND engine_update_planning_test)
 
+# The planner's input as seabass-cli sync-after-export and the GUI build
+# it: stick-relative paths and their keys, the pdbImportKey map, the
+# playlist tree with its folders, and the fileExists predicate.
+add_executable(plan_engine_update_test
+    tests/plan_engine_update_test.cpp
+)
+target_link_libraries(plan_engine_update_test PRIVATE seabass_core_testing)
+target_include_directories(plan_engine_update_test PRIVATE src)
+add_test(NAME plan_engine_update_test COMMAND plan_engine_update_test)
+
 add_executable(engine_cue_translation_test
     tests/engine_cue_translation_test.cpp
 )
@@ -2340,20 +2353,23 @@ set(_cli_catalogs
 set(_cli_rekordbox_counts "tracks:           1161\\n|tracks with cues: 222\\n|total cues:       317\\n")
 set(_cli_engine_counts "tracks:           1564\\n|tracks with cues: 125\\n|total cues:       219\\n")
 function(seabass_cli_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT" "ARGS;EXPECT;FORBID")
+    cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;COPY_FROM;COPY_TO;UNCHANGED_TREE" "ARGS;EXPECT;FORBID;COUNT")
     list(JOIN cli_ARGS "|" _args)
     list(JOIN cli_EXPECT "|" _expect)
     list(JOIN cli_FORBID "|" _forbid)
+    list(JOIN cli_COUNT "|" _count)
     add_test(NAME ${name}
         COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>" "-DARGS=${_args}" "-DEXIT=${cli_EXIT}"
-                "-DEXPECT=${_expect}" "-DFORBID=${_forbid}" "-DUNCHANGED=${_cli_catalogs}"
+                "-DEXPECT=${_expect}" "-DFORBID=${_forbid}" "-DUNCHANGED=${_cli_catalogs}" "-DCOUNT=${_count}"
+                "-DCOPY_FROM=${cli_COPY_FROM}" "-DCOPY_TO=${cli_COPY_TO}" "-DUNCHANGED_TREE=${cli_UNCHANGED_TREE}"
                 -P ${CMAKE_SOURCE_DIR}/tests/cli_expect.cmake)
     # A bare flag with no PATH would look for a real stick.
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 endfunction()
 
 seabass_cli_test(cli_help EXIT 0 ARGS --help
-    EXPECT "Usage" "seabass-cli scan .--rekordbox" "seabass-cli sync --rekordbox")
+    EXPECT "Usage" "seabass-cli scan .--rekordbox" "seabass-cli sync --rekordbox"
+           "seabass-cli sync-after-export .--rekordbox" "  sync-after-export  Compares")
 seabass_cli_test(cli_no_command EXIT 1 ARGS --verbose EXPECT "Usage")
 seabass_cli_test(cli_unknown_command EXIT 1 ARGS frobnicate EXPECT "unknown command: frobnicate" "Usage")
 seabass_cli_test(cli_unknown_option EXIT 1 ARGS scan --bogus EXPECT "unknown option: --bogus")
@@ -2407,6 +2423,46 @@ seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_
     FORBID "Apply the" "backed up")
 seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
     EXPECT "sync needs at least two catalogs, found: no rekordbox, engine, no onelibrary")
+
+# Sync after Rekordbox Export's proposal, read-only, over a fresh copy of
+# the fixture (never the fixture in place): the copy is a stick in the
+# Sync Needed state (export.pdb 15132, Engine counter 14204) with no
+# baseline, so everything is the fallback. Counts pinned by hand from the
+# catalogs read without Seabass (export.pdb parsed by a script, m.db
+# through Python's sqlite3), 2026-10-09:
+#   rekordbox 1161 tracks, 24 playlists and no folders; Engine 1564 rows,
+#   95 streaming (left out), 33 playlists.
+#   The fixture's Engine paths sit under engine/ ("Contents/x.mp3" in the
+#   Engine folder) and its two catalogs number artists apart, so the pairs
+#   are made on the filename, and every one of the 1161 rekordbox
+#   filenames is one of Engine's 1469: no track to add and none refused.
+#   Engine's 308 others all carry pdbImportKey 14204: 308 conflicts
+#   ("Engine imported this track ..."), none of Engine's own tracks.
+#   8 rekordbox playlists have no Engine playlist of their name: 8
+#   creates; 17 Engine playlists have no rekordbox one: 17 kept.
+# The conflict and kept totals (1242, 1177) and the change total are the
+# command's own answer, pinned against regressions. Exit 1: something to
+# do. No file in the copy appears, goes or changes.
+set(_cli_sae_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_sync_after_export")
+seabass_cli_test(cli_sync_after_export EXIT 1
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_sae_copy} UNCHANGED_TREE ${_cli_sae_copy}
+    ARGS sync-after-export --rekordbox ${_cli_sae_copy}/rekordbox --engine ${_cli_sae_copy}/engine
+    EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1564 \\(95 streaming, left out\\)\\n"
+           "rekordbox playlists and folders: 24\\n" "engine playlists and folders:    33\\n"
+           "rekordbox export now: 15132\\n"
+           "\\nNo earlier record of this stick: additions are assumed, removals are left to you\\n"
+           "\\nPlaylists to create, rename, delete \\(8\\)\\n"
+           "\\nConflicts \\(1242\\)\\n" "\\nEngine's own, kept \\(1177\\)\\n"
+           "total: 1511 change\\(s\\), 1511 checked. 1242 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"
+           "read-only: nothing was written."
+    COUNT "8=\\n  \\[x\\] create playlist \""
+          "308=\\n      why: Engine imported this track from rekordbox, which no longer lists it"
+          "0=Engine's own track: no rekordbox import put it there"
+          "17=\\n      why: Engine's own playlist: rekordbox has nothing at this path\\n"
+    FORBID "Tracks to add to Engine" "Tracks to remove from Engine" "\\nNot added \\(" "Compared with how"
+           "nothing to do")
+seabass_cli_test(cli_sync_after_export_one_catalog EXIT 2 ARGS sync-after-export --engine ${_cli_engine}
+    EXPECT "sync-after-export needs a stick with both a rekordbox export and an Engine library")
 
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).
