@@ -528,7 +528,7 @@ private:
         return std::string(r->folder ? "folder:" : "list:") + r->path;
     }
 
-    void ambiguous(std::uint32_t id, const std::string &enginePath, const std::string &state)
+    void ambiguous(std::uint32_t id, const std::string &enginePath, const std::string &state, std::size_t rekordboxCount = 1)
     {
         const std::string engineName = catalogDisplayName("engine");
         EngineUpdateConflict conflict;
@@ -536,7 +536,8 @@ private:
                                      engineName + " has " + std::to_string(countAt(enginePath)) + " playlists at "
                                          + quoted(enginePath) + ": rename one in " + engineName + " DJ first",
                                      state);
-        conflict.rekordboxSide = "rekordbox has one";
+        conflict.rekordboxSide = rekordboxCount == 1 ? std::string("rekordbox has one")
+                                                     : "rekordbox has " + std::to_string(rekordboxCount);
         conflict.engineSide = engineName + " has " + std::to_string(countAt(enginePath));
         out.conflicts.push_back(std::move(conflict));
     }
@@ -574,6 +575,138 @@ private:
         return candidates == 1 ? found : std::nullopt;
     }
 
+    // rekordbox's playlists that share one path (the header's rule): the
+    // group in id order, `paired` the one the baseline knew at this path
+    // and planned as any other, or nullptr. One conflict for the rest.
+    void sharedPath(const std::vector<const BaselinePlaylist *> &group, const BaselinePlaylist *paired,
+                    const std::vector<std::string> &parentDeps)
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const std::string &path = group.front()->path;
+        std::vector<const BaselinePlaylist *> rest;
+        for (const BaselinePlaylist *p : group) {
+            if (p != paired) {
+                rest.push_back(p);
+            }
+        }
+        const BaselinePlaylist &first = *rest.front();
+        const std::string key = playlistItemKey(first.id);
+        // Every list of the group but the paired one, by id: the conflict
+        // comes back when any of them changes.
+        std::string state = "shared:" + path;
+        for (const BaselinePlaylist *p : rest) {
+            state += "\n" + std::to_string(p->id) + (p->folder ? ":folder" : ":list");
+            for (const auto &member : p->members) {
+                state += "\n" + member;
+            }
+        }
+        const auto settle = [&](const std::vector<std::string> &deps) {
+            for (const BaselinePlaylist *p : rest) {
+                PlaylistStatus st;
+                st.deps = deps;
+                status[p->id] = st;
+            }
+        };
+        const std::string parent = parentPath(path);
+        if (countAt(path) > 1 || (!parent.empty() && countAt(parent) > 1)) {
+            const std::string at = countAt(path) > 1 ? path : parent;
+            claimedEnginePaths.insert(at);
+            ambiguous(first.id, at, state, group.size());
+            settle(parentDeps);
+            return;
+        }
+        // A member renamed onto this path: Engine's playlist at its old
+        // path is accounted for by this conflict, not Engine's own.
+        if (base) {
+            for (const BaselinePlaylist *p : rest) {
+                const BaselinePlaylist *b = base->findPlaylist(p->id);
+                if (b && b->path != path && countAt(b->path) == 1) {
+                    claimedEnginePaths.insert(b->path);
+                }
+            }
+        }
+
+        const bool engineHas = countAt(path) == 1;
+        // What Engine's playlist at the path holds, or will once the
+        // paired playlist's own rows are applied.
+        std::set<std::string> holds;
+        if (engineHas) {
+            claimedEnginePaths.insert(path);
+            if (const auto it = eMembers.find(path); it != eMembers.end()) {
+                holds.insert(it->second.begin(), it->second.end());
+            }
+            if (paired) {
+                holds.insert(paired->members.begin(), paired->members.end());
+            }
+        }
+        // The union in rekordbox order, first list first.
+        std::vector<std::string> sequence;
+        if (paired) {
+            sequence = paired->members;
+        }
+        for (const BaselinePlaylist *p : rest) {
+            sequence.insert(sequence.end(), p->members.begin(), p->members.end());
+        }
+        sequence = firstOccurrences(sequence);
+
+        const std::string count = std::to_string(group.size());
+        std::vector<EngineUpdateEdit> choice;
+        if (!engineHas) {
+            PlaylistCreate create;
+            create.pdbId = first.id;
+            create.path = path;
+            create.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxPathShared,
+                                       "Create " + quoted(path) + " in " + engineName + " for all " + count, state,
+                                       parentDeps);
+            choice.emplace_back(std::move(create));
+        }
+        std::string anchor;
+        for (const auto &member : sequence) {
+            if (holds.count(member)) {
+                anchor = member;
+                continue;
+            }
+            if (!rByKey.count(member) || duplicateKeys.count(member) || (!engineRow(member) && !addedKeys.count(member))) {
+                continue;
+            }
+            MembershipEdit add;
+            add.kind = MembershipEdit::Kind::Add;
+            add.pdbId = first.id;
+            add.playlistPath = path;
+            add.pathKey = member;
+            add.track = *rByKey.at(member);
+            add.afterPathKey = anchor;
+            std::vector<std::string> deps = parentDeps;
+            if (addedKeys.count(member)) {
+                deps.push_back(trackItemKey(member));
+            }
+            add.header = makeHeader(memberItemKey(first.id, member), true, false,
+                                    EngineUpdateReason::RekordboxPathShared,
+                                    "Put it into " + engineName + "'s " + quoted(path), "member:in:after:" + anchor,
+                                    std::move(deps));
+            choice.emplace_back(std::move(add));
+            holds.insert(member);
+            anchor = member;
+        }
+
+        EngineUpdateConflict conflict;
+        conflict.header = makeHeader(key, false, true, EngineUpdateReason::RekordboxPathShared,
+                                     "rekordbox has " + count + " playlists spelled " + quoted(leafName(path))
+                                         + " here; " + engineName + " can hold one at this path",
+                                     state, parentDeps);
+        if (engineHas) {
+            conflict.rekordboxSide = "Put the union of their members into " + engineName
+                + "'s playlist in rekordbox order (first list first)";
+        } else {
+            conflict.rekordboxSide = "Create one " + engineName
+                + " playlist holding the union of their members in rekordbox order (first list first)";
+        }
+        conflict.engineSide = "Leave this path alone";
+        conflict.rekordboxChoice = std::move(choice);
+        out.conflicts.push_back(std::move(conflict));
+        settle({key});
+    }
+
     void planPlaylists()
     {
         const std::string engineName = catalogDisplayName("engine");
@@ -590,6 +723,54 @@ private:
             rekordboxPaths.insert(playlist.path);
             rekordboxIds.insert(playlist.id);
         }
+        // Paths more than one rekordbox playlist spells, each group in id
+        // order, and the member the baseline pairs with Engine's playlist
+        // there (sharedPath).
+        std::map<std::string, std::vector<const BaselinePlaylist *>> shared;
+        for (const auto &playlist : now.playlists) {
+            shared[playlist.path].push_back(&playlist);
+        }
+        std::erase_if(shared, [](const auto &entry) { return entry.second.size() < 2; });
+        // Folders hold no members, so a group of folders is one folder:
+        // the paired one, or the lowest id, stands for the others.
+        std::map<std::string, const BaselinePlaylist *> pairedAt;
+        for (auto &[path, group] : shared) {
+            std::sort(group.begin(), group.end(),
+                      [](const BaselinePlaylist *a, const BaselinePlaylist *b) { return a->id < b->id; });
+            if (base && countAt(path) <= 1) {
+                for (const BaselinePlaylist *p : group) {
+                    const BaselinePlaylist *b = base->findPlaylist(p->id);
+                    if (b && b->path == path) {
+                        pairedAt[path] = p;
+                        break;
+                    }
+                }
+            }
+            const bool folders = std::all_of(group.begin(), group.end(), [](const BaselinePlaylist *p) {
+                return p->folder;
+            });
+            if (folders && !pairedAt.count(path)) {
+                pairedAt[path] = group.front();
+            }
+        }
+        // The paired one first among its group, so the others can follow it.
+        std::map<std::string, std::vector<std::size_t>> slots;
+        for (std::size_t slot = 0; slot < order.size(); ++slot) {
+            const auto &path = now.playlists[order[slot]].path;
+            if (pairedAt.count(path)) {
+                slots[path].push_back(slot);
+            }
+        }
+        for (const auto &[path, places] : slots) {
+            const BaselinePlaylist *paired = pairedAt.at(path);
+            for (const std::size_t slot : places) {
+                if (&now.playlists[order[slot]] == paired) {
+                    std::swap(order[slot], order[places.front()]);
+                    break;
+                }
+            }
+        }
+        std::set<std::string> sharedDone;
 
         for (const std::size_t i : order) {
             const BaselinePlaylist &r = now.playlists[i];
@@ -606,6 +787,18 @@ private:
             st.deps = parentDeps;
             const BaselinePlaylist *b = base ? base->findPlaylist(r.id) : nullptr;
 
+            if (const auto group = shared.find(r.path); group != shared.end()) {
+                const auto pairedIt = pairedAt.find(r.path);
+                const BaselinePlaylist *paired = pairedIt == pairedAt.end() ? nullptr : pairedIt->second;
+                if (paired != &r) {
+                    if (paired && paired->folder && r.folder) {
+                        status[r.id] = status[paired->id];
+                    } else if (sharedDone.insert(r.path).second) {
+                        sharedPath(group->second, paired, parentDeps);
+                    }
+                    continue;
+                }
+            }
             if (countAt(r.path) > 1) {
                 claimedEnginePaths.insert(r.path);
                 ambiguous(r.id, r.path, state);

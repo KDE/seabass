@@ -548,6 +548,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
                     playlistsByTrackId[rowEntry->track_id()].push_back(domain::PlaylistMembership{
                         playlistPath(rowEntry->playlist_id(), playlistTreeById),
                         static_cast<int>(rowEntry->entry_index()),
+                        rowEntry->playlist_id(),
                     });
                 }
             }

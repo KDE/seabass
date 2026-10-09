@@ -44,6 +44,24 @@ namespace seabass::domain
 // no record falls back to what SyncPlanner::plan decides (Sync Cue
 // Points). A track's cue changes are one CueEdit per direction.
 //
+// Playlists are items by export.pdb id. rekordbox can hold two playlists
+// with one name at one level; Engine cannot (UNIQUE(title, parentListId)
+// in m.db). rekordbox playlists that share one path form a group. With a
+// baseline, the lowest id of the group the baseline knew at that path is
+// paired with Engine's playlist there and planned as any other; the rest
+// of the group (all of it without a baseline, and any member whose
+// rename lands on a sibling's path) is ONE conflict for the path,
+// RekordboxPathShared, keyed by the lowest id among them so a decline
+// sticks, its state every one of their member lists, so it comes back
+// when one changes. rekordbox's choice: one Engine playlist at the path
+// holding the union of their members in rekordbox order (first list
+// first), created if Engine has none there; Engine's: leave the path
+// alone. No create, membership or delete row is planned for those ids,
+// and what lies under them depends on the conflict's key. Folders hold
+// no members, so a group of folders is one folder, planned as the paired
+// one or the lowest id. Two Engine playlists at one path stay
+// EnginePathAmbiguous, one conflict for the whole group.
+//
 // Pure domain: the planner never reads a file. What only the stick can
 // say (does a file exist, how many Engine playlists share a path, each
 // Engine row's pdbImportKey) arrives in EngineUpdateInput as data.
@@ -86,6 +104,7 @@ enum class EngineUpdateReason {
     // hot cue of Engine's own, to keep? Nothing on the stick says.
     EngineMemoryOrHotCue,
     // Refusals and things to fix elsewhere first.
+    RekordboxPathShared,  // two or more rekordbox playlists at one path: conflict
     EnginePathAmbiguous,  // enginePlaylistCountAtPath != 1
     DuplicateEngineRows,  // two Engine rows for one file: Clean Up first
     FileNotOnStick,       // rekordbox lists a file the stick does not have

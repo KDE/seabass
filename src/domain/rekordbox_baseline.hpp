@@ -136,8 +136,10 @@ struct BaselineGaps
 //
 // Members are ordered by PlaylistMembership::position. Entries whose
 // position the reader could not determine (-1) follow the positioned
-// ones, in the order of `rekordbox`, and ties keep that order too. The
-// parent of "A/B/C" is the playlist whose path is "A/B".
+// ones, in the order of `rekordbox`, and ties keep that order too. A
+// membership with a playlistId goes to the playlist of that id, one
+// without to the first playlist of its path. The parent of "A/B/C" is
+// the first playlist whose path is "A/B".
 RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::vector<PlaylistInfo> &playlists,
                                std::uint64_t pdbSequence,
                                const std::function<std::string(const std::string &)> &stickRelativeOf,

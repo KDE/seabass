@@ -308,7 +308,16 @@ What it reuses, and what it must not:
   members agree closely, and the guess is a conflict. An Engine path
   that resolves to more than one playlist
   (`enginePlaylistCountAtPath() != 1`, `engine_playlists.hpp`) is a
-  conflict, the rule Browse already enforces.
+  conflict, the rule Browse already enforces. **Decision (review of
+  step 13, 2026-10-09):** rekordbox playlists sharing one path are one
+  group, since Engine holds one per path (UNIQUE(title, parentListId)).
+  The member the baseline knew at that path is paired as usual; the
+  rest, all of it without a baseline, and any rename onto a sibling's
+  path, is one conflict keyed by its lowest pdb id: create (or fill)
+  one Engine playlist with the union, first list first, or leave the
+  path alone. Folders, holding no members, merge into one. The pdb
+  reader now gives each membership its playlist id, so the lists stay
+  apart (`engine_update_planning.hpp`).
 - Membership: a three-way merge of the ordered member lists.
   `alignTo()` in `playlist_sync.hpp` is not enough: it counts only
   tracks every library lists and ignores order, and new tracks must be

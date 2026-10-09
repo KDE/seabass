@@ -83,6 +83,7 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
     baseline.pdbSequence = pdbSequence;
 
     std::unordered_map<std::string, std::size_t> playlistIndexByPath;
+    std::unordered_map<std::uint32_t, std::size_t> playlistIndexById;
     baseline.playlists.reserve(playlists.size());
     for (const auto &info : playlists) {
         BaselinePlaylist playlist;
@@ -90,6 +91,7 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
         playlist.folder = info.folder;
         playlist.path = info.path;
         playlistIndexByPath.emplace(info.path, baseline.playlists.size());
+        playlistIndexById.emplace(info.id, baseline.playlists.size());
         baseline.playlists.push_back(std::move(playlist));
     }
     for (auto &playlist : baseline.playlists) {
@@ -146,14 +148,23 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
         baseline.tracks.push_back(std::move(row));
 
         for (const auto &membership : track.playlists) {
-            const auto it = playlistIndexByPath.find(membership.name);
-            if (it == playlistIndexByPath.end() || baseline.playlists[it->second].folder) {
+            // By id where the reader gave one: two playlists can share a
+            // path, and by name every entry would land on the first.
+            std::optional<std::size_t> index;
+            if (const auto byId = playlistIndexById.find(membership.playlistId);
+                membership.playlistId != 0 && byId != playlistIndexById.end()) {
+                index = byId->second;
+            } else if (const auto byPath = playlistIndexByPath.find(membership.name);
+                       byPath != playlistIndexByPath.end()) {
+                index = byPath->second;
+            }
+            if (!index || baseline.playlists[*index].folder) {
                 if (gaps) {
                     gaps->unknownMemberships.push_back(track.sourceId + " in " + membership.name);
                 }
                 continue;
             }
-            entries[it->second].push_back(Entry{membership.position, seen++, key});
+            entries[*index].push_back(Entry{membership.position, seen++, key});
         }
     }
 
