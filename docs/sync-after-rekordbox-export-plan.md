@@ -272,6 +272,17 @@ for cues. No new disk read on insert. `StickHeaderRow.qml`'s badge reads
 "Engine needs syncing" for `"library"` and leads here, "Sync Needed" for
 `"cues"` and leads to Sync Cue Points as today.
 
+**Decision (step 12, 2026-10-09):** the summary is
+`application::summarizeEngineUpdate`. A baseline whose sequence equals
+the pdb's is answered `""` from the two headers alone, with no catalog
+read; only a stale one is read in full. Items declined at rekordbox's
+present state do not raise the badge, as the page leaves them out.
+Playlists come from the Tracks stage memberships, so an empty playlist
+rekordbox made, renamed or deleted, and a comment, do not raise it; the
+page shows them. The fallback compares by pathKey and playlist path
+only: a file the stick lacks still reads `"library"` (the page then
+shows it as a refusal).
+
 ## Domain
 
 New `src/domain/rekordbox_baseline.{hpp,cpp}` (types, `baselineFrom`,

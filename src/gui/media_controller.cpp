@@ -20,6 +20,10 @@
 #include <utility>
 
 #include "application/mount_unless_mounted.hpp"
+#include "application/use_cases/plan_engine_update.hpp"
+#include "application/use_cases/summarize_engine_update.hpp"
+#include "gui/async_request.hpp"
+#include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "application/stick_presence_diff.hpp"
 #include "application/use_cases/open_stick_backup.hpp"
 #include "gui/seabass_settings.hpp"
@@ -126,9 +130,17 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         return stick.rekordboxPath.has_value()
                && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*stick.rekordboxPath);
     case SyncNeededRole:
-        return stick.mounted && stick.rekordboxPath.has_value() && stick.enginePath.has_value()
-            && infrastructure::engine::readRekordboxImportState(*stick.enginePath, *stick.rekordboxPath)
-                   .playerWillOfferImport();
+    case EngineUpdateRole: {
+        // The request's answer (MediaController::requestEngineUpdate);
+        // nothing is read here.
+        const auto it = m_engineUpdate.find(stick.mountPoint);
+        const bool known = it != m_engineUpdate.end() && stick.mounted && stick.rekordboxPath.has_value()
+            && stick.enginePath.has_value();
+        if (role == SyncNeededRole) {
+            return known && it->second.syncNeeded;
+        }
+        return known ? it->second.engineUpdate : QString();
+    }
     case ReadOnlyRole:
         return static_cast<size_t>(index.row()) < m_readOnly.size()
                && m_readOnly[static_cast<size_t>(index.row())];
@@ -179,6 +191,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {SafeToUnplugRole, "safeToUnplug"},
         {HasOneLibraryRole, "hasOneLibrary"},
         {SyncNeededRole, "syncNeeded"},
+        {EngineUpdateRole, "engineUpdate"},
         {ReadOnlyRole, "readOnly"},
     };
 }
@@ -226,6 +239,24 @@ void DetectedStickListModel::refreshRole(int role)
         return;
     }
     emit dataChanged(index(0), index(rowCount() - 1), {role});
+}
+
+void DetectedStickListModel::setEngineUpdateStatus(const std::string &mountPoint, EngineUpdateStatus status)
+{
+    m_engineUpdate[mountPoint] = std::move(status);
+    for (size_t row = 0; row < m_sticks.size(); ++row) {
+        if (m_sticks[row].mountPoint == mountPoint) {
+            const QModelIndex at = index(static_cast<int>(row));
+            emit dataChanged(at, at, {EngineUpdateRole, SyncNeededRole});
+        }
+    }
+}
+
+void DetectedStickListModel::forgetEngineUpdateStatus(const std::string &mountPoint)
+{
+    // No dataChanged: the row is gone or no longer mounted, and data()
+    // answers "" and false for such a row already.
+    m_engineUpdate.erase(mountPoint);
 }
 
 void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> sticks)
@@ -404,12 +435,118 @@ std::vector<std::string> forgetCatalogsOfSticksGone(const std::vector<applicatio
 }  // namespace
 
 // Any save may have levelled the player's import record with export.pdb
-// (save_loop.cpp), so the "Sync Needed" badge is asked again. A role
-// looked up when asked needs only the announcement, not a rescan. The
-// edit session registry calls this after every landed save.
+// (save_loop.cpp), recorded a rekordbox baseline or moved a catalog, so
+// every stick's badge is asked again. The edit session registry calls
+// this after every landed save. The old answer stays until the new one
+// lands, so the badge does not blink.
 void MediaController::refreshSyncNeeded()
 {
-    m_model.refreshRole(DetectedStickListModel::SyncNeededRole);
+    for (const application::DetectedStick &stick : m_model.sticks()) {
+        requestEngineUpdate(stick, true);
+    }
+}
+
+EngineUpdateReading MediaController::readEngineUpdate(const std::string &rekordboxPath, const std::string &enginePath,
+                                                      application::CancellationToken cancel)
+{
+    EngineUpdateReading reading;
+    const auto importState = infrastructure::engine::readRekordboxImportState(enginePath, rekordboxPath);
+    reading.syncNeeded = importState.playerWillOfferImport();
+    if (!importState.error.empty() || !importState.hasRekordboxLibrary || !importState.hasEngineLibrary) {
+        reading.error = QString::fromStdString(importState.error.empty() ? std::string("export.pdb's sequence could not be read")
+                                                                         : importState.error);
+        return reading;
+    }
+    const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(enginePath);
+    std::string error;
+    const auto recordedSequence = infrastructure::local::readRekordboxBaselineSequence(pathFromUtf8(stickRoot), &error);
+    if (!error.empty()) {
+        // A record that exists and cannot be read is not "no record": the
+        // page refuses it, and the badge does not guess either.
+        reading.error = QString::fromStdString(error);
+        return reading;
+    }
+    if (recordedSequence && *recordedSequence == importState.librarySequence) {
+        // Current: rekordbox has not exported since Seabass recorded the
+        // stick, so there is nothing for Engine to catch up with, and no
+        // catalog to read to say so.
+        return reading;
+    }
+    std::optional<domain::RekordboxBaseline> baseline;
+    if (recordedSequence) {
+        baseline = infrastructure::local::readRekordboxBaseline(pathFromUtf8(stickRoot), &error);
+        if (!error.empty()) {
+            reading.error = QString::fromStdString(error);
+            return reading;
+        }
+    }
+    reading.readCatalogs = true;
+    std::vector<domain::Track> rekordbox;
+    std::vector<domain::Track> engine;
+    try {
+        LibraryCatalogCache &cache = LibraryCatalogCache::instance();
+        rekordbox = cache.stagedTracksFor("rekordbox", rekordboxPath, LibraryCatalogCache::Detail::Tracks,
+                                          application::NullProgressReporter::instance(), cancel)
+                        .tracks;
+        // With a record the summary compares rekordbox with it alone.
+        if (!baseline) {
+            engine = cache.stagedTracksFor("engine", enginePath, LibraryCatalogCache::Detail::Tracks,
+                                           application::NullProgressReporter::instance(), cancel)
+                         .tracks;
+        }
+    } catch (const application::OperationCancelled &) {
+        throw;
+    } catch (const std::exception &e) {
+        reading.error = QString::fromStdString(e.what());
+        return reading;
+    }
+    const application::EngineUpdateNeed need = application::summarizeEngineUpdate(
+        rekordbox, engine, baseline, importState.librarySequence, importState.engineCounter,
+        [&stickRoot](const std::string &filePath) { return application::stickRelativePathOf(filePath, stickRoot); },
+        [](const std::string &relative) { return application::normalizedPathKey(relative); });
+    reading.engineUpdate = QString::fromStdString(application::engineUpdateNeedName(need));
+    return reading;
+}
+
+void MediaController::requestEngineUpdate(const application::DetectedStick &stick, bool restart)
+{
+    if (!stick.mounted || stick.mountPoint.empty() || !stick.rekordboxPath || !stick.enginePath) {
+        return;
+    }
+    auto &request = m_engineUpdateRequests[stick.mountPoint];
+    if (!request) {
+        request = std::make_unique<AsyncRequest<EngineUpdateReading>>(this, std::function<void()>());
+    }
+    // The spelling every other reader of these catalogs hands the cache
+    // (the role's QString, as the backup advisor passes it), so a read
+    // already made on insert is the one this request is served.
+    const std::string rekordboxPath = qtPathFromUtf8(*stick.rekordboxPath).toStdString();
+    const std::string enginePath = qtPathFromUtf8(*stick.enginePath).toStdString();
+    const QString key = qtPathFromUtf8(stick.mountPoint);
+    const std::string mountPoint = stick.mountPoint;
+    auto work = [rekordboxPath, enginePath](application::CancellationToken cancel) {
+        return readEngineUpdate(rekordboxPath, enginePath, cancel);
+    };
+    AsyncRequest<EngineUpdateReading>::Ending ending{
+        [this, mountPoint](EngineUpdateReading &&reading) {
+            if (!reading.error.isEmpty()) {
+                qInfo("Sync after Rekordbox Export: no badge answer for %s: %s", mountPoint.c_str(),
+                      qUtf8Printable(reading.error));
+            }
+            m_model.setEngineUpdateStatus(mountPoint, {reading.engineUpdate, reading.syncNeeded});
+        },
+        [mountPoint](const QString &error) {
+            // A stick pulled mid-read lands here too; its status is
+            // forgotten by detect().
+            qInfo("Sync after Rekordbox Export: no badge answer for %s: %s", mountPoint.c_str(),
+                  qUtf8Printable(error));
+        },
+        {}};
+    if (restart) {
+        request->restart(key, key, std::move(work), std::move(ending));
+    } else {
+        request->start(key, key, std::move(work), std::move(ending));
+    }
 }
 
 void MediaController::detect()
@@ -461,11 +598,22 @@ void MediaController::detect()
     }
     m_openedFolderListed = folderListed;
     for (const std::string &mountPoint : forgetCatalogsOfSticksGone(m_model.sticks(), sticks)) {
+        m_model.forgetEngineUpdateStatus(mountPoint);
+        if (const auto request = m_engineUpdateRequests.find(mountPoint); request != m_engineUpdateRequests.end()) {
+            request->second->cancel();
+        }
         emit stickGone(qtPathFromUtf8(mountPoint));
         // Every page still reading it ends that read (AsyncRequest).
         StickEvents::instance().announceStickGone(qtPathFromUtf8(mountPoint));
     }
     m_model.setSticks(std::move(sticks));
+    // A stick with both catalogs that has no badge answer yet: one that
+    // appeared, got mounted or gained its second catalog.
+    for (const application::DetectedStick &stick : m_model.sticks()) {
+        if (!m_model.hasEngineUpdateStatus(stick.mountPoint)) {
+            requestEngineUpdate(stick, false);
+        }
+    }
     std::vector<application::StickIdentity> present;
     for (const application::DetectedStick &stick : m_model.sticks()) {
         // Folder rows are not physical: nothing pulls them, nothing

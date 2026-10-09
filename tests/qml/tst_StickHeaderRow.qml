@@ -86,6 +86,44 @@ TestCase {
         compare(spy.signalArguments[0][2], "/media/MAIN/Engine Library");
     }
 
+    // The same badge for Sync after Rekordbox Export (EngineUpdateRole):
+    // "library" reads "Engine needs syncing" and leads there; "cues" reads
+    // "Sync Needed" and leads to Sync Cue Points; "" leaves it to the old
+    // counter test, which still shows the badge on its own.
+    function test_engineUpdateBadgeRoutesByWhatMoved() {
+        const cases = [
+            {engineUpdate: "", syncNeeded: false, visible: false},
+            {engineUpdate: "", syncNeeded: true, visible: true, label: "Sync Needed", signalName: "syncRequested"},
+            {engineUpdate: "cues", syncNeeded: false, visible: true, label: "Sync Needed", signalName: "syncRequested"},
+            {engineUpdate: "library", syncNeeded: false, visible: true, label: "Engine needs syncing",
+             signalName: "rekordboxExportSyncRequested"},
+            {engineUpdate: "library", syncNeeded: true, visible: true, label: "Engine needs syncing",
+             signalName: "rekordboxExportSyncRequested"},
+        ];
+        for (const c of cases) {
+            const name = "engineUpdate \"" + c.engineUpdate + "\", syncNeeded " + c.syncNeeded;
+            const row = makeRow(makeStick({engineUpdate: c.engineUpdate, syncNeeded: c.syncNeeded}));
+            const badge = findChild(row, "syncNeededBadge");
+            compare(badge.visible, c.visible, name);
+            if (!c.visible) {
+                continue;
+            }
+            compare(badge.label, c.label, name);
+            const other = c.signalName === "syncRequested" ? "rekordboxExportSyncRequested" : "syncRequested";
+            const spy = createTemporaryObject(spyComponent, testCase, {target: row, signalName: c.signalName});
+            const otherSpy = createTemporaryObject(spyComponent, testCase, {target: row, signalName: other});
+            mouseClick(badge);
+            tryCompare(spy, "count", 1, 2000, name);
+            compare(otherSpy.count, 0, name + ": one way only");
+            compare(spy.signalArguments[0][0], "MAIN", name);
+            compare(spy.signalArguments[0][1], "/media/MAIN/PIONEER", name);
+            compare(spy.signalArguments[0][2], "/media/MAIN/Engine Library", name);
+        }
+        // Not mounted: nothing to say, whatever the last answer was.
+        const unmounted = makeRow(makeStick({engineUpdate: "library", mounted: false}));
+        verify(!findChild(unmounted, "syncNeededBadge").visible);
+    }
+
     function makeRow(stick, overrides, groundWidth) {
         // The newest on top: a click must land on the row just made.
         const groundProps = {z: ++testCase.grounds};

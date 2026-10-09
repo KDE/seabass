@@ -369,6 +369,41 @@ TestCase {
         compare(findByName(page, "stickLabel").text, "MAIN2");
     }
 
+    // The stick card's badge follows the model's engineUpdate role as the
+    // request's answer lands (a dataChanged on the row), and its click
+    // leaves the page by the signal for what moved, with the stick's
+    // paths: "library" to Sync after Rekordbox Export, "cues" to Sync Cue
+    // Points.
+    function test_theEngineUpdateBadgeLeavesThePageWithTheSticksPaths() {
+        const model = makeModel([makeStick({engineUpdate: "", syncNeeded: false})]);
+        const page = makePage(model, {});
+        const badge = () => findRowObject(page, "/media/MAIN", "syncNeededBadge");
+        verify(badge() !== null);
+        compare(badge().visible, false, "no answer yet: no badge");
+
+        const routes = [
+            {engineUpdate: "library", label: "Engine needs syncing", signalName: "rekordboxExportSyncRequested",
+             other: "syncRequested"},
+            {engineUpdate: "cues", label: "Sync Needed", signalName: "syncRequested",
+             other: "rekordboxExportSyncRequested"},
+        ];
+        for (const route of routes) {
+            model.setProperty(0, "engineUpdate", route.engineUpdate);
+            tryCompare(badge(), "visible", true, 2000, route.engineUpdate);
+            compare(badge().label, route.label);
+            waitForRendering(page);
+            const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: route.signalName});
+            const other = createTemporaryObject(spyComponent, testCase, {target: page, signalName: route.other});
+            mouseClick(badge());
+            tryCompare(spy, "count", 1, 2000, route.engineUpdate);
+            compare(other.count, 0, route.engineUpdate + ": one way only");
+            compare(JSON.stringify(Array.prototype.slice.call(spy.signalArguments[0])),
+                    JSON.stringify(["MAIN", "/media/MAIN/PIONEER", "/media/MAIN/Engine Library"]), route.engineUpdate);
+        }
+        model.setProperty(0, "engineUpdate", "");
+        tryCompare(badge(), "visible", false, 2000, "settled: gone again");
+    }
+
     // A card below the fold is scrolled into view before a test clicks
     // it (Live.scrollIntoView): a click at the centre of a card outside
     // the pane lands on nothing. A short window, as a laptop with the
