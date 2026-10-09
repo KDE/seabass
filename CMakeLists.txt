@@ -449,6 +449,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/engine_playlists.cpp
+    src/infrastructure/engine/engine_track_rows.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_anonymizer.cpp
     src/infrastructure/media/media_factory.cpp
@@ -588,6 +589,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/engine_playlists.cpp
+    src/infrastructure/engine/engine_track_rows.cpp
     src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
@@ -1567,6 +1569,16 @@ target_link_libraries(progressive_catalog_read_test PRIVATE seabass_core)
 add_test(NAME progressive_catalog_read_test COMMAND progressive_catalog_read_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(progressive_catalog_read_test PROPERTIES LABELS "integration")
+
+# removeEngineTrackRows takes a track out of m.db with every row naming it
+# (PerformanceData, playlist and prepare-list entries, ChangeLog on 2.18),
+# over a copy of the fixture's Engine library and a fresh 2.18 database.
+add_executable(engine_track_rows_test tests/engine_track_rows_test.cpp)
+target_include_directories(engine_track_rows_test PRIVATE src)
+target_link_libraries(engine_track_rows_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME engine_track_rows_test COMMAND engine_track_rows_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(engine_track_rows_test PROPERTIES LABELS "integration")
 
 # The Linux formatter only builds into seabass_core on Linux, but the value
 # this pins is one a second operating system has to agree with -- that is the
