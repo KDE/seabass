@@ -2675,6 +2675,37 @@ if(TARGET seabass_edit)
     set_tests_properties(playlist_diff_controller_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # Sync after Rekordbox Export through its controller, on a copy of the
+    # anonymized fixture: the proposal's counts, the ticks and their
+    # dependencies, an answered conflict, a small save through the session
+    # with its record, the analysis after it, Undo, and a damaged record
+    # refused.
+    add_executable(rekordbox_export_sync_controller_test
+        src/gui/rekordbox_export_sync_controller.hpp
+        src/gui/rekordbox_export_sync_controller.cpp
+        src/gui/rekordbox_export_sync_list_model.hpp
+        src/gui/rekordbox_export_sync_list_model.cpp
+        src/gui/staged_cue_edit_controller.hpp
+        src/gui/staged_cue_edit_controller.cpp
+        src/gui/sync_plan_list_model.hpp
+        src/gui/sync_plan_list_model.cpp
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/rekordbox_export_sync_controller_test.cpp
+    )
+    target_include_directories(rekordbox_export_sync_controller_test PRIVATE src tests)
+    target_link_libraries(rekordbox_export_sync_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Gui
+        Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME rekordbox_export_sync_controller_test COMMAND rekordbox_export_sync_controller_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(rekordbox_export_sync_controller_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.
     add_executable(prefetch_at_exit_test

@@ -239,6 +239,10 @@ set(SEABASS_GUI_SOURCES
     sync_plan_list_model.cpp
     sync_controller.hpp
     sync_controller.cpp
+    rekordbox_export_sync_list_model.hpp
+    rekordbox_export_sync_list_model.cpp
+    rekordbox_export_sync_controller.hpp
+    rekordbox_export_sync_controller.cpp
     full_backups_controller.hpp
     full_backups_controller.cpp
     backup_changelog_text.hpp
