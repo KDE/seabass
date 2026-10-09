@@ -3984,6 +3984,35 @@ if(TARGET seabass_taglib)
     endforeach()
 endif()
 
+# Release rig: Sync after Rekordbox Export on a test stick, headless (rig
+# check W10 in tools/rig-edits.sh): plants "rekordbox added this track
+# since the last save", drives RekordboxExportSyncController through
+# analyze, stage and save, undoes, and compares the catalogs. The page's
+# controller and its session are not in a library, so their sources are
+# listed as rekordbox_export_sync_controller_test lists them.
+if(TARGET seabass_edit)
+    add_executable(rig_engine_update
+        tools/rig_engine_update.cpp
+        src/gui/rekordbox_export_sync_controller.hpp
+        src/gui/rekordbox_export_sync_controller.cpp
+        src/gui/rekordbox_export_sync_list_model.hpp
+        src/gui/rekordbox_export_sync_list_model.cpp
+        src/gui/staged_cue_edit_controller.hpp
+        src/gui/staged_cue_edit_controller.cpp
+        src/gui/sync_plan_list_model.hpp
+        src/gui/sync_plan_list_model.cpp
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/qt_progress_reporter.hpp
+    )
+    target_include_directories(rig_engine_update PRIVATE src tools)
+    target_link_libraries(rig_engine_update PRIVATE seabass_edit Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml)
+endif()
+
 # Issue #59 on hardware: plants five tracks on a test stick that say where
 # a OneLibrary player takes its cues from (table or analysis file, PCOB or
 # PCO2, file-only loops, Seabass's own Add Cue, table against file), and

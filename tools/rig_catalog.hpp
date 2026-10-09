@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -137,6 +138,79 @@ inline bool isCatalogFile(const std::string &path)
     }
     if (path.rfind("Engine Library/Database2/", 0) == 0) {
         return endsWith(".db") || endsWith(".db-wal");
+    }
+    return false;
+}
+
+// A file's sha256, or nothing when it cannot be opened or a read fails
+// part-way: the hash of a prefix is not the file's.
+inline std::optional<infrastructure::hashing::Sha256Digest> sha256OfFile(const std::filesystem::path &file)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    infrastructure::hashing::Sha256 hasher;
+    std::vector<char> buffer(1 << 20);
+    while (in) {
+        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize got = in.gcount();
+        if (got > 0) {
+            hasher.update(std::span<const std::byte>(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(got)));
+        }
+    }
+    if (in.bad()) {
+        return std::nullopt;
+    }
+    return hasher.finish();
+}
+
+// Every catalog file on the stick now (isCatalogFile: export.pdb and its
+// siblings, OneLibrary and its log, Engine's databases and logs), by its
+// '/'-separated path from the stick root, with its sha256 in hex. Where a
+// file cannot be read its value is "UNREADABLE", which no hash equals.
+inline std::map<std::string, std::string> catalogFileShas(const std::filesystem::path &root)
+{
+    std::map<std::string, std::string> out;
+    for (const std::filesystem::path &dir : {root / "PIONEER" / "rekordbox", root / "Engine Library" / "Database2"}) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) {
+            continue;
+        }
+        for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            const std::string relative = pathToGenericUtf8(std::filesystem::relative(entry.path(), root));
+            if (!isCatalogFile(relative)) {
+                continue;
+            }
+            const auto digest = sha256OfFile(entry.path());
+            out[relative] = digest ? infrastructure::hashing::toHex(*digest) : std::string("UNREADABLE");
+        }
+    }
+    return out;
+}
+
+// The sticks no rig tool writes: rig-platform.sh's is_protected_label, a
+// label (or any folder of the path given) starting with WHALESHARK or
+// CORSAIR in any case. WHALESHARK and WHALESHARK2 are Sebastian's working
+// sticks and CORSAIR is a reference.
+inline bool isProtectedStick(const std::filesystem::path &root)
+{
+    const auto protectedName = [](std::string name) {
+        for (char &c : name) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        return name.rfind("WHALESHARK", 0) == 0 || name.rfind("CORSAIR", 0) == 0;
+    };
+    if (protectedName(stickLabelFor(root))) {
+        return true;
+    }
+    for (const auto &part : root.lexically_normal()) {
+        if (protectedName(pathToUtf8(part))) {
+            return true;
+        }
     }
     return false;
 }

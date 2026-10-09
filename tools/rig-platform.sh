@@ -254,6 +254,38 @@ refuse_if_protected_sticks_inserted() {
     fi
 }
 
+# RIG_SCRATCH_STICK=1: a rig script pointed at a plain folder laid out as
+# a stick (PIONEER and Engine Library side by side, say a copy of
+# tests/fixtures/anonymized_library) instead of a stick, to exercise a
+# check without hardware. Then what is plugged in does not matter, since
+# nothing outside the folder is touched, and the folder has to prove it is
+# no stick: not a mount point of its own, nowhere under the places sticks
+# are mounted, not a drive root, and named after no protected stick
+# anywhere along its path. Anything else exits, as the check above does.
+refuse_unless_scratch_folder() {  # <folder>
+    local folder="$1" mounted
+    if [ ! -d "$folder" ]; then
+        echo "REFUSED: RIG_SCRATCH_STICK is set and $folder is no folder. Nothing was written." >&2
+        exit 1
+    fi
+    folder="$(cd "$folder" && pwd -P)"
+    case "$folder" in
+        /media/*|/run/media/*|/Volumes/*|/mnt/*|/[a-zA-Z]|/[a-zA-Z]/)
+            echo "REFUSED: RIG_SCRATCH_STICK is set but $folder is where sticks are mounted. Nothing was written." >&2
+            exit 1 ;;
+    esac
+    mounted="$(df -P "$folder" 2>/dev/null | awk 'NR == 2 {print $6}')"
+    if [ -z "$mounted" ] || [ "$mounted" = "$folder" ]; then
+        echo "REFUSED: RIG_SCRATCH_STICK is set but $folder is a mount point (or df could not say). Nothing was written." >&2
+        exit 1
+    fi
+    if printf '%s\n' "$folder" | tr '/' '\n' | grep -qiE "$rig_protected_label_pattern"; then
+        echo "REFUSED: $folder is named after a stick the rig never writes. Nothing was written." >&2
+        exit 1
+    fi
+    echo "scratch folder $folder, not a stick: the drives plugged in are not checked"
+}
+
 # The device node behind a mount point (/dev/sdc1, /dev/disk6s1).
 stick_device() {  # <mount point>
     if [ "$rig_os" = "Darwin" ]; then
