@@ -155,6 +155,14 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
 infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,
                                                                            const std::string &engineLibraryPath);
 
+// Why a change cannot add or remove rows in the Engine library at
+// `enginePath` (the Engine Library folder), or an empty string when it
+// can. Refused: no path, no library there, and Engine 1.x, whose m.db
+// sits at the library's root and keeps its performance data in p.db, a
+// layout the row writers (engine_track_rows, engine_playlists) do not
+// know. Asked before anything is opened, so a refusal writes nothing.
+QString engineRowWriteRefusal(const QString &enginePath);
+
 // The save's one write target for a catalog database -- the scratch
 // decision, the backup and the commit -- for every change that writes it,
 // whichever feature staged that change.

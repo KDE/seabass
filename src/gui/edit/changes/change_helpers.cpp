@@ -13,6 +13,7 @@
 
 #include "application/path_key.hpp"
 #include "gui/edit/save_context.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
@@ -250,6 +251,24 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
     return ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(key, [&]() {
         return std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
     });
+}
+
+QString engineRowWriteRefusal(const QString &enginePath)
+{
+    if (enginePath.isEmpty()) {
+        return QStringLiteral("No Engine library is known for this stick.");
+    }
+    const std::filesystem::path library = pathFromQString(enginePath);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(library / "Database2" / "m.db", ec)) {
+        return {};
+    }
+    if (std::filesystem::is_regular_file(library / "m.db", ec)) {
+        return QStringLiteral("%1 is an Engine 1.x library. Seabass adds and removes rows in Engine 2.x and 3.x "
+                              "libraries only.")
+            .arg(enginePath);
+    }
+    return QStringLiteral("There is no Engine library at %1.").arg(enginePath);
 }
 
 namespace
