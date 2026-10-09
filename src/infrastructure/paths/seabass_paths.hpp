@@ -56,6 +56,12 @@ fs::path stickOrphanedDir(const fs::path &stickRoot);
 fs::path stickOperationLog(const fs::path &stickRoot);
 fs::path stickPendingDeletions(const fs::path &stickRoot);
 fs::path stickMetadataCache(const fs::path &stickRoot);
+// <stick>/Seabass/rekordbox-baseline.tsv.gz -- how the rekordbox side
+// looked when Seabass last knew it level with Engine (Sync after
+// Rekordbox Export's three-way merge). Deliberately NOT in the caches
+// directory: it cannot be rebuilt from the stick, and it is a backup
+// target of the save, so Undo rolls it back with the catalogs.
+fs::path stickRekordboxBaseline(const fs::path &stickRoot);
 fs::path stickDurationCache(const fs::path &stickRoot);
 // Where the music starts and stops inside each file, once measured.
 // Separate from the duration cache because it costs a full decode to
