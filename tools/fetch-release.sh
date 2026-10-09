@@ -96,11 +96,9 @@ want_linux="linux:package"
 # The Craft job, not the MSYS2 windows:package: that chain has no runner
 # (docs/releasing.md, "Packages before the tag").
 want_windows="craft_windows_qt6_x86_64"
-want_macos_arm64="craft_macos_qt6_arm64"
-want_macos_x86_64="craft_macos_qt6_x86_64"
-# The two halves merged into the package that is published. On a tag it is
-# signed ad hoc, like the halves: see docs/releasing.md, "Signing depends
-# on the ref".
+# One universal package on Qt 6.8, macOS 12 and later, since 2026-10-09;
+# the Craft halves it was merged from are parked. On a tag it is signed ad
+# hoc: see docs/releasing.md, "Signing depends on the ref".
 want_macos_universal="macos:universal"
 
 jobs="$(api "$API/projects/$PROJECT/pipelines/$id/jobs?per_page=100")"
@@ -147,38 +145,20 @@ echo "into $dest:"
 missing=0
 fetch_job "$want_linux" linux tar.gz || missing=1
 fetch_job "$want_windows" windows exe || missing=1
-# Both Mac architectures, because the package that gets published is
-# neither of them: Craft builds one architecture per root, and an
-# arm64-only .dmg mounts on an Intel Mac and refuses to launch. These two
-# are the halves; macos:universal makes the whole (below).
-fetch_job "$want_macos_arm64" macos-arm64 dmg || missing=1
-fetch_job "$want_macos_x86_64" macos-x86_64 dmg || missing=1
-
 universal="$dest/$(seabass_package_name "$version" "$channel" macos dmg)"
-# A universal package already in place (merged by hand on a Mac, or taken
-# on an earlier run) is kept. Otherwise CI's merge is taken, and
-# its absence is reported by fetch_job and then again below.
+# A universal package already in place (built by hand on a Mac with
+# tools/macos-monterey-dmg.sh, or taken on an earlier run) is kept.
 if [ ! -f "$universal" ]; then
-    fetch_job "$want_macos_universal" macos dmg || true
-fi
-echo
-if [ -f "$universal" ]; then
-    echo "macos:   $universal"
-    echo "         $(sha256sum "$universal" | cut -d" " -f1)"
+    if ! fetch_job "$want_macos_universal" macos dmg; then
+        missing=1
+        echo "         press $want_macos_universal in the tag's pipeline and run this again,"
+        echo "         or build it on a Mac (docs/releasing.md, \"A universal macOS package\")"
+        echo "         and put it here as:"
+        echo "           $(seabass_package_name "$version" "$channel" macos dmg)"
+    fi
 else
-    # Named as a thing that is owed, not as a thing that failed. The
-    # publisher looks for this exact filename and will refuse the release
-    # without it, so there is no way to publish the arm64 half by
-    # mistake.
-    missing=1
-    echo "macos:   no universal package yet, and the two above are not it."
-    echo "         They are CI's halves, one architecture each, and they are here as"
-    echo "         evidence that both build. The package that gets published is the"
-    echo "         two merged: press $want_macos_universal in the tag's pipeline once"
-    echo "         both halves are green and run this again, or merge them on a Mac"
-    echo "         (docs/releasing.md, \"A universal macOS package\") and put the"
-    echo "         result here as:"
-    echo "           $(seabass_package_name "$version" "$channel" macos dmg)"
+    echo "  macos:   $universal (already here, kept)"
+    echo "           $(sha256sum "$universal" | cut -d" " -f1)"
 fi
 
 echo
