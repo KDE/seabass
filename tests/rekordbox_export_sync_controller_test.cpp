@@ -44,6 +44,10 @@
 //    create alone. When rekordbox later changes the playlist (its declined
 //    state no longer matches) the create comes back ticked, and so do its
 //    members.
+// 10. What a rating write onto rekordbox says it does: a restore of
+//    Seabass's own write (ExportDropped) puts it back; an answer toward
+//    Engine of a conflict nothing recorded the origin of (OriginUnknown)
+//    sets Engine's, and does not call it Seabass's.
 //
 // argv[1]: tests/fixtures/anonymized_library.
 
@@ -1101,6 +1105,36 @@ void testDeclinedByDependency(const fs::path &fixture)
                  "members) OK\n";
 }
 
+// 10. See the top of the file.
+void testMetadataWords()
+{
+    namespace d = seabass::domain;
+    d::MetadataEdit edit;
+    edit.field = d::MetadataEdit::Field::Rating;
+    edit.direction = d::MetadataEdit::Direction::ToRekordbox;
+    edit.rekordbox.title = "Night Drive";
+    edit.engine.title = "Night Drive";
+    edit.rating = 3;
+    edit.header.reason = d::EngineUpdateReason::ExportDropped;
+    const QString restore = RekordboxExportSyncController::describeMetadataWrite({edit}, false);
+    edit.header.reason = d::EngineUpdateReason::OriginUnknown;
+    const QString overwrite = RekordboxExportSyncController::describeMetadataWrite({edit}, false);
+    d::MetadataEdit comment = edit;
+    comment.field = d::MetadataEdit::Field::Comment;
+    comment.comment = "warm up";
+    const QString both = RekordboxExportSyncController::describeMetadataWrite({edit, comment}, false);
+    std::cout << "  restore: " << restore.toStdString() << "\n  overwrite: " << overwrite.toStdString()
+              << "\n  both: " << both.toStdString() << "\n";
+    assert(restore == QStringLiteral("Put the rating Seabass wrote back on \"Night Drive\" in rekordbox"));
+    assert(overwrite == QStringLiteral("Set the rating of \"Night Drive\" in rekordbox to 3 star(s), Engine's")
+           && "nothing recorded that Seabass wrote it");
+    assert(both == QStringLiteral("Set the rating and comment of \"Night Drive\" in rekordbox to Engine's"));
+    edit.direction = d::MetadataEdit::Direction::ToEngine;
+    assert(RekordboxExportSyncController::describeMetadataWrite({edit}, true)
+           == QStringLiteral("Set the rating of \"Night Drive\" in Engine to 3 star(s)"));
+    std::cout << "case 10 (a rating onto rekordbox: Seabass's put back, or Engine's set over it) OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -1119,6 +1153,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
 
     testOrderAndDetails();
+    testMetadataWords();
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);
     testOrderOnFirstRun(fixture);

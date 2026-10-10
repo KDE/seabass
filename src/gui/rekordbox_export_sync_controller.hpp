@@ -130,6 +130,13 @@ public:
     // Takes back what stageSelected() staged.
     Q_INVOKABLE void unstageAll();
 
+    // What the staged write of one track's rating and comment says it
+    // does, from its edits (one track, one direction). Onto rekordbox it
+    // is a restore of Seabass's own write only when every edit is one
+    // (EngineUpdateReason::ExportDropped); otherwise Engine's value goes
+    // over rekordbox's, and is said to be Engine's. Public for tests.
+    static QString describeMetadataWrite(const std::vector<domain::MetadataEdit> &edits, bool toEngine);
+
 signals:
     void analysisChanged();
     void listChanged();
