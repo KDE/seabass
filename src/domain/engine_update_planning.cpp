@@ -528,6 +528,9 @@ private:
                 }
                 TrackToAdd add;
                 add.rekordbox = *r;
+                // Its cues as the policy says: junk (isJunkCue) is never
+                // written onto a stick, as in every cue row (planTrackCues).
+                add.rekordbox.cues = withoutJunkCues(r->cues);
                 add.stickRelativePath = relativeOf(r->filePath);
                 add.pathKey = key;
                 if (in.fileExists && !in.fileExists(add.stickRelativePath)) {

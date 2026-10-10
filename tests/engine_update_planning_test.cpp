@@ -1564,6 +1564,21 @@ int main()
         std::cout << "no cue rows for added tracks or duplicate rows OK\n";
     }
 
+    // An added track carries its cues as the policy says: rekordbox's
+    // export pad 1 at 7 ms and a negative "no cue" sentinel are junk
+    // (isJunkCue) and never ride into the new Engine row; the real cues do.
+    {
+        World w = cuePair({hot(1, 10000)}, {hot(1, 10000)});
+        const auto base = baselineOf(w);
+        Track n = rb("2", "Music/N.mp3");
+        n.cues = {hot(1, 7), mem(-0.5), hot(2, 5000), mem(30000)};
+        w.rekordbox.push_back(n);
+        const auto p = plan(w, base);
+        assert(p.tracksToAdd.size() == 1);
+        assert(sameCueList(p.tracksToAdd[0].rekordbox.cues, {hot(2, 5000), mem(30000)}));
+        std::cout << "an added track carries no junk cues OK\n";
+    }
+
     // A declined cue item stays out, the track's other items still go, and
     // it resurfaces once rekordbox changes it.
     {

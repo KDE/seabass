@@ -182,7 +182,7 @@ struct EngineUpdateItemHeader
 struct TrackToAdd
 {
     EngineUpdateItemHeader header;
-    Track rekordbox;  // the row to copy; rating, comment and cues ride along
+    Track rekordbox;  // the row to copy; rating, comment and cues (junk left out) ride along
     std::string stickRelativePath;
     std::string pathKey;
 };

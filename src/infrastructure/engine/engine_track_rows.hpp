@@ -165,10 +165,17 @@ struct EngineTrackCover
 // the cues at its 44.1 kHz guess, 9% late for a 48 kHz file. The offsets
 // written are the file's own; it is the reading that guesses.
 //
+// A cue domain::isJunkCue() calls junk (a cue in the first second under
+// "Ignore cues at 0:00", a negative "no cue" sentinel) is never written:
+// it is dropped before step 4 and counted in *junkCuesDropped when given.
+// The planner hands none (TrackToAdd carries withoutJunkCues); this is the
+// guard that keeps a stray one off the stick whoever the caller is.
+//
 // `error` and `cover` are required (std::invalid_argument). On success
 // *error is cleared.
 [[nodiscard]] std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrack &track,
-                                             EngineTrackCover *cover, std::string *error);
+                                             EngineTrackCover *cover, std::string *error,
+                                             int *junkCuesDropped = nullptr);
 
 // Marks these Track rows of the m.db at `databaseFile` as waiting for the
 // player's analysis, the state Engine's own rekordbox import leaves a row
