@@ -242,6 +242,11 @@ public:
     // Also restarts every stick's engine-update request (EngineUpdateRole):
     // the save may have recorded a baseline or moved either catalog.
     Q_INVOKABLE void refreshSyncNeeded();
+    // How often a listed stick's export.pdb and m.db are stat'ed for a
+    // change made outside Seabass while it stays mounted (rekordbox
+    // exported onto it, a player wrote m.db): a change restarts that
+    // stick's request, as refreshSyncNeeded() does after a save.
+    static constexpr int CatalogStampIntervalMs = 5000;
 
     // The engine-update request's work, on a worker thread: the counter
     // test, the baseline's header, and only when that says the record is
@@ -406,6 +411,20 @@ public:
     // and is mounted; `restart` supersedes one already running (after a
     // save), else a running one answers.
     void requestEngineUpdate(const application::DetectedStick &stick, bool restart);
+    // export.pdb and Database2/m.db as a stat sees them: mtime and size.
+    // What a stick's request was started against, so a rewrite outside
+    // Seabass (rekordbox, a player) while the stick stays mounted asks it
+    // again: checkCatalogStamps() compares, on m_stampTimer, never data().
+    struct CatalogStamp
+    {
+        std::filesystem::file_time_type pdbTime{};
+        std::uintmax_t pdbSize = 0;
+        std::filesystem::file_time_type dbTime{};
+        std::uintmax_t dbSize = 0;
+        bool operator==(const CatalogStamp &) const = default;
+    };
+    static CatalogStamp catalogStampOf(const application::DetectedStick &stick);
+    void checkCatalogStamps();
 
     // The opened folder survives a restart: nothing re-detects it, so
     // forgetting it on quit would mean opening a backup again every time.
@@ -423,6 +442,11 @@ public:
     // One request per stick, by mount point: kept after the stick goes
     // (cancelled then), so going away never waits for a worker.
     std::map<std::string, std::unique_ptr<AsyncRequest<EngineUpdateReading>>> m_engineUpdateRequests;
+    // By mount point, taken when the stick's request starts.
+    std::map<std::string, CatalogStamp> m_catalogStamps;
+    // Every CatalogStampInterval while a stick with both catalogs is
+    // listed: two stats per stick on the GUI thread, no catalog read.
+    QTimer m_stampTimer;
     // One folder at most: a local copy of a library, looked into now and
     // then. Kept apart from the model because detect() rebuilds that from
     // the locator, and no locator produces this row.
