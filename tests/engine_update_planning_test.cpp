@@ -801,13 +801,16 @@ int main()
         assert((engineOrder(after, "P") == Deps{"music/c.mp3", "music/a.mp3", "music/b.mp3"}));
         assert(plan(after, base).empty());
 
-        // Without a baseline the same reorder is a conflict.
+        // Without a baseline the same reorder is a conflict, the
+        // playlist's order one item.
         const auto q = plan(w, std::nullopt);
         assert(q.membership.empty() && q.conflicts.size() == 1);
         assert(q.conflicts[0].header.reason == EngineUpdateReason::NoBaselineOrder);
-        assert(q.conflicts[0].header.key == "member:1:music/c.mp3");
-        assert(q.conflicts[0].rekordboxChoice.size() == 2);
-        assert(q.conflicts[0].rekordboxSide == "Put \"P\" in rekordbox's order");
+        assert(q.conflicts[0].header.key == "order:1" && q.conflicts[0].pathKey.empty());
+        assert(q.conflicts[0].header.reasonText
+               == "No earlier record of this stick: 1 track sits elsewhere in Engine's \"P\" than in rekordbox's");
+        assert(q.conflicts[0].rekordboxChoice.size() == 2 && q.conflicts[0].engineChoice.empty());
+        assert(q.conflicts[0].rekordboxSide == "Put \"P\" in rekordbox's order (1 track moves)");
         assert(q.conflicts[0].engineSide == "Keep Engine's order");
         std::cout << "same-set reorder OK\n";
     }
@@ -833,14 +836,83 @@ int main()
                     en("e3", "Music/C.mp3", {{"P", 2}}), en("e4", "Music/X.mp3", {{"P", 3}}),
                     en("e5", "Music/Y.mp3", {{"P", 4}})};
         const auto p = plan(w, base);
-        assert(p.membership.empty() && !p.conflicts.empty());
-        for (const auto &c : p.conflicts) {
-            assert(c.header.reason == EngineUpdateReason::NoBaselineOrder);
-            assert(c.header.reasonText
-                   == "Seabass's record of \"P\" does not list this track, and it sits elsewhere in Engine's \"P\" "
-                      "than in rekordbox's");
+        assert(p.membership.empty() && p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "order:1" && c.header.reason == EngineUpdateReason::NoBaselineOrder);
+        assert(c.header.reasonText
+               == "Seabass's record of \"P\" does not list 2 of the tracks both sides hold, and the two orders "
+                  "differ only around those");
+        assert(c.rekordboxSide == "Put \"P\" in rekordbox's order (2 tracks move)");
+        // Every move in the one choice: the removes, then the adds in
+        // rekordbox's order, each after the member before it.
+        assert(c.rekordboxChoice.size() == 4);
+        for (std::size_t i = 0; i < 4; ++i) {
+            const auto &m = std::get<MembershipEdit>(c.rekordboxChoice[i]);
+            assert(m.kind == (i < 2 ? MembershipEdit::Kind::Remove : MembershipEdit::Kind::Add));
+            assert(m.header.key == "order:1" && m.playlistPath == "P");
         }
+        assert(std::get<MembershipEdit>(c.rekordboxChoice[2]).pathKey == "music/x.mp3"
+               && std::get<MembershipEdit>(c.rekordboxChoice[2]).afterPathKey.empty());
+        assert(std::get<MembershipEdit>(c.rekordboxChoice[3]).pathKey == "music/y.mp3"
+               && std::get<MembershipEdit>(c.rekordboxChoice[3]).afterPathKey == "music/x.mp3");
+        World after = w;
+        apply(after, p, true);
+        assert((engineOrder(after, "P")
+                == Deps{"music/x.mp3", "music/y.mp3", "music/a.mp3", "music/b.mp3", "music/c.mp3"}));
         std::cout << "members the record lacks, out of place: not a change of both OK\n";
+    }
+
+    // Both sides changed the order of the recorded members: one conflict
+    // for the playlist, every move in rekordbox's choice; left open, the
+    // record keeps its order and the question comes back. Only Engine
+    // changed it: Engine's own, kept, under the same item.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"P", 0}}), rb("2", "Music/B.mp3", {{"P", 1}}),
+                       rb("3", "Music/C.mp3", {{"P", 2}}), rb("4", "Music/D.mp3", {{"P", 3}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"P", 0}}), en("e2", "Music/B.mp3", {{"P", 1}}),
+                    en("e3", "Music/C.mp3", {{"P", 2}}), en("e4", "Music/D.mp3", {{"P", 3}})};
+        w.rekordboxPlaylists = {{"P", false, 1}};
+        w.enginePlaylists = {{"P", false, 1}};
+        const auto base = baselineOf(w);
+        w.engine[2].playlists = {{"P", 3}};  // Engine: A B D C
+        w.engine[3].playlists = {{"P", 2}};
+        const auto own = plan(w, base);
+        assert(own.conflicts.empty() && own.membership.empty() && own.engineOwnKept.size() == 1);
+        assert(own.engineOwnKept[0].header.key == "order:1");
+        assert(own.engineOwnKept[0].header.reasonText
+               == "Engine changed the order of \"P\" after Seabass last recorded the stick");
+
+        w.rekordbox[0].playlists = {{"P", 1}};  // rekordbox: B A C D
+        w.rekordbox[1].playlists = {{"P", 0}};
+        const auto p = plan(w, base);
+        assert(p.membership.empty() && p.engineOwnKept.empty() && p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "order:1" && c.header.conflict && !c.header.checkedByDefault);
+        assert(c.header.reason == EngineUpdateReason::BothChanged);
+        assert(c.header.reasonText
+               == "Both sides changed the order of \"P\" since Seabass last recorded the stick; 2 tracks sit "
+                  "elsewhere in Engine's than in rekordbox's");
+        assert(c.rekordboxSide == "Put \"P\" in rekordbox's order (2 tracks move)");
+        assert(c.engineSide == "Keep Engine's order" && c.engineChoice.empty());
+        assert(c.rekordboxChoice.size() == 4);
+        World after = w;
+        apply(after, p, true);
+        assert((engineOrder(after, "P") == Deps{"music/b.mp3", "music/a.mp3", "music/c.mp3", "music/d.mp3"}));
+        assert(plan(after, nextBaseline(&base, after.rekordbox, after.rekordboxPlaylists, 14205, {"order:1"},
+                                        {"order:1"}, {}, stickRelative, lowerKey))
+                   .empty());
+
+        // Left open: the record keeps the order it had, and the same
+        // question comes back.
+        const auto open = nextBaseline(&base, w.rekordbox, w.rekordboxPlaylists, 14205, {"order:1"}, {}, {},
+                                       stickRelative, lowerKey);
+        assert((open.findPlaylist(1)->members
+                == std::vector<std::string>{"music/a.mp3", "music/b.mp3", "music/c.mp3", "music/d.mp3"}));
+        const auto again = plan(w, open);
+        assert(again.conflicts.size() == 1 && again.conflicts[0].header.key == "order:1"
+               && again.conflicts[0].header.reason == EngineUpdateReason::BothChanged);
+        std::cout << "both sides changed the order: one conflict, every move OK\n";
     }
 
     // A new track's membership depends on the track's add, a new

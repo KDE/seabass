@@ -201,6 +201,8 @@ std::string itemKey(const ItemKey &key)
         return "playlist:" + std::to_string(key.playlistId);
     case ItemKey::Kind::Member:
         return "member:" + std::to_string(key.playlistId) + ":" + key.pathKey;
+    case ItemKey::Kind::Order:
+        return "order:" + std::to_string(key.playlistId);
     case ItemKey::Kind::Rating:
         return "rating:" + key.pathKey;
     case ItemKey::Kind::Comment:
@@ -223,12 +225,12 @@ std::optional<ItemKey> parseItemKey(const std::string &text)
         return std::nullopt;
     }
     ItemKey key;
-    if (*head == "playlist") {
+    if (*head == "playlist" || *head == "order") {
         const auto id = wholeNumber<std::uint32_t>(rest);
         if (!id) {
             return std::nullopt;
         }
-        key.kind = ItemKey::Kind::Playlist;
+        key.kind = *head == "playlist" ? ItemKey::Kind::Playlist : ItemKey::Kind::Order;
         key.playlistId = *id;
         return key;
     }
@@ -297,6 +299,14 @@ std::string memberItemKey(std::uint32_t playlistId, const std::string &pathKey)
     return itemKey(key);
 }
 
+std::string orderItemKey(std::uint32_t playlistId)
+{
+    ItemKey key;
+    key.kind = ItemKey::Kind::Order;
+    key.playlistId = playlistId;
+    return itemKey(key);
+}
+
 std::string ratingItemKey(const std::string &pathKey)
 {
     return itemKey(ItemKey{ItemKey::Kind::Rating, pathKey});
@@ -339,8 +349,10 @@ int keyOrder(ItemKey::Kind kind)
         return 1;
     case ItemKey::Kind::Member:
         return 2;
-    default:
+    case ItemKey::Kind::Order:
         return 3;
+    default:
+        return 4;
     }
 }
 
@@ -400,6 +412,36 @@ void keepMember(RekordboxBaseline &next, const RekordboxBaseline *previous, std:
         if (before->members[i] == pathKey) {
             const std::size_t at = std::min(i, it->members.size());
             it->members.insert(it->members.begin() + static_cast<std::ptrdiff_t>(at), pathKey);
+        }
+    }
+}
+
+void keepOrder(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id)
+{
+    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
+        return p.id == id;
+    });
+    if (!before || it == next.playlists.end()) {
+        return;  // no recorded order, or no playlist to hold one
+    }
+    std::set<std::string> seen;
+    std::set<std::string> inNext;
+    for (const auto &key : it->members) {
+        inNext.insert(key);
+    }
+    std::vector<std::string> order;  // previous's, first entries, of members next has
+    for (const auto &key : before->members) {
+        if (inNext.contains(key) && seen.insert(key).second) {
+            order.push_back(key);
+        }
+    }
+    const std::set<std::string> recorded(order.begin(), order.end());
+    seen.clear();
+    std::size_t at = 0;
+    for (auto &key : it->members) {
+        if (recorded.contains(key) && seen.insert(key).second) {
+            key = order[at++];
         }
     }
 }
@@ -485,6 +527,9 @@ void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previou
             break;
         case ItemKey::Kind::Member:
             keepMember(next, previous, key.playlistId, key.pathKey);
+            break;
+        case ItemKey::Kind::Order:
+            keepOrder(next, previous, key.playlistId);
             break;
         default:
             keepValue(next, previous, key, text);

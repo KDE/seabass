@@ -156,6 +156,7 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
 //   track:<pathKey>                    the track's presence
 //   playlist:<id>                      a playlist's existence and path
 //   member:<playlistId>:<pathKey>      one track's membership of a playlist
+//   order:<playlistId>                 the order of a playlist's members
 //   rating:<pathKey>
 //   comment:<pathKey>
 //   cue:hot:<pad>:<pathKey>            hot cue or hot loop on pad <pad>, from 1
@@ -168,11 +169,11 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
 // baseline's position.
 struct ItemKey
 {
-    enum class Kind { Track, Playlist, Member, Rating, Comment, HotCue, MemoryCue, MemoryLoop };
+    enum class Kind { Track, Playlist, Member, Order, Rating, Comment, HotCue, MemoryCue, MemoryLoop };
 
     Kind kind = Kind::Track;
-    std::string pathKey;          // all but Playlist
-    std::uint32_t playlistId = 0; // Playlist, Member
+    std::string pathKey;          // all but Playlist and Order
+    std::uint32_t playlistId = 0; // Playlist, Member, Order
     int pad = 0;                  // HotCue
     std::int64_t positionMs = 0;  // MemoryCue, MemoryLoop
 
@@ -187,6 +188,7 @@ std::optional<ItemKey> parseItemKey(const std::string &text);
 std::string trackItemKey(const std::string &pathKey);
 std::string playlistItemKey(std::uint32_t id);
 std::string memberItemKey(std::uint32_t playlistId, const std::string &pathKey);
+std::string orderItemKey(std::uint32_t playlistId);
 std::string ratingItemKey(const std::string &pathKey);
 std::string commentItemKey(const std::string &pathKey);
 // Hot cue by pad, memory cue or loop by rounded position.
@@ -227,12 +229,17 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 //               (each member is an item of its own) or taken out
 //   member      the track's entries in that playlist: next's taken out,
 //               previous's put back at their indexes (clamped)
+//   order       the members previous has, in the places they take in
+//               next, put back in previous's order (first entries of a
+//               track listed twice); members come and go only as
+//               items of their own, and a playlist previous lacks keeps
+//               next's order
 //   rating, comment, cue
 //               the value on every row of the track next has; a cue is
 //               every cue of that key, with its origin
 //
-// Tracks and playlists are settled before members and values, whatever
-// the order of `keys`.
+// Tracks and playlists are settled before members, members before
+// orders, and orders before values, whatever the order of `keys`.
 void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys);
 
 // The baseline a save of Sync after Rekordbox Export records (plan, "When
