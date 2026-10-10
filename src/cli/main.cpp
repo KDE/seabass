@@ -1165,7 +1165,6 @@ int runSyncAfterExportCommand(const std::optional<std::string> &rekordboxPathArg
     }
 
     const std::string stickRoot = facts.stickRoot;
-    const bool hasBaseline = facts.baseline.has_value();
     const std::size_t rekordboxPlaylists = facts.rekordboxPlaylists.size();
     const std::size_t enginePlaylists = facts.enginePlaylists.size();
     const std::size_t rekordboxCount = rekordboxTracks.size();
@@ -1186,12 +1185,7 @@ int runSyncAfterExportCommand(const std::optional<std::string> &rekordboxPathArg
     Console::info("  engine playlists and folders:    " + std::to_string(enginePlaylists));
     Console::info("  rekordbox export now: " + std::to_string(proposal.currentSequence));
     Console::info("");
-    if (hasBaseline) {
-        Console::info("Compared with how this stick looked when Seabass last saved it (export "
-                      + std::to_string(proposal.baselineSequence) + ")");
-    } else {
-        Console::info("No earlier record of this stick: additions are assumed, removals are left to you");
-    }
+    Console::info(seabass::application::engineUpdateIntroText(proposal));
 
     std::size_t rows = 0;
     std::size_t checked = 0;
