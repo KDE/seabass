@@ -1082,6 +1082,7 @@ int main()
         assert(r.direction == MetadataEdit::Direction::ToRekordbox && r.rating == 4 && r.rekordbox.sourceId == "1");
         assert(r.header.reason == EngineUpdateReason::ExportDropped);
         assert(r.header.reasonText == "rekordbox's export dropped the rating Seabass had written (4 stars); it goes back");
+        assert(r.restoresSeabassWrite && "Seabass's own write goes back");
         assert(p.metadataToEngine.size() == 1 && p.metadataToEngine[0].header.key == "rating:music/b.mp3");
         assert(!p.metadataToEngine[0].rating);
         assert(p.metadataToEngine[0].header.reasonText == "rekordbox cleared the rating (4 stars)" + Since);
@@ -1091,6 +1092,7 @@ int main()
         assert(p.conflicts[0].engineSide == "Keep Engine's 4 stars and write the rating back onto rekordbox");
         const auto &back = std::get<MetadataEdit>(p.conflicts[0].engineChoice[0]);
         assert(back.direction == MetadataEdit::Direction::ToRekordbox && back.rating == 4);
+        assert(!back.restoresSeabassWrite && "nothing recorded Seabass wrote it: Engine's value over rekordbox's");
         World after = w;
         apply(after, p);
         assert(after.rekordbox[0].rating == 4 && !after.engine[1].rating);

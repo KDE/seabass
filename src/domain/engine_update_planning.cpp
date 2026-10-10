@@ -1424,10 +1424,11 @@ private:
                     const auto bv = effectiveRating(b->rating);
                     if (bv == ev && !rv) {
                         if (b->ratingOrigin == ValueOrigin::Seabass) {
-                            out.restoresToRekordbox.push_back(
-                                toRekordbox(bv, true, EngineUpdateReason::ExportDropped,
-                                            "rekordbox's export dropped the rating Seabass had written ("
-                                                + starsText(bv) + "); it goes back"));
+                            auto restore = toRekordbox(bv, true, EngineUpdateReason::ExportDropped,
+                                                       "rekordbox's export dropped the rating Seabass had written ("
+                                                           + starsText(bv) + "); it goes back");
+                            restore.restoresSeabassWrite = true;
+                            out.restoresToRekordbox.push_back(std::move(restore));
                         } else if (b->ratingOrigin == ValueOrigin::Rekordbox) {
                             out.metadataToEngine.push_back(
                                 toEngine(rv, true, EngineUpdateReason::RekordboxChanged,

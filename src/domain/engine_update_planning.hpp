@@ -261,6 +261,12 @@ struct MetadataEdit
     std::string pathKey;
     std::optional<int> rating;  // the value to write, nullopt clears it
     std::string comment;
+    // ToRekordbox only: true when this puts back a value the baseline
+    // records Seabass wrote (EngineUpdateReason::ExportDropped), false
+    // when it is Engine's value written over rekordbox's, which nothing
+    // says Seabass wrote (an OriginUnknown conflict's Engine choice). A
+    // description must not claim Seabass wrote what it only copies.
+    bool restoresSeabassWrite = false;
 };
 
 // One track's cues, either direction, as a SyncPlan that SyncPlanChange
