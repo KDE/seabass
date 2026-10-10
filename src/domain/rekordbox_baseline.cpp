@@ -50,12 +50,53 @@ std::optional<std::string_view> takeField(std::string_view &rest)
 
 }  // namespace
 
+void BaselineTrackIndex::invalidate() const noexcept
+{
+    std::lock_guard lock(m_mutex);
+    m_built = false;
+    m_data = nullptr;
+    m_size = 0;
+    m_rows.clear();
+}
+
+void BaselineTrackIndex::buildLocked(const std::vector<BaselineTrack> &tracks) const
+{
+    m_rows.clear();
+    m_rows.reserve(tracks.size());
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        m_rows[tracks[i].pathKey].push_back(i);
+    }
+    m_data = tracks.data();
+    m_size = tracks.size();
+    m_built = true;
+}
+
+const std::vector<std::size_t> &BaselineTrackIndex::rowsOf(const std::vector<BaselineTrack> &tracks,
+                                                           const std::string &pathKey) const
+{
+    static const std::vector<std::size_t> none;
+    std::lock_guard lock(m_mutex);
+    if (!m_built || m_data != tracks.data() || m_size != tracks.size()) {
+        buildLocked(tracks);
+    }
+    auto it = m_rows.find(pathKey);
+    if (it != m_rows.end() && tracks[it->second.front()].pathKey != pathKey) {
+        // The rows moved under the index without their count changing.
+        buildLocked(tracks);
+        it = m_rows.find(pathKey);
+    }
+    return it == m_rows.end() ? none : it->second;
+}
+
+const std::vector<std::size_t> &RekordboxBaseline::trackRowsOf(const std::string &pathKey) const
+{
+    return trackIndex.rowsOf(tracks, pathKey);
+}
+
 const BaselineTrack *RekordboxBaseline::findTrack(const std::string &pathKey) const
 {
-    const auto it = std::find_if(tracks.begin(), tracks.end(), [&](const BaselineTrack &t) {
-        return t.pathKey == pathKey;
-    });
-    return it == tracks.end() ? nullptr : &*it;
+    const auto &rows = trackRowsOf(pathKey);
+    return rows.empty() ? nullptr : &tracks[rows.front()];
 }
 
 const BaselinePlaylist *RekordboxBaseline::findPlaylist(std::uint32_t id) const
@@ -362,12 +403,12 @@ void keepTrack(RekordboxBaseline &next, const RekordboxBaseline *previous, const
     const bool inPrevious = previous && previous->findTrack(pathKey) != nullptr;
     if (inNext && !inPrevious) {
         std::erase_if(next.tracks, [&](const BaselineTrack &t) { return t.pathKey == pathKey; });
+        next.trackIndex.invalidate();
     } else if (!inNext && inPrevious) {
-        for (const auto &row : previous->tracks) {
-            if (row.pathKey == pathKey) {
-                next.tracks.push_back(row);
-            }
+        for (const std::size_t i : previous->trackRowsOf(pathKey)) {
+            next.tracks.push_back(previous->tracks[i]);
         }
+        next.trackIndex.invalidate();
     }
 }
 
@@ -450,10 +491,8 @@ void keepValue(RekordboxBaseline &next, const RekordboxBaseline *previous, const
                const std::string &text)
 {
     const BaselineTrack *before = previous ? previous->findTrack(key.pathKey) : nullptr;
-    for (auto &row : next.tracks) {
-        if (row.pathKey != key.pathKey) {
-            continue;
-        }
+    for (const std::size_t i : next.trackRowsOf(key.pathKey)) {
+        BaselineTrack &row = next.tracks[i];
         switch (key.kind) {
         case ItemKey::Kind::Rating:
             row.rating = before ? before->rating : std::nullopt;
@@ -482,12 +521,10 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 {
     std::vector<std::string> unlisted;
     for (const auto &write : writes) {
-        bool found = false;
-        for (auto &row : baseline.tracks) {
-            if (row.pathKey != write.pathKey) {
-                continue;
-            }
-            found = true;
+        const std::vector<std::size_t> &rows = baseline.trackRowsOf(write.pathKey);
+        const bool found = !rows.empty();
+        for (const std::size_t i : rows) {
+            BaselineTrack &row = baseline.tracks[i];
             if (write.cues) {
                 row.cues.clear();
                 for (const auto &cue : *write.cues) {

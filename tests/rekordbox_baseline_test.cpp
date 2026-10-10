@@ -216,6 +216,24 @@ void testLookups()
     const RekordboxBaseline dup = baselineFrom(twice, {}, 1, stickRelative, lowerKey);
     assert(dup.tracks.size() == 2);
     assert(dup.findTrack("contents/same.mp3")->pdbId == 1);
+
+    // Through the index too, as the rows change under it: a third row of
+    // the key appended after a lookup leaves the first found; the first
+    // erased, the second is; a copy finds its own rows; a key changed in
+    // place is found once the index is told.
+    RekordboxBaseline grown = dup;
+    assert(grown.findTrack("contents/same.mp3") == &grown.tracks[0] && "a copy finds its own rows");
+    grown.tracks.push_back(grown.tracks[1]);
+    grown.tracks.back().pdbId = 3;
+    assert(grown.findTrack("contents/same.mp3")->pdbId == 1);
+    assert((grown.trackRowsOf("contents/same.mp3") == std::vector<std::size_t>{0, 1, 2}));
+    grown.tracks.erase(grown.tracks.begin());
+    assert(grown.findTrack("contents/same.mp3")->pdbId == 2);
+    grown.tracks[0].pathKey = "contents/other.mp3";
+    grown.trackIndex.invalidate();
+    assert(grown.findTrack("contents/other.mp3") && grown.findTrack("contents/other.mp3")->pdbId == 2);
+    assert(grown.findTrack("contents/same.mp3")->pdbId == 3);
+    assert(grown.findTrack("contents/none.mp3") == nullptr && grown.trackRowsOf("contents/none.mp3").empty());
 }
 
 void testItemKeys()

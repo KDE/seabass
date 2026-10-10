@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "domain/track.hpp"
@@ -75,6 +77,47 @@ struct BaselinePlaylist
     std::vector<std::string> members;
 };
 
+// RekordboxBaseline's index of its tracks by pathKey: every row of a key,
+// in reader order. Built on the first lookup and again whenever the rows
+// it was built over are no longer the rows there: another buffer or
+// another count of rows, or a hit whose row no longer carries its key.
+// What that cannot see, a row's pathKey changed in place or rows replaced
+// without their count changing, the code that does it says with
+// invalidate(). A copy or a move starts with no index of its own.
+// Lookups are safe from several threads at once.
+class BaselineTrackIndex
+{
+public:
+    BaselineTrackIndex() = default;
+    BaselineTrackIndex(const BaselineTrackIndex &) noexcept {}
+    BaselineTrackIndex(BaselineTrackIndex &&) noexcept {}
+    BaselineTrackIndex &operator=(const BaselineTrackIndex &) noexcept
+    {
+        invalidate();
+        return *this;
+    }
+    BaselineTrackIndex &operator=(BaselineTrackIndex &&) noexcept
+    {
+        invalidate();
+        return *this;
+    }
+
+    // The indexes into `tracks` of every row whose pathKey is `pathKey`,
+    // in order; empty when none. Valid until `tracks` changes.
+    const std::vector<std::size_t> &rowsOf(const std::vector<BaselineTrack> &tracks,
+                                           const std::string &pathKey) const;
+    void invalidate() const noexcept;
+
+private:
+    void buildLocked(const std::vector<BaselineTrack> &tracks) const;
+
+    mutable std::mutex m_mutex;
+    mutable bool m_built = false;
+    mutable const BaselineTrack *m_data = nullptr;
+    mutable std::size_t m_size = 0;
+    mutable std::unordered_map<std::string, std::vector<std::size_t>> m_rows;
+};
+
 struct RekordboxBaseline
 {
     // export.pdb's header sequence when this was recorded. A baseline
@@ -93,10 +136,18 @@ struct RekordboxBaseline
     // the item until rekordbox changes it again and the hash differs.
     std::map<std::string, std::string> declined;
 
-    // Linear lookups; nullptr when absent. Two rows for one file are both
-    // kept in tracks, in reader order, and findTrack gives the first:
-    // the planner has to see the duplicate, not have it folded away.
+    // The tracks by pathKey (BaselineTrackIndex): changing a row's
+    // pathKey in place, or replacing rows without changing their count,
+    // is followed by trackIndex.invalidate().
+    BaselineTrackIndex trackIndex;
+
+    // nullptr when absent. Two rows for one file are both kept in tracks,
+    // in reader order, and findTrack gives the first: the planner has to
+    // see the duplicate, not have it folded away. findTrack goes through
+    // trackIndex; the playlist lookups are linear.
     const BaselineTrack *findTrack(const std::string &pathKey) const;
+    // The indexes into tracks of every row of `pathKey`, in order.
+    const std::vector<std::size_t> &trackRowsOf(const std::string &pathKey) const;
     const BaselinePlaylist *findPlaylist(std::uint32_t id) const;
     const BaselinePlaylist *findPlaylistByPath(const std::string &path) const;
 };
