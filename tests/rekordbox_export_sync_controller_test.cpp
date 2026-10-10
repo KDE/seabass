@@ -33,6 +33,12 @@
 // 7. The section order (conflicts first when there are any, playlists
 //    first when there are none) and the details of an add, a membership
 //    and a cue row, pinned by hand on a proposal built here.
+// 8. An order question left unanswered on a run without a record is not
+//    asked again (the plan's step 10 review decision): a playlist saved
+//    onto Engine, its record taken away and two of its Engine members
+//    swapped is an order conflict; a save that leaves it unanswered
+//    records rekordbox's order with every member, so the next analysis
+//    keeps Engine's order as its own and asks nothing about it.
 //
 // argv[1]: tests/fixtures/anonymized_library.
 
@@ -856,6 +862,97 @@ void testOrderAndDetails()
                  "and a conflict) OK\n";
 }
 
+// 8. See the top of the file.
+void testUnansweredOrderOnFirstRun(const fs::path &fixture)
+{
+    const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_unanswered_order");
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    assert(controller.errorMessage().isEmpty());
+    LibraryEditSession *session = sessionOf(stick);
+    const auto uncheckAll = [&] {
+        for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
+                                    "cuesToEngine", "restoresToRekordbox"}) {
+            controller.setSectionIncluded(QString::fromLatin1(section), false);
+        }
+        assert(controller.checkedCount() == 0);
+    };
+
+    // The fixture's one new playlist and its members, onto Engine.
+    uncheckAll();
+    const int create = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
+    const Row createRow = rowsOf(controller)[static_cast<std::size_t>(create)];
+    const std::string playlistPath = std::get<seabass::domain::PlaylistCreate>(*createRow.edit).path;
+    const std::uint32_t pdbId = std::get<seabass::domain::PlaylistCreate>(*createRow.edit).pdbId;
+    std::vector<std::string> memberKeys;
+    for (int m : rowsDependingOn(controller, createRow.header.key)) {
+        controller.setIncluded(m, true);
+        memberKeys.push_back(std::get<seabass::domain::MembershipEdit>(*rowsOf(controller)[static_cast<std::size_t>(m)].edit).pathKey);
+    }
+    assert(memberKeys.size() >= 3);
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+
+    // No record, and Engine's first and last member swapped.
+    fs::remove(testing::baselineFileOf(stick));
+    const auto list = testing::sqlRows(stick.db, "SELECT id FROM Playlist WHERE parentListId = 0 AND title = '"
+                                                     + playlistPath + "';");
+    assert(list.size() == 1);
+    const auto tracks = testing::rootPlaylistTracks(stick.db, playlistPath);
+    assert(tracks.size() == memberKeys.size());
+    const std::string first = std::to_string(tracks.front());
+    const std::string last = std::to_string(tracks.back());
+    const std::string where = " WHERE listId = " + list[0][0] + " AND trackId = ";
+    assert(testing::sqlExec(stick.db, "UPDATE PlaylistEntity SET trackId = -1" + where + first + ";"
+                                          "UPDATE PlaylistEntity SET trackId = " + first + where + last + ";"
+                                          "UPDATE PlaylistEntity SET trackId = " + last + where + "-1;"));
+
+    const auto orderRows = [&](seabass::domain::EngineUpdateReason reason) {
+        int n = 0;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section == Section::Conflicts && row.header.reason == reason) {
+                ++n;
+            }
+        }
+        return n;
+    };
+    analyze(controller, stick);
+    assert(controller.errorMessage().isEmpty());
+    assert(!controller.hasBaseline());
+    printCounts(controller);
+    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) >= 1
+           && "the swap is an order question on a run without a record");
+
+    // Saved with every question unanswered and every change unticked:
+    // only the record is written.
+    uncheckAll();
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    assert(session->pendingCount() == 1);
+    saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+
+    const auto baseline = testing::readBaseline(stick);
+    assert(baseline);
+    const auto *recorded = baseline->findPlaylist(pdbId);
+    assert(recorded && recorded->members == memberKeys && "every member, in rekordbox's order");
+
+    printCounts(controller);
+    assert(controller.hasBaseline());
+    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) == 0);
+    assert(orderRows(seabass::domain::EngineUpdateReason::BothChanged) == 0);
+    bool keptAsEngines = false;
+    for (const auto &row : rowsOf(controller)) {
+        keptAsEngines = keptAsEngines
+            || (row.section == Section::EngineOwnKept
+                && row.header.reasonText
+                    == "Engine changed the order of \"" + playlistPath + "\" after Seabass last recorded the stick");
+    }
+    assert(keptAsEngines);
+    std::cout << "case 8 (an order question left unanswered without a record: recorded as rekordbox has it, then "
+                 "Engine's own) OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -876,6 +973,7 @@ int main(int argc, char **argv)
     testOrderAndDetails();
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);
+    testUnansweredOrderOnFirstRun(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }
