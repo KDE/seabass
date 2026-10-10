@@ -812,6 +812,37 @@ int main()
         std::cout << "same-set reorder OK\n";
     }
 
+    // Members both sides hold that the record lacks, in another place on
+    // each side, the recorded members in the recorded order on both: no
+    // record says where they belong, so it is not a change of both.
+    // (WS_NEW's "Spacy Techno": 29 tracks at the top in rekordbox, at the
+    // bottom in Engine, none of them in the record.)
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"P", 0}}), rb("2", "Music/B.mp3", {{"P", 1}}),
+                       rb("3", "Music/C.mp3", {{"P", 2}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"P", 0}}), en("e2", "Music/B.mp3", {{"P", 1}}),
+                    en("e3", "Music/C.mp3", {{"P", 2}})};
+        w.rekordboxPlaylists = {{"P", false, 1}};
+        w.enginePlaylists = {{"P", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"P", 2}}), rb("2", "Music/B.mp3", {{"P", 3}}),
+                       rb("3", "Music/C.mp3", {{"P", 4}}), rb("4", "Music/X.mp3", {{"P", 0}}),
+                       rb("5", "Music/Y.mp3", {{"P", 1}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"P", 0}}), en("e2", "Music/B.mp3", {{"P", 1}}),
+                    en("e3", "Music/C.mp3", {{"P", 2}}), en("e4", "Music/X.mp3", {{"P", 3}}),
+                    en("e5", "Music/Y.mp3", {{"P", 4}})};
+        const auto p = plan(w, base);
+        assert(p.membership.empty() && !p.conflicts.empty());
+        for (const auto &c : p.conflicts) {
+            assert(c.header.reason == EngineUpdateReason::NoBaselineOrder);
+            assert(c.header.reasonText
+                   == "Seabass's record of \"P\" does not list this track, and it sits elsewhere in Engine's \"P\" "
+                      "than in rekordbox's");
+        }
+        std::cout << "members the record lacks, out of place: not a change of both OK\n";
+    }
+
     // A new track's membership depends on the track's add, a new
     // playlist's on its create.
     {
