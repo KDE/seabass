@@ -133,6 +133,15 @@ QString q(const std::string &text)
     return QString::fromStdString(text);
 }
 
+// Whether a write onto rekordbox puts back what Seabass wrote there (the
+// export dropped it) rather than Engine's value over rekordbox's.
+// Until MetadataEdit says so itself, its reason does: only ExportDropped
+// is a restore.
+bool restoresSeabassWrite(const domain::MetadataEdit &edit)
+{
+    return edit.header.reason == domain::EngineUpdateReason::ExportDropped;
+}
+
 QString titleOf(const domain::Track &track)
 {
     return q(track.title.empty() ? track.filename : track.title);
@@ -471,6 +480,45 @@ void RekordboxExportSyncController::unstageAll()
     emit stagedChanged();
 }
 
+QString RekordboxExportSyncController::describeMetadataWrite(const std::vector<domain::MetadataEdit> &edits,
+                                                            bool toEngine)
+{
+    using domain::MetadataEdit;
+    if (edits.empty()) {
+        return {};
+    }
+    QStringList fields;
+    QString ratingText;
+    bool restore = true;
+    for (const MetadataEdit &e : edits) {
+        if (e.field == MetadataEdit::Field::Rating) {
+            fields << QStringLiteral("rating");
+            ratingText = e.rating && *e.rating > 0 ? QStringLiteral("%1 star(s)").arg(*e.rating)
+                                                   : QStringLiteral("unrated");
+        } else {
+            fields << QStringLiteral("comment");
+        }
+        restore = restore && restoresSeabassWrite(e);
+    }
+    const bool ratingAlone = fields.size() == 1 && fields.front() == QLatin1String("rating");
+    const QString what = fields.join(QStringLiteral(" and "));
+    if (toEngine) {
+        const QString title = titleOf(edits.front().engine);
+        return ratingAlone ? QStringLiteral("Set the rating of \"%1\" in Engine to %2").arg(title, ratingText)
+                           : QStringLiteral("Set the %1 of \"%2\" in Engine as rekordbox has it").arg(what, title);
+    }
+    const QString title = titleOf(edits.front().rekordbox);
+    if (restore) {
+        // The export dropped what Seabass wrote there: it goes back.
+        return QStringLiteral("Put the %1 Seabass wrote back on \"%2\" in rekordbox").arg(what, title);
+    }
+    // Nothing recorded who wrote rekordbox's value (an answer toward
+    // Engine of an OriginUnknown conflict): Engine's goes over it, and is
+    // not called Seabass's.
+    return ratingAlone ? QStringLiteral("Set the rating of \"%1\" in rekordbox to %2, Engine's").arg(title, ratingText)
+                       : QStringLiteral("Set the %1 of \"%2\" in rekordbox to Engine's").arg(what, title);
+}
+
 void RekordboxExportSyncController::stageSelected()
 {
     if (busy() || !m_analysis) {
@@ -630,35 +678,21 @@ void RekordboxExportSyncController::stageSelected()
             const auto &first = std::get<MetadataEdit>(*rows[group.front()].edit);
             domain::MetadataRestoreProposal proposal;
             proposal.stickTrack = toEngine ? first.engine : first.rekordbox;
-            QStringList fields;
-            QString ratingText;
+            std::vector<MetadataEdit> edits;
             for (std::size_t i : group) {
                 const auto &e = std::get<MetadataEdit>(*rows[i].edit);
+                edits.push_back(e);
                 if (e.field == MetadataEdit::Field::Rating) {
                     proposal.ratingOffered = true;
                     // 0 stars is unrated to every writer: a cleared rating
                     // is written as one.
                     proposal.rating = e.rating.value_or(0);
-                    fields << QStringLiteral("rating");
-                    ratingText = e.rating && *e.rating > 0 ? QStringLiteral("%1 star(s)").arg(*e.rating)
-                                                           : QStringLiteral("unrated");
                 } else {
                     proposal.commentOffered = true;
                     proposal.comment = e.comment;
-                    fields << QStringLiteral("comment");
                 }
             }
-            const QString title = titleOf(proposal.stickTrack);
-            QString description;
-            if (toEngine) {
-                description = fields.size() == 1 && proposal.ratingOffered
-                    ? QStringLiteral("Set the rating of \"%1\" in Engine to %2").arg(title, ratingText)
-                    : QStringLiteral("Set the %1 of \"%2\" in Engine as rekordbox has it")
-                          .arg(fields.join(QStringLiteral(" and ")), title);
-            } else {
-                description = QStringLiteral("Put the %1 Seabass wrote back on \"%2\" in rekordbox")
-                                  .arg(fields.join(QStringLiteral(" and ")), title);
-            }
+            const QString description = describeMetadataWrite(edits, toEngine);
             const QString format = toEngine ? QStringLiteral("engine") : QStringLiteral("rekordbox");
             const QString path = toEngine ? enginePath : rekordboxPath;
             planned.push_back({group, toEngine,
