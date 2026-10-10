@@ -626,6 +626,192 @@ TestCase {
         }
     }
 
+    // Rows of each section the view shows (rowsModel's "shown" group),
+    // and whether every one of them is drawn: by section name.
+    function shownBySection(page) {
+        const items = page.rowsModel.items;
+        const out = {};
+        for (let i = 0; i < items.count; ++i) {
+            const item = items.get(i);
+            // The model's own role: an item's model object is stale for a
+            // row without a delegate.
+            const name = rowData(page, i, "section");
+            if (!(name in out)) {
+                out[name] = 0;
+            }
+            if (item.inShown) {
+                ++out[name];
+            }
+        }
+        return out;
+    }
+    // Folded, a section shows its first row only, as an empty shell.
+    function expectedShown(page, name, count) {
+        return page.isCollapsed(name) ? Math.min(count, 1) : count;
+    }
+    // Every section folds and unfolds to exactly its own rows, and no
+    // other section's rows change; the rows that come back are drawn.
+    function foldEverySectionAndBack(page) {
+        const counts = page.controller.sectionCounts;
+        for (const name of page.sectionOrder) {
+            const count = counts[name] || 0;
+            if (count === 0) {
+                continue;
+            }
+            const before = shownBySection(page);
+            const startFolded = page.isCollapsed(name);
+            page.toggleSection(name);
+            page.toggleSection(name);
+            compare(page.isCollapsed(name), startFolded);
+            if (startFolded) {
+                // Open it to look, then fold it back.
+                page.toggleSection(name);
+            }
+            const after = shownBySection(page);
+            compare(after[name], count, name + " shows all its " + count + " rows unfolded");
+            for (const other of page.sectionOrder) {
+                if (other !== name) {
+                    compare(after[other] || 0, before[other] || 0, other + " is untouched by " + name + "'s fold");
+                }
+            }
+            // The first few rows that came back are drawn.
+            const first = firstRowWhere(page, (i) => rowData(page, i, "section") === name);
+            for (let i = first; i < first + Math.min(count, 5); ++i) {
+                const item = rowItem(page, i);
+                verify(item.visible && item.height > 0, name + " row " + i + " is drawn");
+                // Drawn as itself: the delegate's section and title are
+                // the model's for that row.
+                compare(item.section, name, "row " + i + "'s delegate says its section");
+                compare(item.title, rowData(page, i, "title"), "row " + i + "'s delegate shows its title");
+            }
+            if (startFolded) {
+                page.toggleSection(name);
+                compare(shownBySection(page)[name], 1, name + " folds back to its shell");
+            }
+        }
+    }
+
+    // Each section by itself, on the fixture.
+    function test_everySectionFoldsAndUnfoldsToItsRows() {
+        const page = openOnAFreshCopy();
+        const counts = page.controller.sectionCounts;
+        const shown = shownBySection(page);
+        for (const name of page.sectionOrder) {
+            compare(shown[name] || 0, expectedShown(page, name, counts[name] || 0), name + " at the start");
+        }
+        foldEverySectionAndBack(page);
+        // And with an answer's rows after the conflicts: every conflict
+        // answered toward rekordbox adds removal rows to their section.
+        page.controller.resolveAllConflicts(true);
+        tryVerify(() => (page.controller.sectionCounts["tracksToRemove"] || 0) > 0, 2000);
+        wait(50);
+        const answered = page.controller.sectionCounts;
+        const shownAnswered = shownBySection(page);
+        for (const name of page.sectionOrder) {
+            compare(shownAnswered[name] || 0, expectedShown(page, name, answered[name] || 0),
+                    name + " after the answers");
+        }
+        foldEverySectionAndBack(page);
+    }
+
+    // The same on rows built by hand (StickFixture's), where the small
+    // sections hold several rows each: four playlist rows, three cue
+    // rows. A stand-in for the controller hands them to the page.
+    Component {
+        id: fakeControllerComponent
+        QtObject {
+            property var rows: null
+            readonly property var sectionCounts: {
+                const counts = {};
+                for (let i = 0; i < rows.rowCount(); ++i) {
+                    const name = rows.data(rows.index(i, 0), testCase.role.section);
+                    counts[name] = (counts[name] || 0) + 1;
+                }
+                return counts;
+            }
+            readonly property var sectionCheckedCounts: ({})
+            readonly property var categoryCounts: ({})
+            property bool analyzed: true
+            property bool busy: false
+            property bool writing: false
+            property bool canUndo: false
+            property bool onlyCues: false
+            property bool proposalEmpty: false
+            property bool hasBaseline: true
+            property bool scanCancellable: false
+            property int checkedCount: 0
+            property int conflictCount: 1
+            property int stagedCount: 0
+            property int scanCurrent: 0
+            property int scanTotal: 0
+            property string scanLabel: ""
+            property string errorMessage: ""
+            property string statusMessage: ""
+            property string introText: ""
+            property string summaryText: ""
+            signal scanCancelled()
+            function analyze() {}
+            function cancelScan() {}
+            function setIncluded() {}
+            function setSectionIncluded() {}
+            function resolveConflict() {}
+            function clearConflictResolution() {}
+            function resolveAllConflicts() {}
+            function clearAllConflictResolutions() {}
+            function stageSelected() {}
+            function unstageAll() {}
+            function undoLastOperation() {}
+        }
+    }
+    function test_everySectionFoldsAndUnfoldsOnHandBuiltRows() {
+        const fake = createTemporaryObject(fakeControllerComponent, testCase,
+                                           {rows: stickFixture.handBuiltExportSyncRows()});
+        const page = createTemporaryObject(pageComponent, testCase, {controller: fake});
+        verify(page !== null);
+        waitForRendering(page);
+        compare(fake.sectionCounts["playlists"], 4);
+        compare(fake.sectionCounts["cuesToEngine"], 3);
+        const shown = shownBySection(page);
+        for (const name of page.sectionOrder) {
+            compare(shown[name] || 0, expectedShown(page, name, fake.sectionCounts[name] || 0), name + " at the start");
+        }
+        foldEverySectionAndBack(page);
+        // Through the header, as a person does it: fold Playlists, then
+        // open it again from its chevron.
+        mouseClick(findChild(sectionHeader(page, "playlists"), "sectionChevron"));
+        compare(shownBySection(page)["playlists"], 1);
+        mouseClick(findChild(sectionHeader(page, "playlists"), "sectionChevron"));
+        compare(shownBySection(page)["playlists"], 4, "Playlists opens to its four rows");
+        mouseClick(findChild(sectionHeader(page, "cuesToEngine"), "sectionTitle"));
+        mouseClick(findChild(sectionHeader(page, "cuesToEngine"), "sectionTitle"));
+        compare(shownBySection(page)["cuesToEngine"], 3, "Cues to Engine opens to its three rows");
+        // Every section folded through its header, then each opened again.
+        for (const name of page.sectionOrder) {
+            if ((fake.sectionCounts[name] || 0) > 0 && !page.isCollapsed(name)) {
+                mouseClick(findChild(sectionHeader(page, name), "sectionChevron"));
+            }
+        }
+        for (const name of page.sectionOrder) {
+            const count = fake.sectionCounts[name] || 0;
+            if (count === 0) {
+                continue;
+            }
+            compare(shownBySection(page)[name], 1, name + " folded");
+            mouseClick(findChild(sectionHeader(page, name), "sectionChevron"));
+            compare(page.isCollapsed(name), false, name + " opened");
+            compare(shownBySection(page)[name], count, name + " opens to its rows");
+            const first = firstRowWhere(page, (i) => rowData(page, i, "section") === name);
+            for (let i = first; i < first + count; ++i) {
+                const item = rowItem(page, i);
+                verify(item.visible && item.height > 0, name + " row " + i + " is drawn");
+                // Drawn as itself: the delegate's section and title are
+                // the model's for that row.
+                compare(item.section, name, "row " + i + "'s delegate says its section");
+                compare(item.title, rowData(page, i, "title"), "row " + i + "'s delegate shows its title");
+            }
+        }
+    }
+
     // A section folds from its chevron or its title: its rows are gone
     // and the next section moves up; the header stays with its count.
     // Engine's own and the refused adds start folded. A fold is kept by

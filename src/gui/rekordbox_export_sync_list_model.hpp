@@ -182,6 +182,10 @@ public:
     // reason in full.
     QStringList details(int row) const;
 
+    // Every row's section name, in row order: what the page folds by, so
+    // a fold follows the rows themselves, never counts and an assumed
+    // order.
+    Q_INVOKABLE QStringList rowSections() const;
     // Rows per section name, every section present (0 when empty).
     QVariantMap sectionCounts() const;
     // Ticked rows per section name, every section present: what a
