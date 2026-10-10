@@ -149,6 +149,10 @@ public:
     void clearStaged() override;
 
     static QString cueSummary(const domain::SyncPlan &plan);
+    // A track as the rows hand it to QML: side, sourceId, title, file,
+    // artworkPath (a URL), durationMs, bpm, key and its cues. No waveform:
+    // see setAnalysis().
+    static QVariantMap trackMap(const domain::Track &track);
     static domain::CueChange cueChangeOf(const domain::SyncPlan &plan);
     static QString choiceSummary(const domain::CrossSourceSyncConflict &conflict);
     static QString reasonOf(const domain::CrossSourceSyncConflict &conflict);

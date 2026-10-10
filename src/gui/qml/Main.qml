@@ -833,6 +833,7 @@ ApplicationWindow {
         id: rekordboxExportSyncPageComponent
         RekordboxExportSyncPage {
             appSettingsController: appSettingsCtrl
+            playbackController: playbackCtrl
             onSyncCuePointsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(syncPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,

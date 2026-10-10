@@ -445,6 +445,8 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
         return toLocalFileUrl(row.artworkPath);
     case FallbackArtworkPathRole:
         return toLocalFileUrl(row.fallbackArtworkPath);
+    case CueSidesRole:
+        return cueSidesOf(row);
     default:
         return {};
     }
@@ -475,6 +477,7 @@ QHash<int, QByteArray> RekordboxExportSyncListModel::roleNames() const
         {HasTrackRole, "hasTrack"},
         {ArtworkPathRole, "artworkPath"},
         {FallbackArtworkPathRole, "fallbackArtworkPath"},
+        {CueSidesRole, "cueSides"},
     };
 }
 
@@ -1091,6 +1094,97 @@ QStringList RekordboxExportSyncListModel::editLines(const EngineUpdateEdit &edit
         lines << cueEditLines(*e);
     }
     return lines;
+}
+
+namespace
+{
+
+// "2 hot · 1 memory", "no cues": as Sync Cue Points counts a side.
+QString describeCueSet(const std::vector<domain::CuePoint> &cues)
+{
+    int hot = 0;
+    int memory = 0;
+    for (const auto &cue : cues) {
+        (cue.kind == domain::CuePoint::Kind::Hot ? hot : memory) += 1;
+    }
+    QStringList parts;
+    if (hot > 0) {
+        parts << QString::number(hot) + QStringLiteral(" hot");
+    }
+    if (memory > 0) {
+        parts << QString::number(memory) + QStringLiteral(" memory");
+    }
+    return parts.isEmpty() ? QStringLiteral("no cues") : parts.join(QStringLiteral(" · "));
+}
+
+QVariantList cueListOf(const std::vector<domain::CuePoint> &cues)
+{
+    domain::Track carrier;
+    carrier.cues = cues;
+    return SyncPlanListModel::trackMap(carrier).value(QStringLiteral("cues")).toList();
+}
+
+// One copy of the track for the page's strips.
+QVariantMap cueSide(const Track &track, bool written, const std::vector<domain::CuePoint> &proposed,
+                    const domain::CueChange *change)
+{
+    QVariantMap side = SyncPlanListModel::trackMap(track);
+    QString text = describeCueSet(track.cues);
+    if (change) {
+        const int gained = change->gainedHot + change->gainedMemory;
+        const int dropped = change->droppedHot + change->droppedMemory;
+        if (gained > 0) {
+            text += QStringLiteral(" · gains ") + QString::number(gained);
+        }
+        if (dropped > 0) {
+            text += QStringLiteral(" · loses ") + QString::number(dropped);
+        }
+    }
+    side.insert(QStringLiteral("cueText"), text);
+    side.insert(QStringLiteral("written"), written);
+    side.insert(QStringLiteral("proposedCues"), cueListOf(written ? proposed : track.cues));
+    return side;
+}
+
+// A cue write's two copies, rekordbox's first (the plan's match is
+// {rekordbox, Engine}); the copy it writes counts what it gains and loses.
+QVariantList cueSidesOfPlan(const SyncPlan &plan)
+{
+    const bool toEngine = plan.direction == SyncPlan::Direction::ToB;
+    const domain::CueChange change = SyncPlanListModel::cueChangeOf(plan);
+    return {cueSide(plan.match.trackA, !toEngine, plan.cuesToApply, toEngine ? nullptr : &change),
+            cueSide(plan.match.trackB, toEngine, plan.cuesToApply, toEngine ? &change : nullptr)};
+}
+
+}  // namespace
+
+QVariantList RekordboxExportSyncListModel::cueSidesOf(const Row &row) const
+{
+    if (row.conflict) {
+        // A cue conflict: both copies as they are; which one the answer
+        // writes is the buttons' to say.
+        for (const auto *choice : {&row.conflict->rekordboxChoice, &row.conflict->engineChoice}) {
+            for (const auto &edit : *choice) {
+                if (const auto *cues = std::get_if<CueEdit>(&edit)) {
+                    const SyncPlan &plan = cues->plan;
+                    return {cueSide(plan.match.trackA, false, {}, nullptr),
+                            cueSide(plan.match.trackB, false, {}, nullptr)};
+                }
+            }
+        }
+        return {};
+    }
+    if (!row.edit) {
+        return {};
+    }
+    if (const auto *cues = std::get_if<CueEdit>(&*row.edit)) {
+        return cueSidesOfPlan(cues->plan);
+    }
+    if (const auto *add = std::get_if<TrackToAdd>(&*row.edit);
+        add && row.section == Section::TracksToAdd && !add->rekordbox.cues.empty()) {
+        return {cueSide(add->rekordbox, false, {}, nullptr)};
+    }
+    return {};
 }
 
 QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const

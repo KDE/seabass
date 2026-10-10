@@ -41,6 +41,10 @@ Page {
     required property string rekordboxPath
     required property string enginePath
     property var appSettingsController: null
+    // For a cue row's waveforms (PlaybackController::waveformFor), read
+    // only for a row someone opens. Without one the strips draw the cues
+    // on a flat line.
+    property var playbackController: null
 
     // Overridable so a test can hand in a fake; the app never sets it.
     property var controller: realController
@@ -234,6 +238,9 @@ Page {
     // The sections a tick writes (RekordboxExportSyncListModel::writable).
     readonly property var writableSections: ["playlists", "tracksToAdd", "tracksToRemove", "membership",
         "metadataToEngine", "cuesToEngine", "restoresToRekordbox"]
+    function pathForFormat(format) {
+        return format === "engine" ? root.enginePath : root.rekordboxPath;
+    }
     function isWritable(section) {
         return root.writableSections.indexOf(section) >= 0;
     }
@@ -863,6 +870,7 @@ Page {
                     required property bool hasTrack
                     required property string artworkPath
                     required property string fallbackArtworkPath
+                    required property var cueSides
 
                     readonly property bool writable: root.isWritable(section)
                     readonly property bool expanded: root.expandedIndex === modelRow
@@ -1104,6 +1112,76 @@ Page {
                                     font.family: Theme.dataFamily
                                     font.pointSize: Theme.fontSmall
                                     text: row.expanded ? row.details.join("\n") : ""
+                                }
+
+                                // A row with cues, opened: each copy's cues on
+                                // its waveform, as Sync Cue Points' open rows
+                                // draw them, side by side, rekordbox's first.
+                                // The copy the save writes is the target,
+                                // dimmed, and says what it gains and loses.
+                                // Built only while the row is open, so a
+                                // waveform is read only for a row someone
+                                // looks at; nothing on a closed row, as on
+                                // Sync Cue Points.
+                                GridLayout {
+                                    id: cueStrips
+                                    objectName: "cueStrips"
+                                    readonly property bool hasTarget: row.cueSides.some((side) => side.written)
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: row.textIndent
+                                    Layout.rightMargin: Theme.tightSpacing
+                                    Layout.bottomMargin: Theme.tightSpacing
+                                    visible: row.expanded && row.cueSides.length > 0
+                                    columns: row.cueSides.length > 1 ? 2 : 1
+                                    uniformCellWidths: true
+                                    columnSpacing: Theme.rowSpacing
+                                    rowSpacing: Theme.tightSpacing
+                                    Repeater {
+                                        model: row.expanded ? row.cueSides : []
+                                        delegate: ColumnLayout {
+                                            id: strip
+                                            required property var modelData
+                                            objectName: "cueStrip"
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            spacing: Theme.tightSpacing
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.tightSpacing
+                                                TableHeaderLabel {
+                                                    visible: cueStrips.hasTarget
+                                                    label: strip.modelData.written ? "target" : "source"
+                                                }
+                                                StatusBadge {
+                                                    label: FormatLabels.label(strip.modelData.side)
+                                                    badgeColor: strip.modelData.written ? Theme.textMuted : Theme.accent
+                                                }
+                                                Label {
+                                                    objectName: "cueStripText"
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
+                                                    text: strip.modelData.cueText
+                                                    font.family: Theme.dataFamily
+                                                    font.pointSize: Theme.fontSmall
+                                                    color: Theme.textMuted
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+                                            WaveformView {
+                                                objectName: "cueStripWaveform"
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 40
+                                                opacity: strip.modelData.written ? 0.75 : 1.0
+                                                waveformData: root.playbackController
+                                                    ? root.playbackController.waveformFor(strip.modelData.side,
+                                                        root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
+                                                    : []
+                                                format: strip.modelData.side
+                                                cueData: strip.modelData.cues
+                                                trackDurationMs: strip.modelData.durationMs
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Label {

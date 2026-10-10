@@ -90,6 +90,17 @@ public:
         HasTrackRole,
         ArtworkPathRole,
         FallbackArtworkPathRole,
+        // A row that carries cues, as Sync Cue Points' rows draw them: one
+        // map per copy, rekordbox's first, each SyncPlanListModel::trackMap
+        // with "cueText" (its cues counted, and on the copy the save
+        // writes what it gains and loses), "written" (whether the save
+        // writes this copy) and "proposedCues" (what it will hold then;
+        // its own cues on a copy the save leaves alone). [] for a row
+        // without cues. A cue row and a cue conflict have both copies; a
+        // track to add has rekordbox's alone, whose cues go to Engine.
+        // The waveforms are not here: the page reads one only for a row
+        // someone opens (PlaybackController::waveformFor).
+        CueSidesRole,
     };
 
     // The page's order: the questions first, then what a tick writes,
@@ -236,6 +247,7 @@ private:
     void announceIncluded();
     QStringList detailsOf(const Row &row) const;
     QStringList editLines(const domain::EngineUpdateEdit &edit) const;
+    QVariantList cueSidesOf(const Row &row) const;
     QString titleByPathKey(const std::string &pathKey) const;
 
     std::vector<Row> m_rows;
