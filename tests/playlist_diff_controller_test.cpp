@@ -2,14 +2,15 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// PlaylistDiffController over the committed anonymized Engine library:
-// the playlists it lists, the pair it opens on, the counts of the diff
-// and the folded rows. Every number here was read off the fixture's m.db
+// PlaylistDiffController over the committed anonymized library: the
+// playlists it lists, the pair it opens on, the counts of the diff and
+// the folded rows within the Engine catalog, and a DeviceLibrary playlist
+// held against an Engine one. Every number here was read off the fixture's m.db
 // by hand (see the comments), so a controller that dropped an entry, or
 // folded one away, fails against the fixture rather than against itself.
 //
-// argv[1]: tests/fixtures/anonymized_library. The Engine catalog is
-// copied into scratch first: opening m.db may roll a journal back, and
+// argv[1]: tests/fixtures/anonymized_library. The catalogs are copied
+// into scratch first: opening m.db may roll a journal back, and
 // the fixture itself is never written.
 
 #include <QCoreApplication>
@@ -27,6 +28,7 @@
 #include "gui/playlist_diff_controller.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "fixture_copy.hpp"
 #include "scratch_path.hpp"
 
 using seabass::gui::PlaylistDiffController;
@@ -170,20 +172,21 @@ void testRescanDropsTheOldCatalog(const fs::path &scratch)
 {
     PlaylistDiffController controller;
     controller.setTracksForTesting(tracksOf({{"A", {"x", "y"}}, {"B", {"y", "z"}}}));
-    assert(controller.playlistNames().size() == 2);
+    assert(controller.playlistNamesA().size() == 2);
     assert(controller.rows()->rowCount() > 0);
     assert(!controller.relatives().isEmpty());
 
-    controller.scan(QStringLiteral("rekordbox"), seabass::gui::pathToQString(scratch / "no-such-stick" / "PIONEER"));
-    assert(controller.playlistNames().isEmpty());
-    assert(controller.playlistTrackCounts().isEmpty());
+    controller.scan(seabass::gui::pathToQString(scratch / "no-such-stick" / "PIONEER"), QString());
+    assert(controller.playlistNamesA().isEmpty() && controller.playlistNamesB().isEmpty());
+    assert(controller.playlistTrackCountsA().isEmpty());
+    assert(controller.formats().isEmpty());
     assert(controller.rows()->rowCount() == 0);
     assert(controller.relatives().isEmpty());
     assert(controller.sharedCount() == 0 && controller.onlyACount() == 0 && controller.onlyBCount() == 0);
     assert(controller.entriesA() == 0 && controller.entriesB() == 0);
     waitUntilIdle(controller);
     assert(!controller.errorMessage().isEmpty());
-    assert(controller.playlistNames().isEmpty());
+    assert(controller.playlistNamesA().isEmpty());
     assert(controller.rows()->rowCount() == 0);
 }
 
@@ -195,6 +198,116 @@ void testPercentInANameIsText()
     controller.setPlaylistA(QStringLiteral("100%2 Techno"));
     controller.setPlaylistB(QStringLiteral("Mix %1"));
     assert(controller.verdict() == QStringLiteral("1 shared. 100%2 Techno has 1 the other lacks, Mix %1 has 2."));
+}
+
+// The stick's three catalogs at once. The same-catalog pair the page
+// opens on is the one it always opened on; then A is DeviceLibrary's
+// "Playlist 000" and B Engine's "Playlist 010".
+//
+// The pinned numbers were read off the fixture by hand, not through
+// Seabass: export.pdb's track, playlist tree and entry tables parsed
+// from their pages in Python (filename string 19 of each track row) and
+// Engine's m.db with sqlite3 (PlaylistEntity joined to Track.filename).
+// The anonymizer gave the catalogs separate paths and artists, so the
+// two pair by filename; every DeviceLibrary filename is unique and
+// present in Engine. DeviceLibrary's "Playlist 000" has 49 entries,
+// Engine's "Playlist 010" 50, and 46 of them are the same files. The
+// anonymizer also named each catalog's playlists on its own, so the two
+// "Playlist 000"s are different lists: no file in common.
+void testAcrossCatalogs(const fs::path &pioneer, const fs::path &engineLibrary)
+{
+    PlaylistDiffController controller;
+    controller.scan(seabass::gui::pathToQString(pioneer), seabass::gui::pathToQString(engineLibrary));
+    waitUntilIdle(controller);
+    assert(controller.errorMessage().isEmpty());
+    assert((controller.formats()
+            == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary"), QStringLiteral("engine")}));
+
+    // Unchanged within one catalog: Engine on both sides, 000 and 019.
+    assert(controller.formatA() == QStringLiteral("engine") && controller.formatB() == QStringLiteral("engine"));
+    assert(controller.playlistA() == QStringLiteral("Playlist 000"));
+    assert(controller.playlistB() == QStringLiteral("Playlist 019"));
+    assert(controller.sharedCount() == 100 && controller.onlyBCount() == 10 && controller.onlyACount() == 0);
+    assert(controller.verdict() == QStringLiteral("Playlist 019 is Playlist 000 plus 10 tracks."));
+    assert(controller.relatives().first().toMap().value("label") == QStringLiteral("Playlist 019"));
+
+    // A to DeviceLibrary: its own list of playlists, "Playlist 000" kept
+    // because that catalog has one too (another list, see above).
+    QSignalSpy playlistsChanged(&controller, &PlaylistDiffController::playlistsChanged);
+    controller.setFormatA(QStringLiteral("rekordbox"));
+    assert(playlistsChanged.count() == 1);
+    assert(controller.formatA() == QStringLiteral("rekordbox"));
+    assert(controller.catalogLabelA() == QStringLiteral("DeviceLibrary"));
+    assert(controller.playlistNamesA() != controller.playlistNamesB());
+    assert(controller.playlistTrackCountsA().value(QStringLiteral("Playlist 000")).toInt() == 49);
+    assert(controller.playlistA() == QStringLiteral("Playlist 000"));
+
+    controller.setPlaylistB(QStringLiteral("Playlist 000"));
+    assert(controller.entriesA() == 49 && controller.entriesB() == 100);
+    assert(controller.sharedCount() == 0);
+    assert(controller.verdict() != QStringLiteral("The same playlist on both sides."));
+
+    // The relatives span both catalogs, each chip naming Engine's; the
+    // chip for Engine's "Playlist 010" sets B's catalog and playlist.
+    QVariantMap chip;
+    for (const QVariant &relative : controller.relatives()) {
+        const QVariantMap m = relative.toMap();
+        if (m.value("format") == QStringLiteral("engine") && m.value("name") == QStringLiteral("Playlist 010")) {
+            chip = m;
+        }
+    }
+    assert(!chip.isEmpty());
+    assert(chip.value("label") == QStringLiteral("Engine: Playlist 010"));
+    assert(chip.value("catalog") == QStringLiteral("Engine"));
+    assert(chip.value("shared").toInt() == 46);
+    // Most alike first: Engine's 010 and OneLibrary's own copy of the
+    // list (its playlists were named on their own as well) share 46 each
+    // and lead, ahead of DeviceLibrary's 003 with 4.
+    const QVariantList top = controller.relatives();
+    assert(top.size() >= 3);
+    // Ties keep the catalogs' order: A's own, then OneLibrary, then Engine.
+    assert(top.at(0).toMap().value("label") == QStringLiteral("OneLibrary: Playlist 020"));
+    assert(top.at(0).toMap().value("shared").toInt() == 46);
+    assert(top.at(1).toMap().value("label") == chip.value("label"));
+    assert(top.at(2).toMap().value("label") == QStringLiteral("Playlist 003"));
+    assert(top.at(2).toMap().value("shared").toInt() == 4);
+    controller.chooseB(chip.value("format").toString(), chip.value("name").toString());
+    assert(controller.formatB() == QStringLiteral("engine"));
+    assert(controller.playlistB() == QStringLiteral("Playlist 010"));
+
+    // Paired by file: 46 in both, 3 only DeviceLibrary's, 4 only Engine's.
+    assert(controller.entriesA() == 49 && controller.entriesB() == 50);
+    assert(controller.sharedCount() == 46);
+    assert(controller.onlyACount() == 3);
+    assert(controller.onlyBCount() == 4);
+    assert(controller.verdict().startsWith(QStringLiteral("46 shared. Playlist 000 (DeviceLibrary) has 3 the other lacks, "
+                                                          "Playlist 010 (Engine) has 4")));
+    // Each side's row is that side's track: positions in its own list.
+    int sameRows = 0;
+    controller.setFoldIdentical(false);
+    for (const auto &row : controller.rows()->rows()) {
+        if (row.leftKind == QLatin1String("same") || row.leftKind == QLatin1String("moved")) {
+            assert(row.leftPosition >= 1 && row.leftPosition <= 49);
+        }
+        if (row.rightKind == QLatin1String("same")) {
+            assert(row.rightPosition >= 1 && row.rightPosition <= 50);
+            ++sameRows;
+        }
+    }
+    assert(sameRows > 0);
+
+    // Swap takes the catalogs along.
+    controller.swapPlaylists();
+    assert(controller.formatA() == QStringLiteral("engine") && controller.formatB() == QStringLiteral("rekordbox"));
+    assert(controller.playlistA() == QStringLiteral("Playlist 010") && controller.playlistB() == QStringLiteral("Playlist 000"));
+    assert(controller.playlistTrackCountsA().value(QStringLiteral("Playlist 010")).toInt() == 50);
+    assert(controller.sharedCount() == 46 && controller.onlyACount() == 4 && controller.onlyBCount() == 3);
+
+    // Both sides one catalog again: compared by row, as before.
+    controller.setFormatB(QStringLiteral("engine"));
+    controller.setPlaylistA(QStringLiteral("Playlist 000"));
+    controller.setPlaylistB(QStringLiteral("Playlist 019"));
+    assert(controller.sharedCount() == 100 && controller.onlyBCount() == 10);
 }
 
 }  // namespace
@@ -210,23 +323,30 @@ int main(int argc, char **argv)
     const fs::path scratch = seabass::testing::scratchRoot() / "playlist_diff_controller";
     seabass::testing::sandboxSeabassHome(scratch / "home");
     const fs::path engineLibrary = scratch / "stick" / "Engine Library";
+    const fs::path pioneer = scratch / "stick" / "PIONEER";
     fs::remove_all(scratch / "stick");
     fs::create_directories(scratch / "stick");
     fs::copy(fixture / "engine", engineLibrary, fs::copy_options::recursive);
+    std::error_code copyError;
+    seabass::testing::copyPioneerFixture(fixture / "rekordbox", pioneer, copyError);
+    assert(!copyError);
 
     PlaylistDiffController controller;
-    controller.scan(QStringLiteral("engine"), seabass::gui::pathToQString(engineLibrary));
+    controller.scan(QString(), seabass::gui::pathToQString(engineLibrary));
     assert(controller.busy());
     waitUntilIdle(controller);
     assert(controller.errorMessage().isEmpty());
 
     // The fixture's Engine library names 33 playlists; three are empty,
     // and an empty playlist has no track to name it.
-    const QStringList names = controller.playlistNames();
+    assert(controller.formats() == QStringList{QStringLiteral("engine")});
+    assert(controller.formatA() == QStringLiteral("engine") && controller.formatB() == QStringLiteral("engine"));
+    const QStringList names = controller.playlistNamesA();
     assert(names.size() == 30);
+    assert(controller.playlistNamesB() == names);
     assert(names.first() == QStringLiteral("Playlist 000"));
-    assert(controller.playlistTrackCounts().value(QStringLiteral("Playlist 000")).toInt() == 100);
-    assert(controller.playlistTrackCounts().value(QStringLiteral("Playlist 019")).toInt() == 110);
+    assert(controller.playlistTrackCountsA().value(QStringLiteral("Playlist 000")).toInt() == 100);
+    assert(controller.playlistTrackCountsA().value(QStringLiteral("Playlist 019")).toInt() == 110);
 
     // Opens on the first playlist and its nearest relative: Playlist 019
     // is Playlist 000 with ten more at the end (the WHALESHARK2 shape).
@@ -326,6 +446,7 @@ int main(int argc, char **argv)
     assert(controller.verdict() == QStringLiteral("The same playlist on both sides."));
     assert(controller.onlyACount() == 0 && controller.onlyBCount() == 0 && controller.movedCount() == 0);
 
+    testAcrossCatalogs(pioneer, engineLibrary);
     testExtraCopyInB();
     testExtraCopyInAAndPartners();
     testLongPlaylistsDiffOffTheGuiThread();
