@@ -6,9 +6,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <optional>
 #include <set>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include "domain/engine_cue_translation.hpp"
@@ -174,25 +177,44 @@ std::vector<std::string> keepOnly(const std::vector<std::string> &keys, const st
 
 // The keys of a longest common subsequence of two lists of distinct keys:
 // the members that keep their relative order. Everything else moved.
+//
+// One flat table of uint32 lengths, row-major, (n+1) by (m+1): a third of
+// the memory of a vector of vectors of size_t and one allocation. The keys
+// are distinct, so a[i] == b[j] is a lookup of where a[i] sits in b,
+// done once per a[i] rather than a string compare per cell.
 std::set<std::string> longestCommonOrder(const std::vector<std::string> &a, const std::vector<std::string> &b)
 {
     const std::size_t n = a.size();
     const std::size_t m = b.size();
-    std::vector<std::vector<std::size_t>> length(n + 1, std::vector<std::size_t>(m + 1, 0));
+    const std::size_t width = m + 1;
+    std::unordered_map<std::string_view, std::size_t> inB;
+    inB.reserve(m);
+    for (std::size_t j = 0; j < m; ++j) {
+        inB.emplace(b[j], j);
+    }
+    constexpr std::size_t Nowhere = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> match(n, Nowhere);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (const auto it = inB.find(a[i]); it != inB.end()) {
+            match[i] = it->second;
+        }
+    }
+    std::vector<std::uint32_t> length((n + 1) * width, 0);
+    const auto at = [&](std::size_t i, std::size_t j) -> std::uint32_t & { return length[i * width + j]; };
     for (std::size_t i = n; i-- > 0;) {
         for (std::size_t j = m; j-- > 0;) {
-            length[i][j] = a[i] == b[j] ? length[i + 1][j + 1] + 1 : std::max(length[i + 1][j], length[i][j + 1]);
+            at(i, j) = match[i] == j ? at(i + 1, j + 1) + 1 : std::max(at(i + 1, j), at(i, j + 1));
         }
     }
     std::set<std::string> out;
     std::size_t i = 0;
     std::size_t j = 0;
     while (i < n && j < m) {
-        if (a[i] == b[j]) {
+        if (match[i] == j) {
             out.insert(a[i]);
             ++i;
             ++j;
-        } else if (length[i + 1][j] >= length[i][j + 1]) {
+        } else if (at(i + 1, j) >= at(i, j + 1)) {
             ++i;
         } else {
             ++j;
