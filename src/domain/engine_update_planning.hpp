@@ -117,7 +117,9 @@ enum class EngineUpdateReason {
     NoBaselineEngineMember,  // a member only Engine's playlist holds: conflict
     // The two orders of one playlist differ and nothing recorded says
     // which side changed it (no record of the playlist, or only members
-    // the record lacks out of place): one conflict for the playlist.
+    // the record lacks out of place): Engine takes rekordbox's order,
+    // checked, every move under the playlist's order item. Never a
+    // conflict (BothChanged on an order is the same write).
     NoBaselineOrder,
     NoBaselineValuesDiffer,  // a rating or a comment, both set and different: conflict
     NoBaselineEngineValue,   // a rating or a comment only Engine has: kept, removing it is unattributed
@@ -149,8 +151,9 @@ struct EngineUpdateItemHeader
     // grammar). Rows that share a key are one item and are ticked
     // together: a member moved within a playlist is a remove and an add,
     // and a copy swapped for another is the remove that rides with an add.
-    // A playlist's order in question is one conflict under order:<id>
-    // whose rekordbox choice holds every move.
+    // A playlist's order Engine takes from rekordbox without a record
+    // that says rekordbox changed it is one item, order:<id>, every move
+    // of it a row under that key.
     std::string key;
     bool checkedByDefault = false;
     bool conflict = false;

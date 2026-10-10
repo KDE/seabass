@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <set>
 #include <utility>
 
@@ -198,6 +199,67 @@ std::set<std::string> longestCommonOrder(const std::vector<std::string> &a, cons
         }
     }
     return out;
+}
+
+// Where the moved members of a playlist sit, said for one whose order
+// Engine takes from rekordbox. `rc` and `ec` are the members both hold in
+// each side's order, `moved` those out of the longest common order. When
+// the moved members are one run in both, the row says where that run is
+// on each side ("at the top", "at the bottom", "at positions 5 to 6",
+// counted over the whole playlist); otherwise only how many move.
+std::string describeOrderDifference(const std::vector<std::string> &rm, const std::vector<std::string> &em,
+                                    const std::vector<std::string> &rc, const std::vector<std::string> &ec,
+                                    const std::set<std::string> &moved, const std::string &engineName)
+{
+    const std::size_t n = moved.size();
+    const std::string tracks = n == 1 ? std::string("1 track") : std::to_string(n) + " tracks";
+    // The first and last index of the moved members in `list`, when they
+    // are one run there.
+    const auto run = [&](const std::vector<std::string> &list) -> std::optional<std::pair<std::size_t, std::size_t>> {
+        std::optional<std::size_t> first;
+        std::size_t last = 0;
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (moved.count(list[i])) {
+                if (!first) {
+                    first = i;
+                }
+                last = i;
+                ++count;
+            }
+        }
+        if (!first || last - *first + 1 != count) {
+            return std::nullopt;
+        }
+        return std::make_pair(*first, last);
+    };
+    const auto rRun = run(rm);
+    const auto eRun = run(em);
+    if (n == 0 || !run(rc) || !run(ec) || !rRun || !eRun || *rRun == *eRun) {
+        return "The two orders differ (" + tracks + (n == 1 ? " moves" : " move") + "); " + engineName
+            + " takes rekordbox's order";
+    }
+    const auto end = [](const std::pair<std::size_t, std::size_t> &at, std::size_t size) -> std::optional<std::string> {
+        if (at.first == 0) {
+            return std::string("at the top");
+        }
+        if (at.second + 1 == size) {
+            return std::string("at the bottom");
+        }
+        return std::nullopt;
+    };
+    const auto places = [](const std::pair<std::size_t, std::size_t> &at) {
+        return at.first == at.second ? std::to_string(at.first + 1)
+                                     : std::to_string(at.first + 1) + " to " + std::to_string(at.second + 1);
+    };
+    const std::string positions = rRun->first == rRun->second ? "at position " : "at positions ";
+    const auto rEnd = end(*rRun, rm.size());
+    const auto eEnd = end(*eRun, em.size());
+    const std::string where = rEnd ? *rEnd + " in rekordbox and " + (eEnd ? *eEnd : positions + places(*eRun))
+                              : eEnd ? positions + places(*rRun) + " in rekordbox and " + *eEnd
+                                     : positions + places(*rRun) + " in rekordbox and " + places(*eRun);
+    return tracks + (n == 1 ? " sits " : " sit ") + where + " in " + engineName + "; " + engineName
+        + " takes rekordbox's order";
 }
 
 EngineUpdateItemHeader makeHeader(std::string key, bool checked, bool conflict, EngineUpdateReason reason,
@@ -1185,11 +1247,14 @@ private:
             const std::vector<std::string> rc = keepOnly(rm, common);
             const std::vector<std::string> ec = keepOnly(em, common);
             std::set<std::string> moved;
-            enum class OrderMode { Apply, Conflict } orderMode = OrderMode::Apply;
+            // Who decides the order: rekordbox alone changed it since the
+            // record (each move its own item, "rekordbox moved"), or
+            // nothing recorded says (no record of those members, both
+            // sides changed it, no record at all). Then the order is
+            // rekordbox's to decide, never a conflict: Engine takes it,
+            // every move under the playlist's order item.
+            bool wholeOrder = false;
             EngineUpdateReason orderReason = EngineUpdateReason::RekordboxMoved;
-            // The record holds the playlist but not the members out of
-            // place: no record says where those belong.
-            bool unrecordedMembers = false;
             if (rc != ec) {
                 const std::set<std::string> kept = longestCommonOrder(ec, rc);
                 for (const auto &key : rc) {
@@ -1208,7 +1273,7 @@ private:
                     const auto eb = keepOnly(ec, inAll);
                     const auto bb = keepOnly(firstOccurrences(bp->members), inAll);
                     if (eb == bb && rb != bb) {
-                        orderMode = OrderMode::Apply;
+                        // rekordbox's change: each move its own item.
                     } else if (rb == bb && eb != bb) {
                         EngineOwnItem keptRow;
                         keptRow.playlistPath = path;
@@ -1218,21 +1283,26 @@ private:
                                                     playlistState(&r));
                         out.engineOwnKept.push_back(std::move(keptRow));
                         moved.clear();
-                    } else if (rb == bb && eb == bb) {
-                        // The recorded members are in the recorded order on
-                        // both sides; only members the record lacks differ
-                        // in place. Neither side's change, as far as
-                        // anything recorded says.
-                        orderMode = OrderMode::Conflict;
-                        orderReason = EngineUpdateReason::NoBaselineOrder;
-                        unrecordedMembers = true;
                     } else {
-                        orderMode = OrderMode::Conflict;
-                        orderReason = EngineUpdateReason::BothChanged;
+                        // Equal to the record on both sides: only members
+                        // the record lacks are out of place. Different on
+                        // both: both changed it.
+                        wholeOrder = true;
+                        orderReason = rb == bb ? EngineUpdateReason::NoBaselineOrder : EngineUpdateReason::BothChanged;
                     }
                 } else {
-                    orderMode = OrderMode::Conflict;
+                    wholeOrder = true;
                     orderReason = EngineUpdateReason::NoBaselineOrder;
+                }
+            }
+            const std::string orderText =
+                wholeOrder ? describeOrderDifference(rm, em, rc, ec, moved, engineName) : std::string();
+            // The playlist's order, as rekordbox has it: the order item's
+            // state, so a declined order stays out until rekordbox's moves.
+            std::string orderState = "order:";
+            if (wholeOrder) {
+                for (const auto &key : rm) {
+                    orderState += key + '\n';
                 }
             }
 
@@ -1264,12 +1334,9 @@ private:
             }
 
             // Adds and moves in rekordbox's order, each after the member
-            // before it that Engine's copy will hold. An order in question
-            // is one conflict for the playlist, its rekordbox choice every
-            // move: the removes, then the adds in rekordbox's order.
+            // before it that Engine's copy will hold. A move is a remove
+            // and an add; the save stages the removes first.
             std::string anchor;
-            std::vector<MembershipEdit> orderRemoves;
-            std::vector<MembershipEdit> orderAdds;
             for (const auto &key : rm) {
                 const bool isMove = moved.count(key) > 0;
                 if (isMove || addSet.count(key)) {
@@ -1282,67 +1349,30 @@ private:
                                          + " holds this track and " + engineName + "'s does not",
                                key);
                         adds.push_back(std::move(add));
-                    } else {
+                    } else if (!wholeOrder) {
                         auto remove = removeEdit(key, memberItemKey(r.id, key));
-                        if (orderMode == OrderMode::Apply) {
-                            const std::string text = "rekordbox moved this track within " + quoted(path) + since();
-                            finish(remove, true, orderReason, text, key);
-                            finish(add, true, orderReason, text, key);
-                            removes.push_back(std::move(remove));
-                            adds.push_back(std::move(add));
-                        } else {
-                            // Key and words are the conflict's, below.
-                            finish(remove, true, orderReason, {}, key);
-                            finish(add, true, orderReason, {}, key);
-                            orderRemoves.push_back(std::move(remove));
-                            orderAdds.push_back(std::move(add));
+                        const std::string text = "rekordbox moved this track within " + quoted(path) + since();
+                        finish(remove, true, orderReason, text, key);
+                        finish(add, true, orderReason, text, key);
+                        removes.push_back(std::move(remove));
+                        adds.push_back(std::move(add));
+                    } else {
+                        // One item, the playlist's order: every move goes
+                        // with it, ticked or not.
+                        auto remove = removeEdit(key, orderItemKey(r.id));
+                        add.header.key = orderItemKey(r.id);
+                        for (auto *edit : {&remove, &add}) {
+                            auto deps = std::move(edit->header.dependsOn);
+                            edit->header = makeHeader(edit->header.key, true, false, orderReason, orderText, orderState,
+                                                      std::move(deps));
                         }
+                        removes.push_back(std::move(remove));
+                        adds.push_back(std::move(add));
                     }
                     anchor = key;
                 } else if (eSet.count(key)) {
                     anchor = key;
                 }
-            }
-            if (!orderAdds.empty()) {
-                const std::size_t n = orderAdds.size();
-                const std::string tracks = n == 1 ? std::string("1 track") : std::to_string(n) + " tracks";
-                std::size_t unrecorded = 0;
-                for (const auto &key : common) {
-                    unrecorded += bSet.count(key) ? 0 : 1;
-                }
-                std::string why;
-                if (orderReason == EngineUpdateReason::BothChanged) {
-                    why = "Both sides changed the order of " + quoted(path) + " since Seabass last recorded the stick; "
-                        + tracks + (n == 1 ? " sits" : " sit") + " elsewhere in " + engineName + "'s than in "
-                        "rekordbox's";
-                } else if (unrecordedMembers) {
-                    why = "Seabass's record of " + quoted(path) + " does not list " + std::to_string(unrecorded)
-                        + " of the tracks both sides hold, and the two orders differ only around "
-                        + (unrecorded == 1 ? "that one" : "those");
-                } else {
-                    why = "No earlier record of this stick: " + tracks + (n == 1 ? " sits" : " sit") + " elsewhere in "
-                        + engineName + "'s " + quoted(path) + " than in rekordbox's";
-                }
-                const std::string side = "Put " + quoted(path) + " in rekordbox's order (" + tracks
-                    + (n == 1 ? " moves)" : " move)");
-                // The playlist's order, as rekordbox has it: what the
-                // item's state is.
-                std::string order = "order:";
-                for (const auto &key : rm) {
-                    order += key + '\n';
-                }
-                EngineUpdateConflict conflict;
-                conflict.header = makeHeader(orderItemKey(r.id), false, true, orderReason, why, order, st.deps);
-                conflict.rekordboxSide = side;
-                conflict.engineSide = "Keep " + engineName + "'s order";
-                for (auto *list : {&orderRemoves, &orderAdds}) {
-                    for (auto &edit : *list) {
-                        edit.header.key = conflict.header.key;
-                        edit.header.reasonText = side;
-                        conflict.rekordboxChoice.emplace_back(std::move(edit));
-                    }
-                }
-                out.conflicts.push_back(std::move(conflict));
             }
             for (auto &edit : removes) {
                 out.membership.push_back(std::move(edit));
