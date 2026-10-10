@@ -117,6 +117,52 @@ std::vector<StartCueOverEngine> startCuesOverEngine(const std::vector<CuePoint> 
 std::vector<CuePoint> withEngineCuesOverStartCues(const std::vector<CuePoint> &rekordboxCues,
                                                   const std::vector<StartCueOverEngine> &over);
 
+// "if rb has no cue and engine 1, and rb was synched, engine wins!"
+// (Sebastian, 2026-10-10.) An empty rekordbox pad never beats an Engine
+// cue: where rekordbox holds nothing of a kind on a pad (no hot cue, or
+// no hot loop, or nothing at all) and Engine holds one there, Engine's
+// goes onto rekordbox, checked. Not a conflict, not Engine's own to leave
+// alone, not a removal from Engine. Both cue planners decide the case
+// through this one function, beside startCuesOverEngine, so Sync Cue
+// Points (SyncPlanner::plan) and Sync after Rekordbox Export
+// (EngineUpdatePlanner::plan) cannot drift apart.
+//
+// Engine keeps eight hot cues and eight saved loops, so one of its pads
+// can be a cue and a loop at once; rekordbox's pad is one or the other.
+// A rekordbox pad holding the loop Engine holds, with Engine's cue beside
+// it, is a pad where rekordbox has no cue and Engine has one: the same
+// case as an empty pad, for the cue.
+//
+// One entry per pad, 1 to 8, where every cue and loop `rekordboxCues`
+// holds on the pad (a catalog's cues as scanned; junk, isJunkCue(), counts
+// as nothing) is also on Engine's at the same place, and Engine holds at
+// least one more, of a kind rekordbox holds none of there. `engineHotCues`
+// are Engine's own hot cues and loops read in that catalog's terms
+// (cuesFromEngine's hotCues). A pad startCuesOverEngine names is left to
+// it. A loop on one side and a cue on the other, each alone on the pad,
+// is two different things on one pad and not covered: still the planner's
+// question.
+//
+// The planners' one exception lives with the baseline, which only Sync
+// after Rekordbox Export has: a cue the baseline records on the pad as
+// rekordbox's own, which rekordbox no longer has, was deleted in rekordbox
+// and comes off Engine (EngineUpdateReason::RekordboxRemoved).
+struct EngineCuesOverEmptyPad
+{
+    int pad = 0;
+    bool rekordboxEmpty = false;      // rekordbox holds nothing on the pad
+    std::vector<CuePoint> engineCues;  // Engine's cues there rekordbox lacks, what goes back
+};
+
+std::vector<EngineCuesOverEmptyPad> engineCuesOverEmptyPads(const std::vector<CuePoint> &rekordboxCues,
+                                                             const std::vector<CuePoint> &engineHotCues,
+                                                             double toleranceMs);
+
+// rekordboxCues with Engine's cues `over` names added: what rekordbox
+// holds once they go back.
+std::vector<CuePoint> withEngineCuesOverEmptyPads(const std::vector<CuePoint> &rekordboxCues,
+                                                  const std::vector<EngineCuesOverEmptyPad> &over);
+
 class JunkCueFinder
 {
 public:

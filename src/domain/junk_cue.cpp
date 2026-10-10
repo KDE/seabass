@@ -4,6 +4,7 @@
 
 #include "domain/junk_cue.hpp"
 
+#include "domain/cue_tolerance.hpp"
 #include "domain/engine_cue_translation.hpp"
 #include "domain/matching_policy.hpp"
 
@@ -88,6 +89,79 @@ std::vector<CuePoint> withEngineCuesOverStartCues(const std::vector<CuePoint> &r
     }
     for (const StartCueOverEngine &o : over) {
         cues.push_back(o.engineCue);
+    }
+    return cues;
+}
+
+std::vector<EngineCuesOverEmptyPad> engineCuesOverEmptyPads(const std::vector<CuePoint> &rekordboxCues,
+                                                             const std::vector<CuePoint> &engineHotCues,
+                                                             double toleranceMs)
+{
+    std::vector<EngineCuesOverEmptyPad> over;
+    const std::vector<StartCueOverEngine> startCues = startCuesOverEngine(rekordboxCues, engineHotCues);
+    const auto onPad = [](const CuePoint &cue, int pad) {
+        return cue.kind == CuePoint::Kind::Hot && cue.hotCueNumber == pad && !isJunkCue(cue);
+    };
+    for (int pad = 1; pad <= EngineHotCuePads; ++pad) {
+        const bool startCue = std::any_of(startCues.begin(), startCues.end(),
+                                          [&](const StartCueOverEngine &s) { return s.pad == pad; });
+        if (startCue) {
+            continue;
+        }
+        std::vector<const CuePoint *> engine;
+        for (const CuePoint &cue : engineHotCues) {
+            if (onPad(cue, pad)) {
+                engine.push_back(&cue);
+            }
+        }
+        if (engine.empty()) {
+            continue;
+        }
+        // Every one of rekordbox's on Engine's pad, one for one.
+        std::vector<bool> matched(engine.size(), false);
+        bool rekordboxHas = false;
+        bool rekordboxCue = false;
+        bool rekordboxLoop = false;
+        bool allMatched = true;
+        for (const CuePoint &cue : rekordboxCues) {
+            if (!onPad(cue, pad)) {
+                continue;
+            }
+            rekordboxHas = true;
+            (cue.isLoop ? rekordboxLoop : rekordboxCue) = true;
+            bool found = false;
+            for (std::size_t i = 0; i < engine.size() && !found; ++i) {
+                if (!matched[i] && sameCuePlace(cue, *engine[i], toleranceMs)) {
+                    matched[i] = true;
+                    found = true;
+                }
+            }
+            allMatched = allMatched && found;
+        }
+        if (!allMatched) {
+            continue;
+        }
+        EngineCuesOverEmptyPad entry{pad, !rekordboxHas, {}};
+        bool ofAKindRekordboxHolds = false;
+        for (std::size_t i = 0; i < engine.size(); ++i) {
+            if (!matched[i]) {
+                ofAKindRekordboxHolds = ofAKindRekordboxHolds || (engine[i]->isLoop ? rekordboxLoop : rekordboxCue);
+                entry.engineCues.push_back(*engine[i]);
+            }
+        }
+        if (!entry.engineCues.empty() && !ofAKindRekordboxHolds) {
+            over.push_back(std::move(entry));
+        }
+    }
+    return over;
+}
+
+std::vector<CuePoint> withEngineCuesOverEmptyPads(const std::vector<CuePoint> &rekordboxCues,
+                                                  const std::vector<EngineCuesOverEmptyPad> &over)
+{
+    std::vector<CuePoint> cues = rekordboxCues;
+    for (const EngineCuesOverEmptyPad &o : over) {
+        cues.insert(cues.end(), o.engineCues.begin(), o.engineCues.end());
     }
     return cues;
 }

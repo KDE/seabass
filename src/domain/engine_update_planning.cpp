@@ -1675,12 +1675,16 @@ private:
             return;
         }
         const bool ontoEngine = plan.direction == SyncPlan::Direction::ToB;
-        // Engine's cues over rekordbox's 0:00 ones: said as the baseline's
-        // rule says it, the record or its absence changes nothing.
-        if (plan.reason == SyncPlan::Reason::StartCueOverEngine) {
-            out.cuesToRekordbox.push_back(
-                CueEdit{cueHeader(items, true, false, EngineUpdateReason::StartCueOverEngine, plan.reasonText), plan,
-                        key});
+        // Engine's cues over rekordbox's 0:00 ones or its empty pads: said
+        // as the baseline's rule says it, the record or its absence changes
+        // nothing.
+        if (plan.reason == SyncPlan::Reason::StartCueOverEngine || plan.reason == SyncPlan::Reason::EngineOverEmptyPad) {
+            out.cuesToRekordbox.push_back(CueEdit{
+                cueHeader(items, true, false,
+                          plan.reason == SyncPlan::Reason::StartCueOverEngine ? EngineUpdateReason::StartCueOverEngine
+                                                                              : EngineUpdateReason::EngineOverEmptyPad,
+                          plan.reasonText),
+                plan, key});
             return;
         }
         CueEdit edit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues,
@@ -1768,6 +1772,18 @@ private:
             }
             return nullptr;
         };
+        // Pads where rekordbox holds nothing of a kind Engine holds there
+        // (engineCuesOverEmptyPads): an empty rekordbox pad never beats an
+        // Engine cue, so Engine's goes back onto rekordbox.
+        const std::vector<EngineCuesOverEmptyPad> emptyPads = engineCuesOverEmptyPads(r.cues, seen.hotCues, tol);
+        const auto emptyPadOn = [&](int pad) -> const EngineCuesOverEmptyPad * {
+            for (const EngineCuesOverEmptyPad &over : emptyPads) {
+                if (over.pad == pad) {
+                    return &over;
+                }
+            }
+            return nullptr;
+        };
 
         // The target in rekordbox's terms, Engine's set to begin with.
         std::map<int, std::vector<CuePoint>> tHot = eHot;
@@ -1827,6 +1843,8 @@ private:
         std::vector<CuePoint> restoreCues;  // checked restores
         std::vector<Pending> overStart;             // pads whose 0:00 cue Engine's replaces
         std::vector<StartCueOverEngine> goingBack;  // their cues, for every write onto rekordbox
+        std::vector<Pending> overEmpty;                // pads rekordbox holds nothing of Engine's kind on
+        std::vector<EngineCuesOverEmptyPad> emptyGoingBack;  // their cues, for every write onto rekordbox
         std::vector<CuePoint> unknownCues;  // Engine's way of the conflicts nobody recorded the origin of
 
         // Pads.
@@ -1866,6 +1884,32 @@ private:
                 overStart.push_back(Pending{item, EngineUpdateReason::StartCueOverEngine, {}});
                 goingBack.push_back(*over);
                 continue;
+            }
+            // Before the three-way rule too: rekordbox holds nothing of a
+            // kind Engine holds on the pad, and Engine's goes back, whatever
+            // the baseline says (Sebastian, 2026-10-10: "if rb has no cue
+            // and engine 1, and rb was synched, engine wins!"). Recorded
+            // empty or as Engine has it, of Seabass's, of unknown origin:
+            // the same. Two exceptions, both decided below as before: a cue
+            // the baseline records as rekordbox's own that rekordbox no
+            // longer has was deleted in rekordbox and comes off Engine
+            // (RekordboxRemoved); and a pad Seabass wrote that the export
+            // dropped whole is the restore, ExportDropped, the same write in
+            // its own words.
+            if (const EngineCuesOverEmptyPad *over = emptyPadOn(pad)) {
+                const bool rekordboxDeleted = std::any_of(bnRows.begin(), bnRows.end(), [&](const BaselineCue *row) {
+                    return row->origin == ValueOrigin::Rekordbox && within(rn, row->cue) == 0;
+                });
+                const bool restore = rn.empty() && samePad(bn, en) && originOf(bnRows) == ValueOrigin::Seabass;
+                if (!rekordboxDeleted && !restore) {
+                    if (declinedAt(item)) {
+                        cueSuppressed.insert(item.key);
+                        continue;
+                    }
+                    overEmpty.push_back(Pending{item, EngineUpdateReason::EngineOverEmptyPad, {}});
+                    emptyGoingBack.push_back(*over);
+                    continue;
+                }
             }
             if (samePad(bn, rn)) {
                 keptAsEngineOwn(itemKeyText, state,
@@ -2058,7 +2102,8 @@ private:
         // added: every write onto rekordbox carries Engine's cues back over
         // the start cues, a conflict's choice too, as it is the last write.
         const auto ontoRekordbox = [&](const std::vector<CuePoint> &extra) {
-            std::vector<CuePoint> cues = withEngineCuesOverStartCues(r.cues, goingBack);
+            std::vector<CuePoint> cues =
+                withEngineCuesOverEmptyPads(withEngineCuesOverStartCues(r.cues, goingBack), emptyGoingBack);
             cues.insert(cues.end(), extra.begin(), extra.end());
             return cuePlan(r, e, SyncPlan::Direction::ToA, std::move(cues), tol);
         };
@@ -2085,9 +2130,10 @@ private:
                 out.cuesToEngine.push_back(std::move(edit));
             }
         }
-        // One row onto rekordbox: the restores and Engine's cues over the
-        // 0:00 ones are one write of the track's whole cue set.
-        if (!restored.empty() || !overStart.empty()) {
+        // One row onto rekordbox: the restores, Engine's cues over the 0:00
+        // ones and over rekordbox's empty pads are one write of the track's
+        // whole cue set.
+        if (!restored.empty() || !overStart.empty() || !overEmpty.empty()) {
             std::string text;
             if (!restored.empty()) {
                 const std::size_t n = restoreCues.size();
@@ -2098,16 +2144,21 @@ private:
             if (!overStart.empty()) {
                 text += (text.empty() ? "" : "; ") + describeStartCuesOverEngine(goingBack);
             }
+            if (!overEmpty.empty()) {
+                text += (text.empty() ? "" : "; ") + describeEngineCuesOverEmptyPads(emptyGoingBack);
+            }
             std::vector<Pending> items = restored;
             items.insert(items.end(), overStart.begin(), overStart.end());
-            CueEdit edit{cueHeader(itemsOf(items), true, false,
-                                   restored.empty() ? EngineUpdateReason::StartCueOverEngine
-                                                    : EngineUpdateReason::ExportDropped,
-                                   std::move(text)),
-                         ontoRekordbox(restoreCues), key};
+            items.insert(items.end(), overEmpty.begin(), overEmpty.end());
+            const EngineUpdateReason reason = !restored.empty() ? EngineUpdateReason::ExportDropped
+                : !overStart.empty()                            ? EngineUpdateReason::StartCueOverEngine
+                                                                : EngineUpdateReason::EngineOverEmptyPad;
+            CueEdit edit{cueHeader(itemsOf(items), true, false, reason, std::move(text)), ontoRekordbox(restoreCues),
+                         key};
             if (restored.empty()) {
                 // The plan says it as SyncPlanner's would.
-                edit.plan.reason = SyncPlan::Reason::StartCueOverEngine;
+                edit.plan.reason = overStart.empty() ? SyncPlan::Reason::EngineOverEmptyPad
+                                                     : SyncPlan::Reason::StartCueOverEngine;
                 edit.plan.reasonText = edit.header.reasonText;
             }
             written.push_back(edit.header.key);
