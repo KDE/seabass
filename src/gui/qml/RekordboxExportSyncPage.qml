@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQml.Models
 import SeabassGui
 
 // Sync after Rekordbox Export (docs/sync-after-rekordbox-export-plan.md,
@@ -83,10 +84,81 @@ Page {
     })
     readonly property var sectionNotes: ({
         restoresToRekordbox: "What the export dropped that Seabass had written",
-        conflicts: "Seabass cannot tell which side is right. Pick one, or leave it.",
-        engineOwnKept: "Shown, never written",
-        notAdded: "Rekordbox lists these, but they cannot be added",
+        engineOwnKept: "Kept, nothing is written",
+        notAdded: "Rekordbox lists these, but they cannot be added; nothing is written",
     })
+    // What picking a side means, in two sentences: the conflicts' help
+    // and the buttons that answer all of them. Each row's buttons say
+    // what that answer writes (EngineUpdateConflict's labels).
+    readonly property string conflictExplanation: "Rekordbox's side makes Engine match what rekordbox has now, "
+        + "for example by removing a track rekordbox no longer lists. Engine's side keeps what Engine has, and "
+        + "for some cues and ratings puts Engine's version back onto rekordbox, or for a playlist rekordbox may "
+        + "have renamed adds rekordbox's beside Engine's."
+
+    // The sections folded shut, by name, so a fold holds while the list is
+    // analysed again after a save; for this page only, never stored. Its
+    // rows stay in the model (counts and keys do not move) and fold in
+    // their delegate. Engine's own and the refused adds start folded:
+    // nothing in them needs doing.
+    property var collapsedSections: ({engineOwnKept: true, notAdded: true})
+    function isCollapsed(section) {
+        return root.collapsedSections[section] === true;
+    }
+    function toggleSection(section) {
+        const next = Object.assign({}, root.collapsedSections);
+        next[section] = !root.isCollapsed(section);
+        root.collapsedSections = next;
+        root.applyFolds();
+    }
+    // A folded section keeps only its first row in the view, as an empty
+    // shell of height 0 that carries the section's header; the rest leave
+    // the view's "shown" group. Not rows of height 0 each: a thousand of
+    // those throw the ListView's estimate of where a row is, and it
+    // scrolls to the wrong section. Sections are contiguous, in
+    // sectionOrder, so this is a range per section.
+    function applyFolds() {
+        const counts = root.controller.sectionCounts;
+        let start = 0;
+        for (const name of root.sectionOrder) {
+            const count = counts[name] || 0;
+            if (count > 1 && start + count <= rowsModel.items.count) {
+                if (root.isCollapsed(name)) {
+                    rowsModel.items.removeGroups(start + 1, count - 1, "shown");
+                } else {
+                    rowsModel.items.addGroups(start + 1, count - 1, "shown");
+                }
+            }
+            start += count;
+        }
+    }
+    // Model row -> the view's index, -1 for a row a fold leaves out.
+    function viewIndexOf(modelRow) {
+        if (modelRow < 0 || modelRow >= rowsModel.items.count) {
+            return -1;
+        }
+        const item = rowsModel.items.get(modelRow);
+        return item.inShown ? item.shownIndex : -1;
+    }
+    DelegateModel {
+        id: rowsModel
+        model: root.controller.rows
+        delegate: rowDelegate
+        groups: [
+            DelegateModelGroup {
+                name: "shown"
+                includeByDefault: true
+            }
+        ]
+        filterOnGroup: "shown"
+    }
+    // Rows come and go (an analysis, an answer): the folds hold, once the
+    // view has them.
+    Connections {
+        target: root.controller.rows
+        function onModelReset() { Qt.callLater(root.applyFolds); }
+        function onRowsInserted() { Qt.callLater(root.applyFolds); }
+        function onRowsRemoved() { Qt.callLater(root.applyFolds); }
+    }
     // RekordboxExportSyncListModel::Section's order.
     readonly property var sectionOrder: ["conflicts", "playlists", "tracksToAdd", "tracksToRemove", "membership",
         "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept", "notAdded"]
@@ -102,10 +174,10 @@ Page {
     }
     // What the three chips mean, under the intro, each chip as rows show it.
     readonly property var directionLegend: [
-        {direction: "to Engine", text: "Written into the Engine library so it matches rekordbox"},
+        {direction: "to Engine", text: "Will write into the Engine library so it matches rekordbox"},
         {direction: "back to rekordbox",
-         text: "Cues or ratings Seabass had put on the rekordbox side that the export dropped, going back"},
-        {direction: "kept", text: "Engine's own, nothing is written"},
+         text: "Cues or ratings Seabass had put on the rekordbox side that the export dropped will go back onto it"},
+        {direction: "kept", text: "Engine's own, nothing will be written"},
     ]
 
     // What the overview bar draws, left to right: new, changed, removed,
@@ -157,16 +229,6 @@ Page {
     }
 
     readonly property bool idle: !root.controller.busy && !root.controller.writing
-    // A run with no earlier record says once what happens to what is left
-    // undecided: it is recorded as it stands, so it counts as Engine's own.
-    readonly property string introLine: {
-        const intro = root.controller.introText;
-        if (intro.length === 0) {
-            return "";
-        }
-        return intro + "." + (root.controller.hasBaseline ? ""
-            : " Items you leave undecided here count as Engine's own from now on.");
-    }
 
     function directionColor(direction) {
         if (direction === "to Engine") {
@@ -291,6 +353,17 @@ Page {
                               + "in step with Engine."
                     }
 
+                    // What the proposal does, in one plain sentence, so a
+                    // reader can check it makes sense before reading on.
+                    Label {
+                        objectName: "summaryLabel"
+                        Layout.fillWidth: true
+                        visible: root.controller.analyzed
+                        wrapMode: Text.WordWrap
+                        color: Theme.text
+                        text: root.controller.summaryText
+                    }
+
                     Label {
                         id: introLabel
                         objectName: "introLabel"
@@ -298,7 +371,7 @@ Page {
                         visible: text.length > 0
                         wrapMode: Text.WordWrap
                         color: Theme.textMuted
-                        text: root.introLine
+                        text: root.controller.introText
                     }
 
                     // What the chips say, one line each, the chip as rows
@@ -335,87 +408,6 @@ Page {
                         }
                     }
 
-                    // What the proposal holds, drawn to scale, in the
-                    // idiom of SpaceReclaimBar: the same ground, the same
-                    // height, a legend so nothing rests on colour alone.
-                    ColumnLayout {
-                        objectName: "overview"
-                        Layout.fillWidth: true
-                        Layout.topMargin: Theme.tightSpacing
-                        spacing: 0
-                        visible: root.controller.analyzed && root.overviewTotal > 0
-
-                        Item {
-                            objectName: "overviewBar"
-                            Layout.fillWidth: true
-                            implicitHeight: 26
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 3
-                                color: Theme.groupBackground
-                                border.color: Theme.borderSubtle
-                                border.width: 1
-                            }
-                            Row {
-                                id: overviewSegmentsRow
-                                anchors.fill: parent
-                                anchors.margins: 1
-                                spacing: 2
-                                function span(count) {
-                                    return count > 0 && root.overviewTotal > 0
-                                        ? Math.max(2, width * (count / root.overviewTotal) - 2) : 0;
-                                }
-                                Repeater {
-                                    model: root.overviewSegments
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        objectName: "overviewSegment_" + modelData.key
-                                        width: overviewSegmentsRow.span(modelData.count)
-                                        height: parent.height
-                                        radius: 2
-                                        color: modelData.fill
-                                        border.color: Theme.good
-                                        border.width: modelData.outline ? 1 : 0
-                                        visible: width > 0
-                                    }
-                                }
-                            }
-                        }
-
-                        Flow {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 10
-                            spacing: 18
-                            Repeater {
-                                model: root.overviewSegments
-                                delegate: Row {
-                                    id: swatchRow
-                                    required property var modelData
-                                    objectName: "overviewLegend_" + modelData.key
-                                    // A category with nothing in it is left out.
-                                    visible: modelData.count > 0
-                                    spacing: 7
-                                    readonly property int count: modelData.count
-                                    Rectangle {
-                                        width: 10
-                                        height: 10
-                                        radius: 2
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        color: swatchRow.modelData.fill
-                                        border.color: swatchRow.modelData.outline ? Theme.good : Theme.borderSubtle
-                                        border.width: 1
-                                    }
-                                    Label {
-                                        objectName: "overviewLegendText"
-                                        text: swatchRow.modelData.count + " " + swatchRow.modelData.label
-                                        font.pointSize: Theme.fontSmall
-                                        color: Theme.textMuted
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -495,6 +487,102 @@ Page {
                     onClicked: root.controller.stageSelected()
                 }
             }
+
+            // What the proposal holds, drawn to scale, in the
+            // idiom of SpaceReclaimBar: the same ground, the same
+            // height, a legend so nothing rests on colour alone.
+            // Under the counts, and it stays when the header folds:
+            // slim then, without its legend, as Clean Up
+            // Duplicates' space bar does (SpaceReclaimBar's
+            // compactness: 26 down to Theme.tightSpacing).
+            ColumnLayout {
+                objectName: "overview"
+                Layout.fillWidth: true
+                spacing: 0
+                visible: root.controller.analyzed && root.overviewTotal > 0
+
+                Item {
+                    objectName: "overviewBar"
+                    Layout.fillWidth: true
+                    implicitHeight: 26 + (Theme.tightSpacing - 26) * headerCollapse.progress
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 3
+                        color: Theme.groupBackground
+                        border.color: Theme.borderSubtle
+                        border.width: 1
+                    }
+                    Row {
+                        id: overviewSegmentsRow
+                        anchors.fill: parent
+                        anchors.margins: 1
+                        spacing: 2
+                        function span(count) {
+                            return count > 0 && root.overviewTotal > 0
+                                ? Math.max(2, width * (count / root.overviewTotal) - 2) : 0;
+                        }
+                        Repeater {
+                            model: root.overviewSegments
+                            delegate: Rectangle {
+                                required property var modelData
+                                objectName: "overviewSegment_" + modelData.key
+                                width: overviewSegmentsRow.span(modelData.count)
+                                height: parent.height
+                                radius: 2
+                                color: modelData.fill
+                                border.color: Theme.good
+                                border.width: modelData.outline ? 1 : 0
+                                visible: width > 0
+                            }
+                        }
+                    }
+                }
+
+                // The legend folds with the header and hides once it
+                // has, so nothing jumps.
+                Item {
+                    objectName: "overviewLegend"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: (overviewLegendFlow.implicitHeight + 10) * (1 - headerCollapse.progress)
+                    visible: headerCollapse.progress < 1
+                    opacity: 1 - headerCollapse.progress
+                    clip: true
+                    Flow {
+                        id: overviewLegendFlow
+                        y: 10
+                        width: parent.width
+                        spacing: 18
+                        Repeater {
+                            model: root.overviewSegments
+                            delegate: Row {
+                                id: swatchRow
+                                required property var modelData
+                                objectName: "overviewLegend_" + modelData.key
+                                // A category with nothing in it is left out.
+                                visible: modelData.count > 0
+                                spacing: 7
+                                readonly property int count: modelData.count
+                                Rectangle {
+                                    width: 10
+                                    height: 10
+                                    radius: 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: swatchRow.modelData.fill
+                                    border.color: swatchRow.modelData.outline ? Theme.good : Theme.borderSubtle
+                                    border.width: 1
+                                }
+                                Label {
+                                    objectName: "overviewLegendText"
+                                    text: swatchRow.modelData.count + " " + swatchRow.modelData.label
+                                    font.pointSize: Theme.fontSmall
+                                    color: Theme.textMuted
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -545,7 +633,7 @@ Page {
             interactive: contentHeight > height
             clip: true
             reuseItems: true
-            model: root.controller.rows
+            model: rowsModel
             bottomMargin: editHost.saveClearance
             ScrollBar.vertical: BigScrollBar {}
             // BigScrollBar overlays the list, so rows stop short of it.
@@ -563,260 +651,144 @@ Page {
                 readonly property bool conflicts: section === "conflicts"
                 // Room above every section but the list's first.
                 readonly property real gapAbove: section === root.firstSection ? 0 : Theme.sectionSpacing
+                readonly property bool collapsed: root.isCollapsed(section)
                 width: rowsList.delegateWidth
-                height: gapAbove + headerRow.implicitHeight + Theme.tightSpacing
+                height: gapAbove + headerColumn.implicitHeight + Theme.tightSpacing
 
-                RowLayout {
-                    id: headerRow
+                ColumnLayout {
+                    id: headerColumn
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: Theme.tightSpacing
-                    spacing: 0
-                    // The rows' checkbox slot: the title stands over their
-                    // chips. None where a tick writes nothing, so that
-                    // title is on the page's left line.
-                    Item {
-                        visible: sectionHeader.writable
-                        Layout.preferredWidth: root.checkSlotWidth
-                        Layout.alignment: Qt.AlignVCenter
-                        implicitHeight: sectionCheck.implicitHeight
-                        SeabassCheckBox {
-                            id: sectionCheck
-                            objectName: "sectionCheck_" + sectionHeader.section
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: sectionHeader.writable
-                            padding: 0
-                            enabled: root.idle
-                            // Selected when every row of the section is.
-                            checked: sectionHeader.total > 0 && sectionHeader.ticked === sectionHeader.total
-                            ToolTip.visible: hovered
-                            ToolTip.text: checked ? "Deselect every row of this section" : "Select every row of this section"
-                            onToggled: {
-                                root.controller.setSectionIncluded(sectionHeader.section, checked);
-                                // The click broke the binding; the counts decide.
-                                sectionCheck.checked = Qt.binding(() => sectionHeader.total > 0
-                                    && sectionHeader.ticked === sectionHeader.total);
-                            }
-                        }
-                    }
-                    Item {
-                        visible: sectionHeader.writable
-                        Layout.preferredWidth: root.coverSlotWidth
-                    }
-                    Subtitle {
-                        objectName: "sectionTitle"
-                        Layout.alignment: Qt.AlignBaseline
-                        text: root.sectionTitles[sectionHeader.section] || sectionHeader.section
-                    }
-                    Label {
-                        objectName: "sectionCount"
-                        Layout.alignment: Qt.AlignBaseline
-                        Layout.leftMargin: Theme.tightSpacing
-                        text: sectionHeader.total
-                        font.family: Theme.dataFamily
-                        color: Theme.textMuted
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        Layout.alignment: Qt.AlignBaseline
-                        Layout.leftMargin: Theme.rowSpacing
-                        horizontalAlignment: Text.AlignRight
-                        elide: Text.ElideRight
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        text: root.sectionNotes[sectionHeader.section] || ""
-                    }
-                    // Every conflict answered at once, answered ones too,
-                    // or every answer taken back.
-                    Button {
-                        objectName: "rekordboxSideForAllButton"
-                        visible: sectionHeader.conflicts
-                        Layout.leftMargin: Theme.rowSpacing
-                        Layout.alignment: Qt.AlignVCenter
-                        text: "Rekordbox's side for all"
-                        enabled: root.idle
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Take rekordbox's side on every conflict; their edits are selected in their sections"
-                        onClicked: root.controller.resolveAllConflicts(true)
-                    }
-                    Button {
-                        objectName: "engineSideForAllButton"
-                        visible: sectionHeader.conflicts
-                        Layout.leftMargin: Theme.tightSpacing
-                        Layout.alignment: Qt.AlignVCenter
-                        text: "Engine's side for all"
-                        enabled: root.idle
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Keep Engine's side on every conflict"
-                        onClicked: root.controller.resolveAllConflicts(false)
-                    }
-                    ToolButton {
-                        objectName: "clearAllChoicesButton"
-                        visible: sectionHeader.conflicts
-                        Layout.leftMargin: Theme.tightSpacing
-                        Layout.alignment: Qt.AlignVCenter
-                        text: "Clear all choices"
-                        font.pointSize: Theme.fontSmall
-                        enabled: root.idle && sectionHeader.ticked > 0
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Take back every answer: every conflict is open again"
-                        onClicked: root.controller.clearAllConflictResolutions()
-                    }
-                }
-            }
-
-            delegate: Rectangle {
-                id: row
-                required property int index
-                required property string section
-                required property string kind
-                required property string title
-                required property string artist
-                required property string detail
-                required property string reason
-                required property bool isConflict
-                required property string rekordboxChoiceLabel
-                required property string engineChoiceLabel
-                required property string resolvedSide
-                required property bool included
-                required property bool staged
-                required property string stagedDescription
-                required property string direction
-                required property bool fromConflict
-                required property var details
-                required property bool hasTrack
-                required property string artworkPath
-                required property string fallbackArtworkPath
-
-                readonly property bool writable: root.isWritable(section)
-                readonly property bool expanded: root.expandedIndex === index
-                // Where everything under the title row starts: the title's column.
-                readonly property real textIndent: root.checkSlotWidth + root.coverSlotWidth + root.chipSlotWidth
-                    + Theme.tightSpacing
-
-                width: rowsList.delegateWidth
-                implicitHeight: Math.max(rowColumn.implicitHeight, row.hasTrack ? root.coverSide : 0) + 2 * Theme.tightSpacing
-                height: implicitHeight
-                color: hover.hovered ? Theme.rowHover : (index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-                HoverHandler {
-                    id: hover
-                    cursorShape: Qt.PointingHandCursor
-                }
-                // A click on the row's text opens it; the checkbox and the
-                // buttons take their own clicks first.
-                TapHandler {
-                    objectName: "rowTap"
-                    onTapped: root.toggleExpanded(row.index)
-                }
-
-                // The track's cover, read off the GUI thread at the size it
-                // is drawn (ArtworkImage), on the square a row without one
-                // shows. A playlist's row leaves the slot empty.
-                Rectangle {
-                    objectName: "rowCoverSlot"
-                    visible: row.hasTrack
-                    x: root.checkSlotWidth
-                    y: Theme.tightSpacing
-                    width: root.coverSide
-                    height: root.coverSide
-                    radius: 2
-                    // Outlined: the surface is the odd rows' own tone.
-                    color: Theme.surface
-                    border.color: Theme.borderSubtle
-                    border.width: 1
-                    ArtworkImage {
-                        objectName: "rowArtwork"
-                        anchors.fill: parent
-                        source: row.artworkPath
-                        fallbackSource: row.fallbackArtworkPath
-                    }
-                }
-
-                ColumnLayout {
-                    id: rowColumn
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.topMargin: Theme.tightSpacing
-                    spacing: 2
+                    spacing: Theme.tightSpacing
 
                     RowLayout {
+                        id: headerRow
                         Layout.fillWidth: true
                         spacing: 0
+                        // The rows' checkbox slot: the title stands over their
+                        // chips. None where a tick writes nothing, so that
+                        // title is on the page's left line.
                         Item {
+                            visible: sectionHeader.writable
                             Layout.preferredWidth: root.checkSlotWidth
                             Layout.alignment: Qt.AlignVCenter
-                            implicitHeight: rowCheck.implicitHeight
+                            implicitHeight: sectionCheck.implicitHeight
                             SeabassCheckBox {
-                                id: rowCheck
-                                objectName: "rowCheck"
-                                visible: row.writable
+                                id: sectionCheck
+                                objectName: "sectionCheck_" + sectionHeader.section
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: sectionHeader.writable
                                 padding: 0
                                 enabled: root.idle
-                                checked: row.included
+                                // Selected when every row of the section is.
+                                checked: sectionHeader.total > 0 && sectionHeader.ticked === sectionHeader.total
                                 ToolTip.visible: hovered
-                                ToolTip.text: row.included ? "Leave this out" : "Include this when staging"
+                                ToolTip.text: checked ? "Deselect every row of this section" : "Select every row of this section"
                                 onToggled: {
-                                    root.controller.setIncluded(row.index, checked);
-                                    rowCheck.checked = Qt.binding(() => row.included);
+                                    root.controller.setSectionIncluded(sectionHeader.section, checked);
+                                    // The click broke the binding; the counts decide.
+                                    sectionCheck.checked = Qt.binding(() => sectionHeader.total > 0
+                                        && sectionHeader.ticked === sectionHeader.total);
                                 }
                             }
                         }
-                        // The cover's slot; the cover itself is drawn over
-                        // it below, two lines tall.
                         Item {
+                            visible: sectionHeader.writable
                             Layout.preferredWidth: root.coverSlotWidth
                         }
-                        Item {
-                            Layout.preferredWidth: root.chipSlotWidth
-                            Layout.alignment: Qt.AlignVCenter
-                            implicitHeight: chip.implicitHeight
-                            StatusBadge {
-                                id: chip
-                                objectName: "directionChip"
-                                visible: row.direction.length > 0
-                                label: row.direction
-                                badgeColor: root.directionColor(row.direction)
+                        // The title, and its count, fold the section open or
+                        // shut, as the chevron does.
+                        Subtitle {
+                            id: sectionTitle
+                            objectName: "sectionTitle"
+                            Layout.alignment: Qt.AlignBaseline
+                            text: root.sectionTitles[sectionHeader.section] || sectionHeader.section
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler {
+                                objectName: "sectionTitleTap"
+                                onTapped: root.toggleSection(sectionHeader.section)
                             }
                         }
                         Label {
-                            objectName: "rowTitle"
+                            objectName: "sectionCount"
+                            Layout.alignment: Qt.AlignBaseline
                             Layout.leftMargin: Theme.tightSpacing
-                            Layout.fillWidth: true
-                            // A short title is never cut for the detail
-                            // beside it; a long one gives way past a third.
-                            Layout.minimumWidth: Math.min(implicitWidth, rowsList.width / 3)
-                            elide: Text.ElideRight
-                            textFormat: Text.PlainText
-                            font.bold: true
-                            text: row.title
-                        }
-                        Label {
-                            objectName: "rowArtist"
-                            Layout.maximumWidth: rowsList.width * 0.25
-                            visible: row.artist.length > 0
-                            Layout.leftMargin: Theme.rowSpacing
-                            elide: Text.ElideRight
-                            textFormat: Text.PlainText
-                            color: Theme.textMuted
-                            text: row.artist
-                        }
-                        Label {
-                            objectName: "rowDetail"
-                            Layout.maximumWidth: rowsList.width * 0.3
-                            visible: row.detail.length > 0
-                            Layout.leftMargin: Theme.rowSpacing
-                            elide: Text.ElideMiddle
-                            textFormat: Text.PlainText
+                            text: sectionHeader.total
                             font.family: Theme.dataFamily
-                            font.pointSize: Theme.fontSmall
                             color: Theme.textMuted
-                            text: row.detail
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: root.toggleSection(sectionHeader.section) }
                         }
+                        InfoButton {
+                            objectName: "conflictInfoButton"
+                            visible: sectionHeader.conflicts
+                            Layout.leftMargin: Theme.tightSpacing
+                            Layout.alignment: Qt.AlignVCenter
+                            explanationTitle: "Picking a side"
+                            summaryText: root.conflictExplanation
+                            explanationText: "Seabass cannot tell which library is right about these, so it asks.\n\n"
+                                + "Open a conflict to see, under each button's words, every line that answer writes. "
+                                + "An answer's edits are selected in their own sections and staged with the rest."
+                        }
+                        Label {
+                            objectName: "sectionNote"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.alignment: Qt.AlignBaseline
+                            Layout.leftMargin: Theme.rowSpacing
+                            horizontalAlignment: Text.AlignRight
+                            elide: Text.ElideRight
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                            text: root.sectionNotes[sectionHeader.section] || ""
+                        }
+                        // Every conflict answered at once, answered ones too,
+                        // or every answer taken back.
+                        Button {
+                            objectName: "rekordboxSideForAllButton"
+                            visible: sectionHeader.conflicts
+                            Layout.leftMargin: Theme.rowSpacing
+                            Layout.alignment: Qt.AlignVCenter
+                            text: "Rekordbox's side for all"
+                            enabled: root.idle
+                            ToolTip.visible: hovered
+                            // Named, so a test can read what the tip says.
+                            readonly property string toolTipText: "Answer every conflict with rekordbox's side; the "
+                                + "edits are selected in their sections. " + root.conflictExplanation
+                            ToolTip.text: toolTipText
+                            onClicked: root.controller.resolveAllConflicts(true)
+                        }
+                        Button {
+                            objectName: "engineSideForAllButton"
+                            visible: sectionHeader.conflicts
+                            Layout.leftMargin: Theme.tightSpacing
+                            Layout.alignment: Qt.AlignVCenter
+                            text: "Engine's side for all"
+                            enabled: root.idle
+                            ToolTip.visible: hovered
+                            readonly property string toolTipText: "Answer every conflict with Engine's side. "
+                                + root.conflictExplanation
+                            ToolTip.text: toolTipText
+                            onClicked: root.controller.resolveAllConflicts(false)
+                        }
+                        ToolButton {
+                            objectName: "clearAllChoicesButton"
+                            visible: sectionHeader.conflicts
+                            Layout.leftMargin: Theme.tightSpacing
+                            Layout.alignment: Qt.AlignVCenter
+                            text: "Clear all choices"
+                            font.pointSize: Theme.fontSmall
+                            enabled: root.idle && sectionHeader.ticked > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Take back every answer: every conflict is open again"
+                            onClicked: root.controller.clearAllConflictResolutions()
+                        }
+                        // Folds the section open or shut, in the rows'
+                        // chevron column.
                         IconToolButton {
-                            objectName: "expandButton"
+                            objectName: "sectionChevron"
                             Layout.leftMargin: Theme.tightSpacing
                             Layout.rightMargin: Theme.tightSpacing
                             Layout.alignment: Qt.AlignVCenter
@@ -824,107 +796,316 @@ Page {
                             implicitHeight: Theme.iconSizeSmall
                             padding: 0
                             flat: true
-                            iconName: row.expanded ? "arrow-down" : "arrow-right"
+                            iconName: sectionHeader.collapsed ? "arrow-right" : "arrow-down"
                             iconSize: Theme.iconSizeSmall * 0.5
                             iconColor: Theme.textMuted
-                            text: row.expanded ? "Hide details" : "Show details"
+                            text: sectionHeader.collapsed ? "Show this section" : "Hide this section"
                             ToolTip.visible: hovered
-                            ToolTip.text: row.expanded ? "Hide what happens to this" : "Show exactly what happens to this"
-                            onClicked: root.toggleExpanded(row.index)
+                            ToolTip.text: sectionHeader.collapsed ? "Show this section's rows" : "Hide this section's rows"
+                            onClicked: root.toggleSection(sectionHeader.section)
                         }
                     }
 
+                    // One line over the conflicts; the help says what the
+                    // two sides mean.
                     Label {
-                        objectName: "rowReason"
+                        objectName: "conflictExplanation"
+                        visible: sectionHeader.conflicts
                         Layout.fillWidth: true
-                        Layout.leftMargin: row.textIndent
                         Layout.rightMargin: Theme.tightSpacing
-                        visible: row.reason.length > 0
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
                         elide: Text.ElideRight
-                        textFormat: Text.PlainText
                         color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        text: row.reason
+                        text: "Each button says what it writes. Nothing is written for a conflict you leave open."
+                    }
+                }
+            }
+
+            // A row of the list (rowsModel's delegate).
+            Component {
+                id: rowDelegate
+                Rectangle {
+                    id: row
+                    required property int index
+                    // The row in the controller's model: rows of a folded
+                    // section are left out of the view (rowsModel), so the
+                    // view's index is not it.
+                    readonly property int modelRow: DelegateModel.itemsIndex
+                    required property string section
+                    required property string kind
+                    required property string title
+                    required property string artist
+                    required property string detail
+                    required property string reason
+                    required property bool isConflict
+                    required property string rekordboxChoiceLabel
+                    required property string engineChoiceLabel
+                    required property string resolvedSide
+                    required property bool included
+                    required property bool staged
+                    required property string stagedDescription
+                    required property string direction
+                    required property bool fromConflict
+                    required property var details
+                    required property bool hasTrack
+                    required property string artworkPath
+                    required property string fallbackArtworkPath
+
+                    readonly property bool writable: root.isWritable(section)
+                    readonly property bool expanded: root.expandedIndex === modelRow
+                    // Where everything under the title row starts: the title's column.
+                    readonly property real textIndent: root.checkSlotWidth + root.coverSlotWidth + root.chipSlotWidth
+                        + Theme.tightSpacing
+
+                    // Its section folded (root.collapsedSections): no height,
+                    // not shown, nothing built inside.
+                    readonly property bool folded: root.isCollapsed(section)
+
+                    width: rowsList.delegateWidth
+                    implicitHeight: row.folded ? 0 : rowContent.implicitHeight
+                    height: implicitHeight
+                    visible: !row.folded
+                    color: hover.hovered ? Theme.rowHover : (row.modelRow % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
+                    HoverHandler {
+                        id: hover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    // A click on the row's text opens it; the checkbox and the
+                    // buttons take their own clicks first.
+                    TapHandler {
+                        objectName: "rowTap"
+                        onTapped: root.toggleExpanded(row.modelRow)
                     }
 
-                    // A conflict: one button per side, the chosen one
-                    // highlighted, and the answer can be taken back.
-                    RowLayout {
-                        objectName: "conflictChoices"
-                        visible: row.isConflict
-                        Layout.leftMargin: row.textIndent
-                        Layout.rightMargin: Theme.tightSpacing
-                        Layout.fillWidth: true
-                        spacing: Theme.tightSpacing
-                        Button {
-                            objectName: "rekordboxChoiceButton"
-                            visible: row.rekordboxChoiceLabel.length > 0
-                            text: row.rekordboxChoiceLabel
-                            highlighted: row.resolvedSide === "rekordbox"
-                            enabled: root.idle
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Take rekordbox's side; its edits are selected in their sections"
-                            onClicked: root.controller.resolveConflict(row.index, true)
-                        }
-                        Button {
-                            objectName: "engineChoiceButton"
-                            visible: row.engineChoiceLabel.length > 0
-                            text: row.engineChoiceLabel
-                            highlighted: row.resolvedSide === "engine"
-                            enabled: root.idle
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Keep Engine's side"
-                            onClicked: root.controller.resolveConflict(row.index, false)
-                        }
-                        Label {
-                            objectName: "chosenSideLabel"
-                            visible: row.resolvedSide.length > 0
-                            Layout.leftMargin: Theme.rowSpacing
-                            color: Theme.good
-                            font.pointSize: Theme.fontSmall
-                            text: row.resolvedSide === "rekordbox" ? "Rekordbox's side chosen" : "Engine's side chosen"
-                        }
-                        ToolButton {
-                            objectName: "undoChoiceButton"
-                            visible: row.resolvedSide.length > 0
-                            text: "Undo choice"
-                            font.pointSize: Theme.fontSmall
-                            enabled: root.idle
-                            onClicked: root.controller.clearConflictResolution(row.index)
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
+                    // The row itself, built only while its section is open: a
+                    // folded section's rows are this shell alone, height 0 and
+                    // hidden, so even Engine's own (a thousand rows and more)
+                    // stay light when they all fit in the view at once.
+                    Loader {
+                        id: rowContent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        active: !row.folded
+                        sourceComponent: Item {
+                            implicitHeight: Math.max(rowColumn.implicitHeight, row.hasTrack ? root.coverSide : 0)
+                                + 2 * Theme.tightSpacing
+                            // The track's cover, read off the GUI thread at the size it
+                            // is drawn (ArtworkImage), on the square a row without one
+                            // shows. A playlist's row leaves the slot empty.
+                            Rectangle {
+                                objectName: "rowCoverSlot"
+                                visible: row.hasTrack
+                                x: root.checkSlotWidth
+                                y: Theme.tightSpacing
+                                width: root.coverSide
+                                height: root.coverSide
+                                radius: 2
+                                // Outlined: the surface is the odd rows' own tone.
+                                color: Theme.surface
+                                border.color: Theme.borderSubtle
+                                border.width: 1
+                                ArtworkImage {
+                                    objectName: "rowArtwork"
+                                    anchors.fill: parent
+                                    source: row.artworkPath
+                                    fallbackSource: row.fallbackArtworkPath
+                                }
+                            }
 
-                    // Opened: exactly what the save does with this row,
-                    // one line each (the model's details).
-                    Label {
-                        objectName: "rowDetails"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: row.textIndent
-                        Layout.rightMargin: Theme.tightSpacing
-                        Layout.topMargin: Theme.tightSpacing
-                        Layout.bottomMargin: Theme.tightSpacing
-                        visible: row.expanded
-                        wrapMode: Text.WordWrap
-                        textFormat: Text.PlainText
-                        font.family: Theme.dataFamily
-                        font.pointSize: Theme.fontSmall
-                        text: row.expanded ? row.details.join("\n") : ""
-                    }
+                            ColumnLayout {
+                                id: rowColumn
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.topMargin: Theme.tightSpacing
+                                spacing: 2
 
-                    Label {
-                        objectName: "stagedLabel"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: row.textIndent
-                        Layout.rightMargin: Theme.tightSpacing
-                        visible: row.staged
-                        elide: Text.ElideRight
-                        textFormat: Text.PlainText
-                        color: Theme.warnText
-                        font.pointSize: Theme.fontSmall
-                        text: "Staged: " + row.stagedDescription
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 0
+                                    Item {
+                                        Layout.preferredWidth: root.checkSlotWidth
+                                        Layout.alignment: Qt.AlignVCenter
+                                        implicitHeight: rowCheck.implicitHeight
+                                        SeabassCheckBox {
+                                            id: rowCheck
+                                            objectName: "rowCheck"
+                                            visible: row.writable
+                                            padding: 0
+                                            enabled: root.idle
+                                            checked: row.included
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: row.included ? "Leave this out" : "Include this when staging"
+                                            onToggled: {
+                                                root.controller.setIncluded(row.modelRow, checked);
+                                                rowCheck.checked = Qt.binding(() => row.included);
+                                            }
+                                        }
+                                    }
+                                    // The cover's slot; the cover itself is drawn over
+                                    // it below, two lines tall.
+                                    Item {
+                                        Layout.preferredWidth: root.coverSlotWidth
+                                    }
+                                    Item {
+                                        Layout.preferredWidth: root.chipSlotWidth
+                                        Layout.alignment: Qt.AlignVCenter
+                                        implicitHeight: chip.implicitHeight
+                                        StatusBadge {
+                                            id: chip
+                                            objectName: "directionChip"
+                                            visible: row.direction.length > 0
+                                            label: row.direction
+                                            badgeColor: root.directionColor(row.direction)
+                                        }
+                                    }
+                                    Label {
+                                        objectName: "rowTitle"
+                                        Layout.leftMargin: Theme.tightSpacing
+                                        Layout.fillWidth: true
+                                        // A short title is never cut for the detail
+                                        // beside it; a long one gives way past a third.
+                                        Layout.minimumWidth: Math.min(implicitWidth, rowsList.width / 3)
+                                        elide: Text.ElideRight
+                                        textFormat: Text.PlainText
+                                        font.bold: true
+                                        text: row.title
+                                    }
+                                    Label {
+                                        objectName: "rowArtist"
+                                        Layout.maximumWidth: rowsList.width * 0.25
+                                        visible: row.artist.length > 0
+                                        Layout.leftMargin: Theme.rowSpacing
+                                        elide: Text.ElideRight
+                                        textFormat: Text.PlainText
+                                        color: Theme.textMuted
+                                        text: row.artist
+                                    }
+                                    Label {
+                                        objectName: "rowDetail"
+                                        Layout.maximumWidth: rowsList.width * 0.3
+                                        visible: row.detail.length > 0
+                                        Layout.leftMargin: Theme.rowSpacing
+                                        elide: Text.ElideMiddle
+                                        textFormat: Text.PlainText
+                                        font.family: Theme.dataFamily
+                                        font.pointSize: Theme.fontSmall
+                                        color: Theme.textMuted
+                                        text: row.detail
+                                    }
+                                    IconToolButton {
+                                        objectName: "expandButton"
+                                        Layout.leftMargin: Theme.tightSpacing
+                                        Layout.rightMargin: Theme.tightSpacing
+                                        Layout.alignment: Qt.AlignVCenter
+                                        implicitWidth: Theme.iconSizeSmall
+                                        implicitHeight: Theme.iconSizeSmall
+                                        padding: 0
+                                        flat: true
+                                        iconName: row.expanded ? "arrow-down" : "arrow-right"
+                                        iconSize: Theme.iconSizeSmall * 0.5
+                                        iconColor: Theme.textMuted
+                                        text: row.expanded ? "Hide details" : "Show details"
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: row.expanded ? "Hide what happens to this" : "Show exactly what happens to this"
+                                        onClicked: root.toggleExpanded(row.modelRow)
+                                    }
+                                }
+
+                                Label {
+                                    objectName: "rowReason"
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: row.textIndent
+                                    Layout.rightMargin: Theme.tightSpacing
+                                    visible: row.reason.length > 0
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                    textFormat: Text.PlainText
+                                    color: Theme.textMuted
+                                    font.pointSize: Theme.fontSmall
+                                    text: row.reason
+                                }
+
+                                // A conflict: one button per side, the chosen one
+                                // highlighted, and the answer can be taken back.
+                                RowLayout {
+                                    objectName: "conflictChoices"
+                                    visible: row.isConflict
+                                    Layout.leftMargin: row.textIndent
+                                    Layout.rightMargin: Theme.tightSpacing
+                                    Layout.fillWidth: true
+                                    spacing: Theme.tightSpacing
+                                    Button {
+                                        objectName: "rekordboxChoiceButton"
+                                        visible: row.rekordboxChoiceLabel.length > 0
+                                        text: row.rekordboxChoiceLabel
+                                        highlighted: row.resolvedSide === "rekordbox"
+                                        enabled: root.idle
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Take rekordbox's side; its edits are selected in their sections"
+                                        onClicked: root.controller.resolveConflict(row.modelRow, true)
+                                    }
+                                    Button {
+                                        objectName: "engineChoiceButton"
+                                        visible: row.engineChoiceLabel.length > 0
+                                        text: row.engineChoiceLabel
+                                        highlighted: row.resolvedSide === "engine"
+                                        enabled: root.idle
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Keep Engine's side"
+                                        onClicked: root.controller.resolveConflict(row.modelRow, false)
+                                    }
+                                    Label {
+                                        objectName: "chosenSideLabel"
+                                        visible: row.resolvedSide.length > 0
+                                        Layout.leftMargin: Theme.rowSpacing
+                                        color: Theme.good
+                                        font.pointSize: Theme.fontSmall
+                                        text: row.resolvedSide === "rekordbox" ? "Rekordbox's side chosen" : "Engine's side chosen"
+                                    }
+                                    ToolButton {
+                                        objectName: "undoChoiceButton"
+                                        visible: row.resolvedSide.length > 0
+                                        text: "Undo choice"
+                                        font.pointSize: Theme.fontSmall
+                                        enabled: root.idle
+                                        onClicked: root.controller.clearConflictResolution(row.modelRow)
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
+
+                                // Opened: exactly what the save does with this row,
+                                // one line each (the model's details).
+                                Label {
+                                    objectName: "rowDetails"
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: row.textIndent
+                                    Layout.rightMargin: Theme.tightSpacing
+                                    Layout.topMargin: Theme.tightSpacing
+                                    Layout.bottomMargin: Theme.tightSpacing
+                                    visible: row.expanded
+                                    wrapMode: Text.WordWrap
+                                    textFormat: Text.PlainText
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                    text: row.expanded ? row.details.join("\n") : ""
+                                }
+
+                                Label {
+                                    objectName: "stagedLabel"
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: row.textIndent
+                                    Layout.rightMargin: Theme.tightSpacing
+                                    visible: row.staged
+                                    elide: Text.ElideRight
+                                    textFormat: Text.PlainText
+                                    color: Theme.warnText
+                                    font.pointSize: Theme.fontSmall
+                                    text: "Staged: " + row.stagedDescription
+                                }
+                            }
+                        }
                     }
                 }
             }

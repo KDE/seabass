@@ -272,7 +272,9 @@ struct EngineUpdateConflict
 {
     EngineUpdateItemHeader header;
     std::string pathKey;  // for a track's items; empty for a playlist's
-    std::string rekordboxSide;  // one line each, for the two buttons
+    // The two buttons, each what its choice does, in a DJ's words ("Remove
+    // it from Engine", "Keep it in Engine"); both empty for a refusal.
+    std::string rekordboxSide;
     std::string engineSide;
     std::vector<EngineUpdateEdit> rekordboxChoice;
     std::vector<EngineUpdateEdit> engineChoice;
