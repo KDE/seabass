@@ -9,6 +9,7 @@
 #include <system_error>
 
 #include "application/path_key.hpp"
+#include "application/use_cases/plan_engine_update.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -22,18 +23,7 @@ namespace fs = std::filesystem;
 
 std::string baselineStickRelativePath(const std::string &stickRoot, const std::string &filePath)
 {
-    if (stickRoot.empty() || filePath.empty()) {
-        return {};
-    }
-    const fs::path relative =
-        pathFromUtf8(filePath).lexically_normal().lexically_relative(pathFromUtf8(stickRoot).lexically_normal());
-    const std::string text = pathToGenericUtf8(relative);
-    // ".." means the file is not on this stick; such a path must not
-    // become a key.
-    if (text.empty() || text == "." || text.rfind("..", 0) == 0) {
-        return {};
-    }
-    return text;
+    return application::stickRelativePathOf(filePath, stickRoot);
 }
 
 std::string baselinePathKey(const std::string &stickRelativePath)

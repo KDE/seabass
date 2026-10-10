@@ -42,12 +42,6 @@ std::size_t depth(const std::string &path)
     return static_cast<std::size_t>(std::count(path.begin(), path.end(), '/'));
 }
 
-// Unrated and zero stars are one thing at the storage level (track.hpp).
-std::optional<int> effectiveRating(std::optional<int> rating)
-{
-    return rating && *rating > 0 ? rating : std::nullopt;
-}
-
 std::string starsText(std::optional<int> rating)
 {
     if (!rating) {
@@ -148,20 +142,6 @@ std::string places(const std::vector<CuePoint> &cues)
 std::string memoryName(const CuePoint &cue)
 {
     return std::string(cue.isLoop ? "the memory loop at " : "the memory cue at ") + formatCuePosition(cue.positionMs);
-}
-
-// First occurrence of each key, in order. A track listed twice in one
-// playlist is planned by its first entry.
-std::vector<std::string> firstOccurrences(const std::vector<std::string> &keys)
-{
-    std::vector<std::string> out;
-    std::set<std::string> seen;
-    for (const auto &key : keys) {
-        if (seen.insert(key).second) {
-            out.push_back(key);
-        }
-    }
-    return out;
 }
 
 std::vector<std::string> keepOnly(const std::vector<std::string> &keys, const std::set<std::string> &allowed)
@@ -466,13 +446,7 @@ private:
             auto &count = eCount[playlist.path];
             count = std::max(count, playlist.countAtPath);
         }
-        struct Entry
-        {
-            int position;
-            std::size_t seen;
-            std::string key;
-        };
-        std::map<std::string, std::vector<Entry>> entries;
+        std::map<std::string, std::vector<MemberEntry>> entries;
         std::size_t seen = 0;
         for (const auto &track : engine) {
             const auto it = keyOfEngineRow.find(&track);
@@ -480,24 +454,13 @@ private:
                 continue;
             }
             for (const auto &membership : track.playlists) {
-                entries[membership.name].push_back(Entry{membership.position, seen++, it->second});
+                entries[membership.name].push_back(MemberEntry{membership.position, seen++, it->second});
             }
         }
         for (auto &[path, list] : entries) {
-            std::sort(list.begin(), list.end(), [](const Entry &a, const Entry &b) {
-                const bool aUnknown = a.position < 0;
-                const bool bUnknown = b.position < 0;
-                if (aUnknown != bUnknown) {
-                    return bUnknown;
-                }
-                if (!aUnknown && a.position != b.position) {
-                    return a.position < b.position;
-                }
-                return a.seen < b.seen;
-            });
             auto &members = eMembers[path];
-            for (const auto &entry : list) {
-                members.push_back(entry.key);
+            for (auto &key : orderedMembers(std::move(list))) {
+                members.push_back(std::move(key));
             }
         }
     }
