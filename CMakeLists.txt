@@ -3133,6 +3133,9 @@ add_executable(rekordbox_process_detector_test
 )
 target_include_directories(rekordbox_process_detector_test PRIVATE src)
 add_test(NAME rekordbox_process_detector_test COMMAND rekordbox_process_detector_test)
+# The test forks a child called "Engine DJ"; a save in any test running
+# alongside would be refused by the write guard that looks for that name.
+set_tests_properties(rekordbox_process_detector_test PROPERTIES RUN_SERIAL TRUE)
 
 add_executable(rekordbox_settings_test
     src/infrastructure/rekordbox/rekordbox_settings_fields.cpp
