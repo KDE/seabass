@@ -1115,9 +1115,13 @@ void testMetadataWords()
     edit.rekordbox.title = "Night Drive";
     edit.engine.title = "Night Drive";
     edit.rating = 3;
+    // The planner says which it is (MetadataEdit::restoresSeabassWrite);
+    // the reason alone no longer decides the words.
     edit.header.reason = d::EngineUpdateReason::ExportDropped;
+    edit.restoresSeabassWrite = true;
     const QString restore = RekordboxExportSyncController::describeMetadataWrite({edit}, false);
     edit.header.reason = d::EngineUpdateReason::OriginUnknown;
+    edit.restoresSeabassWrite = false;
     const QString overwrite = RekordboxExportSyncController::describeMetadataWrite({edit}, false);
     d::MetadataEdit comment = edit;
     comment.field = d::MetadataEdit::Field::Comment;
