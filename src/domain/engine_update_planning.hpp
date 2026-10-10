@@ -304,6 +304,12 @@ struct EngineOwnItem
     EngineUpdateItemHeader header;
     Track engine;              // the track's items
     std::string playlistPath;  // the playlist's items
+    // A playlist (or folder) only Engine has, no rekordbox playlist
+    // accounting for it, and the tracks it holds: listed on its own, it
+    // is not a change of Engine's to anything rekordbox has.
+    bool engineOnlyPlaylist = false;
+    bool folder = false;
+    int trackCount = 0;
 };
 
 struct EngineUpdateProposal

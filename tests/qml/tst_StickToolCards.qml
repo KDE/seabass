@@ -468,10 +468,10 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
-    // Two cards answer to the experimental setting, Create Engine Library
-    // and Sync after Rekordbox Export; every card that used to be gated
-    // is there with it off.
-    function test_onlyTheExperimentalCardsAnswerToTheSetting() {
+    // One card answers to the experimental setting, Create Engine Library;
+    // every card that used to be gated is there with it off, Sync after
+    // Rekordbox Export since 2026-10-10.
+    function test_onlyCreateEngineLibraryAnswersToTheSetting() {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
@@ -490,6 +490,7 @@ TestCase {
         }
         const off = makeCards(stick, "sync", {}, {appSettingsController: settings});
         compare(card(off, "Create Engine Library").visible, false, "Create Engine Library stays behind the setting");
+        // No Engine library on this stick: no Sync after Rekordbox Export.
         compare(JSON.stringify(shownTitles(off)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
 
         const on = makeCards(stick, "sync", {});
@@ -499,13 +500,14 @@ TestCase {
         const withEngine = makeCards(makeStick({}), "sync", {});
         compare(card(withEngine, "Create Engine Library").visible, false);
 
-        // Sync after Rekordbox Export: both catalogs, and the setting on.
+        // Sync after Rekordbox Export: both catalogs, whatever the setting.
         const bothOff = makeCards(makeStick({}), "sync", {}, {appSettingsController: settings});
-        compare(card(bothOff, "Sync after Rekordbox Export").visible, false,
-                "Sync after Rekordbox Export stays behind the setting");
-        compare(JSON.stringify(shownTitles(bothOff)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
+        verify(card(bothOff, "Sync after Rekordbox Export").visible, "not behind the setting");
+        compare(card(bothOff, "Sync after Rekordbox Export").experimental, false);
+        compare(JSON.stringify(shownTitles(bothOff)),
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]));
         compare(card(withEngine, "Sync after Rekordbox Export").visible, true);
-        compare(card(withEngine, "Sync after Rekordbox Export").experimental, true);
+        compare(card(withEngine, "Sync after Rekordbox Export").experimental, false);
         compare(card(on, "Sync after Rekordbox Export").visible, false, "not without an Engine library");
         const engineOnly = makeCards(makeStick({hasRekordbox: false, rekordboxPath: ""}), "sync", {});
         compare(card(engineOnly, "Sync after Rekordbox Export").visible, false, "not without a rekordbox export");

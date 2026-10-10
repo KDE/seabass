@@ -1017,6 +1017,11 @@ private:
             }
             EngineOwnItem kept;
             kept.playlistPath = playlist.path;
+            kept.engineOnlyPlaylist = true;
+            kept.folder = playlist.folder;
+            if (const auto members = eMembers.find(playlist.path); members != eMembers.end()) {
+                kept.trackCount = static_cast<int>(members->second.size());
+            }
             // No key: rekordbox has no id for a playlist it never had.
             kept.header = makeHeader({}, false, false,
                                      base ? EngineUpdateReason::EngineOwn : EngineUpdateReason::NoBaselineEngineOnly,

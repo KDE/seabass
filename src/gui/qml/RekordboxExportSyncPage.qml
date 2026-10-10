@@ -22,8 +22,8 @@ import SeabassGui
 // what the save does with it (the model's details). A conflict has no
 // checkbox: it is answered with one of its two buttons, or all of them at
 // once from the section's header, and the answer's edits appear as
-// selected rows of their own sections. Engine's own and the refused adds
-// are listed and never written.
+// selected rows of their own sections. Engine's own, the playlists only
+// Engine has and the refused adds are listed and never written.
 //
 // Selecting is not staging. "Stage Selected" hands the selected rows to
 // the controller (stageSelected), which stages them as one batch with the
@@ -84,11 +84,13 @@ Page {
         cuesToEngine: "Cues to Engine",
         restoresToRekordbox: "Cues and ratings back onto rekordbox",
         engineOwnKept: "Engine's own, kept",
+        engineOnlyPlaylists: "Playlists only Engine has",
         notAdded: "Not added",
     })
     readonly property var sectionNotes: ({
         restoresToRekordbox: "What the export dropped that Seabass had written",
-        engineOwnKept: "Kept, nothing is written",
+        engineOwnKept: "Engine's own changes. Nothing here is written; Sync Cue Points syncs them back to rekordbox.",
+        engineOnlyPlaylists: "Rekordbox has no playlist of this name; nothing is written, and nothing is removed",
         notAdded: "Rekordbox lists these, but they cannot be added; nothing is written",
     })
     // What picking a side means, in two sentences: the conflicts' help
@@ -102,9 +104,9 @@ Page {
     // The sections folded shut, by name, so a fold holds while the list is
     // analysed again after a save; for this page only, never stored. Its
     // rows stay in the model (counts and keys do not move) and fold in
-    // their delegate. Engine's own and the refused adds start folded:
-    // nothing in them needs doing.
-    property var collapsedSections: ({engineOwnKept: true, notAdded: true})
+    // their delegate. Engine's own, the playlists only Engine has and the
+    // refused adds start folded: nothing in them needs doing.
+    property var collapsedSections: ({engineOwnKept: true, engineOnlyPlaylists: true, notAdded: true})
     function isCollapsed(section) {
         return root.collapsedSections[section] === true;
     }
@@ -175,7 +177,8 @@ Page {
     }
     // RekordboxExportSyncListModel::Section's order.
     readonly property var sectionOrder: ["conflicts", "playlists", "tracksToAdd", "tracksToRemove", "membership",
-        "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept", "notAdded"]
+        "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept", "engineOnlyPlaylists",
+        "notAdded"]
     // The first section with rows: no room above its header.
     readonly property string firstSection: {
         const counts = root.controller.sectionCounts;
@@ -333,9 +336,6 @@ Page {
                     onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                     onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
                 }
-                ExperimentalBadge {
-                    Layout.alignment: Qt.AlignVCenter
-                }
                 Item { Layout.fillWidth: true }
             }
 
@@ -368,17 +368,6 @@ Page {
                             ? "Engine already matches this stick's rekordbox library."
                             : "Rekordbox has changed the library on this stick. This page brings everything back "
                               + "in step with Engine."
-                    }
-
-                    // What the proposal does, in one plain sentence, so a
-                    // reader can check it makes sense before reading on.
-                    Label {
-                        objectName: "summaryLabel"
-                        Layout.fillWidth: true
-                        visible: root.controller.analyzed
-                        wrapMode: Text.WordWrap
-                        color: Theme.text
-                        text: root.controller.summaryText
                     }
 
                     Label {
@@ -505,6 +494,15 @@ Page {
                 }
             }
 
+            // Where the bar would be, when there is nothing for it.
+            Label {
+                objectName: "overviewNothing"
+                Layout.fillWidth: true
+                visible: root.controller.analyzed && root.overviewTotal === 0
+                color: Theme.textMuted
+                text: "Nothing to add, remove or move."
+            }
+
             // What the proposal holds, drawn to scale, in the
             // idiom of SpaceReclaimBar: the same ground, the same
             // height, a legend so nothing rests on colour alone.
@@ -591,7 +589,9 @@ Page {
                                 }
                                 Label {
                                     objectName: "overviewLegendText"
-                                    text: swatchRow.modelData.count + " " + swatchRow.modelData.label
+                                    // The category said in counts of tracks and
+                                // playlists (the controller's legendTexts).
+                                text: root.controller.legendTexts[swatchRow.modelData.key] || ""
                                     font.pointSize: Theme.fontSmall
                                     color: Theme.textMuted
                                 }
@@ -759,7 +759,9 @@ Page {
                             Layout.minimumWidth: 0
                             Layout.alignment: Qt.AlignBaseline
                             Layout.leftMargin: Theme.rowSpacing
-                            horizontalAlignment: Text.AlignRight
+                            // Beside the count: what the section is, read
+                            // with its title.
+                            horizontalAlignment: Text.AlignLeft
                             elide: Text.ElideRight
                             color: Theme.textMuted
                             font.pointSize: Theme.fontSmall
