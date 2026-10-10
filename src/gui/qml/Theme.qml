@@ -574,8 +574,8 @@ QtObject {
 
     // ---- Transport -- the player's play key (PlayerBar.qml) -------
     //
-    // The key takes the form of the deck the track plays on: a wide flat
-    // key for a track from either Rekordbox catalog, a round pad for one
+    // The key takes the form of the deck the track plays on: a round pad
+    // for a track from either Rekordbox catalog, a wide flat key for one
     // from Engine. Forms and light evoke the hardware and reproduce
     // nothing of anyone's trade dress, the stance LibrarySourceToggle
     // takes with its glyphs. The pad is the height of the artwork square
@@ -595,7 +595,7 @@ QtObject {
     readonly property color transportInkOff: "#9aa5ad"
     readonly property color transportLit: "#35d97e"
     // Paused, the key gives the deck's own idle signal: the Pioneer form
-    // blinks, on and off in equal halves, once a second; the Denon pad
+    // blinks, on and off in equal halves, once a second; the Denon key
     // breathes on a sine. Both from memory of the decks, not measured.
     readonly property int transportBlinkHalfPeriod: 500
     readonly property int transportBreathHalfPeriod: 1100
