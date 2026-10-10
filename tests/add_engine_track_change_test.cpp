@@ -18,8 +18,10 @@
 // 2. Undo of that save: the backup puts m.db back byte for byte, and the
 //    undo is itself a save with both catalogs, which levels the counter
 //    again. So after Undo m.db is the fixture's in every row but the
-//    Information row's counter. The cover file stays in Artwork/, named
-//    by no row.
+//    Information row's counter. The cover file the save wrote under
+//    Artwork/ is gone again: it was declared absent before the save
+//    (BackupTarget::removeOnRestoreIfAbsent), so Undo removes it, and
+//    Artwork/ holds what it held before.
 // 3. On a copy levelled first (a stick after an earlier Seabass save),
 //    save and Undo leave m.db byte for byte as it was; and again through
 //    a scratch copy of m.db (a save with a large item count).
@@ -36,6 +38,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <set>
 
 #include <djinterop/djinterop.hpp>
 
@@ -134,6 +137,19 @@ domain::Track rekordboxRow(const testing::EngineChangeStick &stick, const std::s
     return t;
 }
 
+std::set<fs::path> artworkFiles(const testing::EngineChangeStick &stick)
+{
+    std::set<fs::path> files;
+    if (fs::exists(stick.engine / "Artwork")) {
+        for (const auto &e : fs::recursive_directory_iterator(stick.engine / "Artwork")) {
+            if (e.is_regular_file()) {
+                files.insert(e.path());
+            }
+        }
+    }
+    return files;
+}
+
 std::string information(const std::string &db)
 {
     const auto r = testing::sqlRows(db, "SELECT lastRekordBoxLibraryImportReadCounter FROM Information;");
@@ -162,6 +178,7 @@ int main(int argc, char **argv)
         assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Track;") == 1564);
         assert(testing::sqlScalar(stick.db, "SELECT max(id) FROM Track;") == 1574);
         assert(information(stick.db) == "14204");
+        const std::set<fs::path> artworkBefore = artworkFiles(stick);
 
         auto change = std::make_shared<AddEngineTrackChange>(stick.enginePath(), rekordboxRow(stick, "Added Track", true),
                                                              probe, 1);
@@ -228,11 +245,9 @@ int main(int argc, char **argv)
         }
         // The cover: one file under the real library's Artwork/.
         std::vector<fs::path> covers;
-        if (fs::exists(stick.engine / "Artwork")) {
-            for (const auto &e : fs::recursive_directory_iterator(stick.engine / "Artwork")) {
-                if (e.is_regular_file()) {
-                    covers.push_back(e.path());
-                }
+        for (const auto &file : artworkFiles(stick)) {
+            if (!artworkBefore.count(file)) {
+                covers.push_back(file);
             }
         }
         assert(covers.size() == 1 && "the cover went into Artwork/ on the stick");
@@ -265,9 +280,16 @@ int main(int argc, char **argv)
         }
         assert(information(stick.db) == "15132" && "the undo's own save levelled the counter again");
         assert(testing::fileBytes(pathFromUtf8(stick.db)) != originalBytes);
-        assert(fs::exists(covers[0]) && "the cover file stays, named by no row");
+        if (artworkFiles(stick) != artworkBefore) {
+            for (const auto &file : artworkFiles(stick)) {
+                if (!artworkBefore.count(file)) {
+                    std::cerr << "  left under Artwork/: " << pathToUtf8(file) << "\n";
+                }
+            }
+            assert(false && "after Undo no file under Artwork/ that was not there before");
+        }
         std::cout << "case 2 (Undo: every row back but the counter, which the undo's own save levels; the cover "
-                     "file stays) OK\n";
+                     "file it wrote is gone) OK\n";
     }
 
     // 3. A stick already level: save and Undo, byte for byte.

@@ -11,6 +11,7 @@
 #include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 
@@ -75,8 +76,24 @@ std::vector<BackupTarget> AddEngineTrackChange::filesToBackup(SaveContext &) con
     if (!engineRowWriteRefusal(m_enginePath).isEmpty()) {
         return {};
     }
-    return {{FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()),
-             rekordboxExportSyncOwner().toStdString()}};
+    std::vector<BackupTarget> targets{{FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()),
+                                       rekordboxExportSyncOwner().toStdString()}};
+    // The cover file apply() may write under Artwork/, by the name the
+    // image's content gives it: absent now, Undo removes it with m.db
+    // put back, rather than leaving a file no row names. A library that
+    // keeps its covers in m.db writes no file, and the target stays
+    // absent. Always the stick's own Artwork/: a scratch copy of m.db
+    // never redirects it.
+    if (!m_track.artworkPath.empty()) {
+        const std::string cover =
+            infrastructure::engine::artworkFileForImage(m_enginePath.toStdString(), m_track.artworkPath);
+        if (!cover.empty()) {
+            BackupTarget target{cover, rekordboxExportSyncOwner().toStdString()};
+            target.removeOnRestoreIfAbsent = true;
+            targets.push_back(std::move(target));
+        }
+    }
+    return targets;
 }
 
 ChangeOutcome AddEngineTrackChange::apply(SaveContext &ctx)

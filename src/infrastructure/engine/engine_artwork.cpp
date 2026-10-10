@@ -195,6 +195,30 @@ std::string artworkFileName(std::span<const std::uint8_t> hash)
     return out;
 }
 
+namespace
+{
+
+// The name and place repairArtwork() gives these image bytes as a file:
+// SHA-256 cut to 20 bytes, the width Engine's own rows use.
+fs::path artworkFileForBytes(const fs::path &artworkDir, const std::string &bytes, const std::string &extension)
+{
+    const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
+    const std::span<const std::uint8_t> hash(full.data(), 20);
+    return artworkDir / pathFromUtf8(artworkFileName(hash) + extension);
+}
+
+}  // namespace
+
+std::string artworkFileForImage(const std::string &engineLibraryPath, const std::string &imageFile)
+{
+    const std::string bytes = readWholeFile(pathFromUtf8(imageFile));
+    const std::string extension = extensionForImage(bytes);
+    if (bytes.empty() || extension.empty()) {
+        return {};
+    }
+    return pathToUtf8(artworkFileForBytes(artworkDirectory(engineLibraryPath), bytes, extension));
+}
+
 std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash, bool *anyFile,
                               bool checkBytes)
 {
@@ -1221,8 +1245,9 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
                 // 20 bytes, the width Engine's own rows use.
                 const std::span<const std::uint8_t> hash(full.data(), 20);
-                const std::string name = artworkFileName(hash);
-                const fs::path destination = artwork / pathFromUtf8(name + extension);
+                // artworkFileForImage() names it the same way, before the
+                // save, for Undo.
+                const fs::path destination = artworkFileForBytes(artwork, bytes, extension);
                 // Not "is it there" but "is it an image": an empty file at
                 // the right name is exactly what this repair exists to fix,
                 // and skipping it because something is there would write the
