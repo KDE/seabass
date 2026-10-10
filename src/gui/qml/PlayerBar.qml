@@ -19,10 +19,10 @@ Frame {
         anchors.fill: parent
         spacing: 12
 
-        // The play key, after the deck the loaded track plays on: a wide
-        // flat key for a track from either Rekordbox catalog (a CDJ's or
-        // XDJ's transport key), a round pad for one from Engine (a Prime
-        // deck's). The face stays dark; a rim and the glyph light up in
+        // The play key, after the deck the loaded track plays on: a round
+        // pad for a track from either Rekordbox catalog (a CDJ's or XDJ's
+        // play button), a wide rectangular key for one from Engine (a
+        // Prime deck's). The face stays dark; a rim and the glyph light up in
         // transport green while playing, and while paused the key gives
         // the deck's own idle signal, a blink or a breath. Switching
         // library morphs one form into the other. Sizes and colours are
@@ -42,13 +42,13 @@ Frame {
             // How lit the rim and glyph are, 0 to 1. Full while playing;
             // paused, the animations below own it.
             property real light: root.controller.playing ? 1 : 0
-            property real keyWidth: pioneerForm ? Theme.transportKeyWidth : Theme.transportPadSize
+            property real keyWidth: pioneerForm ? Theme.transportPadSize : Theme.transportKeyWidth
             Behavior on keyWidth {
                 NumberAnimation { duration: Theme.arrivalTransitionDuration; easing.type: Easing.InOutCubic }
             }
             Layout.preferredWidth: keyWidth
             Layout.preferredHeight: Theme.transportPadSize
-            radius: pioneerForm ? Theme.transportKeyRadius : height / 2
+            radius: pioneerForm ? height / 2 : Theme.transportKeyRadius
             Behavior on radius {
                 NumberAnimation { duration: Theme.arrivalTransitionDuration; easing.type: Easing.InOutCubic }
             }
@@ -63,8 +63,8 @@ Frame {
                 }
             }
 
-            // The Pioneer form's blink: on and off in equal halves, a
-            // step and not a fade, the way the key on the deck does it.
+            // The Pioneer pad's blink: on and off in equal halves, a
+            // step and not a fade, the way the button on the deck does it.
             SequentialAnimation {
                 running: playButton.visible && !root.controller.playing && playButton.pioneerForm
                 loops: Animation.Infinite
@@ -73,7 +73,7 @@ Frame {
                 PropertyAction { target: playButton; property: "light"; value: 0 }
                 PauseAnimation { duration: Theme.transportBlinkHalfPeriod }
             }
-            // The Denon pad's breath: a sine swell that never quite goes
+            // The Denon key's breath: a sine swell that never quite goes
             // out and never reaches the playing light.
             SequentialAnimation {
                 running: playButton.visible && !root.controller.playing && !playButton.pioneerForm
@@ -122,10 +122,10 @@ Frame {
                     const h = height;
                     const cx = width / 2, cy = height / 2;
                     const top = cy - 0.21 * h, bottom = cy + 0.21 * h;
-                    // Where the triangle sits. On the flat Pioneer key it
+                    // Where the triangle sits. On the flat Denon key it
                     // is centred on its bounding box, which is what reads
                     // as centred inside a rectangle. Inside the round
-                    // Denon pad that left the tip 0.18h from the centre
+                    // Pioneer pad that left the tip 0.18h from the centre
                     // and the two back corners 0.28h, so the triangle
                     // looked pushed off the ring; there it is centred on
                     // its circumcentre instead, all three corners on one

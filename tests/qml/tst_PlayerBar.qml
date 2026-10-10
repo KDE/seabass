@@ -150,9 +150,9 @@ TestCase {
         return Math.abs(c.r - c.g) < 0.08 && Math.abs(c.g - c.b) < 0.08;
     }
 
-    // The key takes the form of the deck the track plays on: a wide key
-    // for either Rekordbox catalog, a round pad for Engine, and it
-    // morphs from one to the other when the library changes.
+    // The key takes the form of the deck the track plays on: a round pad
+    // for either Rekordbox catalog, a wide rectangular key for Engine, and
+    // it morphs from one to the other when the library changes.
     function test_theKeyTakesTheDecksForm() {
         const controller = createTemporaryObject(liveController, testCase, {currentFormat: "rekordbox"});
         const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
@@ -160,13 +160,18 @@ TestCase {
         waitForRendering(bar);
         const key = findChild(bar, "playButton");
         verify(key !== null, "the player must have a play key");
-        compare(key.width, Theme.transportKeyWidth, "DeviceLibrary: the wide key");
+        compare(key.width, Theme.transportPadSize, "DeviceLibrary: the pad");
         compare(key.height, Theme.transportPadSize);
-        compare(key.radius, Theme.transportKeyRadius, "with the key's corner");
+        compare(key.radius, key.height / 2, "round: its corner is half its height");
+        waitForRendering(bar);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(bar).save(screenshotDir + "/player-bar-rekordbox-paused.png");
+        }
 
         controller.currentFormat = "onelibrary";
         wait(Theme.arrivalTransitionDuration + 50);
-        compare(key.width, Theme.transportKeyWidth, "OneLibrary plays on the same decks: the same key");
+        compare(key.width, Theme.transportPadSize, "OneLibrary plays on the same decks: the same pad");
+        compare(key.radius, key.height / 2);
 
         controller.currentFormat = "engine";
         let sawBetween = false;
@@ -176,10 +181,11 @@ TestCase {
             }
         };
         key.widthChanged.connect(seen);
-        tryCompare(key, "width", Theme.transportPadSize);
+        tryCompare(key, "width", Theme.transportKeyWidth);
         key.widthChanged.disconnect(seen);
         verify(sawBetween, "the change of form is a movement, not a snap");
-        tryCompare(key, "radius", Theme.transportPadSize / 2, 1000, "Engine: a round pad");
+        tryCompare(key, "radius", Theme.transportKeyRadius, 1000, "Engine: the rectangular key's corner");
+        verify(key.radius < key.height / 4, "rectangular, not round: " + key.radius);
         waitForRendering(bar);
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(bar).save(screenshotDir + "/player-bar-engine-paused.png");
@@ -209,8 +215,8 @@ TestCase {
         tryCompare(controller, "playing", false);
     }
 
-    // Paused on the Pioneer form the light steps between off and on,
-    // once a second in equal halves; on the Denon pad it breathes,
+    // Paused on the Pioneer pad the light steps between off and on,
+    // once a second in equal halves; on the Denon key it breathes,
     // never out and never fully on.
     function test_pausedIsTheDecksIdleSignal() {
         const controller = createTemporaryObject(liveController, testCase, {currentFormat: "rekordbox", playing: false});
@@ -222,7 +228,7 @@ TestCase {
         const note = function() { values.push(key.light); };
         key.lightChanged.connect(note);
         tryVerify(function() { return values.indexOf(0) >= 0 && values.indexOf(1) >= 0; },
-                  2 * Theme.transportBlinkHalfPeriod + 500, "the Pioneer key blinks off and on");
+                  2 * Theme.transportBlinkHalfPeriod + 500, "the Pioneer pad blinks off and on");
         verify(values.every(function(v) { return v === 0 || v === 1; }), "in steps, never a fade: " + values);
         key.lightChanged.disconnect(note);
         // Off: the rim is not painted, the face shows through.
@@ -232,10 +238,10 @@ TestCase {
         verify(isGreenish(rimPixel(bar, key)), "and green while it is on, got " + rimPixel(bar, key));
 
         controller.currentFormat = "engine";
-        tryCompare(key, "width", Theme.transportPadSize);
+        tryCompare(key, "width", Theme.transportKeyWidth);
         values = [];
         key.lightChanged.connect(note);
-        tryVerify(function() { return values.length > 8; }, 2000, "the Denon pad breathes");
+        tryVerify(function() { return values.length > 8; }, 2000, "the Denon key breathes");
         key.lightChanged.disconnect(note);
         verify(values.every(function(v) { return v > 0 && v < 1; }), "never out, never fully lit: " + values);
         verify(values.some(function(v) { return v !== values[0]; }), "and moving");
