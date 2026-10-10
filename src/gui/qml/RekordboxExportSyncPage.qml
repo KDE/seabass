@@ -114,21 +114,29 @@ Page {
     // shell of height 0 that carries the section's header; the rest leave
     // the view's "shown" group. Not rows of height 0 each: a thousand of
     // those throw the ListView's estimate of where a row is, and it
-    // scrolls to the wrong section. Sections are contiguous, in
-    // sectionOrder, so this is a range per section.
+    // scrolls to the wrong section. The runs come from the rows' own
+    // sections (rowSections), never from counts and an assumed order, so
+    // a fold cannot drift onto another section's rows.
     function applyFolds() {
-        const counts = root.controller.sectionCounts;
+        const sections = root.controller.rows.rowSections();
+        if (sections.length !== rowsModel.items.count) {
+            return;  // the view has not caught up; the model's signal calls again
+        }
         let start = 0;
-        for (const name of root.sectionOrder) {
-            const count = counts[name] || 0;
-            if (count > 1 && start + count <= rowsModel.items.count) {
+        while (start < sections.length) {
+            const name = sections[start];
+            let end = start + 1;
+            while (end < sections.length && sections[end] === name) {
+                ++end;
+            }
+            if (end - start > 1) {
                 if (root.isCollapsed(name)) {
-                    rowsModel.items.removeGroups(start + 1, count - 1, "shown");
+                    rowsModel.items.removeGroups(start + 1, end - start - 1, "shown");
                 } else {
-                    rowsModel.items.addGroups(start + 1, count - 1, "shown");
+                    rowsModel.items.addGroups(start + 1, end - start - 1, "shown");
                 }
             }
-            start += count;
+            start = end;
         }
     }
     // Model row -> the view's index, -1 for a row a fold leaves out.
@@ -139,6 +147,8 @@ Page {
         const item = rowsModel.items.get(modelRow);
         return item.inShown ? item.shownIndex : -1;
     }
+    // The view's rows, for tests: which are shown.
+    readonly property alias rowsModel: rowsModel
     DelegateModel {
         id: rowsModel
         model: root.controller.rows
@@ -632,7 +642,11 @@ Page {
             Layout.fillHeight: true
             interactive: contentHeight > height
             clip: true
-            reuseItems: true
+            // No reuse: a pooled row handed back while the "shown" group
+            // changes kept another row's data (a Tracks to add row drawn
+            // as a playlist, so a section did not open). Rows are built
+            // only while in view, and a folded section's are not in it.
+            reuseItems: false
             model: rowsModel
             bottomMargin: editHost.saveClearance
             ScrollBar.vertical: BigScrollBar {}

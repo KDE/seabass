@@ -30,6 +30,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
+#include "gui/rekordbox_export_sync_list_model.hpp"
 #include "gui/cleanup_controller.hpp"
 #include "gui/duplicates_controller.hpp"
 #include "gui/engine_library_creator_controller.hpp"
@@ -371,6 +372,96 @@ public:
         for (const QString &root : m_roots) {
             std::filesystem::remove_all(seabass::pathFromUtf8(root.toStdString()), ec);
         }
+    }
+
+    // Sync after Rekordbox Export's rows for a proposal built here, no
+    // stick: one conflict, four playlist rows (two creates, a rename, a
+    // delete), two tracks to add, three memberships, three cue rows to
+    // Engine and one of Engine's own, so every small section has several
+    // rows. Owned by the fixture.
+    Q_INVOKABLE QObject *handBuiltExportSyncRows()
+    {
+        namespace d = seabass::domain;
+        const auto header = [](const std::string &key) {
+            d::EngineUpdateItemHeader h;
+            h.key = key;
+            h.checkedByDefault = true;
+            h.reasonText = "hand-built";
+            return h;
+        };
+        const auto track = [](const std::string &name) {
+            d::Track t;
+            t.title = name;
+            t.artist = "Artist";
+            t.filename = name + ".mp3";
+            t.filePath = "/stick/Contents/" + name + ".mp3";
+            return t;
+        };
+        d::EngineUpdateProposal p;
+        d::TrackToRemove gone;
+        gone.header = header("track|contents/gone.mp3");
+        gone.engine = track("gone");
+        gone.pathKey = "contents/gone.mp3";
+        d::EngineUpdateConflict conflict;
+        conflict.header = header("track|contents/gone.mp3");
+        conflict.header.checkedByDefault = false;
+        conflict.header.conflict = true;
+        conflict.rekordboxSide = "Remove this track from Engine";
+        conflict.engineSide = "Keep it in Engine";
+        conflict.rekordboxChoice = {gone};
+        p.conflicts = {conflict};
+        for (std::uint32_t id : {11u, 12u}) {
+            d::PlaylistCreate create;
+            create.header = header("playlist|" + std::to_string(id));
+            create.pdbId = id;
+            create.path = "New " + std::to_string(id);
+            p.playlistsToCreate.push_back(create);
+        }
+        d::PlaylistRename rename;
+        rename.header = header("playlist|13");
+        rename.pdbId = 13;
+        rename.fromPath = "Old";
+        rename.toPath = "Renamed";
+        p.playlistsToRename = {rename};
+        d::PlaylistDelete del;
+        del.header = header("playlist|14");
+        del.pdbId = 14;
+        del.path = "Deleted";
+        p.playlistsToDelete = {del};
+        for (const char *name : {"a", "b"}) {
+            d::TrackToAdd add;
+            add.header = header(std::string("track|contents/") + name + ".mp3");
+            add.rekordbox = track(name);
+            add.stickRelativePath = std::string("Contents/") + name + ".mp3";
+            add.pathKey = std::string("contents/") + name + ".mp3";
+            p.tracksToAdd.push_back(add);
+        }
+        for (const char *name : {"c", "d", "e"}) {
+            d::MembershipEdit m;
+            m.header = header(std::string("member|11|contents/") + name + ".mp3");
+            m.pdbId = 11;
+            m.playlistPath = "New 11";
+            m.pathKey = std::string("contents/") + name + ".mp3";
+            m.track = track(name);
+            p.membership.push_back(m);
+        }
+        for (const char *name : {"f", "g", "h"}) {
+            d::CueEdit cues;
+            cues.header = header(std::string("cue|contents/") + name + ".mp3|pad1");
+            cues.plan.direction = d::SyncPlan::Direction::ToB;
+            cues.plan.match.trackA = track(name);
+            cues.plan.match.trackB = track(name);
+            cues.pathKey = std::string("contents/") + name + ".mp3";
+            p.cuesToEngine.push_back(cues);
+        }
+        d::EngineOwnItem kept;
+        kept.header = header("track|contents/own.mp3");
+        kept.header.checkedByDefault = false;
+        kept.engine = track("own");
+        p.engineOwnKept = {kept};
+        auto *model = new seabass::gui::RekordboxExportSyncListModel(this);
+        model->setProposal(p, "/stick");
+        return model;
     }
 
     // The stick's root, or empty on failure (which the test then fails

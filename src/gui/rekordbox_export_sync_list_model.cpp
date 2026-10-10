@@ -1146,6 +1146,16 @@ QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const
     return lines;
 }
 
+QStringList RekordboxExportSyncListModel::rowSections() const
+{
+    QStringList names;
+    names.reserve(static_cast<qsizetype>(m_rows.size()));
+    for (const auto &row : m_rows) {
+        names << sectionName(row.section);
+    }
+    return names;
+}
+
 QVariantMap RekordboxExportSyncListModel::sectionCounts() const
 {
     QVariantMap counts;
