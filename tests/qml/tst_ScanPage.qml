@@ -12,7 +12,8 @@ import SeabassGui
 TestCase {
     id: testCase
     name: "ScanPage"
-    width: 900
+    // Wide enough for Browse at the 1000 x 700 the column test renders.
+    width: 1000
     height: 700
     visible: true
     when: windowShown
@@ -809,5 +810,73 @@ TestCase {
         verify(bar !== null, "a scroll bar is attached");
         tryCompare(bar, "visible", true);
         verify(bar.width > 0 && bar.contentItem.height >= 32, "and can be seen: " + bar.width + " x " + bar.contentItem.height);
+    }
+
+    // ---- One column geometry for the header row and the rows ----
+
+    // Each column's header cell and the cell under it in a row, by
+    // objectName: [column, header, row].
+    readonly property var columnCells: [
+        ["artwork", "headerCell_artwork", "rowCell_artwork"],
+        ["title", "sortHeader_title", "rowCell_title"],
+        ["key", "sortHeader_key", "rowCell_key"],
+        ["bpm", "sortHeader_bpm", "rowCell_bpm"],
+        ["duration", "sortHeader_duration", "rowCell_duration"],
+        ["cues", "sortHeader_cues", "cueCountLabel"],
+        ["plays", "sortHeader_plays", "rowCell_plays"],
+        ["actions", "headerCell_actions", "trackRowMenuButton"],
+    ]
+
+    // Every column the header shows starts and ends where the same column
+    // does in the rows, to the pixel; a column the header drops, the rows
+    // drop too. Returns how many columns were compared.
+    function compareColumnGeometry(page, list, where) {
+        const row = list.itemAtIndex(0);
+        verify(row !== null, where + ": a first row");
+        let compared = 0;
+        for (const cell of testCase.columnCells) {
+            const head = findChild(page, cell[1]);
+            const body = findChild(row, cell[2]);
+            verify(head !== null && body !== null, where + ": both cells of " + cell[0]);
+            compare(body.visible, head.visible, where + ": " + cell[0] + " shown in both or neither");
+            if (!head.visible) {
+                continue;
+            }
+            const headX = Math.round(head.mapToItem(page, 0, 0).x);
+            const bodyX = Math.round(body.mapToItem(page, 0, 0).x);
+            compare(headX, bodyX, where + ": " + cell[0] + " starts on its header's line");
+            compare(Math.round(head.width), Math.round(body.width), where + ": " + cell[0] + " as wide as its header");
+            ++compared;
+        }
+        return compared;
+    }
+
+    function test_theHeadersStandOverTheirColumns() {
+        const held = makeHeldPage(12);
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+
+        // The usual window, with the playlists sidebar beside the list.
+        held.page.width = 1000;
+        held.page.height = 700;
+        held.page.playlistSidebarOpen = true;
+        waitForRendering(held.page);
+        saveScreenshot(held.page, "browse-columns-1000x700");
+        compare(held.page.browseTier, 2);
+        compare(compareColumnGeometry(held.page, held.list, "1000 wide"), 8, "every column at full width");
+
+        // Narrow: the numeric columns go, in the header and the rows alike.
+        held.page.playlistSidebarOpen = false;
+        held.page.width = 520;
+        waitForRendering(held.page);
+        saveScreenshot(held.page, "browse-columns-narrow");
+        compare(held.page.browseTier, 1);
+        compare(compareColumnGeometry(held.page, held.list, "520 wide"), 3, "artwork, title and actions");
+
+        // Narrower still: the title goes too.
+        held.page.width = 340;
+        waitForRendering(held.page);
+        compare(held.page.browseTier, 0);
+        compare(compareColumnGeometry(held.page, held.list, "340 wide"), 2, "artwork and actions");
     }
 }

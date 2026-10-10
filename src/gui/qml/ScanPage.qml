@@ -486,6 +486,17 @@ Page {
     readonly property real cuesColumnWidth: sortColumnWidth(cuesHeaderMeasure, 50)
     readonly property real playsColumnWidth: sortColumnWidth(playsHeaderMeasure, 60)
 
+    // The rest of the track list's column geometry, read by the header row
+    // and by every row under it, so the two cannot disagree. They used to
+    // carry their own copies: the header kept room for two trailing
+    // buttons after the rows had gone down to one menu button, so every
+    // header from Title on stood 40 px left of its column.
+    readonly property real trackRowInset: Theme.tightSpacing
+    readonly property real trackColumnSpacing: Theme.rowSpacing
+    readonly property real artworkColumnWidth: Theme.iconSizeNormal
+    // The row's one trailing button, the track actions menu.
+    readonly property real actionsColumnWidth: Theme.iconSizeSmall
+
     // One decimal place, but only when there actually is one, "128"
     // reads better than "128.0" for the (very common) case of a whole-
     // number BPM, while a genuinely fractional one (e.g. a half-time
@@ -776,17 +787,16 @@ Page {
             spacing: 0
 
             RowLayout {
-                // Mirrors the track delegate's own RowLayout exactly (same
-                // left/right inset, spacing and column widths), otherwise
-                // these headers silently drift out of alignment with the
-                // columns they're supposed to label.
+                // The track rows' column geometry (root.trackRowInset and
+                // the widths beside it), read from the same properties as
+                // the rows, so a header stands over its column.
                 Layout.fillWidth: true
-                Layout.leftMargin: 8
-                Layout.rightMargin: 8
+                Layout.leftMargin: root.trackRowInset
+                Layout.rightMargin: root.trackRowInset
                 Layout.topMargin: 4
                 Layout.bottomMargin: 4
-                spacing: 8
-                Label { text: ""; Layout.preferredWidth: Theme.iconSizeNormal }
+                spacing: root.trackColumnSpacing
+                Item { objectName: "headerCell_artwork"; Layout.preferredWidth: root.artworkColumnWidth }
                 // Each header with a sort key sorts by it (see
                 // root.sortByColumn); the artwork column and the trailing
                 // action columns have none.
@@ -831,18 +841,19 @@ Page {
                         visible: root.browseTier >= 2
                     }
                 }
-                // Theme.iconSizeSmall (merge button), the one trailing
-                // ToolButton in the delegate below -- two when Matching
-                // (Experimental) is on, since the find-matching button
-                // joins it. Getting this narrower than the delegate's
-                // real trailing content silently pushes every column
-                // before it out of alignment (the fill spacer above ends
-                // up absorbing a different amount of leftover space in
-                // the header than in each row), exactly what happened
-                // here before this comment existed.
-                Label {
-                    text: ""
-                    Layout.preferredWidth: Theme.iconSizeSmall * 2 + 8
+                // Title's fill, at the narrowest tier where Title goes: the
+                // rows have the same, so the actions stay at the right edge
+                // in both rather than wherever each layout leaves them.
+                Item {
+                    visible: root.browseTier === 0
+                    Layout.fillWidth: true
+                }
+                // Over the rows' track actions button. Any other width here
+                // and Title's fill takes up the difference, which moves
+                // every column after it off its rows.
+                Item {
+                    objectName: "headerCell_actions"
+                    Layout.preferredWidth: root.actionsColumnWidth
                 }
             }
 
@@ -982,15 +993,18 @@ Page {
                         onPressAndHold: root.openTrackMenu(trackDelegate, trackDelegate)
                     }
 
+                    // The page's column geometry, which the header row
+                    // above reads too.
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 8
+                        anchors.leftMargin: root.trackRowInset
+                        anchors.rightMargin: root.trackRowInset
+                        spacing: root.trackColumnSpacing
 
                         Rectangle {
                             id: artworkRect
-                            Layout.preferredWidth: Theme.iconSizeNormal
+                            objectName: "rowCell_artwork"
+                            Layout.preferredWidth: root.artworkColumnWidth
                             Layout.preferredHeight: Theme.iconSizeNormal
                             color: Theme.surface
                             // An Engine row's own art first, the same song's
@@ -1054,6 +1068,7 @@ Page {
                         }
 
                         ColumnLayout {
+                            objectName: "rowCell_title"
                             visible: root.browseTier >= 1
                             Layout.fillWidth: true
                             spacing: 1
@@ -1101,17 +1116,20 @@ Page {
                         }
 
                         KeyBadge {
+                            objectName: "rowCell_key"
                             visible: root.browseTier >= 2
                             keyName: key
                             notation: root.appSettingsController.keyNotation
                             Layout.preferredWidth: root.keyColumnWidth
                         }
                         Label {
+                            objectName: "rowCell_bpm"
                             visible: root.browseTier >= 2
                             text: root.formatBpm(bpm)
                             Layout.preferredWidth: root.bpmColumnWidth
                         }
                         Label {
+                            objectName: "rowCell_duration"
                             visible: root.browseTier >= 2
                             text: root.formatDuration(durationSeconds)
                             Layout.preferredWidth: root.timeColumnWidth
@@ -1125,9 +1143,15 @@ Page {
                             Layout.preferredWidth: root.cuesColumnWidth
                         }
                         Label {
+                            objectName: "rowCell_plays"
                             visible: root.browseTier >= 2
                             text: playCount >= 0 ? playCount : "--"
                             Layout.preferredWidth: root.playsColumnWidth
+                        }
+                        // The header row's spacer, for the same tier.
+                        Item {
+                            visible: root.browseTier === 0
+                            Layout.fillWidth: true
                         }
                         // The row's actions in one menu: merging, finding
                         // matches, and (Experimental, a playlist shown)
@@ -1138,7 +1162,7 @@ Page {
                             objectName: "trackRowMenuButton"
                             text: "Track actions"
                             iconName: "application-menu"
-                            Layout.preferredWidth: Theme.iconSizeSmall
+                            Layout.preferredWidth: root.actionsColumnWidth
                             ToolTip.visible: hovered
                             ToolTip.text: "Merge, find matching tracks" + (root.playlistEditing && root.shownPlaylist.length > 0
                                 ? ", remove from this playlist" : "")
