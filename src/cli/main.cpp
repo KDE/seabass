@@ -40,7 +40,6 @@
 #include "domain/cue_list_count.hpp"
 #include "domain/cross_source_sync_conflict.hpp"
 #include "domain/engine_update_planning.hpp"
-#include "domain/rekordbox_baseline.hpp"
 #include "domain/fuzzy_matcher.hpp"
 #include "domain/track_queries.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
@@ -1247,14 +1246,7 @@ int runSyncAfterExportCommand(const std::optional<std::string> &rekordboxPathArg
     if (section("Conflicts", proposal.conflicts.size())) {
         for (const auto &conflict : proposal.conflicts) {
             std::string subject;
-            const auto item = seabass::domain::parseItemKey(conflict.header.key);
-            if (item && item->kind == seabass::domain::ItemKey::Kind::Order) {
-                // About the playlist, whichever tracks move: each is
-                // a remove and an add.
-                const auto &first = std::get<seabass::domain::MembershipEdit>(conflict.rekordboxChoice.front());
-                subject = "order of \"" + first.playlistPath + "\": "
-                    + std::to_string(conflict.rekordboxChoice.size() / 2) + " track(s) move";
-            } else if (!conflict.rekordboxChoice.empty()) {
+            if (!conflict.rekordboxChoice.empty()) {
                 subject = describeEngineUpdateEdit(conflict.rekordboxChoice.front(), stickRoot);
             } else if (!conflict.engineChoice.empty()) {
                 subject = describeEngineUpdateEdit(conflict.engineChoice.front(), stickRoot);

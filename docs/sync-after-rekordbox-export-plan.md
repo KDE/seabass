@@ -198,7 +198,9 @@ First use, or a stick never saved since this shipped:
 - Playlist in R only: create, checked. Playlist in E only: Engine's own,
   kept.
 - Membership: rekordbox-to-Engine additions checked; Engine-only
-  members a conflict, since removing them is destructive.
+  members a conflict, since removing them is destructive. Where the
+  members both hold sit in another order, Engine takes rekordbox's,
+  checked (the 2026-10-10 decision under "Membership" below).
 - Ratings and comments that differ: conflict.
 - Cues: exactly what `SyncPlanner::plan` decides today, so the fallback
   is Sync Cue Points' behaviour.
@@ -360,6 +362,32 @@ What it reuses, and what it must not:
   members too. Each add carries the preceding member in R that E holds
   or that is being added, so order survives. `sameSong()` handles the
   copy-swap case.
+
+  **Decision (2026-10-10): order is rekordbox's to decide; never a
+  conflict.** Sebastian, on WS_NEW's four order conflicts (both sides
+  held the same tracks, one block at the top in rekordbox and at the
+  bottom in Engine, the rest in the same order): "Then those 4 are not
+  conflicts." rekordbox is the source for playlists in his workflow. The
+  order of the members both sides hold is merged three-way only where
+  the record attributes the change: rekordbox alone changed it, each
+  move is its own checked item ("rekordbox moved this track within
+  "P""); Engine alone changed it, Engine's own, kept, under
+  `order:<playlistId>`. Every other case (no record of the playlist, a
+  record that lacks the members out of place, both sides changed it)
+  gives Engine rekordbox's order, checked, as membership moves (each a
+  remove and an add, after the member before it), every move under the
+  one item `order:<playlistId>`, so they tick together and a decline
+  stays out while rekordbox's order is the one declined. The reason says
+  what differs: when the members that move (those outside the longest
+  common order) are one run on both sides, where that run sits, counted
+  over the whole playlist, "29 tracks sit at the top in rekordbox and at
+  the bottom in Engine; Engine takes rekordbox's order", "2 tracks sit
+  at positions 6 to 7 in rekordbox and at the top in Engine; ..."; any
+  other difference "The two orders differ (2 tracks move); Engine takes
+  rekordbox's order". The reason code stays `NoBaselineOrder` without an
+  attributing record and `BothChanged` when both changed it. This
+  replaces the per-playlist order conflict of 9f5a6902 (one conflict
+  keyed `order:<playlistId>`, rekordbox's order or Engine's).
 - Metadata: rating and comment in v1. Title, artist and album are v2
   (libdjinterop `set_title`). Key stays out: `set_key` rewrites
   `trackData`, which would create an analysis blob (case j3 in

@@ -33,12 +33,12 @@
 // 7. The section order (conflicts first when there are any, playlists
 //    first when there are none) and the details of an add, a membership
 //    and a cue row, pinned by hand on a proposal built here.
-// 8. An order question left unanswered on a run without a record is not
-//    asked again (the plan's step 10 review decision): a playlist saved
-//    onto Engine, its record taken away and two of its Engine members
-//    swapped is an order conflict; a save that leaves it unanswered
-//    records rekordbox's order with every member, so the next analysis
-//    keeps Engine's order as its own and asks nothing about it.
+// 8. An order difference on a run without a record is no question: a
+//    playlist saved onto Engine, its record taken away and two of its
+//    Engine members swapped gives Engine rekordbox's order, checked, every
+//    move under the playlist's order item. A save that leaves them
+//    unticked records rekordbox's order with every member, so the next
+//    analysis keeps Engine's order as its own.
 //
 // argv[1]: tests/fixtures/anonymized_library.
 
@@ -918,7 +918,7 @@ void testOrderAndDetails()
 }
 
 // 8. See the top of the file.
-void testUnansweredOrderOnFirstRun(const fs::path &fixture)
+void testOrderOnFirstRun(const fs::path &fixture)
 {
     const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_unanswered_order");
     RekordboxExportSyncController controller;
@@ -966,7 +966,8 @@ void testUnansweredOrderOnFirstRun(const fs::path &fixture)
     const auto orderRows = [&](seabass::domain::EngineUpdateReason reason) {
         int n = 0;
         for (const auto &row : rowsOf(controller)) {
-            if (row.section == Section::Conflicts && row.header.reason == reason) {
+            if (row.header.reason == reason) {
+                assert(row.section == Section::Membership && "an order is never a conflict");
                 ++n;
             }
         }
@@ -976,26 +977,32 @@ void testUnansweredOrderOnFirstRun(const fs::path &fixture)
     assert(controller.errorMessage().isEmpty());
     assert(!controller.hasBaseline());
     printCounts(controller);
-    // One question for the playlist, titled by it, every move under
-    // rekordbox's side: the swap moves two members, each a remove and an
-    // add. The fixture's 1245 and this one.
-    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) == 1
-           && "the swap is one order question on a run without a record");
-    assert(controller.conflictCount() == FixtureConflicts + 1);
+    // No question: the swap moves two members, each a remove and an add,
+    // checked, all under the playlist's order item. The fixture's
+    // conflicts and nothing more.
+    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) == 4
+           && "the swap is four checked moves on a run without a record");
+    assert(controller.conflictCount() == FixtureConflicts);
+    // The new playlist's members are on Engine now, and the order's four
+    // moves join the rest, ticked: 925 - 14 + 4 = 915, 953 - 1 - 14 + 4.
+    const int saved = static_cast<int>(memberKeys.size());
+    assert(count(controller, "membership") == FixtureMembership - saved + 4);
+    assert(controller.checkedCount() == FixtureChecked - FixtureCreates - saved + 4);
+    int takes = 0;
+    int puts = 0;
     for (int i = 0; i < controller.rows()->rowCount(); ++i) {
         const Row &row = rowsOf(controller)[static_cast<std::size_t>(i)];
         if (row.header.reason != seabass::domain::EngineUpdateReason::NoBaselineOrder) {
             continue;
         }
         assert(row.header.key == seabass::domain::orderItemKey(pdbId));
-        assert(row.title == QString::fromStdString(playlistPath) && !row.hasTrack);
-        assert(row.conflict->rekordboxChoice.size() == 4);
-        const QStringList lines = controller.rows()->details(i);
-        assert(lines.count(QStringLiteral("Put \"%1\" in rekordbox's order (2 tracks move) (rekordbox's side):")
-                               .arg(QString::fromStdString(playlistPath)))
-               == 1);
-        assert(lines.filter(QStringLiteral("  Takes ")).size() == 2 && lines.filter(QStringLiteral("  Puts ")).size() == 2);
+        assert(row.included && row.header.checkedByDefault && !row.header.conflict);
+        assert(row.header.reasonText == "The two orders differ (2 tracks move); Engine takes rekordbox's order");
+        const auto &edit = std::get<seabass::domain::MembershipEdit>(*row.edit);
+        assert(edit.playlistPath == playlistPath);
+        (edit.kind == seabass::domain::MembershipEdit::Kind::Remove ? takes : puts) += 1;
     }
+    assert(takes == 2 && puts == 2);
 
     // Saved with every question unanswered and every change unticked:
     // only the record is written.
@@ -1022,8 +1029,8 @@ void testUnansweredOrderOnFirstRun(const fs::path &fixture)
                     == "Engine changed the order of \"" + playlistPath + "\" after Seabass last recorded the stick");
     }
     assert(keptAsEngines);
-    std::cout << "case 8 (an order question left unanswered without a record: recorded as rekordbox has it, then "
-                 "Engine's own) OK\n";
+    std::cout << "case 8 (an order without a record: rekordbox's, checked; left unticked, recorded as rekordbox "
+                 "has it, then Engine's own) OK\n";
 }
 
 }  // namespace
@@ -1046,7 +1053,7 @@ int main(int argc, char **argv)
     testOrderAndDetails();
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);
-    testUnansweredOrderOnFirstRun(fixture);
+    testOrderOnFirstRun(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }
