@@ -188,6 +188,15 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
 // every other implementation agrees on; nothing else calls it yet.
 std::string artworkFileName(std::span<const std::uint8_t> hash);
 
+// The file repairArtwork() writes under the library's Artwork/ for the
+// image in `imageFile` when the library keeps its covers as files: the
+// image's content hash as artworkFileName() spells it, with
+// extensionForImage()'s extension. Known before the write, so a change
+// can declare it for Undo (BackupTarget::removeOnRestoreIfAbsent). Empty
+// when the file cannot be read or is neither a JPEG nor a PNG, which
+// repairArtwork() writes nothing for.
+std::string artworkFileForImage(const std::string &engineLibraryPath, const std::string &imageFile);
+
 // How SQLite stored an AlbumArt.hash value, which is what tells the two
 // kinds of storage apart: a blob names a file, text names the image in
 // the row beside it.
