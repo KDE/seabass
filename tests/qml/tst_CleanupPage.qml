@@ -255,12 +255,14 @@ TestCase {
 
         scrollDown(list, 3);
         tryVerify(() => !details.visible, 2000, "scrolling never folded the description");
+        // The wheel's own scroll eases out over a few frames; on a slow
+        // runner it can still be moving the list when the fold is read.
+        tryVerify(() => !list.moving, 2000, "the list never came to rest after the wheel");
         const topRow = list.indexAt(0, list.contentY + 1);
         const contentY = list.contentY;
         waitForRendering(page);
         verify(page.header.height < fullHeader - 50,
                "folded header is " + page.header.height + ", was " + fullHeader);
-        // Within a pixel: the wheel's own scroll can still be easing out.
         fuzzyCompare(list.contentY, contentY, 1, "folding moved the list");
         compare(list.indexAt(0, list.contentY + 1), topRow, "folding changed the row at the top");
         for (const name of headerControls) {
