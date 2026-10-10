@@ -27,7 +27,8 @@ namespace seabass::gui
 // stick root, '/'-separated; empty when the file is not under the root.
 // Lexical only, so it answers for a stick that is gone too. The
 // `stickRelativeOf` of baselineFrom, nextBaseline and the planner: the
-// page has to pass these two, or its keys and the save's differ.
+// page has to pass these two, or its keys and the save's differ. It is
+// application::stickRelativePathOf, so the two cannot drift.
 std::string baselineStickRelativePath(const std::string &stickRoot, const std::string &filePath);
 // The stick-relative path to the baseline's pathKey
 // (application::normalizedPathKey). The `pathKeyOf` of the same.

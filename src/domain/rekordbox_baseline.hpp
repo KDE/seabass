@@ -198,6 +198,29 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
                                const std::function<std::string(const std::string &)> &pathKeyOf,
                                BaselineGaps *gaps = nullptr);
 
+// One entry of a playlist as a reader gives it: the track's key, its
+// PlaylistMembership::position (-1 when the reader could not say) and
+// the order it was met in.
+struct MemberEntry
+{
+    int position = -1;
+    std::size_t seen = 0;
+    std::string pathKey;
+};
+
+// The pathKeys of `entries` in member order, baselineFrom's rule and the
+// planner's and the summary's with it: positioned entries by position,
+// unknown positions (-1) after them, ties in the order they were met.
+std::vector<std::string> orderedMembers(std::vector<MemberEntry> entries);
+
+// The first occurrence of each key, in order. A track listed twice in one
+// playlist is planned by its first entry.
+std::vector<std::string> firstOccurrences(const std::vector<std::string> &keys);
+
+// A rating as the merge compares it: unrated and zero stars are one thing
+// at the storage level (track.hpp), so 0 reads as nullopt.
+std::optional<int> effectiveRating(std::optional<int> rating);
+
 // The name of one item of the three-way merge, the key of
 // RekordboxBaseline::declined and of the proposal's rows.
 //

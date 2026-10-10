@@ -21,11 +21,6 @@ using domain::RekordboxBaseline;
 using domain::Track;
 using KeyFn = std::function<std::string(const std::string &)>;
 
-std::optional<int> effectiveRating(std::optional<int> rating)
-{
-    return rating && *rating > 0 ? rating : std::nullopt;
-}
-
 // The planner's key of a row: empty for a row with no place on the stick.
 std::string keyOf(const Track &track, const KeyFn &stickRelativeOf, const KeyFn &pathKeyOf)
 {
@@ -36,18 +31,6 @@ std::string keyOf(const Track &track, const KeyFn &stickRelativeOf, const KeyFn 
     return pathKeyOf ? pathKeyOf(relative) : relative;
 }
 
-std::vector<std::string> firstOccurrences(const std::vector<std::string> &keys)
-{
-    std::vector<std::string> out;
-    std::set<std::string> seen;
-    for (const auto &key : keys) {
-        if (seen.insert(key).second) {
-            out.push_back(key);
-        }
-    }
-    return out;
-}
-
 // One rekordbox playlist as the tracks' memberships give it: members in
 // position order, unknown positions after the known ones, ties in the
 // order they were met (baselineFrom's rule).
@@ -55,35 +38,9 @@ struct MemberList
 {
     std::uint32_t id = 0;  // 0: a playlist the baseline does not know by id or path
     std::string path;
-    struct Entry
-    {
-        int position;
-        std::size_t seen;
-        std::string key;
-    };
-    std::vector<Entry> entries;
+    std::vector<domain::MemberEntry> entries;
 
-    std::vector<std::string> ordered() const
-    {
-        std::vector<Entry> sorted = entries;
-        std::sort(sorted.begin(), sorted.end(), [](const Entry &a, const Entry &b) {
-            const bool aUnknown = a.position < 0;
-            const bool bUnknown = b.position < 0;
-            if (aUnknown != bUnknown) {
-                return bUnknown;
-            }
-            if (!aUnknown && a.position != b.position) {
-                return a.position < b.position;
-            }
-            return a.seen < b.seen;
-        });
-        std::vector<std::string> out;
-        out.reserve(sorted.size());
-        for (auto &entry : sorted) {
-            out.push_back(std::move(entry.key));
-        }
-        return out;
-    }
+    std::vector<std::string> ordered() const { return domain::orderedMembers(entries); }
 };
 
 class WithBaseline
@@ -117,7 +74,7 @@ public:
                 MemberList &list = lists[listKey];
                 list.id = id;
                 list.path = membership.name;
-                list.entries.push_back(MemberList::Entry{membership.position, seen++, key});
+                list.entries.push_back(domain::MemberEntry{membership.position, seen++, key});
             }
         }
     }
@@ -165,8 +122,8 @@ private:
             if (!was) {
                 continue;  // a new track: tracksDiffer's
             }
-            const auto now = effectiveRating(track->rating);
-            if (now != effectiveRating(was->rating)
+            const auto now = domain::effectiveRating(track->rating);
+            if (now != domain::effectiveRating(was->rating)
                 && counts(domain::ratingItemKey(key), "rating:" + (now ? std::to_string(*now) : std::string("none")))) {
                 return true;
             }
@@ -215,8 +172,8 @@ private:
             }
             return "member:in:after:" + (it == now.begin() ? std::string() : *(it - 1));
         };
-        const std::vector<std::string> nowFirst = firstOccurrences(now);
-        const std::vector<std::string> wasFirst = firstOccurrences(was);
+        const std::vector<std::string> nowFirst = domain::firstOccurrences(now);
+        const std::vector<std::string> wasFirst = domain::firstOccurrences(was);
         const auto predecessor = [](const std::vector<std::string> &list, const std::string &key)
             -> std::optional<std::string> {
             const auto it = std::find(list.begin(), list.end(), key);

@@ -152,13 +152,7 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
 
     // Members gathered with their position and the order they were met,
     // sorted once all tracks are in.
-    struct Entry
-    {
-        int position;
-        std::size_t seen;
-        std::string pathKey;
-    };
-    std::vector<std::vector<Entry>> entries(baseline.playlists.size());
+    std::vector<std::vector<MemberEntry>> entries(baseline.playlists.size());
     std::size_t seen = 0;
 
     baseline.tracks.reserve(rekordbox.size());
@@ -205,32 +199,54 @@ RekordboxBaseline baselineFrom(const std::vector<Track> &rekordbox, const std::v
                 }
                 continue;
             }
-            entries[*index].push_back(Entry{membership.position, seen++, key});
+            entries[*index].push_back(MemberEntry{membership.position, seen++, key});
         }
     }
 
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        auto &list = entries[i];
-        // Unknown positions (-1) after the known ones; `seen` keeps the
-        // reader's order among ties, so this needs no stable sort.
-        std::sort(list.begin(), list.end(), [](const Entry &a, const Entry &b) {
-            const bool aUnknown = a.position < 0;
-            const bool bUnknown = b.position < 0;
-            if (aUnknown != bUnknown) {
-                return bUnknown;
-            }
-            if (!aUnknown && a.position != b.position) {
-                return a.position < b.position;
-            }
-            return a.seen < b.seen;
-        });
-        auto &members = baseline.playlists[i].members;
-        members.reserve(list.size());
-        for (auto &entry : list) {
-            members.push_back(std::move(entry.pathKey));
-        }
+        baseline.playlists[i].members = orderedMembers(std::move(entries[i]));
     }
     return baseline;
+}
+
+std::vector<std::string> orderedMembers(std::vector<MemberEntry> entries)
+{
+    // `seen` keeps the reader's order among ties, so this needs no stable
+    // sort.
+    std::sort(entries.begin(), entries.end(), [](const MemberEntry &a, const MemberEntry &b) {
+        const bool aUnknown = a.position < 0;
+        const bool bUnknown = b.position < 0;
+        if (aUnknown != bUnknown) {
+            return bUnknown;
+        }
+        if (!aUnknown && a.position != b.position) {
+            return a.position < b.position;
+        }
+        return a.seen < b.seen;
+    });
+    std::vector<std::string> members;
+    members.reserve(entries.size());
+    for (auto &entry : entries) {
+        members.push_back(std::move(entry.pathKey));
+    }
+    return members;
+}
+
+std::vector<std::string> firstOccurrences(const std::vector<std::string> &keys)
+{
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto &key : keys) {
+        if (seen.insert(key).second) {
+            out.push_back(key);
+        }
+    }
+    return out;
+}
+
+std::optional<int> effectiveRating(std::optional<int> rating)
+{
+    return rating && *rating > 0 ? rating : std::nullopt;
 }
 
 std::string itemKey(const ItemKey &key)
