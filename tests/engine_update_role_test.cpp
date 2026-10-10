@@ -12,7 +12,9 @@
 // reads nothing (the catalog cache's passes are counted around a sweep of
 // every role of every row); a current baseline is answered without a
 // catalog read; and the answer follows the stick after refreshSyncNeeded()
-// (a recorded baseline, a moved pdb sequence, a levelled counter).
+// (a recorded baseline, a moved pdb sequence, a levelled counter), and
+// after export.pdb changes outside Seabass while the stick stays listed,
+// through the stat timer alone.
 //
 // The fixture copy ships in "Sync Needed" state (pdb 15132, Engine
 // counter 14204) with no baseline, and rekordbox playlist paths Engine
@@ -278,6 +280,24 @@ int main(int argc, char **argv)
         waitForAnswer(model, mountPoint, answers, 5);
         assert(roleText(model, row, DetectedStickListModel::EngineUpdateRole) == QStringLiteral("library"));
         std::cout << "case 5 (a track gone from rekordbox since the record: \"library\") OK\n";
+
+        // export.pdb rewritten outside Seabass while the stick stays
+        // listed (rekordbox exported onto it): no save, no replug, no
+        // refreshSyncNeeded(). Untouched, the stat timer asks nothing.
+        {
+            QElapsedTimer quiet;
+            quiet.start();
+            while (quiet.elapsed() < MediaController::CatalogStampIntervalMs + 1500) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            }
+            assert(answers == 5 && "catalogs untouched: the timer restarts nothing");
+        }
+        assert(!model.data(model.index(row), DetectedStickListModel::SyncNeededRole).toBool());
+        writePdbSequence(pioneer, 15134);
+        waitForAnswer(model, mountPoint, answers, 6);
+        assert(model.data(model.index(row), DetectedStickListModel::SyncNeededRole).toBool()
+               && "15134 against 15133: the timer saw export.pdb change and asked again");
+        std::cout << "case 6 (export.pdb changed outside Seabass: syncNeeded flips on the stat timer) OK\n";
 
         // Closing the folder forgets the answer with the row.
         controller.closeFolder(pathToQString(root));

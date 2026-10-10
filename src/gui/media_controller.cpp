@@ -363,6 +363,9 @@ MediaController::MediaController(QObject *parent) : QObject(parent)
     connect(&StickEvents::instance(), &StickEvents::stickContentsChanged, this, &MediaController::detect,
             Qt::QueuedConnection);
 
+    m_stampTimer.setInterval(CatalogStampIntervalMs);
+    connect(&m_stampTimer, &QTimer::timeout, this, &MediaController::checkCatalogStamps);
+
     loadOpenedFolder();
     detect();
 
@@ -508,10 +511,46 @@ EngineUpdateReading MediaController::readEngineUpdate(const std::string &rekordb
     return reading;
 }
 
+MediaController::CatalogStamp MediaController::catalogStampOf(const application::DetectedStick &stick)
+{
+    CatalogStamp stamp;
+    std::error_code ec;
+    if (stick.rekordboxPath) {
+        const std::filesystem::path pdb = pathFromUtf8(*stick.rekordboxPath) / "rekordbox" / "export.pdb";
+        stamp.pdbTime = std::filesystem::last_write_time(pdb, ec);
+        stamp.pdbSize = ec ? 0 : std::filesystem::file_size(pdb, ec);
+    }
+    if (stick.enginePath) {
+        const std::filesystem::path db = pathFromUtf8(*stick.enginePath) / "Database2" / "m.db";
+        stamp.dbTime = std::filesystem::last_write_time(db, ec);
+        stamp.dbSize = ec ? 0 : std::filesystem::file_size(db, ec);
+    }
+    return stamp;
+}
+
+// A catalog rewritten outside Seabass while its stick stays mounted asks
+// the stick's request again; a save of Seabass's own is answered by
+// refreshSyncNeeded(), which takes a new stamp with it.
+void MediaController::checkCatalogStamps()
+{
+    for (const application::DetectedStick &stick : m_model.sticks()) {
+        const auto known = m_catalogStamps.find(stick.mountPoint);
+        if (known != m_catalogStamps.end() && known->second != catalogStampOf(stick)) {
+            requestEngineUpdate(stick, true);
+        }
+    }
+}
+
 void MediaController::requestEngineUpdate(const application::DetectedStick &stick, bool restart)
 {
     if (!stick.mounted || stick.mountPoint.empty() || !stick.rekordboxPath || !stick.enginePath) {
+        m_catalogStamps.erase(stick.mountPoint);  // nothing to watch
         return;
+    }
+    // Before the read: a write during it shows on the next tick.
+    m_catalogStamps[stick.mountPoint] = catalogStampOf(stick);
+    if (!m_stampTimer.isActive()) {
+        m_stampTimer.start();
     }
     auto &request = m_engineUpdateRequests[stick.mountPoint];
     if (!request) {
@@ -599,6 +638,7 @@ void MediaController::detect()
     m_openedFolderListed = folderListed;
     for (const std::string &mountPoint : forgetCatalogsOfSticksGone(m_model.sticks(), sticks)) {
         m_model.forgetEngineUpdateStatus(mountPoint);
+        m_catalogStamps.erase(mountPoint);
         if (const auto request = m_engineUpdateRequests.find(mountPoint); request != m_engineUpdateRequests.end()) {
             request->second->cancel();
         }
@@ -613,6 +653,9 @@ void MediaController::detect()
         if (!m_model.hasEngineUpdateStatus(stick.mountPoint)) {
             requestEngineUpdate(stick, false);
         }
+    }
+    if (m_catalogStamps.empty()) {
+        m_stampTimer.stop();  // no stick with both catalogs to watch
     }
     std::vector<application::StickIdentity> present;
     for (const application::DetectedStick &stick : m_model.sticks()) {
