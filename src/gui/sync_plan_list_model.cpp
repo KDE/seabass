@@ -447,6 +447,11 @@ domain::CueChange SyncPlanListModel::cueChangeOf(const domain::SyncPlan &plan)
                                      domain::cuesInTermsOf(plan.cuesToApply, terms, tolerance), tolerance);
 }
 
+QVariantMap SyncPlanListModel::trackMap(const domain::Track &track)
+{
+    return trackToMap(track);
+}
+
 QString SyncPlanListModel::cueSummary(const domain::SyncPlan &plan)
 {
     const domain::CueChange change = cueChangeOf(plan);

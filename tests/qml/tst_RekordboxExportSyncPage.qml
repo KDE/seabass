@@ -32,6 +32,7 @@ TestCase {
     when: windowShown
 
     AppSettingsController { id: realAppSettings }
+    PlaybackController { id: realPlayback }
 
     // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
     readonly property string fixtureRoot: {
@@ -45,7 +46,7 @@ TestCase {
         section: 257, sectionIndex: 258, kind: 259, key: 260, title: 261, artist: 262, detail: 263,
         reason: 264, isConflict: 265, rekordboxChoiceLabel: 266, engineChoiceLabel: 267, resolvedSide: 268,
         included: 269, dependsOn: 270, staged: 271, stagedDescription: 272, direction: 273, fromConflict: 274,
-        details: 275, hasTrack: 276, artworkPath: 277, fallbackArtworkPath: 278,
+        details: 275, hasTrack: 276, artworkPath: 277, fallbackArtworkPath: 278, cueSides: 279,
     })
 
     Component {
@@ -57,6 +58,7 @@ TestCase {
             rekordboxPath: ""
             enginePath: ""
             appSettingsController: realAppSettings
+            playbackController: realPlayback
         }
     }
 
@@ -810,6 +812,56 @@ TestCase {
                 compare(item.title, rowData(page, i, "title"), "row " + i + "'s delegate shows its title");
             }
         }
+    }
+
+    // A cue row, opened, draws each copy's cues on its waveform as Sync
+    // Cue Points does: rekordbox's and Engine's side by side, the copy the
+    // save writes marked as the target. Closed, it draws none; a
+    // membership row draws none even open.
+    function test_aCueRowShowsBothCopiesCuesWhenOpened() {
+        const page = openOnAFreshCopy();
+        const cueRow = firstRowWhere(page, (i) => rowData(page, i, "section") === "cuesToEngine");
+        verify(cueRow >= 0, "the fixture has cues to Engine");
+        const sides = rowData(page, cueRow, "cueSides");
+        compare(sides.length, 2);
+        compare(sides[0].side, "rekordbox");
+        compare(sides[1].side, "engine");
+        compare(sides[1].written, true, "cues to Engine write Engine's copy");
+        let item = rowItem(page, cueRow);
+        compare(findChild(item, "cueStrips").visible, false, "closed: no strips");
+        mouseClick(findChild(item, "rowTitle"));
+        item = rowItem(page, cueRow);
+        const strips = findChild(item, "cueStrips");
+        verify(strips.visible);
+        const built = findChildrenWhere(strips, (o) => o.objectName === "cueStrip");
+        compare(built.length, 2, "one strip per copy");
+        const waveforms = findChildrenWhere(strips, (o) => o.objectName === "cueStripWaveform");
+        compare(waveforms.length, 2);
+        let markers = 0;
+        for (let i = 0; i < 2; ++i) {
+            compare(waveforms[i].format, sides[i].side);
+            // Every cue of that copy is a marker on its strip.
+            compare(waveforms[i].cueData.length, sides[i].cues.length, sides[i].side + "'s cues on its strip");
+            markers += waveforms[i].cueData.length;
+            verify(waveforms[i].height >= 40);
+        }
+        verify(markers > 0, "the strips carry markers");
+        const texts = findChildrenWhere(strips, (o) => o.objectName === "cueStripText").map((o) => o.text);
+        compare(texts, [sides[0].cueText, sides[1].cueText]);
+        verify(texts[1].indexOf("gains") >= 0 || texts[1].indexOf("loses") >= 0, texts[1]);
+        if (screenshotDir && screenshotDir.length > 0) {
+            listOf(page).positionViewAtIndex(page.viewIndexOf(cueRow), ListView.Beginning);
+            waitForRendering(page);
+            wait(300);
+            grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-cue-row-open.png");
+        }
+        // A membership row: nothing to draw, open or not.
+        const member = firstRowWhere(page, (i) => rowData(page, i, "section") === "membership");
+        compare(rowData(page, member, "cueSides").length, 0);
+        mouseClick(findChild(rowItem(page, member), "rowTitle"));
+        const memberItem = rowItem(page, member);
+        compare(findChild(memberItem, "cueStrips").visible, false);
+        compare(findChildrenWhere(memberItem, (o) => o.objectName === "cueStrip").length, 0);
     }
 
     // A section folds from its chevron or its title: its rows are gone

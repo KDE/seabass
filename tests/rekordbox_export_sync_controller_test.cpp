@@ -774,6 +774,43 @@ void testOrderAndDetails()
         }
         return -1;
     };
+    // The cue strips' data (CueSidesRole): a cue row has both copies,
+    // rekordbox's first, and the one the save writes (Engine) says what it
+    // gains and loses and holds the cues it will have.
+    {
+        const int cueRow = rowOf(QStringLiteral("cues"));
+        const QVariantList sides = model.index(cueRow).data(RekordboxExportSyncListModel::CueSidesRole).toList();
+        assert(sides.size() == 2);
+        const QVariantMap rb = sides[0].toMap();
+        const QVariantMap en = sides[1].toMap();
+        std::cout << "  cue sides: " << rb.value("cueText").toString().toStdString() << " | "
+                  << en.value("cueText").toString().toStdString() << "\n";
+        assert(rb.value("written").toBool() == false);
+        assert(en.value("written").toBool() == true);
+        assert(rb.value("cues").toList().isEmpty());
+        assert(rb.value("cueText").toString() == QStringLiteral("no cues"));
+        const QVariantList now = en.value("cues").toList();
+        assert(now.size() == 2);
+        assert(now[0].toMap().value("hotCueNumber").toInt() == 1 && now[0].toMap().value("positionMs").toDouble() == 1500);
+        assert(now[1].toMap().value("hotCueNumber").toInt() == 3 && now[1].toMap().value("positionMs").toDouble() == 90000);
+        const QVariantList proposed = en.value("proposedCues").toList();
+        assert(proposed.size() == 2);
+        assert(proposed[0].toMap().value("hotCueNumber").toInt() == 1
+               && proposed[0].toMap().value("positionMs").toDouble() == 1000);
+        assert(proposed[1].toMap().value("hotCueNumber").toInt() == 2
+               && proposed[1].toMap().value("positionMs").toDouble() == 5000);
+        // Pad 1 at 0:01.500 becomes 0:01.000, pad 3 goes, pad 2 comes:
+        // two gained, two lost.
+        assert(en.value("cueText").toString() == QStringLiteral("2 hot · gains 2 · loses 2"));
+        // A track to add: rekordbox's copy alone, its three cues.
+        const QVariantList add = model.index(rowOf(QStringLiteral("addTrack")))
+                                     .data(RekordboxExportSyncListModel::CueSidesRole).toList();
+        assert(add.size() == 1 && add[0].toMap().value("cues").toList().size() == 3);
+        assert(add[0].toMap().value("cueText").toString() == QStringLiteral("2 hot · 1 memory"));
+        // A membership carries none.
+        assert(model.index(rowOf(QStringLiteral("addMember"))).data(RekordboxExportSyncListModel::CueSidesRole)
+                   .toList().isEmpty());
+    }
     const auto expect = [&model](int row, const QStringList &lines) {
         const QStringList got = model.index(row).data(RekordboxExportSyncListModel::DetailsRole).toStringList();
         if (got != lines) {
