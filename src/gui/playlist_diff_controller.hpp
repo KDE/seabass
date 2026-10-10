@@ -91,18 +91,37 @@ private:
     std::vector<Row> m_rows;
 };
 
-// Compare Playlists: two playlists of one catalog side by side, git style.
-// Read-only, like Browse Library: it reads the catalog through
-// LibraryCatalogCache and writes nothing.
+// Compare Playlists: two playlists side by side, git style, each side
+// from any catalog the stick has (DeviceLibrary, OneLibrary, Engine), so
+// the copy one catalog holds can be held against the other's. Read-only,
+// like Browse Library: it reads the catalogs through LibraryCatalogCache
+// and writes nothing.
+//
+// What makes two entries "the same track": within one catalog, the row
+// (its sourceId), as it always was. Across two catalogs, the pairing every
+// other page uses, domain::matchTracks within one stick, resolved once per
+// scan into one identity per track shared by the catalogs; a track the
+// other catalog has no row for stays its own.
 class PlaylistDiffController : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
-    // The catalog's playlists, sorted by name, with how many entries each has.
-    Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY playlistsChanged)
-    Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY playlistsChanged)
+    // The catalogs the last scan read: "rekordbox", "onelibrary", "engine".
+    Q_PROPERTY(QStringList formats READ formats NOTIFY playlistsChanged)
+    // The catalog each side reads its playlist from.
+    Q_PROPERTY(QString formatA READ formatA WRITE setFormatA NOTIFY selectionChanged)
+    Q_PROPERTY(QString formatB READ formatB WRITE setFormatB NOTIFY selectionChanged)
+    // The catalog's name as the page says it ("Engine", "DeviceLibrary").
+    Q_PROPERTY(QString catalogLabelA READ catalogLabelA NOTIFY selectionChanged)
+    Q_PROPERTY(QString catalogLabelB READ catalogLabelB NOTIFY selectionChanged)
+    // Each side's catalog's playlists, sorted by name, with how many
+    // entries each has.
+    Q_PROPERTY(QStringList playlistNamesA READ playlistNamesA NOTIFY playlistsChanged)
+    Q_PROPERTY(QStringList playlistNamesB READ playlistNamesB NOTIFY playlistsChanged)
+    Q_PROPERTY(QVariantMap playlistTrackCountsA READ playlistTrackCountsA NOTIFY playlistsChanged)
+    Q_PROPERTY(QVariantMap playlistTrackCountsB READ playlistTrackCountsB NOTIFY playlistsChanged)
     Q_PROPERTY(QString playlistA READ playlistA WRITE setPlaylistA NOTIFY selectionChanged)
     Q_PROPERTY(QString playlistB READ playlistB WRITE setPlaylistB NOTIFY selectionChanged)
     // Collapse runs of identical lines, two lines of context kept on each side.
@@ -116,19 +135,30 @@ class PlaylistDiffController : public QObject
     Q_PROPERTY(int entriesB READ entriesB NOTIFY diffChanged)
     // One sentence on how B stands to A.
     Q_PROPERTY(QString verdict READ verdict NOTIFY diffChanged)
-    // The other playlists that share a track with A, most alike first:
-    // [{name, count, shared, onlyA, onlyB, relation, glyph, detail}].
+    // The other playlists, of every catalog read, that share a track with
+    // A, most alike first: [{name, format, catalog, label, count, shared,
+    // onlyA, onlyB, relation, glyph, detail}]. label is the name, with
+    // its catalog in front when that is not A's ("Engine: Spacy Techno").
     // relation is "identical", "superset", "subset" or "overlap".
     Q_PROPERTY(QVariantList relatives READ relatives NOTIFY diffChanged)
 
 public:
     explicit PlaylistDiffController(QObject *parent = nullptr);
 
-    // Reading the catalog, or diffing two long playlists on a worker.
+    // Reading the catalogs, or diffing two long playlists on a worker.
     bool busy() const { return m_scan.busy() || m_diffJob.busy(); }
     QString errorMessage() const { return m_errorMessage; }
-    QStringList playlistNames() const { return m_names; }
-    QVariantMap playlistTrackCounts() const;
+    QStringList formats() const;
+    QString formatA() const { return m_formatA; }
+    QString formatB() const { return m_formatB; }
+    void setFormatA(const QString &format);
+    void setFormatB(const QString &format);
+    QString catalogLabelA() const { return catalogLabel(m_formatA); }
+    QString catalogLabelB() const { return catalogLabel(m_formatB); }
+    QStringList playlistNamesA() const { return namesOf(m_formatA); }
+    QStringList playlistNamesB() const { return namesOf(m_formatB); }
+    QVariantMap playlistTrackCountsA() const { return countsOf(m_formatA); }
+    QVariantMap playlistTrackCountsB() const { return countsOf(m_formatB); }
     QString playlistA() const { return m_playlistA; }
     QString playlistB() const { return m_playlistB; }
     void setPlaylistA(const QString &name);
@@ -140,16 +170,26 @@ public:
     int onlyBCount() const { return m_diff.onlyB; }
     int sharedCount() const { return m_diff.shared; }
     int movedCount() const { return m_diff.moved; }
-    int entriesA() const { return static_cast<int>(entriesOf(m_playlistA).size()); }
-    int entriesB() const { return static_cast<int>(entriesOf(m_playlistB).size()); }
+    int entriesA() const { return static_cast<int>(entriesOf(m_formatA, m_playlistA).size()); }
+    int entriesB() const { return static_cast<int>(entriesOf(m_formatB, m_playlistB).size()); }
     QString verdict() const { return m_verdict; }
     QVariantList relatives() const { return m_relatives; }
 
-    // format: "rekordbox", "engine" or "onelibrary"; path: that catalog's
-    // path, the same the other read-only pages take.
-    Q_INVOKABLE void scan(const QString &format, const QString &path);
+    // The catalog's name as the page says it, for "rekordbox", "onelibrary"
+    // and "engine".
+    static QString catalogLabel(const QString &format);
+
+    // Reads every catalog the stick has: DeviceLibrary and, when the stick
+    // has one, OneLibrary under rekordboxPath (the PIONEER folder), Engine
+    // under enginePath. Either path may be empty.
+    Q_INVOKABLE void scan(const QString &rekordboxPath, const QString &enginePath);
     Q_INVOKABLE void cancelScan();
+    // Whether a OneLibrary catalog sits beside the DeviceLibrary one.
+    Q_INVOKABLE bool hasOneLibrary(const QString &pioneerRoot) const;
+    // Swaps the two sides, catalogs and playlists.
     Q_INVOKABLE void swapPlaylists();
+    // B is `name` of catalog `format` (a relative's chip), in one step.
+    Q_INVOKABLE void chooseB(const QString &format, const QString &name);
     // Opens the fold row at `row` (its identical lines take its place).
     Q_INVOKABLE void expandFold(int row);
     // "Artist - Title" per line, for the clipboard.
@@ -157,9 +197,9 @@ public:
     Q_INVOKABLE QString onlyInBText() const;
     Q_INVOKABLE void copyToClipboard(const QString &text) const;
 
-    // The catalog's tracks as a finished scan would hand them over, for a
+    // One catalog's tracks as a finished scan would hand them over, for a
     // test that needs playlists the fixture does not have.
-    void setTracksForTesting(std::vector<domain::Track> tracks);
+    void setTracksForTesting(std::vector<domain::Track> tracks, const QString &format = QStringLiteral("engine"));
 
 signals:
     void busyChanged();
@@ -171,32 +211,55 @@ signals:
     void scanCancelled();
 
 private:
-    struct ScanResult
+    // The entries of one playlist: indices into its catalog's tracks, in
+    // playlist order.
+    using Entries = std::vector<int>;
+    struct Catalog
     {
         std::vector<domain::Track> tracks;
-        QString errorMessage;
+        // Per track: the identity it shares with its rows in the other
+        // catalogs, the same string wherever matchTracks paired them.
+        std::vector<std::string> identities;
+        std::map<QString, Entries> playlists;
+        QStringList names;
+    };
+    struct ScanResult
+    {
+        std::map<QString, Catalog> catalogs;
+        QStringList failures;
         bool cancelled = false;
     };
-    // The entries of one playlist: indices into m_tracks, in playlist order.
-    using Entries = std::vector<int>;
 
+    static void resolveIdentities(std::map<QString, Catalog> &catalogs);
+    static void indexPlaylists(Catalog &catalog);
     void onScanFinished(ScanResult &&result);
-    void setTracks(std::vector<domain::Track> tracks);
-    void clearCatalog();
+    void setCatalogs(std::map<QString, Catalog> catalogs);
+    void clearCatalogs();
     void setErrorMessage(const QString &message);
-    void indexPlaylists();
-    void chooseDefaults();
-    const Entries &entriesOf(const QString &name) const;
-    std::vector<std::string> idsOf(const Entries &entries) const;
+    // A side's catalog or playlist that is not there falls back; with
+    // `avoidSamePair`, B equal to A falls back too (the pair a scan opens on).
+    void chooseDefaults(bool avoidSamePair);
+    QString nearestRelativeInB() const;
+    const Catalog *catalogOf(const QString &format) const;
+    QStringList namesOf(const QString &format) const;
+    QVariantMap countsOf(const QString &format) const;
+    const Entries &entriesOf(const QString &format, const QString &name) const;
+    // The keys two entries are compared by: the row within one catalog,
+    // the shared identity across two.
+    std::vector<std::string> idsOf(const QString &format, const Entries &entries, bool acrossCatalogs) const;
+    const domain::Track &trackOf(const QString &format, int index) const;
+    // A side's playlist as a sentence names it: with its catalog when the
+    // two sides are different catalogs.
+    QString sideName(bool sideA) const;
     void recompute();
     void applyDiff(domain::PlaylistDiff diff);
     void rebuildRows();
     QString onlyText(bool sideA) const;
 
     QString m_errorMessage;
-    std::vector<domain::Track> m_tracks;
-    std::map<QString, Entries> m_playlists;
-    QStringList m_names;
+    std::map<QString, Catalog> m_catalogs;
+    QString m_formatA;
+    QString m_formatB;
     QString m_playlistA;
     QString m_playlistB;
     bool m_foldIdentical = true;

@@ -7,8 +7,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Compare Playlists: two playlists of one catalog side by side, the way
-// git shows two versions of a file. The set is the finding: red rows are
+// Compare Playlists: two playlists side by side, the way git shows two
+// versions of a file. Each side has its own catalog (DeviceLibrary,
+// OneLibrary or Engine), so a playlist can be held against the copy
+// another catalog keeps of it. The set is the finding: red rows are
 // tracks only A has, green rows only B has. Order is a side note: a track
 // in both lists but somewhere else is amber on both sides with a ribbon
 // between them, never reported as missing. Runs of identical rows fold
@@ -31,15 +33,11 @@ Page {
 
     readonly property bool hasRekordbox: root.rekordboxPath.length > 0
     readonly property bool hasEngine: root.enginePath.length > 0
-    property string format: root.hasEngine ? "engine" : "rekordbox"
-    function currentPath() {
-        return root.format === "engine" ? root.enginePath : root.rekordboxPath;
-    }
-    function rescan() {
-        controller.scan(root.format, root.currentPath());
-    }
-    onFormatChanged: rescan()
-    Component.onCompleted: rescan()
+    readonly property bool hasOneLibrary: root.hasRekordbox && realController.hasOneLibrary(root.rekordboxPath)
+    // A catalog switch per side only where there is a choice to make.
+    readonly property bool showSourceToggles: (root.hasRekordbox ? 1 : 0) + (root.hasEngine ? 1 : 0)
+        + (root.hasOneLibrary ? 1 : 0) > 1
+    Component.onCompleted: controller.scan(root.rekordboxPath, root.enginePath)
 
     readonly property string keyNotation: root.appSettingsController && root.appSettingsController.keyNotation
         ? root.appSettingsController.keyNotation : "camelot"
@@ -50,18 +48,19 @@ Page {
         return root.keyNotation === "traditional" ? Theme.traditionalLabel(key) : Theme.camelotLabel(key);
     }
 
-    // The pickers' model: every playlist with its entry count.
-    readonly property var pickerModel: {
-        const names = controller.playlistNames || [];
-        const counts = controller.playlistTrackCounts || {};
+    // The pickers' models: every playlist of that side's catalog with its
+    // entry count.
+    function pickerModelOf(names, counts) {
         const out = [];
         for (let i = 0; i < names.length; ++i) {
             out.push({name: names[i], count: counts[names[i]] || 0});
         }
         return out;
     }
-    function pickerIndexOf(name) {
-        const model = root.pickerModel;
+    readonly property var pickerModelA: root.pickerModelOf(controller.playlistNamesA || [], controller.playlistTrackCountsA || {})
+    readonly property var pickerModelB: root.pickerModelOf(controller.playlistNamesB || [], controller.playlistTrackCountsB || {})
+    readonly property bool acrossCatalogs: controller.formatA !== controller.formatB
+    function pickerIndexOf(model, name) {
         for (let i = 0; i < model.length; ++i) {
             if (model[i].name === name) {
                 return i;
@@ -118,17 +117,10 @@ Page {
                 }
                 Item { Layout.fillWidth: true }
                 SeabassBusyIndicator { running: controller.busy; visible: controller.busy; implicitWidth: 20; implicitHeight: 20 }
-                LibrarySourceToggle {
-                    visible: root.hasRekordbox && root.hasEngine
-                    current: root.format
-                    hasRekordbox: root.hasRekordbox
-                    hasEngine: root.hasEngine
-                    hasOneLibrary: false
-                    onSourceRequested: (value) => root.format = value
-                }
             }
 
-            // A, swap, B: the two pickers share the row's width.
+            // A, swap, B, each with its catalog and its playlist: the two
+            // pickers share the row's width.
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.rowSpacing
@@ -139,13 +131,22 @@ Page {
                     font.family: Theme.dataFamily
                     color: Theme.danger
                 }
+                LibrarySourceToggle {
+                    objectName: "sourceToggleA"
+                    visible: root.showSourceToggles
+                    current: controller.formatA
+                    hasRekordbox: root.hasRekordbox
+                    hasEngine: root.hasEngine
+                    hasOneLibrary: root.hasOneLibrary
+                    onSourceRequested: (value) => controller.formatA = value
+                }
                 PlaylistPickerCombo {
                     id: comboA
                     objectName: "playlistACombo"
                     Layout.fillWidth: true
                     implicitHeight: Theme.compactControlHeight
-                    model: root.pickerModel
-                    currentIndex: root.pickerIndexOf(controller.playlistA)
+                    model: root.pickerModelA
+                    currentIndex: root.pickerIndexOf(root.pickerModelA, controller.playlistA)
                     onPlaylistPicked: (index, modelData) => controller.playlistA = modelData.name
                 }
                 IconToolButton {
@@ -162,13 +163,22 @@ Page {
                     font.family: Theme.dataFamily
                     color: Theme.good
                 }
+                LibrarySourceToggle {
+                    objectName: "sourceToggleB"
+                    visible: root.showSourceToggles
+                    current: controller.formatB
+                    hasRekordbox: root.hasRekordbox
+                    hasEngine: root.hasEngine
+                    hasOneLibrary: root.hasOneLibrary
+                    onSourceRequested: (value) => controller.formatB = value
+                }
                 PlaylistPickerCombo {
                     id: comboB
                     objectName: "playlistBCombo"
                     Layout.fillWidth: true
                     implicitHeight: Theme.compactControlHeight
-                    model: root.pickerModel
-                    currentIndex: root.pickerIndexOf(controller.playlistB)
+                    model: root.pickerModelB
+                    currentIndex: root.pickerIndexOf(root.pickerModelB, controller.playlistB)
                     onPlaylistPicked: (index, modelData) => controller.playlistB = modelData.name
                 }
                 SeabassCheckBox {
@@ -187,8 +197,10 @@ Page {
         anchors.rightMargin: Theme.pageMargin
         spacing: Theme.sectionSpacing
 
-        // The other playlists A shares tracks with, most alike first; a
-        // chip sets B. This is what sorts out a drawer of near copies.
+        // The other playlists A shares tracks with, in every catalog, most
+        // alike first; a chip sets B, its catalog too. This is what sorts
+        // out a drawer of near copies, and finds the copy another catalog
+        // keeps of A.
         Flow {
             objectName: "relatives"
             Layout.fillWidth: true
@@ -213,9 +225,11 @@ Page {
                     implicitWidth: chipRow.implicitWidth + leftPadding + rightPadding
                     leftPadding: Theme.rowSpacing
                     rightPadding: Theme.rowSpacing
-                    flat: chip.modelData.name !== controller.playlistB
-                    highlighted: chip.modelData.name === controller.playlistB
-                    onClicked: controller.playlistB = chip.modelData.name
+                    readonly property bool isB: chip.modelData.name === controller.playlistB
+                        && chip.modelData.format === controller.formatB
+                    flat: !chip.isB
+                    highlighted: chip.isB
+                    onClicked: controller.chooseB(chip.modelData.format, chip.modelData.name)
                     ToolTip.visible: hovered
                     ToolTip.text: chip.modelData.detail
                     contentItem: RowLayout {
@@ -229,7 +243,7 @@ Page {
                                 : chip.modelData.relation === "subset" ? Theme.danger
                                 : chip.modelData.relation === "identical" ? Theme.accent : Theme.textMuted
                         }
-                        Label { text: chip.modelData.name; elide: Text.ElideRight; Layout.maximumWidth: 260 }
+                        Label { text: chip.modelData.label; elide: Text.ElideRight; Layout.maximumWidth: 260 }
                         Label { text: chip.modelData.detail; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                     }
                 }
@@ -315,7 +329,8 @@ Page {
                 x: 0
                 width: parent.cellWidth
                 height: parent.height
-                title: controller.playlistNames.length > 0 ? controller.playlistA : ""
+                title: controller.playlistNamesA.length > 0 ? controller.playlistA : ""
+                catalog: root.acrossCatalogs && title.length > 0 ? controller.catalogLabelA : ""
                 count: controller.entriesA
                 accent: Theme.danger
             }
@@ -324,7 +339,8 @@ Page {
                 width: parent.cellWidth
                 objectName: "headerB"
                 height: parent.height
-                title: controller.playlistNames.length > 0 ? controller.playlistB : ""
+                title: controller.playlistNamesB.length > 0 ? controller.playlistB : ""
+                catalog: root.acrossCatalogs && title.length > 0 ? controller.catalogLabelB : ""
                 count: controller.entriesB
                 accent: Theme.good
             }
@@ -537,7 +553,7 @@ Page {
                 visible: !controller.busy && diffList.count === 0
                 iconName: controller.errorMessage.length > 0 ? "dialog-warning" : "view-list-details"
                 text: controller.errorMessage.length > 0 ? controller.errorMessage
-                    : (controller.playlistNames.length === 0 ? "This catalog has no playlists." : "Nothing to show.")
+                    : (controller.playlistNamesA.length === 0 ? "This catalog has no playlists." : "Nothing to show.")
             }
         }
     }
@@ -628,6 +644,8 @@ Page {
     component DiffCellHeader: Item {
         id: head
         property string title: ""
+        // The catalog, beside the name, when the two sides read different ones.
+        property string catalog: ""
         property int count: 0
         property color accent: Theme.text
         RowLayout {
@@ -639,6 +657,18 @@ Page {
             Label {
                 text: head.title
                 font.bold: true
+                elide: Text.ElideRight
+                // Only as wide as the name while the catalog follows it.
+                Layout.maximumWidth: catalogLabel.visible ? implicitWidth : Infinity
+                Layout.fillWidth: true
+            }
+            Label {
+                id: catalogLabel
+                objectName: head.objectName + "Catalog"
+                visible: head.catalog.length > 0
+                text: head.catalog
+                color: Theme.textMuted
+                font.pointSize: Theme.tableHeaderSize
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }

@@ -7,11 +7,12 @@ import QtQuick.Controls
 import QtTest
 import SeabassGui
 
-// PlaylistDiffPage.qml over the committed anonymized Engine library, its
-// real controller running: the pickers list the playlists, the page
-// opens on the first one and its nearest relative, the diff rows render
-// with their signs, a fold opens on click, the chips set B, and the
-// page keeps one left line. Saves a screenshot when
+// PlaylistDiffPage.qml over the committed anonymized library, its real
+// controller running: the pickers list the playlists, the page opens on
+// the first one and its nearest relative, the diff rows render with
+// their signs, a fold opens on click, the chips set B, and the page
+// keeps one left line. With both catalogs, each side has its own catalog
+// switch and lists that catalog's playlists. Saves a screenshot when
 // SEABASS_SCREENSHOT_DIR is set.
 TestCase {
     id: testCase
@@ -41,10 +42,13 @@ TestCase {
         }
     }
 
-    function openOnAFreshCopy() {
+    function openOnAFreshCopy(withRekordbox) {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");
-        const page = createTemporaryObject(pageComponent, testCase, {enginePath: stick + "/Engine Library"});
+        const page = createTemporaryObject(pageComponent, testCase, {
+            enginePath: stick + "/Engine Library",
+            rekordboxPath: withRekordbox ? stick + "/PIONEER" : "",
+        });
         verify(page !== null, "the page must instantiate");
         tryCompare(page.controller, "busy", false, 60000);
         compare(page.controller.errorMessage, "");
@@ -59,7 +63,8 @@ TestCase {
     function test_opensOnTheFirstPlaylistAndItsNearestRelative() {
         const page = openOnAFreshCopy();
         const controller = page.controller;
-        compare(controller.playlistNames.length, 30, "the three empty playlists have no track to name them");
+        compare(controller.playlistNamesA.length, 30, "the three empty playlists have no track to name them");
+        verify(!findChild(page, "sourceToggleA").visible, "one catalog, no switch");
         compare(controller.playlistA, "Playlist 000");
         compare(controller.playlistB, "Playlist 019");
         const comboA = findChild(page, "playlistACombo");
@@ -180,7 +185,7 @@ TestCase {
         const page = openOnAFreshCopy();
         verify(rowsOf(page).count > 0);
         compare(findChild(page, "headerA").title, "Playlist 000");
-        page.controller.scan("engine", testCase.fixtureRoot + "/no-such-stick/Engine Library");
+        page.controller.scan("", testCase.fixtureRoot + "/no-such-stick/Engine Library");
         compare(rowsOf(page).count, 0);
         compare(findChild(page, "headerA").title, "");
         compare(findChild(page, "headerB").title, "");
@@ -190,6 +195,92 @@ TestCase {
         compare(rowsOf(page).count, 0);
         compare(findChild(page, "headerA").title, "");
         compare(findChild(page, "playlistACombo").count, 0);
+    }
+
+    // Both catalogs: a switch beside each picker, each picker listing its
+    // own catalog's playlists. Engine on both sides to begin with, as the
+    // page always opened; B to DeviceLibrary changes B's list alone.
+    function test_eachSideHasItsOwnCatalog() {
+        const page = openOnAFreshCopy(true);
+        const controller = page.controller;
+        const toggleA = findChild(page, "sourceToggleA");
+        const toggleB = findChild(page, "sourceToggleB");
+        verify(toggleA !== null && toggleB !== null);
+        verify(toggleA.visible && toggleB.visible);
+        compare(findChild(page, "librarySourceToggle"), null, "no third switch in the header");
+        compare(toggleA.current, "engine");
+        compare(toggleB.current, "engine");
+        verify(toggleA.hasOneLibrary, "the fixture has a OneLibrary catalog");
+        const comboA = findChild(page, "playlistACombo");
+        const comboB = findChild(page, "playlistBCombo");
+        compare(comboA.count, 30);
+        compare(comboB.count, 30);
+        compare(findChild(page, "headerACatalog").visible, false);
+
+        toggleB.sourceRequested("rekordbox");
+        compare(controller.formatB, "rekordbox");
+        compare(toggleB.current, "rekordbox");
+        compare(toggleA.current, "engine");
+        compare(comboA.count, 30, "A's list is still Engine's");
+        compare(comboB.count, controller.playlistNamesB.length);
+        verify(comboB.count !== 30, "B lists DeviceLibrary's playlists: " + comboB.count);
+        verify(controller.playlistNamesB.indexOf(comboB.currentText) >= 0);
+        compare(findChild(page, "headerACatalog").text, "Engine");
+        compare(findChild(page, "headerBCatalog").text, "DeviceLibrary");
+        verify(findChild(page, "headerBCatalog").visible);
+
+        // Swap takes the catalogs along.
+        mouseClick(findChild(page, "swapButton"));
+        compare(toggleA.current, "rekordbox");
+        compare(toggleB.current, "engine");
+        compare(comboB.count, 30);
+    }
+
+    // A chip for another catalog's playlist names that catalog and sets
+    // B's catalog with B. Engine's Playlist 010 and DeviceLibrary's
+    // Playlist 000 share 46 files (see playlist_diff_controller_test).
+    function test_aChipForAnotherCatalogSetsItsCatalog() {
+        const page = openOnAFreshCopy(true);
+        page.controller.playlistA = "Playlist 010";
+        // The chips' Flow places them on the next polish.
+        waitForRendering(page);
+        const chips = [];
+        function collect(item) {
+            if (item.objectName === "relativeChip") {
+                chips.push(item);
+            }
+            for (let i = 0; i < item.children.length; ++i) {
+                collect(item.children[i]);
+            }
+        }
+        tryVerify(() => { chips.length = 0; collect(findChild(page, "relatives")); return chips.length > 0; });
+        let chip = null;
+        for (let i = 0; i < chips.length; ++i) {
+            if (chips[i].modelData.label === "DeviceLibrary: Playlist 000") {
+                chip = chips[i];
+            }
+        }
+        verify(chip !== null, "a chip names DeviceLibrary's Playlist 000");
+        mouseClick(chip);
+        compare(page.controller.formatB, "rekordbox");
+        compare(page.controller.playlistB, "Playlist 000");
+        compare(findChild(page, "sharedCount").text, "46");
+        compare(findChild(page, "onlyACount").text, "−4");
+        compare(findChild(page, "onlyBCount").text, "+3");
+        verify(chip.highlighted, "the chip for B is lit");
+    }
+
+    // One left line with the switches in the row: A's label still starts it.
+    function test_oneLeftLineWithTwoCatalogs() {
+        const page = openOnAFreshCopy(true);
+        compare(Math.round(findChild(page, "labelA").mapToItem(page, 0, 0).x), Theme.pageMargin);
+        compare(Math.round(rowsOf(page).mapToItem(page, 0, 0).x), Theme.pageMargin);
+        compare(Math.round(findChild(page, "columnHeader").mapToItem(page, 0, 0).x), Theme.pageMargin);
+        const toggleA = findChild(page, "sourceToggleA");
+        const comboA = findChild(page, "playlistACombo");
+        verify(toggleA.mapToItem(page, 0, 0).x > findChild(page, "labelA").mapToItem(page, 0, 0).x);
+        verify(comboA.mapToItem(page, 0, 0).x > toggleA.mapToItem(page, 0, 0).x);
+        verify(comboA.width > 100, "the picker keeps room: " + comboA.width);
     }
 
     function test_screenshot() {
@@ -202,5 +293,10 @@ TestCase {
         page.controller.playlistB = "Playlist 025";
         waitForRendering(page);
         grabImage(page).save(screenshotDir + "/playlist-diff-page-moved.png");
+        const both = openOnAFreshCopy(true);
+        both.controller.playlistA = "Playlist 010";
+        both.controller.chooseB("rekordbox", "Playlist 000");
+        waitForRendering(both);
+        grabImage(both).save(screenshotDir + "/playlist-diff-page-catalogs.png");
     }
 }
