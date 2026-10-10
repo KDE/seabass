@@ -14,6 +14,10 @@
 // - A stick forgotten while its second (Cues) step waits on the cue pass
 //   has that step cancelled: the wait ends at once rather than after the
 //   pass.
+// - An Engine-only stick (a copy of the fixture's Engine Library) through
+//   the real reader: its first step knows its cues from the catalog, so
+//   no Cues step follows (no m.db opened read-write, no audio file
+//   probed over USB) and its advice stands on the first read.
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -33,6 +37,7 @@
 #include "domain/track.hpp"
 #include "gui/backup_advisor_controller.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/library_fingerprint_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
@@ -234,10 +239,45 @@ void forgetCancelsTheCuesStep(const fs::path &root)
     std::cout << "forget() cancels a running Cues step (" << elapsed << " ms to idle) OK\n";
 }
 
+void engineOnlyStickNeedsNoCuesStep(const fs::path &root, const fs::path &fixture)
+{
+    const fs::path mount = root / "engine_only";
+    fs::create_directories(mount);
+    fs::copy(fixture / "engine", mount / "Engine Library", fs::copy_options::recursive);
+    const QString mountPoint = QString::fromStdString(seabass::pathToUtf8(mount));
+    const QString engine = QString::fromStdString(seabass::pathToUtf8(mount / "Engine Library"));
+
+    std::mutex mutex;
+    std::map<FingerprintPass, int> passes;
+    BackupAdvisorController controller;
+    controller.setFingerprintReaderForTesting(
+        [&](const QString &rekordboxPath, const QString &enginePath, FingerprintPass pass, CancellationToken cancel) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                ++passes[pass];
+            }
+            return seabass::gui::readLibraryFingerprint(rekordboxPath, enginePath, pass, std::move(cancel));
+        });
+    controller.assess(QStringLiteral("ENGINE"), mountPoint, QString(), engine);
+    waitUntilIdle(controller);
+    std::lock_guard<std::mutex> lock(mutex);
+    std::cout << "  Engine-only insert: " << passes[FingerprintPass::Tracks] << " Tracks step(s), "
+              << passes[FingerprintPass::Cues] << " Cues step(s)\n";
+    assert(passes[FingerprintPass::Tracks] == 1 && "the first step read the stick: the precondition");
+    assert(passes[FingerprintPass::Cues] == 0 && "an Engine-only stick's insert enqueues no Cues step");
+    assert(controller.advice().contains(mountPoint) && "advised on the first read");
+    std::cout << "an Engine-only stick is fingerprinted from its catalog alone, no Cues step OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
+    if (argc < 2) {
+        std::cerr << "usage: backup_advisor_controller_test <tests/fixtures/anonymized_library>\n";
+        return 2;
+    }
+    qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
     QCoreApplication app(argc, argv);
     const fs::path root = seabass::testing::scratchRoot() / "backup_advisor_controller_test";
     fs::remove_all(root);
@@ -245,6 +285,7 @@ int main(int argc, char **argv)
 
     forgetWhileFactsQueuedOrRunning(root);
     forgetCancelsTheCuesStep(root);
+    engineOnlyStickNeedsNoCuesStep(root, seabass::pathFromUtf8(argv[1]));
 
     seabass::gui::LibraryCatalogCache::instance().waitUntilPrefetchIdle();
     fs::remove_all(root);

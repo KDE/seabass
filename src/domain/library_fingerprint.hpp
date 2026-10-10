@@ -25,7 +25,10 @@ namespace seabass::domain
 //   tracks:    normalized title + artist + the catalog's duration in
 //              whole seconds (a length probed after the read is left out)
 //   cues:      per track, its sorted cue positions rounded to 50 ms
-//              (the personal part: two DJs rarely place identical cues)
+//              (the personal part: two DJs rarely place identical cues);
+//              for an Engine row that records no sample rate, its cues'
+//              kinds and pads only (Track::cueRateUnverified), so the
+//              catalog alone gives them and no audio file is opened
 //   playlists: normalized playlist paths
 //
 // compare() estimates containment from the samples, so a library that
@@ -47,7 +50,13 @@ struct LibraryFingerprint
     // length. Only a track whose length Seabass probed itself hashes
     // differently, so an old manifest can read as a changed library, and
     // never as an unchanged one.
-    static constexpr int Version = 2;
+    //
+    // 3: an Engine row without a recorded sample rate hashes its cues'
+    // kinds and pads, not their positions (see the cues line above), so
+    // an Engine catalog's cues are known from its Tracks read. Version 2
+    // still parses; a stick holding such rows reads as changed once
+    // against a version 2 manifest, until its next backup.
+    static constexpr int Version = 3;
     static constexpr int OldestReadableVersion = 1;
     static constexpr std::size_t SampleSize = 256;
 

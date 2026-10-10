@@ -179,6 +179,14 @@ struct Track
     double bpm = 0.0;
     std::string key;  // human-readable, e.g. "Fm" or "F#m", empty if unknown
     std::vector<CuePoint> cues;
+    // True for an Engine row whose catalog records no sample rate (the
+    // player has not analysed it): its cues are stored as sample offsets,
+    // so their times are at the reader's 44.1 kHz guess, or at the rate
+    // its file gave when the reader could ask it. Either way the catalog
+    // alone does not fix them, so the library fingerprint takes such a
+    // track's cue count and kinds, never its positions, and reads the
+    // same with or without the file. Every other row leaves this false.
+    bool cueRateUnverified = false;
 
     // Normalized to 0-5 stars (Engine's own 0-100 scale is divided down by
     // readers before this is set), nullopt when unrated rather than 0 --

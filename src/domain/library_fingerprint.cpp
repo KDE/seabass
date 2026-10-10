@@ -169,13 +169,19 @@ LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks, bool cue
         const std::uint64_t identity = trackIdentityHash(track);
         trackHashes.insert(identity);
         if (cuesKnown && !track.cues.empty()) {
+            // A row whose rate the catalog does not record has its
+            // positions at a guess or at its file's rate (see
+            // Track::cueRateUnverified): what it holds, never where, so a
+            // read that asked the file and one that did not agree.
             std::vector<long long> positions;
             positions.reserve(track.cues.size());
             for (const CuePoint &cue : track.cues) {
-                positions.push_back(std::llround(cue.positionMs / 50.0));
+                positions.push_back(track.cueRateUnverified
+                                        ? (cue.kind == CuePoint::Kind::Hot ? cue.hotCueNumber : 0) * 2 + (cue.isLoop ? 1 : 0)
+                                        : std::llround(cue.positionMs / 50.0));
             }
             std::sort(positions.begin(), positions.end());
-            std::uint64_t hash = identity;
+            std::uint64_t hash = track.cueRateUnverified ? mix(identity, 0x52415445u) : identity;
             for (const long long position : positions) {
                 hash = mix(hash, static_cast<std::uint64_t>(position));
             }

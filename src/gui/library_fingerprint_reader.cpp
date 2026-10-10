@@ -5,6 +5,7 @@
 #include "library_fingerprint_reader.hpp"
 
 #include <exception>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,12 +39,14 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
             anyRead = true;
             // A Tracks answer from an entry that had already read its cues
             // carries them, and saying "checking cues" over it would be a
-            // flash of nothing: the stage says which. For Engine too,
-            // although its cues are in its catalog: a row the player has
-            // not analysed yet has them at a 44.1 kHz guess until the Cues
-            // stage asks the file for its rate, and a backup's
-            // fingerprint is taken from the Cues stage.
-            cuesMissing = cuesMissing || read.stage < LibraryCatalogCache::Detail::Cues;
+            // flash of nothing: the stage says which. Engine's cues are in
+            // its catalog, so its Tracks read knows them: a row the player
+            // has not analysed yet has them at a 44.1 kHz guess until the
+            // Cues stage asks the file for its rate, and the fingerprint
+            // takes such a row's cue kinds, not its positions
+            // (Track::cueRateUnverified), so it needs no file opened.
+            const bool cuesInCatalog = std::string_view(format) == "engine";
+            cuesMissing = cuesMissing || (!cuesInCatalog && read.stage < LibraryCatalogCache::Detail::Cues);
         } catch (const std::exception &) {
             // A catalog that is there and could not be read (or a cancel):
             // no fingerprint at all. The other catalog alone is half the
