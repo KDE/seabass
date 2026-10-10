@@ -2066,7 +2066,7 @@ if(TARGET Qt6::Core)
         tests/library_fingerprint_reader_test.cpp
     )
     target_include_directories(library_fingerprint_reader_test PRIVATE src)
-    target_link_libraries(library_fingerprint_reader_test PRIVATE seabass_core Qt6::Core Threads::Threads)
+    target_link_libraries(library_fingerprint_reader_test PRIVATE seabass_core Qt6::Core Threads::Threads DjInterop)
     # The real duration probe, so the Full stage has something to probe
     # in the duration case; without TagLib that case cannot run.
     if(TARGET seabass_taglib)
@@ -2620,7 +2620,8 @@ if(TARGET seabass_edit)
     )
     target_include_directories(backup_advisor_controller_test PRIVATE src tests)
     target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
-    add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test)
+    add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
     # Clean Up Recordings through its controller: summary, listing, and a
     # real delete run on the worker, against a planted stick.

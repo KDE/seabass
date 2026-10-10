@@ -167,12 +167,17 @@ int main()
         // (2026-09-27) went red on every reference backup when it did not.
         std::string versionOne = text;
         versionOne.replace(0, versionOne.find(';'), "v1");
-        assert(text.rfind("v2;", 0) == 0 && versionOne.rfind("v1;", 0) == 0);
+        assert(text.rfind("v3;", 0) == 0 && versionOne.rfind("v1;", 0) == 0);
         std::optional<LibraryFingerprint> oldManifest = LibraryFingerprint::parse(versionOne);
         assert(oldManifest.has_value() && "a version 1 manifest still parses");
         assert(oldManifest->trackCount == original.trackCount && *oldManifest == original);
+        // Version 2, before an unanalysed Engine row's cues were hashed
+        // by kind and pad: the same layout, and it reads.
+        std::string versionTwo = text;
+        versionTwo.replace(0, versionTwo.find(';'), "v2");
+        assert(LibraryFingerprint::parse(versionTwo) == original && "a version 2 manifest still parses");
         assert(!LibraryFingerprint::parse("v0;1;1;1;;;").has_value() && "before the first version is garbage");
-        assert(!LibraryFingerprint::parse("v3;1;1;1;;;").has_value() && "a future version is not guessed at");
+        assert(!LibraryFingerprint::parse("v4;1;1;1;;;").has_value() && "a future version is not guessed at");
         assert(!LibraryFingerprint::parse("vx;1;1;1;;;").has_value());
         LibraryFingerprint empty = fingerprintLibrary({});
         assert(LibraryFingerprint::parse(empty.serialize()) == empty);

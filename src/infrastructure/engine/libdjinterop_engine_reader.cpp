@@ -1026,6 +1026,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
         const std::optional<double> storedRate =
             snap.sample_rate && *snap.sample_rate > 0.0 ? snap.sample_rate : std::nullopt;
         track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, storedRate.value_or(FallbackSampleRate));
+        track.cueRateUnverified = !storedRate;
         if (!storedRate && !track.cues.empty()) {
             if (const auto fileRate = rateFromSource(track)) {
                 track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, *fileRate);

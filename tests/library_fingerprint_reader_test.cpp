@@ -15,9 +15,16 @@
 //   copy of the committed fixture: a Tracks read of a cold rekordbox
 //   catalog does not know its cues, and one served from an entry that
 //   has read them does, and says the same as the Cues read.
+// - An Engine catalog knows its cues from its Tracks read, and a row the
+//   player has not analysed (no sample rate recorded, a 48 kHz file) gives
+//   one fingerprint whether its cues were read at the 44.1 kHz guess or
+//   at the rate its file gave: the fingerprint takes that row's cue kinds
+//   and pads, never its positions, so no audio file needs opening.
 
 #include <cassert>
 #include <chrono>
+#include <string>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -27,10 +34,13 @@
 
 #include <QString>
 
+#include <djinterop/djinterop.hpp>
+
 #include "domain/library_fingerprint.hpp"
 #include "domain/track.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/library_fingerprint_reader.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "mp3_fixture.hpp"
 #include "scratch_path.hpp"
@@ -176,7 +186,7 @@ void unreadableCatalogCases(const fs::path &fixture)
 // duration cache empty: the Tracks stage opens no audio file (every such
 // track reads 0), the Full stage probes them, and the fingerprint names
 // the same tracks either way, since a probed length is not part of a
-// track's identity. Its cues are known only from the Cues stage on. The fixture has no audio, so a short MP3 is planted where
+// track's identity. Its cues are known from the Tracks stage on. The fixture has no audio, so a short MP3 is planted where
 // each untimed track's file should be: without it the probe would fail
 // at every stage and the comparison would prove nothing.
 void durationStageCases(const fs::path &fixture)
@@ -229,9 +239,10 @@ void durationStageCases(const fs::path &fixture)
     }
     assert(probed > 0 && "the Full stage probed the planted files: the precondition of the comparison below");
     const auto fromFull = seabass::gui::readLibraryFingerprint(QString(), enginePath, seabass::gui::FingerprintPass::Cues);
-    // Engine's cues are known from the Cues stage on: an unanalysed row's
-    // are at a 44.1 kHz guess before it.
-    assert(fromTracks && fromFull && !fromTracks->cuesKnown && fromFull->cuesKnown);
+    // Engine's cues are in its catalog: known from the Tracks read, and
+    // the same as the Full read's.
+    assert(fromTracks && fromFull && fromTracks->cuesKnown && fromFull->cuesKnown);
+    assert(*fromTracks == *fromFull && "the cue sample does not move between the stages");
     assert(fromTracks->trackCount == fromFull->trackCount && fromTracks->trackHashes == fromFull->trackHashes
            && fromTracks->playlistCount == fromFull->playlistCount
            && fromTracks->playlistHashes == fromFull->playlistHashes
@@ -239,6 +250,81 @@ void durationStageCases(const fs::path &fixture)
     std::cout << "the Tracks stage opens no audio file, Full probes " << probed << " rows of " << untimed.size()
               << " files, and the fingerprint names the same tracks at both OK\n";
     cache.invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
+    fs::remove_all(stick);
+}
+
+// See the top of the file: an analysed row (48 kHz recorded) and an
+// unanalysed one (none recorded, its hot cue at 48000 samples).
+void unverifiedRateCases()
+{
+    using seabass::infrastructure::engine::LibdjinteropEngineReader;
+    const fs::path stick = seabass::testing::scratchRoot() / "library_fingerprint_reader_test_rates";
+    fs::remove_all(stick);
+    fs::create_directories(stick);
+    const std::string engine = seabass::pathToUtf8(stick / "Engine Library");
+    {
+        auto db = djinterop::engine::create_database(engine);
+        djinterop::track_snapshot analysed;
+        analysed.title = "analysed";
+        analysed.artist = "Artist";
+        analysed.relative_path = "../Contents/analysed.mp3";
+        analysed.sample_rate = 48000.0;
+        analysed.main_cue = 48000.0;
+        db.create_track(analysed);
+        djinterop::track_snapshot unanalysed;
+        unanalysed.title = "unanalysed";
+        unanalysed.artist = "Artist";
+        unanalysed.relative_path = "../Contents/unanalysed.mp3";
+        unanalysed.hot_cues.resize(8);
+        unanalysed.hot_cues[0] = djinterop::hot_cue{"", 48000.0, djinterop::pad_color{}};
+        db.create_track(unanalysed);
+    }
+    const auto unanalysedOf = [](std::vector<seabass::domain::Track> &tracks) -> seabass::domain::Track & {
+        for (auto &track : tracks) {
+            if (track.title == "unanalysed") {
+                return track;
+            }
+        }
+        assert(false && "the unanalysed row was read");
+        return tracks.front();
+    };
+
+    LibdjinteropEngineReader plain(engine);
+    auto guessed = plain.readTracks();
+    LibdjinteropEngineReader asking(engine);
+    asking.setSampleRateSource([](const std::string &) -> std::optional<double> { return 48000.0; });
+    auto probed = asking.readTracks();
+    assert(guessed.size() == 2 && probed.size() == 2);
+    const double atGuess = unanalysedOf(guessed).cues.at(0).positionMs;
+    const double atRate = unanalysedOf(probed).cues.at(0).positionMs;
+    std::cout << "  the unanalysed hot cue: " << atGuess << " ms at the guess, " << atRate << " ms at 48 kHz\n";
+    assert(std::llround(atGuess / 50.0) != std::llround(atRate / 50.0) && "the precondition: the two reads differ");
+    const LibraryFingerprint fromGuess = fingerprintLibrary(guessed);
+    const LibraryFingerprint fromRate = fingerprintLibrary(probed);
+    assert(fromGuess.cuedTrackCount == 2);
+    assert(fromGuess.serialize() == fromRate.serialize()
+           && "one fingerprint with and without the file's rate");
+    {
+        // What the row holds still counts: the cue on another pad is
+        // another library.
+        auto moved = guessed;
+        unanalysedOf(moved).cues.at(0).hotCueNumber = 2;
+        assert(!(fingerprintLibrary(moved) == fromGuess) && "an unanalysed row's pads are in the fingerprint");
+    }
+
+    // Through the cache: a cold Tracks read of the Engine catalog knows
+    // its cues, and is the Cues read's fingerprint.
+    const QString enginePath = QString::fromStdString(engine);
+    seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
+    const auto fromTracks =
+        seabass::gui::readLibraryFingerprint(QString(), enginePath, seabass::gui::FingerprintPass::Tracks);
+    assert(fromTracks && fromTracks->cuesKnown && "an Engine Tracks read knows its cues");
+    const auto fromCues =
+        seabass::gui::readLibraryFingerprint(QString(), enginePath, seabass::gui::FingerprintPass::Cues);
+    assert(fromCues && *fromCues == *fromTracks && fromTracks->serialize() == fromGuess.serialize());
+    std::cout << "an unanalysed 48 kHz row: one fingerprint at the guess and at the file's rate, known from "
+                 "the Tracks read OK\n";
+    seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
     fs::remove_all(stick);
 }
 
@@ -263,6 +349,7 @@ int main(int argc, char **argv)
     cuesPassCases();
     stageFromTheCacheCases(seabass::pathFromUtf8(argv[1]));
     unreadableCatalogCases(seabass::pathFromUtf8(argv[1]));
+    unverifiedRateCases();
 #ifdef SEABASS_TEST_HAVE_PROBE
     durationStageCases(seabass::pathFromUtf8(argv[1]));
 #else
