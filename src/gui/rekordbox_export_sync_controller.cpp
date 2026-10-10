@@ -134,12 +134,11 @@ QString q(const std::string &text)
 }
 
 // Whether a write onto rekordbox puts back what Seabass wrote there (the
-// export dropped it) rather than Engine's value over rekordbox's.
-// Until MetadataEdit says so itself, its reason does: only ExportDropped
-// is a restore.
+// export dropped it) rather than Engine's value over rekordbox's. The
+// planner says which.
 bool restoresSeabassWrite(const domain::MetadataEdit &edit)
 {
-    return edit.header.reason == domain::EngineUpdateReason::ExportDropped;
+    return edit.restoresSeabassWrite;
 }
 
 QString titleOf(const domain::Track &track)
