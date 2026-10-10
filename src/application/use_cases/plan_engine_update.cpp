@@ -60,4 +60,16 @@ domain::EngineUpdateInput buildEngineUpdateInput(std::vector<domain::Track> reko
     return in;
 }
 
+
+std::string engineUpdateIntroText(const domain::EngineUpdateProposal &proposal)
+{
+    if (proposal.hasBaseline) {
+        return "Compared with how this stick looked when Seabass last saved it, export "
+               + std::to_string(proposal.baselineSequence) + ".";
+    }
+    return "No earlier record of this stick. What rekordbox has and Engine lacks is taken as added in rekordbox "
+           "and is selected; what Engine has and rekordbox lacks is left for you to decide. Anything you leave "
+           "undecided counts as Engine's own from now on and is not asked again.";
+}
+
 }  // namespace seabass::application

@@ -238,8 +238,13 @@ hardware rounds below pass, the way Create Engine Library is.
 
 The page is a proposal first, then one save, as Sync Cue Points is: an
 intro line saying what it was compared against ("Compared with how this
-stick looked when Seabass last saved it, export 15132" or "No earlier
-record of this stick: additions are assumed, removals are left to you"),
+stick looked when Seabass last saved it, export 15132" or, on the first
+run, three sentences saying what and to what: "No earlier record of this
+stick. What rekordbox has and Engine lacks is taken as added in rekordbox
+and is selected; what Engine has and rekordbox lacks is left for you to
+decide. Anything you leave undecided counts as Engine's own from now on
+and is not asked again."; one text for the page and the CLI,
+application::engineUpdateIntroText),
 then sections, each with a section-wide checkbox and one per row, each
 row with its reason:
 

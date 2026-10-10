@@ -67,4 +67,11 @@ std::function<bool(const std::string &)> fileExistsUnder(const std::string &stic
 domain::EngineUpdateInput buildEngineUpdateInput(std::vector<domain::Track> rekordbox,
                                                  std::vector<domain::Track> engine, EngineUpdateStickFacts facts);
 
+
+// The sentence the page and seabass-cli lead with: what the proposal was
+// compared against. With a baseline, the export it was recorded at;
+// without one, the first run's rule, each sentence saying what and to
+// what. One text, so the two never drift.
+std::string engineUpdateIntroText(const domain::EngineUpdateProposal &proposal);
+
 }  // namespace seabass::application

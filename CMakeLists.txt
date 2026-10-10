@@ -2473,7 +2473,7 @@ seabass_cli_test(cli_sync_after_export EXIT 1
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1564 \\(95 streaming, left out\\)\\n"
            "rekordbox playlists and folders: 24\\n" "engine playlists and folders:    33\\n"
            "rekordbox export now: 15132\\n"
-           "\\nNo earlier record of this stick: additions are assumed, removals are left to you\\n"
+           "\\nNo earlier record of this stick\\. What rekordbox has and Engine lacks is taken as added in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to decide\\. Anything you leave undecided counts as Engine's own from now on and is not asked again\\.\\n"
            "\\nPlaylists to create, rename, delete \\(1\\)\\n" "\\nPlaylist membership \\(925\\)\\n"
            "\\nConflicts \\(1245\\)\\n" "\\nEngine's own, kept \\(1177\\)\\n"
            "total: 953 change\\(s\\), 953 checked. 1245 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"

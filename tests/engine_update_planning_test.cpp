@@ -1491,7 +1491,7 @@ int main()
         MatchingPolicy::reset();
         assert(p.cuesToRekordbox.empty() && p.conflicts.empty() && p.cuesToEngine.size() == 1);
         assert(p.cuesToEngine[0].header.reason == EngineUpdateReason::RekordboxChanged);
-        assert(p.cuesToEngine[0].header.reasonText == "rekordbox moved pad 3 from 1:07.751 to 0:00.000" + Since);
+        assert(p.cuesToEngine[0].header.reasonText == "rekordbox set pad 3 to 0:00.000 (was 1:07.751)" + Since);
         assert(sameCueList(p.cuesToEngine[0].plan.cuesToApply, {hot(1, 10000), hot(3, 0)}));
         std::cout << "0:00 pad with the preference off is rekordbox's change OK\n";
     }
