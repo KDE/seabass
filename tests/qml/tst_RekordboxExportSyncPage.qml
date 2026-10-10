@@ -515,7 +515,10 @@ TestCase {
         tryVerify(() => page.controller.hasBaseline && !page.controller.busy, 120000, "the page analyses again");
         compare(page.controller.stagedCount, 0);
         compare(page.controller.sectionCounts["conflicts"], 3);
-        compare(page.controller.sectionCounts["engineOwnKept"], 2422);
+        // 2422 before the empty-pad rule (12391d90): the fixture's 17
+        // "Engine set pad N" rows were kept then and are writes onto
+        // rekordbox now, so they are no longer Engine's own.
+        compare(page.controller.sectionCounts["engineOwnKept"], 2405);
         compare(page.controller.sectionCounts["engineOnlyPlaylists"], 17);
         compare(page.controller.sectionCounts["playlists"], 0);
         compare(page.controller.sectionCounts["membership"], 0);
