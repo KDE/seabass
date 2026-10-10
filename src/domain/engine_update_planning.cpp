@@ -2040,9 +2040,14 @@ private:
                 continue;
             }
             // rekordbox lacks it. Engine's cue point alone is not a pad to
-            // take out, so only a pad counts as Engine having it.
+            // take out, so only a pad counts as Engine having it for a
+            // removal or a question. For a restore of Seabass's own write
+            // the main cue counts too, as it does for the empty pads: Sync
+            // Cue Points copies Engine's main cue onto rekordbox as a
+            // memory cue, and a re-export dropping it is a cue to put back.
             const auto translations = within(seen.memoryCues, bc);
-            if (translations == 0) {
+            const bool seabassOnEngineMain = row->origin == ValueOrigin::Seabass && within(eMain, bc) > 0;
+            if (translations == 0 && !seabassOnEngineMain) {
                 continue;
             }
             const CueItemState item{itemKeyText, engineUpdateStateHash(memoryState(nullptr))};
