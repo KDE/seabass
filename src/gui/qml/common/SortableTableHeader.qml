@@ -14,7 +14,8 @@ import SeabassGui
 // `sortField` and `sortAscending` are the page's current sort, and a
 // click (or Space/Enter with focus) emits sortRequested(sortKey). The
 // page decides what that means: a new column sorts ascending, the
-// sorted one flips.
+// sorted one flips, and a column sorted descending goes back to the
+// table's own order, which `unsortedName` names for the tooltip.
 //
 // The arrow's room is part of the header's width whether the arrow is
 // shown or not, so a header never changes width when its column becomes
@@ -26,6 +27,8 @@ Item {
     required property string sortKey
     property string sortField: ""
     property bool sortAscending: true
+    // What the table goes back to after descending, as the tooltip says it.
+    property string unsortedName: "the original order"
     readonly property bool active: root.sortField === root.sortKey
 
     signal sortRequested(string key)
@@ -52,7 +55,7 @@ Item {
         }
         return root.sortAscending
             ? "Sorted by " + root.label + ", ascending. Click to sort descending"
-            : "Sorted by " + root.label + ", descending. Click to sort ascending";
+            : "Sorted by " + root.label + ", descending. Click for " + root.unsortedName;
     }
     Accessible.description: root.toolTipText
     Accessible.onPressAction: root.sortRequested(root.sortKey)

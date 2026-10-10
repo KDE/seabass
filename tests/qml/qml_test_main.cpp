@@ -594,13 +594,16 @@ public:
     Q_INVOKABLE QString presentArtworkUrl() { return QUrl::fromLocalFile(presentArtwork()).toString(); }
     Q_INVOKABLE QString missingArtworkUrl() const { return QUrl::fromLocalFile(missingArtwork()).toString(); }
 
-    Q_INVOKABLE void holdCues(int trackCount)
+    // reversedPlaylist adds a second playlist, "Held Reversed", holding
+    // every track in the opposite order, so a playlist's own order can be
+    // told apart from the scan order and from a sort by title.
+    Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false)
     {
         restore();
         auto gate = std::make_shared<Gate>();
         const std::string present = presentArtwork().toStdString();
         const std::string missing = missingArtwork().toStdString();
-        auto stage = [gate, trackCount, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
+        auto stage = [gate, trackCount, reversedPlaylist, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,
                                                           std::vector<seabass::domain::Track> &tracks,
                                                           seabass::gui::LibraryCatalogCache::StageNotes &,
@@ -617,6 +620,9 @@ public:
                     track.artist = "Held Artist";
                     track.durationSeconds = 200 + i;
                     track.playlists.push_back({"Held Playlist", i});
+                    if (reversedPlaylist) {
+                        track.playlists.push_back({"Held Reversed", trackCount - 1 - i});
+                    }
                     // Engine names art that is not on the stick; the
                     // rekordbox copy of the same song has a real one.
                     track.artworkPath = format == "engine" ? missing : present;

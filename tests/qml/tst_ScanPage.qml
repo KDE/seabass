@@ -436,7 +436,10 @@ TestCase {
         cues.forceActiveFocus();
         keyClick(Qt.Key_Space);
         compareIndicators(held.page, "cues", false);
-        compare(cues.toolTipText, "Sorted by Cues, descending. Click to sort ascending");
+        compare(cues.toolTipText, "Sorted by Cues, descending. Click for the library's own order");
+        keyClick(Qt.Key_Return);
+        compareIndicators(held.page, "", true);
+        compare(held.page.sortField, "playlist", "a third press goes back to the list's own order");
         keyClick(Qt.Key_Return);
         compareIndicators(held.page, "cues", true);
 
@@ -878,5 +881,60 @@ TestCase {
         waitForRendering(held.page);
         compare(held.page.browseTier, 0);
         compare(compareColumnGeometry(held.page, held.list, "340 wide"), 2, "artwork and actions");
+    }
+
+    // ---- Back to the playlist's own order ----
+
+    // A third click on the sorted header returns the list to the order the
+    // playlist has on the player, and the page says so: the combo reads
+    // Playlist Order and no header shows an arrow.
+    function test_aThirdClickReturnsToThePlaylistsOrder() {
+        browseFixture.holdCues(12, true);
+        const page = makePage();
+        page.playlistSidebarOpen = false;
+        const controller = findChild(page, "scanController");
+        const list = findChild(page, "trackListView");
+        tryCompare(list, "count", 12);
+        tryCompare(controller, "busy", false);
+        browseFixture.releaseCues();
+        tryCompare(controller, "cuesPending", false);
+        const index = controller.playlistNames.indexOf("Held Reversed");
+        verify(index >= 0, "the reversed playlist is listed");
+        // Not remembered: the last playlist is a setting every later page
+        // reads, and Sync Cue Points would open on this one and find nothing.
+        page.selectPlaylist(index + 1, "Held Reversed", false);
+        waitForRendering(page);
+
+        const playlistOrder = titles(controller);
+        compare(playlistOrder[0], "Held Track 1011", "the playlist's first track is the scan's last");
+        compare(playlistOrder[11], "Held Track 1000");
+        const combo = findChild(page, "sortCombo");
+        compare(combo.currentText, "Playlist Order");
+
+        const cues = header(page, "cues");
+        mouseClick(cues);
+        compareIndicators(page, "cues", true);
+        verify(String(titles(controller)) !== String(playlistOrder), "sorted by cues, ascending");
+        mouseClick(cues);
+        compareIndicators(page, "cues", false);
+        verify(String(titles(controller)) !== String(playlistOrder), "sorted by cues, descending");
+        compare(cues.toolTipText, "Sorted by Cues, descending. Click for the playlist's own order");
+
+        mouseClick(cues);
+        compare(page.sortField, "playlist");
+        compare(titles(controller), playlistOrder, "back in the playlist's own order");
+        compare(combo.currentText, "Playlist Order", "the combo says so");
+        compareIndicators(page, "", true);
+        compare(cues.toolTipText, "Sort by Cues");
+
+        // And from there a click sorts by the column again, ascending.
+        mouseClick(cues);
+        compareIndicators(page, "cues", true);
+        waitForRendering(page);
+        saveScreenshot(page, "browse-sorted-by-cues");
+        mouseClick(cues);
+        mouseClick(cues);
+        waitForRendering(page);
+        saveScreenshot(page, "browse-playlist-order");
     }
 }
