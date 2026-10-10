@@ -39,6 +39,11 @@
 //    move under the playlist's order item. A save that leaves them
 //    unticked records rekordbox's order with every member, so the next
 //    analysis keeps Engine's order as its own.
+// 9. Only what the user unticked is declined: the new playlist's create
+//    unticked takes its members with it, and the record declines the
+//    create alone. When rekordbox later changes the playlist (its declined
+//    state no longer matches) the create comes back ticked, and so do its
+//    members.
 //
 // argv[1]: tests/fixtures/anonymized_library.
 
@@ -1033,6 +1038,69 @@ void testOrderOnFirstRun(const fs::path &fixture)
                  "has it, then Engine's own) OK\n";
 }
 
+// 9. See the top of the file.
+void testDeclinedByDependency(const fs::path &fixture)
+{
+    const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_declined_by_dependency");
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    assert(controller.errorMessage().isEmpty());
+    LibraryEditSession *session = sessionOf(stick);
+    for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
+                                "cuesToEngine", "restoresToRekordbox"}) {
+        controller.setSectionIncluded(QString::fromLatin1(section), false);
+    }
+    assert(controller.checkedCount() == 0);
+
+    // The user unticks the create only; its members go with it.
+    const int create = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
+    const std::string createKey = rowsOf(controller)[static_cast<std::size_t>(create)].header.key;
+    std::vector<std::string> memberItems;
+    for (int m : rowsDependingOn(controller, createKey)) {
+        memberItems.push_back(rowsOf(controller)[static_cast<std::size_t>(m)].header.key);
+        controller.setIncluded(m, true);
+    }
+    assert(memberItems.size() >= 3);
+    assert(included(controller, create));
+    controller.setIncluded(create, false);
+    for (int m : rowsDependingOn(controller, createKey)) {
+        assert(!included(controller, m));
+    }
+    assert(controller.checkedCount() == 0);
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    assert(session->pendingCount() == 1 && "only the record");
+    saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+
+    auto baseline = testing::readBaseline(stick);
+    assert(baseline);
+    assert(baseline->declined.count(createKey) == 1 && "the create the user unticked is declined");
+    int membersDeclined = 0;
+    for (const auto &key : memberItems) {
+        membersDeclined += static_cast<int>(baseline->declined.count(key));
+    }
+    std::cout << "  members declined with the create: " << membersDeclined << " of " << memberItems.size() << "\n";
+    assert(membersDeclined == 0 && "a member unticked only with its create is not declined");
+
+    // rekordbox renames the playlist: the create's declined state no
+    // longer matches, so it is offered again.
+    baseline->declined[createKey] = "renamed in rekordbox since";
+    testing::plantBaseline(stick, *baseline);
+    analyze(controller, stick);
+    assert(controller.errorMessage().isEmpty());
+    const int again = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
+    assert(again >= 0 && rowsOf(controller)[static_cast<std::size_t>(again)].header.key == createKey);
+    assert(included(controller, again) && "the create comes back ticked");
+    const std::vector<int> back = rowsDependingOn(controller, createKey);
+    std::cout << "  members offered again: " << back.size() << " of " << memberItems.size() << "\n";
+    assert(back.size() == memberItems.size() && "its members come back with it");
+    for (int m : back) {
+        assert(included(controller, m) && "ticked, as the create is");
+    }
+    std::cout << "case 9 (a row unticked with its dependency is not declined: the create comes back with its "
+                 "members) OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -1054,6 +1122,7 @@ int main(int argc, char **argv)
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);
     testOrderOnFirstRun(fixture);
+    testDeclinedByDependency(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }

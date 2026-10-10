@@ -736,6 +736,26 @@ void RekordboxExportSyncController::stageSelected()
             answeredByARow.insert(row.fromConflictUid);
         }
     }
+    // A row is declined only when the user unticked it itself: one whose
+    // dependency is unticked went with it (a playlist's create takes its
+    // members) and is neither applied nor declined, so it is offered again
+    // with the record before. Declined on its own key, a member would stay
+    // out after rekordbox renamed its playlist and the create came back.
+    std::set<std::string> listedKeys;
+    std::set<std::string> tickedKeys;
+    for (const Row &row : rows) {
+        if (row.section == Section::Conflicts || RekordboxExportSyncListModel::writable(row.section)) {
+            listedKeys.insert(row.header.key);
+        }
+        if (RekordboxExportSyncListModel::writable(row.section) && row.included) {
+            tickedKeys.insert(row.header.key);
+        }
+    }
+    const auto untickedWithADependency = [&](const Row &row) {
+        return std::any_of(row.header.dependsOn.begin(), row.header.dependsOn.end(), [&](const std::string &key) {
+            return listedKeys.count(key) && !tickedKeys.count(key);
+        });
+    };
     for (const Row &row : rows) {
         if (row.section == Section::Conflicts) {
             // An answer whose side writes nothing is decided all the same:
@@ -768,6 +788,9 @@ void RekordboxExportSyncController::stageSelected()
         }
         if (row.fromConflictUid >= 0) {
             continue;  // an answer left unticked leaves its conflict open
+        }
+        if (untickedWithADependency(row)) {
+            continue;  // unticked with what it depends on: offered, not declined
         }
         declined[row.header.key] = row.header.rekordboxState;
         for (const auto &item : row.header.cueItems) {
