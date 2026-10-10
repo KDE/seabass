@@ -35,9 +35,10 @@ using domain::TrackToRemove;
 using Section = RekordboxExportSyncListModel::Section;
 
 // In Section's order.
-constexpr std::array<const char *, 10> SectionNames = {
+constexpr std::array<const char *, 11> SectionNames = {
     "conflicts",    "playlists",           "tracksToAdd",   "tracksToRemove", "membership",
-    "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept", "notAdded",
+    "metadataToEngine", "cuesToEngine", "restoresToRekordbox", "engineOwnKept",
+    "engineOnlyPlaylists", "notAdded",
 };
 
 QString q(const std::string &text)
@@ -93,6 +94,7 @@ QString directionOf(Section section)
     case Section::RestoresToRekordbox:
         return QStringLiteral("back to rekordbox");
     case Section::EngineOwnKept:
+    case Section::EngineOnlyPlaylists:
         return QStringLiteral("kept");
     case Section::Conflicts:
     case Section::NotAdded:
@@ -365,6 +367,7 @@ bool RekordboxExportSyncListModel::writable(Section section)
         return true;
     case Section::Conflicts:
     case Section::EngineOwnKept:
+    case Section::EngineOnlyPlaylists:
     case Section::NotAdded:
         break;
     }
@@ -685,6 +688,9 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
         appendEdit(e);
     }
     for (const auto &k : proposal.engineOwnKept) {
+        if (k.engineOnlyPlaylist) {
+            continue;  // their own section, after this one
+        }
         Row row = makeRow(Section::EngineOwnKept, QStringLiteral("kept"), k.header);
         if (!k.playlistPath.empty()) {
             row.title = q(k.playlistPath);
@@ -696,6 +702,19 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
             row.artist = q(k.engine.artist);
             row.detail = pathOnStick(k.engine, stickRoot);
         }
+        assignPlanKey(row);
+        m_rows.push_back(std::move(row));
+    }
+    for (const auto &k : proposal.engineOwnKept) {
+        if (!k.engineOnlyPlaylist) {
+            continue;
+        }
+        Row row = makeRow(Section::EngineOnlyPlaylists, k.folder ? QStringLiteral("engineFolder")
+                                                                : QStringLiteral("enginePlaylist"), k.header);
+        row.title = q(k.playlistPath);
+        row.detail = k.folder ? QStringLiteral("folder")
+                              : QString::number(k.trackCount) + (k.trackCount == 1 ? QStringLiteral(" track")
+                                                                                   : QStringLiteral(" tracks"));
         assignPlanKey(row);
         m_rows.push_back(std::move(row));
     }
@@ -1219,6 +1238,12 @@ QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const
         side(QStringLiteral("Engine's side"), c.engineSide, c.engineChoice);
         return lines;
     }
+    if (row.section == Section::EngineOnlyPlaylists) {
+        lines << QStringLiteral("Only Engine has this; nothing is written, and nothing is removed");
+        lines << QStringLiteral("Why: ") + why;
+        lines << QStringLiteral("Item: ") + row.title + QStringLiteral(", ") + row.detail;
+        return lines;
+    }
     if (row.section == Section::EngineOwnKept) {
         lines << QStringLiteral("Kept as Engine has it; nothing is written");
         lines << QStringLiteral("Why: ") + (why.isEmpty() ? QStringLiteral("Engine changed it") : why);
@@ -1289,6 +1314,10 @@ QVariantMap RekordboxExportSyncListModel::summaryCounts() const
     int playlistsCreated = 0;
     int playlistsRemoved = 0;
     int playlistsRenamed = 0;
+    int membershipRemoves = 0;
+    int ratingsAndComments = 0;
+    int cueTracks = 0;
+    int backOntoRekordbox = 0;
     std::set<std::string> moved;
     for (const auto &row : m_rows) {
         switch (row.section) {
@@ -1311,8 +1340,20 @@ QVariantMap RekordboxExportSyncListModel::summaryCounts() const
             if (row.edit) {
                 if (const auto *m = std::get_if<domain::MembershipEdit>(&*row.edit)) {
                     moved.insert(m->pathKey);
+                    if (m->kind == domain::MembershipEdit::Kind::Remove) {
+                        ++membershipRemoves;
+                    }
                 }
             }
+            break;
+        case Section::MetadataToEngine:
+            ++ratingsAndComments;
+            break;
+        case Section::CuesToEngine:
+            ++cueTracks;
+            break;
+        case Section::RestoresToRekordbox:
+            ++backOntoRekordbox;
             break;
         default:
             break;
@@ -1322,13 +1363,17 @@ QVariantMap RekordboxExportSyncListModel::summaryCounts() const
     counts.insert(QStringLiteral("tracksAdded"), tracksAdded);
     counts.insert(QStringLiteral("tracksRemoved"), tracksRemoved);
     counts.insert(QStringLiteral("tracksMoved"), static_cast<int>(moved.size()));
+    counts.insert(QStringLiteral("membershipRemoves"), membershipRemoves);
     counts.insert(QStringLiteral("playlistsCreated"), playlistsCreated);
     counts.insert(QStringLiteral("playlistsRemoved"), playlistsRemoved);
     counts.insert(QStringLiteral("playlistsRenamed"), playlistsRenamed);
+    counts.insert(QStringLiteral("ratingsAndComments"), ratingsAndComments);
+    counts.insert(QStringLiteral("cueTracks"), cueTracks);
+    counts.insert(QStringLiteral("backOntoRekordbox"), backOntoRekordbox);
     return counts;
 }
 
-QString RekordboxExportSyncListModel::summaryText(const QVariantMap &counts)
+QVariantMap RekordboxExportSyncListModel::legendTexts(const QVariantMap &counts)
 {
     const auto clause = [&](const char *key, const QString &one, const QString &many, const QString &what) {
         const int n = counts.value(QLatin1String(key)).toInt();
@@ -1347,22 +1392,24 @@ QString RekordboxExportSyncListModel::summaryText(const QVariantMap &counts)
     const QString tracks = QStringLiteral("tracks");
     const QString playlist = QStringLiteral("playlist");
     const QString playlists = QStringLiteral("playlists");
-    const QString trackPart = join({clause("tracksAdded", track, tracks, QStringLiteral("added")),
-                                    clause("tracksRemoved", track, tracks, QStringLiteral("removed")),
-                                    clause("tracksMoved", track, tracks, QStringLiteral("moved between playlists"))});
-    const QString playlistPart = join({clause("playlistsCreated", playlist, playlists, QStringLiteral("created")),
-                                       clause("playlistsRemoved", playlist, playlists, QStringLiteral("removed")),
-                                       clause("playlistsRenamed", playlist, playlists, QStringLiteral("renamed"))});
-    if (trackPart.isEmpty() && playlistPart.isEmpty()) {
-        return QStringLiteral("Nothing to add, remove or move.");
-    }
-    QStringList parts;
-    for (const QString &part : {trackPart, playlistPart}) {
-        if (!part.isEmpty()) {
-            parts << part;
-        }
-    }
-    return parts.join(QStringLiteral("; ")) + QLatin1Char('.');
+    QVariantMap texts;
+    texts.insert(QStringLiteral("newTracks"), clause("tracksAdded", track, tracks, QStringLiteral("added")));
+    texts.insert(QStringLiteral("newPlaylists"), clause("playlistsCreated", playlist, playlists, QStringLiteral("created")));
+    texts.insert(QStringLiteral("changed"),
+                 join({clause("tracksMoved", track, tracks, QStringLiteral("moved between playlists")),
+                       clause("ratingsAndComments", QStringLiteral("rating or comment"),
+                              QStringLiteral("ratings and comments"), QStringLiteral("changed")),
+                       clause("cueTracks", QStringLiteral("track's cues"), QStringLiteral("tracks' cues"),
+                              QStringLiteral("changed")),
+                       clause("backOntoRekordbox", QStringLiteral("restore"), QStringLiteral("restores"),
+                              QStringLiteral("onto rekordbox"))}));
+    texts.insert(QStringLiteral("removed"),
+                 join({clause("tracksRemoved", track, tracks, QStringLiteral("removed")),
+                       clause("playlistsRemoved", playlist, playlists, QStringLiteral("removed")),
+                       clause("membershipRemoves", QStringLiteral("track taken out of a playlist"),
+                              QStringLiteral("tracks taken out of playlists"), QString()).trimmed()}));
+    texts.insert(QStringLiteral("other"), clause("playlistsRenamed", playlist, playlists, QStringLiteral("renamed")));
+    return texts;
 }
 
 QVariantMap RekordboxExportSyncListModel::categoryCounts() const
@@ -1403,6 +1450,7 @@ QVariantMap RekordboxExportSyncListModel::categoryCounts() const
             break;
         case Section::Conflicts:
         case Section::EngineOwnKept:
+        case Section::EngineOnlyPlaylists:
         case Section::NotAdded:
             break;
         }

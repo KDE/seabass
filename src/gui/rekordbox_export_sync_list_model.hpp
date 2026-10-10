@@ -115,6 +115,8 @@ public:
         CuesToEngine,
         RestoresToRekordbox,
         EngineOwnKept,
+        // Playlists only Engine has: shown, never written, never removed.
+        EngineOnlyPlaylists,
         NotAdded,
     };
 
@@ -210,18 +212,22 @@ public:
     // deletes, membership removes), "other" (renames). Conflicts, Engine's
     // own and the refused adds are not in it.
     QVariantMap categoryCounts() const;
-    // The page's one line of what the proposal does, rows counted the
-    // plain way: "tracksAdded" (tracks to add), "tracksRemoved" (tracks to
-    // remove), "tracksMoved" (distinct tracks with a membership add or
-    // remove: a track put into two playlists counts once),
-    // "playlistsCreated", "playlistsRemoved", "playlistsRenamed" (the
-    // playlist rows, folders included). Conflicts, Engine's own and the
-    // refused adds are not in it; an answer's rows are.
+    // What the proposal does, counted plainly for the overview bar's
+    // legend: "tracksAdded", "tracksRemoved", "tracksMoved" (distinct
+    // tracks with a membership add or remove: a track put into two
+    // playlists counts once), "membershipRemoves", "playlistsCreated",
+    // "playlistsRemoved", "playlistsRenamed" (folders included),
+    // "ratingsAndComments", "cueTracks", "backOntoRekordbox". Conflicts,
+    // Engine's own, the playlists only Engine has and the refused adds
+    // are not in it; an answer's rows are.
     QVariantMap summaryCounts() const;
-    // Those counts as one sentence: "3 tracks added, 1 track moved between
-    // playlists; 1 playlist created." A clause with nothing in it is left
-    // out; nothing at all is "Nothing to add, remove or move."
-    static QString summaryText(const QVariantMap &counts);
+    // Each of categoryCounts' categories said with those counts, for the
+    // legend beside its swatch: "newTracks" ("3 tracks added"),
+    // "newPlaylists", "changed" ("4 tracks moved between playlists, 1
+    // rating or comment changed, 2 restores onto rekordbox"), "removed" ("2 tracks removed, 1
+    // playlist removed"), "other" ("2 playlists renamed"). A clause with
+    // nothing in it is left out; a category with nothing is "".
+    static QVariantMap legendTexts(const QVariantMap &counts);
     // Writable rows ticked.
     int checkedCount() const;
     // Conflicts not answered yet.

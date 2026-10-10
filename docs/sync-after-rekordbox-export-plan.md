@@ -233,8 +233,9 @@ Name: **Sync after Rekordbox Export**. Card in the Sync group beside Sync
 Cue Points, subtitle "Bring the Engine library in line with the latest
 changes after a Rekordbox export", shown when the stick has both
 catalogs and is writable, read-only and lock handling copied from the
-Sync Cue Points card. Behind `experimentalFeaturesEnabled` until the
-hardware rounds below pass, the way Create Engine Library is.
+Sync Cue Points card. It was behind `experimentalFeaturesEnabled` at
+first; the gate was lifted on 2026-10-10, after the Prime 4 played the
+rows the feature wrote.
 
 The page is a proposal first, then one save, as Sync Cue Points is: an
 intro line saying what it was compared against ("Compared with how this
@@ -667,7 +668,9 @@ review in the main session.
 14. Hardware rounds 1 to 5 and the evidence README. 1 to 2 d with
     Sebastian
 
-About 18 to 20 working days. Experimental until rounds 1 and 2 pass.
+About 18 to 20 working days. Experimental until rounds 1 and 2 pass;
+the gate was lifted on 2026-10-10, after the Prime 4 played the rows the
+feature wrote.
 
 ## Risks
 

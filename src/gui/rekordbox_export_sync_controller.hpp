@@ -72,11 +72,11 @@ class RekordboxExportSyncController : public StagedCueEditController
     // Rows per category for the overview bar
     // (RekordboxExportSyncListModel::categoryCounts).
     Q_PROPERTY(QVariantMap categoryCounts READ categoryCounts NOTIFY listChanged)
-    // What the proposal does, counted plainly and said in one sentence
-    // under the page's first line (RekordboxExportSyncListModel::
-    // summaryCounts, summaryText).
+    // What the proposal does, counted plainly, and said per category in
+    // the overview bar's legend (RekordboxExportSyncListModel::
+    // summaryCounts, legendTexts).
     Q_PROPERTY(QVariantMap summaryCounts READ summaryCounts NOTIFY listChanged)
-    Q_PROPERTY(QString summaryText READ summaryText NOTIFY listChanged)
+    Q_PROPERTY(QVariantMap legendTexts READ legendTexts NOTIFY listChanged)
     // Analysed, and nothing to write or decide
     // (domain::EngineUpdateProposal::empty).
     Q_PROPERTY(bool proposalEmpty READ proposalEmpty NOTIFY analysisChanged)
@@ -100,7 +100,7 @@ public:
     QVariantMap sectionCheckedCounts() const { return m_model.sectionCheckedCounts(); }
     QVariantMap categoryCounts() const { return m_model.categoryCounts(); }
     QVariantMap summaryCounts() const { return m_model.summaryCounts(); }
-    QString summaryText() const { return RekordboxExportSyncListModel::summaryText(m_model.summaryCounts()); }
+    QVariantMap legendTexts() const { return RekordboxExportSyncListModel::legendTexts(m_model.summaryCounts()); }
     bool proposalEmpty() const;
     int checkedCount() const { return m_model.checkedCount(); }
     int conflictCount() const { return m_model.unresolvedConflictCount(); }

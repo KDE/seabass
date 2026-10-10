@@ -11,7 +11,8 @@ import SeabassGui
 // stick (never the fixture), its real controller running. The fixture is
 // in "Sync Needed" state with no record of an earlier save, so the page
 // shows the numbers rekordbox_export_sync_controller_test pins: 1 playlist
-// to create, 925 membership rows, 1245 conflicts, 1177 of Engine's own.
+// to create, 925 membership rows, 1245 conflicts, 1160 of Engine's own and
+// 17 playlists only Engine has.
 //
 // Through the page: the conflicts head the list, the section headers carry
 // those counts, the first-run sentence and the legend of the three
@@ -160,7 +161,8 @@ TestCase {
         compare(sectionCountText(page, "playlists"), "1");
         compare(sectionCountText(page, "membership"), "925");
         compare(sectionCountText(page, "conflicts"), "1245");
-        compare(sectionCountText(page, "engineOwnKept"), "1177");
+        compare(sectionCountText(page, "engineOwnKept"), "1160");
+        compare(sectionCountText(page, "engineOnlyPlaylists"), "17");
         compare(findChild(sectionHeader(page, "membership"), "sectionTitle").text, "Playlist membership");
         const intro = findChild(page.header, "introLabel");
         compare(intro.text, "No earlier record of this stick. What rekordbox has and Engine lacks is taken as added "
@@ -301,14 +303,10 @@ TestCase {
         compare(explanation.color, Theme.text);
         verify(explanation.mapToItem(page, 0, 0).y < findChild(page.header, "introLabel").mapToItem(page, 0, 0).y,
                "it comes before the intro");
-        // Under it, the one plain line of what the proposal does.
-        const summary = findChild(page.header, "summaryLabel");
-        verify(summary.visible);
-        compare(summary.text, "779 tracks moved between playlists; 1 playlist created.");
-        compare(summary.text, page.controller.summaryText);
-        const below = (a, b) => a.mapToItem(page, 0, 0).y > b.mapToItem(page, 0, 0).y;
-        verify(below(summary, explanation), "under the explanation");
-        verify(below(findChild(page.header, "legendLine"), summary), "before the legend");
+        // What the proposal does is said in the bar's legend, not a line
+        // of its own.
+        compare(findChild(page.header, "summaryLabel"), null);
+        compare(findChild(page.header, "overviewNothing").visible, false);
         // Counted here off the rows.
         let added = 0, created = 0, changed = 0, removed = 0, other = 0;
         for (let i = 0; i < rowCount(page); ++i) {
@@ -328,20 +326,20 @@ TestCase {
         }
         compare(changed, 952);
         compare(created, 1);
-        compare(findChild(findChildWhere(page.header, (o) => o.objectName === "overviewLegend_newPlaylists"),
-                          "overviewLegendText").text, "1 new playlist");
+        const legendText = (key) => findChild(findChildWhere(page.header, (o) => o.objectName === "overviewLegend_" + key),
+                                              "overviewLegendText").text;
+        compare(legendText("newPlaylists"), "1 playlist created");
+        compare(legendText("changed"), "779 tracks moved between playlists, 1 rating or comment changed, 17 tracks' cues changed, 9 restores onto rekordbox");
         const expected = {newTracks: added, newPlaylists: created, changed: changed, removed: removed, other: other};
-        const labels = {newTracks: "new tracks", newPlaylists: "new playlists", changed: "changed", removed: "removed",
-                        other: "other"};
         verify(findChild(page.header, "overview").visible);
         for (const key in expected) {
             compare(page.controller.categoryCounts[key], expected[key], key);
             const entry = findChildWhere(page.header, (o) => o.objectName === "overviewLegend_" + key);
             verify(entry !== null, key + " has a legend entry");
             compare(entry.visible, expected[key] > 0, key + " shows only with something in it");
-            // One of a kind is said in the singular.
-            const label = expected[key] === 1 ? labels[key].replace(/s$/, "") : labels[key];
-            compare(findChild(entry, "overviewLegendText").text, expected[key] + " " + label);
+            // Said in tracks and playlists, as the controller counts them.
+            compare(findChild(entry, "overviewLegendText").text, page.controller.legendTexts[key] || "");
+            compare((page.controller.legendTexts[key] || "").length > 0, expected[key] > 0, key + "'s words");
             const segment = findChildWhere(page.header, (o) => o.objectName === "overviewSegment_" + key);
             compare(segment.visible, expected[key] > 0);
         }
@@ -517,7 +515,8 @@ TestCase {
         tryVerify(() => page.controller.hasBaseline && !page.controller.busy, 120000, "the page analyses again");
         compare(page.controller.stagedCount, 0);
         compare(page.controller.sectionCounts["conflicts"], 3);
-        compare(page.controller.sectionCounts["engineOwnKept"], 2439);
+        compare(page.controller.sectionCounts["engineOwnKept"], 2422);
+        compare(page.controller.sectionCounts["engineOnlyPlaylists"], 17);
         compare(page.controller.sectionCounts["playlists"], 0);
         compare(page.controller.sectionCounts["membership"], 0);
         compare(findChild(page.header, "introLabel").text,
@@ -750,7 +749,7 @@ TestCase {
             property string errorMessage: ""
             property string statusMessage: ""
             property string introText: ""
-            property string summaryText: ""
+            readonly property var legendTexts: ({})
             signal scanCancelled()
             function analyze() {}
             function cancelScan() {}
@@ -872,10 +871,25 @@ TestCase {
         const page = openOnAFreshCopy();
         compare(page.isCollapsed("engineOwnKept"), true);
         compare(page.isCollapsed("notAdded"), true);
+        compare(page.isCollapsed("engineOnlyPlaylists"), true);
         compare(page.isCollapsed("conflicts"), false);
         compare(page.isCollapsed("membership"), false);
         compare(findChild(sectionHeader(page, "engineOwnKept"), "sectionChevron").iconName, "arrow-right");
-        compare(findChild(sectionHeader(page, "engineOwnKept"), "sectionNote").text, "Kept, nothing is written");
+        // What the two never-written sections are, beside their counts.
+        const keptNote = findChild(sectionHeader(page, "engineOwnKept"), "sectionNote");
+        compare(keptNote.text, "Engine's own changes. Nothing here is written; Sync Cue Points syncs them back to "
+                + "rekordbox.");
+        verify(Qt.colorEqual(String(keptNote.color), String(Theme.textMuted)));
+        const onlyHeader = sectionHeader(page, "engineOnlyPlaylists");
+        compare(findChild(onlyHeader, "sectionTitle").text, "Playlists only Engine has");
+        compare(findChild(onlyHeader, "sectionNote").text,
+                "Rekordbox has no playlist of this name; nothing is written, and nothing is removed");
+        const countLabel = findChild(onlyHeader, "sectionCount");
+        verify(findChild(onlyHeader, "sectionNote").mapToItem(onlyHeader, 0, 0).x
+               < countLabel.mapToItem(onlyHeader, 0, 0).x + countLabel.width + 3 * Theme.rowSpacing, "beside the count");
+        compare(findChild(onlyHeader, "sectionChevron").iconName, "arrow-right", "folded at the start");
+        const onlyRow = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOnlyPlaylists");
+        verify(/^\d+ tracks?$|^folder$/.test(rowData(page, onlyRow, "detail")), rowData(page, onlyRow, "detail"));
         const kept = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOwnKept");
         let keptItem = rowItem(page, kept);
         compare(keptItem.visible, false, "a folded section's row is not shown");
