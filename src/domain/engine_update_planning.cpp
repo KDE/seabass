@@ -1182,6 +1182,9 @@ private:
             std::set<std::string> moved;
             enum class OrderMode { Apply, Conflict } orderMode = OrderMode::Apply;
             EngineUpdateReason orderReason = EngineUpdateReason::RekordboxMoved;
+            // The record holds the playlist but not the members out of
+            // place: no record says where those belong.
+            bool unrecordedMembers = false;
             if (rc != ec) {
                 const std::set<std::string> kept = longestCommonOrder(ec, rc);
                 for (const auto &key : rc) {
@@ -1210,6 +1213,14 @@ private:
                                                     playlistState(&r));
                         out.engineOwnKept.push_back(std::move(keptRow));
                         moved.clear();
+                    } else if (rb == bb && eb == bb) {
+                        // The recorded members are in the recorded order on
+                        // both sides; only members the record lacks differ
+                        // in place. Neither side's change, as far as
+                        // anything recorded says.
+                        orderMode = OrderMode::Conflict;
+                        orderReason = EngineUpdateReason::NoBaselineOrder;
+                        unrecordedMembers = true;
                     } else {
                         orderMode = OrderMode::Conflict;
                         orderReason = EngineUpdateReason::BothChanged;
@@ -1280,6 +1291,10 @@ private:
                                 orderReason == EngineUpdateReason::BothChanged
                                     ? "Both sides changed the order of " + quoted(path)
                                         + " since Seabass last recorded the stick"
+                                    : unrecordedMembers
+                                    ? "Seabass's record of " + quoted(path)
+                                        + " does not list this track, and it sits elsewhere in " + engineName + "'s "
+                                        + quoted(path) + " than in rekordbox's"
                                     : "No earlier record of this stick: this track sits elsewhere in " + engineName
                                         + "'s " + quoted(path) + " than in rekordbox's",
                                 memberState(key), st.deps);
