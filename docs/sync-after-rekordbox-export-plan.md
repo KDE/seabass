@@ -380,6 +380,34 @@ What it reuses, and what it must not:
   synced from Engine; they go back". Rekordbox origin: the DJ deleted it
   in rekordbox, so remove it from Engine, checked. Unknown: conflict.
   Ratings the same way.
+
+  **Decision (2026-10-10):** an empty rekordbox pad never beats an
+  Engine cue (Sebastian: "if rb has no cue and engine 1, and rb was
+  synched, engine wins!"). Where rekordbox holds nothing of a kind on a
+  pad (no hot cue, or no hot loop, or nothing at all; a junk cue counts
+  as nothing) and Engine holds one there, with everything rekordbox
+  holds on the pad also on Engine's, Engine's goes onto rekordbox: a
+  checked `CueEdit` in `cuesToRekordbox`, reason
+  `EngineUpdateReason::EngineOverEmptyPad`, "rekordbox has nothing on
+  pad 1; Engine's cue at 0:30.251 goes back", whatever the baseline
+  says. A pad Engine set after the record is no longer Engine's own,
+  kept, and an unknown-origin pad rekordbox lacks is no longer a
+  conflict. One exception stays: B records a cue on the pad as
+  rekordbox's own that R lacks, the DJ deleted it in rekordbox, and it
+  comes off Engine (`RekordboxRemoved`). A Seabass-origin pad the
+  export dropped whole keeps its restore wording (`ExportDropped`), the
+  same write. Engine keeps eight hot cues and eight saved loops, so one
+  Engine pad can be a cue and a loop at once where rekordbox's is one
+  or the other: the WS_NEW rows "Pad 1: rekordbox no cue, Engine
+  0:30.251; both sides changed it ... (recorded empty)" were a pad
+  where rekordbox held the loop Engine holds and Engine a cue beside
+  it, compared as one item that both sides had changed from the empty
+  record. A loop on one side and a cue on the other, each alone on the
+  pad, stays a conflict. Sync Cue Points decides the same
+  (`SyncPlan::Reason::EngineOverEmptyPad`, a write onto rekordbox, not
+  a `PadsDiffer` choice), and so does the fallback without a baseline:
+  both planners call `engineCuesOverEmptyPads` (`junk_cue.hpp`), beside
+  `startCuesOverEngine`. Memory cues are not pads and keep their rule.
 - Reasons are short, positions via `formatCuePosition`, catalog names
   via `catalogDisplayName`, no dashes.
 

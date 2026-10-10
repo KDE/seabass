@@ -733,8 +733,11 @@ int main()
     // Pads differ: one line naming the pads, three at most, then a count.
     {
         auto plan = SyncPlanner::plan(
-            SyncMatch{side("rekordbox", 124.0, {hot(1, 10000.0), hot(2, 20000.0), hot(3, 67751.0), hot(4, 90000.0)}),
-                      side("engine", 124.0, {hot(1, 15000.0), hot(3, 30251.0), hot(4, 95000.0), hot(5, 120000.0)})},
+            // (pad 5 on rekordbox's side: an Engine pad over an empty one
+            // of rekordbox's is no difference, engineCuesOverEmptyPads)
+            SyncMatch{side("rekordbox", 124.0,
+                           {hot(1, 10000.0), hot(2, 20000.0), hot(3, 67751.0), hot(4, 90000.0), hot(5, 120000.0)}),
+                      side("engine", 124.0, {hot(1, 15000.0), hot(3, 30251.0), hot(4, 95000.0)})},
             now, now);
         assert(plan.reason == SyncPlan::Reason::PadsDiffer);
         assert(plan.reasonText
@@ -769,8 +772,12 @@ int main()
             SyncMatch{side("engine", 132.0, {hot(1, 49486.0), engineLoop, hot(2, 56545.0)}),
                       side("onelibrary", 132.0, {hot(1, 49538.0), hot(2, 56545.0)})},
             now, now);
-        assert(roam.needsChoice && roam.reason == SyncPlan::Reason::PadsDiffer);
-        assert(roam.reasonText == "Pad 1: Engine loop 0:23.051, OneLibrary no loop");
+        // Since 2026-10-10 OneLibrary holding no loop on a pad Engine holds
+        // one on is no choice: Engine's loop goes onto OneLibrary
+        // (engineCuesOverEmptyPads).
+        assert(!roam.needsChoice && roam.reason == SyncPlan::Reason::EngineOverEmptyPad);
+        assert(roam.direction == SyncPlan::Direction::ToB);
+        assert(roam.reasonText == "OneLibrary has no loop on pad 1; Engine's loop at 0:23.051 goes back");
 
         // A loop and a cue at different starts name both.
         CuePoint lateLoop = hot(2, 30040.0);
@@ -1076,11 +1083,18 @@ int main()
         std::cout << "case (a 0:00 pad where Engine has none stays ignored) OK\n";
 
         // A memory cue at 0:00 has no pad: junk under the policy, ignored
-        // as before, never written over or copied.
+        // as before, never written over or copied. Pad 3 is empty on
+        // rekordbox's side, which was a choice ("Pad 3: rekordbox empty,
+        // Engine 1:07.751") until 2026-10-10; an empty rekordbox pad never
+        // beats an Engine cue, so Engine's goes onto rekordbox.
         const Track memoryAtStart = side("rekordbox", 124.0, {hot(1, 10000.0), memory(0.0)});
         const auto mem = SyncPlanner::plan(SyncMatch{memoryAtStart, e}, now, now);
-        assert(mem.needsChoice && mem.reason == SyncPlan::Reason::PadsDiffer
-               && mem.reasonText == "Pad 3: rekordbox empty, Engine 1:07.751");
+        assert(!mem.needsChoice && mem.direction == SyncPlan::Direction::ToA);
+        assert(mem.reason == SyncPlan::Reason::EngineOverEmptyPad);
+        assert(mem.reasonText == "rekordbox has nothing on pad 3; Engine's cue at 1:07.751 goes back");
+        Track memWritten = memoryAtStart;
+        memWritten.cues = mem.cuesToApply;
+        assert(SyncPlanner::plan(SyncMatch{memWritten, e}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
         std::cout << "case (a memory cue at 0:00 is not a pad over Engine's) OK\n";
 
         // With the preference off the 0:00 cue is a cue: the pad differs,
@@ -1093,6 +1107,78 @@ int main()
         assert(startCuesOverEngine(r.cues, e.cues).empty());
         MatchingPolicy::reset();
         std::cout << "case (with the preference off a 0:00 pad is a cue, as before) OK\n";
+    }
+
+    // An empty rekordbox pad never beats an Engine cue (Sebastian,
+    // 2026-10-10: "if rb has no cue and engine 1, and rb was synched,
+    // engine wins!"; engineCuesOverEmptyPads). rekordbox holding nothing
+    // of a kind on a pad Engine holds one on is not a choice but a write of
+    // Engine's onto rekordbox. A loop on one side and a cue on the other is
+    // still a choice.
+    {
+        const auto now = std::chrono::system_clock::now();
+        const auto loopAt = [&](int pad, double ms, double endMs) {
+            CuePoint loop = hot(pad, ms);
+            loop.isLoop = true;
+            loop.loopEndMs = endMs;
+            return loop;
+        };
+        struct Case
+        {
+            std::vector<CuePoint> rekordbox;
+            std::vector<CuePoint> engine;
+            std::string text;
+        };
+        const std::vector<Case> cases = {
+            {{hot(1, 10000.0)}, {hot(1, 10000.0), hot(3, 67751.0)},
+             "rekordbox has nothing on pad 3; Engine's cue at 1:07.751 goes back"},
+            {{hot(1, 10000.0)}, {hot(1, 10000.0), loopAt(3, 67751.0, 69686.0)},
+             "rekordbox has nothing on pad 3; Engine's loop at 1:07.751 goes back"},
+            {{hot(1, 10000.0), loopAt(3, 67751.0, 69686.0)}, {hot(1, 10000.0), hot(3, 67751.0), loopAt(3, 67751.0, 69686.0)},
+             "rekordbox has no cue on pad 3; Engine's cue at 1:07.751 goes back"},
+            {{hot(1, 10000.0), hot(3, 67751.0)}, {hot(1, 10000.0), hot(3, 67751.0), loopAt(3, 67751.0, 69686.0)},
+             "rekordbox has no loop on pad 3; Engine's loop at 1:07.751 goes back"},
+        };
+        for (const Case &c : cases) {
+            const Track r = side("rekordbox", 124.0, c.rekordbox);
+            const Track e = side("engine", 124.0, c.engine);
+            const auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+            assert(!plan.needsChoice && plan.direction == SyncPlan::Direction::ToA);
+            assert(plan.reason == SyncPlan::Reason::EngineOverEmptyPad);
+            assert(plan.reasonText == c.text);
+            Track written = r;
+            written.cues = plan.cuesToApply;
+            assert(SyncPlanner::plan(SyncMatch{written, e}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+            // Engine named first: the same, toward B.
+            const auto reversed = SyncPlanner::plan(SyncMatch{e, r}, now, now);
+            assert(!reversed.needsChoice && reversed.direction == SyncPlan::Direction::ToB);
+            assert(reversed.reason == SyncPlan::Reason::EngineOverEmptyPad && reversed.reasonText == c.text);
+        }
+
+        // A real difference on another pad stays a choice, and neither of
+        // its writes takes Engine's pad 3 off.
+        const Track moved = side("rekordbox", 124.0, {hot(1, 20000.0)});
+        const Track e = side("engine", 124.0, {hot(1, 10000.0), hot(3, 67751.0)});
+        const auto choice = SyncPlanner::plan(SyncMatch{moved, e}, now, now);
+        assert(choice.needsChoice && choice.reason == SyncPlan::Reason::PadsDiffer);
+        assert(choice.reasonText == "Pad 1: rekordbox 0:20.000, Engine 0:10.000");
+        for (const auto *cues : {&choice.cuesIfAWins, &choice.cuesIfBWins}) {
+            assert(std::any_of(cues->begin(), cues->end(),
+                               [](const CuePoint &cue) { return cue.hotCueNumber == 3 && cue.positionMs == 67751.0; }));
+        }
+
+        // A loop on rekordbox and a cue on Engine, each alone on pad 6:
+        // still the DJ's choice.
+        const auto kinds = SyncPlanner::plan(
+            SyncMatch{side("rekordbox", 124.0, {loopAt(6, 30251.0, 32186.0)}), side("engine", 124.0, {hot(6, 30251.0)})},
+            now, now);
+        assert(kinds.needsChoice && kinds.reason == SyncPlan::Reason::LoopVsCue);
+        assert(engineCuesOverEmptyPads({loopAt(6, 30251.0, 32186.0)}, {hot(6, 30251.0)}, 250.0).empty());
+        // Two cues on Engine's pad against one of them on rekordbox's is
+        // not an empty pad: rekordbox holds a cue there.
+        assert(engineCuesOverEmptyPads({hot(1, 10000.0)}, {hot(1, 10000.0), hot(1, 40000.0)}, 250.0).empty());
+        assert(describeEngineCuesOverEmptyPads({}).empty());
+        std::cout << "case (an empty rekordbox pad never beats an Engine cue) OK\n";
     }
 
     // Cues Engine has no pad for are said, not silent.

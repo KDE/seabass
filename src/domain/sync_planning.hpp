@@ -61,8 +61,8 @@ struct SyncPlan
     };
     enum class Direction { None, ToA, ToB };
 
-    // Why a plan needs the DJ's choice (and, for StartCueOverEngine alone,
-    // why a write onto rekordbox is planned). Tests assert this; the page
+    // Why a plan needs the DJ's choice (and, for StartCueOverEngine and
+    // EngineOverEmptyPad alone, why a write onto rekordbox is planned). Tests assert this; the page
     // and the CLI show reasonText.
     enum class Reason {
         None,
@@ -95,6 +95,11 @@ struct SyncPlan
         // Engine's cues onto rekordbox over it, checked. reasonText is
         // describeStartCuesOverEngine's.
         StartCueOverEngine,
+        // Not a choice either: the other side holds nothing of a kind on a
+        // pad where Engine holds one, and nothing there Engine lacks
+        // (domain::engineCuesOverEmptyPads). Engine's goes onto it,
+        // checked. reasonText is describeEngineCuesOverEmptyPads's.
+        EngineOverEmptyPad,
     };
 
     Kind kind = Kind::NoCues;
@@ -129,6 +134,14 @@ struct SyncPlan
 // at 1:07.751; Engine's goes back", or empty for none. Both cue planners
 // say the case in these words.
 std::string describeStartCuesOverEngine(const std::vector<StartCueOverEngine> &over);
+
+// "rekordbox has nothing on pad 1; Engine's cue at 0:30.251 goes back",
+// "rekordbox has no cue on pad 1; Engine's cue at 0:30.251 goes back",
+// pads joined by "; ", or empty for none. Both cue planners say the case
+// in these words; `label` names the other side ("OneLibrary" on Sync Cue
+// Points, catalogDisplayName).
+std::string describeEngineCuesOverEmptyPads(const std::vector<EngineCuesOverEmptyPad> &over,
+                                            const std::string &label = "rekordbox");
 
 // "2 cues stay off Engine: its eight pads are full (1:02.000, 3:10.500)",
 // or empty for none.
@@ -198,6 +211,17 @@ public:
 // writes Engine's cues onto rekordbox over the 0:00 cue
 // (Reason::StartCueOverEngine). With the preference off it is a cue like
 // any other.
+//
+// And an empty pad on the other side never beats an Engine cue
+// (domain::engineCuesOverEmptyPads, 2026-10-10): where that side holds
+// nothing of a kind on a pad Engine holds one on, and nothing there
+// Engine lacks, the pad is read as holding Engine's there too. It is not
+// a choice ("Pad 3: rekordbox empty, Engine 1:07.751" was one); when
+// nothing else differs the plan writes Engine's cues onto that side
+// (Reason::EngineOverEmptyPad). A plan that already writes Engine's cues
+// there keeps its own reason; a real difference elsewhere stays a choice,
+// both of whose writes keep Engine's cue on the pad. A loop on one side
+// and a cue on the other, each alone on the pad, is still a choice.
 class SyncPlanner
 {
 public:

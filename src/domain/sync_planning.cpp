@@ -826,6 +826,35 @@ std::string describeStartCuesOverEngine(const std::vector<StartCueOverEngine> &o
         + "; Engine's go back";
 }
 
+std::string describeEngineCuesOverEmptyPads(const std::vector<EngineCuesOverEmptyPad> &over,
+                                            const std::string &label)
+{
+    std::string text;
+    const std::size_t shown = std::min<std::size_t>(over.size(), 3);
+    for (std::size_t i = 0; i < shown; ++i) {
+        const EngineCuesOverEmptyPad &o = over[i];
+        const std::string pad = std::to_string(o.pad);
+        const bool loops = std::all_of(o.engineCues.begin(), o.engineCues.end(),
+                                       [](const CuePoint &cue) { return cue.isLoop; });
+        const bool cues = std::none_of(o.engineCues.begin(), o.engineCues.end(),
+                                       [](const CuePoint &cue) { return cue.isLoop; });
+        std::string engine;
+        for (std::size_t j = 0; j < o.engineCues.size(); ++j) {
+            const CuePoint &cue = o.engineCues[j];
+            engine += (j == 0 ? "" : (j + 1 == o.engineCues.size() ? " and " : ", "))
+                + std::string(cue.isLoop ? "loop" : "cue") + " at " + formatCuePosition(cue.positionMs);
+        }
+        text += (i == 0 ? "" : "; ") + label + " has "
+            + (o.rekordboxEmpty ? "nothing" : loops ? "no loop" : cues ? "no cue" : "no cue and no loop") + " on pad "
+            + pad + "; Engine's " + engine + (o.engineCues.size() == 1 ? " goes back" : " go back");
+    }
+    if (over.size() > shown) {
+        const std::size_t more = over.size() - shown;
+        text += "; and " + std::to_string(more) + (more == 1 ? " more pad" : " more pads");
+    }
+    return text;
+}
+
 std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut)
 {
     if (cuesLeftOut.empty()) {
@@ -873,19 +902,34 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
     const bool aIsEngine = match.trackA.format == "engine";
     const bool bIsEngine = match.trackB.format == "engine";
     const SyncPlan::Direction toX = aIsEngine ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+    //
+    // An empty pad on the other side never beats an Engine cue
+    // (engineCuesOverEmptyPads, Sebastian 2026-10-10): where that side
+    // holds nothing of a kind on a pad Engine holds one on, its side is
+    // read as holding Engine's there too, the same way, so the pad is not
+    // a choice ("Pad 3: rekordbox empty, Engine 1:07.751" used to be) but
+    // a write of Engine's onto it.
     std::vector<StartCueOverEngine> startCues;
+    std::vector<EngineCuesOverEmptyPad> emptyPads;
     if (aIsEngine != bIsEngine) {
         const Track &scannedX = aIsEngine ? original.trackB : original.trackA;
         const Track &x = aIsEngine ? match.trackB : match.trackA;
         const Track &e = aIsEngine ? match.trackA : match.trackB;
-        startCues = startCuesOverEngine(scannedX.cues, cuesFromEngine(e.cues, x.cues, tolerance.ms).hotCues);
+        const std::vector<CuePoint> engineHot = cuesFromEngine(e.cues, x.cues, tolerance.ms).hotCues;
+        startCues = startCuesOverEngine(scannedX.cues, engineHot);
+        emptyPads = engineCuesOverEmptyPads(scannedX.cues, engineHot, tolerance.ms);
     }
 
     SyncPlan result = planBetween(original, match, tolerance.ms, tolerance);
-    if (!startCues.empty() && result.direction != toX) {
+    // Whether reading Engine's cues onto the other side's pads changed the
+    // plan: a plan that already wrote Engine's cues onto that side keeps
+    // its own reason for the empty pads (the 0:00 cues still name theirs).
+    bool emptyPadsDecide = false;
+    if ((!startCues.empty() || !emptyPads.empty()) && result.direction != toX) {
         Track &x = aIsEngine ? match.trackB : match.trackA;
-        x.cues = withEngineCuesOverStartCues(x.cues, startCues);
+        x.cues = withEngineCuesOverEmptyPads(withEngineCuesOverStartCues(x.cues, startCues), emptyPads);
         result = planBetween(original, match, tolerance.ms, tolerance);
+        emptyPadsDecide = !emptyPads.empty();
     }
     result.positionToleranceMs = tolerance.ms;
 
@@ -913,7 +957,8 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
     // A choice stays a choice (both of its writes keep Engine's cue on its
     // pad), and a write onto Engine leaves the 0:00 cue for the next sync:
     // a plan has one direction.
-    if (!startCues.empty() && !result.needsChoice) {
+    // So are Engine's cues over the other side's empty pads.
+    if ((!startCues.empty() || emptyPadsDecide) && !result.needsChoice) {
         if (result.kind == SyncPlan::Kind::AlreadyConsistent) {
             const Track &x = aIsEngine ? match.trackB : match.trackA;
             result.kind = SyncPlan::Kind::Conflict;
@@ -921,8 +966,15 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
             result.cuesToApply = x.cues;
         }
         if (result.direction == toX) {
-            result.reason = SyncPlan::Reason::StartCueOverEngine;
-            result.reasonText = describeStartCuesOverEngine(startCues);
+            std::string text = describeStartCuesOverEngine(startCues);
+            if (emptyPadsDecide) {
+                text += (text.empty() ? "" : "; ")
+                    + describeEngineCuesOverEmptyPads(emptyPads,
+                                                      catalogDisplayName((aIsEngine ? match.trackB : match.trackA).format));
+            }
+            result.reason =
+                startCues.empty() ? SyncPlan::Reason::EngineOverEmptyPad : SyncPlan::Reason::StartCueOverEngine;
+            result.reasonText = std::move(text);
         }
     }
     return result;

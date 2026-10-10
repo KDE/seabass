@@ -43,9 +43,15 @@ namespace seabass::domain
 // rekordbox did, and is a conflict when nobody recorded which. A cue at
 // 0:00 rekordbox's export put on a pad where Engine holds a real cue is
 // none of these: Engine's cue goes back onto rekordbox over it
-// (StartCueOverEngine), the way SyncPlanner::plan decides it. A pair with
-// no record falls back to what SyncPlanner::plan decides (Sync Cue
-// Points). A track's cue changes are one CueEdit per direction.
+// (StartCueOverEngine), the way SyncPlanner::plan decides it. Nor is a
+// pad where rekordbox holds nothing of a kind Engine holds there (no cue,
+// no loop, or nothing; engineCuesOverEmptyPads): an empty rekordbox pad
+// never beats an Engine cue, so Engine's goes back onto rekordbox,
+// checked (EngineOverEmptyPad), whatever the baseline says, unless the
+// baseline records a cue there as rekordbox's own that rekordbox no
+// longer has, which comes off Engine (RekordboxRemoved). A pair with no
+// record falls back to what SyncPlanner::plan decides (Sync Cue Points).
+// A track's cue changes are one CueEdit per direction.
 //
 // Playlists are items by export.pdb id. rekordbox can hold two playlists
 // with one name at one level; Engine cannot (UNIQUE(title, parentListId)
@@ -91,6 +97,13 @@ enum class EngineUpdateReason {
     // rekordbox over it, checked; never a conflict, never a removal or a
     // move of Engine's cue. With a baseline and without one alike.
     StartCueOverEngine,
+    // rekordbox holds nothing of a kind on a pad (no cue, or no loop, or
+    // nothing at all) where Engine holds one, and everything rekordbox
+    // holds there Engine holds too (engineCuesOverEmptyPads): Engine's
+    // goes onto rekordbox, checked, whatever the baseline says, except
+    // where the baseline records a cue there as rekordbox's own that
+    // rekordbox no longer has (RekordboxRemoved). Never a conflict.
+    EngineOverEmptyPad,
     // B holds a value R lacks and nothing recorded who wrote it.
     OriginUnknown,
     // B equals R, E differs.
@@ -311,8 +324,8 @@ struct EngineUpdateProposal
     std::vector<PlaylistDelete> playlistsToDelete;
     std::vector<TrackToRemove> tracksToRemove;
     std::vector<MetadataEdit> restoresToRekordbox;
-    // Restores, Engine's cues over rekordbox's 0:00 ones, and the
-    // fallback's writes onto rekordbox.
+    // Restores, Engine's cues over rekordbox's 0:00 ones and its empty
+    // pads, and the fallback's writes onto rekordbox.
     std::vector<CueEdit> cuesToRekordbox;
 
     std::vector<EngineUpdateConflict> conflicts;
