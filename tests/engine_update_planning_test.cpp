@@ -1383,6 +1383,31 @@ int main()
         std::cout << "Seabass's cues the export dropped go back OK\n";
     }
 
+    // Rule B with Engine holding the cue as its main cue alone: Sync Cue
+    // Points copied Engine's main cue onto rekordbox as a memory cue (the
+    // baseline says Seabass wrote it), rekordbox's re-export dropped it.
+    // Engine still has it, so it goes back onto rekordbox, checked, once.
+    {
+        World w = cuePair({hot(1, 10000), mem(30000)}, {hot(1, 10000), mem(30000)});
+        auto base = baselineOf(w);
+        setOrigin(base, ValueOrigin::Seabass);
+        w.rekordbox[0].cues = {hot(1, 10000)};
+        const auto p = plan(w, base);
+        assert(p.cuesToEngine.empty() && p.conflicts.empty() && p.engineOwnKept.empty());
+        assert(p.cuesToRekordbox.size() == 1);
+        const auto &c = p.cuesToRekordbox[0];
+        assert(c.header.checkedByDefault);
+        assert((itemKeys(c.header) == Deps{"cue:memory:30000:music/a.mp3"}));
+        assert(c.header.reason == EngineUpdateReason::ExportDropped);
+        assert(c.header.reasonText == "rekordbox's export dropped 1 cue Seabass had synced from Engine; it goes back");
+        assert(c.plan.direction == SyncPlan::Direction::ToA);
+        assert(sameCueList(c.plan.cuesToApply, {hot(1, 10000), mem(30000)}));
+        World after = w;
+        apply(after, p);
+        assert(plan(after, base).empty());
+        std::cout << "Seabass's memory cue Engine holds as its main cue goes back OK\n";
+    }
+
     // Rule B: rekordbox's own cue the DJ deleted there: removed from Engine.
     {
         World w = cuePair({hot(1, 10000), hot(2, 20000)}, {hot(1, 10000), hot(2, 20000)});
