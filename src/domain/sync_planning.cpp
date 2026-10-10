@@ -806,6 +806,26 @@ bool sameCuesForSync(const std::vector<CuePoint> &a, const std::vector<CuePoint>
         && memorySetsEqual(cuesOfKind(a, CuePoint::Kind::Memory), cuesOfKind(b, CuePoint::Kind::Memory), toleranceMs);
 }
 
+std::string describeStartCuesOverEngine(const std::vector<StartCueOverEngine> &over)
+{
+    if (over.empty()) {
+        return {};
+    }
+    std::string pads;
+    std::string places;
+    for (std::size_t i = 0; i < over.size(); ++i) {
+        const char *joint = i == 0 ? "" : (i + 1 == over.size() ? " and " : ", ");
+        pads += joint + std::to_string(over[i].pad);
+        places += joint + formatCuePosition(over[i].engineCue.positionMs);
+    }
+    if (over.size() == 1) {
+        return "rekordbox's export put a cue at 0:00 on pad " + pads + " over the cue Engine has at " + places
+            + "; Engine's goes back";
+    }
+    return "rekordbox's export put cues at 0:00 on pads " + pads + " over the cues Engine has at " + places
+        + "; Engine's go back";
+}
+
 std::string describeCuesLeftOut(const std::vector<CuePoint> &cuesLeftOut)
 {
     if (cuesLeftOut.empty()) {
@@ -840,7 +860,33 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
 
     // Half a beat of the tempo both sides agree on; else the fallback.
     const CueTolerance tolerance = cueToleranceFor(match.trackA.bpm, match.trackB.bpm);
+
+    // rekordbox's export puts a cue at 0:00 on a pad Engine holds a real
+    // cue on (startCuesOverEngine): export noise over Engine's cue, not a
+    // difference. Left out with the junk above, it would leave the pad
+    // empty on rekordbox's side, so the pad would differ and the DJ be
+    // asked. Instead rekordbox's side is read as holding Engine's cue
+    // there, so that pad never differs, and a write onto rekordbox carries
+    // Engine's cue over the 0:00 one. Planned that way only when the
+    // plain plan does not already write Engine's cues onto rekordbox
+    // (which it does when the 0:00 cues were rekordbox's only pads).
+    const bool aIsEngine = match.trackA.format == "engine";
+    const bool bIsEngine = match.trackB.format == "engine";
+    const SyncPlan::Direction toX = aIsEngine ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+    std::vector<StartCueOverEngine> startCues;
+    if (aIsEngine != bIsEngine) {
+        const Track &scannedX = aIsEngine ? original.trackB : original.trackA;
+        const Track &x = aIsEngine ? match.trackB : match.trackA;
+        const Track &e = aIsEngine ? match.trackA : match.trackB;
+        startCues = startCuesOverEngine(scannedX.cues, cuesFromEngine(e.cues, x.cues, tolerance.ms).hotCues);
+    }
+
     SyncPlan result = planBetween(original, match, tolerance.ms, tolerance);
+    if (!startCues.empty() && result.direction != toX) {
+        Track &x = aIsEngine ? match.trackB : match.trackA;
+        x.cues = withEngineCuesOverStartCues(x.cues, startCues);
+        result = planBetween(original, match, tolerance.ms, tolerance);
+    }
     result.positionToleranceMs = tolerance.ms;
 
     // Without an agreed tempo the fallback is a guess at what half a beat
@@ -859,6 +905,24 @@ SyncPlan SyncPlanner::plan(const SyncMatch &original, std::chrono::system_clock:
                 text = result.reasonText + (last == '?' || last == '.' ? " " : ". ") + text;
             }
             makeChoice(result, SyncPlan::Reason::TempoUnsure, std::move(text));
+        }
+    }
+
+    // The 0:00 cues were the only difference: Engine's cues go onto
+    // rekordbox over them, the write a sync makes so the next one is clean.
+    // A choice stays a choice (both of its writes keep Engine's cue on its
+    // pad), and a write onto Engine leaves the 0:00 cue for the next sync:
+    // a plan has one direction.
+    if (!startCues.empty() && !result.needsChoice) {
+        if (result.kind == SyncPlan::Kind::AlreadyConsistent) {
+            const Track &x = aIsEngine ? match.trackB : match.trackA;
+            result.kind = SyncPlan::Kind::Conflict;
+            result.direction = toX;
+            result.cuesToApply = x.cues;
+        }
+        if (result.direction == toX) {
+            result.reason = SyncPlan::Reason::StartCueOverEngine;
+            result.reasonText = describeStartCuesOverEngine(startCues);
         }
     }
     return result;
