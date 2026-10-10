@@ -20,22 +20,6 @@
 namespace seabass::gui
 {
 
-namespace
-{
-
-// The whole string as a positive id, or nothing: "12x" is not track 12.
-std::optional<std::int64_t> engineId(const std::string &sourceId)
-{
-    if (sourceId.empty() || sourceId.size() > 18
-        || !std::all_of(sourceId.begin(), sourceId.end(), [](char c) { return c >= '0' && c <= '9'; })) {
-        return std::nullopt;
-    }
-    const std::int64_t id = std::stoll(sourceId);
-    return id > 0 ? std::optional(id) : std::nullopt;
-}
-
-}  // namespace
-
 RemoveEngineTrackChange::RemoveEngineTrackChange(QString enginePath, domain::Track engineRow, int itemCountHint)
     : m_enginePath(std::move(enginePath)), m_row(std::move(engineRow)), m_itemCountHint(itemCountHint)
 {

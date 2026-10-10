@@ -6,6 +6,7 @@
 
 #include <QStringList>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -251,6 +252,21 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
     return ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(key, [&]() {
         return std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
     });
+}
+
+std::optional<std::int64_t> engineId(const std::string &sourceId)
+{
+    if (sourceId.empty() || sourceId.size() > 18
+        || !std::all_of(sourceId.begin(), sourceId.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        return std::nullopt;
+    }
+    const std::int64_t id = std::stoll(sourceId);
+    return id > 0 ? std::optional(id) : std::nullopt;
+}
+
+QString quotedPath(const std::string &path)
+{
+    return QStringLiteral("\"%1\"").arg(QString::fromStdString(path));
 }
 
 QString engineRowWriteRefusal(const QString &enginePath)

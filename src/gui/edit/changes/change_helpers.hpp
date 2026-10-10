@@ -6,6 +6,8 @@
 
 #include <QString>
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
 #include "domain/library_consistency.hpp"
@@ -162,6 +164,13 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
 // layout the row writers (engine_track_rows, engine_playlists) do not
 // know. Asked before anything is opened, so a refusal writes nothing.
 QString engineRowWriteRefusal(const QString &enginePath);
+
+// An Engine track id from a row's sourceId: the whole string as a
+// positive id, or nothing ("12x" is not track 12).
+std::optional<std::int64_t> engineId(const std::string &sourceId);
+
+// A playlist path in a change's description or error, in double quotes.
+QString quotedPath(const std::string &path);
 
 // The save's one write target for a catalog database -- the scratch
 // decision, the backup and the commit -- for every change that writes it,

@@ -26,11 +26,6 @@ std::vector<BackupTarget> engineDatabaseTarget(const QString &enginePath)
              rekordboxExportSyncOwner().toStdString()}};
 }
 
-QString quotedPath(const std::string &path)
-{
-    return QStringLiteral("\"%1\"").arg(QString::fromStdString(path));
-}
-
 }  // namespace
 
 CreateEnginePlaylistChange::CreateEnginePlaylistChange(QString enginePath, std::string path, int itemCountHint)

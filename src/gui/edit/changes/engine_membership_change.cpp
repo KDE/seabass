@@ -16,27 +16,6 @@
 namespace seabass::gui
 {
 
-namespace
-{
-
-// The whole string as a positive id, or nothing.
-std::optional<std::int64_t> engineId(const std::string &sourceId)
-{
-    if (sourceId.empty() || sourceId.size() > 18
-        || !std::all_of(sourceId.begin(), sourceId.end(), [](char c) { return c >= '0' && c <= '9'; })) {
-        return std::nullopt;
-    }
-    const std::int64_t id = std::stoll(sourceId);
-    return id > 0 ? std::optional(id) : std::nullopt;
-}
-
-QString quotedPath(const std::string &path)
-{
-    return QStringLiteral("\"%1\"").arg(QString::fromStdString(path));
-}
-
-}  // namespace
-
 EngineMembershipChange::EngineMembershipChange(QString enginePath, std::string playlistPath, std::vector<Add> adds,
                                                std::vector<Remove> removes, int itemCountHint)
     : m_enginePath(std::move(enginePath)), m_playlist(std::move(playlistPath)), m_adds(std::move(adds)),
