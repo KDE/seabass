@@ -353,7 +353,10 @@ Page {
 
     // The list's sort, held here so the column headers and the Sort by
     // combo show one state. A header click sorts by its column, ascending
-    // for a new column and flipped for the sorted one; the combo picks
+    // for a new column and flipped for the sorted one; a third click, on a
+    // column sorted descending, goes back to Playlist Order, the order the
+    // tracks have in the playlist on the player (with All tracks, the
+    // order the catalog lists them in). The combo picks
     // the field and keeps the direction. Playlist Order and Artist have
     // no column, so no header shows their direction: they always sort
     // ascending, and the direction the headers last showed is kept for
@@ -371,14 +374,21 @@ Page {
     readonly property var columnSortKeys: ["title", "key", "bpm", "duration", "cues", "plays"]
     property string sortField: "playlist"
     property bool sortAscending: true
+    // What Playlist Order is for the list shown, as the headers' tooltips
+    // name it.
+    readonly property string unsortedOrderName: root.shownPlaylist.length > 0
+        ? "the playlist's own order" : "the library's own order"
     readonly property bool sortedByColumn: root.columnSortKeys.indexOf(root.sortField) >= 0
 
     function applySort() {
         scanController.setSort(root.sortField, root.sortedByColumn ? root.sortAscending : true);
     }
     function sortByColumn(key) {
-        if (root.sortField === key) {
-            root.sortAscending = !root.sortAscending;
+        if (root.sortField === key && !root.sortAscending) {
+            root.sortField = "playlist";
+            root.sortAscending = true;
+        } else if (root.sortField === key) {
+            root.sortAscending = false;
         } else {
             root.sortField = key;
             root.sortAscending = true;
@@ -616,9 +626,10 @@ Page {
                 }
                 Item { Layout.fillWidth: true }
                 Label { text: "Sort by" }
-                // The only way to Playlist Order and Artist, which have no
-                // column; the direction is the column headers' (see
-                // root.sortField).
+                // The only way to Artist, which has no column, and the one
+                // that says when the list is in Playlist Order (a third
+                // header click also goes back to it); the direction is the
+                // column headers' (see root.sortField).
                 //
                 // The template, not the styled ComboBox: every part is drawn
                 // below, and a style still runs its own code against the
@@ -806,6 +817,7 @@ Page {
                     sortKey: "title"
                     sortField: root.sortField
                     sortAscending: root.sortAscending
+                    unsortedName: root.unsortedOrderName
                     onSortRequested: (key) => root.sortByColumn(key)
                     Layout.fillWidth: true
                     visible: root.browseTier >= 1
@@ -836,6 +848,7 @@ Page {
                         sortKey: modelData.key
                         sortField: root.sortField
                         sortAscending: root.sortAscending
+                        unsortedName: root.unsortedOrderName
                         onSortRequested: (key) => root.sortByColumn(key)
                         Layout.preferredWidth: modelData.width
                         visible: root.browseTier >= 2
