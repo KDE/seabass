@@ -921,8 +921,26 @@ void testUnansweredOrderOnFirstRun(const fs::path &fixture)
     assert(controller.errorMessage().isEmpty());
     assert(!controller.hasBaseline());
     printCounts(controller);
-    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) >= 1
-           && "the swap is an order question on a run without a record");
+    // One question for the playlist, titled by it, every move under
+    // rekordbox's side: the swap moves two members, each a remove and an
+    // add. The fixture's 1245 and this one.
+    assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) == 1
+           && "the swap is one order question on a run without a record");
+    assert(controller.conflictCount() == FixtureConflicts + 1);
+    for (int i = 0; i < controller.rows()->rowCount(); ++i) {
+        const Row &row = rowsOf(controller)[static_cast<std::size_t>(i)];
+        if (row.header.reason != seabass::domain::EngineUpdateReason::NoBaselineOrder) {
+            continue;
+        }
+        assert(row.header.key == seabass::domain::orderItemKey(pdbId));
+        assert(row.title == QString::fromStdString(playlistPath) && !row.hasTrack);
+        assert(row.conflict->rekordboxChoice.size() == 4);
+        const QStringList lines = controller.rows()->details(i);
+        assert(lines.count(QStringLiteral("Put \"%1\" in rekordbox's order (2 tracks move) (rekordbox's side):")
+                               .arg(QString::fromStdString(playlistPath)))
+               == 1);
+        assert(lines.filter(QStringLiteral("  Takes ")).size() == 2 && lines.filter(QStringLiteral("  Puts ")).size() == 2);
+    }
 
     // Saved with every question unanswered and every change unticked:
     // only the record is written.

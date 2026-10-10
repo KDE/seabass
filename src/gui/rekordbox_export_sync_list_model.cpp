@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 
+#include "domain/rekordbox_baseline.hpp"
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/sync_plan_list_model.hpp"
@@ -626,7 +627,10 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
         if (playlist.empty()) {
             playlist = playlistOfChoice(c.engineChoice);
         }
-        if (track) {
+        // A playlist's order is about the playlist, whichever tracks move.
+        const auto item = domain::parseItemKey(c.header.key);
+        const bool order = item && item->kind == domain::ItemKey::Kind::Order;
+        if (track && !order) {
             row.title = q(track->title.empty() ? track->filename : track->title);
             row.hasTrack = true;
             row.artworkPath = track->artworkPath;

@@ -223,6 +223,7 @@ void testItemKeys()
     using seabass::domain::commentItemKey;
     using seabass::domain::cueItemKey;
     using seabass::domain::memberItemKey;
+    using seabass::domain::orderItemKey;
     using seabass::domain::playlistItemKey;
     using seabass::domain::ratingItemKey;
     using seabass::domain::trackItemKey;
@@ -232,6 +233,7 @@ void testItemKeys()
     assert(trackItemKey(path) == "track:contents/a:b/one.mp3");
     assert(playlistItemKey(11) == "playlist:11");
     assert(memberItemKey(11, path) == "member:11:contents/a:b/one.mp3");
+    assert(orderItemKey(11) == "order:11");
     assert(ratingItemKey(path) == "rating:contents/a:b/one.mp3");
     assert(commentItemKey(path) == "comment:contents/a:b/one.mp3");
     assert(cueItemKey(path, CuePoint{CuePoint::Kind::Hot, 3, 1234.0, "", ""}) == "cue:hot:3:contents/a:b/one.mp3");
@@ -258,6 +260,10 @@ void testItemKeys()
     playlist.kind = ItemKey::Kind::Playlist;
     playlist.playlistId = 4294967295u;
     keys.push_back(playlist);
+    ItemKey order;
+    order.kind = ItemKey::Kind::Order;
+    order.playlistId = 7;
+    keys.push_back(order);
     ItemKey member = key(ItemKey::Kind::Member);
     member.playlistId = 7;
     keys.push_back(member);
@@ -280,7 +286,8 @@ void testItemKeys()
     for (const std::string bad : {"", "track", "track:", "playlist:", "playlist:12x", "playlist:-1",
                                   "playlist:4294967296", "member:7", "member:x:a.mp3", "member:7:", "rating:",
                                   "cue:hot:0:a.mp3", "cue:hot:1", "cue:hot:a:a.mp3", "cue:memory:12:",
-                                  "cue:side:1:a.mp3", "folder:a.mp3"}) {
+                                  "cue:side:1:a.mp3", "folder:a.mp3", "order:", "order:7:a.mp3",
+                                  "order:x"}) {
         if (parseItemKey(bad)) {
             std::cerr << "parsed what it should refuse: " << bad << "\n";
             assert(false);
@@ -413,6 +420,41 @@ void testKeepMemberOrder()
     std::cout << "keepPreviousItems (member order) OK\n";
 }
 
+void testKeepOrder()
+{
+    const NextInput in = nextInput();
+    RekordboxBaseline next = baselineFrom(in.now, in.playlists, 200, stickRelative, lowerKey);
+    assert((next.findPlaylist(11)->members == Members{Two, One, Three}));
+    // The order of a playlist: the members the previous record has go
+    // back to its order, in the places they take in next; a member it
+    // lacks keeps its place, and no member comes or goes.
+    seabass::domain::keepPreviousItems(next, &in.previous, {"order:11"});
+    assert((next.findPlaylist(11)->members == Members{One, Two, Three}));
+    {
+        RekordboxBaseline moved = baselineFrom(in.now, in.playlists, 200, stickRelative, lowerKey);
+        for (auto &p : moved.playlists) {
+            if (p.id == 11) {
+                p.members = {Three, Two, One};
+            }
+        }
+        seabass::domain::keepPreviousItems(moved, &in.previous, {"order:11"});
+        assert((moved.findPlaylist(11)->members == Members{Three, One, Two}));
+    }
+    // A playlist the previous record lacks, or no previous record: no
+    // order was recorded, so next's stands.
+    RekordboxBaseline fresh = baselineFrom(in.now, in.playlists, 200, stickRelative, lowerKey);
+    seabass::domain::keepPreviousItems(fresh, &in.previous, {"order:13"});
+    seabass::domain::keepPreviousItems(fresh, nullptr, {"order:11"});
+    assert((fresh.findPlaylist(11)->members == Members{Two, One, Three}));
+    assert((fresh.findPlaylist(13)->members == Members{Three}));
+    // Through nextBaseline: an order offered and not applied keeps the
+    // previous order, and every member of now.
+    const RekordboxBaseline kept = nextBaseline(&in.previous, in.now, in.playlists, 200, {"order:11"}, {}, {},
+                                                stickRelative, lowerKey);
+    assert((kept.findPlaylist(11)->members == Members{One, Two, Three}));
+    std::cout << "keepPreviousItems (a playlist's order, its members left alone) OK\n";
+}
+
 void testRecordSeabassWrites()
 {
     const NextInput in = nextInput();
@@ -442,6 +484,7 @@ int main()
     testItemKeys();
     testNextBaseline();
     testKeepMemberOrder();
+    testKeepOrder();
     testRecordSeabassWrites();
     std::cout << "rekordbox_baseline_test: all passed\n";
     return 0;
