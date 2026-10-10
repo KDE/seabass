@@ -13,6 +13,7 @@
 #include <sqlite3.h>
 
 #include "domain/engine_cue_translation.hpp"
+#include "domain/junk_cue.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
@@ -482,7 +483,7 @@ std::optional<EngineInformationRows> readEngineInformation(const std::string &da
 }
 
 std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrack &track, EngineTrackCover *cover,
-                               std::string *error)
+                               std::string *error, int *junkCuesDropped)
 {
     if (error == nullptr) {
         throw std::invalid_argument("createEngineTrack: the error out-parameter is required");
@@ -491,6 +492,9 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
         throw std::invalid_argument("createEngineTrack: the cover out-parameter is required");
     }
     error->clear();
+    if (junkCuesDropped != nullptr) {
+        *junkCuesDropped = 0;
+    }
     cover->written = false;
     cover->filesWritten.clear();
     cover->problem.clear();
@@ -627,7 +631,14 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
         return undo("could not leave track id=" + std::to_string(id) + " for the player to analyse: " + markError);
     }
 
-    const domain::EngineCueTranslation translated = domain::translateCuesForEngine(source.cues, {});
+    // Junk is never written onto a stick (domain/junk_cue.hpp): the
+    // planner hands none, and a cue that still is junk is dropped here,
+    // counted, rather than put on a pad or made the main cue.
+    const std::vector<domain::CuePoint> cues = domain::withoutJunkCues(source.cues);
+    if (junkCuesDropped != nullptr) {
+        *junkCuesDropped = static_cast<int>(source.cues.size() - cues.size());
+    }
+    const domain::EngineCueTranslation translated = domain::translateCuesForEngine(cues, {});
     if (!translated.cues.empty()) {
         try {
             LibdjinteropEngineCueWriter writer(writeRoot);

@@ -826,6 +826,44 @@ int main(int argc, char **argv)
             assert(scalar(db2, "SELECT count(*) FROM Track;") == tracks && "nothing added");
         }
         std::cout << "case 14 (an Information row at id 2 is accepted and stays; two rows are refused) OK\n";
+
+        // 15. Junk is never written onto a stick (domain::isJunkCue): a
+        //     rekordbox export cue on pad 1 at 7 ms and a negative "no cue"
+        //     sentinel given to createEngineTrack are dropped and counted;
+        //     the real hot cue and memory cue go in as before.
+        {
+            const fs::path lib3 = root / "Engine Library 3";
+            fs::copy(fixture / "engine", lib3, fs::copy_options::recursive);
+            const std::string lib3Utf8 = pathToUtf8(lib3);
+            NewEngineTrack t = makeTrack(wav48, "Junk", rate48);
+            t.realEngineLibraryPath = lib3Utf8;
+            domain::CuePoint exportCue{domain::CuePoint::Kind::Hot, 1, 7.0, "#FF0000", ""};
+            domain::CuePoint sentinel{domain::CuePoint::Kind::Memory, 0, -0.5, "", ""};
+            domain::CuePoint real{domain::CuePoint::Kind::Hot, 2, 1000.0, "#00FF00", "two"};
+            domain::CuePoint memory{domain::CuePoint::Kind::Memory, 0, 3000.0, "", ""};
+            t.source.cues = {exportCue, sentinel, real, memory};
+            EngineTrackCover c;
+            std::string e = "stale";
+            int dropped = -1;
+            const std::int64_t id = createEngineTrack(lib3Utf8, t, &c, &e, &dropped);
+            if (id < 0) {
+                std::cerr << "createEngineTrack: " << e << "\n";
+            }
+            assert(id == 1575 && e.empty());
+            auto engine = djinterop::engine::load_database(lib3Utf8);
+            auto row = engine.track_by_id(id);
+            assert(row);
+            const auto hot = row->hot_cues();
+            assert(hot[0] && hot[0]->sample_offset == 144000.0
+                   && "pad 1 is free of the 7 ms export cue, so the memory cue took it");
+            for (const auto &h : hot) {
+                assert(!h || h->sample_offset >= 48000.0);
+            }
+            assert(hot[1] && hot[1]->sample_offset == 48000.0 && hot[1]->label == "two");
+            assert(row->main_cue() == std::optional<double>(144000.0) && "the main cue is the real memory cue, not 0");
+            assert(dropped == 2 && "the 7 ms pad 1 and the sentinel, counted");
+        }
+        std::cout << "case 15 (junk cues given to createEngineTrack are dropped and counted, never written) OK\n";
     }
 
     std::cout << "engine_track_rows_test: all cases passed\n";
