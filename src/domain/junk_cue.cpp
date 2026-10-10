@@ -4,7 +4,10 @@
 
 #include "domain/junk_cue.hpp"
 
+#include "domain/engine_cue_translation.hpp"
 #include "domain/matching_policy.hpp"
+
+#include <algorithm>
 
 namespace seabass::domain
 {
@@ -32,6 +35,61 @@ bool isJunkCue(const CuePoint &cue)
         return false;
     }
     return cue.positionMs < 1000.0;
+}
+
+std::vector<StartCueOverEngine> startCuesOverEngine(const std::vector<CuePoint> &rekordboxCues,
+                                                    const std::vector<CuePoint> &engineHotCues)
+{
+    std::vector<StartCueOverEngine> over;
+    if (!MatchingPolicy::ignoreCuesAtStart()) {
+        return over;
+    }
+    const auto onPad = [](const CuePoint &cue, int pad) {
+        return cue.kind == CuePoint::Kind::Hot && cue.hotCueNumber == pad;
+    };
+    for (int pad = 1; pad <= EngineHotCuePads; ++pad) {
+        const CuePoint *start = nullptr;
+        bool realCue = false;
+        for (const CuePoint &cue : rekordboxCues) {
+            if (!onPad(cue, pad)) {
+                continue;
+            }
+            if (isJunkCue(cue)) {
+                start = start ? start : &cue;
+            } else {
+                realCue = true;
+            }
+        }
+        if (!start || realCue) {
+            continue;
+        }
+        const auto engine = std::find_if(engineHotCues.begin(), engineHotCues.end(), [&](const CuePoint &cue) {
+            return onPad(cue, pad) && !isJunkCue(cue);
+        });
+        if (engine != engineHotCues.end()) {
+            over.push_back(StartCueOverEngine{pad, *start, *engine});
+        }
+    }
+    return over;
+}
+
+std::vector<CuePoint> withEngineCuesOverStartCues(const std::vector<CuePoint> &rekordboxCues,
+                                                  const std::vector<StartCueOverEngine> &over)
+{
+    std::vector<CuePoint> cues;
+    cues.reserve(rekordboxCues.size() + over.size());
+    for (const CuePoint &cue : rekordboxCues) {
+        const bool replaced = std::any_of(over.begin(), over.end(), [&](const StartCueOverEngine &o) {
+            return cue.kind == CuePoint::Kind::Hot && cue.hotCueNumber == o.pad && isJunkCue(cue);
+        });
+        if (!replaced) {
+            cues.push_back(cue);
+        }
+    }
+    for (const StartCueOverEngine &o : over) {
+        cues.push_back(o.engineCue);
+    }
+    return cues;
 }
 
 std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)

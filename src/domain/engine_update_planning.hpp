@@ -40,7 +40,10 @@ namespace seabass::domain
 // (cueToleranceFor), colour never counts, junk cues (isJunkCue) are not
 // cues, and Engine is read in rekordbox's terms (cuesFromEngine). A dropped
 // cue goes back onto rekordbox when Seabass wrote it, comes off Engine when
-// rekordbox did, and is a conflict when nobody recorded which. A pair with
+// rekordbox did, and is a conflict when nobody recorded which. A cue at
+// 0:00 rekordbox's export put on a pad where Engine holds a real cue is
+// none of these: Engine's cue goes back onto rekordbox over it
+// (StartCueOverEngine), the way SyncPlanner::plan decides it. A pair with
 // no record falls back to what SyncPlanner::plan decides (Sync Cue
 // Points). A track's cue changes are one CueEdit per direction.
 //
@@ -82,6 +85,12 @@ enum class EngineUpdateReason {
     // B equals E, R lacks a value B holds with Seabass origin: the export
     // regenerated the file and dropped Seabass's write. Goes back.
     ExportDropped,
+    // rekordbox's export put a cue at 0:00 on a pad where Engine holds a
+    // real cue (startCuesOverEngine, "Ignore cues at 0:00" on): export
+    // noise, whatever the baseline says. Engine's cue goes back onto
+    // rekordbox over it, checked; never a conflict, never a removal or a
+    // move of Engine's cue. With a baseline and without one alike.
+    StartCueOverEngine,
     // B holds a value R lacks and nothing recorded who wrote it.
     OriginUnknown,
     // B equals R, E differs.
@@ -295,7 +304,9 @@ struct EngineUpdateProposal
     std::vector<PlaylistDelete> playlistsToDelete;
     std::vector<TrackToRemove> tracksToRemove;
     std::vector<MetadataEdit> restoresToRekordbox;
-    std::vector<CueEdit> cuesToRekordbox;  // restores, and the fallback's writes onto rekordbox
+    // Restores, Engine's cues over rekordbox's 0:00 ones, and the
+    // fallback's writes onto rekordbox.
+    std::vector<CueEdit> cuesToRekordbox;
 
     std::vector<EngineUpdateConflict> conflicts;
     std::vector<EngineOwnItem> engineOwnKept;

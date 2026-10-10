@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -1002,6 +1003,96 @@ int main()
         auto voices = SyncPlanner::plan(SyncMatch{voicesR, voicesE}, now, now);
         assert(voices.needsChoice && voices.reason == SyncPlan::Reason::EngineMemoryOrHotCue);
         std::cout << "case (Engine pads at memory cues: the import's shape is in sync, any other is asked) OK\n";
+    }
+
+    // rekordbox's export puts a cue at 0:00 on almost every track
+    // (2026-10-10). On a pad where Engine holds a real cue it is export
+    // noise over Engine's cue: never a choice, and Engine's cue goes back
+    // onto rekordbox over it, the plan's one reason saying so.
+    {
+        MatchingPolicy::reset();
+        const Track r = side("rekordbox", 124.0, {hot(1, 10000.0), hot(3, 0.0)});
+        const Track e = side("engine", 124.0, {hot(1, 10000.0), hot(3, 67751.0)});
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(!plan.needsChoice && plan.direction == SyncPlan::Direction::ToA
+               && "a 0:00 pad over Engine's cue is a write onto rekordbox, not a choice");
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.reason == SyncPlan::Reason::StartCueOverEngine);
+        assert(plan.reasonText
+               == "rekordbox's export put a cue at 0:00 on pad 3 over the cue Engine has at 1:07.751; Engine's goes "
+                  "back");
+        assert(plan.cuesToApply.size() == 2);
+        for (const CuePoint &cue : plan.cuesToApply) {
+            assert(cue.kind == CuePoint::Kind::Hot);
+            assert(cue.positionMs == (cue.hotCueNumber == 1 ? 10000.0 : 67751.0) && "Engine's cue replaces 0:00");
+        }
+        // Applied, the pair is in sync: the next plan writes nothing.
+        Track written = r;
+        written.cues = plan.cuesToApply;
+        const auto again = SyncPlanner::plan(SyncMatch{written, e}, now, now);
+        assert(again.kind == SyncPlan::Kind::AlreadyConsistent && again.direction == SyncPlan::Direction::None);
+        // Engine named first: the same, toward B.
+        const auto reversed = SyncPlanner::plan(SyncMatch{e, r}, now, now);
+        assert(!reversed.needsChoice && reversed.direction == SyncPlan::Direction::ToB);
+        assert(reversed.reason == SyncPlan::Reason::StartCueOverEngine);
+        std::cout << "case (rekordbox's 0:00 pad over Engine's cue: Engine's goes back) OK\n";
+
+        // Two pads, and rekordbox's 0:00 cues its only pads: the plain plan
+        // already writes Engine's pads onto rekordbox, and says why.
+        const Track bare = side("rekordbox", 124.0, {hot(2, 300.0), hot(3, 0.0), memory(10000.0)});
+        const Track pads = side("engine", 124.0, {hot(1, 10000.0), hot(2, 30000.0), hot(3, 67751.0), memory(10000.0)});
+        const auto two = SyncPlanner::plan(SyncMatch{bare, pads}, now, now);
+        assert(!two.needsChoice && two.direction == SyncPlan::Direction::ToA);
+        assert(two.reasonText
+               == "rekordbox's export put cues at 0:00 on pads 2 and 3 over the cues Engine has at 0:30.000 and "
+                  "1:07.751; Engine's go back");
+        Track bareWritten = bare;
+        bareWritten.cues = two.cuesToApply;
+        assert(SyncPlanner::plan(SyncMatch{bareWritten, pads}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+        std::cout << "case (several 0:00 pads over Engine's cues) OK\n";
+
+        // A real difference on another pad stays a choice; neither of its
+        // writes takes Engine's cue off pad 3.
+        const Track moved = side("rekordbox", 124.0, {hot(1, 20000.0), hot(3, 0.0)});
+        const auto choice = SyncPlanner::plan(SyncMatch{moved, e}, now, now);
+        assert(choice.needsChoice && choice.reason == SyncPlan::Reason::PadsDiffer);
+        assert(choice.reasonText == "Pad 1: rekordbox 0:20.000, Engine 0:10.000" && "pad 3 is not named");
+        for (const auto *cues : {&choice.cuesIfAWins, &choice.cuesIfBWins}) {
+            const bool keepsPad3 = std::any_of(cues->begin(), cues->end(), [](const CuePoint &cue) {
+                return cue.hotCueNumber == 3 && cue.positionMs == 67751.0;
+            });
+            assert(keepsPad3 && "either choice keeps Engine's pad 3");
+        }
+        std::cout << "case (a 0:00 pad is never part of a choice) OK\n";
+
+        // Engine holds nothing on the pad: the 0:00 cue stays ignored, not
+        // copied onto Engine.
+        const Track emptyPad = side("engine", 124.0, {hot(1, 10000.0)});
+        const auto ignored = SyncPlanner::plan(SyncMatch{r, emptyPad}, now, now);
+        assert(ignored.kind == SyncPlan::Kind::AlreadyConsistent && ignored.direction == SyncPlan::Direction::None);
+        // Nor when Engine's own cue on it is junk too.
+        const Track junkPad = side("engine", 124.0, {hot(1, 10000.0), hot(3, 400.0)});
+        assert(SyncPlanner::plan(SyncMatch{r, junkPad}, now, now).kind == SyncPlan::Kind::AlreadyConsistent);
+        std::cout << "case (a 0:00 pad where Engine has none stays ignored) OK\n";
+
+        // A memory cue at 0:00 has no pad: junk under the policy, ignored
+        // as before, never written over or copied.
+        const Track memoryAtStart = side("rekordbox", 124.0, {hot(1, 10000.0), memory(0.0)});
+        const auto mem = SyncPlanner::plan(SyncMatch{memoryAtStart, e}, now, now);
+        assert(mem.needsChoice && mem.reason == SyncPlan::Reason::PadsDiffer
+               && mem.reasonText == "Pad 3: rekordbox empty, Engine 1:07.751");
+        std::cout << "case (a memory cue at 0:00 is not a pad over Engine's) OK\n";
+
+        // With the preference off the 0:00 cue is a cue: the pad differs,
+        // the DJ chooses, as before.
+        MatchingPolicy::set(MatchingPolicy::DefaultExactMatchSeconds, MatchingPolicy::DefaultCompareAudioSeconds,
+                            false);
+        const auto off = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(off.needsChoice && off.reason == SyncPlan::Reason::PadsDiffer);
+        assert(off.reasonText == "Pad 3: rekordbox 0:00.000, Engine 1:07.751");
+        assert(startCuesOverEngine(r.cues, e.cues).empty());
+        MatchingPolicy::reset();
+        std::cout << "case (with the preference off a 0:00 pad is a cue, as before) OK\n";
     }
 
     // Cues Engine has no pad for are said, not silent.

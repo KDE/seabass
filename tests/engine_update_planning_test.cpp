@@ -1367,6 +1367,164 @@ int main()
         std::cout << "declined cue item suppressed, then resurfacing OK\n";
     }
 
+    // rekordbox's export put a cue at 0:00 on pad 3, where Engine holds
+    // its cue at 1:07.751 (2026-10-10). Whoever the baseline says wrote
+    // pad 3, it is export noise: one checked write onto rekordbox with
+    // Engine's cue over the 0:00 one, no conflict, nothing onto Engine.
+    // Before, an unknown origin asked (OriginUnknown), rekordbox's origin
+    // took Engine's cue off (RekordboxRemoved), and Seabass's restored it.
+    {
+        const std::string text =
+            "rekordbox's export put a cue at 0:00 on pad 3 over the cue Engine has at 1:07.751; Engine's goes back";
+        for (const ValueOrigin origin : {ValueOrigin::Unknown, ValueOrigin::Rekordbox, ValueOrigin::Seabass}) {
+            World w = cuePair({hot(1, 10000), hot(3, 67751)}, {hot(1, 10000), hot(3, 67751)});
+            auto base = baselineOf(w);
+            setOrigin(base, origin);
+            w.rekordbox[0].cues = {hot(1, 10000), hot(3, 0)};
+            const auto p = plan(w, base);
+            assert(p.conflicts.empty() && p.cuesToEngine.empty() && p.engineOwnKept.empty());
+            assert(p.cuesToRekordbox.size() == 1);
+            const auto &c = p.cuesToRekordbox[0];
+            assert(c.header.key == "cue:hot:3:music/a.mp3" && c.header.checkedByDefault && !c.header.conflict);
+            assert((itemKeys(c.header) == Deps{"cue:hot:3:music/a.mp3"}));
+            assert(c.header.reason == EngineUpdateReason::StartCueOverEngine);
+            assert(c.header.reasonText == text);
+            assert(c.plan.direction == SyncPlan::Direction::ToA && !c.plan.needsChoice);
+            assert(c.plan.reason == SyncPlan::Reason::StartCueOverEngine);
+            assert(sameCueList(c.plan.cuesToApply, {hot(1, 10000), hot(3, 67751)}));
+            assert(p.onlyCues());
+            World after = w;
+            apply(after, p);
+            assert(plan(after, base).empty());
+            assert(plan(after, baselineFrom(after.rekordbox, after.rekordboxPlaylists, 15132, stickRelative, lowerKey))
+                       .empty());
+        }
+
+        // Engine set pad 3 on the deck after the record (B equals R, which
+        // was Engine's own and kept): with rekordbox's 0:00 cue over it,
+        // Engine's goes onto rekordbox.
+        World own = cuePair({hot(1, 10000)}, {hot(1, 10000)});
+        const auto ownBase = baselineOf(own);
+        own.engine[0].cues.push_back(hot(3, 67751));
+        own.rekordbox[0].cues.push_back(hot(3, 0));
+        const auto q = plan(own, ownBase);
+        assert(q.conflicts.empty() && q.engineOwnKept.empty() && q.cuesToRekordbox.size() == 1);
+        assert(q.cuesToRekordbox[0].header.reason == EngineUpdateReason::StartCueOverEngine);
+        assert(sameCueList(q.cuesToRekordbox[0].plan.cuesToApply, {hot(1, 10000), hot(3, 67751)}));
+        World ownAfter = own;
+        apply(ownAfter, q);
+        assert(plan(ownAfter, ownBase).empty());
+        std::cout << "rekordbox's 0:00 pad over Engine's cue: Engine's goes back OK\n";
+    }
+
+    // Where Engine holds no cue on the pad, the 0:00 cue stays ignored: not
+    // copied onto Engine, nothing written.
+    {
+        World w = cuePair({hot(1, 10000)}, {hot(1, 10000)});
+        const auto base = baselineOf(w);
+        w.rekordbox[0].cues.push_back(hot(3, 0));
+        const auto p = plan(w, base);
+        assert(p.empty() && p.engineOwnKept.empty());
+        assert(plan(w, std::nullopt).empty());
+        std::cout << "0:00 pad over an empty Engine pad stays ignored OK\n";
+    }
+
+    // A memory cue at 0:00 has no pad: junk under the policy, left out as
+    // before, so the pad rekordbox no longer has is still the question of
+    // who wrote it.
+    {
+        World w = cuePair({hot(1, 10000), hot(3, 67751)}, {hot(1, 10000), hot(3, 67751)});
+        const auto base = baselineOf(w);  // every origin Unknown
+        w.rekordbox[0].cues = {hot(1, 10000), mem(0)};
+        const auto p = plan(w, base);
+        assert(p.cuesToRekordbox.empty() && p.conflicts.size() == 1);
+        assert(p.conflicts[0].header.reason == EngineUpdateReason::OriginUnknown);
+        std::cout << "memory cue at 0:00 is not a pad over Engine's OK\n";
+    }
+
+    // With "Ignore cues at 0:00" off the cue at 0:00 is a cue: rekordbox
+    // moved pad 3 there, and that goes to Engine, as before.
+    {
+        World w = cuePair({hot(1, 10000), hot(3, 67751)}, {hot(1, 10000), hot(3, 67751)});
+        const auto base = baselineOf(w);
+        w.rekordbox[0].cues = {hot(1, 10000), hot(3, 0)};
+        MatchingPolicy::set(2.0, 10.0, false);
+        const auto p = plan(w, base);
+        MatchingPolicy::reset();
+        assert(p.cuesToRekordbox.empty() && p.conflicts.empty() && p.cuesToEngine.size() == 1);
+        assert(p.cuesToEngine[0].header.reason == EngineUpdateReason::RekordboxChanged);
+        assert(p.cuesToEngine[0].header.reasonText == "rekordbox moved pad 3 from 1:07.751 to 0:00.000" + Since);
+        assert(sameCueList(p.cuesToEngine[0].plan.cuesToApply, {hot(1, 10000), hot(3, 0)}));
+        std::cout << "0:00 pad with the preference off is rekordbox's change OK\n";
+    }
+
+    // With a restore: one write onto rekordbox carries both, the restore's
+    // reason first. With a conflict beside it: the conflict depends on the
+    // write, and its choice onto rekordbox keeps Engine's pad 3.
+    {
+        World w = cuePair({hot(1, 10000), hot(2, 20000), hot(3, 67751)},
+                          {hot(1, 10000), hot(2, 20000), hot(3, 67751)});
+        auto base = baselineOf(w);
+        setOrigin(base, ValueOrigin::Seabass);
+        w.rekordbox[0].cues = {hot(1, 10000), hot(3, 0)};
+        const auto p = plan(w, base);
+        assert(p.conflicts.empty() && p.cuesToEngine.empty() && p.cuesToRekordbox.size() == 1);
+        const auto &c = p.cuesToRekordbox[0];
+        assert((itemKeys(c.header) == Deps{"cue:hot:2:music/a.mp3", "cue:hot:3:music/a.mp3"}));
+        assert(c.header.reason == EngineUpdateReason::ExportDropped);
+        assert(c.header.reasonText
+               == "rekordbox's export dropped 1 cue Seabass had synced from Engine; it goes back; rekordbox's export "
+                  "put a cue at 0:00 on pad 3 over the cue Engine has at 1:07.751; Engine's goes back");
+        assert(sameCueList(c.plan.cuesToApply, {hot(1, 10000), hot(3, 67751), hot(2, 20000)}));
+        World after = w;
+        apply(after, p);
+        assert(plan(after, base).empty());
+
+        const auto unknown = baselineOf(cuePair({hot(1, 10000), hot(2, 20000), hot(3, 67751)}, {}));
+        const auto k = plan(w, unknown);
+        assert(k.cuesToEngine.empty() && k.cuesToRekordbox.size() == 1 && k.conflicts.size() == 1);
+        assert(k.cuesToRekordbox[0].header.reason == EngineUpdateReason::StartCueOverEngine);
+        const auto &conflict = k.conflicts[0];
+        assert(conflict.header.reason == EngineUpdateReason::OriginUnknown);
+        assert(conflict.header.key == "cue:hot:2:music/a.mp3");
+        assert((conflict.header.dependsOn == Deps{"cue:hot:3:music/a.mp3"}));
+        assert(sameCueList(std::get<CueEdit>(conflict.engineChoice[0]).plan.cuesToApply,
+                           {hot(1, 10000), hot(3, 67751), hot(2, 20000)}));
+        assert(sameCueList(std::get<CueEdit>(conflict.rekordboxChoice[0]).plan.cuesToApply,
+                           {hot(1, 10000), hot(3, 67751)}));
+        World settled = w;
+        apply(settled, k, true);
+        assert(plan(settled, unknown).empty());
+        std::cout << "0:00 pad rides with a restore and beside a conflict OK\n";
+    }
+
+    // No baseline: the fallback is SyncPlanner's plan, which knows the
+    // rule, said in the same words.
+    {
+        World w = cuePair({hot(1, 10000), hot(3, 0)}, {hot(1, 10000), hot(3, 67751)});
+        const SyncPlan sync = SyncPlanner::plan(SyncMatch{w.rekordbox[0], w.engine[0]}, {}, {});
+        assert(!sync.needsChoice && sync.direction == SyncPlan::Direction::ToA);
+        const auto p = plan(w, std::nullopt);
+        assert(p.conflicts.empty() && p.cuesToEngine.empty() && p.cuesToRekordbox.size() == 1);
+        const auto &c = p.cuesToRekordbox[0];
+        assert(c.header.checkedByDefault && c.header.reason == EngineUpdateReason::StartCueOverEngine);
+        assert(c.header.reasonText == sync.reasonText);
+        assert(c.header.reasonText
+               == "rekordbox's export put a cue at 0:00 on pad 3 over the cue Engine has at 1:07.751; Engine's goes "
+                  "back");
+        assert((itemKeys(c.header) == Deps{"cue:hot:1:music/a.mp3", "cue:hot:3:music/a.mp3"}));
+        assert(sameCueList(c.plan.cuesToApply, sync.cuesToApply));
+        assert(sameCueList(c.plan.cuesToApply, {hot(1, 10000), hot(3, 67751)}));
+        // With a baseline the write is the same.
+        World recorded = cuePair({hot(1, 10000), hot(3, 67751)}, {hot(1, 10000), hot(3, 67751)});
+        const auto base = baselineOf(recorded);
+        assert(sameCueList(plan(w, base).cuesToRekordbox[0].plan.cuesToApply, c.plan.cuesToApply));
+        World after = w;
+        apply(after, p);
+        assert(plan(after, std::nullopt).empty());
+        std::cout << "no baseline: the 0:00 pad as Sync Cue Points decides OK\n";
+    }
+
     // Idempotence with cues: a pad moved, a memory cue added (a free pad
     // and the cue point on Engine), Seabass's cue restored, rekordbox's
     // own deletion carried over. Plan, apply, plan again is empty.

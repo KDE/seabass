@@ -1609,6 +1609,14 @@ private:
             return;
         }
         const bool ontoEngine = plan.direction == SyncPlan::Direction::ToB;
+        // Engine's cues over rekordbox's 0:00 ones: said as the baseline's
+        // rule says it, the record or its absence changes nothing.
+        if (plan.reason == SyncPlan::Reason::StartCueOverEngine) {
+            out.cuesToRekordbox.push_back(
+                CueEdit{cueHeader(items, true, false, EngineUpdateReason::StartCueOverEngine, plan.reasonText), plan,
+                        key});
+            return;
+        }
         CueEdit edit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues,
                                ontoEngine ? "No earlier record of this stick: rekordbox's cues go to " + engineName
                                        + ", as Sync Cue Points decides"
@@ -1682,6 +1690,18 @@ private:
             eHot[cue.hotCueNumber].push_back(cue);
         }
         const std::vector<CuePoint> leftOut = translateCuesForEngine(rC, eC, tol).leftOut;
+        // rekordbox's cues at 0:00 on pads where Engine holds a real cue:
+        // export noise over Engine's, never a change of rekordbox's
+        // (startCuesOverEngine). Engine's cue goes back onto rekordbox.
+        const std::vector<StartCueOverEngine> startCues = startCuesOverEngine(r.cues, seen.hotCues);
+        const auto startCueOn = [&](int pad) -> const StartCueOverEngine * {
+            for (const StartCueOverEngine &over : startCues) {
+                if (over.pad == pad) {
+                    return &over;
+                }
+            }
+            return nullptr;
+        };
 
         // The target in rekordbox's terms, Engine's set to begin with.
         std::map<int, std::vector<CuePoint>> tHot = eHot;
@@ -1734,6 +1754,8 @@ private:
         std::vector<Pending> conflicting;
         std::vector<std::function<void(Target)>> rekordboxWay;  // each conflict item resolved rekordbox's way
         std::vector<CuePoint> restoreCues;  // checked restores
+        std::vector<Pending> overStart;             // pads whose 0:00 cue Engine's replaces
+        std::vector<StartCueOverEngine> goingBack;  // their cues, for every write onto rekordbox
         std::vector<CuePoint> unknownCues;  // Engine's way of the conflicts nobody recorded the origin of
 
         // Pads.
@@ -1762,6 +1784,18 @@ private:
             const std::string state = padState(pad, rn);
             const CueItemState item{itemKeyText, engineUpdateStateHash(state)};
             const std::string padName = "pad " + std::to_string(pad);
+            // Before the three-way rule: whatever the baseline says, a 0:00
+            // cue over Engine's is not rekordbox removing or moving it, nor
+            // a conflict, nor Engine's own to leave alone.
+            if (const StartCueOverEngine *over = startCueOn(pad)) {
+                if (declinedAt(item)) {
+                    cueSuppressed.insert(item.key);
+                    continue;
+                }
+                overStart.push_back(Pending{item, EngineUpdateReason::StartCueOverEngine, {}});
+                goingBack.push_back(*over);
+                continue;
+            }
             if (samePad(bn, rn)) {
                 keptAsEngineOwn(itemKeyText, state,
                                 bn.empty()   ? engineName + " set " + padName + " (" + places(en) + ")"
@@ -1931,8 +1965,11 @@ private:
             plan.cuesLeftOut = translation.leftOut;
             return plan;
         };
+        // rekordbox's cues with Engine's over the 0:00 ones and `extra`
+        // added: every write onto rekordbox carries Engine's cues back over
+        // the start cues, a conflict's choice too, as it is the last write.
         const auto ontoRekordbox = [&](const std::vector<CuePoint> &extra) {
-            std::vector<CuePoint> cues = r.cues;
+            std::vector<CuePoint> cues = withEngineCuesOverStartCues(r.cues, goingBack);
             cues.insert(cues.end(), extra.begin(), extra.end());
             return cuePlan(r, e, SyncPlan::Direction::ToA, std::move(cues), tol);
         };
@@ -1959,13 +1996,31 @@ private:
                 out.cuesToEngine.push_back(std::move(edit));
             }
         }
-        if (!restored.empty()) {
-            const std::size_t n = restoreCues.size();
-            CueEdit edit{cueHeader(itemsOf(restored), true, false, EngineUpdateReason::ExportDropped,
-                                   "rekordbox's export dropped " + std::to_string(n)
-                                       + (n == 1 ? " cue Seabass had synced from " + engineName + "; it goes back"
-                                                 : " cues Seabass had synced from " + engineName + "; they go back")),
+        // One row onto rekordbox: the restores and Engine's cues over the
+        // 0:00 ones are one write of the track's whole cue set.
+        if (!restored.empty() || !overStart.empty()) {
+            std::string text;
+            if (!restored.empty()) {
+                const std::size_t n = restoreCues.size();
+                text = "rekordbox's export dropped " + std::to_string(n)
+                    + (n == 1 ? " cue Seabass had synced from " + engineName + "; it goes back"
+                              : " cues Seabass had synced from " + engineName + "; they go back");
+            }
+            if (!overStart.empty()) {
+                text += (text.empty() ? "" : "; ") + describeStartCuesOverEngine(goingBack);
+            }
+            std::vector<Pending> items = restored;
+            items.insert(items.end(), overStart.begin(), overStart.end());
+            CueEdit edit{cueHeader(itemsOf(items), true, false,
+                                   restored.empty() ? EngineUpdateReason::StartCueOverEngine
+                                                    : EngineUpdateReason::ExportDropped,
+                                   std::move(text)),
                          ontoRekordbox(restoreCues), key};
+            if (restored.empty()) {
+                // The plan says it as SyncPlanner's would.
+                edit.plan.reason = SyncPlan::Reason::StartCueOverEngine;
+                edit.plan.reasonText = edit.header.reasonText;
+            }
             written.push_back(edit.header.key);
             out.cuesToRekordbox.push_back(std::move(edit));
         }

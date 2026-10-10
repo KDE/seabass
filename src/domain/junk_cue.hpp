@@ -79,6 +79,44 @@ bool isJunkCue(const CuePoint &cue);
 // put back exactly what Library Health had just taken off.
 std::vector<CuePoint> withoutJunkCues(const std::vector<CuePoint> &cues);
 
+// rekordbox's export puts a hot cue at 0:00 on almost every track
+// (Sebastian, 2026-10-10: "Yet again, I saw rekordbox putting a 0:00 cue
+// on almost every track"). Where Engine holds a real cue on that pad, the
+// 0:00 cue is export noise over it, not a change rekordbox made: it is
+// never a conflict and never removes or moves Engine's cue. Engine's cue
+// goes back onto rekordbox over it, checked. Both cue planners decide the
+// case through this one function, so Sync Cue Points
+// (SyncPlanner::plan) and Sync after Rekordbox Export
+// (EngineUpdatePlanner::plan) cannot drift apart.
+//
+// One entry per pad, 1 to 8, where `rekordboxCues` (a catalog's cues as
+// scanned, junk included) holds a hot cue isJunkCue() calls junk and no
+// other hot cue, and `engineHotCues` (Engine's own hot cues and loops, read
+// in that catalog's terms: cuesFromEngine's hotCues) holds one that is not
+// junk. Empty with "Ignore cues at 0:00" off: then a cue at 0:00 is a cue
+// like any other and the planners compare it as one.
+//
+// A memory cue at 0:00 has no pad and is not covered: it is junk under the
+// policy as before, left out of every comparison and every write. A loop
+// is never junk (isJunkCue), so a hot loop on the first bar is a real pad.
+// Where Engine holds nothing on the pad, or only junk, the 0:00 cue stays
+// ignored as before and is not copied onto Engine.
+struct StartCueOverEngine
+{
+    int pad = 0;
+    CuePoint startCue;   // rekordbox's cue at the start, on `pad`
+    CuePoint engineCue;  // Engine's cue on `pad`, what goes back
+};
+
+std::vector<StartCueOverEngine> startCuesOverEngine(const std::vector<CuePoint> &rekordboxCues,
+                                                    const std::vector<CuePoint> &engineHotCues);
+
+// rekordboxCues with the start cues `over` names taken off their pads and
+// Engine's cues there put in their place: what rekordbox holds once
+// Engine's go back.
+std::vector<CuePoint> withEngineCuesOverStartCues(const std::vector<CuePoint> &rekordboxCues,
+                                                  const std::vector<StartCueOverEngine> &over);
+
 class JunkCueFinder
 {
 public:

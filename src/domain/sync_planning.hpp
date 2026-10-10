@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "domain/cue_tolerance.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -60,8 +61,9 @@ struct SyncPlan
     };
     enum class Direction { None, ToA, ToB };
 
-    // Why a plan needs the DJ's choice. Tests assert this; the page and the
-    // CLI show reasonText.
+    // Why a plan needs the DJ's choice (and, for StartCueOverEngine alone,
+    // why a write onto rekordbox is planned). Tests assert this; the page
+    // and the CLI show reasonText.
     enum class Reason {
         None,
         // A pad holds different cues, or is empty on one side.
@@ -87,6 +89,12 @@ struct SyncPlan
         // Two catalogs propose different cues for a third
         // (domain::CrossSourceSyncConflict, never set by SyncPlanner).
         SourcesDisagree,
+        // Not a choice: the one reason a plan with a direction carries.
+        // rekordbox's export put a cue at 0:00 on a pad where Engine holds
+        // a real one (domain::startCuesOverEngine), and the plan writes
+        // Engine's cues onto rekordbox over it, checked. reasonText is
+        // describeStartCuesOverEngine's.
+        StartCueOverEngine,
     };
 
     Kind kind = Kind::NoCues;
@@ -116,6 +124,11 @@ struct SyncPlan
     // (describeCuesLeftOut).
     std::vector<CuePoint> cuesLeftOut;
 };
+
+// "rekordbox's export put a cue at 0:00 on pad 3 over the cue Engine has
+// at 1:07.751; Engine's goes back", or empty for none. Both cue planners
+// say the case in these words.
+std::string describeStartCuesOverEngine(const std::vector<StartCueOverEngine> &over);
 
 // "2 cues stay off Engine: its eight pads are full (1:02.000, 3:10.500)",
 // or empty for none.
@@ -177,6 +190,14 @@ public:
 // Either way a sync comes back clean after one save; before this, a
 // stray memory cue at 0:00 was offered to Engine again on every sync,
 // the write having stored nothing.
+//
+// One cue at 0:00 is more than left out: rekordbox's hot cue on a pad
+// where Engine holds a real cue (domain::startCuesOverEngine). That pad is
+// read as holding Engine's cue on rekordbox's side too, so it is never a
+// difference and never a choice, and when nothing else differs the plan
+// writes Engine's cues onto rekordbox over the 0:00 cue
+// (Reason::StartCueOverEngine). With the preference off it is a cue like
+// any other.
 class SyncPlanner
 {
 public:
