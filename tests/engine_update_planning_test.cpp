@@ -446,6 +446,7 @@ int main()
                == "Engine imported this track from rekordbox, which no longer lists it; no earlier record says "
                   "whether it was removed there");
         assert(c.rekordboxChoice.size() == 1 && c.engineChoice.empty());
+        assert(c.rekordboxSide == "Remove this track from Engine" && c.engineSide == "Keep it in Engine");
         assert(std::get<TrackToRemove>(c.rekordboxChoice[0]).engine.sourceId == "e2");
         assert(p.engineOwnKept.size() == 1);
         assert(p.engineOwnKept[0].header.key == "track:music/c.mp3");
@@ -508,6 +509,27 @@ int main()
         std::cout << "playlist renamed by id OK\n";
     }
 
+    // No baseline: an Engine-only playlist beside a new rekordbox one,
+    // holding the same tracks, may be it renamed. One conflict: rename
+    // it, or keep it and create rekordbox's beside it.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"New", 0}}), rb("2", "Music/B.mp3", {{"New", 1}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"Old", 0}}), en("e2", "Music/B.mp3", {{"Old", 1}})};
+        w.rekordboxPlaylists = {{"New", false, 3}};
+        w.enginePlaylists = {{"Old", false, 1}};
+        w.importKey = {{"e1", 1}, {"e2", 1}};
+        const auto p = plan(w, std::nullopt);
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        assert(c.header.key == "playlist:3" && c.header.reason == EngineUpdateReason::NoBaselineRenameGuess);
+        assert(c.rekordboxSide == "Rename \"Old\" to \"New\" in Engine");
+        assert(c.engineSide == "Keep \"Old\" and create \"New\"");
+        assert(std::get<PlaylistRename>(c.rekordboxChoice.at(0)).toPath == "New");
+        assert(std::get<PlaylistCreate>(c.engineChoice.at(0)).path == "New");
+        std::cout << "no baseline: a rename guess is a conflict with two concrete choices OK\n";
+    }
+
     // An Engine path two playlists share is a conflict, nothing edited.
     {
         World w;
@@ -522,6 +544,8 @@ int main()
         assert(c.header.reason == EngineUpdateReason::EnginePathAmbiguous);
         assert(c.header.reasonText == "Engine has 2 playlists at \"Dup\": rename one in Engine DJ first");
         assert(c.rekordboxChoice.empty() && c.engineChoice.empty());
+        // A refusal has no buttons: its reason says what to do.
+        assert(c.rekordboxSide.empty() && c.engineSide.empty());
         assert(p.membership.empty() && p.playlistsToCreate.empty() && p.engineOwnKept.empty());
         std::cout << "ambiguous Engine path conflict OK\n";
     }
@@ -551,10 +575,8 @@ int main()
         assert(c.header.key == "playlist:4" && c.header.conflict && !c.header.checkedByDefault);
         assert(c.header.reason == EngineUpdateReason::RekordboxPathShared);
         assert(c.header.reasonText == sharedText);
-        assert(c.rekordboxSide
-               == "Create one Engine playlist holding the union of their members in rekordbox order (first list "
-                  "first)");
-        assert(c.engineSide == "Leave this path alone");
+        assert(c.rekordboxSide == "Create one Engine playlist \"Playlist\" holding all 2 of them");
+        assert(c.engineSide == "Leave Engine without \"Playlist\"");
         assert(c.engineChoice.empty());
         assert(c.rekordboxChoice.size() == 5);
         const auto &create = std::get<PlaylistCreate>(c.rekordboxChoice[0]);
@@ -589,8 +611,8 @@ int main()
         const auto &c = p.conflicts[0];
         assert(c.header.key == "playlist:4" && c.header.reason == EngineUpdateReason::RekordboxPathShared);
         assert(c.header.reasonText == sharedText);
-        assert(c.rekordboxSide
-               == "Put the union of their members into Engine's playlist in rekordbox order (first list first)");
+        assert(c.rekordboxSide == "Add the tracks of all 2 of them to Engine's \"Playlist\"");
+        assert(c.engineSide == "Leave Engine's \"Playlist\" as it is");
         assert(c.rekordboxChoice.size() == 3);
         const auto &a = std::get<MembershipEdit>(c.rekordboxChoice[0]);
         const auto &cc = std::get<MembershipEdit>(c.rekordboxChoice[1]);
@@ -785,6 +807,8 @@ int main()
         assert(q.conflicts[0].header.reason == EngineUpdateReason::NoBaselineOrder);
         assert(q.conflicts[0].header.key == "member:1:music/c.mp3");
         assert(q.conflicts[0].rekordboxChoice.size() == 2);
+        assert(q.conflicts[0].rekordboxSide == "Put \"P\" in rekordbox's order");
+        assert(q.conflicts[0].engineSide == "Keep Engine's order");
         std::cout << "same-set reorder OK\n";
     }
 
@@ -843,6 +867,8 @@ int main()
         assert(p.conflicts[0].header.reasonText
                == "Both sides changed the rating since Seabass last recorded the stick (rekordbox 5 stars, Engine "
                   "2 stars, recorded 3 stars)");
+        assert(p.conflicts[0].rekordboxSide == "Set the rating in Engine to 5 stars (rekordbox's)");
+        assert(p.conflicts[0].engineSide == "Keep Engine's 2 stars");
         World after = w;
         apply(after, p, true);
         assert(after.engine[0].rating == 5 && after.engine[2].rating == 5 && after.engine[1].rating == 4);
@@ -862,7 +888,7 @@ int main()
         assert(c.header.reason == EngineUpdateReason::NoBaselineValuesDiffer);
         assert(c.header.reasonText
                == "Ratings differ (rekordbox 5 stars, Engine 3 stars) and no earlier record says which side changed");
-        assert(c.rekordboxSide == "rekordbox: 5 stars" && c.engineSide == "Engine: 3 stars");
+        assert(c.rekordboxSide == "Set the rating in Engine to 5 stars (rekordbox's)" && c.engineSide == "Keep Engine's 3 stars");
         assert(std::get<MetadataEdit>(c.rekordboxChoice[0]).rating == 5 && c.engineChoice.empty());
         std::cout << "rating conflict without a baseline OK\n";
     }
@@ -892,6 +918,8 @@ int main()
         assert(p.metadataToEngine[0].header.reasonText == "rekordbox cleared the rating (4 stars)" + Since);
         assert(p.conflicts.size() == 1 && p.conflicts[0].header.key == "rating:music/c.mp3");
         assert(p.conflicts[0].header.reason == EngineUpdateReason::OriginUnknown);
+        assert(p.conflicts[0].rekordboxSide == "Clear the rating in Engine (rekordbox has none)");
+        assert(p.conflicts[0].engineSide == "Keep Engine's 4 stars and write the rating back onto rekordbox");
         const auto &back = std::get<MetadataEdit>(p.conflicts[0].engineChoice[0]);
         assert(back.direction == MetadataEdit::Direction::ToRekordbox && back.rating == 4);
         World after = w;
@@ -951,6 +979,7 @@ int main()
         assert(c.header.key == "track:music/a.mp3" && c.header.reason == EngineUpdateReason::DuplicateEngineRows);
         assert(c.header.reasonText == "Engine lists this file 2 times: Clean Up first");
         assert(c.rekordboxChoice.empty() && c.engineChoice.empty());
+        assert(c.rekordboxSide.empty() && c.engineSide.empty());
         assert(p.tracksToAdd.empty() && p.metadataToEngine.empty() && p.tracksToRemove.empty());
         std::cout << "two Engine rows for one file OK\n";
     }
@@ -996,6 +1025,8 @@ int main()
         assert(p.conflicts[0].header.reasonText
                == "Engine's \"P\" holds this track and rekordbox's does not; no earlier record says which side "
                   "changed it");
+        assert(p.conflicts[0].rekordboxSide == "Take it out of \"P\" in Engine");
+        assert(p.conflicts[0].engineSide == "Keep it in \"P\"");
         assert(p.membership.size() == 2);
         assert(p.membership[0].kind == MembershipEdit::Kind::Remove && p.membership[0].pathKey == "music/s1.mp3");
         assert(p.membership[0].header.key == "member:1:music/s2.mp3");
@@ -1061,6 +1092,8 @@ int main()
         assert(p.conflicts[0].header.key == "comment:music/b.mp3");
         assert(p.conflicts[0].header.reason == EngineUpdateReason::NoBaselineValuesDiffer);
         assert(p.conflicts[0].header.reasonText == "Comments differ and no earlier record says which side changed");
+        assert(p.conflicts[0].rekordboxSide == "Set the comment in Engine to \"rekordbox note\" (rekordbox's)");
+        assert(p.conflicts[0].engineSide == "Keep Engine's comment \"another note\"");
         // A's comment and B's rating: Engine's own, kept.
         assert(p.engineOwnKept.size() == 2);
         assert(p.engineOwnKept[0].header.key == "comment:music/a.mp3");
@@ -1124,7 +1157,7 @@ int main()
         const auto &c = p.cuesToEngine[0];
         assert(c.header.key == "cue:hot:1:music/a.mp3");
         assert(c.header.reason == EngineUpdateReason::RekordboxChanged);
-        assert(c.header.reasonText == "rekordbox moved pad 1 from 0:10.000 to 0:10.300" + Since);
+        assert(c.header.reasonText == "rekordbox set pad 1 to 0:10.300 (was 0:10.000)" + Since);
         assert(sameCueList(c.plan.cuesToApply, {hot(1, 10300)}));
         std::cout << "cue moved within and beyond tolerance OK\n";
     }
@@ -1143,7 +1176,8 @@ int main()
         assert(c.header.reasonText
                == "Pad 1: rekordbox 0:20.000, Engine 0:30.000; both sides changed it since Seabass last recorded the "
                   "stick (recorded 0:10.000)");
-        assert(c.rekordboxSide == "Follow rekordbox" && c.engineSide == "Keep Engine's cues");
+        assert(c.rekordboxSide == "Set pad 1 in Engine to 0:20.000, rekordbox's position");
+        assert(c.engineSide == "Keep pad 1 in Engine at 0:30.000");
         assert(c.rekordboxChoice.size() == 1 && c.engineChoice.empty());
         const auto &choice = std::get<CueEdit>(c.rekordboxChoice[0]);
         assert(choice.plan.direction == SyncPlan::Direction::ToB);
@@ -1212,7 +1246,8 @@ int main()
         assert(c.header.reasonText
                == "rekordbox no longer has pad 2 (0:20.000), which Engine has, and nothing recorded whether Seabass "
                   "or rekordbox put it there");
-        assert(c.engineSide == "Put Engine's cues back on rekordbox");
+        assert(c.rekordboxSide == "Remove pad 2 from Engine (rekordbox has no cue there)");
+        assert(c.engineSide == "Keep pad 2 in Engine and write it back onto rekordbox");
         assert(sameCueList(std::get<CueEdit>(c.rekordboxChoice[0]).plan.cuesToApply, {hot(1, 10000)}));
         const auto &back = std::get<CueEdit>(c.engineChoice[0]);
         assert(back.plan.direction == SyncPlan::Direction::ToA);
@@ -1267,7 +1302,9 @@ int main()
         assert(c.header.reasonText
                == "Engine pad 5 sits where rekordbox had the memory cue at 0:30.000, which it no longer has: that cue "
                   "on Engine, or a hot cue of Engine's own?");
-        assert(c.engineChoice.empty() && c.engineSide == "Keep Engine's cues");
+        assert(c.engineChoice.empty());
+        assert(c.rekordboxSide == "Remove pad 5 from Engine (rekordbox no longer has the memory cue at 0:30.000)");
+        assert(c.engineSide == "Keep pad 5 in Engine as a hot cue of its own");
         const auto &choice = std::get<CueEdit>(c.rekordboxChoice[0]);
         assert(choice.plan.reason == SyncPlan::Reason::EngineMemoryOrHotCue);
         assert(sameCueList(choice.plan.cuesToApply, {hot(1, 10000)}));
@@ -1313,6 +1350,7 @@ int main()
         assert(k.header.key == "cue:hot:1:music/b.mp3" && k.header.reason == EngineUpdateReason::NoBaselineCues);
         assert(k.header.reasonText == b.reasonText);
         assert(k.header.reasonText == "Pad 1: rekordbox 0:10.000, Engine 0:20.000");
+        assert(k.rekordboxSide == "Use rekordbox's cues in Engine" && k.engineSide == "Copy Engine's cues to rekordbox");
         assert(sameCueList(std::get<CueEdit>(k.rekordboxChoice[0]).plan.cuesToApply, {hot(1, 10000)}));
         const auto &theirs = std::get<CueEdit>(k.engineChoice[0]);
         assert(theirs.plan.direction == SyncPlan::Direction::ToA);

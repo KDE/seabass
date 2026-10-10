@@ -195,6 +195,18 @@ public:
     // deletes, membership removes), "other" (renames). Conflicts, Engine's
     // own and the refused adds are not in it.
     QVariantMap categoryCounts() const;
+    // The page's one line of what the proposal does, rows counted the
+    // plain way: "tracksAdded" (tracks to add), "tracksRemoved" (tracks to
+    // remove), "tracksMoved" (distinct tracks with a membership add or
+    // remove: a track put into two playlists counts once),
+    // "playlistsCreated", "playlistsRemoved", "playlistsRenamed" (the
+    // playlist rows, folders included). Conflicts, Engine's own and the
+    // refused adds are not in it; an answer's rows are.
+    QVariantMap summaryCounts() const;
+    // Those counts as one sentence: "3 tracks added, 1 track moved between
+    // playlists; 1 playlist created." A clause with nothing in it is left
+    // out; nothing at all is "Nothing to add, remove or move."
+    static QString summaryText(const QVariantMap &counts);
     // Writable rows ticked.
     int checkedCount() const;
     // Conflicts not answered yet.

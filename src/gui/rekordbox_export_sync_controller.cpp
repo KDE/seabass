@@ -285,10 +285,14 @@ QString RekordboxExportSyncController::introText() const
         return {};
     }
     if (m_analysis->proposal.hasBaseline) {
-        return QStringLiteral("Compared with how this stick looked when Seabass last saved it, export %1")
+        return QStringLiteral("Compared with how this stick looked when Seabass last saved it, export %1.")
             .arg(m_analysis->proposal.baselineSequence);
     }
-    return QStringLiteral("No earlier record of this stick: additions are assumed, removals are left to you");
+    // Each sentence says what, and to what: the first run's rule.
+    return QStringLiteral("No earlier record of this stick. What rekordbox has and Engine lacks is taken as added "
+                          "in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to "
+                          "decide. Anything you leave undecided counts as Engine's own from now on and is not "
+                          "asked again.");
 }
 
 bool RekordboxExportSyncController::proposalEmpty() const

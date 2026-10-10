@@ -112,12 +112,15 @@ TestCase {
         }
         return out;
     }
-    // The delegate of row i, scrolled into view.
+    // The delegate of model row i, scrolled into view: the view's index
+    // differs past a folded section (page.viewIndexOf).
     function rowItem(page, i) {
         const list = listOf(page);
-        list.positionViewAtIndex(i, ListView.Beginning);
+        const v = page.viewIndexOf(i);
+        verify(v >= 0, "row " + i + " is in the view, not folded away");
+        list.positionViewAtIndex(v, ListView.Beginning);
         waitForRendering(list);
-        const item = list.itemAtIndex(i);
+        const item = list.itemAtIndex(v);
         verify(item !== null, "row " + i + " is in view");
         return item;
     }
@@ -126,9 +129,9 @@ TestCase {
         const first = firstRowWhere(page, (i) => rowData(page, i, "section") === name);
         verify(first >= 0, name + " has rows");
         const list = listOf(page);
-        list.positionViewAtIndex(first, ListView.Center);
+        list.positionViewAtIndex(page.viewIndexOf(first), ListView.Center);
         waitForRendering(list);
-        const header = findChild(list, "sectionHeader_" + name);
+        const header = findChildWhere(list, (o) => o.objectName === "sectionHeader_" + name && o.visible);
         verify(header !== null, "the " + name + " header is up");
         return header;
     }
@@ -158,8 +161,9 @@ TestCase {
         compare(sectionCountText(page, "engineOwnKept"), "1177");
         compare(findChild(sectionHeader(page, "membership"), "sectionTitle").text, "Playlist membership");
         const intro = findChild(page.header, "introLabel");
-        compare(intro.text, "No earlier record of this stick: additions are assumed, removals are left to you. "
-                + "Items you leave undecided here count as Engine's own from now on.");
+        compare(intro.text, "No earlier record of this stick. What rekordbox has and Engine lacks is taken as added "
+                + "in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to decide. "
+                + "Anything you leave undecided counts as Engine's own from now on and is not asked again.");
         verify(intro.visible);
         compare(findChild(page.header, "conflictFigure").value, "1245");
         compare(findChild(page.header, "checkedFigure").value, "953");
@@ -178,11 +182,13 @@ TestCase {
         compare(chips[1].badgeColor, Theme.warnText);
         compare(chips[2].badgeColor, Theme.textMuted);
         const legendTexts = findChildrenWhere(page.header, (o) => o.objectName === "legendText").map((o) => o.text);
-        compare(legendTexts, ["Written into the Engine library so it matches rekordbox",
-                              "Cues or ratings Seabass had put on the rekordbox side that the export dropped, going back",
-                              "Engine's own, nothing is written"]);
+        compare(legendTexts, ["Will write into the Engine library so it matches rekordbox",
+                              "Cues or ratings Seabass had put on the rekordbox side that the export dropped will go "
+                              + "back onto it",
+                              "Engine's own, nothing will be written"]);
         // Engine's own carry no checkbox, nor does a conflict; a writable row does.
         const kept = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOwnKept");
+        page.toggleSection("engineOwnKept");
         compare(findChild(rowItem(page, kept), "rowCheck").visible, false);
         compare(findChild(rowItem(page, 0), "rowCheck").visible, false);
         compare(findChild(rowItem(page, createRow(page)), "rowCheck").visible, true);
@@ -293,6 +299,14 @@ TestCase {
         compare(explanation.color, Theme.text);
         verify(explanation.mapToItem(page, 0, 0).y < findChild(page.header, "introLabel").mapToItem(page, 0, 0).y,
                "it comes before the intro");
+        // Under it, the one plain line of what the proposal does.
+        const summary = findChild(page.header, "summaryLabel");
+        verify(summary.visible);
+        compare(summary.text, "779 tracks moved between playlists; 1 playlist created.");
+        compare(summary.text, page.controller.summaryText);
+        const below = (a, b) => a.mapToItem(page, 0, 0).y > b.mapToItem(page, 0, 0).y;
+        verify(below(summary, explanation), "under the explanation");
+        verify(below(findChild(page.header, "legendLine"), summary), "before the legend");
         // Counted here off the rows.
         let added = 0, created = 0, changed = 0, removed = 0, other = 0;
         for (let i = 0; i < rowCount(page); ++i) {
@@ -396,13 +410,16 @@ TestCase {
         // The chevron closes it again.
         mouseClick(findChild(rowItem(page, create), "expandButton"));
         compare(page.expandedIndex, -1);
-        // A conflict's details name both sides.
+        // A conflict's details list what each side writes, each list
+        // headed by its button's words.
         const conflictLines = rowData(page, 0, "details");
-        verify(conflictLines.some((line) => line.startsWith("Rekordbox's side")), JSON.stringify(conflictLines));
-        verify(conflictLines.some((line) => line.startsWith("Engine's side")), JSON.stringify(conflictLines));
+        verify(conflictLines.indexOf(rowData(page, 0, "rekordboxChoiceLabel") + " (rekordbox's side):") >= 0,
+               JSON.stringify(conflictLines));
+        verify(conflictLines.indexOf(rowData(page, 0, "engineChoiceLabel") + " (Engine's side):") >= 0,
+               JSON.stringify(conflictLines));
         if (screenshotDir && screenshotDir.length > 0) {
             mouseClick(findChild(rowItem(page, member), "rowTitle"));
-            listOf(page).positionViewAtIndex(member, ListView.Center);
+            listOf(page).positionViewAtIndex(page.viewIndexOf(member), ListView.Center);
             waitForRendering(page);
             wait(300);
             grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-row-open.png");
@@ -424,6 +441,15 @@ TestCase {
         }
         tryVerify(() => !details.visible, 2000, "scrolling never folded the intro");
         waitForRendering(page);
+        // The overview stays, slim, as Clean Up Duplicates' space bar
+        // does folded (SpaceReclaimBar: Theme.tightSpacing), without its
+        // legend.
+        const overview = findChild(page.header, "overview");
+        const bar = findChild(page.header, "overviewBar");
+        const legend = findChild(page.header, "overviewLegend");
+        verify(overview.visible && bar.visible, "the bar stays when the header folds");
+        compare(bar.height, Theme.tightSpacing);
+        compare(legend.visible, false);
         verify(page.header.height < fullHeader - 40, "folded " + page.header.height + ", was " + fullHeader);
         for (const name of ["checkedFigure", "conflictFigure", "stageButton", "breadcrumb"]) {
             const control = findChild(page.header, name);
@@ -438,6 +464,8 @@ TestCase {
         list.positionViewAtBeginning();
         tryCompare(page.header, "height", fullHeader, 2000, "the header did not unfold at the top");
         verify(details.visible);
+        compare(bar.height, 26);
+        verify(legend.visible, "the legend is back");
     }
 
     // The new playlist and its members, staged on the page and saved
@@ -543,6 +571,7 @@ TestCase {
         compare(leftOf(page, findChild(sectionHeader(page, "conflicts"), "sectionTitle")), Theme.pageMargin);
         // Every title in one column, whatever the row carries.
         const kept = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOwnKept");
+        page.toggleSection("engineOwnKept");
         compare(leftOf(page, findChild(rowItem(page, kept), "rowTitle")),
                 leftOf(page, findChild(rowItem(page, create), "rowTitle")));
         compare(leftOf(page, findChild(rowItem(page, 0), "rowTitle")), leftOf(page, findChild(rowItem(page, create), "rowTitle")));
@@ -597,6 +626,110 @@ TestCase {
         }
     }
 
+    // A section folds from its chevron or its title: its rows are gone
+    // and the next section moves up; the header stays with its count.
+    // Engine's own and the refused adds start folded. A fold is kept by
+    // name while the list is analysed again.
+    function test_sectionsFold() {
+        const page = openOnAFreshCopy();
+        compare(page.isCollapsed("engineOwnKept"), true);
+        compare(page.isCollapsed("notAdded"), true);
+        compare(page.isCollapsed("conflicts"), false);
+        compare(page.isCollapsed("membership"), false);
+        compare(findChild(sectionHeader(page, "engineOwnKept"), "sectionChevron").iconName, "arrow-right");
+        compare(findChild(sectionHeader(page, "engineOwnKept"), "sectionNote").text, "Kept, nothing is written");
+        const kept = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOwnKept");
+        let keptItem = rowItem(page, kept);
+        compare(keptItem.visible, false, "a folded section's row is not shown");
+        compare(keptItem.height, 0);
+
+        const create = createRow(page);
+        // From the playlists' header to the membership's: content
+        // coordinates move as the list lays out, the distance does not.
+        const gap = () => {
+            const playlists = sectionHeader(page, "playlists");
+            return findChildWhere(listOf(page), (o) => o.objectName === "sectionHeader_membership" && o.visible).y
+                - playlists.y;
+        };
+        const membershipGap = gap();
+        const playlistsHeader = sectionHeader(page, "playlists");
+        const chevron = findChild(playlistsHeader, "sectionChevron");
+        compare(chevron.iconName, "arrow-down");
+        mouseClick(chevron);
+        compare(page.isCollapsed("playlists"), true);
+        let item = rowItem(page, create);
+        compare(item.visible, false, "the create's row is gone");
+        compare(item.height, 0);
+        compare(findChild(item, "rowTitle"), null, "nothing is built inside a folded row");
+        verify(gap() < membershipGap - 20, "the next header moved up: " + gap() + ", was " + membershipGap);
+        compare(findChild(sectionHeader(page, "playlists"), "sectionCount").text, "1", "the count stays");
+        verify(findChild(sectionHeader(page, "playlists"), "sectionCheck_playlists").visible, "the box stays");
+        compare(page.controller.sectionCounts["playlists"], 1, "the model is not filtered");
+        // A long section: only its first row stays in the view, as the
+        // empty shell that carries the header.
+        const members = firstRowWhere(page, (i) => rowData(page, i, "section") === "membership");
+        const shownBefore = listOf(page).count;
+        mouseClick(findChild(sectionHeader(page, "membership"), "sectionChevron"));
+        compare(listOf(page).count, shownBefore - 924);
+        compare(page.viewIndexOf(members + 1), -1);
+        compare(rowItem(page, members).height, 0);
+        compare(findChild(sectionHeader(page, "membership"), "sectionCount").text, "925");
+        mouseClick(findChild(sectionHeader(page, "membership"), "sectionChevron"));
+        compare(listOf(page).count, shownBefore);
+        if (screenshotDir && screenshotDir.length > 0) {
+            listOf(page).positionViewAtIndex(page.viewIndexOf(create), ListView.Center);
+            waitForRendering(page);
+            wait(300);
+            grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-section-folded.png");
+        }
+
+        // Analysed again: the fold holds, by name.
+        page.controller.analyze(page.stickLabel, page.rekordboxPath, page.enginePath);
+        tryVerify(() => page.controller.busy, 5000, "the analysis starts");
+        tryCompare(page.controller, "busy", false, 120000);
+        compare(page.isCollapsed("playlists"), true);
+        compare(rowItem(page, createRow(page)).visible, false, "still folded after the analysis");
+
+        // The title opens it again.
+        mouseClick(findChild(sectionHeader(page, "playlists"), "sectionTitle"));
+        compare(page.isCollapsed("playlists"), false);
+        item = rowItem(page, createRow(page));
+        verify(item.visible && item.height > 0, "the row is back");
+        verify(findChild(item, "rowTitle") !== null);
+        compare(findChild(sectionHeader(page, "playlists"), "sectionChevron").iconName, "arrow-down");
+        tryVerify(() => Math.abs(gap() - membershipGap) < 1, 2000, "the next header is back where it was");
+    }
+
+    // What picking a side means: a line under the conflicts' header, the
+    // two sentences in its help and on the buttons that answer all.
+    function test_conflictsSayWhatASideMeans() {
+        const page = openOnAFreshCopy();
+        const header = sectionHeader(page, "conflicts");
+        const line = findChild(header, "conflictExplanation");
+        verify(line.visible);
+        compare(line.text, "Each button says what it writes. Nothing is written for a conflict you leave open.");
+        verify(Qt.colorEqual(String(line.color), String(Theme.textMuted)), "muted");
+        const title = findChild(header, "sectionTitle");
+        verify(line.mapToItem(header, 0, 0).y > title.mapToItem(header, 0, 0).y + title.height - 1,
+               "under the header's title");
+        compare(page.conflictExplanation,
+                "Rekordbox's side makes Engine match what rekordbox has now, for example by removing a track "
+                + "rekordbox no longer lists. Engine's side keeps what Engine has, and for some cues and ratings "
+                + "puts Engine's version back onto rekordbox, or for a playlist rekordbox may have renamed adds "
+                + "rekordbox's beside Engine's.");
+        const info = findChild(header, "conflictInfoButton");
+        verify(info.visible);
+        compare(info.summaryText, page.conflictExplanation);
+        verify(findChild(header, "rekordboxSideForAllButton").toolTipText.indexOf(page.conflictExplanation) > 0);
+        verify(findChild(header, "engineSideForAllButton").toolTipText.indexOf(page.conflictExplanation) > 0);
+        compare(findChild(sectionHeader(page, "membership"), "conflictExplanation").visible, false);
+        compare(findChild(sectionHeader(page, "membership"), "conflictInfoButton").visible, false);
+        // A row's buttons are its own concrete answer.
+        const item = rowItem(page, 0);
+        compare(findChild(item, "rekordboxChoiceButton").text, "Remove this track from Engine");
+        compare(findChild(item, "engineChoiceButton").text, "Keep it in Engine");
+    }
+
     function test_screenshot() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");
@@ -606,7 +739,7 @@ TestCase {
         wait(100);
         grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page.png");
         // Past the conflicts: the header folded, the writable sections.
-        listOf(page).positionViewAtIndex(createRow(page), ListView.Beginning);
+        listOf(page).positionViewAtIndex(page.viewIndexOf(createRow(page)), ListView.Beginning);
         waitForRendering(page);
         wait(400);
         grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-playlists.png");

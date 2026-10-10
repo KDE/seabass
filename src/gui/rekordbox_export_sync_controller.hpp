@@ -55,7 +55,8 @@ class RekordboxExportSyncController : public StagedCueEditController
     Q_PROPERTY(bool hasBaseline READ hasBaseline NOTIFY analysisChanged)
     Q_PROPERTY(qint64 baselineSequence READ baselineSequence NOTIFY analysisChanged)
     Q_PROPERTY(qint64 currentSequence READ currentSequence NOTIFY analysisChanged)
-    // What the proposal was compared against, one line over the sections.
+    // What the proposal was compared against, and with no earlier record
+    // the first run's rule, in full sentences over the sections.
     Q_PROPERTY(QString introText READ introText NOTIFY analysisChanged)
     // Something to write or decide, and all of it cues: the page links to
     // Sync Cue Points.
@@ -71,6 +72,11 @@ class RekordboxExportSyncController : public StagedCueEditController
     // Rows per category for the overview bar
     // (RekordboxExportSyncListModel::categoryCounts).
     Q_PROPERTY(QVariantMap categoryCounts READ categoryCounts NOTIFY listChanged)
+    // What the proposal does, counted plainly and said in one sentence
+    // under the page's first line (RekordboxExportSyncListModel::
+    // summaryCounts, summaryText).
+    Q_PROPERTY(QVariantMap summaryCounts READ summaryCounts NOTIFY listChanged)
+    Q_PROPERTY(QString summaryText READ summaryText NOTIFY listChanged)
     // Analysed, and nothing to write or decide
     // (domain::EngineUpdateProposal::empty).
     Q_PROPERTY(bool proposalEmpty READ proposalEmpty NOTIFY analysisChanged)
@@ -93,6 +99,8 @@ public:
     QVariantMap sectionCounts() const { return m_model.sectionCounts(); }
     QVariantMap sectionCheckedCounts() const { return m_model.sectionCheckedCounts(); }
     QVariantMap categoryCounts() const { return m_model.categoryCounts(); }
+    QVariantMap summaryCounts() const { return m_model.summaryCounts(); }
+    QString summaryText() const { return RekordboxExportSyncListModel::summaryText(m_model.summaryCounts()); }
     bool proposalEmpty() const;
     int checkedCount() const { return m_model.checkedCount(); }
     int conflictCount() const { return m_model.unresolvedConflictCount(); }

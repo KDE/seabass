@@ -57,6 +57,22 @@ std::string quoted(const std::string &text)
     return "\"" + text + "\"";
 }
 
+// A value for a button: quoted, and cut after 32 bytes (never inside a
+// UTF-8 sequence) so a long comment does not make a long button. The row's
+// details give it in full.
+std::string shortQuoted(const std::string &text)
+{
+    constexpr std::size_t Limit = 32;
+    if (text.size() <= Limit) {
+        return quoted(text);
+    }
+    std::size_t cut = Limit;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+        --cut;
+    }
+    return quoted(text.substr(0, cut) + "...");
+}
+
 bool isHotCue(const CuePoint &cue)
 {
     return cue.kind == CuePoint::Kind::Hot;
@@ -427,8 +443,7 @@ private:
                                                  + " times: Clean Up first",
                                              state);
                 conflict.pathKey = key;
-                conflict.rekordboxSide = r ? "rekordbox lists it once" : "rekordbox does not list it";
-                conflict.engineSide = engineName + " lists it " + std::to_string(rows.size()) + " times";
+                // A refusal: no buttons, the reason says what to do.
                 out.conflicts.push_back(std::move(conflict));
                 continue;
             }
@@ -506,7 +521,7 @@ private:
                                                    "earlier record says whether it was removed there",
                                              state);
                 conflict.pathKey = key;
-                conflict.rekordboxSide = "Remove it from " + engineName;
+                conflict.rekordboxSide = "Remove this track from " + engineName;
                 conflict.engineSide = "Keep it in " + engineName;
                 conflict.rekordboxChoice.emplace_back(std::move(remove));
                 out.conflicts.push_back(std::move(conflict));
@@ -528,7 +543,7 @@ private:
         return std::string(r->folder ? "folder:" : "list:") + r->path;
     }
 
-    void ambiguous(std::uint32_t id, const std::string &enginePath, const std::string &state, std::size_t rekordboxCount = 1)
+    void ambiguous(std::uint32_t id, const std::string &enginePath, const std::string &state)
     {
         const std::string engineName = catalogDisplayName("engine");
         EngineUpdateConflict conflict;
@@ -536,9 +551,7 @@ private:
                                      engineName + " has " + std::to_string(countAt(enginePath)) + " playlists at "
                                          + quoted(enginePath) + ": rename one in " + engineName + " DJ first",
                                      state);
-        conflict.rekordboxSide = rekordboxCount == 1 ? std::string("rekordbox has one")
-                                                     : "rekordbox has " + std::to_string(rekordboxCount);
-        conflict.engineSide = engineName + " has " + std::to_string(countAt(enginePath));
+        // A refusal: no buttons, the reason says what to do.
         out.conflicts.push_back(std::move(conflict));
     }
 
@@ -611,7 +624,7 @@ private:
         if (countAt(path) > 1 || (!parent.empty() && countAt(parent) > 1)) {
             const std::string at = countAt(path) > 1 ? path : parent;
             claimedEnginePaths.insert(at);
-            ambiguous(first.id, at, state, group.size());
+            ambiguous(first.id, at, state);
             settle(parentDeps);
             return;
         }
@@ -694,14 +707,17 @@ private:
                                      "rekordbox has " + count + " playlists spelled " + quoted(leafName(path))
                                          + " here; " + engineName + " can hold one at this path",
                                      state, parentDeps);
+        // Their tracks in rekordbox order, the first list's first: the
+        // row's details say which go where.
         if (engineHas) {
-            conflict.rekordboxSide = "Put the union of their members into " + engineName
-                + "'s playlist in rekordbox order (first list first)";
+            conflict.rekordboxSide = "Add the tracks of all " + count + " of them to " + engineName + "'s "
+                + quoted(path);
+            conflict.engineSide = "Leave " + engineName + "'s " + quoted(path) + " as it is";
         } else {
-            conflict.rekordboxSide = "Create one " + engineName
-                + " playlist holding the union of their members in rekordbox order (first list first)";
+            conflict.rekordboxSide = "Create one " + engineName + " playlist " + quoted(path) + " holding all " + count
+                + " of them";
+            conflict.engineSide = "Leave " + engineName + " without " + quoted(path);
         }
-        conflict.engineSide = "Leave this path alone";
         conflict.rekordboxChoice = std::move(choice);
         out.conflicts.push_back(std::move(conflict));
         settle({key});
@@ -868,7 +884,7 @@ private:
                                                  + engineName + " no longer has " + quoted(b->path),
                                              state, parentDeps);
                 conflict.rekordboxSide = "Create " + quoted(r.path) + " in " + engineName;
-                conflict.engineSide = "Leave " + engineName + " without it";
+                conflict.engineSide = "Leave " + engineName + " without " + quoted(r.path);
                 conflict.rekordboxChoice.emplace_back(std::move(create));
                 out.conflicts.push_back(std::move(conflict));
                 st.deps = {key};
@@ -902,7 +918,7 @@ private:
                             + std::to_string(std::set<std::string>(r.members.begin(), r.members.end()).size())
                             + " tracks; rekordbox may have renamed it",
                         state, parentDeps);
-                    conflict.rekordboxSide = "Rename " + engineName + "'s " + quoted(*guess) + " to " + quoted(r.path);
+                    conflict.rekordboxSide = "Rename " + quoted(*guess) + " to " + quoted(r.path) + " in " + engineName;
                     conflict.engineSide = "Keep " + quoted(*guess) + " and create " + quoted(r.path);
                     conflict.rekordboxChoice.emplace_back(std::move(rename));
                     conflict.engineChoice.emplace_back(std::move(create));
@@ -980,7 +996,7 @@ private:
                                                      + "'s copy changed since Seabass last recorded the stick",
                                                  state);
                     conflict.rekordboxSide = "Delete " + quoted(b->path) + " from " + engineName;
-                    conflict.engineSide = "Keep it in " + engineName;
+                    conflict.engineSide = "Keep " + quoted(b->path) + " in " + engineName;
                     conflict.rekordboxChoice.emplace_back(std::move(del));
                     out.conflicts.push_back(std::move(conflict));
                     continue;
@@ -1121,8 +1137,8 @@ private:
                                                        "record says which side changed it",
                                                  memberState(key), st.deps);
                     conflict.pathKey = key;
-                    conflict.rekordboxSide = "Take it out of " + engineName + "'s " + quoted(path);
-                    conflict.engineSide = "Keep it there";
+                    conflict.rekordboxSide = "Take it out of " + quoted(path) + " in " + engineName;
+                    conflict.engineSide = "Keep it in " + quoted(path);
                     conflict.rekordboxChoice.emplace_back(std::move(edit));
                     out.conflicts.push_back(std::move(conflict));
                 }
@@ -1255,7 +1271,7 @@ private:
                             removes.push_back(std::move(remove));
                             adds.push_back(std::move(add));
                         } else {
-                            const std::string text = "Move it to rekordbox's place";
+                            const std::string text = "Put " + quoted(path) + " in rekordbox's order";
                             finish(remove, true, orderReason, text, key);
                             finish(add, true, orderReason, text, key);
                             EngineUpdateConflict conflict;
@@ -1268,8 +1284,8 @@ private:
                                         + "'s " + quoted(path) + " than in rekordbox's",
                                 memberState(key), st.deps);
                             conflict.pathKey = key;
-                            conflict.rekordboxSide = "Move it to rekordbox's place";
-                            conflict.engineSide = "Leave it where " + engineName + " has it";
+                            conflict.rekordboxSide = text;
+                            conflict.engineSide = "Keep " + engineName + "'s order";
                             conflict.rekordboxChoice.emplace_back(std::move(remove));
                             conflict.rekordboxChoice.emplace_back(std::move(add));
                             out.conflicts.push_back(std::move(conflict));
@@ -1332,8 +1348,10 @@ private:
                     EngineUpdateConflict c;
                     c.header = makeHeader(itemKeyText, false, true, reason, std::move(text), state);
                     c.pathKey = key;
-                    c.rekordboxSide = "rekordbox: " + starsText(rv);
-                    c.engineSide = engineName + ": " + starsText(ev);
+                    c.rekordboxSide = rv ? "Set the rating in " + engineName + " to " + starsText(rv) + " (rekordbox's)"
+                                         : "Clear the rating in " + engineName + " (rekordbox has none)";
+                    c.engineSide = ev ? "Keep " + engineName + "'s " + starsText(ev)
+                                      : "Leave " + engineName + " without a rating";
                     return c;
                 };
                 if (b) {
@@ -1354,7 +1372,9 @@ private:
                                                     + starsText(ev)
                                                     + "), and nothing recorded whether Seabass or rekordbox wrote it");
                             c.rekordboxChoice.emplace_back(toEngine(rv, true, EngineUpdateReason::OriginUnknown,
-                                                                    "Clear " + engineName + "'s rating"));
+                                                                    c.rekordboxSide));
+                            c.engineSide = "Keep " + engineName + "'s " + starsText(ev)
+                                + " and write the rating back onto rekordbox";
                             c.engineChoice.emplace_back(toRekordbox(ev, true, EngineUpdateReason::OriginUnknown,
                                                                     "Put " + starsText(ev) + " back on rekordbox"));
                             out.conflicts.push_back(std::move(c));
@@ -1378,7 +1398,7 @@ private:
                                                 + starsText(rv) + ", " + engineName + " " + starsText(ev)
                                                 + ", recorded " + starsText(bv) + ")");
                         c.rekordboxChoice.emplace_back(
-                            toEngine(rv, true, EngineUpdateReason::BothChanged, "Use rekordbox's rating"));
+                            toEngine(rv, true, EngineUpdateReason::BothChanged, c.rekordboxSide));
                         out.conflicts.push_back(std::move(c));
                     }
                 } else if (rv && ev) {
@@ -1388,7 +1408,7 @@ private:
                                         "Ratings differ (rekordbox " + starsText(rv) + ", " + engineName + " "
                                             + starsText(ev) + ") and no earlier record says which side changed");
                     c.rekordboxChoice.emplace_back(
-                        toEngine(rv, true, EngineUpdateReason::NoBaselineValuesDiffer, "Use rekordbox's rating"));
+                        toEngine(rv, true, EngineUpdateReason::NoBaselineValuesDiffer, c.rekordboxSide));
                     out.conflicts.push_back(std::move(c));
                 } else if (ev) {
                     // Clearing Engine's rating would be destructive and
@@ -1425,9 +1445,12 @@ private:
                     EngineUpdateConflict c;
                     c.header = makeHeader(itemKeyText, false, true, reason, std::move(text), state);
                     c.pathKey = key;
-                    c.rekordboxSide = r->comment.empty() ? "rekordbox: no comment" : "rekordbox: " + quoted(r->comment);
-                    c.engineSide = e->comment.empty() ? engineName + ": no comment" : engineName + ": " + quoted(e->comment);
-                    c.rekordboxChoice.emplace_back(toEngine(true, reason, "Use rekordbox's comment"));
+                    c.rekordboxSide = r->comment.empty()
+                        ? "Clear the comment in " + engineName + " (rekordbox has none)"
+                        : "Set the comment in " + engineName + " to " + shortQuoted(r->comment) + " (rekordbox's)";
+                    c.engineSide = e->comment.empty() ? "Leave " + engineName + " without a comment"
+                                                      : "Keep " + engineName + "'s comment " + shortQuoted(e->comment);
+                    c.rekordboxChoice.emplace_back(toEngine(true, reason, c.rekordboxSide));
                     return c;
                 };
                 if (b && b->comment == e->comment && !r->comment.empty()) {
@@ -1589,21 +1612,21 @@ private:
             EngineUpdateConflict conflict;
             conflict.header = cueHeader(items, false, true, EngineUpdateReason::NoBaselineCues, plan.reasonText);
             conflict.pathKey = key;
-            conflict.rekordboxSide = "Use rekordbox's cues";
-            conflict.engineSide = "Use " + engineName + "'s cues";
+            conflict.rekordboxSide = "Use rekordbox's cues in " + engineName;
+            conflict.engineSide = "Copy " + engineName + "'s cues to rekordbox";
             SyncPlan toEngine = plan;
             toEngine.needsChoice = false;
             toEngine.direction = SyncPlan::Direction::ToB;
             toEngine.cuesToApply = plan.cuesIfAWins;
             conflict.rekordboxChoice.emplace_back(
-                CueEdit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, "Use rekordbox's cues"),
+                CueEdit{cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, conflict.rekordboxSide),
                         toEngine, key});
             SyncPlan toRekordbox = plan;
             toRekordbox.needsChoice = false;
             toRekordbox.direction = SyncPlan::Direction::ToA;
             toRekordbox.cuesToApply = plan.cuesIfBWins;
             conflict.engineChoice.emplace_back(CueEdit{
-                cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, "Use " + engineName + "'s cues"),
+                cueHeader(items, true, false, EngineUpdateReason::NoBaselineCues, conflict.engineSide),
                 toRekordbox, key});
             out.conflicts.push_back(std::move(conflict));
             return;
@@ -1747,6 +1770,11 @@ private:
             CueItemState item;
             EngineUpdateReason reason;
             std::string text;
+            // A conflict's two buttons for this one cue: the object, the
+            // action and the value ("Set pad 3 in Engine to 1:07.751,
+            // rekordbox's position" / "Keep pad 3 in Engine at 0:30.251").
+            std::string rekordboxLabel;
+            std::string engineLabel;
         };
         using Target = std::pair<std::map<int, std::vector<CuePoint>> *, std::vector<CuePoint> *>;
         std::vector<Pending> toEngine;
@@ -1800,8 +1828,8 @@ private:
                 keptAsEngineOwn(itemKeyText, state,
                                 bn.empty()   ? engineName + " set " + padName + " (" + places(en) + ")"
                                 : en.empty() ? engineName + " cleared " + padName + " (" + places(bn) + ")"
-                                             : engineName + " moved " + padName + " from " + places(bn) + " to "
-                                        + places(en));
+                                             : engineName + " set " + padName + " to " + places(en) + " (was "
+                                        + places(bn) + ")");
                 continue;
             }
             if (declinedAt(item)) {
@@ -1814,8 +1842,8 @@ private:
                     toEngine.push_back(bn.empty() ? Pending{item, EngineUpdateReason::RekordboxAdded,
                                                             "rekordbox set " + padName + " (" + places(rn) + ")"}
                                                   : Pending{item, EngineUpdateReason::RekordboxChanged,
-                                                            "rekordbox moved " + padName + " from " + places(bn)
-                                                                + " to " + places(rn)});
+                                                            "rekordbox set " + padName + " to " + places(rn)
+                                                                + " (was " + places(bn) + ")"});
                     continue;
                 }
                 switch (originOf(bnRows)) {
@@ -1833,7 +1861,11 @@ private:
                                                   "rekordbox no longer has " + padName + " (" + places(bn)
                                                       + "), which " + engineName
                                                       + " has, and nothing recorded whether Seabass or rekordbox "
-                                                        "put it there"});
+                                                        "put it there",
+                                                  "Remove " + padName + " from " + engineName
+                                                      + " (rekordbox has no cue there)",
+                                                  "Keep " + padName + " in " + engineName
+                                                      + " and write it back onto rekordbox"});
                     rekordboxWay.push_back([pad](Target t) { t.first->erase(pad); });
                     unknownCues.insert(unknownCues.end(), bn.begin(), bn.end());
                     break;
@@ -1845,7 +1877,13 @@ private:
                                           describePadDifference(rn, en, "rekordbox", engineName, tolerance)
                                               + "; both sides changed it since Seabass last recorded the stick "
                                                 "(recorded "
-                                              + places(bn) + ")"});
+                                              + places(bn) + ")",
+                                          rn.empty() ? "Clear " + padName + " in " + engineName
+                                                  + " (rekordbox has no cue there)"
+                                                     : "Set " + padName + " in " + engineName + " to " + places(rn)
+                                                  + ", rekordbox's position",
+                                          en.empty() ? "Leave " + padName + " in " + engineName + " empty"
+                                                     : "Keep " + padName + " in " + engineName + " at " + places(en)});
             rekordboxWay.push_back([pad, rn](Target t) {
                 if (rn.empty()) {
                     t.first->erase(pad);
@@ -1910,7 +1948,11 @@ private:
                                               engineName + " pad " + std::to_string(pad) + " sits where rekordbox had "
                                                   + memoryName(bc)
                                                   + ", which it no longer has: that cue on " + engineName
-                                                  + ", or a hot cue of " + engineName + "'s own?"});
+                                                  + ", or a hot cue of " + engineName + "'s own?",
+                                              "Remove pad " + std::to_string(pad) + " from " + engineName
+                                                  + " (rekordbox no longer has " + memoryName(bc) + ")",
+                                              "Keep pad " + std::to_string(pad) + " in " + engineName
+                                                  + " as a hot cue of its own"});
                 rekordboxWay.push_back([removeMemory, bc](Target t) { removeMemory(*t.second, bc); });
             } else if (row->origin == ValueOrigin::Rekordbox) {
                 removeMemory(tMem, bc);
@@ -1920,7 +1962,11 @@ private:
                 conflicting.push_back(Pending{item, EngineUpdateReason::OriginUnknown,
                                               "rekordbox no longer has " + memoryName(bc) + ", which " + engineName
                                                   + " has, and nothing recorded whether Seabass or rekordbox put "
-                                                    "it there"});
+                                                    "it there",
+                                              "Remove " + memoryName(bc) + " from " + engineName
+                                                  + " (rekordbox has no cue there)",
+                                              "Keep " + memoryName(bc) + " in " + engineName
+                                                  + " and write it back onto rekordbox"});
                 rekordboxWay.push_back([removeMemory, bc](Target t) { removeMemory(*t.second, bc); });
                 unknownCues.push_back(bc);
             }
@@ -2034,9 +2080,20 @@ private:
             conflict.header =
                 cueHeader(itemsOf(conflicting), false, true, conflicting.front().reason, std::move(text), written);
             conflict.pathKey = key;
-            conflict.rekordboxSide = "Follow rekordbox";
-            conflict.engineSide = unknownCues.empty() ? "Keep " + engineName + "'s cues"
-                                                      : "Put " + engineName + "'s cues back on rekordbox";
+            // One cue: its own words. Several on one track: what each
+            // side does to all of them (the reason names the first, the
+            // details every one).
+            if (conflicting.size() == 1) {
+                conflict.rekordboxSide = conflicting.front().rekordboxLabel;
+                conflict.engineSide = conflicting.front().engineLabel;
+            } else {
+                const std::string n = std::to_string(conflicting.size());
+                conflict.rekordboxSide = "Set these " + n + " cues in " + engineName + " as rekordbox has them";
+                conflict.engineSide = unknownCues.empty()
+                    ? "Keep these " + n + " cues in " + engineName + " as they are"
+                    : "Keep these " + n + " cues in " + engineName + " and write the ones rekordbox lacks back "
+                      "onto rekordbox";
+            }
             auto hot = tHot;
             auto memory = tMem;
             for (const auto &resolve : rekordboxWay) {
@@ -2047,15 +2104,14 @@ private:
                     plan->reason = SyncPlan::Reason::EngineMemoryOrHotCue;
                 }
                 conflict.rekordboxChoice.emplace_back(CueEdit{
-                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason, "Follow rekordbox"),
+                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason, conflict.rekordboxSide),
                     std::move(*plan), key});
             }
             if (!unknownCues.empty()) {
                 std::vector<CuePoint> back = restoreCues;
                 back.insert(back.end(), unknownCues.begin(), unknownCues.end());
                 conflict.engineChoice.emplace_back(CueEdit{
-                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason,
-                              "Put " + engineName + "'s cues back on rekordbox"),
+                    cueHeader(itemsOf(conflicting), true, false, conflicting.front().reason, conflict.engineSide),
                     ontoRekordbox(back), key});
             }
             out.conflicts.push_back(std::move(conflict));

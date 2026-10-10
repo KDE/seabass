@@ -47,6 +47,7 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine_change_fixture.hpp"
@@ -197,7 +198,10 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
     assert(!controller.hasBaseline());
     assert(controller.currentSequence() == 15132);
     assert(controller.introText()
-           == QStringLiteral("No earlier record of this stick: additions are assumed, removals are left to you"));
+           == QStringLiteral("No earlier record of this stick. What rekordbox has and Engine lacks is taken as added in "
+                             "rekordbox and is selected; what Engine has and rekordbox lacks is left for you to "
+                             "decide. Anything you leave undecided counts as Engine's own from now on and is not "
+                             "asked again."));
     assert(count(controller, "playlists") == FixtureCreates);
     assert(firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist")) >= 0);
     assert(count(controller, "membership") == FixtureMembership);
@@ -252,6 +256,65 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         // 925 membership adds, 1 rating or comment, 17 cue rows, 9 restores.
         assert(categories.value("changed").toInt() == 952);
         assert(!controller.proposalEmpty());
+    }
+    // The one line over the page, counted here off the rows: the
+    // membership rows' distinct tracks, a track in two playlists once.
+    {
+        std::set<std::string> moved;
+        int added = 0;
+        int removed = 0;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section == Section::Membership) {
+                moved.insert(std::get<seabass::domain::MembershipEdit>(*row.edit).pathKey);
+            } else if (row.section == Section::TracksToAdd) {
+                ++added;
+            } else if (row.section == Section::TracksToRemove) {
+                ++removed;
+            }
+        }
+        std::cout << "  summary: " << controller.summaryText().toStdString() << " (" << added << " added, " << removed
+                  << " removed, " << moved.size() << " distinct tracks in " << FixtureMembership
+                  << " membership rows)\n";
+        const QVariantMap summary = controller.summaryCounts();
+        assert(summary.value("tracksAdded").toInt() == added);
+        assert(summary.value("tracksRemoved").toInt() == removed);
+        assert(summary.value("tracksMoved").toInt() == static_cast<int>(moved.size()));
+        assert(summary.value("playlistsCreated").toInt() == FixtureCreates);
+        // 925 membership rows over 779 tracks; nothing added or removed.
+        assert(moved.size() == 779 && added == 0 && removed == 0);
+        assert(controller.summaryText() == QStringLiteral("779 tracks moved between playlists; 1 playlist created."));
+    }
+
+    // The conflicts' buttons say what they do, as the page shows them
+    // (the model's label roles), for the three kinds the fixture holds;
+    // a row's details are headed by the same words.
+    {
+        std::set<std::pair<QString, QString>> pairs;
+        int imported = -1;
+        for (int i = 0; i < controller.rows()->rowCount(); ++i) {
+            const QModelIndex at = controller.rows()->index(i);
+            if (!at.data(RekordboxExportSyncListModel::IsConflictRole).toBool()) {
+                continue;
+            }
+            pairs.emplace(at.data(RekordboxExportSyncListModel::RekordboxChoiceLabelRole).toString(),
+                          at.data(RekordboxExportSyncListModel::EngineChoiceLabelRole).toString());
+            if (imported < 0 && rowsOf(controller)[static_cast<std::size_t>(i)].header.reason
+                    == seabass::domain::EngineUpdateReason::NoBaselineImportedRow) {
+                imported = i;
+            }
+        }
+        // An imported row rekordbox no longer lists.
+        assert(pairs.count({QStringLiteral("Remove this track from Engine"), QStringLiteral("Keep it in Engine")}));
+        // A member only Engine's playlist holds.
+        assert(pairs.count({QStringLiteral("Take it out of \"Playlist 007\" in Engine"),
+                            QStringLiteral("Keep it in \"Playlist 007\"")}));
+        // Three rekordbox playlists spelled alike at one path.
+        assert(pairs.count({QStringLiteral("Create one Engine playlist \"Playlist\" holding all 3 of them"),
+                            QStringLiteral("Leave Engine without \"Playlist\"")}));
+        assert(imported >= 0);
+        const QStringList lines = controller.rows()->details(imported);
+        assert(lines.contains(QStringLiteral("Remove this track from Engine (rekordbox's side):")));
+        assert(lines.contains(QStringLiteral("Keep it in Engine (Engine's side):")));
     }
     std::cout << "case 1 (the fixture's proposal: 1 create, 925 members, 1245 conflicts, 1177 kept, 953 ticked) OK\n";
 
@@ -538,7 +601,7 @@ void testSmallSave(const fs::path &fixture)
     printCounts(controller);
     assert(controller.hasBaseline());
     assert(controller.introText()
-           == QStringLiteral("Compared with how this stick looked when Seabass last saved it, export 15132"));
+           == QStringLiteral("Compared with how this stick looked when Seabass last saved it, export 15132."));
     const auto listed = keysListed(controller);
     assert(!listed.count(createRow.header.key));
     for (const auto &key : memberItems) {
@@ -673,6 +736,27 @@ void testOrderAndDetails()
     RekordboxExportSyncListModel model;
     model.setProposal(proposal, "/stick");
     assert(model.rowCount() == 5);
+    // The one line: Night Drive added; Night Drive and Second Song put
+    // into "Warm Up" (two tracks, each once); the playlist created.
+    assert(RekordboxExportSyncListModel::summaryText(model.summaryCounts())
+           == QStringLiteral("1 track added, 2 tracks moved between playlists; 1 playlist created."));
+    {
+        QVariantMap none;
+        for (const char *key : {"tracksAdded", "tracksRemoved", "tracksMoved", "playlistsCreated", "playlistsRemoved",
+                                "playlistsRenamed"}) {
+            none.insert(QLatin1String(key), 0);
+        }
+        assert(RekordboxExportSyncListModel::summaryText(none) == QStringLiteral("Nothing to add, remove or move."));
+        QVariantMap some = none;
+        some.insert(QStringLiteral("tracksRemoved"), 3);
+        some.insert(QStringLiteral("playlistsRemoved"), 1);
+        some.insert(QStringLiteral("playlistsRenamed"), 2);
+        assert(RekordboxExportSyncListModel::summaryText(some)
+               == QStringLiteral("3 tracks removed; 1 playlist removed, 2 playlists renamed."));
+        some = none;
+        some.insert(QStringLiteral("playlistsCreated"), 2);
+        assert(RekordboxExportSyncListModel::summaryText(some) == QStringLiteral("2 playlists created."));
+    }
     assert(model.index(0).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("playlists"));
     assert(model.index(0).data(RekordboxExportSyncListModel::SectionIndexRole).toInt() == 1);
 
@@ -758,10 +842,10 @@ void testOrderAndDetails()
     assert(model.index(0).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("conflicts"));
     assert(model.index(0).data(RekordboxExportSyncListModel::SectionIndexRole).toInt() == 0);
     assert(model.index(1).data(RekordboxExportSyncListModel::SectionRole).toString() == QStringLiteral("playlists"));
-    expect(0, {QStringLiteral("Why: test"), QStringLiteral("Rekordbox's side (Take it out):"),
+    expect(0, {QStringLiteral("Why: test"), QStringLiteral("Take it out (rekordbox's side):"),
                QStringLiteral("  Takes Second Song out of \"Warm Up\" on Engine"), QStringLiteral("  Position on Engine: #2"),
                QStringLiteral("  The track stays in the library"), QStringLiteral("  File: Contents/second.mp3"),
-               QStringLiteral("Engine's side (Keep it):"), QStringLiteral("  writes nothing; Engine keeps what it has")});
+               QStringLiteral("Keep it (Engine's side):"), QStringLiteral("  writes nothing; Engine keeps what it has")});
     // Not in the bar until answered; answered toward rekordbox it is a
     // membership remove, and removed.
     assert(model.categoryCounts().value("removed").toInt() == 0);
