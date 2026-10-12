@@ -209,12 +209,13 @@ cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DSEABASS_TESTS=OFF -DSEABASS_LIBDJINTEROP_TESTS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Boost=ON \
     -DSEABASS_RELEASE_CHANNEL="${SEABASS_RELEASE_CHANNEL:-dev}" -DSEABASS_PUBLISHED_BUILD=ON \
     >"$work/configure.log" 2>&1 ||
-    { echo "configure failed; see $work/configure.log" >&2; exit 1; }
+    { echo "configure failed; see $work/configure.log" >&2; tail -n 60 "$work/configure.log" >&2; exit 1; }
 # A TagLib found anywhere but here would be the host's own, of one
 # architecture only.
 grep -q "TagLib_DIR:PATH=$prefix" "$build/CMakeCache.txt" ||
     { echo "the build did not find the TagLib built here" >&2; grep TagLib "$build/CMakeCache.txt" >&2; exit 1; }
-cmake --build "$build" >"$work/build.log" 2>&1 || { echo "build failed; see $work/build.log" >&2; exit 1; }
+cmake --build "$build" >"$work/build.log" 2>&1 ||
+    { echo "build failed; see $work/build.log" >&2; tail -n 60 "$work/build.log" >&2; exit 1; }
 
 echo "== bundling"
 # seabass.app, as the build and Craft both name it.
