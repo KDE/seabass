@@ -5,11 +5,15 @@
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 
 #include <charconv>
+#include <cctype>
 #include <climits>
 #include <cmath>
 #include <fstream>
+#include <limits>
+#include <locale>
 #include <map>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -76,22 +80,28 @@ bool parseInteger(std::string_view text, T &out)
     return result.ec == std::errc() && result.ptr == text.data() + text.size();
 }
 
+// Streams in the classic locale rather than std::from_chars and
+// std::to_chars for doubles, which macOS 12's libc++ does not have.
 bool parseDouble(std::string_view text, double &out)
 {
-    if (text.empty()) {
+    if (text.empty() || std::isspace(static_cast<unsigned char>(text.front()))) {
         return false;
     }
-    const auto result = std::from_chars(text.data(), text.data() + text.size(), out);
-    return result.ec == std::errc() && result.ptr == text.data() + text.size() && std::isfinite(out);
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
+    in >> out;
+    return !in.fail() && in.eof() && std::isfinite(out);
 }
 
-// The shortest decimal that std::from_chars reads back as the same
-// double, so a position survives the file to the bit.
+// max_digits10 digits read back as the same double, so a position
+// survives the file to the bit.
 std::string formatDouble(double value)
 {
-    char buffer[64];
-    const auto result = std::to_chars(buffer, buffer + sizeof buffer, value);
-    return std::string(buffer, result.ptr);
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out.precision(std::numeric_limits<double>::max_digits10);
+    out << value;
+    return out.str();
 }
 
 bool parseBool(std::string_view text, bool &out)
