@@ -1439,12 +1439,6 @@ Page {
                     }
                 }
             }
-
-            Label {
-                Layout.margins: 8
-                text: trackListView.count + " tracks"
-                color: Theme.textMuted
-            }
         }
 
         TrackDetailPanel {

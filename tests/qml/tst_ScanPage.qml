@@ -291,6 +291,15 @@ TestCase {
         return {page: page, controller: controller, list: list};
     }
 
+    // Nothing under the list: the "N tracks" line repeated what the
+    // playlist sidebar says, and the rows need the room.
+    function test_theListReachesTheBottomOfThePage() {
+        const held = makeHeldPage(3);
+        const bottom = held.list.mapToItem(held.page, 0, held.list.height).y;
+        verify(held.page.height - bottom <= 1, "list ends at " + bottom + " of " + held.page.height);
+        browseFixture.releaseCues();
+    }
+
     function saveScreenshot(item, name) {
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(item).save(screenshotDir + "/" + name + ".png");
