@@ -873,6 +873,7 @@ Page {
                     required property string artworkPath
                     required property string fallbackArtworkPath
                     required property var cueSides
+                    required property var playTrack
 
                     readonly property bool writable: root.isWritable(section)
                     readonly property bool expanded: root.expandedIndex === modelRow
@@ -933,6 +934,50 @@ Page {
                                     anchors.fill: parent
                                     source: row.artworkPath
                                     fallbackSource: row.fallbackArtworkPath
+                                }
+                                // Play the row's track from its cover: shown
+                                // while the row is hovered, and while it is
+                                // the track playing, as a pause key then.
+                                ToolButton {
+                                    id: coverPlay
+                                    objectName: "rowPlayButton"
+                                    readonly property bool current: root.playbackController !== null
+                                        && root.playbackController.hasTrack
+                                        && root.playbackController.currentFormat === (row.playTrack.side || "")
+                                        && root.playbackController.currentSourceId === (row.playTrack.sourceId || "")
+                                    anchors.fill: parent
+                                    padding: 0
+                                    display: AbstractButton.IconOnly
+                                    text: coverPlay.current && root.playbackController.playing ? "Pause" : "Play"
+                                    visible: root.playbackController !== null && (row.playTrack.filePath || "").length > 0
+                                        && (hover.hovered || coverPlay.hovered || coverPlay.current)
+                                    contentItem: Item {
+                                        SeabassIcon {
+                                            anchors.centerIn: parent
+                                            iconName: coverPlay.current && root.playbackController.playing
+                                                ? "media-playback-pause" : "media-playback-start"
+                                            size: Theme.iconSizeSmall * 0.6
+                                            color: "white"
+                                        }
+                                    }
+                                    background: Rectangle {
+                                        radius: 2
+                                        color: "black"
+                                        opacity: coverPlay.hovered ? 0.55 : 0.4
+                                    }
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: coverPlay.current ? (root.playbackController.playing ? "Pause" : "Play")
+                                        : (row.playTrack.side === "engine" ? "Play Engine's copy of the track"
+                                                                          : "Play rekordbox's copy of the track")
+                                    onClicked: {
+                                        if (coverPlay.current) {
+                                            root.playbackController.togglePlay();
+                                            return;
+                                        }
+                                        const t = row.playTrack;
+                                        root.playbackController.load(t.side, root.pathForFormat(t.side), t.sourceId,
+                                            t.filePath, t.title, t.artist, t.artworkPath, t.cues);
+                                    }
                                 }
                             }
 

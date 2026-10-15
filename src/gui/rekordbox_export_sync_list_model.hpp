@@ -101,6 +101,10 @@ public:
         // The waveforms are not here: the page reads one only for a row
         // someone opens (PlaybackController::waveformFor).
         CueSidesRole,
+        // The row's track to play, SyncPlanListModel::trackMap of the copy
+        // the row is about (Engine's for a removal, rekordbox's for an
+        // add); {} for a row without one.
+        PlayTrackRole,
     };
 
     // The page's order: the questions first, then what a tick writes,
@@ -134,6 +138,15 @@ public:
         std::optional<domain::EngineUpdateEdit> edit;
         // Conflict rows.
         std::optional<domain::EngineUpdateConflict> conflict;
+        // A conflict row standing for several: tracks Engine imported from
+        // rekordbox that rekordbox no longer lists, one row per Engine
+        // playlist that holds them (groupImportedRowConflicts()). Answered
+        // as one, each answered underneath; `conflict` is empty then.
+        std::vector<domain::EngineUpdateConflict> group;
+        QString groupRekordboxLabel;
+        QString groupEngineLabel;
+        std::string groupPlaylist;
+        QVariantMap playTrack;
         QString title;
         QString artist;
         QString detail;
@@ -164,6 +177,9 @@ public:
     void setProposal(const domain::EngineUpdateProposal &proposal, const std::string &stickRoot);
     void clear();
     const std::vector<Row> &rows() const { return m_rows; }
+
+    // The conflicts a conflict row answers: its own, or its group's.
+    static std::vector<const domain::EngineUpdateConflict *> conflictsOf(const Row &row);
 
     static QString sectionName(Section section);
     static std::optional<Section> sectionFromName(const QString &name);
@@ -247,6 +263,14 @@ private:
     Row makeRow(Section section, QString kind, const domain::EngineUpdateItemHeader &header);
     Row rowForEdit(const domain::EngineUpdateEdit &edit) const;
     void appendEdit(const domain::EngineUpdateEdit &edit);
+    // The row for groups[i] == playlist (importedRowGroups() in the .cpp);
+    // `gone`: rekordbox no longer has the playlist.
+    void appendImportedRowGroup(const domain::EngineUpdateProposal &proposal, const std::vector<std::string> &groups,
+                                const std::string &playlist, bool gone);
+    // The rows one answer adds for `conflict`, numbered and inserted at
+    // the end of their sections; their uids go to `added`.
+    void insertAnswerRows(const domain::EngineUpdateConflict &conflict, int conflictUid, bool rekordboxSide,
+                          std::vector<int> &added);
     void assignPlanKey(Row &row);
     int endOfSection(Section section) const;
     void removeAnswerRows(int conflictUid);
