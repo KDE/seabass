@@ -258,6 +258,10 @@ set(SEABASS_GUI_SOURCES
     metadata_restore_proposal_model.cpp
     playback_controller.hpp
     playback_controller.cpp
+    cover_cache.hpp
+    cover_cache.cpp
+    cover_image_provider.hpp
+    cover_image_provider.cpp
     settings_controller.hpp
     settings_controller.cpp
     app_settings_controller.hpp

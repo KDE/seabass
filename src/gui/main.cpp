@@ -18,6 +18,7 @@
 #include "gui/app_color_scheme.hpp"
 #include "gui/style_color_scheme.hpp"
 #include "gui/controls_style.hpp"
+#include "gui/cover_image_provider.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/seabass_settings.hpp"
 
@@ -209,6 +210,8 @@ int main(int argc, char **argv)
     QObject::connect(
         engine.get(), &QQmlApplicationEngine::objectCreationFailed, &app,
         []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
+    // Cover art through the cache on the computer: ArtworkImage.qml.
+    seabass::gui::registerCoverImageProvider(engine.get());
     engine->loadFromModule("SeabassGui", "Main");
 
     int result = app.exec();

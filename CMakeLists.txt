@@ -2581,6 +2581,22 @@ if(TARGET seabass_edit)
     target_link_libraries(update_checker_test PRIVATE Qt6::Core Qt6::Network Qt6::Qml)
     add_test(NAME update_checker_test COMMAND update_checker_test)
 
+    # The cover cache (#76): hits, changed covers, eviction, two processes,
+    # a damaged file. Qt6::Gui for QImage; seabass_core for SQLite and the
+    # paths.
+    add_executable(cover_cache_test
+        src/gui/cover_cache.cpp
+        tests/cover_cache_test.cpp
+    )
+    target_include_directories(cover_cache_test PRIVATE src)
+    target_link_libraries(cover_cache_test PRIVATE seabass_core Qt6::Core Qt6::Gui)
+    add_test(NAME cover_cache_test COMMAND cover_cache_test)
+    # And what it buys, against a real stick's covers, read-only: reads,
+    # decoding, and the cache's next run and memory, timed apart.
+    add_executable(cover_cache_timing src/gui/cover_cache.cpp tools/cover_cache_timing.cpp)
+    target_include_directories(cover_cache_timing PRIVATE src)
+    target_link_libraries(cover_cache_timing PRIVATE seabass_core Qt6::Core Qt6::Gui)
+
     add_executable(stick_list_order_test
         src/gui/media_controller.cpp
         src/gui/stick_events.cpp

@@ -21,6 +21,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "gui/app_color_scheme.hpp"
 #include "gui/controls_style.hpp"
+#include "gui/cover_image_provider.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -2277,6 +2278,9 @@ void seedMetadataStoreForTests()
 
     void qmlEngineAvailable(QQmlEngine *engine)
     {
+        // As the app does: ArtworkImage loads every local cover through
+        // it. Its file lands under the sandboxed SEABASS_HOME.
+        seabass::gui::registerCoverImageProvider(engine);
         engine->rootContext()->setContextProperty(QStringLiteral("screenshotDir"),
                                                   qEnvironmentVariable("SEABASS_SCREENSHOT_DIR"));
         // Whether this run ended up under a Qt Quick Controls style other

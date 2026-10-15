@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace seabass::infrastructure::local
 {
@@ -70,6 +71,10 @@ public:
     void bindBlob(int index, const std::string &value)
     {
         sqlite3_bind_blob(m_stmt, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
+    }
+    void bindBlob(int index, const void *data, int size)
+    {
+        sqlite3_bind_blob(m_stmt, index, data, size, SQLITE_TRANSIENT);
     }
     void bindNull(int index) { sqlite3_bind_null(m_stmt, index); }
     // An absent optional binds SQL NULL rather than 0. The distinction
@@ -134,6 +139,16 @@ public:
         const void *data = sqlite3_column_blob(m_stmt, index);
         int size = sqlite3_column_bytes(m_stmt, index);
         return data ? std::string(reinterpret_cast<const char *>(data), static_cast<size_t>(size)) : std::string();
+    }
+
+    // The blob in place, valid until the next step() or reset(): for a
+    // caller that copies it once into its own buffer anyway.
+    std::string_view columnBlobView(int index)
+    {
+        const void *data = sqlite3_column_blob(m_stmt, index);
+        const int size = sqlite3_column_bytes(m_stmt, index);
+        return data ? std::string_view(reinterpret_cast<const char *>(data), static_cast<size_t>(size))
+                    : std::string_view();
     }
 
     sqlite3_int64 lastInsertRowId() { return sqlite3_last_insert_rowid(m_db); }
