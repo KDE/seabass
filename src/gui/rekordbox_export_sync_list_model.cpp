@@ -7,12 +7,15 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/sync_plan_list_model.hpp"
+#include "domain/sync_planning.hpp"
 
 namespace seabass::gui
 {
@@ -150,6 +153,70 @@ std::string playlistOfChoice(const std::vector<EngineUpdateEdit> &choice)
     return {};
 }
 
+
+// The track a conflict would take out of Engine when it is only that: a
+// track Engine imported from rekordbox that rekordbox no longer lists.
+const TrackToRemove *importedRowRemoval(const domain::EngineUpdateConflict &conflict)
+{
+    if (conflict.header.reason != domain::EngineUpdateReason::NoBaselineImportedRow
+        || conflict.rekordboxChoice.size() != 1) {
+        return nullptr;
+    }
+    return std::get_if<TrackToRemove>(&conflict.rekordboxChoice.front());
+}
+
+// Per conflict, the Engine playlist it is shown under, "" for its own
+// row. A playlist removed or emptied in rekordbox left every one of its
+// tracks a conflict of its own, all asking the same question: WHALESHARK2
+// showed 308, each with a page of metadata. Each such track goes under
+// one Engine playlist that holds it: one rekordbox no longer has if there
+// is one, else the one holding most of them; a playlist that would hold
+// one track leaves it on its own row.
+std::vector<std::string> importedRowGroups(const domain::EngineUpdateProposal &proposal)
+{
+    std::set<std::string> engineOnly;
+    for (const auto &kept : proposal.engineOwnKept) {
+        if (kept.engineOnlyPlaylist && !kept.folder) {
+            engineOnly.insert(kept.playlistPath);
+        }
+    }
+    std::map<std::string, int> holding;
+    for (const auto &conflict : proposal.conflicts) {
+        if (const TrackToRemove *removal = importedRowRemoval(conflict)) {
+            for (const auto &membership : removal->engine.playlists) {
+                ++holding[membership.name];
+            }
+        }
+    }
+    std::vector<std::string> groups(proposal.conflicts.size());
+    std::map<std::string, int> sizes;
+    for (std::size_t i = 0; i < proposal.conflicts.size(); ++i) {
+        const TrackToRemove *removal = importedRowRemoval(proposal.conflicts[i]);
+        if (!removal) {
+            continue;
+        }
+        const std::string *best = nullptr;
+        for (const auto &membership : removal->engine.playlists) {
+            const auto rank = [&](const std::string &name) {
+                return std::make_tuple(engineOnly.count(name) != 0, holding[name]);
+            };
+            if (!best || rank(membership.name) > rank(*best)
+                || (rank(membership.name) == rank(*best) && membership.name < *best)) {
+                best = &membership.name;
+            }
+        }
+        if (best) {
+            groups[i] = *best;
+            ++sizes[*best];
+        }
+    }
+    for (auto &group : groups) {
+        if (!group.empty() && sizes[group] < 2) {
+            group.clear();
+        }
+    }
+    return groups;
+}
 
 // The details lines (RekordboxExportSyncListModel::details). Plain
 // sentences in the data font: "Label: value", one fact a line.
@@ -404,8 +471,14 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
     case IsConflictRole:
         return row.section == Section::Conflicts;
     case RekordboxChoiceLabelRole:
+        if (!row.group.empty()) {
+            return row.groupRekordboxLabel;
+        }
         return row.conflict ? q(row.conflict->rekordboxSide) : QString();
     case EngineChoiceLabelRole:
+        if (!row.group.empty()) {
+            return row.groupEngineLabel;
+        }
         return row.conflict ? q(row.conflict->engineSide) : QString();
     case ResolvedSideRole:
         if (row.fromConflictUid >= 0) {
@@ -449,6 +522,8 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
         return toLocalFileUrl(row.fallbackArtworkPath);
     case CueSidesRole:
         return cueSidesOf(row);
+    case PlayTrackRole:
+        return row.playTrack;
     default:
         return {};
     }
@@ -470,6 +545,7 @@ QHash<int, QByteArray> RekordboxExportSyncListModel::roleNames() const
         {EngineChoiceLabelRole, "engineChoiceLabel"},
         {ResolvedSideRole, "resolvedSide"},
         {IncludedRole, "included"},
+        {PlayTrackRole, "playTrack"},
         {DependsOnRole, "dependsOn"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
@@ -514,6 +590,7 @@ RekordboxExportSyncListModel::Row RekordboxExportSyncListModel::rowForEdit(const
             row.hasTrack = true;
             row.artworkPath = t.artworkPath;
             row.fallbackArtworkPath = other ? other->artworkPath : std::string();
+            row.playTrack = SyncPlanListModel::trackMap(t);
         }
         void operator()(const PlaylistCreate &e)
         {
@@ -620,8 +697,28 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
     m_rows.clear();
     m_ordinals.clear();
     m_stickRoot = stickRoot;
-    // The questions first (Section's order).
-    for (const auto &c : proposal.conflicts) {
+    // The questions first (Section's order); a group where its first
+    // conflict was.
+    const std::vector<std::string> groups = importedRowGroups(proposal);
+    const std::set<std::string> engineOnly = [&] {
+        std::set<std::string> names;
+        for (const auto &kept : proposal.engineOwnKept) {
+            if (kept.engineOnlyPlaylist) {
+                names.insert(kept.playlistPath);
+            }
+        }
+        return names;
+    }();
+    std::set<std::string> grouped;
+    for (std::size_t i = 0; i < proposal.conflicts.size(); ++i) {
+        const auto &c = proposal.conflicts[i];
+        if (!groups[i].empty()) {
+            if (!grouped.insert(groups[i]).second) {
+                continue;  // in the group's row, made at its first
+            }
+            appendImportedRowGroup(proposal, groups, groups[i], engineOnly.count(groups[i]) != 0);
+            continue;
+        }
         Row row = makeRow(Section::Conflicts, QStringLiteral("conflict"), c.header);
         row.conflict = c;
         std::optional<Track> track = trackOfChoice(c.rekordboxChoice);
@@ -635,6 +732,7 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
         if (track) {
             row.title = q(track->title.empty() ? track->filename : track->title);
             row.hasTrack = true;
+            row.playTrack = SyncPlanListModel::trackMap(*track);
             row.artworkPath = track->artworkPath;
             if (const std::optional<Track> other = trackOfChoice(c.engineChoice); other) {
                 row.fallbackArtworkPath = other->artworkPath;
@@ -725,6 +823,61 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
     }
     endResetModel();
     emit countsChanged();
+}
+
+void RekordboxExportSyncListModel::appendImportedRowGroup(const domain::EngineUpdateProposal &proposal,
+                                                          const std::vector<std::string> &groups,
+                                                          const std::string &playlist, bool gone)
+{
+    std::vector<domain::EngineUpdateConflict> members;
+    for (std::size_t i = 0; i < proposal.conflicts.size(); ++i) {
+        if (groups[i] == playlist) {
+            members.push_back(proposal.conflicts[i]);
+        }
+    }
+    const std::string engineName = domain::catalogDisplayName("engine");
+    const std::string count = std::to_string(members.size());
+    // The group's own key only lists it; staging and the record go by
+    // its members' keys.
+    domain::EngineUpdateItemHeader header = members.front().header;
+    header.key = "group:" + playlist;
+    header.rekordboxState.clear();
+    header.cueItems.clear();
+    header.dependsOn.clear();
+    for (const auto &member : members) {
+        for (const auto &key : member.header.dependsOn) {
+            if (std::find(header.dependsOn.begin(), header.dependsOn.end(), key) == header.dependsOn.end()) {
+                header.dependsOn.push_back(key);
+            }
+        }
+    }
+    header.reasonText = gone ? "Rekordbox no longer has this playlist. " + engineName + " imported these " + count
+            + " tracks from rekordbox, which no longer lists them; no earlier record says whether they were "
+              "removed there"
+                             : engineName + "'s copy of this playlist holds " + count
+            + " tracks rekordbox no longer lists at all. " + engineName
+            + " imported them from rekordbox; no earlier record says whether they were removed there";
+    Row row = makeRow(Section::Conflicts, QStringLiteral("conflictGroup"), header);
+    row.group = std::move(members);
+    row.groupPlaylist = playlist;
+    row.groupRekordboxLabel = QStringLiteral("Remove these %1 tracks from %2").arg(row.group.size()).arg(q(engineName));
+    row.groupEngineLabel = QStringLiteral("Keep them in %1").arg(q(engineName));
+    row.title = q(playlist);
+    row.detail = QStringLiteral("%1 tracks rekordbox no longer lists").arg(row.group.size());
+    assignPlanKey(row);
+    m_rows.push_back(std::move(row));
+}
+
+std::vector<const domain::EngineUpdateConflict *> RekordboxExportSyncListModel::conflictsOf(const Row &row)
+{
+    std::vector<const domain::EngineUpdateConflict *> out;
+    if (row.conflict) {
+        out.push_back(&*row.conflict);
+    }
+    for (const auto &member : row.group) {
+        out.push_back(&member);
+    }
+    return out;
 }
 
 void RekordboxExportSyncListModel::clear()
@@ -865,24 +1018,10 @@ void RekordboxExportSyncListModel::removeAnswerRows(int conflictUid)
     }
 }
 
-bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxSide)
+void RekordboxExportSyncListModel::insertAnswerRows(const domain::EngineUpdateConflict &conflict, int conflictUid,
+                                                    bool rekordboxSide, std::vector<int> &added)
 {
-    if (rowIndex < 0 || rowIndex >= static_cast<int>(m_rows.size())) {
-        return false;
-    }
-    if (m_rows[static_cast<std::size_t>(rowIndex)].section != Section::Conflicts
-        || !m_rows[static_cast<std::size_t>(rowIndex)].conflict) {
-        return false;
-    }
-    const domain::EngineUpdateConflict conflict = *m_rows[static_cast<std::size_t>(rowIndex)].conflict;
-    if (conflict.rekordboxChoice.empty() && conflict.engineChoice.empty()) {
-        return false;  // a refusal: its reason says what to do instead
-    }
-    const int conflictUid = m_rows[static_cast<std::size_t>(rowIndex)].uid;
-    removeAnswerRows(conflictUid);
-
     const auto &choice = rekordboxSide ? conflict.rekordboxChoice : conflict.engineChoice;
-    std::vector<int> added;
     for (const auto &edit : choice) {
         Row row = rowForEdit(edit);
         row.uid = m_nextUid++;
@@ -902,7 +1041,7 @@ bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxS
         if (std::holds_alternative<CueEdit>(edit) && !conflict.header.cueItems.empty()) {
             row.header.cueItems = conflict.header.cueItems;
         }
-        row.included = false;  // ticked below, with what it depends on
+        row.included = false;  // ticked by the caller, with what it depends on
         assignPlanKey(row);
         const int at = endOfSection(row.section);
         if (!m_bulk) {
@@ -913,6 +1052,35 @@ bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxS
             endInsertRows();
         }
         added.push_back(m_rows[static_cast<std::size_t>(at)].uid);
+    }
+}
+
+bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxSide)
+{
+    if (rowIndex < 0 || rowIndex >= static_cast<int>(m_rows.size())) {
+        return false;
+    }
+    const Row &at = m_rows[static_cast<std::size_t>(rowIndex)];
+    if (at.section != Section::Conflicts) {
+        return false;
+    }
+    // Copied: answering inserts rows, and the row moves.
+    std::vector<domain::EngineUpdateConflict> conflicts;
+    for (const auto *conflict : conflictsOf(at)) {
+        conflicts.push_back(*conflict);
+    }
+    const bool refusal = std::all_of(conflicts.begin(), conflicts.end(), [](const auto &conflict) {
+        return conflict.rekordboxChoice.empty() && conflict.engineChoice.empty();
+    });
+    if (conflicts.empty() || refusal) {
+        return false;  // a refusal: its reason says what to do instead
+    }
+    const int conflictUid = at.uid;
+    removeAnswerRows(conflictUid);
+
+    std::vector<int> added;
+    for (const auto &conflict : conflicts) {
+        insertAnswerRows(conflict, conflictUid, rekordboxSide, added);
     }
     const int conflictAt = rowIndexOfUid(conflictUid);
     m_rows[static_cast<std::size_t>(conflictAt)].resolvedSide =
@@ -1206,6 +1374,37 @@ QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const
 {
     QStringList lines;
     const QString why = q(row.header.reasonText);
+    if (row.section == Section::Conflicts && !row.group.empty()) {
+        // What each button does once, then the tracks one line each: the
+        // question is the same for all of them.
+        lines << QStringLiteral("Why: ") + why;
+        lines << row.groupRekordboxLabel + QStringLiteral(" (rekordbox's side):");
+        lines << QStringLiteral("  removes each track from Engine's library and from every Engine playlist; "
+                                "the files stay on the stick");
+        lines << row.groupEngineLabel + QStringLiteral(" (Engine's side):");
+        lines << QStringLiteral("  writes nothing; Engine keeps what it has");
+        lines << QStringLiteral("Tracks:");
+        for (const auto &member : row.group) {
+            const TrackToRemove *removal = importedRowRemoval(member);
+            if (!removal) {
+                continue;
+            }
+            const Track &t = removal->engine;
+            QString line = QStringLiteral("  ") + (t.artist.empty() ? QString() : q(t.artist) + QStringLiteral(" - "))
+                + q(t.title.empty() ? t.filename : t.title);
+            QStringList others;
+            for (const auto &membership : t.playlists) {
+                if (membership.name != row.groupPlaylist) {
+                    others << quotedText(membership.name);
+                }
+            }
+            if (!others.isEmpty()) {
+                line += QStringLiteral(" (also in ") + others.join(QStringLiteral(", ")) + QLatin1Char(')');
+            }
+            lines << line;
+        }
+        return lines;
+    }
     if (row.section == Section::Conflicts && row.conflict) {
         const auto &c = *row.conflict;
         if (!why.isEmpty()) {

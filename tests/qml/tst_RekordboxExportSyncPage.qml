@@ -11,7 +11,7 @@ import SeabassGui
 // stick (never the fixture), its real controller running. The fixture is
 // in "Sync Needed" state with no record of an earlier save, so the page
 // shows the numbers rekordbox_export_sync_controller_test pins: 1 playlist
-// to create, 925 membership rows, 1245 conflicts, 1160 of Engine's own and
+// to create, 925 membership rows, 1245 conflicts on 959 rows, 1160 of Engine's own and
 // 17 playlists only Engine has.
 //
 // Through the page: the conflicts head the list, the section headers carry
@@ -47,7 +47,7 @@ TestCase {
         section: 257, sectionIndex: 258, kind: 259, key: 260, title: 261, artist: 262, detail: 263,
         reason: 264, isConflict: 265, rekordboxChoiceLabel: 266, engineChoiceLabel: 267, resolvedSide: 268,
         included: 269, dependsOn: 270, staged: 271, stagedDescription: 272, direction: 273, fromConflict: 274,
-        details: 275, hasTrack: 276, artworkPath: 277, fallbackArtworkPath: 278, cueSides: 279,
+        details: 275, hasTrack: 276, artworkPath: 277, fallbackArtworkPath: 278, cueSides: 279, playTrack: 280,
     })
 
     Component {
@@ -160,7 +160,7 @@ TestCase {
         compare(page.firstSection, "conflicts");
         compare(sectionCountText(page, "playlists"), "1");
         compare(sectionCountText(page, "membership"), "925");
-        compare(sectionCountText(page, "conflicts"), "1245");
+        compare(sectionCountText(page, "conflicts"), "959");
         compare(sectionCountText(page, "engineOwnKept"), "1160");
         compare(sectionCountText(page, "engineOnlyPlaylists"), "17");
         compare(findChild(sectionHeader(page, "membership"), "sectionTitle").text, "Playlist membership");
@@ -169,7 +169,7 @@ TestCase {
                 + "in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to decide. "
                 + "Anything you leave undecided counts as Engine's own from now on and is not asked again.");
         verify(intro.visible);
-        compare(findChild(page.header, "conflictFigure").value, "1245");
+        compare(findChild(page.header, "conflictFigure").value, "959");
         compare(findChild(page.header, "checkedFigure").value, "953");
         compare(findChild(page.header, "checkedFigure").label, "selected");
         compare(findChild(page.header, "stageButton").text, "Stage Selected");
@@ -255,7 +255,7 @@ TestCase {
 
     function test_aConflictAnsweredTowardRekordboxShowsItsSideAndAddsTheRemoval() {
         const page = openOnAFreshCopy();
-        const conflict = firstRowWhere(page, (i) => rowData(page, i, "isConflict")
+        const conflict = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflict"
             && rowData(page, i, "rekordboxChoiceLabel").length > 0 && rowData(page, i, "engineChoiceLabel").length > 0);
         verify(conflict >= 0);
         const key = rowData(page, conflict, "key");
@@ -270,7 +270,7 @@ TestCase {
         compare(findChild(item, "chosenSideLabel").visible, false);
         mouseClick(rekordboxButton);
         compare(page.controller.sectionCounts["tracksToRemove"], removalsBefore + 1);
-        compare(page.controller.conflictCount, 1244);
+        compare(page.controller.conflictCount, 958);
         // The answer's row goes after the conflicts: the conflict stays.
         const answered = firstRowWhere(page, (i) => rowData(page, i, "isConflict") && rowData(page, i, "key") === key);
         compare(rowData(page, answered, "resolvedSide"), "rekordbox");
@@ -287,7 +287,7 @@ TestCase {
         // Undo choice takes it back.
         mouseClick(findChild(rowItem(page, answered), "undoChoiceButton"));
         compare(page.controller.sectionCounts["tracksToRemove"], removalsBefore);
-        compare(page.controller.conflictCount, 1245);
+        compare(page.controller.conflictCount, 959);
         compare(answered, conflict);
     }
 
@@ -375,7 +375,7 @@ TestCase {
         const clear = findChild(sectionHeader(page, "conflicts"), "clearAllChoicesButton");
         verify(clear.enabled);
         mouseClick(clear);
-        compare(page.controller.conflictCount, 1245);
+        compare(page.controller.conflictCount, 959);
         compare(page.controller.checkedCount, 953);
         compare(rowData(page, 0, "resolvedSide"), "");
     }
@@ -586,13 +586,14 @@ TestCase {
     // slot empty; the titles stay in one column either way.
     function test_trackRowsShowTheirCovers() {
         const page = openOnAFreshCopy(true);
-        // The conflicts at the top are Engine rows rekordbox no longer
-        // lists: Engine's copy, so Engine's cover.
-        compare(rowData(page, 0, "hasTrack"), true);
-        const url = rowData(page, 0, "artworkPath");
+        // A conflict about an Engine row rekordbox no longer lists:
+        // Engine's copy, so Engine's cover.
+        const first = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflict" && rowData(page, i, "hasTrack"));
+        verify(first >= 0);
+        const url = rowData(page, first, "artworkPath");
         verify(url.indexOf("file:") === 0, url);
         verify(url.indexOf("seabass-test-cover.png") > 0, url);
-        let item = rowItem(page, 0);
+        let item = rowItem(page, first);
         const slot = findChild(item, "rowCoverSlot");
         verify(slot.visible);
         const art = findChild(item, "rowArtwork");
@@ -623,7 +624,7 @@ TestCase {
             listOf(page).positionViewAtBeginning();
             const headerDetails = findChild(page.header, "headerDetails");
             tryVerify(() => headerDetails.visible && headerDetails.height === headerDetails.implicitHeight, 2000);
-            tryCompare(findChild(rowItem(page, 0), "rowArtwork"), "showing", "source", 5000);
+            tryCompare(findChild(rowItem(page, first), "rowArtwork"), "showing", "source", 5000);
             waitForRendering(page);
             wait(300);
             grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-covers.png");
@@ -979,10 +980,74 @@ TestCase {
         verify(findChild(header, "engineSideForAllButton").toolTipText.indexOf(page.conflictExplanation) > 0);
         compare(findChild(sectionHeader(page, "membership"), "conflictExplanation").visible, false);
         compare(findChild(sectionHeader(page, "membership"), "conflictInfoButton").visible, false);
-        // A row's buttons are its own concrete answer.
-        const item = rowItem(page, 0);
-        compare(findChild(item, "rekordboxChoiceButton").text, "Remove this track from Engine");
-        compare(findChild(item, "engineChoiceButton").text, "Keep it in Engine");
+        // A row's buttons are its own concrete answer: a track's, and a
+        // playlist's worth of them in one row.
+        const single = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflict"
+            && rowData(page, i, "rekordboxChoiceLabel") === "Remove this track from Engine");
+        verify(single >= 0);
+        compare(findChild(rowItem(page, single), "engineChoiceButton").text, "Keep it in Engine");
+        const group = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflictGroup");
+        verify(group >= 0);
+        const groupItem = rowItem(page, group);
+        verify(/^Remove these \d+ tracks from Engine$/.test(findChild(groupItem, "rekordboxChoiceButton").text));
+        compare(findChild(groupItem, "engineChoiceButton").text, "Keep them in Engine");
+    }
+
+    // The tracks Engine imported that rekordbox no longer lists, asked
+    // per Engine playlist rather than per track: a playlist removed or
+    // emptied in rekordbox made every one of its tracks a conflict, each
+    // with a page of metadata, and nothing said why.
+    function test_tracksRekordboxNoLongerListsAreAskedPerPlaylist() {
+        const page = openOnAFreshCopy();
+        const group = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflictGroup");
+        verify(group >= 0);
+        compare(rowData(page, group, "isConflict"), true);
+        compare(rowData(page, group, "hasTrack"), false);
+        const detail = rowData(page, group, "detail");
+        verify(/^\d+ tracks rekordbox no longer lists$/.test(detail), detail);
+        const n = parseInt(detail);
+        verify(n >= 2);
+        verify(rowData(page, group, "reason").indexOf("no longer lists") > 0, rowData(page, group, "reason"));
+        compare(findChild(rowItem(page, group), "rowReason").visible, true);
+        compare(findChild(rowItem(page, group), "rowCoverSlot").visible, false);
+        page.toggleExpanded(group);
+        const lines = findChild(rowItem(page, group), "rowDetails").text.split("\n");
+        compare(lines[0].indexOf("Why: "), 0);
+        compare(lines.length, 6 + n, "what each button does once, then one line a track");
+        verify(lines.every((line) => line.indexOf("Title: ") < 0 && line.indexOf("BPM: ") < 0), "no field lists");
+        const removalsBefore = page.controller.sectionCounts["tracksToRemove"];
+        const openBefore = page.controller.conflictCount;
+        mouseClick(findChild(rowItem(page, group), "rekordboxChoiceButton"));
+        compare(page.controller.sectionCounts["tracksToRemove"], removalsBefore + n, "one removal a track");
+        compare(page.controller.conflictCount, openBefore - 1, "one question answered");
+        mouseClick(findChild(rowItem(page, group), "undoChoiceButton"));
+        compare(page.controller.sectionCounts["tracksToRemove"], removalsBefore);
+    }
+
+    // A track's row plays from its cover: the key shows over the cover
+    // while the row is hovered, plays the row's copy, and stays while that
+    // is the track playing.
+    function test_aTrackRowPlaysFromItsCover() {
+        const page = openOnAFreshCopy(true);
+        const row = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflict" && rowData(page, i, "hasTrack")
+            && (rowData(page, i, "playTrack").filePath || "").length > 0);
+        verify(row >= 0);
+        const track = rowData(page, row, "playTrack");
+        const item = rowItem(page, row);
+        const play = findChild(item, "rowPlayButton");
+        mouseMove(page, 1, 1);
+        compare(play.visible, false, "hidden until the row is hovered");
+        mouseMove(item, item.width / 2, item.height / 2);
+        tryCompare(play, "visible", true);
+        mouseClick(play);
+        tryCompare(realPlayback, "currentSourceId", track.sourceId);
+        compare(realPlayback.currentFormat, track.side);
+        mouseMove(page, 1, 1);
+        verify(play.visible, "shown while it is the track playing");
+        // A playlist's row has no cover, so no key.
+        const create = createRow(page);
+        compare(findChild(rowItem(page, create), "rowPlayButton").visible, false);
+        realPlayback.pause();
     }
 
     function test_screenshot() {

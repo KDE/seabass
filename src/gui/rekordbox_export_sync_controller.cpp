@@ -780,6 +780,9 @@ void RekordboxExportSyncController::stageSelected()
         if (row.section == Section::Conflicts || RekordboxExportSyncListModel::writable(row.section)) {
             listedKeys.insert(row.header.key);
         }
+        for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
+            listedKeys.insert(conflict->header.key);
+        }
         if (RekordboxExportSyncListModel::writable(row.section) && row.included) {
             tickedKeys.insert(row.header.key);
         }
@@ -793,22 +796,25 @@ void RekordboxExportSyncController::stageSelected()
         if (row.section == Section::Conflicts) {
             // An answer whose side writes nothing is decided all the same:
             // the item advances, and Engine keeps what it has.
-            const bool emptyAnswer = !row.resolvedSide.isEmpty() && row.conflict
-                && (row.resolvedSide == QLatin1String("rekordbox") ? row.conflict->rekordboxChoice.empty()
-                                                                   : row.conflict->engineChoice.empty());
-            // Left open on a run without a record (unanswered, or its
-            // answer unticked): recorded as the rekordbox side stands, so
-            // it reads as Engine's own from now on and is not asked again
-            // (the plan's step 10 review decision). Keeping "the record
-            // before" would take the item out of a record there was none
-            // of, and a member both sides hold would then come back as a
-            // change of both. A refusal answers nothing and comes back.
-            const bool refusal = row.conflict && row.conflict->rekordboxChoice.empty()
-                && row.conflict->engineChoice.empty();
-            const bool openWithoutRecord = !analysis.baseline && !refusal;
-            if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
-                for (const auto &key : withCueItems(row.header)) {
-                    applied.insert(key);
+            // Each conflict the row answers: its own, or a group's.
+            for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
+                const bool emptyAnswer = !row.resolvedSide.isEmpty()
+                    && (row.resolvedSide == QLatin1String("rekordbox") ? conflict->rekordboxChoice.empty()
+                                                                       : conflict->engineChoice.empty());
+                // Left open on a run without a record (unanswered, or its
+                // answer unticked): recorded as the rekordbox side stands,
+                // so it reads as Engine's own from now on and is not asked
+                // again (the plan's step 10 review decision). Keeping "the
+                // record before" would take the item out of a record there
+                // was none of, and a member both sides hold would then come
+                // back as a change of both. A refusal answers nothing and
+                // comes back.
+                const bool refusal = conflict->rekordboxChoice.empty() && conflict->engineChoice.empty();
+                const bool openWithoutRecord = !analysis.baseline && !refusal;
+                if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
+                    for (const auto &key : withCueItems(conflict->header)) {
+                        applied.insert(key);
+                    }
                 }
             }
             continue;  // unanswered: comes back, never declined

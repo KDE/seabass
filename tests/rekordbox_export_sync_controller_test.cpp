@@ -56,6 +56,7 @@
 #include <QTest>
 #include <QUrl>
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -90,7 +91,11 @@ namespace
 
 constexpr int FixtureCreates = 1;
 constexpr int FixtureMembership = 925;
+// The planner's conflicts, and the rows they are asked as: the tracks
+// Engine imported that rekordbox no longer lists go one row per Engine
+// playlist (RekordboxExportSyncListModel's importedRowGroups()).
 constexpr int FixtureConflicts = 1245;
+constexpr int FixtureConflictRows = 959;
 // Engine's own, without the playlists only Engine has, which have their
 // own section.
 constexpr int FixtureKept = 1160;
@@ -223,8 +228,26 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
     assert(count(controller, "playlists") == FixtureCreates);
     assert(firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist")) >= 0);
     assert(count(controller, "membership") == FixtureMembership);
-    assert(count(controller, "conflicts") == FixtureConflicts);
-    assert(controller.conflictCount() == FixtureConflicts);
+    std::cout << "  conflict rows " << count(controller, "conflicts") << "\n";
+    assert(count(controller, "conflicts") == FixtureConflictRows);
+    assert(controller.conflictCount() == FixtureConflictRows);
+    {
+        // Every conflict under exactly one row, and a group never of one.
+        std::set<std::string> keys;
+        int conflicts = 0;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section != Section::Conflicts) {
+                continue;
+            }
+            assert(row.group.empty() || row.group.size() >= 2);
+            for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
+                ++conflicts;
+                keys.insert(conflict->header.key);
+            }
+        }
+        assert(conflicts == FixtureConflicts);
+        assert(static_cast<int>(keys.size()) == FixtureConflicts);
+    }
     std::cout << "  kept " << count(controller, "engineOwnKept") << ", Engine-only playlists "
               << count(controller, "engineOnlyPlaylists") << "\n";
     assert(count(controller, "engineOwnKept") == FixtureKept);
@@ -330,12 +353,13 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
             }
             pairs.emplace(at.data(RekordboxExportSyncListModel::RekordboxChoiceLabelRole).toString(),
                           at.data(RekordboxExportSyncListModel::EngineChoiceLabelRole).toString());
-            if (imported < 0 && rowsOf(controller)[static_cast<std::size_t>(i)].header.reason
+            if (imported < 0 && rowsOf(controller)[static_cast<std::size_t>(i)].conflict
+                && rowsOf(controller)[static_cast<std::size_t>(i)].header.reason
                     == seabass::domain::EngineUpdateReason::NoBaselineImportedRow) {
                 imported = i;
             }
         }
-        // An imported row rekordbox no longer lists.
+        // An imported row rekordbox no longer lists, on a row of its own.
         assert(pairs.count({QStringLiteral("Remove this track from Engine"), QStringLiteral("Keep it in Engine")}));
         // A member only Engine's playlist holds.
         assert(pairs.count({QStringLiteral("Take it out of \"Playlist 007\" in Engine"),
@@ -348,7 +372,7 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(lines.contains(QStringLiteral("Remove this track from Engine (rekordbox's side):")));
         assert(lines.contains(QStringLiteral("Keep it in Engine (Engine's side):")));
     }
-    std::cout << "case 1 (the fixture's proposal: 1 create, 925 members, 1245 conflicts, 1160 kept, 17 Engine-only playlists, 953 ticked) OK\n";
+    std::cout << "case 1 (the fixture's proposal: 1 create, 925 members, 1245 conflicts on 959 rows, 1160 kept, 17 Engine-only playlists, 953 ticked) OK\n";
 
     // 2. dependsOn, both ways.
     const int create = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
@@ -393,19 +417,19 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
     int conflict = -1;
     for (std::size_t i = 0; i < rowsOf(controller).size(); ++i) {
         const Row &row = rowsOf(controller)[i];
-        if (row.section == Section::Conflicts
+        if (row.section == Section::Conflicts && row.conflict
             && row.header.reason == seabass::domain::EngineUpdateReason::NoBaselineImportedRow) {
             conflict = static_cast<int>(i);
             break;
         }
     }
-    assert(conflict >= 0);
+    assert(conflict >= 0 && "an import conflict on a row of its own");
     const std::string conflictKey = rowsOf(controller)[static_cast<std::size_t>(conflict)].header.key;
     const int removalsBefore = count(controller, "tracksToRemove");
     const int checkedBefore = controller.checkedCount();
     controller.resolveConflict(conflict, true);
     assert(count(controller, "tracksToRemove") == removalsBefore + 1);
-    assert(controller.conflictCount() == FixtureConflicts - 1);
+    assert(controller.conflictCount() == FixtureConflictRows - 1);
     assert(controller.checkedCount() == checkedBefore + 1);
     int removal = -1;
     for (std::size_t i = 0; i < rowsOf(controller).size(); ++i) {
@@ -428,13 +452,58 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
     assert(rowsOf(controller)[static_cast<std::size_t>(conflict)].header.key == conflictKey);
     controller.resolveConflict(conflict, false);
     assert(count(controller, "tracksToRemove") == removalsBefore);
-    assert(controller.conflictCount() == FixtureConflicts - 1);
+    assert(controller.conflictCount() == FixtureConflictRows - 1);
     assert(controller.rows()->index(conflict).data(RekordboxExportSyncListModel::ResolvedSideRole).toString()
            == QStringLiteral("engine"));
     controller.clearConflictResolution(conflict);
-    assert(controller.conflictCount() == FixtureConflicts);
+    assert(controller.conflictCount() == FixtureConflictRows);
     assert(controller.checkedCount() == checkedBefore);
     std::cout << "case 3 (an import conflict answered: a removal toward rekordbox, nothing toward Engine) OK\n";
+
+    // 3b. A playlist's worth of them, one row: answered toward rekordbox,
+    //     one removal per track under that track's own key; toward Engine,
+    //     nothing; taken back, the list as it was.
+    {
+        int groupRow = -1;
+        for (std::size_t i = 0; i < rowsOf(controller).size(); ++i) {
+            if (!rowsOf(controller)[i].group.empty()) {
+                groupRow = static_cast<int>(i);
+                break;
+            }
+        }
+        assert(groupRow >= 0);
+        const Row &group = rowsOf(controller)[static_cast<std::size_t>(groupRow)];
+        std::set<std::string> memberKeys;
+        for (const auto &member : group.group) {
+            memberKeys.insert(member.header.key);
+        }
+        const QModelIndex at = controller.rows()->index(groupRow);
+        assert(at.data(RekordboxExportSyncListModel::IsConflictRole).toBool());
+        assert(at.data(RekordboxExportSyncListModel::RekordboxChoiceLabelRole).toString()
+               == QStringLiteral("Remove these %1 tracks from Engine").arg(memberKeys.size()));
+        assert(at.data(RekordboxExportSyncListModel::EngineChoiceLabelRole).toString() == QStringLiteral("Keep them in Engine"));
+        const QStringList lines = at.data(RekordboxExportSyncListModel::DetailsRole).toStringList();
+        assert(lines.front().startsWith(QStringLiteral("Why: ")));
+        assert(lines.contains(QStringLiteral("Tracks:")));
+        assert(lines.size() == 6 + static_cast<int>(memberKeys.size()) && "one line a track, no field lists");
+        controller.resolveConflict(groupRow, true);
+        assert(count(controller, "tracksToRemove") == removalsBefore + static_cast<int>(memberKeys.size()));
+        assert(controller.conflictCount() == FixtureConflictRows - 1);
+        std::set<std::string> removed;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.section == Section::TracksToRemove && row.fromConflictUid >= 0) {
+                assert(row.included);
+                removed.insert(row.header.key);
+            }
+        }
+        assert(removed == memberKeys);
+        controller.resolveConflict(groupRow, false);
+        assert(count(controller, "tracksToRemove") == removalsBefore);
+        controller.clearConflictResolution(groupRow);
+        assert(controller.conflictCount() == FixtureConflictRows);
+        assert(controller.checkedCount() == checkedBefore);
+    }
+    std::cout << "case 3b (a playlist of import conflicts answered as one row) OK\n";
 
     // 6. Every conflict at once, the one answered above included.
     controller.resolveConflict(conflict, false);
@@ -442,7 +511,9 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
     for (const auto &row : rowsOf(controller)) {
         if (row.section == Section::Conflicts
             && row.header.reason == seabass::domain::EngineUpdateReason::NoBaselineImportedRow) {
-            importConflicts.insert(row.header.key);
+            for (const auto *member : RekordboxExportSyncListModel::conflictsOf(row)) {
+                importConflicts.insert(member->header.key);
+            }
         }
     }
     assert(!importConflicts.empty());
@@ -465,8 +536,13 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(removalsAnswered.count(key) == 1 && "every import conflict has its ticked removal");
     }
     for (const auto &row : rowsOf(controller)) {
-        if (row.section == Section::Conflicts && row.conflict
-            && !(row.conflict->rekordboxChoice.empty() && row.conflict->engineChoice.empty())) {
+        if (row.section != Section::Conflicts) {
+            continue;
+        }
+        const auto members = RekordboxExportSyncListModel::conflictsOf(row);
+        if (std::any_of(members.begin(), members.end(), [](const auto *c) {
+                return !(c->rekordboxChoice.empty() && c->engineChoice.empty());
+            })) {
             assert(row.resolvedSide == QStringLiteral("rekordbox"));
         }
     }
@@ -474,13 +550,13 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
               << controller.conflictCount() << " left open, " << controller.checkedCount() << " ticked\n";
     controller.clearAllConflictResolutions();
     assert(tickedRemovalKeys().empty());
-    assert(controller.conflictCount() == FixtureConflicts);
+    assert(controller.conflictCount() == FixtureConflictRows);
     assert(controller.checkedCount() == checkedBefore);
     controller.resolveAllConflicts(false);
     assert(tickedRemovalKeys().empty() && "Engine's side removes nothing");
-    assert(controller.conflictCount() < FixtureConflicts);
+    assert(controller.conflictCount() < FixtureConflictRows);
     controller.clearAllConflictResolutions();
-    assert(controller.conflictCount() == FixtureConflicts);
+    assert(controller.conflictCount() == FixtureConflictRows);
     std::cout << "case 6 (every conflict answered at once, and every answer cleared) OK\n";
 
     // 5. A damaged record on this stick: the analysis fails with its
@@ -991,7 +1067,7 @@ void testOrderOnFirstRun(const fs::path &fixture)
     // conflicts and nothing more.
     assert(orderRows(seabass::domain::EngineUpdateReason::NoBaselineOrder) == 4
            && "the swap is four checked moves on a run without a record");
-    assert(controller.conflictCount() == FixtureConflicts);
+    assert(controller.conflictCount() == FixtureConflictRows);
     // The new playlist's members are on Engine now, and the order's four
     // moves join the rest, ticked: 925 - 14 + 4 = 915, 953 - 1 - 14 + 4.
     const int saved = static_cast<int>(memberKeys.size());
