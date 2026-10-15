@@ -820,7 +820,8 @@ Item {
         // "QQuickImage*" since the art is read off the GUI thread
         // (18244872): the asynchronous reader names the type with the
         // pointer, and the plain match let every missing cover fail the
-        // storm on the first page with a list.
+        // storm on the first page with a list. The cover cache's provider
+        // (gui/cover_image_provider.cpp) words its failure the same way.
         if (/QQuickImage\*?: Cannot open/.test(w)) {
             return false;
         }

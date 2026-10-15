@@ -63,7 +63,7 @@ TestCase {
         const image = findChild(art, "artworkImage");
         compare(image.visible, true);
         compare(image.status, Image.Ready);
-        compare(image.source.toString(), fileUrl(browseFixture.presentArtwork()));
+        compare(art.chosenSource.toString(), fileUrl(browseFixture.presentArtwork()));
     }
 
     function test_anEmptySourceShowsTheFallback() {
@@ -79,9 +79,30 @@ TestCase {
         const image = findChild(art, "artworkImage");
         tryCompare(art, "sourceFailed", true, 5000, "the source was tried first");
         tryCompare(image, "status", Image.Error);
-        compare(image.source.toString(), fileUrl(browseFixture.missingArtwork() + ".png"), "then the fallback");
+        compare(art.chosenSource.toString(), fileUrl(browseFixture.missingArtwork() + ".png"), "then the fallback");
         compare(image.visible, false);
         compare(art.showing, "");
+    }
+
+    // A file on disk goes through the cover cache (gui/cover_cache.hpp),
+    // decoded at the drawn size; it is the same picture either way.
+    function test_aLocalFileLoadsThroughTheCoverCache() {
+        const art = make(fileUrl(browseFixture.presentArtwork()), "");
+        tryCompare(art, "showing", "source");
+        const image = findChild(art, "artworkImage");
+        verify(image.source.toString().startsWith("image://cover/"), image.source.toString());
+        // Covers the 40 px square (at the screen's pixel ratio), never more.
+        const side = Math.ceil(40 * Screen.devicePixelRatio);
+        compare(Math.min(image.implicitWidth, image.implicitHeight) <= side, true);
+        verify(image.implicitWidth > 0 && image.implicitHeight > 0);
+    }
+
+    // Anything that is not a local file loads as it is.
+    function test_aResourceLoadsAsItIs() {
+        const icon = "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg";
+        const art = make(icon, "");
+        tryCompare(art, "showing", "source");
+        compare(findChild(art, "artworkImage").source.toString(), icon);
     }
 
     function test_aNewSourceIsTriedAgain() {

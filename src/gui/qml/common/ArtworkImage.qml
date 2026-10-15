@@ -18,6 +18,9 @@ import QtQuick
 // the stick on the GUI thread, at the image's full size: a stick on
 // Windows can take far longer than a frame to answer, and the whole page
 // waited for it. Now a row appears at once and its art when it is read.
+//
+// And read once: a decoded cover is kept on the computer (cacheUrl()), so
+// coming back to a page, or starting again, does not read it again.
 Item {
     id: artwork
 
@@ -31,13 +34,31 @@ Item {
     // Which one is on screen: "source", "fallback", or "" while neither
     // has loaded (or neither can).
     readonly property string showing: image.status !== Image.Ready ? ""
-        : (image.source === artwork.source && !artwork.sourceFailed ? "source" : "fallback")
+        : (artwork.chosenSource === artwork.source && !artwork.sourceFailed ? "source" : "fallback")
+
+    // The one of the two being loaded, as given: `source` first,
+    // `fallbackSource` when that is empty or failed.
+    readonly property url chosenSource: artwork.source.toString().length > 0 && !artwork.sourceFailed
+        ? artwork.source : artwork.fallbackSource
+
+    // A local file goes through the cover cache (gui/cover_cache.hpp), so
+    // a cover read once is not read from the stick again, in this run or
+    // the next; anything else loads as it is.
+    function cacheUrl(url) {
+        const text = url.toString();
+        return text.startsWith("file:") ? "image://cover/" + encodeURIComponent(text) : text;
+    }
+    // `source` as the image asks for it. A property, not a call: the
+    // failure is noted after the fact (noteSourceFailed()), possibly while
+    // a scrolled-away row is being destroyed, where no function of it may
+    // run any more.
+    readonly property url sourceAsLoaded: artwork.cacheUrl(artwork.source)
 
     // Set when `source` failed to load, cleared when it changes.
     property bool sourceFailed: false
     onSourceChanged: artwork.sourceFailed = false
     function noteSourceFailed() {
-        if (image.status === Image.Error && image.source === artwork.source) {
+        if (image.status === Image.Error && image.source === artwork.sourceAsLoaded) {
             artwork.sourceFailed = true;
         }
     }
@@ -63,14 +84,14 @@ Item {
         // Until the item has a size, the image's own.
         readonly property real drawnSide: Math.ceil(Math.max(artwork.width, artwork.height) * Screen.devicePixelRatio)
         sourceSize: image.drawnSide > 0 ? Qt.size(image.drawnSide, image.drawnSide) : undefined
-        source: artwork.source.toString().length > 0 && !artwork.sourceFailed ? artwork.source : artwork.fallbackSource
+        source: artwork.cacheUrl(artwork.chosenSource)
         // A load can fail while `source` is still being assigned (a local
         // file used to load synchronously, and a cached failure still
         // answers at once); switching to the fallback right there is a
         // binding loop that leaves the source as it was. Noted after the
         // assignment instead.
         onStatusChanged: {
-            if (image.status === Image.Error && image.source === artwork.source) {
+            if (image.status === Image.Error && image.source === artwork.sourceAsLoaded) {
                 Qt.callLater(artwork.noteSourceFailed);
             }
         }
