@@ -122,6 +122,13 @@ TestCase {
         const intro = findChild(page, "aboutIntro");
         compare(Math.round(intro.mapToItem(page, 0, 0).x), Math.round(version.mapToItem(page, 0, 0).x),
                 "the introduction starts where the name does");
+        // A rule the width of the page between the head and the introduction.
+        const rule = findChild(page, "aboutRule");
+        verify(rule !== null && rule.visible, "the rule exists");
+        const ruleY = rule.mapToItem(page, 0, 0).y;
+        verify(ruleY >= mark.mapToItem(page, 0, mark.height).y - 0.5, "under the mascot");
+        verify(ruleY <= intro.mapToItem(page, 0, 0).y, "above the introduction");
+        verify(Math.abs(rule.width - intro.width) <= 1, "as wide as the introduction under it: " + rule.width);
         const text = findChild(page, "aboutKdeText");
         verify(text.text.indexOf("KDE") >= 0, "it names KDE");
         verify(text.text.indexOf(page.kdeUrl) >= 0 && text.text.indexOf(page.sourceUrl) >= 0,
