@@ -78,7 +78,7 @@ Rectangle {
     height: 32
 
     color: mouseArea.pressed ? Theme.rowPressed
-        : mouseArea.containsMouse ? Theme.rowHover
+        : rowHover.hovered ? Theme.rowHover
         : (root.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
     border.color: root.isCurrent || root.dropTarget ? Theme.accent : "transparent"
     border.width: root.isCurrent || root.dropTarget ? 2 : 0
@@ -138,14 +138,15 @@ Rectangle {
         }
     }
 
-    // A handler, not the MouseArea's own hover: under org.kde.desktop a
-    // Label carries a HoverHandler of its own, and the MouseArea under
-    // the row's labels never hears the pointer arrive.
+    // The row's hover, for its shading and its summary. A handler, not
+    // the MouseArea's own hover: under org.kde.desktop a Label carries a
+    // HoverHandler of its own, and the MouseArea under the row's labels
+    // never hears the pointer arrive, so the row shaded only in its
+    // margins.
     HoverHandler {
-        id: summaryHover
-        enabled: root.summaryEnabled
+        id: rowHover
         onHoveredChanged: {
-            if (summaryHover.hovered) {
+            if (rowHover.hovered && root.summaryEnabled) {
                 summaryTimer.restart();
             } else {
                 root.closeSummary();

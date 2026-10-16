@@ -1172,9 +1172,14 @@ Page {
                     RowHoverShade {
                         objectName: "rowHoverShade"
                         radius: trackDelegate.radius
-                        hovered: rowMouseArea.containsMouse
+                        hovered: rowHover.hovered
                         pressed: rowMouseArea.pressed
                     }
+                    // Not rowMouseArea's own hover: under org.kde.desktop
+                    // every Label carries a HoverHandler, and the
+                    // MouseArea under the row's text never hears the
+                    // pointer, so the row shaded only between its cells.
+                    HoverHandler { id: rowHover }
 
                     // Now-playing highlight, an accent-colored stripe,
                     // same idiom as most media players use for "this one."
