@@ -89,6 +89,22 @@ TestCase {
         ScanController {}
     }
 
+    // A file on the copied stick, spelled as the scan spells it: with the
+    // platform's own separator, so with '\' on Windows. Built by joining
+    // the copy's path and "/Contents/...", a file read C:\x\stick/Contents/...
+    // there, matched no scanned row (C:\x\stick\Contents\...), and a test
+    // that stopped on it left its edits staged for every test after it.
+    function fileOnStick(t, relative) {
+        const joined = t.stick + "/" + relative;
+        return Qt.platform.os === "windows" ? joined.replace(/\//g, "\\") : joined;
+    }
+
+    // Whatever a test staged and did not get to save or discard, a failed
+    // assertion included, is not handed to the next one.
+    function cleanup() {
+        EditSessionRegistry.discardAll();
+    }
+
     // A real controller on a fresh copy of the fixture, scanned. `plant`
     // runs on the copy first.
     function scannedCopy(plant) {
@@ -361,7 +377,7 @@ TestCase {
         tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
         scan.filterByPlaylist("Fresh Picks");
         compare(scan.tracks.trackCount(), 0, "nothing in it yet");
-        const file = t.stick + "/Contents/795079.mp3";
+        const file = fileOnStick(t, "Contents/795079.mp3");
         // A playlist with tracks that does not hold the file yet.
         scan.filterByPlaylist("");
         let fileRow = null;
@@ -576,7 +592,7 @@ TestCase {
             }
             return files;
         };
-        const file = t.stick + "/Contents/795079.mp3";
+        const file = fileOnStick(t, "Contents/795079.mp3");
         // A playlist of three or more that does not hold the file.
         const playlist = scan.playlistNames.filter(n => {
             if (scan.playlistTrackCounts[n] < 3) {
@@ -767,7 +783,7 @@ TestCase {
         const browse = page.playlistEditController;
         verify(!EditSessionRegistry.anyDirty, "nothing staged yet");
         verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Dragged Here")), browse.errorMessage);
-        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Dragged Here", t.stick + "/Contents/795079.mp3",
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Dragged Here", fileOnStick(t, "Contents/795079.mp3"),
                                                    "A Track")), browse.errorMessage);
         // The track is in OneLibrary alone on this fixture: the page asks.
         const ask = findChild(page, "missingLibrariesDialog");
@@ -900,7 +916,7 @@ TestCase {
         const engine = t.stick + "/Engine Library";
         const browse = createTemporaryObject(askingEditComponent, testCase);
         const spy = createTemporaryObject(addSpyComponent, testCase, {target: browse});
-        const file = t.stick + "/Contents/795079.mp3";
+        const file = fileOnStick(t, "Contents/795079.mp3");
         verify(browse.addToPlaylist(t.pioneer, engine, "Playlist 000", file, "A Track", 3));
         tryCompare(browse, "busy", false, 60000);
         compare(spy.count, 1, "asked");
