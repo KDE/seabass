@@ -250,6 +250,9 @@ struct LibraryConsistencyScanResult
     // track (#61).
     std::vector<PlaylistFinding> playlistFindings;
     std::vector<infrastructure::engine::DanglingPlaylistEntries> danglingPlaylistEntries;
+    // Engine entries naming a track the player cannot resolve them to (its
+    // origin uuid is not theirs).
+    std::vector<infrastructure::engine::UnresolvedPlaylistEntries> unresolvedPlaylistEntries;
     bool playlistsChecked = false;
     std::string playlistsError;
     // The same pass: files no library has in any playlist.
@@ -413,6 +416,11 @@ private:
     // Each {playlist, entries}.
     Q_PROPERTY(QVariantList danglingPlaylists READ danglingPlaylists NOTIFY playlistsChanged)
     Q_PROPERTY(bool danglingFixStaged READ danglingFixStaged NOTIFY playlistsChanged)
+    // Engine playlist entries the player cannot see (infrastructure::
+    // engine::unresolvedPlaylistEntries): each {playlist, entries}.
+    Q_PROPERTY(int unresolvedPlaylistEntryCount READ unresolvedPlaylistEntryCount NOTIFY playlistsChanged)
+    Q_PROPERTY(QVariantList unresolvedPlaylists READ unresolvedPlaylists NOTIFY playlistsChanged)
+    Q_PROPERTY(bool unresolvedFixStaged READ unresolvedFixStaged NOTIFY playlistsChanged)
     // Files no library on the stick has in any playlist (domain::
     // findTracksInNoPlaylist), checked with the playlists. Each {filePath,
     // title, artist, libraries, staged}. stickHasPlaylists false means
@@ -567,6 +575,9 @@ public:
     int danglingPlaylistEntryCount() const;
     QVariantList danglingPlaylists() const;
     bool danglingFixStaged() const { return m_danglingFixStaged; }
+    int unresolvedPlaylistEntryCount() const;
+    QVariantList unresolvedPlaylists() const;
+    bool unresolvedFixStaged() const { return m_unresolvedFixStaged; }
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -638,6 +649,8 @@ public:
     Q_INVOKABLE void unstageCueTables();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
+    Q_INVOKABLE void repairUnresolvedPlaylistEntries();
+    Q_INVOKABLE void unstageUnresolvedPlaylistEntries();
     // Stages telling Engine the rekordbox library is already imported.
     Q_INVOKABLE void markRekordboxImported();
     Q_INVOKABLE void unstageRekordboxImportMark();
@@ -751,10 +764,12 @@ private:
     bool m_sampleRateFillStaged = false;
     std::vector<PlaylistFinding> m_playlistFindings;
     std::vector<infrastructure::engine::DanglingPlaylistEntries> m_danglingPlaylistEntries;
+    std::vector<infrastructure::engine::UnresolvedPlaylistEntries> m_unresolvedPlaylistEntries;
     bool m_playlistsChecked = false;
     QString m_playlistsError;
     std::map<QString, QString> m_stagedPlaylists;  // change id -> reference format
     bool m_danglingFixStaged = false;
+    bool m_unresolvedFixStaged = false;
     domain::NoPlaylistScan m_noPlaylist;
     std::set<std::string> m_stagedNoPlaylistFiles;
     domain::CueTableAudit m_cueTables;

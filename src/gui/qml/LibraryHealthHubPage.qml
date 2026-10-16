@@ -349,11 +349,13 @@ Page {
     }
     readonly property int playlistDifferenceCount: healthController.playlistDifferenceCount
     readonly property int danglingPlaylistEntryCount: healthController.danglingPlaylistEntryCount
+    readonly property int unresolvedPlaylistEntryCount: healthController.unresolvedPlaylistEntryCount ?? 0
     readonly property string playlistSummary: {
         if (healthController.playlistsError.length > 0) {
             return healthController.playlistsError;
         }
-        if (root.playlistDifferenceCount === 0 && root.danglingPlaylistEntryCount === 0) {
+        if (root.playlistDifferenceCount === 0 && root.danglingPlaylistEntryCount === 0
+            && root.unresolvedPlaylistEntryCount === 0) {
             return "Every playlist holds the same tracks in every library on this stick.";
         }
         const parts = [];
@@ -367,6 +369,11 @@ Page {
             parts.push(root.danglingPlaylistEntryCount + " Engine playlist "
                        + (root.danglingPlaylistEntryCount === 1 ? "entry points" : "entries point")
                        + " at a track the library no longer has.");
+        }
+        if (root.unresolvedPlaylistEntryCount > 0) {
+            parts.push(root.unresolvedPlaylistEntryCount + " Engine playlist "
+                       + (root.unresolvedPlaylistEntryCount === 1 ? "entry" : "entries")
+                       + " the player cannot see.");
         }
         return parts.join(" ");
     }
@@ -628,17 +635,19 @@ Page {
                 objectName: "playlistSyncCard"
                 visible: root.playlistsShown
                 fixableCount: root.playlistDifferenceCount + (root.danglingPlaylistEntryCount > 0 ? 1 : 0)
+                    + (root.unresolvedPlaylistEntryCount > 0 ? 1 : 0)
                 foundCount: root.playlistDifferenceCount + (root.danglingPlaylistEntryCount > 0 ? 1 : 0)
+                    + (root.unresolvedPlaylistEntryCount > 0 ? 1 : 0)
                 actionEnabled: !healthController.stickReadOnly
                 actionDisabledReason: root.blockedByReadOnly
                 title: "Playlists"
                 summary: root.playlistSummary
                 running: root.scanning
                 ok: root.playlistDifferenceCount === 0 && root.danglingPlaylistEntryCount === 0
-                    && healthController.playlistsError.length === 0
+                    && root.unresolvedPlaylistEntryCount === 0 && healthController.playlistsError.length === 0
                 failed: healthController.playlistsError.length > 0
                 actionLabel: root.playlistDifferenceCount > 0 || root.danglingPlaylistEntryCount > 0
-                    ? "Review playlists" : ""
+                    || root.unresolvedPlaylistEntryCount > 0 ? "Review playlists" : ""
                 onActionRequested: root.detailRequested("playlists")
             }
 

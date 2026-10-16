@@ -698,14 +698,21 @@ int main(int argc, char **argv)
         // Four tracks in no playlist: three from other libraries, one
         // naming none.
         const auto free = rows(udb, "SELECT id FROM Track WHERE id NOT IN (SELECT trackId FROM PlaylistEntity) "
-                                    "ORDER BY id LIMIT 4;");
-        assert(free.size() == 4);
+                                    "ORDER BY id LIMIT 5;");
+        assert(free.size() == 5);
+        assert(unresolvedPlaylistEntries(lib).empty() && "every entry of the fixture resolves (the dangling ones "
+                                                         "name no track, and are another check)");
         const std::int64_t a = free[0][0], b = free[1][0], none = free[2][0], c = free[3][0];
         assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000a' WHERE id = "
                              + std::to_string(a) + ";"));
         assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000b' WHERE id = "
                              + std::to_string(b) + ";"));
+        // Engine's own trigger puts the library's uuid into an empty
+        // origin (trigger_after_update_Track_fix_origin); a library
+        // without it can have one, which is what the fallback is for.
+        assert(exec(udb, "DROP TRIGGER trigger_after_update_Track_fix_origin;"));
         assert(exec(udb, "UPDATE Track SET originDatabaseUuid = NULL WHERE id = " + std::to_string(none) + ";"));
+        assert(text(udb, "SELECT originDatabaseUuid FROM Track WHERE id = " + std::to_string(none) + ";") == "<null>");
         assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000c' WHERE id = "
                              + std::to_string(c) + ";"));
         const auto uuidOf = [&](const std::string &list, std::int64_t track) {
@@ -743,6 +750,48 @@ int main(int argc, char **argv)
         assert(uuidOf("Uuid List", none) == own);
         assert((engineTrackIdsInPlaylist(lib, "Both") == std::vector<std::int64_t>{c}));
         assert(dangling(lib).size() == 1 && "nothing new left dangling");
+
+        // Entries the player cannot see, as WHALESHARK3 had 120 of: b's in
+        // "Uuid List" written with the library's uuid; a second copy of c
+        // in "Both" with the library's uuid beside the one with c's; and d,
+        // whose originTrackId is not its id, which no uuid would make
+        // resolve.
+        const std::int64_t d = free[4][0];
+        assert(exec(udb, "UPDATE PlaylistEntity SET databaseUuid = '" + own + "' WHERE trackId = " + std::to_string(b)
+                             + " AND listId = (SELECT id FROM Playlist WHERE title = 'Uuid List');"));
+        assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000d', originTrackId = "
+                             "999999 WHERE id = " + std::to_string(d) + ";"));
+        createEnginePlaylist(lib, "Odd");
+        assert(insertIntoEnginePlaylist(lib, "Odd", d, std::nullopt));
+        assert(exec(udb, "UPDATE PlaylistEntity SET databaseUuid = '" + own + "' WHERE trackId = " + std::to_string(d) + ";"));
+        const std::string both = "(SELECT id FROM Playlist WHERE title = 'Both')";
+        assert(exec(udb, "INSERT INTO PlaylistEntity (listId, trackId, databaseUuid, nextEntityId, membershipReference) "
+                         "VALUES (" + both + ", " + std::to_string(c) + ", '" + own + "', 0, 0);"));
+        assert(exec(udb, "UPDATE PlaylistEntity SET nextEntityId = (SELECT max(id) FROM PlaylistEntity) WHERE listId = "
+                             + both + " AND nextEntityId = 0 AND id <> (SELECT max(id) FROM PlaylistEntity);"));
+        assert((engineTrackIdsInPlaylist(lib, "Both") == std::vector<std::int64_t>{c, c}));
+        std::map<std::string, int> found;
+        for (const auto &u : unresolvedPlaylistEntries(lib)) {
+            found[u.playlist] = u.entries;
+        }
+        assert((found == std::map<std::string, int>{{"Uuid List", 1}, {"Both", 1}, {"Odd", 1}}));
+        assert(scalar(udb, "SELECT count(*) FROM PlaylistEntity e JOIN Track t ON t.id = e.trackId "
+                           "WHERE NOT EXISTS (SELECT 1 FROM Track o WHERE o.originDatabaseUuid = e.databaseUuid "
+                           "AND o.originTrackId = e.trackId) AND t.originDatabaseUuid IS NOT NULL;") == 3);
+
+        const RepointedPlaylistEntries repointed = repointUnresolvedPlaylistEntries(lib);
+        assert(repointed.repointed == 1 && repointed.removed == 1 && repointed.leftAlone == 1);
+        assert(uuidOf("Uuid List", b) == "fb65ee77-0000-4000-8000-00000000000b" && "repointed to the track's origin");
+        assert((engineTrackIdsInPlaylist(lib, "Uuid List") == std::vector<std::int64_t>{c, b, none}) && "in its order");
+        assert((engineTrackIdsInPlaylist(lib, "Both") == std::vector<std::int64_t>{c}) && "the copy nobody saw goes");
+        assert(uuidOf("Both", c) == "fb65ee77-0000-4000-8000-00000000000c" && "the one that showed stays");
+        assert(uuidOf("Odd", d) == own && "left alone");
+        found.clear();
+        for (const auto &u : unresolvedPlaylistEntries(lib)) {
+            found[u.playlist] = u.entries;
+        }
+        assert((found == std::map<std::string, int>{{"Odd", 1}}) && "only the one left alone");
+        assert(dangling(lib).size() == 1);
     }
 
     std::cout << "engine_playlists_test: all passed\n";

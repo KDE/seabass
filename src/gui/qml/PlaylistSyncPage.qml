@@ -20,6 +20,7 @@ HealthCheckPage {
     readonly property string error: consistencyController?.playlistsError ?? ""
     readonly property var differences: consistencyController?.playlistDifferences ?? []
     readonly property int dangling: consistencyController?.danglingPlaylistEntryCount ?? 0
+    readonly property int unresolved: consistencyController?.unresolvedPlaylistEntryCount ?? 0
 
     function sideLine(side) {
         if (!side.hasPlaylist) {
@@ -108,6 +109,33 @@ HealthCheckPage {
             onClicked: consistencyController?.danglingFixStaged
                 ? consistencyController?.unstageDanglingPlaylistEntries()
                 : consistencyController?.removeDanglingPlaylistEntries()
+        }
+    }
+
+    // Entries a Denon player cannot see: written with the stick's own
+    // library uuid where the tracks name another as their origin.
+    RowLayout {
+        visible: root.checked && root.unresolved > 0
+        Layout.fillWidth: true
+        spacing: Theme.rowSpacing
+        Label {
+            objectName: "unresolvedSummary"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: root.unresolved + " Engine playlist " + (root.unresolved === 1 ? "entry" : "entries")
+                + " the player cannot see ("
+                + (consistencyController?.unresolvedPlaylists ?? []).map((d) => d.playlist + ": " + d.entries).join(", ")
+                + "): they name their track by another library than the one the track says it came from, so a "
+                + "Denon player leaves them out of the playlist. Seabass can point them at the track's own library."
+        }
+        Button {
+            objectName: "repairUnresolvedButton"
+            text: consistencyController?.unresolvedFixStaged ? "Unstage" : "Repair Them"
+            enabled: !consistencyController?.busy && !consistencyController?.writing
+                && !consistencyController?.stickReadOnly
+            onClicked: consistencyController?.unresolvedFixStaged
+                ? consistencyController?.unstageUnresolvedPlaylistEntries()
+                : consistencyController?.repairUnresolvedPlaylistEntries()
         }
     }
 

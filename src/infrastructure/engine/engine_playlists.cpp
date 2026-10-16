@@ -794,6 +794,11 @@ namespace
 // 52f6b8cd, against 1570 entries the player and Engine DJ wrote with the
 // tracks' fb65ee77. In a library made on the stick the two are the same.
 //
+// Engine's own triggers fill an empty origin with the library's uuid and
+// the row's id (trigger_after_insert_Track_fix_origin and its update
+// twin), so a track naming no origin is only met in a library without
+// them; the fallback is for that.
+//
 // trackId stays the Track row's id, as libdjinterop and Engine DJ write
 // it. Whether the player matches it against id or originTrackId the data
 // cannot tell: on WHALESHARK3 the two are equal for all 1359 tracks.
@@ -1145,6 +1150,151 @@ int reassignEnginePlaylistEntries(const std::string &engineLibraryPath, std::int
     }
     db.commit();
     return changed;
+}
+
+namespace
+{
+
+// The entries the player cannot resolve (unresolvedPlaylistEntries), with
+// the list they are in and the title of that list.
+struct UnresolvedEntry
+{
+    std::int64_t id = 0;
+    std::int64_t listId = 0;
+    std::int64_t trackId = 0;
+    std::string title;
+};
+// An entry resolves through a track whose (originDatabaseUuid,
+// originTrackId) is its (databaseUuid, trackId), or, for a track naming
+// no origin, through (the library's uuid, the track's id).
+constexpr const char *UnresolvedEntriesSql =
+    "SELECT e.id, e.listId, e.trackId, p.title FROM PlaylistEntity e "
+    "JOIN Playlist p ON p.id = e.listId JOIN Track t ON t.id = e.trackId "
+    "WHERE e.trackId > 0 "
+    "AND NOT EXISTS (SELECT 1 FROM Track o WHERE o.originDatabaseUuid = e.databaseUuid AND o.originTrackId = e.trackId) "
+    "AND NOT (e.databaseUuid = (SELECT uuid FROM Information LIMIT 1) "
+    "         AND (t.originDatabaseUuid IS NULL OR t.originDatabaseUuid = '')) "
+    "ORDER BY e.listId, e.id;";
+
+std::vector<UnresolvedEntry> unresolvedEntries(PlaylistWriter &db)
+{
+    std::vector<UnresolvedEntry> found;
+    db.run(UnresolvedEntriesSql, {}, [&](sqlite3_stmt *s) {
+        const auto *title = reinterpret_cast<const char *>(sqlite3_column_text(s, 3));
+        found.push_back({sqlite3_column_int64(s, 0), sqlite3_column_int64(s, 1), sqlite3_column_int64(s, 2),
+                         title ? title : ""});
+    });
+    return found;
+}
+
+}  // namespace
+
+std::vector<UnresolvedPlaylistEntries> unresolvedPlaylistEntries(const std::string &engineLibraryPath)
+{
+    std::vector<UnresolvedPlaylistEntries> perList;
+    const std::string file = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    if (!std::filesystem::is_regular_file(pathFromUtf8(file))) {
+        return perList;  // no Engine 2.x or 3.x library: none to resolve
+    }
+    // Read only, unlike the repair: a browsed backup is a read-only file.
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(file.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        const std::string why = handle ? sqlite3_errmsg(handle) : "out of memory";
+        sqlite3_close(handle);
+        throw std::runtime_error("engine: could not open " + file + ": " + why);
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle, UnresolvedEntriesSql, -1, &stmt, nullptr) != SQLITE_OK) {
+        const std::string why = sqlite3_errmsg(handle);
+        sqlite3_close(handle);
+        throw std::runtime_error("engine: could not look for playlist entries the player cannot see: " + why);
+    }
+    std::int64_t lastList = -1;
+    int step = SQLITE_ROW;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const std::int64_t listId = sqlite3_column_int64(stmt, 1);
+        if (listId != lastList) {
+            const auto *title = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 3));
+            perList.push_back({title ? title : "", 0});
+            lastList = listId;
+        }
+        ++perList.back().entries;
+    }
+    const std::string why = sqlite3_errmsg(handle);
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    if (step != SQLITE_DONE) {
+        throw std::runtime_error("engine: stopped looking for playlist entries the player cannot see: " + why);
+    }
+    return perList;
+}
+
+RepointedPlaylistEntries repointUnresolvedPlaylistEntries(const std::string &engineLibraryPath)
+{
+    PlaylistWriter db(engineLibraryPath);
+    RepointedPlaylistEntries done;
+    const auto found = unresolvedEntries(db);
+    // Each list touched as it was: its entries, and their ids in chain order.
+    std::map<std::int64_t, std::pair<std::map<std::int64_t, ListEntry>, std::vector<std::int64_t>>> lists;
+    for (const auto &e : found) {
+        if (lists.count(e.listId)) {
+            continue;
+        }
+        auto entries = listEntries(db, e.listId);
+        std::map<std::int64_t, std::int64_t> nextOf;
+        for (const auto &[id, entry] : entries) {
+            nextOf[id] = entry.next;
+        }
+        const auto chain = walkChain(nextOf);
+        if (!chain) {
+            throw std::runtime_error("engine: the entries of \"" + e.title
+                                     + "\" do not form one chain; refusing to repoint them");
+        }
+        lists[e.listId] = {std::move(entries), *chain};
+    }
+    std::set<std::int64_t> deleted;
+    for (const auto &e : found) {
+        std::int64_t originTrackId = e.trackId;
+        db.run("SELECT originTrackId FROM Track WHERE id = ?;", {e.trackId}, [&](sqlite3_stmt *s) {
+            if (sqlite3_column_type(s, 0) != SQLITE_NULL) {
+                originTrackId = sqlite3_column_int64(s, 0);
+            }
+        });
+        if (originTrackId != e.trackId) {
+            // Repointing the uuid would not make it resolve: which track
+            // the player would find instead is not ours to guess.
+            ++done.leftAlone;
+            continue;
+        }
+        const std::string uuid = entityUuidFor(db, e.trackId);
+        bool twin = false;
+        db.run("SELECT 1 FROM PlaylistEntity WHERE listId = ? AND trackId = ? AND databaseUuid = ? AND id <> ?;",
+               {e.listId, e.trackId, uuid, e.id}, [&](sqlite3_stmt *) { twin = true; });
+        if (twin) {
+            // The list holds the track already, visibly: this copy of it
+            // never showed. Engine's trigger relinks round it.
+            db.run("DELETE FROM PlaylistEntity WHERE id = ?;", {e.id});
+            deleted.insert(e.id);
+            ++done.removed;
+        } else {
+            db.run("UPDATE PlaylistEntity SET databaseUuid = ? WHERE id = ?;", {uuid, e.id});
+            ++done.repointed;
+        }
+    }
+    for (const auto &[listId, list] : lists) {
+        std::vector<std::int64_t> expected;
+        for (const std::int64_t id : list.second) {
+            if (!deleted.count(id)) {
+                expected.push_back(list.first.at(id).trackId);
+            }
+        }
+        if (listInOrder(listEntries(db, listId)) != expected) {
+            throw std::runtime_error("engine: list id=" + std::to_string(listId)
+                                     + " does not read back in its order after repointing its entries");
+        }
+    }
+    db.commit();
+    return done;
 }
 
 }  // namespace seabass::infrastructure::engine

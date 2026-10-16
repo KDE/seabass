@@ -792,6 +792,59 @@ TestCase {
         verify(!asked, "left without asking");
     }
 
+    // Library Health's "Engine playlist entries the player cannot see",
+    // with the real controller on a stick copy: a playlist's entries given
+    // a library uuid their tracks do not name as their origin (as Seabass
+    // wrote 120 on WHALESHARK3) are found, counted per playlist, staged,
+    // and written back to the tracks' own uuid by Save; the rescan finds
+    // none, and the playlist still holds its tracks in their order.
+    function test_engineEntriesThePlayerCannotSeeAreRepaired() {
+        const t = scannedCopy((stick) => stickFixture.plantUnresolvedEngineEntries(
+            stick, "Playlist 000", "52f6b8cd-3bf1-44c9-ba8f-4b04244a3f60"));
+        compare(t.planted, 100, "Playlist 000's entries planted");
+        compare(stickFixture.unresolvedEngineEntries(t.stick), 100);
+        compare(t.controller.unresolvedPlaylistEntryCount, 100);
+        compare(t.controller.unresolvedPlaylists.length, 1);
+        compare(t.controller.unresolvedPlaylists[0].playlist, "Playlist 000");
+        compare(t.controller.unresolvedPlaylists[0].entries, 100);
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("engine", t.stick + "/Engine Library");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "engine scanned");
+        scan.filterByPlaylist("Playlist 000");
+        const before = [];
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            before.push(scan.tracks.trackAt(i).sourceId);
+        }
+        compare(before.length, 100, "Seabass's reader lists them whatever their uuid");
+
+        t.controller.repairUnresolvedPlaylistEntries();
+        verify(t.controller.unresolvedFixStaged);
+        compare(t.session.pendingCount, 1);
+        t.controller.unstageUnresolvedPlaylistEntries();
+        compare(t.session.pendingCount, 0);
+        verify(!t.controller.unresolvedFixStaged);
+        t.controller.repairUnresolvedPlaylistEntries();
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 100, "counted in entries: " + JSON.stringify(summary));
+        tryVerify(() => !t.controller.busy && t.controller.playlistsChecked, 300000, "the rescan finishes");
+        compare(stickFixture.unresolvedEngineEntries(t.stick), 0, "every entry resolves now, on the stick");
+        compare(t.controller.unresolvedPlaylistEntryCount, 0, "and the rescan says so");
+        verify(!t.controller.unresolvedFixStaged);
+        const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
+        verify(log.indexOf("repointed 100 Engine playlist entr(ies) the player could not see") >= 0, log);
+
+        const again = createTemporaryObject(scanControllerComponent, testCase);
+        again.scan("engine", t.stick + "/Engine Library");
+        tryVerify(() => !again.busy && again.playlistNames.length > 0, 120000, "engine scanned again");
+        again.filterByPlaylist("Playlist 000");
+        const after = [];
+        for (let i = 0; i < again.tracks.trackCount(); ++i) {
+            after.push(again.tracks.trackAt(i).sourceId);
+        }
+        compare(JSON.stringify(after), JSON.stringify(before), "the same tracks in the same order");
+    }
+
     // The page picks its playlist again as a scan's names arrive (the one
     // it showed before the rescan a save causes): the pick stands, the
     // list shows that playlist and not every track.
