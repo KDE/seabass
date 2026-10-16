@@ -5,66 +5,16 @@
 #include "gui/cover_image_provider.hpp"
 
 #include <QQmlEngine>
-#include <QQuickTextureFactory>
-#include <QRunnable>
 #include <QUrl>
 
 #include <atomic>
 
 #include "gui/cover_cache.hpp"
 #include "gui/playlist_thumbnail_provider.hpp"
+#include "gui/pooled_image_response.hpp"
 
 namespace seabass::gui
 {
-
-namespace
-{
-
-class CoverResponse : public QQuickImageResponse, public QRunnable
-{
-public:
-    CoverResponse(std::shared_ptr<CoverCache> cache, QString path, int side)
-        : m_cache(std::move(cache)), m_path(std::move(path)), m_side(side)
-    {
-        // The engine deletes the response once it has its finished(); the
-        // pool must not delete it as well.
-        setAutoDelete(false);
-    }
-
-    void run() override
-    {
-        if (!m_cancelled.load()) {
-            m_image = m_path.isEmpty() ? QImage() : m_cache->cover(m_path, m_side);
-            if (m_image.isNull()) {
-                // Worded as Qt words a file it cannot load, which is what
-                // this is, and what the storm already knows a missing
-                // cover by (tests/qml-storm/StormRunner.qml).
-                m_error = QStringLiteral("Cannot open: ") + m_path;
-            }
-        }
-        // Also when cancelled: the engine waits for it to let go.
-        emit finished();
-    }
-
-    QQuickTextureFactory *textureFactory() const override
-    {
-        return QQuickTextureFactory::textureFactoryForImage(m_image);
-    }
-
-    QString errorString() const override { return m_error; }
-
-    void cancel() override { m_cancelled.store(true); }
-
-private:
-    std::shared_ptr<CoverCache> m_cache;
-    QString m_path;
-    int m_side;
-    QImage m_image;
-    QString m_error;
-    std::atomic<bool> m_cancelled{false};
-};
-
-}  // namespace
 
 CoverImageProvider::CoverImageProvider(std::shared_ptr<CoverCache> cache) : m_cache(std::move(cache))
 {
@@ -94,9 +44,19 @@ QQuickImageResponse *CoverImageProvider::requestImageResponse(const QString &id,
     // ArtworkImage asks for a square; the larger side, should anything ask
     // for another shape, so the crop still has the pixels it is cut from.
     const int side = requestedSize.isValid() ? std::max(requestedSize.width(), requestedSize.height()) : 0;
-    auto *response = new CoverResponse(m_cache, localPathFromId(id), side);
-    m_pool.start(response);
-    return response;
+    // The job keeps its own copies: the response may be gone before it
+    // runs (see PooledImageResponse).
+    return PooledImageResponse::start(
+        m_pool, [cache = m_cache, path = localPathFromId(id), side](const std::atomic<bool> &, QString &error) {
+            QImage image = path.isEmpty() ? QImage() : cache->cover(path, side);
+            if (image.isNull()) {
+                // Worded as Qt words a file it cannot load, which is what
+                // this is, and what the storm already knows a missing
+                // cover by (tests/qml-storm/StormRunner.qml).
+                error = QStringLiteral("Cannot open: ") + path;
+            }
+            return image;
+        });
 }
 
 void registerCoverImageProvider(QQmlEngine *engine)
