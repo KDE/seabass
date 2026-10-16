@@ -174,6 +174,7 @@ set(SEABASS_GUI_QML_FILES
     qml/PlaylistPickerCombo.qml
     qml/PlayerTrackRing.qml
     qml/PlaylistRowDelegate.qml
+    qml/PlaylistDropGap.qml
     qml/PlaylistListView.qml
     qml/MatchingPage.qml
     qml/StarRating.qml
