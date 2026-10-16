@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "PixelScale.js" as PixelScale
 
 TestCase {
     id: testCase
@@ -88,5 +89,119 @@ TestCase {
         mouseMove(name, 4, name.height / 2);
         tryVerify(() => Qt.colorEqual(row.color, Theme.rowHover), 1000, "shaded under the name: " + row.color);
         combo.popup.close();
+    }
+
+    // ---- Blank rows (Sebastian's testing): a row now and then came up
+    // an empty gap, the right height and no text. ----
+
+    function manyNames(n, prefix) {
+        const names = [{name: "All tracks", count: n}];
+        for (let i = 1; i < n; ++i) {
+            names.push({name: (prefix || "Playlist ") + String(i).padStart(3, "0"), count: i});
+        }
+        return names;
+    }
+
+    // Every row the popup's list has built: its name shown, with its
+    // text, and the row the height of a row.
+    function checkRows(combo, what) {
+        const list = combo.popup.contentItem;
+        tryVerify(() => list.count === combo.model.length
+                 && (list.itemAtIndex(0) !== null || list.itemAtIndex(list.count - 1) !== null), 3000, what + ": rows built");
+        waitForRendering(list);
+        let built = 0;
+        for (let i = 0; i < list.count; ++i) {
+            const row = list.itemAtIndex(i);
+            if (row === null) {
+                continue;  // not built: scrolled out of the popup
+            }
+            ++built;
+            const name = findChild(row, "pickerRowName");
+            verify(name !== null, what + ": row " + i + " has its name label");
+            compare(name.text, combo.model[i].name, what + ": row " + i + "'s text");
+            verify(name.visible && name.width > 0 && name.height > 0 && name.opacity > 0,
+                   what + ": row " + i + "'s name is drawn (" + name.width + " x " + name.height + ")");
+            compare(row.height, 32, what + ": row " + i + "'s height");
+            verify(row.width > 0 && row.visible, what + ": row " + i + " is laid out");
+            const before = i > 0 ? list.itemAtIndex(i - 1) : null;
+            verify(before === null || row.y >= before.y + before.height, what + ": row " + i + " below the one before");
+        }
+        verify(built > 5, what + ": rows built " + built);
+        checkRowsDrawn(list, "pickerRowName", what);
+    }
+
+    function test_noBlankRowsOverRepeatedOpens() {
+        const combo = createTemporaryObject(comboComponent, testCase, {model: manyNames(30), width: 240});
+        for (let round = 0; round < 20; ++round) {
+            mouseClick(combo);
+            tryVerify(() => combo.popup.opened, 3000, "opens, round " + round);
+            checkRows(combo, "round " + round);
+            // And scrolled to its end, the rows below built as they come.
+            combo.popup.contentItem.positionViewAtEnd();
+            checkRows(combo, "scrolled, round " + round);
+            combo.popup.close();
+            tryVerify(() => !combo.popup.visible, 3000, "closes, round " + round);
+        }
+    }
+
+    // The names arrive (a scan finishing) and the popup opens straight
+    // away, the first time and after a change of the list.
+    function test_noBlankRowsRightAfterTheNamesArrive() {
+        const combo = createTemporaryObject(comboComponent, testCase, {model: [], width: 240});
+        for (let round = 0; round < 20; ++round) {
+            combo.model = manyNames(30 + round % 3, round % 2 ? "Crate " : "Playlist ");
+            mouseClick(combo);
+            tryVerify(() => combo.popup.opened, 3000, "opens, round " + round);
+            checkRows(combo, "after the names changed, round " + round);
+            combo.popup.close();
+            tryVerify(() => !combo.popup.visible, 3000, "closes, round " + round);
+        }
+    }
+
+    // The names change while the popup is open (a scan finishing under it).
+    function test_noBlankRowsWhenTheNamesChangeWhileOpen() {
+        const combo = createTemporaryObject(comboComponent, testCase, {model: manyNames(5), width: 240});
+        for (let round = 0; round < 20; ++round) {
+            mouseClick(combo);
+            tryVerify(() => combo.popup.opened, 3000, "opens, round " + round);
+            combo.model = manyNames(30 + round % 3, round % 2 ? "Crate " : "Playlist ");
+            checkRows(combo, "changed while open, round " + round);
+            combo.popup.close();
+            tryVerify(() => !combo.popup.visible, 3000, "closes, round " + round);
+            combo.model = manyNames(5 + round % 4);
+        }
+    }
+
+    // The text of every row in sight, as drawn: the window's own frame
+    // (the popup is in its overlay), read under each row's name label,
+    // must hold pixels unlike the row's ground beside it.
+    function checkRowsDrawn(list, labelName, what) {
+        const ground = list.Window.contentItem;
+        const image = grabImage(ground);
+        const s = PixelScale.scale(image, ground);
+        const lum = c => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        let looked = 0;
+        for (let i = 0; i < list.count; ++i) {
+            const row = list.itemAtIndex(i);
+            if (row === null || row.y - list.contentY < 0 || row.y - list.contentY + row.height > list.height) {
+                continue;
+            }
+            if (row.mapToItem(ground, 0, row.height).y > ground.height) {
+                continue;  // below the window's edge
+            }
+            const name = findChild(row, labelName);
+            const back = lum(PixelScale.pixel(image, ground, row.mapToItem(ground, 4, row.height / 2).x,
+                                              row.mapToItem(ground, 4, row.height / 2).y));
+            const origin = name.mapToItem(ground, 0, 0);
+            let ink = 0;
+            for (let y = 0; y < name.height; y += 1 / s) {
+                for (let x = 0; x < Math.min(name.width, 60); x += 1 / s) {
+                    ink += Math.abs(lum(PixelScale.pixel(image, ground, origin.x + x, origin.y + y)) - back) > 0.15 ? 1 : 0;
+                }
+            }
+            verify(ink >= 3, what + ": row " + i + " (" + name.text + ") is drawn with its text, " + ink + " pixels of ink");
+            ++looked;
+        }
+        verify(looked > 4, what + ": rows looked at " + looked);
     }
 }
