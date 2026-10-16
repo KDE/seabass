@@ -133,6 +133,7 @@ Rectangle {
         anchors.rightMargin: 8 + Theme.scaled(10)
         spacing: 6
         Label {
+            objectName: "playlistRowName"
             text: root.name
             Layout.fillWidth: true
             elide: Text.ElideRight

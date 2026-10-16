@@ -341,6 +341,7 @@ ColumnLayout {
             }
             ComboBox {
                 id: playlistCombo
+                objectName: "playlistCombo"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 70
                 model: root.playlistComboModel
