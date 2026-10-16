@@ -614,6 +614,8 @@ TestCase {
         const summary = saveAndWait(t.session);
         compare(summary.error, "", JSON.stringify(summary));
         compare(summary.written, 4, JSON.stringify(summary));
+        compare(browse.lastSavedSummary, "2 playlists saved: 1 created, 1 renamed, 2 tracks added",
+                "the add after the rename counted with it, as one playlist");
         compare(JSON.stringify(browse.pendingRenames), "{}", "written, so no longer pending");
         const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
         verify(log.indexOf("playlist-rename: renamed \"" + oldName + "\" to \"" + newName + "\" in 3 libraries") >= 0, log);
@@ -635,6 +637,12 @@ TestCase {
         compare(JSON.stringify(written), JSON.stringify(before.concat([file])), "its tracks, and the add last");
         again.filterByPlaylist("Fresh B");
         compare(again.tracks.trackCount(), 1);
+
+        // A rename alone, saved: said by the name it had.
+        verify(edited(browse, browse.renamePlaylist(t.pioneer, engine, "Fresh B", "Fresh C")), browse.errorMessage);
+        const renamedOnly = saveAndWait(t.session);
+        compare(renamedOnly.error, "", JSON.stringify(renamedOnly));
+        compare(browse.lastSavedSummary, "\"Fresh B\" saved: renamed");
     }
 
     PlaybackController { id: realPlayback }

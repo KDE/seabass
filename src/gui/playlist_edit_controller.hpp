@@ -217,6 +217,10 @@ private:
     // playlists they were in.
     std::map<QString, int> m_appliedKinds;
     std::set<QString> m_appliedPlaylists;
+    // The renames this save applied, new path to old: the edits written
+    // after one address the playlist by its new name, and are counted
+    // under the old one with the rename, as one playlist.
+    std::map<QString, QString> m_appliedRenames;
     QString m_lastSavedSummary;
     std::set<QString> m_staged;  // change ids
     QStringList m_newPlaylists;
