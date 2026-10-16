@@ -653,9 +653,13 @@ if(MSVC)
     # build at all on Windows with "Cannot open include file: 'sqlite3.h'".
     target_sources(seabass_core PRIVATE
         third_party/libdjinterop/ext/sqlite-amalgamation/sqlite3.c)
-    target_include_directories(seabass_core PRIVATE
+    # The header for whatever links seabass_core, as SQLite::SQLite3 gives
+    # it everywhere else: the GUI's cover cache (gui/cover_cache.cpp) and
+    # its tests include <sqlite3.h>, and on MSVC failed to build without
+    # it. The definitions in seabass_core, one copy, as before.
+    target_include_directories(seabass_core PUBLIC
         third_party/libdjinterop/ext/sqlite-amalgamation)
-    target_compile_definitions(seabass_core PRIVATE SQLITE_OMIT_LOAD_EXTENSION)
+    target_compile_definitions(seabass_core PUBLIC SQLITE_OMIT_LOAD_EXTENSION)
 
     target_sources(seabass_core_testing PRIVATE
         third_party/libdjinterop/ext/sqlite-amalgamation/sqlite3.c)
