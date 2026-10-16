@@ -35,6 +35,23 @@ namespace seabass::gui
 
 namespace
 {
+
+// `name` under the renames in `aliases` ({from: to}): a renamed playlist,
+// or one inside a renamed folder, with its new path; any other unchanged.
+QString aliasedPlaylistName(const QVariantMap &aliases, const QString &name)
+{
+    for (auto it = aliases.constBegin(); it != aliases.constEnd(); ++it) {
+        if (name == it.key() || name.startsWith(it.key() + QLatin1Char('/'))) {
+            return it.value().toString() + name.mid(it.key().size());
+        }
+    }
+    return name;
+}
+
+}  // namespace
+
+namespace
+{
 // A track's cues as QML reads them (WaveformView, the player): one shape
 // for the list's rows and for Matching's candidates.
 QVariantList cuesToVariant(const domain::Track &track)
@@ -106,7 +123,7 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
     case PlaylistNamesRole: {
         QStringList names;
         for (const auto &p : track.playlists) {
-            names << QString::fromStdString(p.name);
+            names << aliasedPlaylistName(m_playlistAliases, QString::fromStdString(p.name));
         }
         return names;
     }
@@ -561,13 +578,15 @@ void ScanController::publishTracks(ScanTaskResult &result)
     for (const auto &path : result.playlistPaths) {
         uniquePlaylistNames.insert(path);
     }
-    m_playlistNames.clear();
-    m_playlistTrackCounts.clear();
+    m_scannedPlaylistNames.clear();
+    m_scannedPlaylistTrackCounts.clear();
     for (const auto &name : uniquePlaylistNames) {
         QString qName = QString::fromStdString(name);
-        m_playlistNames << qName;
-        m_playlistTrackCounts[qName] = countByPlaylist[name];
+        m_scannedPlaylistNames << qName;
+        m_scannedPlaylistTrackCounts[qName] = countByPlaylist[name];
     }
+    m_previousPlaylistAliases = m_playlistAliases;
+    rebuildPlaylistNames();
 
     // m_allTracks (which totalTrackCount() reads) must be updated before
     // playlistNamesChanged fires. QML bindings that read totalTrackCount
@@ -610,6 +629,53 @@ void ScanController::publishCues(ScanTaskResult &result)
     applyFilters(true);
     setCuesPending(false);
     emit tracksPublished(true);
+}
+
+void ScanController::rebuildPlaylistNames()
+{
+    m_playlistNames.clear();
+    m_playlistTrackCounts.clear();
+    for (const QString &name : m_scannedPlaylistNames) {
+        const QString shown = aliasedPlaylistName(m_playlistAliases, name);
+        m_playlistNames << shown;
+        m_playlistTrackCounts[shown] = m_scannedPlaylistTrackCounts.value(name);
+    }
+}
+
+QString ScanController::scannedPlaylistName(const QVariantMap &aliases, const QString &shown)
+{
+    for (auto it = aliases.constBegin(); it != aliases.constEnd(); ++it) {
+        const QString to = it.value().toString();
+        if (shown == to || shown.startsWith(to + QLatin1Char('/'))) {
+            return it.key() + shown.mid(to.size());
+        }
+    }
+    return shown;
+}
+
+void ScanController::setPlaylistAliases(const QVariantMap &aliases)
+{
+    if (m_playlistAliases == aliases) {
+        return;
+    }
+    // The playlist shown keeps being shown across a rename or its
+    // take-back, under the name it has now.
+    const QString filterAfter = m_currentPlaylistFilter.isEmpty()
+        ? QString() : aliasedPlaylistName(aliases, scannedPlaylistName(m_currentPlaylistFilter));
+    m_previousPlaylistAliases = m_playlistAliases;
+    m_playlistAliases = aliases;
+    m_model.setPlaylistAliases(aliases);
+    m_currentPlaylistFilter = filterAfter;
+    rebuildPlaylistNames();
+    emit playlistNamesChanged();
+    applyFilters();
+}
+
+QString ScanController::currentPlaylistName(const QString &name) const
+{
+    // Spelled under the aliases before their last change, or as scanned:
+    // either way back to the scanned path, then under the aliases now.
+    return aliasedPlaylistName(m_playlistAliases, scannedPlaylistName(m_previousPlaylistAliases, name));
 }
 
 void ScanController::filterByPlaylist(const QString &playlistName)
@@ -683,7 +749,7 @@ QVariantList ScanController::tracksByArtist(const QString &artist, const QString
         // Where the track can be found, for the row's tooltip.
         QStringList playlists;
         for (const auto &membership : track.playlists) {
-            playlists << QString::fromStdString(membership.name);
+            playlists << aliasedPlaylistName(m_playlistAliases, QString::fromStdString(membership.name));
         }
         m["playlistNames"] = playlists;
         result.append(m);
@@ -752,7 +818,10 @@ std::optional<int> playlistPosition(const domain::Track &track, const std::strin
 void ScanController::applyFilters(bool inPlace)
 {
     std::vector<domain::Track> result = m_allTracks;
-    std::string playlistFilter = m_currentPlaylistFilter.toStdString();
+    // The playlist shown by its scanned path: a staged rename lists it
+    // under the new one.
+    const QString scannedFilter = scannedPlaylistName(m_currentPlaylistFilter);
+    std::string playlistFilter = scannedFilter.toStdString();
 
     std::set<std::string> pendingAdditions;
     std::set<std::string> pendingMoves;
@@ -760,7 +829,11 @@ void ScanController::applyFilters(bool inPlace)
         result = domain::filterByScope(result, domain::TrackScope::playlist(playlistFilter));
         // The tracks staged into it, after the ones it has, in the order
         // they were added, as Save will write them.
-        const QStringList staged = m_pendingAdditions.value(m_currentPlaylistFilter).toStringList();
+        // Staged under either name: before a rename the old, after it the new.
+        QStringList staged = m_pendingAdditions.value(scannedFilter).toStringList();
+        if (scannedFilter != m_currentPlaylistFilter) {
+            staged << m_pendingAdditions.value(m_currentPlaylistFilter).toStringList();
+        }
         if (!staged.isEmpty()) {
             int last = -1;
             std::set<std::string> listed;
@@ -791,7 +864,10 @@ void ScanController::applyFilters(bool inPlace)
         // Then the moves, each in the order the ones before it left (the
         // additions included), as Save writes them: the playlist renumbered
         // from 0 in its new order, which is what the playlist sort shows.
-        const QVariantList moves = m_pendingMoves.value(m_currentPlaylistFilter).toList();
+        QVariantList moves = m_pendingMoves.value(scannedFilter).toList();
+        if (scannedFilter != m_currentPlaylistFilter) {
+            moves << m_pendingMoves.value(m_currentPlaylistFilter).toList();
+        }
         if (!moves.isEmpty()) {
             std::vector<size_t> order(result.size());
             std::iota(order.begin(), order.end(), size_t{0});
@@ -929,7 +1005,7 @@ QVariantList ScanController::findCompatibleTracks(const QString &anchorSourceId,
         tiers.push_back(tier.toStdString());
     }
     bool keyFilterActive = !tiers.empty();
-    std::string targetPlaylist = targetPlaylistName.toStdString();
+    std::string targetPlaylist = scannedPlaylistName(targetPlaylistName).toStdString();
     QString lowerQuery = textQuery.toLower();
     double bpmLow = anchor->bpm * (1.0 - bpmTolerancePct / 100.0);
     double bpmHigh = anchor->bpm * (1.0 + bpmTolerancePct / 100.0);
@@ -1017,7 +1093,7 @@ QVariantList ScanController::findCompatibleTracks(const QString &anchorSourceId,
         m["cues"] = cuesToVariant(track);
         QStringList playlistNames;
         for (const auto &p : track.playlists) {
-            playlistNames << QString::fromStdString(p.name);
+            playlistNames << aliasedPlaylistName(m_playlistAliases, QString::fromStdString(p.name));
         }
         m["playlistNames"] = playlistNames;
         result << m;

@@ -87,6 +87,9 @@ public:
     // The rows (by sourceId) shown at a place a staged move gives them,
     // served as pendingMove. Set before the tracks.
     void setPendingMoves(std::set<std::string> sourceIds) { m_pendingMoves = std::move(sourceIds); }
+    // Staged renames, {scanned path: new path}: playlistNames serves the
+    // new names.
+    void setPlaylistAliases(QVariantMap aliases) { m_playlistAliases = std::move(aliases); }
 
     // Random-access read of one row, by index into *this currently
     // displayed* (filtered/sorted) list -- not the full unfiltered
@@ -116,6 +119,7 @@ private:
     std::shared_ptr<const FallbackArtwork> m_fallbackArtwork;
     std::set<std::string> m_pendingAdditions;
     std::set<std::string> m_pendingMoves;
+    QVariantMap m_playlistAliases;
 };
 
 // Result of a background scan task, see ScanController::scan(). Kept
@@ -242,6 +246,18 @@ public:
     // their new place in its order, in the order moved, flagged
     // pendingMove.
     Q_INVOKABLE void setPendingEdits(const QVariantMap &additions, const QVariantMap &moves);
+    // The playlists staged to be renamed, {path in the scan: new path}, as
+    // PlaylistEditController::pendingRenames has them: listed, filtered by
+    // and shown in the rows' playlistNames under the new name until Save,
+    // their tracks and counts the scanned playlist's. A renamed folder's
+    // children are listed under it. The scan is not touched: taking a
+    // rename back lists the old name again.
+    Q_INVOKABLE void setPlaylistAliases(const QVariantMap &aliases);
+    // `name` as playlistNames spells it now: across the last change of the
+    // aliases (a name listed before it, renamed or given back since), or
+    // a scanned name under its alias. What the page re-picks its playlist
+    // by when the names change.
+    Q_INVOKABLE QString currentPlaylistName(const QString &name) const;
 
     // Matches against title or artist, case-insensitive substring. Empty
     // clears the search.
@@ -395,6 +411,16 @@ private:
     std::vector<domain::Track> m_allTracks;
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
+    // The names and counts as scanned, before the aliases.
+    QStringList m_scannedPlaylistNames;
+    QVariantMap m_scannedPlaylistTrackCounts;
+    QVariantMap m_playlistAliases;
+    // The aliases before their last change (the same after a scan).
+    QVariantMap m_previousPlaylistAliases;
+    void rebuildPlaylistNames();
+    // The scanned path of a playlist listed as `shown` under `aliases`.
+    static QString scannedPlaylistName(const QVariantMap &aliases, const QString &shown);
+    QString scannedPlaylistName(const QString &shown) const { return scannedPlaylistName(m_playlistAliases, shown); }
     QString m_currentPlaylistFilter;
     QVariantMap m_pendingAdditions;
     QVariantMap m_pendingMoves;

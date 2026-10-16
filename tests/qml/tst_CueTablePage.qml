@@ -510,11 +510,131 @@ TestCase {
             verify(again.tracks.trackAt(i).pendingMove === false);
         }
         compare(JSON.stringify(written), JSON.stringify(moved(before, 0, 2)), "the stick holds the new order");
-        // On the fixture copy only OneLibrary is found holding this
-        // playlist (playlistWhereabouts), so it is the one library written.
+        // All three libraries have the playlist, but the anonymized fixture
+        // spells its paths differently per library, so only OneLibrary's
+        // copy holds the file: it is the one written, the other two say why.
         const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
         verify(log.indexOf("playlist-move: moved \"" + moving + "\" to position 3 in \"" + playlist + "\" in 1 libraries")
                >= 0, log);
+        for (const library of ["rekordbox", "Engine"]) {
+            verify(log.indexOf("not moved in \"" + playlist + "\" there: " + library + "'s playlist does not hold the file")
+                   >= 0, log);
+        }
+    }
+
+    // Browse's rename with the real controllers on a stick copy. Staged,
+    // the list names the playlist anew and shows its tracks under the new
+    // name; a track then added to it is looked up by the old name (the
+    // stick's until Save) and staged under the new, so one Save writes the
+    // rename first and the add after it, and a rescan finds both. A new
+    // playlist renamed is renamed in place, its track staged into it along;
+    // a name the stick has is refused, and taking a rename back takes the
+    // edits made under the new name with it.
+    function test_aRenameAndAnAddAfterItLandInOneSave() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("onelibrary", t.pioneer);
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
+        const oldName = "Playlist 001";
+        const newName = "Renamed 001";
+        verify(scan.playlistNames.indexOf(oldName) >= 0, JSON.stringify(scan.playlistNames));
+        const count = scan.playlistTrackCounts[oldName];
+        verify(count > 0);
+        scan.filterByPlaylist(oldName);
+        const before = [];
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            before.push(scan.tracks.trackAt(i).filePath);
+        }
+        // A file the playlist does not hold, OneLibrary has a row for.
+        scan.filterByPlaylist("");
+        let file = "";
+        for (let i = 0; i < scan.tracks.trackCount() && file.length === 0; ++i) {
+            const row = scan.tracks.trackAt(i);
+            if (row.playlistNames.indexOf(oldName) < 0 && row.streamingSource.length === 0) {
+                file = row.filePath;
+            }
+        }
+        verify(file.length > 0);
+
+        verify(!edited(browse, browse.renamePlaylist(t.pioneer, engine, oldName, "Playlist 000")), "a name the stick has");
+        verify(browse.errorMessage.indexOf("already a playlist") >= 0, browse.errorMessage);
+        verify(!edited(browse, browse.renamePlaylist(t.pioneer, engine, oldName, "A/B")), "a folder path");
+        compare(t.session.pendingCount, 0);
+
+        verify(edited(browse, browse.renamePlaylist(t.pioneer, engine, oldName, "  " + newName + " ")), browse.errorMessage);
+        compare(t.session.pendingCount, 1);
+        compare(JSON.stringify(browse.pendingRenames), JSON.stringify({"Playlist 001": newName}), "trimmed");
+        verify(browse.isRenameStaged(newName) && browse.isRenameStaged(oldName), "by either name");
+        verify(browse.isPlaylistEdited(newName));
+        scan.setPlaylistAliases(browse.pendingRenames);
+        verify(scan.playlistNames.indexOf(newName) >= 0, "listed under the new name");
+        verify(scan.playlistNames.indexOf(oldName) < 0, "and not the old");
+        compare(scan.playlistTrackCounts[newName], count, "its count unchanged");
+        compare(scan.currentPlaylistName(oldName), newName);
+        scan.filterByPlaylist(newName);
+        compare(scan.tracks.trackCount(), before.length, "the old playlist's tracks");
+        verify(scan.tracks.trackAt(0).playlistNames.indexOf(newName) >= 0, "the rows name it anew");
+
+        // Taken back, with an add made under the new name meanwhile.
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, newName, file, "Added")), browse.errorMessage);
+        compare(t.session.pendingCount, 2);
+        browse.keepPlaylistName(newName);
+        compare(t.session.pendingCount, 0, "the rename and the add under its name both taken back");
+        compare(JSON.stringify(browse.pendingRenames), "{}");
+        scan.setPlaylistAliases(browse.pendingRenames);
+        verify(scan.playlistNames.indexOf(oldName) >= 0 && scan.playlistNames.indexOf(newName) < 0);
+        compare(scan.currentPlaylistName(newName), oldName, "a page showing it follows it back");
+
+        // A new playlist with a track in it, renamed in place.
+        verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Fresh A")), browse.errorMessage);
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Fresh A", file, "Added")), browse.errorMessage);
+        verify(edited(browse, browse.renamePlaylist(t.pioneer, engine, "Fresh A", "Fresh B")), browse.errorMessage);
+        compare(JSON.stringify(browse.newPlaylists), JSON.stringify(["Fresh B"]));
+        compare(JSON.stringify(browse.pendingRenames), "{}", "no rename of a playlist the stick does not have");
+        compare(browse.pendingAdditions["Fresh B"].join(), file, "its track along");
+        verify(browse.isAdditionStaged("Fresh B", file) && !browse.isAdditionStaged("Fresh A", file));
+        compare(t.session.pendingCount, 2);
+
+        // The rename, then the add under the new name: one Save.
+        verify(edited(browse, browse.renamePlaylist(t.pioneer, engine, oldName, newName)), browse.errorMessage);
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, newName, file, "Added")), browse.errorMessage);
+        verify(browse.isAdditionStaged(newName, file));
+        compare(t.session.pendingCount, 4);
+        verify(!edited(browse, browse.renamePlaylist(t.pioneer, engine, newName, "Again")),
+               "renamed again with an edit under the new name");
+        verify(browse.errorMessage.indexOf("edits staged under its new name") >= 0, browse.errorMessage);
+        scan.setPendingEdits(browse.pendingAdditions, browse.pendingMoves);
+        scan.setPlaylistAliases(browse.pendingRenames);
+        scan.filterByPlaylist(newName);
+        compare(scan.tracks.trackCount(), before.length + 1, "the add shown in it under the new name");
+        compare(scan.tracks.trackAt(before.length).filePath, file);
+
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 4, JSON.stringify(summary));
+        compare(JSON.stringify(browse.pendingRenames), "{}", "written, so no longer pending");
+        const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
+        verify(log.indexOf("playlist-rename: renamed \"" + oldName + "\" to \"" + newName + "\" in 3 libraries") >= 0, log);
+        // The add after it, by the new name: written after the rename.
+        verify(log.indexOf("to \"" + newName + "\" in 2 libraries") > log.indexOf("playlist-rename: renamed"), log);
+        verify(log.indexOf("playlist-create: created \"Fresh B\" in 3 libraries") >= 0, log);
+
+        const again = createTemporaryObject(scanControllerComponent, testCase);
+        again.scan("onelibrary", t.pioneer);
+        tryVerify(() => !again.busy && again.playlistNames.length > 0, 120000, "onelibrary scanned again");
+        verify(again.playlistNames.indexOf(newName) >= 0, JSON.stringify(again.playlistNames));
+        verify(again.playlistNames.indexOf(oldName) < 0, "the old name is gone");
+        verify(again.playlistNames.indexOf("Fresh B") >= 0 && again.playlistNames.indexOf("Fresh A") < 0);
+        again.filterByPlaylist(newName);
+        const written = [];
+        for (let i = 0; i < again.tracks.trackCount(); ++i) {
+            written.push(again.tracks.trackAt(i).filePath);
+        }
+        compare(JSON.stringify(written), JSON.stringify(before.concat([file])), "its tracks, and the add last");
+        again.filterByPlaylist("Fresh B");
+        compare(again.tracks.trackCount(), 1);
     }
 
     PlaybackController { id: realPlayback }
