@@ -206,7 +206,8 @@ QString PlaylistEditController::lastAddPlaylist() const
 }
 
 bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
-                                           const QString &filePath, const QString &title, int toIndex)
+                                           const QString &filePath, const QString &title, int toIndex,
+                                           const QString &moveFrom)
 {
     setErrorMessage({});
     if (playlist.isEmpty() || filePath.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
@@ -218,37 +219,80 @@ bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const Q
         emit lastAddPlaylistChanged();
     }
     // Looked up by the path the stick has now, staged under the name shown
-    // (see renamePlaylist).
-    const std::string name = playlist.toStdString();
-    lookUp(rekordboxPath, enginePath, stickPathOf(playlist).toStdString(), [=, this](const PlaylistWhereabouts &where) {
-        // Asked when its turn comes: a create queued before it is staged by then.
-        const QStringList libraries = isNewPlaylistStaged(playlist) ? where.onStick : where.having;
-        if (libraries.isEmpty()) {
-            setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
-            return;
-        }
-        if (!where.several.isEmpty()) {
-            setErrorMessage(ambiguous(playlist, where.several));
-            return;
-        }
-        const std::string file = filePath.toStdString();
-        const std::optional<int> place = toIndex >= 0 ? std::optional<int>(toIndex) : std::nullopt;
-        const auto remake = [=](const std::string &named) -> std::unique_ptr<PendingChange> {
-            return std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries, place);
-        };
-        if (!m_session->stage(remake(name))) {
-            return;
-        }
-        // Staged again (a place given or changed), it replaces the one
-        // before, in the session and here.
-        const QString id = AddToPlaylistChange::idFor(name, file);
-        m_staged.insert(id);
-        std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
-        m_additions.push_back({id, playlist, filePath, toIndex, ++m_sequence, remake});
-        ++m_pendingRevision;
-        emit pendingChanged();
-    });
+    // (see renamePlaylist); the file's rows in the same worker round.
+    lookUp(
+        rekordboxPath, enginePath, stickPathOf(playlist).toStdString(),
+        [=, this](const PlaylistWhereabouts &where) {
+            // Asked when its turn comes: a create queued before it is staged by then.
+            const QStringList libraries = isNewPlaylistStaged(playlist) ? where.onStick : where.having;
+            if (libraries.isEmpty()) {
+                setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+                return;
+            }
+            if (!where.several.isEmpty()) {
+                setErrorMessage(ambiguous(playlist, where.several));
+                return;
+            }
+            const PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, libraries};
+            QStringList missing;
+            QStringList reached;
+            for (const QString &library : libraries) {
+                (where.withFile.contains(library) ? reached : missing) << displayNames({library});
+            }
+            if (!missing.isEmpty()) {
+                m_waitingAdds[playlist + QLatin1Char('|') + filePath] = add;
+                emit additionNeedsLibraries(playlist, filePath, title, missing, toIndex, reached);
+                return;
+            }
+            stageAdd(add);
+        },
+        filePath.toStdString());
     return true;
+}
+
+void PlaylistEditController::stageAdd(const PendingAdd &add)
+{
+    const std::string name = add.playlist.toStdString();
+    const std::string file = add.filePath.toStdString();
+    const std::optional<int> place = add.toIndex >= 0 ? std::optional<int>(add.toIndex) : std::nullopt;
+    const auto remake = [rekordboxPath = add.rekordboxPath, enginePath = add.enginePath, file, title = add.title,
+                         libraries = add.libraries, place](const std::string &named) -> std::unique_ptr<PendingChange> {
+        return std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries, place);
+    };
+    if (!m_session->stage(remake(name))) {
+        return;
+    }
+    // Staged again (a place given or changed), it replaces the one
+    // before, in the session and here.
+    const QString id = AddToPlaylistChange::idFor(name, file);
+    m_staged.insert(id);
+    std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
+    m_additions.push_back({id, add.playlist, add.filePath, add.toIndex, ++m_sequence, remake});
+    ++m_pendingRevision;
+    emit pendingChanged();
+    // The other half of a move, after the add: looked up in its turn.
+    if (!add.moveFrom.isEmpty()) {
+        removeFromPlaylist(add.rekordboxPath, add.enginePath, add.moveFrom, add.filePath, add.title);
+    }
+}
+
+void PlaylistEditController::addAnyway(const QString &playlist, const QString &filePath)
+{
+    const auto it = m_waitingAdds.find(playlist + QLatin1Char('|') + filePath);
+    if (it == m_waitingAdds.end()) {
+        return;
+    }
+    const PendingAdd add = it->second;
+    m_waitingAdds.erase(it);
+    setErrorMessage({});
+    if (attachSession(add.rekordboxPath, add.enginePath)) {
+        stageAdd(add);
+    }
+}
+
+void PlaylistEditController::dropAddition(const QString &playlist, const QString &filePath)
+{
+    m_waitingAdds.erase(playlist + QLatin1Char('|') + filePath);
 }
 
 void PlaylistEditController::keepOutOfPlaylist(const QString &playlist, const QString &filePath)
@@ -703,17 +747,20 @@ std::vector<QString> PlaylistEditController::editsAddressing(const QString &path
 }
 
 void PlaylistEditController::lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
-                                    std::function<void(const PlaylistWhereabouts &)> then)
+                                    std::function<void(const PlaylistWhereabouts &)> then, const std::string &file)
 {
-    lookUp(rekordboxPath, enginePath, playlist, std::string(),
-           [then = std::move(then)](const PlaylistWhereabouts &where, const PlaylistWhereabouts &) { then(where); });
+    m_lookups.push_back({rekordboxPath, enginePath, playlist, std::string(), file,
+                         [then = std::move(then)](const PlaylistWhereabouts &where, const PlaylistWhereabouts &) {
+                             then(where);
+                         }});
+    runNextLookup();
 }
 
 void PlaylistEditController::lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
                                     const std::string &also,
                                     std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then)
 {
-    m_lookups.push_back({rekordboxPath, enginePath, playlist, also, std::move(then)});
+    m_lookups.push_back({rekordboxPath, enginePath, playlist, also, std::string(), std::move(then)});
     runNextLookup();
 }
 
@@ -729,8 +776,9 @@ void PlaylistEditController::runNextLookup()
     setBusy(true);
     const Lookup &next = m_lookups.front();
     m_lookupWatcher.setFuture(QtConcurrent::run(
-        [rekordboxPath = next.rekordboxPath, enginePath = next.enginePath, playlist = next.playlist, also = next.also]() {
-            return std::make_pair(playlistWhereabouts(rekordboxPath, enginePath, playlist),
+        [rekordboxPath = next.rekordboxPath, enginePath = next.enginePath, playlist = next.playlist, also = next.also,
+         file = next.file]() {
+            return std::make_pair(playlistWhereabouts(rekordboxPath, enginePath, playlist, file),
                                   also.empty() ? PlaylistWhereabouts{} : playlistWhereabouts(rekordboxPath, enginePath, also));
         }));
 }

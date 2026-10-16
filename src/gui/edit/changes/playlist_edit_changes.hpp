@@ -32,8 +32,15 @@ struct PlaylistWhereabouts
     // have to guess there, so Browse refuses, and the changes fail rather
     // than guess if it happens by Save.
     QStringList several;
+    // Asked with a file: the libraries on the stick with a row for it,
+    // looked up as AddToPlaylistChange looks it up (export.pdb by its path
+    // on the stick, OneLibrary's content rows, Engine's tracks by the path
+    // relative to the library). A library holding the playlist that is not
+    // here would be left alone by an add, so Browse asks first.
+    QStringList withFile;
 };
-PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
+PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist,
+                                        const std::string &filePath = {});
 
 // Every playlist one library holds, by full path ("Folder/List"), folders
 // left out, read now: catalog is "rekordbox" or "onelibrary" with the

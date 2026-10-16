@@ -24,6 +24,9 @@ Page {
     // the exact same already-scanned, currently filtered/sorted list
     // this page is showing, instead of re-scanning from scratch.
     signal trackDetailRequested(var scanController, int trackIndex, string format, string libraryPath)
+    // "Open Sync" in the dialog about a track Engine does not have yet:
+    // Sync after Rekordbox Export brings it there.
+    signal openRekordboxExportSyncRequested()
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0
@@ -247,6 +250,102 @@ Page {
             }
         }
         return "";
+    }
+
+    // An add to a playlist some library on the stick has without the
+    // track (rekordbox exported it, Engine has not been synced since): the
+    // add would leave that library alone and its player show the playlist
+    // short, so it waits for an answer. Nothing is staged meanwhile.
+    Dialog {
+        id: missingLibrariesDialog
+        objectName: "missingLibrariesDialog"
+        property string playlist: ""
+        property string filePath: ""
+        property string trackTitle: ""
+        property var missing: []
+        property var added: []
+        readonly property bool engineMissing: missing.indexOf("Engine") >= 0
+        readonly property bool pioneerMissing: missing.indexOf("rekordbox") >= 0 || missing.indexOf("OneLibrary") >= 0
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Not in every library")
+        closePolicy: Popup.CloseOnEscape
+        function names(list) {
+            return list.length <= 1 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+        }
+        readonly property string text: {
+            const players = engineMissing && pioneerMissing ? qsTr("Denon and Pioneer players")
+                : engineMissing ? qsTr("a Denon player") : qsTr("a Pioneer player");
+            const lines = [qsTr("\"%1\" is not in the %2 %3 on this stick, so it would be added to \"%4\" in %5 only, "
+                                + "and %6 would not see it there.")
+                               .arg(trackTitle).arg(names(missing)).arg(missing.length === 1 ? qsTr("library") : qsTr("libraries"))
+                               .arg(playlist).arg(names(added)).arg(players)];
+            if (engineMissing) {
+                lines.push(qsTr("Run Sync after Rekordbox Export first to bring the track into Engine."));
+            }
+            if (pioneerMissing) {
+                lines.push(qsTr("Export the track to this stick from rekordbox first to bring it into %1.")
+                           .arg(names(missing.filter(n => n !== "Engine"))));
+            }
+            return lines.join(" ");
+        }
+        Label {
+            objectName: "missingLibrariesText"
+            width: Math.min(implicitWidth, root.width * 0.6)
+            wrapMode: Text.Wrap
+            text: missingLibrariesDialog.text
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "openSyncButton"
+                visible: missingLibrariesDialog.engineMissing
+                text: qsTr("Open Sync")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: {
+                    missingLibrariesDialog.drop();
+                    root.openRekordboxExportSyncRequested();
+                }
+            }
+            Button {
+                objectName: "addAnywayButton"
+                text: qsTr("Add anyway")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                objectName: "dontAddButton"
+                text: qsTr("Don't add")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        // Answered once: whichever closes it first says what happens.
+        property bool answered: false
+        onAboutToShow: answered = false
+        function drop() {
+            if (!answered) {
+                answered = true;
+                root.playlistEditController.dropAddition(playlist, filePath);
+            }
+            close();
+        }
+        onAccepted: {
+            if (!answered) {
+                answered = true;
+                root.playlistEditController.addAnyway(playlist, filePath);
+            }
+        }
+        onRejected: drop()
+    }
+    Connections {
+        target: root.playlistEditController
+        ignoreUnknownSignals: true
+        function onAdditionNeedsLibraries(playlist, filePath, title, missing, toIndex, added) {
+            missingLibrariesDialog.playlist = playlist;
+            missingLibrariesDialog.filePath = filePath;
+            missingLibrariesDialog.trackTitle = title;
+            missingLibrariesDialog.missing = missing;
+            missingLibrariesDialog.added = added ?? [];
+            missingLibrariesDialog.open();
+        }
     }
 
     // The list's last row: a name for a new, empty playlist, made in every
@@ -2052,11 +2151,9 @@ Page {
         // at a place in the list, the add carries that place.
         onAddChosen: playlist => root.addDraggedTrack(playlist)
         // The halves staged in this order: the add is looked up first.
-        onMoveChosen: (playlist, fromPlaylist) => {
-            root.addDraggedTrack(playlist);
-            root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, fromPlaylist,
-                                                           trackDrag.filePath, trackDrag.title);
-        }
+        // The removal from the source is staged with the add, after it,
+        // or not at all when the add is not (see missingLibrariesDialog).
+        onMoveChosen: (playlist, fromPlaylist) => root.addDraggedTrack(playlist, fromPlaylist)
     }
 
     // While a track is dragged, the sidebar and the track list scroll when
@@ -2089,12 +2186,13 @@ Page {
 
     // One add, at the place the track was let go when it was (-1: at the
     // end): one change on the Save button, not an add and a move.
-    function addDraggedTrack(playlist) {
+    function addDraggedTrack(playlist, moveFrom) {
         if (trackDrag.targetIndex >= 0) {
             root.settle(trackDrag.targetIndex);
         }
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
-                                                  trackDrag.filePath, trackDrag.title, trackDrag.targetIndex);
+                                                  trackDrag.filePath, trackDrag.title, trackDrag.targetIndex,
+                                                  moveFrom ?? "");
     }
 
     BusyOverlay {
