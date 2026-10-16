@@ -42,6 +42,30 @@ Rectangle {
     // menu here. The Matching page's combo ignores it.
     signal contextRequested()
 
+    // The playlist's summary (PlaylistSummaryPopup.qml), beside the row
+    // after this long a hover; the pointer leaving, a press or the wheel
+    // closes it. Off unless the host turns it on: the Matching page's
+    // combo shows these rows inside a popup of its own, where a second
+    // one would only be in the way. A host turns it off again while the
+    // pointer is busy with something else (a drag).
+    property bool summaryEnabled: false
+    property int summaryDelay: 1500
+    // Asked when the summary opens, not before, so a row merely passed
+    // over works nothing out: ScanController.playlistSummary()'s map.
+    property var summaryFor: () => ({})
+    property string keyNotation: "camelot"
+    // What summaryFor() answered as the summary opened.
+    property var summary: ({})
+    function closeSummary() {
+        summaryTimer.stop();
+        summaryLoader.active = false;
+    }
+    onSummaryEnabledChanged: {
+        if (!root.summaryEnabled) {
+            root.closeSummary();
+        }
+    }
+
     // The same fallback the other two pickers needed. This delegate is
     // used inside a ComboBox popup on the Matching page as well as in a
     // plain list, and in the popup the rows are built through a
@@ -67,6 +91,12 @@ Rectangle {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: mouse => mouse.button === Qt.RightButton ? root.contextRequested() : root.picked()
         onPressAndHold: root.contextRequested()
+        onPressed: root.closeSummary()
+        // Passed on, so the list still scrolls.
+        onWheel: wheel => {
+            root.closeSummary();
+            wheel.accepted = false;
+        }
     }
 
     RowLayout {
@@ -105,6 +135,40 @@ Rectangle {
         onDropped: drop => {
             drop.accept(Qt.CopyAction);
             root.trackDropped();
+        }
+    }
+
+    // A handler, not the MouseArea's own hover: under org.kde.desktop a
+    // Label carries a HoverHandler of its own, and the MouseArea under
+    // the row's labels never hears the pointer arrive.
+    HoverHandler {
+        id: summaryHover
+        enabled: root.summaryEnabled
+        onHoveredChanged: {
+            if (summaryHover.hovered) {
+                summaryTimer.restart();
+            } else {
+                root.closeSummary();
+            }
+        }
+    }
+    Timer {
+        id: summaryTimer
+        interval: root.summaryDelay
+        onTriggered: {
+            root.summary = root.summaryFor();
+            summaryLoader.active = true;
+        }
+    }
+    Loader {
+        id: summaryLoader
+        objectName: "summaryLoader"
+        active: false
+        sourceComponent: PlaylistSummaryPopup {
+            row: root
+            title: root.name
+            summary: root.summary
+            notation: root.keyNotation
         }
     }
 }

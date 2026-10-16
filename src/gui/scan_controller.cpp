@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -1057,6 +1058,92 @@ QVariantMap ScanController::keyRelation(const QString &keyA, const QString &keyB
         break;
     }
     return m;
+}
+
+QVariantMap ScanController::playlistSummary(const QString &playlist) const
+{
+    // Covers a summary shows: the popup's mosaic has room for four.
+    constexpr int kSummaryCovers = 4;
+
+    const std::string name = playlist.toStdString();
+    // In the playlist's own order, so the covers are the ones its first
+    // tracks have; the library's in scan order, as Browse lists it.
+    std::vector<std::pair<int, const domain::Track *>> entries;
+    for (const auto &track : m_allTracks) {
+        if (name.empty()) {
+            entries.emplace_back(0, &track);
+            continue;
+        }
+        for (const auto &membership : track.playlists) {
+            if (membership.name == name) {
+                entries.emplace_back(membership.position, &track);
+            }
+        }
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+
+    // Keyed by wheel position, minor (A) before major (B), so the pie's
+    // slices go round the wheel and neighbouring keys sit side by side.
+    struct KeyCount
+    {
+        std::string key;
+        int count = 0;
+    };
+    std::map<std::pair<int, int>, KeyCount> byWheel;
+    int unknownKeys = 0;
+    double bpmMin = 0.0;
+    double bpmMax = 0.0;
+    double totalSeconds = 0.0;
+    int withCues = 0;
+    QVariantList artwork;
+    std::set<QString> coversSeen;
+    for (const auto &[position, track] : entries) {
+        if (const auto wheel = domain::CamelotKey::parse(track->key)) {
+            KeyCount &slot = byWheel[{wheel->number, wheel->isMinor ? 0 : 1}];
+            if (slot.count == 0) {
+                slot.key = track->key;
+            }
+            ++slot.count;
+        } else {
+            ++unknownKeys;
+        }
+        if (track->bpm > 0.0) {
+            bpmMin = bpmMin > 0.0 ? std::min(bpmMin, track->bpm) : track->bpm;
+            bpmMax = std::max(bpmMax, track->bpm);
+        }
+        totalSeconds += track->durationSeconds;
+        if (!track->cues.empty()) {
+            ++withCues;
+        }
+        if (artwork.size() < kSummaryCovers) {
+            const QString source = m_model.artworkFor(*track);
+            if (!source.isEmpty() && coversSeen.insert(source).second) {
+                artwork << QVariantMap{{"source", source}, {"fallbackSource", m_model.fallbackArtworkFor(*track)}};
+            }
+        }
+    }
+
+    QVariantList keys;
+    for (const auto &[wheel, slot] : byWheel) {
+        keys << QVariantMap{{"camelot", QString::number(wheel.first) + (wheel.second == 0 ? "A" : "B")},
+                            {"key", QString::fromStdString(slot.key)},
+                            {"count", slot.count}};
+    }
+    if (unknownKeys > 0) {
+        keys << QVariantMap{{"camelot", QString()}, {"key", QString()}, {"count", unknownKeys}};
+    }
+
+    const int count = static_cast<int>(entries.size());
+    QVariantMap summary;
+    summary["count"] = count;
+    summary["keys"] = keys;
+    summary["bpmMin"] = bpmMin;
+    summary["bpmMax"] = bpmMax;
+    summary["totalDurationSeconds"] = totalSeconds;
+    summary["withCues"] = withCues;
+    summary["withoutCues"] = count - withCues;
+    summary["artwork"] = artwork;
+    return summary;
 }
 
 void ScanController::setBusy(bool busy)

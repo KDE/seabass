@@ -51,6 +51,12 @@ ListView {
     signal createRequested()
     // A playlist staged to be created was clicked.
     signal newPlaylistPicked(string name)
+    // Hovering a playlist shows its summary (PlaylistSummaryPopup.qml),
+    // "All tracks" the whole library's. Switched off while the pointer
+    // is busy with something else, such as dragging tracks onto a row.
+    property bool summariesEnabled: true
+    property int summaryDelay: 1500
+    property string keyNotation: "camelot"
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
@@ -77,6 +83,10 @@ ListView {
         pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
+        summaryEnabled: root.summariesEnabled
+        summaryDelay: root.summaryDelay
+        summaryFor: () => root.scanController.playlistSummary(index === 0 ? "" : modelData)
+        keyNotation: root.keyNotation
         onPicked: root.playlistPicked(index, modelData)
         acceptsTrackDrop: root.trackDropsEnabled && index > 0 && modelData !== root.shownPlaylist && !pendingDelete
         heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData

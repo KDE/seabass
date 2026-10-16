@@ -1011,6 +1011,7 @@ Page {
                 canCreate: root.playlistEditing
                 newPlaylists: root.newPlaylistNames
                 shownPlaylist: root.shownPlaylist
+                keyNotation: root.appSettingsController.keyNotation
                 onNewPlaylistPicked: name => root.selectPlaylist(-1, name)
                 onCreateRequested: root.openCreatePlaylistDialog()
                 // A dragged track is dropped on a playlist row; the card

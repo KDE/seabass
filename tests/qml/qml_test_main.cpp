@@ -715,6 +715,19 @@ public:
 
     Q_INVOKABLE QString missingArtwork() const { return m_artDir.filePath(QStringLiteral("not-there.jpg")); }
 
+    // A cover in one flat colour ("#rrggbb"), as a file:// URL: tells the
+    // tiles of a playlist's cover mosaic apart in a grab.
+    Q_INVOKABLE QString colouredArtworkUrl(const QString &colour)
+    {
+        const QString file = m_artDir.filePath(QStringLiteral("cover-%1.png").arg(QString(colour).remove('#')));
+        if (!QFile::exists(file)) {
+            QImage image(64, 64, QImage::Format_RGB32);
+            image.fill(QColor(colour));
+            image.save(file);
+        }
+        return QUrl::fromLocalFile(file).toString();
+    }
+
     // The same two as the file:// URLs an Image takes, spelled the way the
     // app spells them (gui/local_file_url.hpp). "file://" + path is only
     // right for a path that starts with "/": on Windows it gives

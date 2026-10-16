@@ -325,6 +325,22 @@ public:
     // argument order (keyA -> keyB); every other tag is symmetric.
     Q_INVOKABLE QVariantMap keyRelation(const QString &keyA, const QString &keyB) const;
 
+    // What hovering a playlist in Browse's sidebar shows
+    // (PlaylistSummaryPopup.qml), worked out from the tracks already in
+    // memory, so it costs nothing to ask on hover; an empty name is the
+    // whole library ("All tracks"). A track listed twice counts twice,
+    // as the sidebar's own count does.
+    //   count, totalDurationSeconds, withCues, withoutCues
+    //   bpmMin, bpmMax: over the tracks that have one, 0 when none does
+    //   keys: [{camelot, key, count}] in wheel order (1A, 1B, 2A ...),
+    //     enharmonic spellings folded into one wheel position, `key` the
+    //     first spelling met; the tracks without a key that parses last,
+    //     as one entry with camelot and key empty
+    //   artwork: [{source, fallbackSource}], the first few distinct
+    //     covers in the playlist's own order, as the list's rows serve
+    //     them (TrackListModel::artworkFor)
+    Q_INVOKABLE QVariantMap playlistSummary(const QString &playlist) const;
+
     // Backs Settings' "Hide tracks from streaming services" toggle.
     // Streaming tracks (Engine/TIDAL) still show up in m_allTracks (they
     // came from a real scan), this just excludes them from what
