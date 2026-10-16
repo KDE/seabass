@@ -26,7 +26,8 @@ constexpr int MaxTiles = 4;
 // The corners' radius, as a share of the side: the row's
 // Theme.cornerRadius / 2 at its 24 px.
 constexpr double CornerFraction = 1.0 / 12.0;
-const QLatin1Char Separator('|');
+// Hex digits on either side: a URL keeps it as it is, never encoded.
+const QLatin1Char Separator('.');
 
 // Where tile `i` of `n` goes, in fractions of the square: as
 // PlaylistCoverMosaic.qml's tileRect().
@@ -119,7 +120,7 @@ QString PlaylistThumbnailProvider::idForCovers(const QStringList &coverUrls)
         if (url.isEmpty()) {
             continue;
         }
-        const QString encoded = QString::fromLatin1(QUrl::toPercentEncoding(url));
+        const QString encoded = QString::fromLatin1(url.toUtf8().toHex());
         if (!parts.contains(encoded)) {
             parts << encoded;
         }
@@ -133,11 +134,8 @@ QString PlaylistThumbnailProvider::idForCovers(const QStringList &coverUrls)
 QStringList PlaylistThumbnailProvider::coverPathsFromId(const QString &id)
 {
     QStringList paths;
-    // The engine hands the id over partly decoded already (as it does the
-    // cover provider's); "|" is never left encoded, and decoding each part
-    // once more gives back the URL that was encoded.
     for (const QString &part : id.split(Separator, Qt::SkipEmptyParts)) {
-        const QUrl url(QUrl::fromPercentEncoding(part.toUtf8()));
+        const QUrl url(QString::fromUtf8(QByteArray::fromHex(part.toLatin1())));
         paths << (url.isLocalFile() ? url.toLocalFile() : QString());
     }
     return paths;

@@ -144,7 +144,17 @@ void theIdIsTheCovers()
     check(back.value(1) == QStringLiteral("/music/plain.jpg") && back.value(2) == QStringLiteral("/c.jpg")
               && back.value(3) == QStringLiteral("/d.jpg"),
           "in order");
-    check(id.count(QLatin1Char('|')) == 3, "three separators, none left from the paths");
+    check(id.count(QLatin1Char('.')) == 3, "three separators, none left from the paths");
+
+    // And as the QML engine hands it over: the id taken back out of the
+    // image URL it was put in (QQuickPixmap's own way). A separator the
+    // URL re-encodes ("|" became "%7C") ran every path into one.
+    const QUrl source(QStringLiteral("image://playlist-thumb/") + id);
+    const QString handed = source.toString(QUrl::RemoveScheme | QUrl::RemoveAuthority).mid(1);
+    const QStringList fromEngine = PlaylistThumbnailProvider::coverPathsFromId(handed);
+    check(fromEngine == back, "the same four covers through the engine's URL: "
+                                  + QString::number(fromEngine.size()).toStdString() + " "
+                                  + fromEngine.value(0).toStdString());
 }
 
 // Composed once: the second request reads the kept one, and so does the

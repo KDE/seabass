@@ -26,10 +26,15 @@ class CoverCache;
 // four: a long list of playlists decodes and draws a quarter of what
 // four tiles each would.
 //
-// The id is the playlist's first four distinct cover URLs, each
-// percent-encoded and joined by "|", which an encoded URL never holds:
-// nothing but the covers decides the image, so a playlist whose leading
-// covers change asks for a new one by itself. Made once and kept in the
+// The id is the playlist's first four distinct cover URLs, each written
+// out in hex (its UTF-8 bytes) and joined by ".": nothing but the covers
+// decides the image, so a playlist whose leading covers change asks for
+// a new one by itself. Hex and dots, because the id passes through the
+// QML engine as part of a URL, which re-encodes what it does not allow:
+// it was percent-encoding joined by "|", and the engine turned every "|"
+// into "%7C", so a playlist with more than one cover named one path that
+// does not exist and came back clear (Sebastian's stick, 2026-10-16).
+// Only digits, letters a to f and dots go through unchanged both ways. Made once and kept in the
 // cover cache under "playlist:<id>:<side>", read back before anything is
 // composed again, in this run or the next; old ones go with the cache's
 // own eviction. The tiles come from CoverCache::cover() too, so a cover
@@ -54,7 +59,8 @@ public:
     // The id for these cover URLs (file URLs, as ArtworkImage is given
     // them), the first four that are distinct and not empty; "" for none.
     static QString idForCovers(const QStringList &coverUrls);
-    // The local cover paths an id names, in order.
+    // The local cover paths an id names, in order: the id as the engine
+    // hands it over, or as made.
     static QStringList coverPathsFromId(const QString &id);
 
     // The thumbnail for an id at `side` device pixels: the kept one when

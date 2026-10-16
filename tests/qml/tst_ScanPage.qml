@@ -1329,9 +1329,7 @@ TestCase {
         compare(tile.visible, true);
         compare(Math.round(tile.width), Math.round(Theme.scaled(24)));
         const image = findChild(row, "playlistThumbnail");
-        const cover = browseFixture.presentArtworkUrl();
-        compare(image.source.toString(), "image://playlist-thumb/" + encodeURIComponent(cover),
-                "the id is the playlist's one cover");
+        verify(image.source.toString().startsWith("image://playlist-thumb/"), "the provider's");
         compare(t.controller.playlistThumbnails["Held Playlist"], image.source.toString());
         compare(t.controller.playlistThumbnails[""], image.source.toString(), "and All tracks has the same");
         compare(findChild(playlistRow(t, "All tracks"), "playlistThumbnail").source.toString(), image.source.toString());
@@ -1352,9 +1350,36 @@ TestCase {
         const otherUrl = browseFixture.colouredArtworkUrl("#2050c0");
         const t2 = makeThumbnailPage(decodeURIComponent(otherUrl.replace(/^file:\/\//, "")));
         const image2 = findChild(playlistRow(t2, "Held Playlist"), "playlistThumbnail");
-        compare(image2.source.toString(), "image://playlist-thumb/" + encodeURIComponent(otherUrl));
         verify(image2.source.toString() !== image.source.toString(), "a changed cover, a new key");
         tryCompare(image2, "status", Image.Ready, 5000);
+    }
+
+    // Four covers of their own, real JPEGs in folders as a stick has them:
+    // each comes back in its quarter of the row's thumbnail, through the
+    // engine's own image request. One cover alone did not show the
+    // trouble: a stick's playlists, with four, came back clear.
+    function test_aPlaylistOfFourCoversShowsAllFour() {
+        const t = makeThumbnailPage("distinct");
+        const row = playlistRow(t, "Held Playlist");
+        const image = findChild(row, "playlistThumbnail");
+        verify(image.source.toString().length > 0, "a source");
+        tryCompare(image, "status", Image.Ready, 5000);
+        waitForRendering(row);
+        const ground = testCase.Window.contentItem;
+        const grab = grabImage(ground);
+        const scale = grab.width / ground.width;
+        // Held Playlist holds the tracks in scan order: covers 0 to 3.
+        const quarters = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
+        for (let i = 0; i < 4; ++i) {
+            const at = image.mapToItem(ground, image.width * quarters[i][0], image.height * quarters[i][1]);
+            const got = grab.pixel(Math.round(at.x * scale), Math.round(at.y * scale));
+            const want = Qt.color(browseFixture.distinctArtworkColour(i));
+            verify(Math.abs(got.r - want.r) < 0.08 && Math.abs(got.g - want.g) < 0.08 && Math.abs(got.b - want.b) < 0.08,
+                   "cover " + i + " in its quarter: got " + got + ", want " + want);
+        }
+        // Held Reversed holds them the other way round: its own four.
+        const reversed = findChild(playlistRow(t, "Held Reversed"), "playlistThumbnail");
+        verify(reversed.source.toString() !== image.source.toString(), "another playlist order, another image");
     }
 
     // A playlist with no covers shows the neutral tile, the track glyph
