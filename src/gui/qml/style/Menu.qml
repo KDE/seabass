@@ -17,6 +17,11 @@ T.Menu {
     padding: 1
     overlap: 1
 
+    // What Menu.addMenu() and insertMenu() make a submenu's entry from.
+    // Without it they add nothing at all: Browse's row menu built its
+    // "Add to..." submenu that way and, on the Mac, never showed it.
+    delegate: MenuItem {}
+
     contentItem: ListView {
         implicitHeight: contentHeight
         model: control.contentModel
