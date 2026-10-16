@@ -386,4 +386,18 @@ TestCase {
                "a path with room to spare must not be abbreviated (width " + label.width
                + " vs implicit " + label.implicitWidth + ")");
     }
+
+    // An unmounted stick's row shades with the pointer over its name: under org.kde.desktop a Label has a
+    // HoverHandler of its own, and the MouseArea's hover under it never
+    // fired.
+    function test_anUnmountedRowShadesUnderItsName() {
+        const row = makeRow(makeStick({mounted: false, mountPoint: ""}));
+        const shade = named(row, "mountRowShade");
+        const label = named(row, "stickLabel");
+        verify(!Qt.colorEqual(shade.color, Theme.rowHover));
+        mouseMove(label, 4, label.height / 2);
+        tryVerify(() => Qt.colorEqual(shade.color, Theme.rowHover), 1000, "shaded under the name: " + shade.color);
+        mouseMove(testCase, testCase.width - 2, testCase.height - 2);
+        tryVerify(() => !Qt.colorEqual(shade.color, Theme.rowHover), 1000, "not once the pointer has gone");
+    }
 }

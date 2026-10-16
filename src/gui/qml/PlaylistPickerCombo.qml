@@ -47,11 +47,16 @@ ComboBox {
         height: 32
 
         color: rowMouseArea.pressed ? Theme.rowPressed
-            : rowMouseArea.containsMouse ? Theme.rowHover
+            : rowHover.hovered ? Theme.rowHover
             : (rowRoot.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
         border.color: rowRoot.index === root.currentIndex ? Theme.accent : "transparent"
         border.width: rowRoot.index === root.currentIndex ? 2 : 0
         radius: rowRoot.index === root.currentIndex ? 4 : 0
+
+        // Not rowMouseArea's own hover: under org.kde.desktop a Label
+        // carries a HoverHandler of its own, and the MouseArea under the
+        // row's name never hears the pointer arrive.
+        HoverHandler { id: rowHover }
 
         MouseArea {
             id: rowMouseArea
@@ -69,6 +74,7 @@ ComboBox {
             anchors.rightMargin: 8
             spacing: 6
             Label {
+                objectName: "pickerRowName"
                 text: rowRoot.modelData.name
                 Layout.fillWidth: true
                 elide: Text.ElideRight
