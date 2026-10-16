@@ -281,9 +281,10 @@ TestCase {
         compare(t.session.pendingCount, 0);
     }
 
-    // Browse's "Create new playlist" with the real controller: names it
-    // refuses, the one it stages listed until Save, made by Save in every
-    // library on the copy (so asking again is refused, naming them).
+    // Browse's "Create new playlist" and "Add to" with the real
+    // controller: names it refuses, the one it stages listed until Save,
+    // made by Save in every library on the copy (so asking again is
+    // refused, naming them), a track added to it in the same save.
     function test_aNewPlaylistIsMadeInEveryLibraryOnSave() {
         const t = scannedCopy(null);
         const engine = t.stick + "/Engine Library";
@@ -297,10 +298,29 @@ TestCase {
         compare(JSON.stringify(browse.newPlaylists), JSON.stringify(["Fresh Picks"]), "trimmed");
         verify(browse.isNewPlaylistStaged("Fresh Picks"));
         verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "asked twice");
-        compare(t.session.pendingCount, 1);
+        // And a track into it, in the same save.
+        verify(browse.addToPlaylist(t.pioneer, engine, "Fresh Picks", t.stick + "/Contents/795079.mp3", "A Track"),
+               browse.errorMessage);
+        compare(browse.lastAddPlaylist, "Fresh Picks");
+        compare(t.session.pendingCount, 2);
+        // A new playlist dropped takes the tracks staged into it along.
+        verify(browse.createPlaylist(t.pioneer, engine, "Gone Again"), browse.errorMessage);
+        verify(browse.addToPlaylist(t.pioneer, engine, "Gone Again", t.stick + "/Contents/795079.mp3", "A Track"));
+        compare(t.session.pendingCount, 4);
+        browse.dropNewPlaylist("Gone Again");
+        compare(t.session.pendingCount, 2, "the create and its add both gone");
+        verify(!browse.isAdditionStaged("Gone Again", t.stick + "/Contents/795079.mp3"));
         const summary = saveAndWait(t.session);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.written, 1, JSON.stringify(summary));
+        compare(summary.written, 2, JSON.stringify(summary));
+        // The anonymized fixture spells its paths differently per library,
+        // so only OneLibrary has a row for this file: the log says why the
+        // other two were left alone.
+        const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
+        verify(log.indexOf("playlist-create: created \"Fresh Picks\" in 3 libraries") >= 0, log);
+        verify(log.indexOf("to \"Fresh Picks\" in 1 libraries") >= 0, log);
+        verify(log.indexOf("not added to \"Fresh Picks\" there: rekordbox has no row for the file") >= 0, log);
+        verify(log.indexOf("not added to \"Fresh Picks\" there: Engine has no row for the file") >= 0, log);
         compare(browse.newPlaylists.length, 0, "made, so no longer pending");
         verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "the stick has it now");
         compare(browse.errorMessage, "There is already a playlist \"Fresh Picks\" (in rekordbox, OneLibrary, Engine).");

@@ -198,6 +198,48 @@ Page {
         readonly property bool canRemove: root.playlistEditing && root.shownPlaylist.length > 0 && filePath.length > 0
         readonly property bool staged: canRemove && root.playlistEditController.pendingRevision >= 0
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
+        // Adding to a playlist (Experimental): the playlists this stick
+        // has and the ones staged to be created, but not the one shown,
+        // which already holds the track.
+        readonly property bool canAdd: root.playlistEditing && filePath.length > 0 && !streaming
+        readonly property var addTargets: canAdd
+            ? scanController.playlistNames.concat(root.newPlaylistNames)
+                .filter(n => n !== root.shownPlaylist)
+            : []
+        // The playlist a track was last added to, when this stick has it.
+        readonly property string lastAdd: ("lastAddPlaylist" in root.playlistEditController)
+            && addTargets.indexOf(root.playlistEditController.lastAddPlaylist) >= 0
+            ? root.playlistEditController.lastAddPlaylist : ""
+        function addedTo(playlist) {
+            return root.playlistEditController.pendingRevision >= 0
+                && root.playlistEditController.isAdditionStaged(playlist, filePath);
+        }
+        function toggleAdd(playlist) {
+            if (addedTo(playlist)) {
+                root.playlistEditController.keepOutOfPlaylist(playlist, filePath);
+            } else {
+                root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
+                                                          filePath, row.title);
+            }
+        }
+        // The submenu only while it has somewhere to add to.
+        onAboutToShow: {
+            const shown = trackMenu.indexOfMenu(addToMenu) >= 0;
+            if (canAdd && addTargets.length > 0 && !shown) {
+                trackMenu.addMenu(addToMenu);
+            } else if (!(canAdd && addTargets.length > 0) && shown) {
+                trackMenu.removeMenu(addToMenu);
+            }
+        }
+        function indexOfMenu(menu) {
+            for (let i = 0; i < count; ++i) {
+                const item = itemAt(i);
+                if (item && item.subMenu === menu) {
+                    return i;
+                }
+            }
+            return -1;
+        }
         MenuItem {
             objectName: "mergeTrackItem"
             enabled: root.format !== "onelibrary" && !trackMenu.streaming
@@ -230,7 +272,47 @@ Page {
                 }
             }
         }
+        MenuSeparator {
+            visible: trackMenu.canAdd && !trackMenu.canRemove
+            height: visible ? implicitHeight : 0
+        }
+        MenuItem {
+            objectName: "addToLastPlaylistItem"
+            visible: trackMenu.lastAdd.length > 0
+            height: visible ? implicitHeight : 0
+            text: trackMenu.addedTo(trackMenu.lastAdd) ? qsTr("Don't add to \"%1\"").arg(trackMenu.lastAdd)
+                                                       : qsTr("Add to \"%1\"").arg(trackMenu.lastAdd)
+            onTriggered: trackMenu.toggleAdd(trackMenu.lastAdd)
+        }
     }
+
+    // The row menu's last entry: every playlist to add the track to, a
+    // tick on the ones it is staged into (picking one again takes it back).
+    Menu {
+        id: addToMenu
+        objectName: "addToMenu"
+        title: qsTr("Add to...")
+        Instantiator {
+            model: trackMenu.addTargets
+            delegate: MenuItem {
+                required property string modelData
+                objectName: "addTo_" + modelData
+                text: modelData
+                checkable: true
+                checked: trackMenu.filePath.length > 0 && trackMenu.addedTo(modelData)
+                onTriggered: {
+                    trackMenu.toggleAdd(modelData);
+                    // A click flips `checked` itself; the staging says.
+                    checked = Qt.binding(() => trackMenu.filePath.length > 0 && trackMenu.addedTo(modelData));
+                }
+            }
+            onObjectAdded: (index, object) => addToMenu.insertItem(index, object)
+            onObjectRemoved: (index, object) => addToMenu.removeItem(object)
+        }
+    }
+
+    readonly property var newPlaylistNames: ("newPlaylists" in root.playlistEditController)
+        ? root.playlistEditController.newPlaylists : []
 
     function openPlaylistMenu(name, row) {
         if (!root.playlistEditing) {
@@ -838,8 +920,7 @@ Page {
                 pendingRevision: root.playlistEditController.pendingRevision
                 onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
                 canCreate: root.playlistEditing
-                newPlaylists: ("newPlaylists" in root.playlistEditController)
-                    ? root.playlistEditController.newPlaylists : []
+                newPlaylists: root.newPlaylistNames
                 onCreateRequested: root.openCreatePlaylistDialog()
             }
         }

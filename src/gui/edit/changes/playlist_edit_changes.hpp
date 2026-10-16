@@ -84,6 +84,40 @@ private:
     QStringList m_libraries;
 };
 
+// Puts one file at the end of a playlist in every library on the stick
+// named, by path: an export.pdb entry appended as rekordbox does, a
+// OneLibrary row after the last, an Engine entry linked last. A library
+// whose playlist already holds the file, or that has no row for the file
+// (an Engine-only track has no export.pdb row), is left alone and the log
+// says so; nothing added anywhere is a skip. The playlist may be one a
+// CreatePlaylistChange staged before it makes in the same save.
+class AddToPlaylistChange : public PendingChange
+{
+public:
+    AddToPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string filePath, QString title,
+                        QStringList libraries);
+
+    static QString idFor(const std::string &playlist, const std::string &filePath);
+
+    QString id() const override;
+    QString owner() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+private:
+    QString m_pioneerRoot;
+    QString m_enginePath;
+    std::string m_playlist;
+    std::string m_filePath;
+    QString m_title;
+    QStringList m_libraries;
+};
+
 // Takes one file out of a playlist in every library on the stick that has
 // both, by path: export.pdb's entries rewritten as rekordbox does, the
 // OneLibrary rows renumbered, the Engine entry unlinked. A library whose
