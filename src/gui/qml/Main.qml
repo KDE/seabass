@@ -340,7 +340,8 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        StackView {
+        // Pages cross-fade as one tool gives way to the next.
+        FadeStackView {
             id: stackView
             Layout.fillWidth: true
             Layout.fillHeight: true
