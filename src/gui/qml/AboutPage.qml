@@ -119,9 +119,11 @@ Page {
                 spacing: Theme.rowSpacing * 2
                 ColumnLayout {
                     id: headBlock
+                    // The left half, from the top.
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.preferredWidth: 0
+                    Layout.alignment: Qt.AlignTop
                     spacing: 10
 
                     ColumnLayout {
@@ -196,13 +198,15 @@ Page {
                 Image {
                     objectName: "aboutLogo"
                     source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
-                    // Twice the name block's height on a side (Sebastian,
-                    // 2026-10-16): the fish is the page's picture, not a badge.
-                    Layout.preferredWidth: nameBlock.implicitHeight * 2
-                    Layout.preferredHeight: nameBlock.implicitHeight * 2
-                    Layout.alignment: Qt.AlignTop
-                    sourceSize.width: Math.ceil(nameBlock.implicitHeight * 2)
-                    sourceSize.height: Math.ceil(nameBlock.implicitHeight * 2)
+                    // The right half of the head, the fish's own shape (1024 by
+                    // 613), standing on the rule under it (Sebastian's sketch,
+                    // 2026-10-16: titles left half, mascot right half).
+                    readonly property real half: (parent.width - parent.spacing) / 2
+                    Layout.preferredWidth: half
+                    Layout.preferredHeight: half * 613 / 1024
+                    Layout.alignment: Qt.AlignBottom | Qt.AlignRight
+                    sourceSize.width: Math.ceil(half)
+                    sourceSize.height: Math.ceil(half * 613 / 1024)
                     fillMode: Image.PreserveAspectFit
                 }
             }
