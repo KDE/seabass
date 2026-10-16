@@ -167,6 +167,21 @@ TestCase {
         compare(labels[1].text, "new");
     }
 
+    // The pointer over a row's text shades the row, not just over its
+    // margins: under org.kde.desktop a Label has a HoverHandler of its
+    // own, and a MouseArea's hover under it never fired.
+    function test_aPlaylistRowShadesUnderItsName() {
+        const row = createTemporaryObject(playlistRowComponent, testCase, {name: "Peak Time", count: 12, y: 40});
+        waitForRendering(row);
+        const name = row.children[1].children[0];
+        compare(name.text, "Peak Time");
+        verify(!Qt.colorEqual(row.color, Theme.rowHover));
+        mouseMove(name, 4, name.height / 2);
+        tryVerify(() => Qt.colorEqual(row.color, Theme.rowHover), 1000, "shaded under the name: " + row.color);
+        mouseMove(testCase, testCase.width - 2, testCase.height - 2);
+        tryVerify(() => !Qt.colorEqual(row.color, Theme.rowHover), 1000, "and not once the pointer has gone");
+    }
+
     // A Matching result's menu button opens Browse's row menu for it,
     // Add to included; no "Remove from" for a track not in the playlist
     // shown.
@@ -823,6 +838,22 @@ TestCase {
         const held = makeHeldPage(3);
         const bottom = held.list.mapToItem(held.page, 0, held.list.height).y;
         verify(held.page.height - bottom <= 1, "list ends at " + bottom + " of " + held.page.height);
+        browseFixture.releaseCues();
+    }
+
+    // A track row shades under its title, as a playlist row does.
+    function test_aTrackRowShadesUnderItsTitle() {
+        const held = makeHeldPage(3);
+        const row = held.list.itemAtIndex(1);
+        const shade = findChild(row, "rowHoverShade");
+        const cell = findChild(row, "rowCell_title");
+        verify(shade !== null && cell !== null);
+        verify(!shade.hovered);
+        mouseMove(cell, 4, cell.height / 2);
+        tryVerify(() => shade.hovered, 1000, "shaded under the title");
+        tryCompare(shade, "opacity", 1, 2000);
+        mouseMove(held.page, 2, 2);
+        tryVerify(() => !shade.hovered, 1000, "and not once the pointer has gone");
         browseFixture.releaseCues();
     }
 
