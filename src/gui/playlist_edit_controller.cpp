@@ -92,6 +92,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                     m_staged.clear();
                     m_additions.clear();
                     m_removals.clear();
+                    m_moves.clear();
                     m_newPlaylists.clear();
                     ++m_pendingRevision;
                     emit pendingChanged();
@@ -234,7 +235,69 @@ bool PlaylistEditController::isPlaylistEdited(const QString &playlist) const
 {
     const auto staged = [&](const auto &c) { return std::get<1>(c) == playlist && m_staged.count(std::get<0>(c)) > 0; };
     return std::any_of(m_additions.begin(), m_additions.end(), staged)
-        || std::any_of(m_removals.begin(), m_removals.end(), staged);
+        || std::any_of(m_removals.begin(), m_removals.end(), staged)
+        || std::any_of(m_moves.begin(), m_moves.end(), staged);
+}
+
+bool PlaylistEditController::moveInPlaylist(const QString &rekordboxPath, const QString &enginePath,
+                                            const QString &playlist, const QString &filePath, const QString &title,
+                                            int toIndex)
+{
+    setErrorMessage({});
+    if (playlist.isEmpty() || filePath.isEmpty() || toIndex < 0 || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    const std::string name = playlist.toStdString();
+    lookUp(rekordboxPath, enginePath, name, [=, this](const PlaylistWhereabouts &where) {
+        // A playlist staged to be created holds only what is staged into
+        // it, and is written in every library on the stick.
+        const QStringList libraries = isNewPlaylistStaged(playlist) ? where.onStick : where.having;
+        if (libraries.isEmpty()) {
+            setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+            return;
+        }
+        if (!where.several.isEmpty()) {
+            setErrorMessage(ambiguous(playlist, where.several));
+            return;
+        }
+        const std::string file = filePath.toStdString();
+        if (!m_session->stage(
+                std::make_unique<MoveInPlaylistChange>(rekordboxPath, enginePath, name, file, title, toIndex, libraries))) {
+            return;
+        }
+        // The same id: the session replaced the move staged before, and
+        // the preview takes this one, last.
+        const QString id = MoveInPlaylistChange::idFor(name, file);
+        m_staged.insert(id);
+        std::erase_if(m_moves, [&](const auto &m) { return std::get<0>(m) == id; });
+        m_moves.emplace_back(id, playlist, filePath, toIndex);
+        ++m_pendingRevision;
+        emit pendingChanged();
+    });
+    return true;
+}
+
+void PlaylistEditController::keepPositionInPlaylist(const QString &playlist, const QString &filePath)
+{
+    unstage(MoveInPlaylistChange::idFor(playlist.toStdString(), filePath.toStdString()));
+}
+
+bool PlaylistEditController::isMoveStaged(const QString &playlist, const QString &filePath) const
+{
+    return m_staged.count(MoveInPlaylistChange::idFor(playlist.toStdString(), filePath.toStdString())) > 0;
+}
+
+QVariantMap PlaylistEditController::pendingMoves() const
+{
+    QVariantMap moves;
+    for (const auto &[id, playlist, file, toIndex] : m_moves) {
+        if (m_staged.count(id) > 0) {
+            QVariantList list = moves.value(playlist).toList();
+            list << QVariantMap{{QStringLiteral("filePath"), file}, {QStringLiteral("toIndex"), toIndex}};
+            moves[playlist] = list;
+        }
+    }
+    return moves;
 }
 
 bool PlaylistEditController::isAdditionStaged(const QString &playlist, const QString &filePath) const
@@ -244,12 +307,13 @@ bool PlaylistEditController::isAdditionStaged(const QString &playlist, const QSt
 
 void PlaylistEditController::dropNewPlaylist(const QString &name)
 {
-    // The tracks staged into it go with it: without the playlist there
-    // is nothing to add them to.
-    const QString prefix = AddToPlaylistChange::idFor(name.toStdString(), std::string());
+    // The tracks staged into it go with it, and their moves: without the
+    // playlist there is nothing to add them to.
+    const QString addPrefix = AddToPlaylistChange::idFor(name.toStdString(), std::string());
+    const QString movePrefix = MoveInPlaylistChange::idFor(name.toStdString(), std::string());
     std::vector<QString> adds;
     for (const QString &id : m_staged) {
-        if (id.startsWith(prefix)) {
+        if (id.startsWith(addPrefix) || id.startsWith(movePrefix)) {
             adds.push_back(id);
         }
     }
@@ -269,6 +333,7 @@ void PlaylistEditController::forgetUnstagedNewPlaylists()
     m_newPlaylists.removeIf([this](const QString &name) { return !isNewPlaylistStaged(name); });
     std::erase_if(m_additions, [this](const auto &a) { return m_staged.count(std::get<0>(a)) == 0; });
     std::erase_if(m_removals, [this](const auto &r) { return m_staged.count(std::get<0>(r)) == 0; });
+    std::erase_if(m_moves, [this](const auto &m) { return m_staged.count(std::get<0>(m)) == 0; });
 }
 
 bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist)

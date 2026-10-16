@@ -26,10 +26,10 @@ namespace seabass::gui
 class LibraryEditSession;
 
 // Browse's playlist editing (Experimental): creating a playlist, deleting
-// one and taking a track out of one, staged into the stick's edit session
-// like an added cue, so the page's Save writes them into every library on
-// the stick (CreatePlaylistChange; DeletePlaylistChange and
-// RemoveFromPlaylistChange where the playlist is).
+// one, adding a track to one, taking it out or moving it within one,
+// staged into the stick's edit session like an added cue, so the page's
+// Save writes them into every library on the stick (CreatePlaylistChange;
+// the others where the playlist is).
 class PlaylistEditController : public QObject
 {
     Q_OBJECT
@@ -44,6 +44,11 @@ class PlaylistEditController : public QObject
     // list in the order they were added: Browse shows them in their
     // playlist until Save writes them.
     Q_PROPERTY(QVariantMap pendingAdditions READ pendingAdditions NOTIFY pendingChanged)
+    // The tracks staged to move within a playlist, as {playlist:
+    // [{filePath, toIndex}]}, each list in the order they were moved (a
+    // track moved again counts as moved last): Browse shows them at their
+    // new place until Save writes them.
+    Q_PROPERTY(QVariantMap pendingMoves READ pendingMoves NOTIFY pendingChanged)
     // The playlist a track was last added to, for the row menu's
     // shortcut; empty until one was. Kept in the settings, across pages,
     // sticks and restarts (the menu leaves it out where the stick has no
@@ -61,6 +66,7 @@ public:
     int pendingRevision() const { return m_pendingRevision; }
     QStringList newPlaylists() const { return m_newPlaylists; }
     QVariantMap pendingAdditions() const;
+    QVariantMap pendingMoves() const;
     QString lastAddPlaylist() const;
     bool busy() const { return m_busy; }
 
@@ -86,10 +92,17 @@ public:
                                    const QString &filePath, const QString &title);
     Q_INVOKABLE void keepOutOfPlaylist(const QString &playlist, const QString &filePath);
     Q_INVOKABLE bool isAdditionStaged(const QString &playlist, const QString &filePath) const;
+    // The file to `toIndex` (from 0) in `playlist`'s order as Browse shows
+    // it, in every library on the stick that has the playlist. Moving it
+    // again replaces the move staged before.
+    Q_INVOKABLE bool moveInPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                    const QString &filePath, const QString &title, int toIndex);
+    Q_INVOKABLE void keepPositionInPlaylist(const QString &playlist, const QString &filePath);
+    Q_INVOKABLE bool isMoveStaged(const QString &playlist, const QString &filePath) const;
     // Tracks staged into `playlist` less those staged out of it: what its
     // count becomes at Save.
     Q_INVOKABLE int trackCountChange(const QString &playlist) const;
-    // A track is staged into or out of `playlist`.
+    // A track is staged into, out of or within `playlist`.
     Q_INVOKABLE bool isPlaylistEdited(const QString &playlist) const;
     Q_INVOKABLE void keepPlaylist(const QString &playlist);
     Q_INVOKABLE void keepInPlaylist(const QString &playlist, const QString &filePath);
@@ -116,7 +129,8 @@ private:
     void setErrorMessage(const QString &message);
     void unstage(const QString &changeId);
     // Drops from m_newPlaylists every name whose create is no longer
-    // staged, and from m_additions and m_removals every change that is not.
+    // staged, and from m_additions, m_removals and m_moves every change
+    // that is not.
     void forgetUnstagedNewPlaylists();
 
     QPointer<LibraryEditSession> m_session;
@@ -137,6 +151,8 @@ private:
     std::vector<std::tuple<QString, QString, QString>> m_additions;
     // The same for every removal staged.
     std::vector<std::tuple<QString, QString, QString>> m_removals;
+    // Every move staged, in order, as (change id, playlist, file, index).
+    std::vector<std::tuple<QString, QString, QString, int>> m_moves;
     int m_pendingRevision = 0;
     QString m_errorMessage;
 };

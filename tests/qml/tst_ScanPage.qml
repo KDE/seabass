@@ -102,6 +102,18 @@ TestCase {
             }
             function isPlaylistStaged(playlist) { return staged["p:" + playlist] === true; }
             function isRemovalStaged(playlist, filePath) { return staged["r:" + playlist + "|" + filePath] === true; }
+            function moveInPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex) {
+                calls.push(["move", rekordboxPath, enginePath, playlist, filePath, title, toIndex]);
+                staged["m:" + playlist + "|" + filePath] = true;
+                pendingRevision++;
+                return true;
+            }
+            function keepPositionInPlaylist(playlist, filePath) {
+                calls.push(["keepPosition", playlist, filePath]);
+                delete staged["m:" + playlist + "|" + filePath];
+                pendingRevision++;
+            }
+            function isMoveStaged(playlist, filePath) { return staged["m:" + playlist + "|" + filePath] === true; }
         }
     }
 
@@ -124,6 +136,7 @@ TestCase {
             property string title: "A Track"
             property string streamingSource: ""
             property bool pendingAddition: false
+            property bool pendingMove: false
         }
     }
 
@@ -201,6 +214,32 @@ TestCase {
         item.triggered();
         compare(JSON.stringify(page.playlistEditController.calls[0]),
                 JSON.stringify(["keepOut", "Peak", "/nonexistent/a.mp3"]));
+        menu.close();
+        cleanupExperimental();
+    }
+
+    // A row shown at a place a staged move gives it: its menu offers to
+    // keep it at its place, which takes the move back; a row not moved
+    // has no such entry.
+    function test_aTrackMovedWithinThePlaylistShownCanBeKeptAtItsPlace() {
+        const page = makeEditingPage(true);
+        const menu = findChild(page, "trackMenu");
+        const item = findChild(page, "keepPositionItem");
+        page.shownPlaylist = "Peak";
+        page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase), page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, false, "not moved");
+        menu.close();
+        tryCompare(menu, "visible", false);
+        const row = createTemporaryObject(fakeRowComponent, testCase, {pendingMove: true});
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, true);
+        compare(item.text, "Keep at its place in \"Peak\"");
+        compare(findChild(page, "removeFromPlaylistItem").text, "Remove from \"Peak\"", "a moved track can still go");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[0]),
+                JSON.stringify(["keepPosition", "Peak", "/nonexistent/a.mp3"]));
         menu.close();
         cleanupExperimental();
     }

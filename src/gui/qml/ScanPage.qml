@@ -203,6 +203,8 @@ Page {
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
         // In the playlist shown only because it is staged to be added.
         readonly property bool pendingAddition: canRemove && row !== null && row.pendingAddition === true
+        // At a place in the playlist shown that a staged move gives it.
+        readonly property bool pendingMove: canRemove && row !== null && row.pendingMove === true
         // Adding to a playlist (Experimental): the playlists this stick
         // has and the ones staged to be created, but not the one shown,
         // which already holds the track.
@@ -278,6 +280,13 @@ Page {
                 }
             }
         }
+        MenuItem {
+            objectName: "keepPositionItem"
+            visible: trackMenu.pendingMove
+            height: visible ? implicitHeight : 0
+            text: qsTr("Keep at its place in \"%1\"").arg(root.shownPlaylist)
+            onTriggered: root.playlistEditController.keepPositionInPlaylist(root.shownPlaylist, trackMenu.filePath)
+        }
         MenuSeparator {
             visible: trackMenu.canAdd && !trackMenu.canRemove
             height: visible ? implicitHeight : 0
@@ -330,7 +339,12 @@ Page {
     // The tracks staged into a playlist show in it, greyed, until Save.
     readonly property var pendingAdditions: ("pendingAdditions" in root.playlistEditController)
         ? root.playlistEditController.pendingAdditions : ({})
-    onPendingAdditionsChanged: scanController.setPendingAdditions(root.pendingAdditions)
+    onPendingAdditionsChanged: scanController.setPendingEdits(root.pendingAdditions, root.pendingMoves)
+    // The tracks staged to move within a playlist show at their new place,
+    // greyed, until Save.
+    readonly property var pendingMoves: ("pendingMoves" in root.playlistEditController)
+        ? root.playlistEditController.pendingMoves : ({})
+    onPendingMovesChanged: scanController.setPendingEdits(root.pendingAdditions, root.pendingMoves)
 
     function openPlaylistMenu(name, row) {
         if (!root.playlistEditing) {
@@ -1075,6 +1089,7 @@ Page {
                     required property string album
                     required property string fallbackArtworkPath
                     required property bool pendingAddition
+                    required property bool pendingMove
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -1250,9 +1265,11 @@ Page {
                                 Label {
                                     text: title
                                     font.bold: true
-                                    // Staged to be added to the playlist shown.
-                                    font.italic: trackDelegate.pendingAddition
-                                    color: trackDelegate.pendingAddition ? Theme.textMuted : palette.windowText
+                                    // Staged to be added to the playlist shown,
+                                    // or moved within it.
+                                    font.italic: trackDelegate.pendingAddition || trackDelegate.pendingMove
+                                    color: trackDelegate.pendingAddition || trackDelegate.pendingMove
+                                        ? Theme.textMuted : palette.windowText
                                     // Staged to come out of the playlist shown.
                                     font.strikeout: root.playlistEditing && root.shownPlaylist.length > 0
                                         && root.playlistEditController.pendingRevision >= 0
