@@ -116,7 +116,11 @@ TestCase {
         // The name block starts on the page's left line, with everything under it.
         compare(Math.round(head.mapToItem(page, 0, 0).x), Math.round(note.mapToItem(page, 0, 0).x),
                 "the name starts where the body does");
-        verify(Math.abs(mark.height - 2 * head.height) <= 2, "twice as tall as the block: " + mark.height + " vs " + head.height);
+        const row = findChild(page, "aboutHead");
+        verify(Math.abs(mark.width - (row.width - row.spacing) / 2) <= 1, "the right half: " + mark.width + " of " + row.width);
+        verify(Math.abs(mark.height - mark.width * 613 / 1024) <= 1, "the fish's own shape");
+        verify(Math.abs(mark.mapToItem(page, 0, mark.height).y - row.mapToItem(page, 0, row.height).y) <= 1,
+               "standing on the row's bottom, where the rule is");
         verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
         // The introduction is in the name's column, under the version.
         const intro = findChild(page, "aboutIntro");
