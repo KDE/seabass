@@ -19,6 +19,17 @@ derives the square forms the platforms want from it.
 Run from the repository root after a new mascot.png:
 
     python3 tools/make_app_icons.py
+
+The committed app_icon.icns is then remade on a Mac, because Pillow
+writes no 16 and 32 pixel images (Apple's icp4/icp5), which a non-Retina
+Mac draws in Finder's list view and Spotlight:
+
+    mkdir seabass.iconset
+    for s in 16 32 128 256 512; do
+        sips -z $s $s src/gui/qml/icons/seabass_icon.png --out seabass.iconset/icon_${s}x${s}.png
+        sips -z $((s*2)) $((s*2)) src/gui/qml/icons/seabass_icon.png --out seabass.iconset/icon_${s}x${s}@2x.png
+    done
+    iconutil -c icns -o src/gui/mac/app_icon.icns seabass.iconset
 """
 
 from pathlib import Path
