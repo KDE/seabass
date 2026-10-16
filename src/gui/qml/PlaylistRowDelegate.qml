@@ -115,7 +115,7 @@ Rectangle {
             font.strikeout: root.pendingDelete
             font.italic: root.pendingNew || root.edited || root.pendingRename
             font.bold: root.tracksEdited
-            color: root.pendingDelete || root.pendingNew || root.pendingRename ? Theme.textMuted : palette.windowText
+            color: root.pendingDelete || root.pendingNew || root.pendingRename ? Theme.textMuted : Theme.text
         }
         Label {
             objectName: "playlistRowCount"
