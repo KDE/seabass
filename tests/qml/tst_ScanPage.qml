@@ -244,6 +244,191 @@ TestCase {
         cleanupExperimental();
     }
 
+    // ---- Drop to reorder: a stand-in drag item with the playlist-dnd
+    // contract's keys and properties. ----
+
+    Component {
+        id: fakeDragComponent
+        Item {
+            width: 10
+            height: 10
+            Drag.keys: ["seabass/track"]
+            Drag.hotSpot.x: 5
+            Drag.hotSpot.y: 5
+            property string sourceId: "3"
+            property string filePath: "/nonexistent/d.mp3"
+            property string title: "Dragged"
+            property string artist: "Someone"
+            property double durationSeconds: 300
+            property double bpm: 124
+            property string key: "8A"
+            property string artworkPath: ""
+            property string fallbackArtworkPath: ""
+            property string streamingSource: ""
+            property var playlistNames: ["Peak"]
+        }
+    }
+
+    // The component alone, fed by a DropArea as ScanPage feeds it: five
+    // rows of 50, the dragged track the fourth (index 3).
+    Component {
+        id: dropHarnessComponent
+        Item {
+            width: 600
+            height: 400
+            property alias gap: harnessGap
+            property var moves: []
+            DropArea {
+                id: harnessArea
+                anchors.fill: parent
+                keys: ["seabass/track"]
+                onDropped: (drop) => {
+                    if (harnessGap.release()) {
+                        drop.accept(Qt.MoveAction);
+                    }
+                }
+            }
+            PlaylistDropGap {
+                id: harnessGap
+                anchors.fill: parent
+                draggedTrack: harnessArea.containsDrag ? harnessArea.drag.source : null
+                draggedIndex: draggedTrack ? Number(draggedTrack.sourceId) : -1
+                playlist: "Peak"
+                orderShown: true
+                hovering: harnessArea.containsDrag
+                pointerY: harnessArea.drag.y
+                rowHeight: 50
+                rowCount: 5
+                hoverDelay: 400
+                onMoveRequested: (filePath, title, toIndex) => moves.push([filePath, title, toIndex])
+            }
+        }
+    }
+
+    function dragOver(parent, props, x, y) {
+        const drag = createTemporaryObject(fakeDragComponent, parent, props || {});
+        drag.x = x - 5;
+        drag.y = y - 5;
+        drag.Drag.active = true;
+        return drag;
+    }
+
+    // Held over a gap for the delay, the gap opens: the rows below move
+    // down a row and the faded copy says where it goes; it then follows
+    // the pointer at once, and a release asks for the move, as the place
+    // the track takes afterwards.
+    function test_aTrackHeldOverAGapOpensItAndDropsThere() {
+        const h = createTemporaryObject(dropHarnessComponent, testCase);
+        const ghost = findChild(h.gap, "dropGapGhost");
+        const drag = dragOver(h, {}, 100, 52);
+        tryCompare(h.gap, "hovering", true);
+        compare(h.gap.gapIndex, -1, "not at once");
+        wait(150);
+        compare(h.gap.gapIndex, -1, "not before the delay");
+        compare(ghost.visible, false);
+        tryCompare(h.gap, "gapIndex", 1, 2000);
+        verify(ghost.visible);
+        compare(ghost.y, 50);
+        compare(findChild(h.gap, "dropGapLabel").text, "Move track here");
+        compare(findChild(h.gap, "dropGapTitle").text, "Dragged");
+        compare(h.gap.shiftFor(0), 0);
+        compare(h.gap.shiftFor(1), 50, "the rows from the gap on make room");
+        compare(h.gap.shiftFor(4), 50);
+        waitForRendering(h);
+        saveScreenshot(h, "browse_drop_gap");
+        // Over the copy it stays; below it, the rows' places count as they
+        // were before they moved down.
+        drag.y = 80 - 5;
+        tryCompare(h.gap, "pointerY", 80);
+        compare(h.gap.gapIndex, 1, "over the copy");
+        drag.y = 130 - 5;
+        tryCompare(h.gap, "pointerY", 130);
+        compare(h.gap.gapIndex, 2, "below the copy, a row lower: follows at once once open");
+        drag.y = 4 - 5;
+        tryCompare(h.gap, "pointerY", 4);
+        compare(h.gap.gapIndex, 0, "follows at once once open");
+        drag.Drag.drop();
+        compare(JSON.stringify(h.moves), JSON.stringify([["/nonexistent/d.mp3", "Dragged", 0]]));
+        compare(h.gap.gapIndex, -1, "closed after the drop");
+        verify(!ghost.visible);
+    }
+
+    // Below its own row the place counts without it: gap 5 (after the
+    // last of five) is place 4; the gaps on either side of its own row
+    // leave it where it is and ask for nothing.
+    function test_aDropBelowItsOwnRowCountsWithoutIt() {
+        const h = createTemporaryObject(dropHarnessComponent, testCase);
+        let drag = dragOver(h, {}, 100, 248);
+        tryCompare(h.gap, "gapIndex", 5, 2000);
+        drag.Drag.drop();
+        compare(JSON.stringify(h.moves), JSON.stringify([["/nonexistent/d.mp3", "Dragged", 4]]));
+        drag = dragOver(h, {}, 100, 198);
+        tryCompare(h.gap, "gapIndex", 4, 2000);
+        drag.Drag.drop();
+        drag = dragOver(h, {}, 100, 152);
+        tryCompare(h.gap, "gapIndex", 3, 2000);
+        drag.Drag.drop();
+        compare(h.moves.length, 1, "its own place asks for nothing");
+    }
+
+    // Leaving the list closes the gap; a track from another playlist, or a
+    // list not in the playlist's order, never opens one.
+    function test_theGapClosesOnLeavingAndOpensOnlyForThePlaylistsTracks() {
+        const h = createTemporaryObject(dropHarnessComponent, testCase);
+        let drag = dragOver(h, {}, 100, 100);
+        tryCompare(h.gap, "gapIndex", 2, 2000);
+        drag.x = 2000;
+        tryCompare(h.gap, "hovering", false);
+        compare(h.gap.gapIndex, -1, "closed on leaving");
+        drag.Drag.active = false;
+
+        drag = dragOver(h, {playlistNames: ["Other"]}, 100, 100);
+        tryCompare(h.gap, "hovering", true);
+        wait(h.gap.hoverDelay + 300);
+        compare(h.gap.gapIndex, -1, "not a track of the playlist shown");
+        drag.Drag.active = false;
+
+        h.gap.orderShown = false;
+        drag = dragOver(h, {}, 100, 100);
+        tryCompare(h.gap, "hovering", true);
+        wait(h.gap.hoverDelay + 300);
+        compare(h.gap.gapIndex, -1, "a sorted list has no places");
+        drag.Drag.drop();
+        compare(h.moves.length, 0);
+    }
+
+    // On the page: the drop area over the track list feeds the gap, and a
+    // drop at an open gap stages the move with the controller. Nothing is
+    // scanned here, so the list's rows are given to the gap by hand.
+    function test_theTrackListStagesAMoveDroppedOnIt() {
+        const page = makeEditingPage(true);
+        realAppSettings.hideStreamingTracks = false;
+        page.shownPlaylist = "Peak";
+        const list = findChild(page, "trackListView");
+        const gap = findChild(page, "playlistDropGap");
+        verify(gap !== null);
+        compare(gap.parent, list, "over the list, not its scrolling content");
+        compare(gap.hoverDelay, 1500);
+        verify(gap.orderShown, "the playlist's own order");
+        gap.hoverDelay = 300;
+        gap.draggedIndex = 3;
+        gap.rowCount = 5;
+        gap.rowHeight = 50;
+        const at = list.mapToItem(page, 100, 52);
+        const drag = dragOver(page, {}, at.x, at.y);
+        tryCompare(gap, "hovering", true);
+        compare(gap.draggedTrack, drag);
+        compare(gap.pointerY, 52);
+        tryCompare(gap, "gapIndex", 1, 3000);
+        drag.Drag.drop();
+        compare(JSON.stringify(page.playlistEditController.calls[0]), JSON.stringify(["move",
+                "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak",
+                "/nonexistent/d.mp3", "Dragged", 1]));
+        page.sortAscending = false;
+        verify(!gap.orderShown, "sorted the other way: no places");
+        cleanupExperimental();
+    }
+
     // Without Experimental: no playlist menu, and the row menu (Merge,
     // Find) has no "Remove from".
     function test_withoutExperimentalThereIsNoPlaylistEditing() {

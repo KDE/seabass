@@ -1068,6 +1068,11 @@ Page {
                     // its inline waveform (below) room to actually be
                     // legible instead of a sliver.
                     height: trackDelegate.isPlaying ? 64 : 56
+                    // Down a row while a dragged track's gap is open above it.
+                    transform: Translate {
+                        y: dropGap.shiftFor(trackDelegate.index)
+                        Behavior on y { NumberAnimation { duration: Theme.shortTransitionDuration } }
+                    }
 
                     required property int index
                     required property string sourceId
@@ -1367,6 +1372,45 @@ Page {
                     visible: trackListView.count === 0 && !scanController.busy
                     iconName: "edit-find"
                     text: "No tracks found."
+                }
+
+                // Dropping a track of the playlist shown between two rows
+                // moves it there (Experimental): the drag item carries the
+                // row's roles (Drag.keys ["seabass/track"]). Over the list
+                // itself, not its content, so they stay put as it scrolls.
+                DropArea {
+                    id: trackDropArea
+                    objectName: "trackDropArea"
+                    parent: trackListView
+                    anchors.fill: parent
+                    keys: ["seabass/track"]
+                    onDropped: (drop) => {
+                        if (dropGap.release()) {
+                            drop.accept(Qt.MoveAction);
+                        }
+                    }
+                }
+                PlaylistDropGap {
+                    id: dropGap
+                    objectName: "playlistDropGap"
+                    parent: trackListView
+                    anchors.fill: parent
+                    draggedTrack: trackDropArea.containsDrag ? trackDropArea.drag.source : null
+                    draggedIndex: draggedTrack && draggedTrack.sourceId !== undefined
+                        ? scanController.tracks.indexOfSourceId(draggedTrack.sourceId) : -1
+                    playlist: root.playlistEditing ? root.shownPlaylist : ""
+                    // The playlist whole, in its own order: sorted, searched
+                    // or with rows hidden, a row's place is not its place in
+                    // the playlist.
+                    orderShown: root.sortField === "playlist" && root.sortAscending && searchField.text.length === 0
+                        && !root.appSettingsController.hideStreamingTracks
+                    hovering: trackDropArea.containsDrag
+                    pointerY: trackDropArea.drag.y
+                    contentY: trackListView.contentY
+                    originY: trackListView.originY
+                    rowCount: trackListView.count
+                    onMoveRequested: (filePath, title, toIndex) => root.playlistEditController.moveInPlaylist(
+                        root.rekordboxPath, root.enginePath, root.shownPlaylist, filePath, title, toIndex)
                 }
             }
 
