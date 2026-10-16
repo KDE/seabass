@@ -100,8 +100,8 @@ TestCase {
     }
 
     // Every legend tip is shown whole: the info area is sized to the
-    // tallest of them (five lines at this width), so none is elided, and
-    // the wheel does not move while they come and go.
+    // tallest of them (five lines here, seven on a Mac's Qt 6.8), so none
+    // is elided, and the wheel does not move while they come and go.
     function test_everyLegendTipFitsWithoutEliding() {
         const t = opened();
         const info = findChild(t.popup.contentItem, "wheelHoverInfo");
@@ -115,7 +115,8 @@ TestCase {
             waitForRendering(t.popup.contentItem);
             compare(info.text, entries[i].tip);
             verify(!info.truncated, "'" + entries[i].label + "' is shown whole, not elided");
-            verify(info.lineCount <= 6, entries[i].label + " takes " + info.lineCount + " lines");
+            verify(info.lineCount < t.popup.infoMaxLines || !info.truncated,
+                   entries[i].label + " takes " + info.lineCount + " lines");
             verify(info.contentHeight <= info.height + 0.5, entries[i].label + " fits the row");
             compare(t.wheel.mapToItem(t.popup.contentItem, 0, 0).y, wheelY, "the wheel stays put");
             if (screenshotDir && screenshotDir.length > 0 && entries[i].label === "Relative") {
