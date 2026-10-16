@@ -2076,6 +2076,37 @@ uint32_t PdbRowWriter::createPlaylist(uint32_t parentId, const std::string &name
     return id;
 }
 
+bool PdbRowWriter::renamePlaylist(uint32_t id, const std::string &name)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("playlists live in export.pdb");
+    }
+    if (name.empty() || name.find('/') != std::string::npos) {
+        throw std::invalid_argument("a playlist name must be non-empty and hold no '/'");
+    }
+    const auto tree = treeRowsOf(m_buffer);
+    const auto node = std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.id == id; });
+    if (node == tree.end()) {
+        throw std::invalid_argument("export.pdb has no playlist " + std::to_string(id));
+    }
+    if (node->name == name) {
+        return false;
+    }
+    for (const auto &r : tree) {
+        if (r.parentId == node->parentId && r.id != id && r.name == name) {
+            throw std::invalid_argument("\"" + name + "\" is already there");
+        }
+    }
+    std::vector<TreeRowSlot> level = siblingsOf(m_buffer, node->parentId);
+    for (auto &slot : level) {
+        if (slot.id == id) {
+            slot.nameBytes = encodeDeviceSqlString(name);
+        }
+    }
+    rewriteTreeLevel(node->parentId, level);
+    return true;
+}
+
 size_t PdbRowWriter::deletePlaylist(uint32_t id)
 {
     const auto tree = treeRowsOf(m_buffer);

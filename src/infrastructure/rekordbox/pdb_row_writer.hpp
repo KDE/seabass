@@ -356,6 +356,17 @@ public:
     // many playlists and folders went (0 when there is no such id).
     size_t deletePlaylist(uint32_t id);
 
+    // Renames a playlist or folder (its children stay under it, so their
+    // paths follow): the level it is in is deleted and written again,
+    // sort_order 0 on, in its order, the node's name encoded as
+    // createPlaylist() encodes one, as rekordbox writes every change of a
+    // level (#62: create, reorder, delete). Its id, place and entries
+    // stay. Refuses as createPlaylist() does (an empty name, a '/', a name
+    // its level already has) and an id that is not there, changing
+    // nothing; PdbPageFull when the level cannot be placed. Returns false
+    // when the name is that already.
+    bool renamePlaylist(uint32_t id, const std::string &name);
+
     // Puts playlistId's entries in the order of trackIds, which must hold
     // exactly the tracks it has (std::invalid_argument otherwise): the
     // entries are deleted and added again, entry_index 1 on, as rekordbox

@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
@@ -39,6 +40,10 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "scratch_path.hpp"
+
+// After the project's headers: sqlcipher_dyn.hpp (through the OneLibrary
+// writer) declares names sqlite3.h defines as macros.
+#include <sqlite3.h>
 
 using namespace seabass;
 using namespace seabass::gui;
@@ -492,6 +497,169 @@ int main(int argc, char **argv)
         assertOrder({A05, A02, A04, A01, A03}, "level again");
     }
     std::cout << "case 9 (a track moved within a playlist in all three libraries) OK\n";
+
+    // 10. Renaming: Q1 to "Q One" in all three, read back by path with its
+    //     tracks in their order; a name taken, an ambiguous path and an
+    //     Engine library with a smart playlist filed by the name are left
+    //     alone, each said; a folder takes its children's paths along; a
+    //     name with "/" fails.
+    {
+        const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        const std::string mdb = pathToUtf8(library / "Database2" / "m.db");
+        const std::string logFile = infrastructure::backup::operationLogForStickRoot(
+            infrastructure::backup::stickRootForCatalogPath(pathToUtf8(library)));
+        const auto logText = [&]() {
+            std::ifstream in(pathFromUtf8(logFile));
+            std::stringstream all;
+            all << in.rdbuf();
+            return all.str();
+        };
+        const auto rename = [&](const std::string &from, const std::string &to, const QStringList &libraries) {
+            return std::make_shared<RenamePlaylistChange>(pioneerQ, libraryQ, from, to, libraries);
+        };
+        // Each library's tracks of the playlist at `path`, in its order:
+        // export.pdb's track ids, OneLibrary's content ids, Engine's ids.
+        const auto orderIn = [&](const std::string &path) {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            std::vector<uint32_t> pdb;
+            for (const auto &n : rows.playlistTree()) {
+                if (n.name == path) {
+                    pdb = rows.playlistTrackIds(n.id);
+                }
+            }
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            std::vector<int64_t> ol;
+            for (const auto &[content, seq] : w.playlistContent(path)) {
+                ol.push_back(content);
+            }
+            return std::make_tuple(pdb, ol, engineMembers(library, path));
+        };
+
+        const auto before = orderIn("Q1");
+        assert(std::get<0>(before).size() == 5 && std::get<1>(before).size() == 5 && std::get<2>(before).size() == 5);
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const auto targets = rename("Q1", "Q One", all)->filesToBackup(ctx);
+            assert(targets.size() == 3 && "every library it writes is backed up");
+            assert(targets[0].file == pdbPath && targets[0].label == "playlist-rename");
+            assert(targets[1].file == infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
+            assert(targets[2].file == mdb && targets[2].label == "playlist-rename");
+            assert(rename("Q1", "Q One", all)->id() == QStringLiteral("addcue:rename-playlist:Q1"));
+        }
+        auto result = save(rename("Q1", "Q One", all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q One").having == all && "renamed in all three");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q1").having.isEmpty() && "the old name is gone");
+        if (orderIn("Q One") != before) {
+            std::cerr << "a renamed playlist lost its tracks or their order\n";
+            assert(false);
+        }
+        assert(logText().find("playlist-rename: renamed \"Q1\" to \"Q One\" in 3 libraries") != std::string::npos);
+        {
+            // Still where it was among its siblings in export.pdb.
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            std::map<std::string, uint32_t> order;
+            for (const auto &n : rows.playlistTree()) {
+                if (n.parentId == 0) {
+                    order[n.name] = n.sortOrder;
+                }
+            }
+            assert(order.count("Q One") && order["Q One"] < order["Fresh"] && "kept its place in the level");
+        }
+
+        // A name taken: every library has "Fresher".
+        size_t mark = logText().size();
+        result = save(rename("Fresh", "Fresher", all));
+        assert(result.skippedIds.size() == 1 && "taken everywhere: a skip");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").having == all && "left alone");
+        for (const char *name : {"rekordbox", "OneLibrary", "Engine"}) {
+            assert(logText().substr(mark).find("not renamed in \"Fresh\" there: " + std::string(name)
+                                               + " has a playlist \"Fresher\" already")
+                   != std::string::npos);
+        }
+        assert(logText().substr(mark).find("playlist-rename: \"Fresh\" renamed nowhere, skipped") != std::string::npos);
+
+        // Engine's "AC/DC" names two playlists (case 6).
+        mark = logText().size();
+        result = save(rename("AC/DC", "Back", QStringList{QStringLiteral("engine")}));
+        assert(result.skippedIds.size() == 1);
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "AC/DC") == 2 && "both still there");
+        assert(logText().substr(mark).find("there: Engine has 2 playlists named \"AC/DC\"") != std::string::npos);
+
+        // A smart playlist filed under "Q One" in Engine: Engine is left
+        // alone, the other two are renamed.
+        {
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(mdb.c_str(), &db) == SQLITE_OK);
+            int tables = 0;
+            sqlite3_exec(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'Smartlist';",
+                         [](void *n, int, char **, char **) { ++*static_cast<int *>(n); return 0; }, &tables, nullptr);
+            assert(tables == 1 && "the Engine library has a Smartlist table to plant in");
+            assert(sqlite3_exec(db, "INSERT INTO Smartlist (listUuid, title, parentPlaylistPath, nextPlaylistPath, nextListUuid, rules) "
+                                    "VALUES ('u-1', 'Smart', 'Q One;', '', '', '');",
+                                nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(db);
+        }
+        mark = logText().size();
+        result = save(rename("Q One", "Q Two", all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assert(logText().substr(mark).find("not renamed in \"Q One\" there: Engine has 1 smart playlists filed by its name")
+               != std::string::npos);
+        assert(logText().substr(mark).find("renamed \"Q One\" to \"Q Two\" in 2 libraries") != std::string::npos);
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "Q One") == 1 && "Engine left alone");
+        assert((playlistWhereabouts(pioneerQ, libraryQ, "Q Two").having
+                == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
+        {
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(mdb.c_str(), &db) == SQLITE_OK);
+            assert(sqlite3_exec(db, "DELETE FROM Smartlist;", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(db);
+        }
+        result = save(rename("Q One", "Q Two", QStringList{QStringLiteral("engine")}));
+        assert(result.appliedIds.size() == 1 && playlistWhereabouts(pioneerQ, libraryQ, "Q Two").having == all);
+        assert(std::get<2>(orderIn("Q Two")) == std::get<2>(before) && "Engine's entries in their order");
+
+        // A folder: "Crate" holding "Inside" (with a02) in all three,
+        // renamed to "Box": the child's path follows, its track stays.
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            const uint32_t crate = rows.createPlaylist(0, "Crate", true);
+            const uint32_t inside = rows.createPlaylist(crate, "Inside", false);
+            rows.appendPlaylistEntries(inside, {A02.pdbId});
+            assert(rows.commit());
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            w.createPlaylist("", "Crate", true);
+            w.createPlaylist("Crate", "Inside", false);
+            w.addToPlaylist("Crate/Inside", file(A02));
+            infrastructure::engine::createEnginePlaylist(pathToUtf8(library), "Crate/Inside");
+            infrastructure::engine::insertIntoEnginePlaylist(pathToUtf8(library), "Crate/Inside", engineId[A02.relative],
+                                                             std::nullopt);
+        }
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate/Inside").having == all);
+        result = save(rename("Crate", "Box", all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Box/Inside").having == all && "the child follows");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate/Inside").having.isEmpty());
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate").having.isEmpty());
+        assert(engineMembers(library, "Box/Inside") == std::vector<std::int64_t>{engineId[A02.relative]});
+        assert(infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(pioneer)).playlistContent("Box/Inside").size() == 1);
+
+        // A name with a "/" fails, nothing written.
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const SaveLoopResult bad = runSaveLoop({rename("Fresh", "A/B", all)}, ctx);
+            assert(!bad.error.isEmpty() && "a name holding a slash fails");
+            assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").having == all);
+        }
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const SaveLoopResult bad = runSaveLoop({rename("Fresh", " Padded", all)}, ctx);
+            assert(!bad.error.isEmpty() && "an untrimmed name fails");
+            assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").having == all);
+            assert(playlistWhereabouts(pioneerQ, libraryQ, " Padded").having.isEmpty() && "written nowhere");
+        }
+    }
+    std::cout << "case 10 (a playlist and a folder renamed in all three libraries) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
