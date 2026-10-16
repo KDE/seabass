@@ -131,6 +131,19 @@ QStringList LibraryEditSession::pendingDescriptions() const
     return lines;
 }
 
+int LibraryEditSession::playlistsEdited() const
+{
+    std::set<QString> playlists;
+    for (const auto &change : m_changes) {
+        const QString playlist = change->playlistEdited();
+        if (playlist.isEmpty()) {
+            return 0;
+        }
+        playlists.insert(playlist);
+    }
+    return static_cast<int>(playlists.size());
+}
+
 void LibraryEditSession::setStickLabel(const QString &label)
 {
     if (m_stickLabel == label) {

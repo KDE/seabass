@@ -28,6 +28,7 @@ TestCase {
             property bool writing: false
             property int pendingCount: 0
             property var pendingDescriptions: []
+            property int playlistsEdited: 0
             property string writeLabel: ""
             property int writeCurrent: 0
             property int writeTotal: 0
@@ -181,6 +182,29 @@ TestCase {
         tryCompare(summary, "opened", true);
         findByObjectName(summary, "okButton").clicked();
         tryCompare(summary, "opened", false);
+    }
+
+    // Only playlist edits staged: the button names playlists, one or
+    // several; anything else staged, or a page with a label of its own,
+    // and it says what it said before.
+    function test_theSaveButtonNamesPlaylistsWhenOnlyThoseAreStaged() {
+        const t = makeHost();
+        t.session.dirty = true;
+        t.session.state = "editing";
+        t.session.pendingCount = 2;
+        const button = findByObjectName(t.host, "saveButton");
+        const label = findByObjectName(t.host, "saveButtonLabel");
+        compare(label.text, "Save");
+        t.session.playlistsEdited = 1;
+        compare(label.text, "Save Playlist");
+        t.session.playlistsEdited = 2;
+        compare(label.text, "Save Playlists");
+        verify(button.ToolTip.text.indexOf("Save Playlists: 2 change(s)") === 0, button.ToolTip.text);
+        t.session.playlistsEdited = 0;
+        compare(label.text, "Save", "something besides playlists staged");
+        t.session.playlistsEdited = 2;
+        t.host.saveLabel = "Clean Up";
+        compare(label.text, "Clean Up", "a page's own label stands");
     }
 
     function test_lockRefusalOpensTheLockedDialog() {

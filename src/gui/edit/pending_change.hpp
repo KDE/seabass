@@ -125,6 +125,13 @@ public:
     // most need to trust the message is the one where they just deleted
     // data.
     virtual QString verb() const { return QStringLiteral("written"); }
+    // The playlist this change makes, deletes, puts a track into, takes
+    // one out of or moves one within, by its full path; empty for every
+    // other change.
+    // The Save button says "Save Playlists" while every staged change
+    // names one (LibraryEditSession::playlistsEdited), so a user who only
+    // moved tracks between playlists is told what Save writes.
+    virtual QString playlistEdited() const { return {}; }
     // Catalog formats this change writes ("rekordbox", "engine",
     // "onelibrary"), for cache invalidation after the save.
     virtual QStringList formatsTouched() const = 0;

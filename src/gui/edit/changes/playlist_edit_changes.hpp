@@ -59,6 +59,7 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    QString playlistEdited() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -87,6 +88,7 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    QString playlistEdited() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -119,6 +121,7 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    QString playlistEdited() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -150,6 +153,7 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    QString playlistEdited() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -186,6 +190,7 @@ public:
     QString subject() const override;
     QString unit() const override;
     QString verb() const override;
+    QString playlistEdited() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
