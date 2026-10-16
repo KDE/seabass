@@ -236,6 +236,9 @@ ComboBox {
             Label {
                 objectName: "pickerRowName"
                 text: root.textAt(rowRoot.sourceIndex)
+                // Theme's, like the count beside it: the style's palette
+                // text is a light theme's on a Mac, dark on this popup.
+                color: Theme.text
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
