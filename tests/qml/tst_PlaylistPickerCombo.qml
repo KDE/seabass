@@ -172,6 +172,145 @@ TestCase {
         }
     }
 
+    // ---- Typing while the popup is open ----
+
+    readonly property var crateModel: ["All tracks", "Peak Time", "Warmup", "Deep House", "Peaky", "Techno Peak",
+                                      "Afterhours", "Ambient", "Broken Beat", "Warehouse"].map((n, i) => ({name: n, count: i}))
+
+    function openCrates(props) {
+        const combo = createTemporaryObject(comboComponent, testCase,
+                                            Object.assign({model: crateModel, width: 240}, props || {}));
+        mouseClick(combo);
+        tryVerify(() => combo.popup.opened, 3000, "opens");
+        return combo;
+    }
+
+    function type(text) {
+        for (const c of text) {
+            keyClick(c);
+        }
+    }
+
+    function shownNames(combo) {
+        return combo.shownRows.map(i => combo.textAt(i)).join(", ");
+    }
+
+    function currentName(combo) {
+        const list = combo.popup.contentItem;
+        return list.currentIndex < 0 ? "" : combo.textAt(combo.shownRows[list.currentIndex]);
+    }
+
+    // Typed quickly, the letters narrow the list to the names holding
+    // them anywhere, case folded; the first is current, and the field
+    // says what is typed.
+    function test_typingNarrowsToTheNamesHoldingIt() {
+        const combo = openCrates();
+        type("eak");
+        compare(combo.typedFilter, "eak");
+        compare(shownNames(combo), "Peak Time, Peaky, Techno Peak", "inside a name, not only at its start");
+        compare(combo.popup.contentItem.count, 3, "the popup lists those");
+        compare(currentName(combo), "Peak Time", "the first match is current");
+        compare(combo.displayText, "Filter: eak");
+        verify(combo.popup.visible, "still open");
+        combo.popup.close();
+    }
+
+    function test_theFilterFoldsCase() {
+        const combo = openCrates();
+        type("PEAK");
+        compare(shownNames(combo), "Peak Time, Peaky, Techno Peak");
+        combo.popup.close();
+    }
+
+    // After a pause longer than the interval the typing starts over: a
+    // letter alone then jumps, it does not narrow.
+    function test_aPauseStartsTheTypingOver() {
+        const combo = openCrates({typeAheadInterval: 150});
+        type("w");
+        compare(combo.typedFilter, "", "one letter alone narrows nothing");
+        compare(currentName(combo), "Warmup", "it jumps to the next name starting with it");
+        wait(400);
+        type("a");
+        compare(combo.typedFilter, "", "after the pause: started over, not \"wa\"");
+        compare(shownNames(combo).split(", ").length, 10, "the whole list");
+        compare(currentName(combo), "Afterhours");
+        type("m");
+        compare(combo.typedFilter, "am", "within the interval: a filter");
+        compare(shownNames(combo), "Ambient");
+        combo.popup.close();
+    }
+
+    // A letter after each pause goes to the next name with that initial,
+    // round the list.
+    function test_aLetterAloneJumpsToTheNextInitial() {
+        const combo = openCrates({typeAheadInterval: 100});
+        compare(currentName(combo), "All tracks", "opens on the playlist picked");
+        const seen = [];
+        for (let i = 0; i < 3; ++i) {
+            type("a");
+            seen.push(currentName(combo));
+            wait(300);
+        }
+        compare(seen.join(", "), "Afterhours, Ambient, All tracks");
+        compare(combo.typedFilter, "");
+        combo.popup.close();
+    }
+
+    function test_backspaceTakesALetterOff() {
+        const combo = openCrates();
+        type("eak");
+        keyClick(Qt.Key_Backspace);
+        compare(combo.typedFilter, "ea");
+        compare(shownNames(combo), "Peak Time, Peaky, Techno Peak, Broken Beat", "wider again");
+        keyClick(Qt.Key_Backspace);
+        compare(combo.typedFilter, "e", "still a filter at one letter");
+        verify(combo.shownRows.length < 10 && combo.shownRows.length > 3, shownNames(combo));
+        keyClick(Qt.Key_Backspace);
+        compare(combo.typedFilter, "");
+        compare(combo.shownRows.length, 10, "the whole list again");
+        combo.popup.close();
+    }
+
+    function test_escapeClearsTheFilterThenCloses() {
+        const combo = openCrates();
+        type("pe");
+        compare(combo.shownRows.length, 3);
+        keyClick(Qt.Key_Escape);
+        compare(combo.typedFilter, "");
+        compare(combo.shownRows.length, 10);
+        verify(combo.popup.visible, "the first Escape only clears");
+        keyClick(Qt.Key_Escape);
+        tryVerify(() => !combo.popup.visible, 2000, "the second closes");
+    }
+
+    function test_enterPicksTheCurrentRow() {
+        const combo = openCrates();
+        pickedSpy.target = combo;
+        pickedSpy.clear();
+        type("tech");
+        keyClick(Qt.Key_Return);
+        compare(pickedSpy.count, 1);
+        compare(pickedSpy.signalArguments[0][0], 5, "the model's index, not the filtered list's");
+        compare(pickedSpy.signalArguments[0][1].name, "Techno Peak");
+        tryVerify(() => !combo.popup.visible, 2000, "and closes");
+        compare(combo.typedFilter, "", "the filter goes with it");
+    }
+
+    function test_theFilterIsClearedOnReopen() {
+        const combo = openCrates();
+        type("pe");
+        compare(combo.shownRows.length, 3);
+        combo.popup.close();
+        tryVerify(() => !combo.popup.visible);
+        compare(combo.typedFilter, "", "cleared on closing");
+        mouseClick(combo);
+        tryVerify(() => combo.popup.opened, 3000);
+        compare(combo.shownRows.length, 10);
+        compare(combo.popup.contentItem.count, 10);
+        compare(combo.displayText, "All tracks");
+        combo.popup.close();
+    }
+
     // The text of every row in sight, as drawn: the window's own frame
     // (the popup is in its overlay), read under each row's name label,
     // must hold pixels unlike the row's ground beside it.
