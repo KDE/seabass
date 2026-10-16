@@ -20,7 +20,7 @@ TestCase {
     visible: true
     when: windowShown
 
-    // Short, so the tests do not wait the real second and a half, and
+    // Shorter than the real delay, so the tests do not wait it out, and
     // long enough that "not yet" can be seen.
     readonly property int delay: 400
 
@@ -30,6 +30,11 @@ TestCase {
                {camelot: "5B", key: "Eb", count: 3}, {camelot: "8A", key: "Am", count: 18},
                {camelot: "9A", key: "Em", count: 12}, {camelot: "", key: "", count: 2}],
         bpmMin: 122, bpmMax: 128.5, totalDurationSeconds: 3723.4,
+        bpmBins: [{bpm: 122, count: 2}, {bpm: 123, count: 0}, {bpm: 124, count: 10}, {bpm: 125, count: 18},
+                  {bpm: 126, count: 6}, {bpm: 127, count: 4}, {bpm: 128, count: 2}],
+        bpmBinWidth: 1, bpmPeak: 125,
+        longest: {title: "Strings Of Life", artist: "Rhythim Is Rhythim", durationSeconds: 492},
+        shortest: {title: "Interlude", artist: "Someone", durationSeconds: 95},
         withCues: 30, withoutCues: 12, artwork: []})
 
     Component {
@@ -140,7 +145,138 @@ TestCase {
         // Onto the next row: still the list, not this row.
         const next = row(t.list, 2);
         mouseMove(next, next.width / 2, next.height / 2);
-        tryCompare(loader, "active", false, testCase.delay / 2);
+        tryCompare(loader, "active", false, 1000);
+    }
+
+    // ---- The pointer in the popup ----
+
+    Component {
+        id: defaultListComponent
+        PlaylistListView { width: 240; height: 200 }
+    }
+
+    // The delay is a moment, not a wait: 600 ms unless a host says
+    // otherwise, on the list and on a bare row alike.
+    function test_theDelayIsShort() {
+        const fake = createTemporaryObject(fakeScanComponent, testCase, {playlistNames: ["Peak"], totalTrackCount: 4});
+        const list = createTemporaryObject(defaultListComponent, testCase, {scanController: fake});
+        compare(list.summaryDelay, 600);
+        const bare = createTemporaryObject(bareRowComponent, testCase, {y: 300});
+        compare(createTemporaryObject(plainRowComponent, testCase, {y: 340}).summaryDelay, 600);
+        waitForRendering(list);
+        const r = row(list, 1);
+        const loader = findChild(r, "summaryLoader");
+        const started = Date.now();
+        mouseMove(r, r.width / 2, r.height / 2);
+        wait(300);
+        verify(!loader.active, "not at once");
+        tryVerify(() => loader.active, 2000, "open after the delay");
+        verify(Date.now() - started < 1000, "within the second: " + (Date.now() - started) + " ms");
+    }
+    Component {
+        id: plainRowComponent
+        PlaylistRowDelegate { index: 1; width: 240; name: "Plain" }
+    }
+
+    function popupPoint(loader) {
+        const content = loader.item.contentItem;
+        return {item: content, x: content.width / 2, y: Theme.scaled(20)};
+    }
+
+    // Into the popup: it stays, however long the pointer rests there,
+    // and shows what its first look leaves out, every key and the
+    // longest and shortest track, below that first look, which does not
+    // move. Out of both, it closes.
+    function test_thePointerMayMoveIntoThePopup() {
+        // A row well down a tall list, so the popup stands free of the
+        // window's edges and would move if it were centred on the row as
+        // it grew.
+        const names = [];
+        for (let i = 0; i < 14; ++i) {
+            names.push("Playlist " + i);
+        }
+        const t = makeList(names);
+        t.list.height = 560;
+        waitForRendering(t.list);
+        const r = row(t.list, 9);
+        const loader = hoverOpen(r);
+        const popup = loader.item;
+        const title = findChild(popup.contentItem, "summaryTitle");
+        const titleAt = title.mapToItem(testCase, 0, 0);
+        verify(!findChild(popup.contentItem, "allKeys").visible, "the first look as it was");
+        verify(findChild(popup.contentItem, "keyLegendMore").visible);
+        const p = popupPoint(loader);
+        mouseMove(p.item, p.x, p.y);
+        wait(r.summaryGrace * 3);
+        compare(loader.active, true, "still open with the pointer in it");
+        compare(popup.hovered, true);
+        tryVerify(() => findChild(popup.contentItem, "allKeys").visible, 1000, "the details shown");
+        const entries = [];
+        for (const child of findChild(popup.contentItem, "allKeys").children) {
+            if (child.objectName === "allKeysEntry") {
+                entries.push(child.label);
+            }
+        }
+        compare(entries.join(", "), "1A 2, 3B 5, 5B 3, 8A 18, 9A 12, no key 2", "every key, in wheel order");
+        verify(popup.height > 0);
+        verify(!findChild(popup.contentItem, "keyLegendMore").visible, "no \"and N more\" once they are all there");
+        compare(findChild(popup.contentItem, "longestTrack").text, "Strings Of Life, Rhythim Is Rhythim (8:12)");
+        compare(findChild(popup.contentItem, "shortestTrack").text, "Interlude, Someone (1:35)");
+        waitForRendering(popup.contentItem);
+        const titleNow = title.mapToItem(testCase, 0, 0);
+        compare(Math.round(titleNow.y), Math.round(titleAt.y), "the first look stays where it was");
+        compare(Math.round(titleNow.x), Math.round(titleAt.x));
+        saveScreenshot(testCase.Window.contentItem, "playlist-summary-popup-expanded");
+        // Back to the row: still open.
+        mouseMove(r, r.width / 2, r.height / 2);
+        wait(r.summaryGrace * 2);
+        compare(loader.active, true, "back on the row");
+        leave();
+        tryCompare(loader, "active", false, 1000);
+    }
+
+    // The gap between row and popup is crossed without the popup closing:
+    // it waits summaryGrace with the pointer on neither.
+    function test_crossingTheGapKeepsItOpen() {
+        const t = makeList();
+        const r = row(t.list, 1);
+        const loader = hoverOpen(r);
+        compare(r.summaryGrace, 200);
+        // In the gap: right of the row, left of the popup.
+        const popupLeft = loader.item.contentItem.mapToItem(r, 0, 0).x - loader.item.leftPadding;
+        verify(popupLeft > r.width + 1, "a gap to stand in");
+        mouseMove(r, (r.width + popupLeft) / 2, r.height / 2);
+        wait(60);
+        compare(loader.active, true, "still open in the gap");
+        tryCompare(loader, "active", false, 1000, "closed once the grace is over");
+    }
+
+    // A press in the popup does not close it, nor does the wheel there,
+    // which scrolls nothing under it either.
+    Component {
+        id: underComponent
+        Flickable {
+            x: 250; y: 0; width: 600; height: 600
+            contentHeight: 3000
+            Rectangle { width: 600; height: 3000; color: "transparent" }
+        }
+    }
+    function test_pressAndWheelInThePopupKeepIt() {
+        const under = createTemporaryObject(underComponent, testCase);
+        const t = makeList();
+        const r = row(t.list, 1);
+        const loader = hoverOpen(r);
+        const p = popupPoint(loader);
+        mouseMove(p.item, p.x, p.y);
+        mousePress(p.item, p.x, p.y);
+        mouseRelease(p.item, p.x, p.y);
+        wait(r.summaryGrace * 2);
+        compare(loader.active, true, "a press in it keeps it");
+        mouseWheel(p.item, p.x, p.y, 0, -120);
+        wait(r.summaryGrace * 2);
+        compare(loader.active, true, "the wheel in it keeps it");
+        compare(under.contentY, 0, "and scrolls nothing under it");
+        compare(t.list.contentY, 0);
     }
 
     function test_closesOnAPressAndTheClickStillPicks() {
@@ -251,7 +387,9 @@ TestCase {
         compare(text(popup, "summaryTitle"), "Peak Time");
         compare(text(popup, "summaryCount"), "42 tracks");
         compare(text(popup, "summaryDuration"), "1:02:03");
-        compare(text(popup, "summaryBpm"), "122 to 128.5");
+        compare(text(popup, "bpmMinLabel"), "122");
+        compare(text(popup, "bpmMaxLabel"), "128.5");
+        compare(text(popup, "bpmPeakLabel"), "Most at 125");
         compare(text(popup, "summaryCues"), "30 with, 12 without");
         // The commonest four, then how many more.
         compare(legend(popup), "8A 18, 9A 12, 3B 5, 5B 3");
@@ -265,7 +403,11 @@ TestCase {
                                  totalDurationSeconds: 433, withCues: 0, withoutCues: 1, artwork: []});
         compare(text(popup, "summaryCount"), "1 track");
         compare(text(popup, "summaryDuration"), "7:13");
-        compare(text(popup, "summaryBpm"), "124");
+        popup.summary = Object.assign({}, popup.summary, {bpmBins: [{bpm: 124, count: 1}], bpmBinWidth: 1, bpmPeak: 124});
+        compare(text(popup, "bpmMinLabel"), "124");
+        verify(!findChild(popup.contentItem, "bpmMaxLabel").visible, "one value, said once");
+        verify(!findChild(popup.contentItem, "bpmPeakLabel").visible, "one bin has no busiest");
+        compare(bins(popup).length, 1, "a single bin");
         compare(legend(popup), "no key 1");
         verify(!findChild(popup.contentItem, "keyLegendMore").visible);
 
@@ -273,8 +415,78 @@ TestCase {
                          withoutCues: 0, artwork: []};
         compare(text(popup, "summaryCount"), "0 tracks");
         verify(!findChild(popup.contentItem, "summaryDuration").visible);
-        verify(!findChild(popup.contentItem, "summaryBpm").parent.visible, "no figures for an empty playlist");
+        verify(!findChild(popup.contentItem, "summaryCues").parent.visible, "no figures for an empty playlist");
+        popup.summary = {count: 2, keys: [], bpmMin: 0, bpmMax: 0, bpmBins: [], totalDurationSeconds: 0,
+                         withCues: 0, withoutCues: 2, artwork: []};
+        verify(!findChild(popup.contentItem, "bpmHeat").visible, "no BPM, no strip");
         verify(findChild(popup.contentItem, "neutralCover").visible);
+    }
+
+    function bins(popup) {
+        const strip = findChild(popup.contentItem, "bpmStrip");
+        return strip.children.filter(child => child.objectName === "bpmBin");
+    }
+
+    // The strip: a bin per BPM from the lowest to the highest, empty
+    // bins in the ground, the fullest in the accent, the rest between and
+    // darker or lighter by how full they are. Sampled from the screen.
+    function test_theBpmStripIsAHeatmap() {
+        const popup = makePopup(testCase.sampleSummary);
+        const strip = findChild(popup.contentItem, "bpmStrip");
+        compare(Math.round(strip.width), Math.round(Theme.scaled(120)));
+        const shown = bins(popup);
+        compare(shown.length, 7);
+        waitForRendering(popup.contentItem);
+        const ground = testCase.Window.contentItem;
+        const image = grabImage(ground);
+        const scale = image.width / ground.width;
+        const near = (a, b) => Math.abs(a.r - b.r) < 0.03 && Math.abs(a.g - b.g) < 0.03 && Math.abs(a.b - b.b) < 0.03;
+        const dist = (a, b) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+        const sampled = [];
+        for (let i = 0; i < shown.length; ++i) {
+            const bin = shown[i];
+            verify(bin.width >= 1, "bin " + i + " is drawn");
+            const at = bin.mapToItem(ground, bin.width / 2, bin.height / 2);
+            sampled.push(image.pixel(Math.round(at.x * scale), Math.round(at.y * scale)));
+        }
+        const counts = testCase.sampleSummary.bpmBins.map(b => b.count);
+        verify(near(sampled[1], Theme.groupBackground), "123, empty, is the ground: " + sampled[1]);
+        verify(near(sampled[3], Theme.accent), "125, the fullest, is the accent: " + sampled[3]);
+        for (let i = 0; i < counts.length; ++i) {
+            if (counts[i] > 0 && counts[i] < 18) {
+                verify(!near(sampled[i], Theme.groupBackground) && !near(sampled[i], Theme.accent),
+                       "bin " + i + " between the two: " + sampled[i]);
+            }
+            for (let j = 0; j < counts.length; ++j) {
+                if (counts[i] > counts[j]) {
+                    verify(dist(sampled[i], Theme.accent) < dist(sampled[j], Theme.accent),
+                           "fuller bin " + i + " nearer the accent than bin " + j);
+                }
+            }
+        }
+        // Left to right in BPM order: the bins stand side by side.
+        for (let i = 1; i < shown.length; ++i) {
+            compare(shown[i].x, shown[i - 1].x + shown[i - 1].width, "bin " + i + " follows bin " + (i - 1));
+        }
+        compare(shown[shown.length - 1].x + shown[shown.length - 1].width, strip.width, "the last bin ends the strip");
+
+        // Two BPM to a bin: the busiest says its range.
+        popup.summary = Object.assign({}, testCase.sampleSummary,
+                                      {bpmMin: 90, bpmMax: 140, bpmBinWidth: 2, bpmPeak: 124,
+                                       bpmBins: [{bpm: 90, count: 1}, {bpm: 124, count: 5}, {bpm: 140, count: 2}]});
+        compare(text(popup, "bpmPeakLabel"), "Most at 124 to 125");
+        compare(text(popup, "bpmMinLabel"), "90");
+        compare(text(popup, "bpmMaxLabel"), "140");
+        // A single bin is full: the accent across the strip.
+        popup.summary = Object.assign({}, testCase.sampleSummary,
+                                      {bpmMin: 124, bpmMax: 124.04, bpmPeak: 124, bpmBins: [{bpm: 124, count: 3}]});
+        waitForRendering(popup.contentItem);
+        const one = bins(popup)[0];
+        compare(Math.round(one.width), Math.round(strip.width));
+        const oneAt = one.mapToItem(ground, one.width / 2, one.height / 2);
+        const onePixel = grabImage(ground).pixel(Math.round(oneAt.x * scale), Math.round(oneAt.y * scale));
+        verify(near(onePixel, Theme.accent), "one full bin, in the accent: " + onePixel);
+        verify(!findChild(popup.contentItem, "bpmMaxLabel").visible, "124 and 124.04 read as one value");
     }
 
     // Each key's slice in its Camelot colour, round from twelve o'clock in
@@ -424,6 +636,9 @@ TestCase {
         let withCues = 0;
         const artwork = [];
         let count = 0;
+        const bpms = [];
+        let longest = 0;
+        let shortest = 0;
         for (let i = 0; i < scan.tracks.trackCount(); ++i) {
             const t = scan.tracks.trackAt(i);
             // A row is listed once, however often the playlist holds it;
@@ -439,6 +654,11 @@ TestCase {
             if (t.bpm > 0) {
                 bpmMin = bpmMin > 0 ? Math.min(bpmMin, t.bpm) : t.bpm;
                 bpmMax = Math.max(bpmMax, t.bpm);
+                bpms.push({bpm: t.bpm, times: times});
+            }
+            if (t.durationSeconds > 0) {
+                longest = Math.max(longest, t.durationSeconds);
+                shortest = shortest > 0 ? Math.min(shortest, t.durationSeconds) : t.durationSeconds;
             }
             seconds += times * t.durationSeconds;
             if (t.cueCount > 0) {
@@ -449,7 +669,8 @@ TestCase {
             }
         }
         return {count: count, keys: keys, unknown: unknown, bpmMin: bpmMin, bpmMax: bpmMax,
-                seconds: seconds, withCues: withCues, artwork: artwork};
+                seconds: seconds, withCues: withCues, artwork: artwork, bpms: bpms, longest: longest,
+                shortest: shortest};
     }
 
     function checkSummary(scan, playlist) {
@@ -465,6 +686,26 @@ TestCase {
         fuzzyCompare(got.bpmMin, want.bpmMin, 0.001, what + ": lowest BPM");
         fuzzyCompare(got.bpmMax, want.bpmMax, 0.001, what + ": highest BPM");
         fuzzyCompare(got.totalDurationSeconds, want.seconds, 0.01, what + ": duration");
+        // The heatmap's bins, counted again from the rows.
+        if (want.bpmMax > 0) {
+            const w = want.bpmMax - want.bpmMin > 40 ? 2 : 1;
+            compare(got.bpmBinWidth, w, what + ": bin width");
+            const first = Math.floor(want.bpmMin / w);
+            const last = Math.floor(want.bpmMax / w);
+            const counts = new Array(last - first + 1).fill(0);
+            for (const b of want.bpms) {
+                counts[Math.floor(b.bpm / w) - first] += b.times;
+            }
+            compare(got.bpmBins.map(b => b.bpm + ":" + b.count).join(" "),
+                    counts.map((c, i) => (first + i) * w + ":" + c).join(" "), what + ": BPM bins");
+            let peak = 0;
+            counts.forEach((c, i) => { if (c > counts[peak]) peak = i; });
+            compare(got.bpmPeak, (first + peak) * w, what + ": the busiest bin");
+        } else {
+            compare(got.bpmBins.length, 0, what + ": no bins without a BPM");
+        }
+        fuzzyCompare(got.longest.durationSeconds || 0, want.longest, 0.001, what + ": longest");
+        fuzzyCompare(got.shortest.durationSeconds || 0, want.shortest, 0.001, what + ": shortest");
         const art = list => list.map(a => a.source + " | " + a.fallbackSource).join(", ");
         compare(art(got.artwork), art(want.artwork), what + ": covers");
         // Keys: every wheel position once, in wheel order, no key last.

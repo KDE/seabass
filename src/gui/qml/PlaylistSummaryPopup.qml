@@ -16,8 +16,16 @@ import SeabassGui
 // on colour alone.
 //
 // A tooltip in all but size: it never takes focus and never closes
-// itself. The row that opened it closes it (pointer gone, a press, the
-// wheel), and nothing in it is meant to be pointed at.
+// itself. The row that opened it closes it: the pointer gone from both
+// the row and this popup, a press or the wheel in the row.
+//
+// The pointer may come into it, and when it does the popup shows the
+// rest of what it knows below its first look: every key, not the
+// commonest four, and the longest and shortest track. Shown on arrival
+// rather than behind a "more" to click: the pointer coming in is the
+// question, and a click target in a popup that closes when the pointer
+// strays is one more thing to aim at. It grows downward from where it
+// stands, so nothing under the pointer moves.
 PanelPopup {
     id: popup
     objectName: "playlistSummaryPopup"
@@ -33,6 +41,50 @@ PanelPopup {
     readonly property int count: popup.summary.count || 0
     readonly property var keys: popup.summary.keys || []
 
+    // The pointer in the popup, padding included (PlaylistRowDelegate
+    // keeps it open while this is true). Two handlers: the card's own
+    // hears the padding, but not the pointer over the content, whose
+    // labels (each with a HoverHandler under org.kde.desktop) keep it
+    // from anything beneath them; the content's own, an ancestor of
+    // those labels, hears it there.
+    readonly property bool hovered: popupHover.hovered || contentHover.hovered
+    // Set once the pointer has been in, and kept while the popup is
+    // open, so the details do not fold away as the pointer crosses
+    // back to the row.
+    property bool expanded: false
+    // Where the popup stood when it expanded: its first look stays put
+    // and the details grow below it.
+    property real expandedY: 0
+    onHoveredChanged: {
+        if (popup.hovered && !popup.expanded) {
+            popup.expandedY = popup.y;
+            popup.expanded = true;
+        }
+    }
+
+    // The BPM heatmap: bins from the summary, coloured from the ground to
+    // the accent by how full they are. A bin with anything in it is never
+    // fainter than a quarter of the way, so one track among many shows.
+    readonly property var bpmBins: popup.summary.bpmBins || []
+    readonly property int bpmBinWidth: popup.summary.bpmBinWidth || 1
+    readonly property int bpmBinMax: popup.bpmBins.reduce((most, bin) => Math.max(most, bin.count), 0)
+    function binColor(count) {
+        if (count <= 0 || popup.bpmBinMax <= 0) {
+            return Theme.groupBackground;
+        }
+        return Theme.mix(Theme.groupBackground, Theme.accent, 0.25 + 0.75 * count / popup.bpmBinMax);
+    }
+    function binLabel(edge) {
+        return popup.bpmBinWidth === 1 ? String(edge) : edge + " to " + (edge + popup.bpmBinWidth - 1);
+    }
+    function trackLine(track) {
+        if (!track || !(track.durationSeconds > 0)) {
+            return "";
+        }
+        const who = [track.title, track.artist].filter(part => part && part.length > 0).join(", ");
+        return who + " (" + popup.duration(track.durationSeconds) + ")";
+    }
+
     // Mirrors ScanPage.qml's own formatBpm().
     function formatBpm(bpm) {
         if (bpm <= 0) {
@@ -40,13 +92,6 @@ PanelPopup {
         }
         const oneDecimal = bpm.toFixed(1);
         return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
-    }
-    function bpmRange(low, high) {
-        if (!(high > 0)) {
-            return "";
-        }
-        return popup.formatBpm(low) === popup.formatBpm(high) ? popup.formatBpm(high)
-            : popup.formatBpm(low) + " to " + popup.formatBpm(high);
     }
     // Mirrors RecordingsPage.qml's own duration(): "1:07:13" or "7:13".
     function duration(seconds) {
@@ -73,7 +118,7 @@ PanelPopup {
     parent: row
     // The row can go first when the list is torn down.
     x: row ? Theme.snap(row.width + Theme.tightSpacing) : 0
-    y: row ? Theme.snap((row.height - height) / 2) : 0
+    y: popup.expanded ? popup.expandedY : (row ? Theme.snap((row.height - height) / 2) : 0)
     // Kept inside the window: the sidebar's last rows would otherwise
     // push it off the bottom.
     margins: Theme.pageMargin
@@ -89,8 +134,19 @@ PanelPopup {
 
     Component.onCompleted: popup.open()
 
+    // PanelPopup's card, with the pointer followed across all of it. The
+    // wheel needs nothing here: a popup keeps it from what lies under it.
+    background: Rectangle {
+        radius: Theme.popupRadius
+        color: Theme.surface
+        border.color: Theme.border
+        border.width: 1
+        HoverHandler { id: popupHover }
+    }
+
     contentItem: ColumnLayout {
         spacing: Theme.sectionSpacing
+        HoverHandler { id: contentHover }
 
         RowLayout {
             Layout.fillWidth: true
@@ -142,16 +198,63 @@ PanelPopup {
             rowSpacing: Theme.tightSpacing
 
             Label {
-                visible: bpmLabel.visible
+                Layout.alignment: Qt.AlignTop
+                visible: bpmHeat.visible
                 text: "BPM"
                 color: Theme.textMuted
             }
-            Label {
-                id: bpmLabel
-                objectName: "summaryBpm"
-                visible: text.length > 0
-                text: popup.bpmRange(popup.summary.bpmMin || 0, popup.summary.bpmMax || 0)
-                font.family: Theme.dataFamily
+            // The range as a strip, lowest at the left: where the
+            // playlist's tempos sit, and where most of them do.
+            ColumnLayout {
+                id: bpmHeat
+                objectName: "bpmHeat"
+                visible: popup.bpmBins.length > 0
+                spacing: Theme.tightSpacing / 2
+                readonly property bool oneValue: popup.formatBpm(popup.summary.bpmMin || 0)
+                    === popup.formatBpm(popup.summary.bpmMax || 0)
+                RowLayout {
+                    spacing: Theme.tightSpacing
+                    Label {
+                        objectName: "bpmMinLabel"
+                        text: popup.formatBpm(popup.summary.bpmMin || 0)
+                        font.family: Theme.dataFamily
+                        font.pointSize: Theme.fontSmall
+                    }
+                    Item {
+                        id: bpmStrip
+                        objectName: "bpmStrip"
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: Theme.scaled(120)
+                        implicitHeight: Theme.scaled(6)
+                        Repeater {
+                            model: popup.bpmBins
+                            delegate: Rectangle {
+                                required property var modelData
+                                required property int index
+                                objectName: "bpmBin"
+                                readonly property int count: modelData.count
+                                x: Math.round(index * bpmStrip.width / popup.bpmBins.length)
+                                width: Math.round((index + 1) * bpmStrip.width / popup.bpmBins.length) - x
+                                height: bpmStrip.height
+                                color: popup.binColor(count)
+                            }
+                        }
+                    }
+                    Label {
+                        objectName: "bpmMaxLabel"
+                        visible: !bpmHeat.oneValue
+                        text: popup.formatBpm(popup.summary.bpmMax || 0)
+                        font.family: Theme.dataFamily
+                        font.pointSize: Theme.fontSmall
+                    }
+                }
+                Label {
+                    objectName: "bpmPeakLabel"
+                    visible: popup.bpmBins.length > 1
+                    text: "Most at " + popup.binLabel(popup.summary.bpmPeak || 0)
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontSmall
+                }
             }
 
             Label {
@@ -276,12 +379,81 @@ PanelPopup {
                     Label {
                         objectName: "keyLegendMore"
                         readonly property int more: popup.keys.length - popup.topKeys.length
-                        visible: more > 0
+                        // Answered below once the popup has expanded.
+                        visible: more > 0 && !popup.expanded
                         text: more === 1 ? "and 1 more" : "and " + more + " more"
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
                     }
                 }
+            }
+
+            // ---- What the pointer coming in reveals ----
+            Label {
+                Layout.alignment: Qt.AlignTop
+                visible: allKeys.visible
+                text: "All keys"
+                color: Theme.textMuted
+            }
+            Flow {
+                id: allKeys
+                objectName: "allKeys"
+                Layout.fillWidth: true
+                visible: popup.expanded && popup.keys.length > 0
+                spacing: Theme.rowSpacing
+                Repeater {
+                    model: popup.expanded ? popup.keys : []
+                    delegate: Row {
+                        required property var modelData
+                        objectName: "allKeysEntry"
+                        spacing: Theme.tightSpacing / 2
+                        readonly property string label: popup.keyLabel(modelData) + " " + modelData.count
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Theme.chartSwatchSize
+                            height: Theme.chartSwatchSize
+                            radius: 2
+                            color: Theme.colorForKey(modelData.camelot)
+                        }
+                        Label {
+                            text: popup.keyLabel(modelData)
+                            font.family: Theme.dataFamily
+                        }
+                        Label {
+                            text: modelData.count
+                            font.family: Theme.dataFamily
+                            color: Theme.textMuted
+                        }
+                    }
+                }
+            }
+
+            Label {
+                visible: longestLabel.visible
+                text: "Longest"
+                color: Theme.textMuted
+            }
+            Label {
+                id: longestLabel
+                objectName: "longestTrack"
+                Layout.fillWidth: true
+                visible: popup.expanded && text.length > 0
+                text: popup.trackLine(popup.summary.longest)
+                elide: Text.ElideRight
+            }
+            Label {
+                visible: shortestLabel.visible
+                text: "Shortest"
+                color: Theme.textMuted
+            }
+            Label {
+                id: shortestLabel
+                objectName: "shortestTrack"
+                Layout.fillWidth: true
+                // One track is its own longest and shortest: said once.
+                visible: popup.expanded && text.length > 0 && popup.count > 1
+                text: popup.trackLine(popup.summary.shortest)
+                elide: Text.ElideRight
             }
         }
     }
