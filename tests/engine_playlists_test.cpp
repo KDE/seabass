@@ -100,6 +100,25 @@ std::int64_t scalar(const std::string &file, const std::string &sql)
     return r[0][0];
 }
 
+// One text value read on a copy.
+std::string text(const std::string &file, const std::string &sql)
+{
+    sqlite3 *handle = nullptr;
+    const int opened = sqlite3_open_v2(file.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr);
+    assert(opened == SQLITE_OK);
+    sqlite3_stmt *stmt = nullptr;
+    const int prepared = sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr);
+    assert(prepared == SQLITE_OK);
+    std::string value = "<no row>";
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        value = t ? t : "<null>";
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    return value;
+}
+
 // Runs one statement on a copy; returns whether SQLite took it.
 bool exec(const std::string &file, const std::string &sql)
 {
@@ -658,6 +677,72 @@ int main(int argc, char **argv)
         assert(throws([&] { removeFromEnginePlaylist(lib, "Playlist 000", 999999); }, "no track"));
         assert(throws([&] { removeFromEnginePlaylist(lib, "Playlist 404", expected.front()); }, "no list"));
         assert(othersUnchanged(231).at(231) == expected);
+    }
+
+    // --- the entries' databaseUuid -----------------------------------------
+    // The player resolves an entry by (databaseUuid, trackId) against the
+    // tracks' (originDatabaseUuid, originTrackId). On WHALESHARK3 the
+    // tracks carry their first library's uuid and Information.uuid is
+    // another: every entry Seabass writes takes the track's origin uuid,
+    // the library's own only for a track without one, and a relink keeps
+    // the entry's as it is.
+    std::cout << "entity uuid\n";
+    {
+        const fs::path uuidPath = scratch / "uuid" / "Engine Library";
+        fs::create_directories(uuidPath.parent_path());
+        fs::copy(fixture / "engine", uuidPath, fs::copy_options::recursive);
+        const std::string lib = pathToUtf8(uuidPath);
+        const std::string udb = pathToUtf8(uuidPath / "Database2" / "m.db");
+        const std::string own = text(udb, "SELECT uuid FROM Information;");
+        assert(own.size() == 36);
+        // Four tracks in no playlist: three from other libraries, one
+        // naming none.
+        const auto free = rows(udb, "SELECT id FROM Track WHERE id NOT IN (SELECT trackId FROM PlaylistEntity) "
+                                    "ORDER BY id LIMIT 4;");
+        assert(free.size() == 4);
+        const std::int64_t a = free[0][0], b = free[1][0], none = free[2][0], c = free[3][0];
+        assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000a' WHERE id = "
+                             + std::to_string(a) + ";"));
+        assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000b' WHERE id = "
+                             + std::to_string(b) + ";"));
+        assert(exec(udb, "UPDATE Track SET originDatabaseUuid = NULL WHERE id = " + std::to_string(none) + ";"));
+        assert(exec(udb, "UPDATE Track SET originDatabaseUuid = 'fb65ee77-0000-4000-8000-00000000000c' WHERE id = "
+                             + std::to_string(c) + ";"));
+        const auto uuidOf = [&](const std::string &list, std::int64_t track) {
+            return text(udb, "SELECT e.databaseUuid FROM PlaylistEntity e JOIN Playlist p ON p.id = e.listId "
+                             "WHERE p.title = '" + list + "' AND e.trackId = " + std::to_string(track) + ";");
+        };
+
+        createEnginePlaylist(lib, "Uuid List");
+        assert(insertIntoEnginePlaylist(lib, "Uuid List", a, std::nullopt));
+        assert(uuidOf("Uuid List", a) == "fb65ee77-0000-4000-8000-00000000000a" && "insert: the track's origin uuid");
+        assert(insertAtStartOfEnginePlaylist(lib, "Uuid List", b));
+        assert(uuidOf("Uuid List", b) == "fb65ee77-0000-4000-8000-00000000000b" && "first: the track's origin uuid");
+        assert(addToEnginePlaylist(lib, "Uuid List", none));
+        assert(uuidOf("Uuid List", none) == own && "a track naming no origin: the library's own");
+        createEnginePlaylist(lib, "Add List");
+        assert(addToEnginePlaylist(lib, "Add List", b));
+        assert(uuidOf("Add List", b) == "fb65ee77-0000-4000-8000-00000000000b" && "add: the track's origin uuid too");
+        assert((engineTrackIdsInPlaylist(lib, "Uuid List") == std::vector<std::int64_t>{b, a, none}));
+        assert((djinteropTracks(lib, {"Uuid List"}) == std::vector<std::int64_t>{b, a, none})
+               && "the reader lists entries whatever their uuid");
+        assert(moveInEnginePlaylist(lib, "Uuid List", a, std::nullopt));
+        assert(uuidOf("Uuid List", a) == "fb65ee77-0000-4000-8000-00000000000a" && "a move keeps the entry's uuid");
+        assert((engineTrackIdsInPlaylist(lib, "Uuid List") == std::vector<std::int64_t>{a, b, none}));
+
+        // Clean Up's merge: a's entry handed to c where it stands, with
+        // c's uuid; the others untouched, uuid and all. In a list that
+        // holds both, a's entry goes.
+        createEnginePlaylist(lib, "Both");
+        assert(insertIntoEnginePlaylist(lib, "Both", c, std::nullopt));
+        assert(insertIntoEnginePlaylist(lib, "Both", a, std::nullopt));
+        assert(reassignEnginePlaylistEntries(lib, a, c) == 2);
+        assert((engineTrackIdsInPlaylist(lib, "Uuid List") == std::vector<std::int64_t>{c, b, none}));
+        assert(uuidOf("Uuid List", c) == "fb65ee77-0000-4000-8000-00000000000c" && "repointed with the survivor's uuid");
+        assert(uuidOf("Uuid List", b) == "fb65ee77-0000-4000-8000-00000000000b" && "the others keep theirs");
+        assert(uuidOf("Uuid List", none) == own);
+        assert((engineTrackIdsInPlaylist(lib, "Both") == std::vector<std::int64_t>{c}));
+        assert(dangling(lib).size() == 1 && "nothing new left dangling");
     }
 
     std::cout << "engine_playlists_test: all passed\n";

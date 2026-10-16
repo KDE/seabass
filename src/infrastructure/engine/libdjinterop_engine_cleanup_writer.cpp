@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <filesystem>
@@ -119,8 +120,21 @@ void LibdjinteropEngineCleanupWriter::removeTrackReplacingWith(const std::string
     // against a freshly-created database: the cascade did NOT fire,
     // leaving a dangling reference in the playlist. So walk every
     // playlist explicitly first, rather than trust that comment.
-    for (auto &root : db.root_playlists()) {
-        reassignPlaylistMembership(root, *doomed, *survivor);
+    //
+    // On a 2.x or 3.x library the entries are repointed in place
+    // (reassignEnginePlaylistEntries), not rebuilt through libdjinterop:
+    // its add_track_back gives every entry it writes the library's own
+    // uuid, and rebuilding a list wrote that into every entry of it, which
+    // a player cannot resolve where the tracks name another library as
+    // their origin (a restored stick whose Information.uuid was renewed,
+    // as WHALESHARK3's was). A merge on such a stick would have emptied,
+    // on the player, every playlist the duplicate was in.
+    if (std::filesystem::exists(pathFromUtf8(m_engineLibraryPath) / "Database2" / "m.db")) {
+        reassignEnginePlaylistEntries(m_engineLibraryPath, doomed->id(), survivor->id());
+    } else {
+        for (auto &root : db.root_playlists()) {
+            reassignPlaylistMembership(root, *doomed, *survivor);
+        }
     }
 
     const int64_t doomedId = doomed->id();
