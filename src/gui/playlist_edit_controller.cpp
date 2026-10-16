@@ -206,7 +206,7 @@ QString PlaylistEditController::lastAddPlaylist() const
 }
 
 bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
-                                           const QString &filePath, const QString &title)
+                                           const QString &filePath, const QString &title, int toIndex)
 {
     setErrorMessage({});
     if (playlist.isEmpty() || filePath.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
@@ -232,17 +232,19 @@ bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const Q
             return;
         }
         const std::string file = filePath.toStdString();
+        const std::optional<int> place = toIndex >= 0 ? std::optional<int>(toIndex) : std::nullopt;
         const auto remake = [=](const std::string &named) -> std::unique_ptr<PendingChange> {
-            return std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries);
+            return std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries, place);
         };
         if (!m_session->stage(remake(name))) {
             return;
         }
+        // Staged again (a place given or changed), it replaces the one
+        // before, in the session and here.
         const QString id = AddToPlaylistChange::idFor(name, file);
-        if (m_staged.insert(id).second) {
-            std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
-            m_additions.push_back({id, playlist, filePath, -1, ++m_sequence, remake});
-        }
+        m_staged.insert(id);
+        std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
+        m_additions.push_back({id, playlist, filePath, toIndex, ++m_sequence, remake});
         ++m_pendingRevision;
         emit pendingChanged();
     });
@@ -348,13 +350,31 @@ bool PlaylistEditController::isMoveStaged(const QString &playlist, const QString
 
 QVariantMap PlaylistEditController::pendingMoves() const
 {
-    QVariantMap moves;
+    // The moves, and the places of the tracks added at one, in the order
+    // they were staged: Save puts an added track at its place as it adds
+    // it, among the moves before and after it. A place is flagged
+    // "addedAt", so the list shows the row as added, not moved.
+    std::vector<const Edit *> edits;
     for (const Edit &m : m_moves) {
         if (m_staged.count(m.id) > 0) {
-            QVariantList list = moves.value(m.playlist).toList();
-            list << QVariantMap{{QStringLiteral("filePath"), m.file}, {QStringLiteral("toIndex"), m.toIndex}};
-            moves[m.playlist] = list;
+            edits.push_back(&m);
         }
+    }
+    for (const Edit &a : m_additions) {
+        if (m_staged.count(a.id) > 0 && a.toIndex >= 0) {
+            edits.push_back(&a);
+        }
+    }
+    std::sort(edits.begin(), edits.end(), [](const Edit *a, const Edit *b) { return a->sequence < b->sequence; });
+    QVariantMap moves;
+    for (const Edit *e : edits) {
+        QVariantList list = moves.value(e->playlist).toList();
+        QVariantMap entry{{QStringLiteral("filePath"), e->file}, {QStringLiteral("toIndex"), e->toIndex}};
+        if (e->id.startsWith(QStringLiteral("addcue:add-to-playlist:"))) {
+            entry.insert(QStringLiteral("addedAt"), true);
+        }
+        list << entry;
+        moves[e->playlist] = list;
     }
     return moves;
 }

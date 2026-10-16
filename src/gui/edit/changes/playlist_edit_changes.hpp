@@ -7,6 +7,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -106,12 +107,18 @@ private:
 // whose playlist already holds the file, or that has no row for the file
 // (an Engine-only track has no export.pdb row), is left alone and the log
 // says so; nothing added anywhere is a skip. The playlist may be one a
-// CreatePlaylistChange staged before it makes in the same save.
+// CreatePlaylistChange staged before it makes in the same save. Given a
+// place, each library that took the entry then has it moved there the way
+// MoveInPlaylistChange writes a move: one change for a track dropped
+// between two rows, not an add and a move.
 class AddToPlaylistChange : public PendingChange
 {
 public:
+    // toIndex: the place the entry takes in the playlist after the add,
+    // from 0, clamped to the end; none, at the end. Same id either way, so
+    // a placed add and a plain one for the same file replace each other.
     AddToPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string filePath, QString title,
-                        QStringList libraries);
+                        QStringList libraries, std::optional<int> toIndex = std::nullopt);
 
     static QString idFor(const std::string &playlist, const std::string &filePath);
 
@@ -126,6 +133,8 @@ public:
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
+    std::optional<int> toIndex() const { return m_toIndex; }
+
 private:
     QString m_pioneerRoot;
     QString m_enginePath;
@@ -133,6 +142,7 @@ private:
     std::string m_filePath;
     QString m_title;
     QStringList m_libraries;
+    std::optional<int> m_toIndex;
 };
 
 // Takes one file out of a playlist in every library on the stick that has

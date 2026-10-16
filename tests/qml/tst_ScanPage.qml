@@ -65,8 +65,13 @@ TestCase {
             }
             function isNewPlaylistStaged(name) { return staged["n:" + name] === true; }
             property string lastAddPlaylist: ""
-            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title) {
-                calls.push(["add", rekordboxPath, enginePath, playlist, filePath, title]);
+            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex) {
+                // A place only when one is given, as the page passes -1 for none.
+                const call = ["add", rekordboxPath, enginePath, playlist, filePath, title];
+                if (toIndex !== undefined && toIndex >= 0) {
+                    call.push(toIndex);
+                }
+                calls.push(call);
                 staged["a:" + playlist + "|" + filePath] = true;
                 lastAddPlaylist = playlist;
                 pendingRevision++;
@@ -1606,10 +1611,8 @@ TestCase {
         const file = "/nonexistent/HELD/Contents/held-1000.mp3";
         compare(JSON.stringify(t.fake.calls), JSON.stringify([
             ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Fresh", file,
-             "Held Track 1000"],
-            ["move", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Fresh", file,
              "Held Track 1000", 0],
-            ["remove", "Held Playlist", file, "Held Track 1000"]]));
+            ["remove", "Held Playlist", file, "Held Track 1000"]]), "one add at the place, then the removal");
         tryCompare(t.card, "visible", false);
         cleanupExperimental();
     }
@@ -1645,8 +1648,8 @@ TestCase {
     // A track not in the playlist shown, dragged over the list, gets a
     // place: the rows make room, the faded copy says "Add track here", and
     // the release pins the card, the gap held open, with Add only (it came
-    // from no playlist shown); Add stages the add and then the move to
-    // that place. Escape lets it go instead, nothing staged.
+    // from no playlist shown); Add stages one add, at that place. Escape
+    // lets it go instead, nothing staged.
     function test_aTrackFromElsewhereIsAddedAtItsPlace() {
         const t = makeDragPage(true);
         realAppSettings.hideStreamingTracks = false;
@@ -1704,9 +1707,7 @@ TestCase {
         mouseClick(findChild(t.card, "dropAddButton"));
         compare(JSON.stringify(t.fake.calls), JSON.stringify([
             ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Playlist",
-             "/nonexistent/x.mp3", "Stranger"],
-            ["move", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Playlist",
-             "/nonexistent/x.mp3", "Stranger", 4]]));
+             "/nonexistent/x.mp3", "Stranger", 4]]), "one add, at the place");
         tryCompare(t.card, "visible", false);
         cleanupExperimental();
     }
@@ -1738,8 +1739,6 @@ TestCase {
         mouseClick(findChild(t.card, "dropMoveButton"));
         compare(JSON.stringify(t.fake.calls), JSON.stringify([
             ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Reversed",
-             "/nonexistent/c.mp3", "Carried"],
-            ["move", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Reversed",
              "/nonexistent/c.mp3", "Carried", 1],
             ["remove", "Held Playlist", "/nonexistent/c.mp3", "Carried"]]));
         tryCompare(t.card, "visible", false);
