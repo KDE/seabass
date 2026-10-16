@@ -310,11 +310,13 @@ int main(int argc, char **argv)
         assert(session->stage(std::make_unique<MoveInPlaylistChange>(QString(), engine, "Playlist 003", file,
                                                                      QStringLiteral("A"), 0, libraries)));
         assert(session->playlistsEdited() == 4 && "a move is a playlist edit too");
+        assert(session->stage(std::make_unique<RenamePlaylistChange>(QString(), engine, "Playlist 004", "Renamed", libraries)));
+        assert(session->playlistsEdited() == 5 && "a rename is a playlist edit too");
         // A cue from Browse: the same page, not a playlist edit.
         assert(session->stage(std::make_unique<AddCueChange>(QStringLiteral("engine"), engine, QStringLiteral("6"), 1000.0,
                                                              QStringLiteral("hot"), 1, QString(), QString(), false, 0.0,
                                                              QStringLiteral("A"))));
-        assert(session->pendingCount() == 6);
+        assert(session->pendingCount() == 7);
         assert(session->playlistsEdited() == 0 && "a cue staged too");
         session->discard();
         registry.closeSession(QStringLiteral("lib-playlists"));

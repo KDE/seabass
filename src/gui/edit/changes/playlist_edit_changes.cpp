@@ -875,6 +875,11 @@ QString RenamePlaylistChange::id() const
     return idFor(m_playlist);
 }
 
+QString RenamePlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
 QString RenamePlaylistChange::owner() const
 {
     return QStringLiteral("addcue");

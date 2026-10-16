@@ -105,6 +105,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                 const QString described = describeApplied();
                 m_appliedKinds.clear();
                 m_appliedPlaylists.clear();
+                m_appliedRenames.clear();
                 if (m_lastSavedSummary != described) {
                     m_lastSavedSummary = described;
                     emit lastSavedSummaryChanged();
@@ -743,7 +744,20 @@ void PlaylistEditController::noteApplied(const QString &changeId)
     const QString kind = parts.at(1);
     const QString rest = parts.mid(2).join(QLatin1Char(':'));
     ++m_appliedKinds[kind];
-    m_appliedPlaylists.insert(rest.section(QLatin1Char('|'), 0, 0));
+    QString playlist = rest.section(QLatin1Char('|'), 0, 0);
+    if (kind == QLatin1String("rename-playlist")) {
+        for (const Rename &r : m_renames) {
+            if (r.id == changeId) {
+                m_appliedRenames[r.to] = r.from;
+            }
+        }
+    }
+    for (const auto &[to, from] : m_appliedRenames) {
+        if (within(playlist, to)) {
+            playlist = from + playlist.mid(to.size());
+        }
+    }
+    m_appliedPlaylists.insert(playlist);
 }
 
 QString PlaylistEditController::describeApplied() const
@@ -765,6 +779,9 @@ QString PlaylistEditController::describeApplied() const
     if (const int n = count("create-playlist")) {
         parts << (one ? QStringLiteral("created") : QStringLiteral("%1 created").arg(n));
     }
+    if (const int n = count("rename-playlist")) {
+        parts << (one ? QStringLiteral("renamed") : QStringLiteral("%1 renamed").arg(n));
+    }
     if (const int n = count("add-to-playlist")) {
         parts << tracks(n, "added");
     }
@@ -779,7 +796,8 @@ QString PlaylistEditController::describeApplied() const
     }
     int other = 0;
     for (const auto &[kind, n] : m_appliedKinds) {
-        static const QStringList known{QStringLiteral("create-playlist"), QStringLiteral("add-to-playlist"),
+        static const QStringList known{QStringLiteral("create-playlist"), QStringLiteral("rename-playlist"),
+                                       QStringLiteral("add-to-playlist"),
                                        QStringLiteral("move-in-playlist"), QStringLiteral("remove-from-playlist"),
                                        QStringLiteral("delete-playlist")};
         other += known.contains(kind) ? 0 : n;
