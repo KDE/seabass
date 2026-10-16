@@ -35,6 +35,7 @@ AppSettingsController::AppSettingsController(QObject *parent)
     m_useSystemTheme = false;
     m_preferredFormat = m_settings.value("preferredFormat", "rekordbox").toString();
     m_hideStreamingTracks = m_settings.value("hideStreamingTracks", false).toBool();
+    m_showPlayCount = m_settings.value("showPlayCount", false).toBool();
     m_keyNotation = m_settings.value("keyNotation", "camelot").toString();
     m_exactMatchSeconds = m_settings.value("music/exactMatchSeconds",
                                             static_cast<int>(domain::MatchingPolicy::DefaultExactMatchSeconds))
@@ -107,6 +108,16 @@ void AppSettingsController::setHideStreamingTracks(bool value)
     m_hideStreamingTracks = value;
     m_settings.setValue("hideStreamingTracks", value);
     emit hideStreamingTracksChanged();
+}
+
+void AppSettingsController::setShowPlayCount(bool value)
+{
+    if (m_showPlayCount == value) {
+        return;
+    }
+    m_showPlayCount = value;
+    m_settings.setValue("showPlayCount", value);
+    emit showPlayCountChanged();
 }
 
 bool AppSettingsController::audioComparisonSupported()

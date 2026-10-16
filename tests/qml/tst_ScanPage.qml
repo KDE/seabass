@@ -922,6 +922,9 @@ TestCase {
 
     function cleanup() {
         realAppSettings.lastPlaylistName = lastPlaylistBefore;
+        // The Plays column is off by default; a test that showed it puts
+        // the setting back.
+        realAppSettings.showPlayCount = false;
         browseFixture.restore();
     }
 
@@ -1907,7 +1910,7 @@ TestCase {
         if (activeKey.length > 0) {
             tryCompare(findChild(header(page, activeKey), "sortIndicator"), "visible", true, 5000);
         }
-        for (const key of ["title", "key", "bpm", "duration", "cues", "plays"]) {
+        for (const key of page.columnSortKeys) {
             const arrow = findChild(header(page, key), "sortIndicator");
             verify(arrow !== null);
             compare(arrow.visible, key === activeKey, "the arrow on " + key);
@@ -1957,6 +1960,8 @@ TestCase {
         const held = makeHeldPage(8);
         verify(findChild(held.page, "sortDirectionButton") === null, "no direction button any more");
         compareIndicators(held.page, "", true);
+        realAppSettings.showPlayCount = true;
+        waitForRendering(held.page);
         for (const key of ["title", "key", "bpm", "duration", "cues", "plays"]) {
             compare(findChild(header(held.page, key), "sortHeaderLabel").truncated, false,
                     "the " + key + " label whole beside the room for its arrow");
@@ -2045,6 +2050,8 @@ TestCase {
         compare(held.page.browseTier, 1);
         const title = header(held.page, "title");
         compare(title.visible, true);
+        realAppSettings.showPlayCount = true;
+        waitForRendering(held.page);
         for (const key of ["key", "bpm", "duration", "cues", "plays"]) {
             compare(header(held.page, key).visible, false, key + " is dropped");
         }
@@ -2381,7 +2388,12 @@ TestCase {
         for (const cell of testCase.columnCells) {
             const head = findChild(page, cell[1]);
             const body = findChild(row, cell[2]);
-            verify(head !== null && body !== null, where + ": both cells of " + cell[0]);
+            verify(body !== null, where + ": a row cell for " + cell[0]);
+            // A column switched off (Plays) has no header at all.
+            if (head === null) {
+                compare(body.visible, false, where + ": " + cell[0] + " has no header, so no cell");
+                continue;
+            }
             compare(body.visible, head.visible, where + ": " + cell[0] + " shown in both or neither");
             if (!head.visible) {
                 continue;
@@ -2407,7 +2419,11 @@ TestCase {
         waitForRendering(held.page);
         saveScreenshot(held.page, "browse-columns-1000x700");
         compare(held.page.browseTier, 2);
-        compare(compareColumnGeometry(held.page, held.list, "1000 wide"), 8, "every column at full width");
+        compare(compareColumnGeometry(held.page, held.list, "1000 wide"), 7, "every column but Plays at full width");
+        realAppSettings.showPlayCount = true;
+        waitForRendering(held.page);
+        compare(compareColumnGeometry(held.page, held.list, "1000 wide, Plays shown"), 8, "and Plays with it");
+        realAppSettings.showPlayCount = false;
 
         // Narrow: the numeric columns go, in the header and the rows alike.
         held.page.playlistSidebarOpen = false;
@@ -2422,6 +2438,91 @@ TestCase {
         waitForRendering(held.page);
         compare(held.page.browseTier, 0);
         compare(compareColumnGeometry(held.page, held.list, "340 wide"), 2, "artwork and actions");
+    }
+
+    // ---- The Plays column, behind a setting ----
+
+    // Off by default: no Plays header, no Plays cell in the rows, no
+    // Plays in the sort combo, and the columns beside it close up.
+    // Switched on, all three are there, Cues moved left of it.
+    function test_thePlaysColumnFollowsItsSetting() {
+        const held = makeHeldPage(6);
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+        held.page.width = 1000;
+        waitForRendering(held.page);
+        compare(realAppSettings.showPlayCount, false, "off by default");
+        compare(held.page.browseTier, 2);
+        const row = held.list.itemAtIndex(0);
+        verify(findChild(held.page, "sortHeader_plays") === null, "no Plays header");
+        compare(findChild(row, "rowCell_plays").visible, false, "no Plays cell");
+        verify(held.page.sortOptions.every(option => option.value !== "plays"), "no Plays to sort by");
+        const cuesHeader = findChild(held.page, "sortHeader_cues");
+        const actions = findChild(held.page, "headerCell_actions");
+        const gapOff = actions.mapToItem(held.page, 0, 0).x - cuesHeader.mapToItem(held.page, cuesHeader.width, 0).x;
+
+        realAppSettings.showPlayCount = true;
+        waitForRendering(held.page);
+        const plays = findChild(held.page, "sortHeader_plays");
+        verify(plays !== null && plays.visible, "a Plays header");
+        compare(findChild(row, "rowCell_plays").visible, true, "a Plays cell");
+        verify(held.page.sortOptions.some(option => option.value === "plays"), "Plays to sort by");
+        const gapOn = actions.mapToItem(held.page, 0, 0).x
+            - findChild(held.page, "sortHeader_cues").mapToItem(held.page, findChild(held.page, "sortHeader_cues").width, 0).x;
+        verify(gapOn - gapOff >= held.page.playsColumnWidth, "Plays takes its room between Cues and the actions: "
+               + gapOff + " then " + gapOn);
+        compare(compareColumnGeometry(held.page, held.list, "Plays shown"), 8);
+    }
+
+    // Sorted by Plays when the column goes: back to Playlist Order, the
+    // combo and the list with it.
+    function test_sortingByPlaysFallsBackWhenTheColumnGoes() {
+        realAppSettings.showPlayCount = true;
+        const held = makeHeldPage(6);
+        const scanOrder = titles(held.controller);
+        held.page.sortByColumn("plays");
+        held.page.sortByColumn("plays");
+        compare(held.page.sortField, "plays");
+        compare(findChild(held.page, "sortCombo").currentText, "Plays");
+        realAppSettings.showPlayCount = false;
+        compare(held.page.sortField, "playlist");
+        compare(held.page.sortAscending, true);
+        compare(findChild(held.page, "sortCombo").currentText, "Playlist Order");
+        compare(titles(held.controller), scanOrder, "the list in its own order again");
+    }
+
+    // Without Plays the other columns fit sooner, and the full tier comes
+    // where they do: no narrower, no wider.
+    function test_theFullTierComesWhereTheColumnsFit() {
+        const held = makeHeldPage(6);
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+        held.page.playlistSidebarOpen = false;
+        const page = held.page;
+        const room = page.playsColumnWidth + page.trackColumnSpacing;
+        compare(page.fullTierWidth, 620 - room);
+        realAppSettings.showPlayCount = true;
+        compare(page.fullTierWidth, 620);
+        realAppSettings.showPlayCount = false;
+        // Just wide enough for the full tier without Plays: every column
+        // shown fits, the header row inside the page.
+        // Each width laid out before the tier is read: the tier follows
+        // the column the layout gives Browse, a pass after the width.
+        for (let w = 500; w < 800; w += 4) {
+            page.width = w;
+            waitForRendering(page);
+            if (page.browseTier === 2) {
+                break;
+            }
+        }
+        compare(page.browseTier, 2);
+        waitForRendering(page);
+        compare(page.browseTier, 2, "and it stays there once the headers have come");
+        const actions = findChild(page, "headerCell_actions");
+        const right = actions.mapToItem(page, actions.width, 0).x;
+        verify(right <= page.width - Theme.pageMargin + 1, "the header row ends inside the page at " + page.width
+               + ": " + right);
+        compare(compareColumnGeometry(page, held.list, "at the threshold"), 7);
     }
 
     // ---- Back to the playlist's own order ----
