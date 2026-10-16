@@ -546,7 +546,8 @@ ColumnLayout {
                             required property int index
                             width: 2
                             height: 4
-                            x: Theme.snap((parent.width - width) * index / (root.bpmSteps.length - 1))
+                            // parent is null for a moment while the page is torn down.
+                            x: parent ? Theme.snap((parent.width - width) * index / (root.bpmSteps.length - 1)) : 0
                             color: index === root.bpmStepIndex ? Theme.accent : Theme.borderSubtle
                         }
                     }
