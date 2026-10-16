@@ -1542,7 +1542,7 @@ Page {
                                     // or moved within it.
                                     font.italic: trackDelegate.pendingAddition || trackDelegate.pendingMove
                                     color: trackDelegate.pendingAddition || trackDelegate.pendingMove
-                                        ? Theme.textMuted : palette.windowText
+                                        ? Theme.textMuted : Theme.text
                                     // Staged to come out of the playlist shown.
                                     font.strikeout: root.playlistEditing && root.shownPlaylist.length > 0
                                         && root.playlistEditController.pendingRevision >= 0

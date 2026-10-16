@@ -350,7 +350,7 @@ TestCase {
                 // What a run elsewhere (a Mac) needs to say why: the grab,
                 // and the numbers the sampling worked from.
                 const file = screenshotDir && screenshotDir.length > 0
-                    ? screenshotDir + "/blank-row-" + what.replace(/[^A-Za-z0-9]+/g, "-") + "-row" + i + ".png" : "";
+                    ? screenshotDir + "/blank-row-combo-" + what.replace(/[^A-Za-z0-9]+/g, "-") + "-row" + i + ".png" : "";
                 if (file.length > 0) {
                     image.save(file);
                 }
