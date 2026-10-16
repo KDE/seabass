@@ -4,7 +4,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-"""Single source of truth for the Seabass "Sound Bass" brand mark.
+"""The generated "Sound Bass" mark Seabass shipped before Nuno's artwork.
+
+Superseded 2026-10-16: the app shows src/gui/qml/icons/seabass_mascot.png
+and its icon forms come from tools/make_app_icons.py. Kept for the
+geometry and the website until the site has the new artwork too.
+
 
 The design is a fish whose body is filled with equalizer bars: a deep base
 slab per bar with a brighter level segment centred on the waveform axis,

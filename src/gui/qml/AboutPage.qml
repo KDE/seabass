@@ -118,7 +118,7 @@ Page {
                 spacing: Theme.rowSpacing * 2
                 Image {
                     objectName: "aboutLogo"
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
                     Layout.preferredWidth: nameBlock.implicitHeight
                     Layout.preferredHeight: nameBlock.implicitHeight
                     Layout.alignment: Qt.AlignTop
