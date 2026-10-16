@@ -139,73 +139,91 @@ HealthCheckPage {
         }
     }
 
-    Repeater {
-        objectName: "playlistDifferences"
-        model: root.differences
-        delegate: ColumnLayout {
-            id: playlistRow
-            required property var modelData
-            Layout.fillWidth: true
-            Layout.topMargin: Theme.tightSpacing
+    // The playlists, as many as the stick has: a list that scrolls, with
+    // room under the last row for the floating Save button (a long list
+    // ran off the page and could not be scrolled, Sebastian 2026-10-16).
+    Flickable {
+        id: differencesView
+        objectName: "playlistDifferencesView"
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        contentWidth: width
+        contentHeight: differencesColumn.implicitHeight
+        bottomMargin: root.saveClearance
+        interactive: contentHeight + bottomMargin > height
+        ScrollBar.vertical: BigScrollBar {}
+        ColumnLayout {
+            id: differencesColumn
+            width: differencesView.width
             spacing: Theme.tightSpacing
-
-            Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                font.bold: true
-                text: playlistRow.modelData.name
-            }
             Repeater {
-                model: playlistRow.modelData.sides
-                delegate: Label {
+                objectName: "playlistDifferences"
+                model: root.differences
+                delegate: ColumnLayout {
+                    id: playlistRow
                     required property var modelData
                     Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.textMuted
-                    text: root.sideLine(modelData)
-                }
-            }
-            Label {
-                visible: playlistRow.modelData.missingSomewhere
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.textMuted
-                text: "Seabass cannot create a playlist in a library that lacks it yet."
-            }
-            RowLayout {
-                spacing: Theme.rowSpacing
-                Repeater {
-                    model: playlistRow.modelData.references
-                    delegate: Button {
-                        required property var modelData
-                        objectName: "match_" + modelData.format
-                        readonly property bool hasWork: modelData.adds + modelData.removes + modelData.swaps > 0
-                        visible: hasWork && playlistRow.modelData.staged.length === 0
-                        text: "Follow " + modelData.library
-                        enabled: !consistencyController?.busy && !consistencyController?.writing
-                            && !consistencyController?.stickReadOnly
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.referenceTip(modelData)
-                        onClicked: consistencyController?.alignPlaylist(playlistRow.modelData.name, modelData.format)
+                    Layout.topMargin: Theme.tightSpacing
+                    spacing: Theme.tightSpacing
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.bold: true
+                        text: playlistRow.modelData.name
                     }
-                }
-                Label {
-                    objectName: "stagedPlaylistNote"
-                    visible: playlistRow.modelData.staged.length > 0
-                    color: Theme.warnText
-                    text: "staged: following " + playlistRow.modelData.references
-                        .filter((r) => r.format === playlistRow.modelData.staged)
-                        .map((r) => r.library).join("") + ", not saved yet"
-                }
-                Button {
-                    objectName: "unstagePlaylistButton"
-                    visible: playlistRow.modelData.staged.length > 0
-                    text: "Unstage"
-                    onClicked: consistencyController?.unstagePlaylist(playlistRow.modelData.name)
+                    Repeater {
+                        model: playlistRow.modelData.sides
+                        delegate: Label {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textMuted
+                            text: root.sideLine(modelData)
+                        }
+                    }
+                    Label {
+                        visible: playlistRow.modelData.missingSomewhere
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textMuted
+                        text: "Seabass cannot create a playlist in a library that lacks it yet."
+                    }
+                    RowLayout {
+                        spacing: Theme.rowSpacing
+                        Repeater {
+                            model: playlistRow.modelData.references
+                            delegate: Button {
+                                required property var modelData
+                                objectName: "match_" + modelData.format
+                                readonly property bool hasWork: modelData.adds + modelData.removes + modelData.swaps > 0
+                                visible: hasWork && playlistRow.modelData.staged.length === 0
+                                text: "Follow " + modelData.library
+                                enabled: !consistencyController?.busy && !consistencyController?.writing
+                                    && !consistencyController?.stickReadOnly
+                                ToolTip.visible: hovered
+                                ToolTip.text: root.referenceTip(modelData)
+                                onClicked: consistencyController?.alignPlaylist(playlistRow.modelData.name, modelData.format)
+                            }
+                        }
+                        Label {
+                            objectName: "stagedPlaylistNote"
+                            visible: playlistRow.modelData.staged.length > 0
+                            color: Theme.warnText
+                            text: "staged: following " + playlistRow.modelData.references
+                                .filter((r) => r.format === playlistRow.modelData.staged)
+                                .map((r) => r.library).join("") + ", not saved yet"
+                        }
+                        Button {
+                            objectName: "unstagePlaylistButton"
+                            visible: playlistRow.modelData.staged.length > 0
+                            text: "Unstage"
+                            onClicked: consistencyController?.unstagePlaylist(playlistRow.modelData.name)
+                        }
+                    }
                 }
             }
         }
     }
-
-    Item { Layout.fillHeight: true }
 }

@@ -138,6 +138,35 @@ TestCase {
 
     // Entries the player cannot see: said with their playlists, and the
     // button stages the repair and takes it back.
+    // Forty playlists do not fit the page: the list scrolls, with room under
+    // the last row for the floating Save button, and the last row can be
+    // brought on screen.
+    function test_aLongListOfPlaylistsScrolls() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null);
+        waitForRendering(page);
+        const one = controller.playlistDifferences[0];
+        const many = [];
+        for (let i = 0; i < 40; ++i) {
+            const copy = JSON.parse(JSON.stringify(one));
+            copy.name = "Playlist " + i;
+            many.push(copy);
+        }
+        controller.playlistDifferences = many;
+        const view = findChild(page, "playlistDifferencesView");
+        verify(view !== null, "the list is a view");
+        tryVerify(() => view.contentHeight > view.height, 5000, "more than fits");
+        verify(view.interactive, "and so it scrolls");
+        verify(view.bottomMargin >= page.saveClearance - 0.5, "room for the Save button under the last row");
+        view.contentY = view.contentHeight + view.bottomMargin - view.height;
+        const rows = findChild(page, "playlistDifferences");
+        const last = rows.itemAt(39);
+        verify(last !== null);
+        const bottom = last.mapToItem(view, 0, last.height).y;
+        verify(bottom <= view.height + 0.5 && bottom > 0, "the last row is on screen at the end: " + bottom);
+    }
+
     function test_entriesThePlayerCannotSeeAreListedAndRepaired() {
         const controller = createTemporaryObject(controllerComponent, testCase);
         const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
