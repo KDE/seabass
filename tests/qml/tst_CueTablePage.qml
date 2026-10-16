@@ -361,7 +361,7 @@ TestCase {
         compare(browse.trackCountChange(other), 0);
         scan.filterByPlaylist(full);
         compare(browse.pendingAdditions[full].join(), file);
-        scan.setPendingAdditions(browse.pendingAdditions);
+        scan.setPendingEdits(browse.pendingAdditions, browse.pendingMoves);
         compare(scan.tracks.trackCount(), inIt + 1, "added at the end of " + full);
         const added = scan.tracks.trackAt(inIt);
         compare(added.filePath, file);
@@ -375,7 +375,7 @@ TestCase {
             verify(scan.tracks.trackAt(i).pendingAddition === false, "no flag outside the playlist");
         }
         browse.keepOutOfPlaylist(full, file);
-        scan.setPendingAdditions(browse.pendingAdditions);
+        scan.setPendingEdits(browse.pendingAdditions, browse.pendingMoves);
         scan.filterByPlaylist(full);
         compare(scan.tracks.trackCount(), inIt, "taken back");
 
@@ -419,6 +419,100 @@ TestCase {
                        + JSON.stringify(again.playlistNames));
             }
         }
+    }
+
+    // Browse's move within a playlist with the real controllers: staged,
+    // the list shows the track at its new place, flagged, the others closed
+    // up around it; moved again, the one change is replaced; taken back,
+    // the old order; Save writes it, and a rescan reads the new order off
+    // the stick.
+    function test_aTrackMovedWithinAPlaylistShowsThereUntilSaveWritesIt() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("onelibrary", t.pioneer);
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
+        const order = () => {
+            const files = [];
+            for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+                files.push(scan.tracks.trackAt(i).filePath);
+            }
+            return files;
+        };
+        // A playlist of four or more different files.
+        const playlist = scan.playlistNames.filter(n => {
+            if (scan.playlistTrackCounts[n] < 4) {
+                return false;
+            }
+            scan.filterByPlaylist(n);
+            return new Set(order()).size === order().length;
+        })[0];
+        verify(playlist !== undefined, JSON.stringify(scan.playlistTrackCounts));
+        scan.filterByPlaylist(playlist);
+        const before = order();
+        const moving = before[0];
+        const moved = (files, from, to) => {
+            const copy = files.slice();
+            const file = copy.splice(from, 1)[0];
+            copy.splice(to, 0, file);
+            return copy;
+        };
+        const refresh = () => scan.setPendingEdits(browse.pendingAdditions, browse.pendingMoves);
+
+        verify(edited(browse, browse.moveInPlaylist(t.pioneer, engine, playlist, moving, "Moving", 2)), browse.errorMessage);
+        compare(t.session.pendingCount, 1);
+        verify(browse.isMoveStaged(playlist, moving));
+        verify(browse.isPlaylistEdited(playlist), "a move edits the playlist");
+        compare(browse.trackCountChange(playlist), 0, "a move changes no count");
+        compare(JSON.stringify(browse.pendingMoves[playlist]), JSON.stringify([{filePath: moving, toIndex: 2}]));
+        refresh();
+        compare(JSON.stringify(order()), JSON.stringify(moved(before, 0, 2)), "shown at its new place");
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            compare(scan.tracks.trackAt(i).pendingMove, i === 2, "only the moved row is flagged: row " + i);
+            verify(scan.tracks.trackAt(i).pendingAddition === false);
+        }
+        scan.filterByPlaylist("");
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            verify(scan.tracks.trackAt(i).pendingMove === false, "no flag outside the playlist");
+        }
+        scan.filterByPlaylist(playlist);
+
+        verify(edited(browse, browse.moveInPlaylist(t.pioneer, engine, playlist, moving, "Moving", 1)), browse.errorMessage);
+        compare(t.session.pendingCount, 1, "moved again: the one change replaced");
+        compare(JSON.stringify(browse.pendingMoves[playlist]), JSON.stringify([{filePath: moving, toIndex: 1}]));
+        refresh();
+        compare(JSON.stringify(order()), JSON.stringify(moved(before, 0, 1)));
+
+        browse.keepPositionInPlaylist(playlist, moving);
+        compare(t.session.pendingCount, 0);
+        verify(!browse.isMoveStaged(playlist, moving));
+        verify(!browse.isPlaylistEdited(playlist));
+        refresh();
+        compare(JSON.stringify(order()), JSON.stringify(before), "taken back: the old order");
+        verify(scan.tracks.trackAt(0).pendingMove === false);
+
+        verify(edited(browse, browse.moveInPlaylist(t.pioneer, engine, playlist, moving, "Moving", 2)), browse.errorMessage);
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        compare(JSON.stringify(browse.pendingMoves), "{}", "written, so no longer pending");
+
+        const again = createTemporaryObject(scanControllerComponent, testCase);
+        again.scan("onelibrary", t.pioneer);
+        tryVerify(() => !again.busy && again.playlistNames.length > 0, 120000, "onelibrary scanned again");
+        again.filterByPlaylist(playlist);
+        const written = [];
+        for (let i = 0; i < again.tracks.trackCount(); ++i) {
+            written.push(again.tracks.trackAt(i).filePath);
+            verify(again.tracks.trackAt(i).pendingMove === false);
+        }
+        compare(JSON.stringify(written), JSON.stringify(moved(before, 0, 2)), "the stick holds the new order");
+        // On the fixture copy only OneLibrary is found holding this
+        // playlist (playlistWhereabouts), so it is the one library written.
+        const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
+        verify(log.indexOf("playlist-move: moved \"" + moving + "\" to position 3 in \"" + playlist + "\" in 1 libraries")
+               >= 0, log);
     }
 
     // The page picks its playlist again as a scan's names arrive (the one

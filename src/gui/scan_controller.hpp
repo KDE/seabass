@@ -58,6 +58,7 @@ public:
         AlbumRole,
         FallbackArtworkPathRole,
         PendingAdditionRole,
+        PendingMoveRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -83,6 +84,9 @@ public:
     // The rows (by sourceId) that are in their playlist only because an
     // add is staged, served as pendingAddition. Set before the tracks.
     void setPendingAdditions(std::set<std::string> sourceIds) { m_pendingAdditions = std::move(sourceIds); }
+    // The rows (by sourceId) shown at a place a staged move gives them,
+    // served as pendingMove. Set before the tracks.
+    void setPendingMoves(std::set<std::string> sourceIds) { m_pendingMoves = std::move(sourceIds); }
 
     // Random-access read of one row, by index into *this currently
     // displayed* (filtered/sorted) list -- not the full unfiltered
@@ -111,6 +115,7 @@ private:
     std::vector<domain::Track> m_tracks;
     std::shared_ptr<const FallbackArtwork> m_fallbackArtwork;
     std::set<std::string> m_pendingAdditions;
+    std::set<std::string> m_pendingMoves;
 };
 
 // Result of a background scan task, see ScanController::scan(). Kept
@@ -230,10 +235,13 @@ public:
 
     // playlistName empty shows every scanned track again.
     Q_INVOKABLE void filterByPlaylist(const QString &playlistName);
-    // The tracks staged to be added to a playlist, {playlist: [file
-    // paths]} as PlaylistEditController::pendingAdditions has them: shown
-    // at the end of that playlist, flagged pendingAddition, until Save.
-    Q_INVOKABLE void setPendingAdditions(const QVariantMap &additions);
+    // The playlist edits staged, as PlaylistEditController has them,
+    // shown in the playlist they are for until Save: the tracks to be
+    // added ({playlist: [file paths]}) at its end, flagged pendingAddition,
+    // then the tracks to be moved ({playlist: [{filePath, toIndex}]}) at
+    // their new place in its order, in the order moved, flagged
+    // pendingMove.
+    Q_INVOKABLE void setPendingEdits(const QVariantMap &additions, const QVariantMap &moves);
 
     // Matches against title or artist, case-insensitive substring. Empty
     // clears the search.
@@ -373,6 +381,7 @@ private:
     QVariantMap m_playlistTrackCounts;
     QString m_currentPlaylistFilter;
     QVariantMap m_pendingAdditions;
+    QVariantMap m_pendingMoves;
     QString m_currentSearchQuery;
     QString m_sortField = "playlist";
     bool m_sortAscending = true;

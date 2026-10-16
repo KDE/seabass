@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -93,6 +94,8 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         return fallbackArtworkFor(track);
     case PendingAdditionRole:
         return m_pendingAdditions.count(track.sourceId) > 0;
+    case PendingMoveRole:
+        return m_pendingMoves.count(track.sourceId) > 0;
     case BpmRole:
         return track.bpm;
     case KeyRole:
@@ -146,6 +149,7 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {AlbumRole, "album"},
         {FallbackArtworkPathRole, "fallbackArtworkPath"},
         {PendingAdditionRole, "pendingAddition"},
+        {PendingMoveRole, "pendingMove"},
     };
 }
 
@@ -613,12 +617,13 @@ void ScanController::filterByPlaylist(const QString &playlistName)
     applyFilters();
 }
 
-void ScanController::setPendingAdditions(const QVariantMap &additions)
+void ScanController::setPendingEdits(const QVariantMap &additions, const QVariantMap &moves)
 {
-    if (m_pendingAdditions == additions) {
+    if (m_pendingAdditions == additions && m_pendingMoves == moves) {
         return;
     }
     m_pendingAdditions = additions;
+    m_pendingMoves = moves;
     applyFilters();
 }
 
@@ -749,6 +754,7 @@ void ScanController::applyFilters(bool inPlace)
     std::string playlistFilter = m_currentPlaylistFilter.toStdString();
 
     std::set<std::string> pendingAdditions;
+    std::set<std::string> pendingMoves;
     if (!m_currentPlaylistFilter.isEmpty()) {
         result = domain::filterByScope(result, domain::TrackScope::playlist(playlistFilter));
         // The tracks staged into it, after the ones it has, in the order
@@ -779,6 +785,39 @@ void ScanController::applyFilters(bool inPlace)
                 listed.insert(path);
                 pendingAdditions.insert(track.sourceId);
                 result.push_back(std::move(track));
+            }
+        }
+        // Then the moves, each in the order the ones before it left (the
+        // additions included), as Save writes them: the playlist renumbered
+        // from 0 in its new order, which is what the playlist sort shows.
+        const QVariantList moves = m_pendingMoves.value(m_currentPlaylistFilter).toList();
+        if (!moves.isEmpty()) {
+            std::vector<size_t> order(result.size());
+            std::iota(order.begin(), order.end(), size_t{0});
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+                return playlistPosition(result[a], playlistFilter).value_or(std::numeric_limits<int>::max())
+                       < playlistPosition(result[b], playlistFilter).value_or(std::numeric_limits<int>::max());
+            });
+            for (const QVariant &m : moves) {
+                const QVariantMap move = m.toMap();
+                const std::string path = move.value(QStringLiteral("filePath")).toString().toStdString();
+                const auto at = std::find_if(order.begin(), order.end(), [&](size_t i) { return result[i].filePath == path; });
+                if (at == order.end()) {
+                    continue;
+                }
+                const size_t row = *at;
+                order.erase(at);
+                const size_t to = std::min(static_cast<size_t>(std::max(move.value(QStringLiteral("toIndex")).toInt(), 0)),
+                                           order.size());
+                order.insert(order.begin() + static_cast<std::ptrdiff_t>(to), row);
+                pendingMoves.insert(result[row].sourceId);
+            }
+            for (size_t k = 0; k < order.size(); ++k) {
+                for (auto &membership : result[order[k]].playlists) {
+                    if (membership.name == playlistFilter) {
+                        membership.position = static_cast<int>(k);
+                    }
+                }
             }
         }
     }
@@ -858,6 +897,7 @@ void ScanController::applyFilters(bool inPlace)
     });
 
     m_model.setPendingAdditions(std::move(pendingAdditions));
+    m_model.setPendingMoves(std::move(pendingMoves));
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {
