@@ -267,6 +267,11 @@ QString CreatePlaylistChange::description() const
     return QStringLiteral("Create the playlist \"%1\"").arg(QString::fromStdString(m_playlist));
 }
 
+QString CreatePlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
 QString CreatePlaylistChange::subject() const
 {
     return QString::fromStdString(m_playlist);
@@ -365,6 +370,11 @@ QString DeletePlaylistChange::description() const
     return QStringLiteral("Delete the playlist \"%1\"").arg(QString::fromStdString(m_playlist));
 }
 
+QString DeletePlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
 QString DeletePlaylistChange::subject() const
 {
     return QString::fromStdString(m_playlist);
@@ -461,6 +471,11 @@ QString AddToPlaylistChange::owner() const
 QString AddToPlaylistChange::description() const
 {
     return QStringLiteral("Add \"%1\" to \"%2\"").arg(m_title, QString::fromStdString(m_playlist));
+}
+
+QString AddToPlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
 }
 
 QString AddToPlaylistChange::subject() const
@@ -584,6 +599,11 @@ QString RemoveFromPlaylistChange::description() const
     return QStringLiteral("Remove \"%1\" from \"%2\"").arg(m_title, QString::fromStdString(m_playlist));
 }
 
+QString RemoveFromPlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
 QString RemoveFromPlaylistChange::subject() const
 {
     return m_title;
@@ -693,6 +713,11 @@ QString MoveInPlaylistChange::description() const
         .arg(m_title)
         .arg(m_toIndex + 1)
         .arg(QString::fromStdString(m_playlist));
+}
+
+QString MoveInPlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
 }
 
 QString MoveInPlaylistChange::subject() const

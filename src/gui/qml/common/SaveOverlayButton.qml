@@ -58,6 +58,7 @@ Item {
         contentItem: RowLayout {
             spacing: 10
             Label {
+                objectName: "saveButtonLabel"
                 text: root.label
                 font.family: Theme.titleFamily
                 font.weight: Font.Bold

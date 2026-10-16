@@ -13,7 +13,8 @@
 // the wrapped pair saves as the bare pair would, on a copy of the
 // anonymized fixture: a pad onto an Engine track and an Engine playlist
 // deleted, the applied ids the wrapped ones, Undo putting m.db back byte
-// for byte (case 4).
+// for byte (case 4). Each change also says which playlist it edits, which
+// the session counts for the Save button's label (case 5).
 
 #include <QCoreApplication>
 #include <QSignalSpy>
@@ -26,6 +27,7 @@
 #include <djinterop/djinterop.hpp>
 
 #include "domain/sync_planning.hpp"
+#include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
@@ -198,6 +200,7 @@ int main(int argc, char **argv)
             assert(owned.unitsWritten() == bare->unitsWritten());
             assert(owned.unitsSkipped() == bare->unitsSkipped());
             assert(owned.verb() == bare->verb());
+            assert(owned.playlistEdited() == bare->playlistEdited());
             assert(owned.formatsTouched() == bare->formatsTouched());
             assert(sameWrites(owned.rekordboxWrites(), bare->rekordboxWrites()));
             const auto ownedTargets = owned.filesToBackup(ctx);
@@ -229,6 +232,8 @@ int main(int argc, char **argv)
                == QStringLiteral("rekordbox-export-sync:sync:engine:6"));
         assert(OwnedChange(rekordboxExportSyncOwner(), deleteChange(stick)).verb() == QStringLiteral("deleted"));
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).verb() == QStringLiteral("synchronised"));
+        assert(OwnedChange(rekordboxExportSyncOwner(), deleteChange(stick)).playlistEdited() == QStringLiteral("Playlist 001"));
+        assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).playlistEdited().isEmpty());
         bool refused = false;
         try {
             OwnedChange none(rekordboxExportSyncOwner(), nullptr);
@@ -283,6 +288,37 @@ int main(int argc, char **argv)
         assert(undone.error.isEmpty() && undone.appliedIds.size() == 1);
         assert(testing::fileBytes(pathFromUtf8(stick.db)) == before && "Undo puts m.db back byte for byte");
         std::cout << "case 4 (the wrapped pair saves under the wrapped ids; Undo restores m.db byte for byte) OK\n";
+    }
+
+    // 5. What the Save button reads: how many playlists the staged changes
+    //    edit while every one is a playlist edit, and 0 once one is not.
+    {
+        LibraryEditSession *session = registry.openSession(QStringLiteral("lib-playlists"), QStringLiteral("P"));
+        const QString engine = stick.enginePath();
+        const QStringList libraries{QStringLiteral("engine")};
+        const std::string file = pathToUtf8(stick.root / "Contents" / "a.mp3");
+        assert(session->playlistsEdited() == 0 && "nothing staged");
+        assert(session->stage(std::make_unique<CreatePlaylistChange>(QString(), engine, "Fresh", libraries)));
+        assert(session->playlistsEdited() == 1);
+        assert(session->stage(std::make_unique<AddToPlaylistChange>(QString(), engine, "Fresh", file,
+                                                                    QStringLiteral("A"), libraries)));
+        assert(session->playlistsEdited() == 1 && "the same playlist twice is one");
+        assert(session->stage(std::make_unique<RemoveFromPlaylistChange>(QString(), engine, "Playlist 001", file,
+                                                                         QStringLiteral("A"), libraries)));
+        assert(session->stage(std::make_unique<DeletePlaylistChange>(QString(), engine, "Playlist 002", libraries)));
+        assert(session->playlistsEdited() == 3);
+        assert(session->stage(std::make_unique<MoveInPlaylistChange>(QString(), engine, "Playlist 003", file,
+                                                                     QStringLiteral("A"), 0, libraries)));
+        assert(session->playlistsEdited() == 4 && "a move is a playlist edit too");
+        // A cue from Browse: the same page, not a playlist edit.
+        assert(session->stage(std::make_unique<AddCueChange>(QStringLiteral("engine"), engine, QStringLiteral("6"), 1000.0,
+                                                             QStringLiteral("hot"), 1, QString(), QString(), false, 0.0,
+                                                             QStringLiteral("A"))));
+        assert(session->pendingCount() == 6);
+        assert(session->playlistsEdited() == 0 && "a cue staged too");
+        session->discard();
+        registry.closeSession(QStringLiteral("lib-playlists"));
+        std::cout << "case 5 (playlistsEdited counts the playlists while only playlist edits are staged) OK\n";
     }
 
     std::cout << "owned_change_test: all cases passed\n";

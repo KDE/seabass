@@ -55,6 +55,10 @@ class LibraryEditSession : public QObject
     Q_PROPERTY(bool lockHeld READ lockHeld NOTIFY stateChanged)
     Q_PROPERTY(int pendingCount READ pendingCount NOTIFY pendingChanged)
     Q_PROPERTY(QStringList pendingDescriptions READ pendingDescriptions NOTIFY pendingChanged)
+    // How many playlists the staged changes edit, when every one of them
+    // is a playlist edit (PendingChange::playlistEdited); 0 as soon as one
+    // is anything else. The Save button names playlists by it.
+    Q_PROPERTY(int playlistsEdited READ playlistsEdited NOTIFY pendingChanged)
     Q_PROPERTY(QString writeLabel READ writeLabel NOTIFY writeProgressChanged)
     Q_PROPERTY(int writeCurrent READ writeCurrent NOTIFY writeProgressChanged)
     Q_PROPERTY(int writeTotal READ writeTotal NOTIFY writeProgressChanged)
@@ -104,6 +108,7 @@ public:
         return units;
     }
     QStringList pendingDescriptions() const;
+    int playlistsEdited() const;
     QString writeLabel() const { return m_writeLabel; }
     int writeCurrent() const { return m_writeCurrent; }
     int writeTotal() const { return m_writeTotal; }

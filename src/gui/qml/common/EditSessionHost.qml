@@ -42,6 +42,17 @@ Item {
     // whose save means something more specific than "write my edits"
     // overrides it.
     property string saveLabel: "Save"
+    // What the button says: saveLabel, except that a page keeping the
+    // plain "Save" says "Save Playlist" or "Save Playlists" while every
+    // staged change is a playlist edit (LibraryEditSession::
+    // playlistsEdited). Browse stages cues and playlist edits alike, and a
+    // user who only moved tracks between playlists is told that Save
+    // writes playlists and nothing else. A page with a label of its own
+    // keeps it: its Save means what it says there.
+    readonly property int playlistsEdited: internal.session !== null && internal.session.playlistsEdited !== undefined
+        ? internal.session.playlistsEdited : 0
+    readonly property string shownSaveLabel: host.saveLabel !== "Save" || host.playlistsEdited === 0 ? host.saveLabel
+        : host.playlistsEdited === 1 ? "Save Playlist" : "Save Playlists"
     // How much room the floating Save button takes out of the bottom of
     // the page, gap included. A list gives itself this much bottomMargin so
     // its last row can always scroll clear of the button. Measured whether
@@ -284,7 +295,7 @@ Item {
         id: saveOverlayButton
         objectName: "saveOverlay"
         session: host.session
-        label: host.saveLabel
+        label: host.shownSaveLabel
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 24

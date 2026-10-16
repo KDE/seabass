@@ -65,6 +65,11 @@ QString OwnedChange::verb() const
     return m_inner->verb();
 }
 
+QString OwnedChange::playlistEdited() const
+{
+    return m_inner->playlistEdited();
+}
+
 QStringList OwnedChange::formatsTouched() const
 {
     return m_inner->formatsTouched();

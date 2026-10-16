@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 
@@ -513,6 +514,61 @@ TestCase {
         const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
         verify(log.indexOf("playlist-move: moved \"" + moving + "\" to position 3 in \"" + playlist + "\" in 1 libraries")
                >= 0, log);
+    }
+
+    PlaybackController { id: realPlayback }
+    AppSettingsController { id: realAppSettings }
+    Component {
+        id: browseStackComponent
+        StackView {
+            width: 1000
+            height: 760
+            initialItem: Item {}
+        }
+    }
+    Component {
+        id: browseComponent
+        ScanPage { stickLabel: "TESTSTICK" }
+    }
+
+    // Playlist edits staged in Browse with the real controller are unsaved
+    // changes like any other: quitting asks (the window asks when
+    // EditSessionRegistry.anyDirty, see Main.qml's onClosing), and so does
+    // leaving the page, whose Back goes through EditSessionHost's
+    // requestLeave. Meanwhile the Save button names what Save writes: the
+    // playlist, or the playlists.
+    function test_stagedPlaylistEditsAreUnsavedChanges() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const stack = createTemporaryObject(browseStackComponent, testCase);
+        const page = stack.push(browseComponent, {rekordboxPath: t.pioneer, enginePath: engine,
+                                                  playbackController: realPlayback,
+                                                  appSettingsController: realAppSettings});
+        tryCompare(stack, "busy", false);
+        compare(stack.depth, 2);
+        const browse = page.playlistEditController;
+        verify(!EditSessionRegistry.anyDirty, "nothing staged yet");
+        verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Dragged Here")), browse.errorMessage);
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Dragged Here", t.stick + "/Contents/795079.mp3",
+                                                   "A Track")), browse.errorMessage);
+        compare(t.session.pendingCount, 2);
+        compare(t.session.playlistsEdited, 1);
+        verify(EditSessionRegistry.anyDirty, "quitting would ask");
+        const label = findChild(page, "saveButtonLabel");
+        verify(label !== null);
+        tryCompare(label, "text", "Save Playlist");
+        verify(edited(browse, browse.deletePlaylist(t.pioneer, engine, "Playlist 000")), browse.errorMessage);
+        tryCompare(label, "text", "Save Playlists");
+
+        mouseClick(findChild(page, "backButton"));
+        const dialog = findChild(page, "unsavedDialog");
+        tryCompare(dialog, "opened", true);
+        compare(stack.depth, 2, "not left before the answer");
+        compare(dialog.pendingCount, 3);
+        findChild(dialog, "discardButton").clicked();
+        tryCompare(stack, "depth", 1);
+        compare(t.session.pendingCount, 0, "discarded");
+        verify(!EditSessionRegistry.anyDirty);
     }
 
     // The page picks its playlist again as a scan's names arrive (the one
