@@ -1141,7 +1141,8 @@ QVariantMap ScanController::playlistSummary(const QString &playlist) const
     // Covers a summary shows: the popup's mosaic has room for four.
     constexpr int kSummaryCovers = 4;
 
-    const std::string name = playlist.toStdString();
+    // By its scanned path: a staged rename lists it under the new one.
+    const std::string name = scannedPlaylistName(playlist).toStdString();
     // In the playlist's own order, so the covers are the ones its first
     // tracks have; the library's in scan order, as Browse lists it.
     std::vector<std::pair<int, const domain::Track *>> entries;

@@ -510,6 +510,30 @@ TestCase {
         compare(summary.withoutCues, 2);
     }
 
+    // A playlist staged to be renamed (ScanController.setPlaylistAliases):
+    // its row, in grey italics under the new name, still opens the
+    // summary, titled with the new name and counting the old playlist's
+    // tracks.
+    function test_aRenamedPlaylistKeepsItsSummary() {
+        browseFixture.holdCues(6, true);
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("rekordbox", "/nonexistent/HELD/PIONEER");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 10000, "the list read");
+        scan.setPlaylistAliases({"Held Reversed": "Held Renamed"});
+        compare(scan.playlistSummary("Held Renamed").count, 6, "the old playlist's tracks");
+        const list = createTemporaryObject(listComponent, testCase,
+                                           {scanController: scan, isRenamed: name => name === "Held Renamed"});
+        waitForRendering(list);
+        const index = list.model.indexOf("Held Renamed");
+        verify(index > 0, JSON.stringify(list.model));
+        const r = row(list, index);
+        verify(r.pendingRename, "drawn as a renamed row");
+        const loader = hoverOpen(r);
+        compare(text(loader.item, "summaryTitle"), "Held Renamed");
+        compare(text(loader.item, "summaryCount"), "6 tracks");
+        browseFixture.releaseCues();
+    }
+
     function test_summaryOfARealLibrary() {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");
