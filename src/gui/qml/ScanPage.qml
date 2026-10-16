@@ -1019,6 +1019,9 @@ Page {
                 trackDropsEnabled: root.playlistEditing
                 heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
                 onTrackDropped: name => trackDrag.dropOn(name, root.moveSourceFor(trackDrag))
+                // No summary over the rows while a track is dragged onto
+                // them, or while the card asks what the drop should do.
+                summariesEnabled: !root.dragging && !trackDrag.confirming
             }
         }
 
