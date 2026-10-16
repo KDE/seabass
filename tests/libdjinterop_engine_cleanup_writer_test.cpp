@@ -109,6 +109,76 @@ int main()
         std::cout << "case 2 (nested/child-playlist membership handled too) OK\n";
     }
 
+    // A library whose tracks name another library as their origin (a
+    // restored stick whose Information.uuid the player renewed): the
+    // survivor takes the doomed entry's place with its own origin uuid,
+    // and every other entry of the list keeps the uuid it had. Rebuilding
+    // the list through libdjinterop wrote the library's own uuid into all
+    // of them, which the player cannot resolve.
+    {
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(root));
+        djinterop::track_snapshot snapshot;
+        snapshot.title = "Origin Survivor";
+        snapshot.relative_path = "origin_survivor.mp3";
+        auto survivorTrack = db.create_track(snapshot);
+        snapshot.title = "Origin Doomed";
+        snapshot.relative_path = "origin_doomed.mp3";
+        auto doomedTrack = db.create_track(snapshot);
+        snapshot.title = "Origin Neighbour";
+        snapshot.relative_path = "origin_neighbour.mp3";
+        auto neighbour = db.create_track(snapshot);
+        auto list = db.create_root_playlist("Origins");
+        list.add_track_back(neighbour);
+        list.add_track_back(doomedTrack);
+
+        const std::string file = seabass::pathToUtf8(root / "Database2" / "m.db");
+        const auto exec = [&](const std::string &sql) {
+            sqlite3 *h = nullptr;
+            assert(sqlite3_open_v2(file.c_str(), &h, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+            const bool ok = sqlite3_exec(h, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+            sqlite3_close(h);
+            assert(ok);
+        };
+        const auto text = [&](const std::string &sql) {
+            sqlite3 *h = nullptr;
+            sqlite3_open_v2(file.c_str(), &h, SQLITE_OPEN_READONLY, nullptr);
+            sqlite3_stmt *st = nullptr;
+            sqlite3_prepare_v2(h, sql.c_str(), -1, &st, nullptr);
+            std::string v = "<no row>";
+            if (sqlite3_step(st) == SQLITE_ROW) {
+                const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(st, 0));
+                v = t ? t : "<null>";
+            }
+            sqlite3_finalize(st);
+            sqlite3_close(h);
+            return v;
+        };
+        exec("UPDATE Track SET originDatabaseUuid = 'fb65ee77-77a4-4a96-a05e-c0ff4cd71d7d' WHERE id IN ("
+             + std::to_string(survivorTrack.id()) + ", " + std::to_string(doomedTrack.id()) + ", "
+             + std::to_string(neighbour.id()) + ");");
+        const std::string listId = "(SELECT id FROM Playlist WHERE title = 'Origins')";
+        exec("UPDATE PlaylistEntity SET databaseUuid = 'fb65ee77-77a4-4a96-a05e-c0ff4cd71d7d' WHERE listId = " + listId
+             + ";");
+
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(root));
+        writer.removeTrackReplacingWith(std::to_string(doomedTrack.id()), std::to_string(survivorTrack.id()));
+
+        const std::string inList = " FROM PlaylistEntity WHERE listId = " + listId + " AND trackId = ";
+        assert(text("SELECT databaseUuid" + inList + std::to_string(survivorTrack.id()) + ";")
+               == "fb65ee77-77a4-4a96-a05e-c0ff4cd71d7d" && "the survivor's entry: its origin uuid");
+        assert(text("SELECT databaseUuid" + inList + std::to_string(neighbour.id()) + ";")
+               == "fb65ee77-77a4-4a96-a05e-c0ff4cd71d7d" && "the neighbour keeps its uuid");
+        assert(text("SELECT count(*)" + inList + std::to_string(doomedTrack.id()) + ";") == "0");
+        auto after = djinterop::engine::load_database(seabass::pathToUtf8(root));
+        for (const auto &pl : after.root_playlists()) {
+            if (pl.name() == "Origins") {
+                const auto tracks = pl.tracks();
+                assert(tracks.size() == 2 && tracks[0].id() == neighbour.id() && tracks[1].id() == survivorTrack.id());
+            }
+        }
+        std::cout << "case 2b (the entries keep the tracks' origin uuid through a merge) OK\n";
+    }
+
     // Not-found cases throw (doomed id, then survivor id).
     {
         auto db = djinterop::engine::load_database(seabass::pathToUtf8(root));

@@ -63,37 +63,6 @@ std::optional<djinterop::playlist> playlistAtPath(djinterop::database &db, const
     return current;
 }
 
-struct Resolved
-{
-    djinterop::database db;
-    djinterop::playlist playlist;
-    djinterop::track track;
-};
-
-Resolved resolve(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId)
-{
-    auto db = djinterop::engine::load_database(engineLibraryPath);
-    auto playlist = playlistAtPath(db, playlistPath);
-    if (!playlist) {
-        throw std::runtime_error("engine: no playlist \"" + playlistPath + "\"");
-    }
-    auto track = db.track_by_id(trackId);
-    if (!track) {
-        throw std::runtime_error("engine: no track id=" + std::to_string(trackId));
-    }
-    return Resolved{db, *playlist, *track};
-}
-
-bool isMember(const djinterop::playlist &playlist, std::int64_t trackId)
-{
-    for (const auto &t : playlist.tracks()) {
-        if (t.id() == trackId) {
-            return true;
-        }
-    }
-    return false;
-}
-
 }  // namespace
 
 std::vector<DanglingPlaylistEntries> danglingPlaylistEntries(const std::string &engineLibraryPath)
@@ -139,18 +108,13 @@ int removeDanglingPlaylistEntries(const std::string &databaseFile)
     return removed;
 }
 
+// Not libdjinterop's playlist::add_track_back: it gives every entry the
+// library's own uuid, which a player cannot resolve where the tracks name
+// another library as their origin (see entityUuidFor). Appended the way the sync's inserts
+// are, with the track's.
 bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId)
 {
-    Resolved r = resolve(engineLibraryPath, playlistPath, trackId);
-    if (isMember(r.playlist, trackId)) {
-        return false;
-    }
-    r.playlist.add_track_back(r.track);
-    if (!isMember(r.playlist, trackId)) {
-        throw std::runtime_error("engine: track id=" + std::to_string(trackId) + " is not in \"" + playlistPath
-                                 + "\" after adding it");
-    }
-    return true;
+    return insertIntoEnginePlaylist(engineLibraryPath, playlistPath, trackId, std::nullopt);
 }
 
 bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath)
@@ -815,6 +779,54 @@ bool renameEnginePlaylist(const std::string &engineLibraryPath, const std::strin
 namespace
 {
 
+// The databaseUuid a playlist entry for `trackId` carries: the track's
+// originDatabaseUuid when it has one, else the library's own (the one
+// Information row's). The player resolves an entry by (databaseUuid,
+// trackId) against the tracks' (originDatabaseUuid, originTrackId), and
+// the two uuids need not be the same. WHALESHARK3 is a Seabass restore of
+// WHALESHARK: its tracks carry WHALESHARK's library uuid (fb65ee77...) as
+// their origin, the restore kept Information.uuid as well, and something
+// since (most likely the Prime 4, meeting a second stick with a library
+// uuid it already knew) renewed the stick's Information.uuid to another
+// (52f6b8cd...) while the tracks' origin stayed. An entry written with the
+// stick's uuid was then invisible on the player: "50th Opening" showed
+// empty, its 8 entries and the 112 others Seabass had written carrying
+// 52f6b8cd, against 1570 entries the player and Engine DJ wrote with the
+// tracks' fb65ee77. In a library made on the stick the two are the same.
+//
+// trackId stays the Track row's id, as libdjinterop and Engine DJ write
+// it. Whether the player matches it against id or originTrackId the data
+// cannot tell: on WHALESHARK3 the two are equal for all 1359 tracks.
+std::string entityUuidFor(PlaylistWriter &db, std::int64_t trackId)
+{
+    bool hasOrigin = false;
+    db.run("PRAGMA table_info(Track);", {}, [&](sqlite3_stmt *s) {
+        const auto *name = reinterpret_cast<const char *>(sqlite3_column_text(s, 1));
+        hasOrigin = hasOrigin || (name != nullptr && std::string(name) == "originDatabaseUuid");
+    });
+    if (hasOrigin) {
+        std::string origin;
+        db.run("SELECT originDatabaseUuid FROM Track WHERE id = ?;", {trackId}, [&](sqlite3_stmt *s) {
+            const auto *u = reinterpret_cast<const char *>(sqlite3_column_text(s, 0));
+            origin = u ? u : "";
+        });
+        if (!origin.empty()) {
+            return origin;
+        }
+    }
+    std::vector<std::string> uuids;
+    db.run("SELECT uuid FROM Information;", {}, [&](sqlite3_stmt *s) {
+        const auto *u = reinterpret_cast<const char *>(sqlite3_column_text(s, 0));
+        uuids.emplace_back(u ? u : "");
+    });
+    if (uuids.size() != 1 || uuids.front().empty()) {
+        throw std::runtime_error("engine: the library has " + std::to_string(uuids.size())
+                                 + " Information rows, not one with a uuid, and track id=" + std::to_string(trackId)
+                                 + " names no origin; refusing to add playlist entries");
+    }
+    return uuids.front();
+}
+
 // Where insertEntry puts a track: after an anchor (appended when there is
 // none or it is not a member), or first.
 enum class Placement { AfterAnchor, AtStart };
@@ -830,17 +842,7 @@ bool insertEntry(const std::string &engineLibraryPath, const std::string &playli
     if (!trackExists) {
         throw std::runtime_error("engine: no track id=" + std::to_string(trackId));
     }
-    // The databaseUuid every entry libdjinterop writes carries: the one
-    // Information row's (a player's has been seen at id 2).
-    std::vector<std::string> uuids;
-    db.run("SELECT uuid FROM Information;", {}, [&](sqlite3_stmt *s) {
-        const auto *u = reinterpret_cast<const char *>(sqlite3_column_text(s, 0));
-        uuids.emplace_back(u ? u : "");
-    });
-    if (uuids.size() != 1 || uuids.front().empty()) {
-        throw std::runtime_error("engine: the library has " + std::to_string(uuids.size())
-                                 + " Information rows, not one with a uuid; refusing to add playlist entries");
-    }
+    const std::string entryUuid = entityUuidFor(db, trackId);
 
     const auto entries = listEntries(db, listId);
     const auto before = listInOrder(entries);
@@ -888,7 +890,7 @@ bool insertEntry(const std::string &engineLibraryPath, const std::string &playli
     const std::int64_t next = placement == Placement::AtStart ? head : anchor ? anchor->next : 0;
     db.run("INSERT INTO PlaylistEntity (listId, trackId, databaseUuid, nextEntityId, membershipReference) "
            "VALUES (?, ?, ?, ?, 0);",
-           {listId, trackId, uuids.front(), next});
+           {listId, trackId, entryUuid, next});
     const std::int64_t added = db.lastInsertId();
     db.run("UPDATE PlaylistEntity SET nextEntityId = ? WHERE listId = ? AND nextEntityId = ? AND id <> ?;",
            {added, listId, next, added});
@@ -1082,6 +1084,67 @@ int engineSmartlistsFiledUnder(const std::string &engineLibraryPath, const std::
            {spelled, spelled},
            [&](sqlite3_stmt *s) { filed = sqlite3_column_int(s, 0); });
     return filed;
+}
+
+int reassignEnginePlaylistEntries(const std::string &engineLibraryPath, std::int64_t doomedTrackId,
+                                  std::int64_t survivorTrackId)
+{
+    PlaylistWriter db(engineLibraryPath);
+    const std::string survivorUuid = entityUuidFor(db, survivorTrackId);
+    std::set<std::int64_t> lists;
+    db.run("SELECT DISTINCT listId FROM PlaylistEntity WHERE trackId = ?;", {doomedTrackId},
+           [&](sqlite3_stmt *s) { lists.insert(sqlite3_column_int64(s, 0)); });
+    int changed = 0;
+    for (const std::int64_t listId : lists) {
+        const auto entries = listEntries(db, listId);
+        const auto before = listInOrder(entries);
+        if (!before) {
+            throw std::runtime_error("engine: the entries of list id=" + std::to_string(listId)
+                                     + " do not form one chain; refusing to repoint them");
+        }
+        std::vector<std::int64_t> expected;
+        bool survivorThere = std::find(before->begin(), before->end(), survivorTrackId) != before->end();
+        for (const std::int64_t track : *before) {
+            if (track == doomedTrackId) {
+                if (!survivorThere) {
+                    expected.push_back(survivorTrackId);
+                    survivorThere = true;
+                }
+            } else {
+                expected.push_back(track);
+            }
+        }
+        // The first of the doomed track's entries takes the survivor
+        // where the list has none; the rest go.
+        std::map<std::int64_t, std::int64_t> nextOf;
+        for (const auto &[id, e] : entries) {
+            nextOf[id] = e.next;
+        }
+        // Named: a range-for over *walkChain(...) would read the optional
+        // after it is gone (GCC 13 has not got C++23's P2718).
+        const std::vector<std::int64_t> chain = *walkChain(nextOf);
+        bool repointed = std::find(before->begin(), before->end(), survivorTrackId) != before->end();
+        for (const std::int64_t id : chain) {
+            if (entries.at(id).trackId != doomedTrackId) {
+                continue;
+            }
+            if (!repointed) {
+                db.run("UPDATE PlaylistEntity SET trackId = ?, databaseUuid = ? WHERE id = ?;",
+                       {survivorTrackId, survivorUuid, id});
+                repointed = true;
+            } else {
+                db.run("DELETE FROM PlaylistEntity WHERE id = ?;", {id});
+            }
+            ++changed;
+        }
+        if (listInOrder(listEntries(db, listId)) != expected) {
+            throw std::runtime_error("engine: list id=" + std::to_string(listId)
+                                     + " does not read back in its order after repointing track id="
+                                     + std::to_string(doomedTrackId));
+        }
+    }
+    db.commit();
+    return changed;
 }
 
 }  // namespace seabass::infrastructure::engine

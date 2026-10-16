@@ -47,6 +47,14 @@ int removeDanglingPlaylistEntries(const std::string &databaseFile);
 // in libdjinterop_engine_cleanup_writer.cpp). m.db keeps one entry per
 // (list, databaseUuid, track), so a track sits in a list once per
 // databaseUuid; remove takes out every one.
+//
+// Add is insertIntoEnginePlaylist without an anchor. Every entry Seabass
+// writes carries the track's originDatabaseUuid, or the library's own
+// uuid for a track without one, never simply the library's: the two can
+// differ (a restored stick whose Information.uuid was renewed since, see
+// entityUuidFor in the .cpp), and the player resolves an entry by
+// (databaseUuid, trackId) against the tracks' (originDatabaseUuid,
+// originTrackId), so an entry with the library's uuid is not shown.
 bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId);
 bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                               std::int64_t trackId);
@@ -194,6 +202,17 @@ int engineSmartlistsFiledUnder(const std::string &engineLibraryPath, const std::
 // (an insert would hide or lose part of it). Returns true when it added.
 bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                               std::int64_t trackId, std::optional<std::int64_t> afterTrackId);
+
+// Every playlist entry for doomedTrackId, in every list, given to
+// survivorTrackId instead, for Clean Up merging two copies of a track: an
+// entry is repointed where it stands (trackId and databaseUuid, the
+// survivor's origin uuid as add writes it; the rest of the list and every
+// other entry untouched), or deleted, Engine's trigger relinking round
+// it, where the list already holds the survivor. One transaction; each
+// list touched must walk as one chain in the order it had, and throws
+// otherwise. Returns how many entries were repointed or deleted.
+int reassignEnginePlaylistEntries(const std::string &engineLibraryPath, std::int64_t doomedTrackId,
+                                  std::int64_t survivorTrackId);
 
 // Puts the track first in the playlist at playlistPath: what a sync asks
 // for when no member before it in rekordbox's playlist is in Engine's
