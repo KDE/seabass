@@ -973,6 +973,15 @@ TestCase {
         // the setting back.
         realAppSettings.showPlayCount = false;
         browseFixture.restore();
+        // The pointer off every page's rows. QtTest leaves it where the
+        // last case put it, and the next case's page is built under it:
+        // a sidebar row there is hovered, its summary opens after the
+        // delay beside it, over the track list's covers, and takes the
+        // next case's click on a cover (test_aDraggableRowStillClicks
+        // after test_aDeletedPlaylistTakesNoDropANewOneDoes, whose drops
+        // end on the sidebar). The clicks QtTest sends elsewhere move no
+        // pointer, so nothing unhovers the row.
+        mouseMove(testCase, testCase.width - 1, testCase.height - 1);
     }
 
     function makeHeldPage(trackCount) {
@@ -1449,6 +1458,46 @@ TestCase {
         compare(findChild(t.card, "dropAddButton").text, "Add to \"Fresh\"");
         keyClick(Qt.Key_Escape);
         tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // The drag card asked what to do and sent away with Escape keeps
+    // nothing: the next click on a cover, on the same page, plays it (the
+    // card's carrier gives its mouse grab back).
+    function test_aCoverPlaysAfterTheCardIsSentAway() {
+        const t = makeDragPage(true);
+        t.fake.newPlaylists = ["Fresh"];
+        waitForRendering(t.page);
+        const row = t.list.itemAtIndex(0);
+        const fresh = playlistRow(t, "Fresh");
+        dragOnto(row, fresh);
+        tryCompare(fresh, "dropTarget", true);
+        dropOnto(row, fresh);
+        compare(t.card.confirming, true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(t.card, "visible", false);
+        compare(t.fake.calls.length, 0, "nothing staged");
+        const cover = findChild(t.list.itemAtIndex(2), "rowCell_artwork");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        mouseClick(cover);
+        compare(realPlayback.currentSourceId, "3", "the cover plays");
+        realPlayback.stop();
+        compare(t.card.visible, false);
+
+        // And sent away mid drag, the button still down: the carrier lets
+        // go of the grab it took, and the button let go after is nobody's.
+        dragOnto(row, fresh);
+        compare(t.card.carried, true, "carried by the card");
+        keyClick(Qt.Key_Escape);
+        tryCompare(t.card, "visible", false);
+        compare(t.card.carried, false, "the grab given back");
+        dropOnto(row, fresh);
+        compare(t.card.confirming, false, "the let go asks nothing");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        mouseClick(cover);
+        compare(realPlayback.currentSourceId, "3", "the cover plays after a drag sent away");
+        realPlayback.stop();
+        compare(t.fake.calls.length, 0, "nothing staged");
         cleanupExperimental();
     }
 
