@@ -107,8 +107,10 @@ TestCase {
     }
 
     function leave() {
-        // Off the list, onto the empty right half of the window.
-        mouseMove(testCase, 700, 500);
+        // Off the list and off the popup: the window's far corner. Not a
+        // fixed point mid-window: in a Mac's larger fonts the popup reaches
+        // past x 700, y 500, so a "leave" there was a move onto it.
+        mouseMove(testCase, testCase.width - 2, testCase.height - 2);
     }
 
     function cleanup() {
