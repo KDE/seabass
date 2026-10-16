@@ -43,22 +43,28 @@ std::string engineDbOf(const std::string &enginePath)
 }
 
 // Each node of a playlist tree (export.pdb's or OneLibrary's) with its
-// full path, spelled by walking up its parents.
+// full path, spelled by walking up its parents. The nodes are copies, not
+// pointers into `tree`: every caller hands it the tree as a temporary
+// (`for (... : spelledPaths(rows.playlistTree()))`), which a range-for
+// does not keep alive past its initializer before C++23's P2718 (GCC 13
+// has not got it), so pointers into it were read after it was freed
+// (AddressSanitizer: the scan's playlistPathsIn and every playlist edit's
+// pdbPlaylistIds, the second a write path).
 template<typename Node>
-std::vector<std::pair<const Node *, std::string>> spelledPaths(const std::vector<Node> &tree)
+std::vector<std::pair<Node, std::string>> spelledPaths(const std::vector<Node> &tree)
 {
     std::map<decltype(Node::id), const Node *> byId;
     for (const auto &n : tree) {
         byId[n.id] = &n;
     }
-    std::vector<std::pair<const Node *, std::string>> spelled;
+    std::vector<std::pair<Node, std::string>> spelled;
     for (const auto &n : tree) {
         std::string path = n.name;
         int guard = 0;
         for (auto p = n.parentId; p != 0 && byId.count(p) && guard < 64; p = byId.at(p)->parentId, ++guard) {
             path = byId.at(p)->name + "/" + path;
         }
-        spelled.emplace_back(&n, std::move(path));
+        spelled.emplace_back(n, std::move(path));
     }
     return spelled;
 }
@@ -71,7 +77,7 @@ std::vector<uint32_t> pdbPlaylistIds(const infrastructure::rekordbox::PdbRowWrit
     std::vector<uint32_t> ids;
     for (const auto &[node, spelled] : spelledPaths(rows.playlistTree())) {
         if (spelled == path) {
-            ids.push_back(node->id);
+            ids.push_back(node.id);
         }
     }
     return ids;
@@ -212,7 +218,7 @@ std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::
             }
             const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(path));
             for (const auto &[node, spelled] : spelledPaths(rows.playlistTree())) {
-                if (!node->isFolder) {
+                if (!node.isFolder) {
                     paths.push_back(spelled);
                 }
             }
@@ -222,7 +228,7 @@ std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::
             }
             infrastructure::onelibrary::OneLibraryCueWriter w(path);
             for (const auto &[node, spelled] : spelledPaths(w.playlistTree())) {
-                if (!node->isFolder) {
+                if (!node.isFolder) {
                     paths.push_back(spelled);
                 }
             }
