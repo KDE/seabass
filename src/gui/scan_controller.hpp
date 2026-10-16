@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -56,6 +57,7 @@ public:
         CommentRole,
         AlbumRole,
         FallbackArtworkPathRole,
+        PendingAdditionRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -77,6 +79,10 @@ public:
     // Served as fallbackArtworkPath, and as artworkPath for a row whose
     // own catalog names no art. Kept until the next call.
     void setFallbackArtwork(std::shared_ptr<const FallbackArtwork> fallbackArtwork);
+
+    // The rows (by sourceId) that are in their playlist only because an
+    // add is staged, served as pendingAddition. Set before the tracks.
+    void setPendingAdditions(std::set<std::string> sourceIds) { m_pendingAdditions = std::move(sourceIds); }
 
     // Random-access read of one row, by index into *this currently
     // displayed* (filtered/sorted) list -- not the full unfiltered
@@ -104,6 +110,7 @@ public:
 private:
     std::vector<domain::Track> m_tracks;
     std::shared_ptr<const FallbackArtwork> m_fallbackArtwork;
+    std::set<std::string> m_pendingAdditions;
 };
 
 // Result of a background scan task, see ScanController::scan(). Kept
@@ -125,6 +132,9 @@ struct ScanTaskResult
     std::shared_ptr<const FallbackArtwork> fallbackArtwork;
     // Only on the Tracks result: a Cues result follows.
     bool cuesPending = false;
+    // Only on the Tracks result: every playlist the catalog holds, by
+    // full path, the empty ones among them, which no track names.
+    std::vector<std::string> playlistPaths;
     QString errorMessage;  // empty on success
     bool cancelled = false;  // stopped via cancelScan(); tracks is empty, errorMessage too
     // The scan() this belongs to, so a result from a scan that has since
@@ -220,6 +230,10 @@ public:
 
     // playlistName empty shows every scanned track again.
     Q_INVOKABLE void filterByPlaylist(const QString &playlistName);
+    // The tracks staged to be added to a playlist, {playlist: [file
+    // paths]} as PlaylistEditController::pendingAdditions has them: shown
+    // at the end of that playlist, flagged pendingAddition, until Save.
+    Q_INVOKABLE void setPendingAdditions(const QVariantMap &additions);
 
     // Matches against title or artist, case-insensitive substring. Empty
     // clears the search.
@@ -358,6 +372,7 @@ private:
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
     QString m_currentPlaylistFilter;
+    QVariantMap m_pendingAdditions;
     QString m_currentSearchQuery;
     QString m_sortField = "playlist";
     bool m_sortAscending = true;

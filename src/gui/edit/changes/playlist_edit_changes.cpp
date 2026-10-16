@@ -39,25 +39,36 @@ std::string engineDbOf(const std::string &enginePath)
     return pathToUtf8(pathFromUtf8(enginePath) / "Database2" / "m.db");
 }
 
+// Each node of a playlist tree (export.pdb's or OneLibrary's) with its
+// full path, spelled by walking up its parents.
+template<typename Node>
+std::vector<std::pair<const Node *, std::string>> spelledPaths(const std::vector<Node> &tree)
+{
+    std::map<decltype(Node::id), const Node *> byId;
+    for (const auto &n : tree) {
+        byId[n.id] = &n;
+    }
+    std::vector<std::pair<const Node *, std::string>> spelled;
+    for (const auto &n : tree) {
+        std::string path = n.name;
+        int guard = 0;
+        for (auto p = n.parentId; p != 0 && byId.count(p) && guard < 64; p = byId.at(p)->parentId, ++guard) {
+            path = byId.at(p)->name + "/" + path;
+        }
+        spelled.emplace_back(&n, std::move(path));
+    }
+    return spelled;
+}
+
 // export.pdb's playlists (and folders) spelling a full path, by walking
 // its tree. Two when a folder holds two of one name, or a name holds a
 // "/" that reads as a folder.
 std::vector<uint32_t> pdbPlaylistIds(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
 {
-    const auto tree = rows.playlistTree();
-    std::map<uint32_t, const infrastructure::rekordbox::PdbRowWriter::PlaylistTreeNode *> byId;
-    for (const auto &n : tree) {
-        byId[n.id] = &n;
-    }
     std::vector<uint32_t> ids;
-    for (const auto &n : tree) {
-        std::string spelled = n.name;
-        int guard = 0;
-        for (uint32_t p = n.parentId; p != 0 && byId.count(p) && guard < 64; p = byId.at(p)->parentId, ++guard) {
-            spelled = byId.at(p)->name + "/" + spelled;
-        }
+    for (const auto &[node, spelled] : spelledPaths(rows.playlistTree())) {
         if (spelled == path) {
-            ids.push_back(n.id);
+            ids.push_back(node->id);
         }
     }
     return ids;
@@ -87,19 +98,6 @@ void requireOneOneLibraryPlaylist(infrastructure::onelibrary::OneLibraryCueWrite
     const int n = w.playlistCountAtPath(path);
     if (n > 1) {
         throw std::runtime_error("OneLibrary has " + std::to_string(n) + " playlists named \"" + path + "\"");
-    }
-}
-
-bool oneLibraryHas(const std::string &pioneer, const std::string &path)
-{
-    if (!infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
-        return false;
-    }
-    try {
-        infrastructure::onelibrary::OneLibraryCueWriter w(pioneer);
-        return w.playlistCountAtPath(path) > 0;
-    } catch (const std::exception &) {
-        return false;
     }
 }
 
@@ -134,68 +132,88 @@ std::vector<BackupTarget> backupsFor(const QStringList &libraries, const QString
 
 }  // namespace
 
-QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist)
+PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist)
 {
-    QStringList libraries;
+    PlaylistWhereabouts where;
+    const auto note = [&](const char *library, int count) {
+        where.onStick << QString::fromLatin1(library);
+        if (count > 0) {
+            where.having << QString::fromLatin1(library);
+        }
+        if (count > 1) {
+            where.several << QString::fromLatin1(library);
+        }
+    };
     const std::string pioneer = pioneerRoot.toStdString();
     if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
+        int count = 0;
         try {
-            const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
-            if (!pdbPlaylistIds(rows, playlist).empty()) {
-                libraries << QStringLiteral("rekordbox");
-            }
+            count = static_cast<int>(pdbPlaylistIds(infrastructure::rekordbox::PdbRowWriter(exportPdbOf(pioneer)), playlist).size());
         } catch (const std::exception &) {
         }
-    }
-    if (!pioneer.empty() && oneLibraryHas(pioneer, playlist)) {
-        libraries << QStringLiteral("onelibrary");
-    }
-    const std::string engine = enginePath.toStdString();
-    if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))
-        && infrastructure::engine::enginePlaylistCountAtPath(engine, playlist) > 0) {
-        libraries << QStringLiteral("engine");
-    }
-    return libraries;
-}
-
-QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist)
-{
-    QStringList libraries;
-    const std::string pioneer = pioneerRoot.toStdString();
-    try {
-        if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))
-            && pdbPlaylistIds(infrastructure::rekordbox::PdbRowWriter(exportPdbOf(pioneer)), playlist).size() > 1) {
-            libraries << QStringLiteral("rekordbox");
-        }
-        if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)
-            && infrastructure::onelibrary::OneLibraryCueWriter(pioneer).playlistCountAtPath(playlist) > 1) {
-            libraries << QStringLiteral("onelibrary");
-        }
-        const std::string engine = enginePath.toStdString();
-        if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))
-            && infrastructure::engine::enginePlaylistCountAtPath(engine, playlist) > 1) {
-            libraries << QStringLiteral("engine");
-        }
-    } catch (const std::exception &) {
-    }
-    return libraries;
-}
-
-QStringList librariesOnStick(const QString &pioneerRoot, const QString &enginePath)
-{
-    QStringList libraries;
-    const std::string pioneer = pioneerRoot.toStdString();
-    if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
-        libraries << QStringLiteral("rekordbox");
+        note("rekordbox", count);
     }
     if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
-        libraries << QStringLiteral("onelibrary");
+        int count = 0;
+        try {
+            count = infrastructure::onelibrary::OneLibraryCueWriter(pioneer).playlistCountAtPath(playlist);
+        } catch (const std::exception &) {
+        }
+        note("onelibrary", count);
     }
     const std::string engine = enginePath.toStdString();
     if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
-        libraries << QStringLiteral("engine");
+        int count = 0;
+        try {
+            count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist);
+        } catch (const std::exception &) {
+        }
+        note("engine", count);
     }
-    return libraries;
+    return where;
+}
+
+std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::string &path)
+{
+    std::vector<std::string> paths;
+    if (path.empty()) {
+        return paths;
+    }
+    try {
+        if (catalog == "rekordbox") {
+            if (!std::filesystem::exists(pathFromUtf8(exportPdbOf(path)))) {
+                return paths;
+            }
+            const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(path));
+            for (const auto &[node, spelled] : spelledPaths(rows.playlistTree())) {
+                if (!node->isFolder) {
+                    paths.push_back(spelled);
+                }
+            }
+        } else if (catalog == "onelibrary") {
+            if (!infrastructure::onelibrary::OneLibraryCueWriter::existsFor(path)) {
+                return paths;
+            }
+            infrastructure::onelibrary::OneLibraryCueWriter w(path);
+            for (const auto &[node, spelled] : spelledPaths(w.playlistTree())) {
+                if (!node->isFolder) {
+                    paths.push_back(spelled);
+                }
+            }
+        } else if (catalog == "engine") {
+            if (!std::filesystem::exists(pathFromUtf8(engineDbOf(path)))) {
+                return paths;
+            }
+            for (const auto &info : infrastructure::engine::listEnginePlaylists(path)) {
+                if (!info.folder) {
+                    paths.push_back(info.path);
+                }
+            }
+        }
+    } catch (const std::exception &) {
+        paths.clear();
+    }
+    return paths;
 }
 
 CreatePlaylistChange::CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)

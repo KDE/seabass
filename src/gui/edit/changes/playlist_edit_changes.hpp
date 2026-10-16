@@ -7,25 +7,39 @@
 #include <QString>
 #include <QStringList>
 
+#include <string>
+#include <vector>
+
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::gui
 {
 
-// The libraries on the stick that hold a playlist at `playlist` (its full
-// path, "Folder/List"), read now: "rekordbox", "onelibrary", "engine".
-// What a playlist edit from Browse will write, and what it backs up.
-QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
-// The libraries where more than one playlist spells that path (two of one
-// name in a folder, or a name holding a "/"): editing by path would have
-// to guess there, so Browse refuses, and the changes fail rather than
-// guess if it happens by Save.
-QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
+// Where a playlist at `playlist` (its full path, "Folder/List") is on the
+// stick, read now, each library opened once: libraries are "rekordbox",
+// "onelibrary", "engine". Slow on a stick (each catalog is read whole), so
+// Browse asks it off the GUI thread.
+struct PlaylistWhereabouts
+{
+    // The libraries the stick has at all: where a new playlist goes.
+    QStringList onStick;
+    // The ones holding a playlist at that path: what an edit of it writes,
+    // and backs up.
+    QStringList having;
+    // The ones where more than one playlist spells that path (two of one
+    // name in a folder, or a name holding a "/"): editing by path would
+    // have to guess there, so Browse refuses, and the changes fail rather
+    // than guess if it happens by Save.
+    QStringList several;
+};
+PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
 
-// The libraries the stick has at all, read now: "rekordbox" (an
-// export.pdb), "onelibrary", "engine" (an m.db). Where a new playlist
-// goes.
-QStringList librariesOnStick(const QString &pioneerRoot, const QString &enginePath);
+// Every playlist one library holds, by full path ("Folder/List"), folders
+// left out, read now: catalog is "rekordbox" or "onelibrary" with the
+// PIONEER folder, or "engine" with the Engine Library folder. What the
+// tracks' memberships cannot say: an empty playlist holds none. Nothing
+// when the library is missing or cannot be read.
+std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::string &path);
 
 // Creates an empty playlist at the top level, last there, in every
 // library on the stick named, each through its own writer (#62's

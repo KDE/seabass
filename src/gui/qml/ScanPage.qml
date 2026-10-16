@@ -195,17 +195,20 @@ Page {
         onClosed: row = null
         readonly property string filePath: row ? row.filePath : ""
         readonly property bool streaming: row ? row.streamingSource.length > 0 : false
+        // Only for a track in the playlist shown: a Matching result opens
+        // this menu too, and need not be in it.
         readonly property bool canRemove: root.playlistEditing && root.shownPlaylist.length > 0 && filePath.length > 0
+            && (!row || !row.playlistNames || row.playlistNames.indexOf(root.shownPlaylist) >= 0)
         readonly property bool staged: canRemove && root.playlistEditController.pendingRevision >= 0
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
+        // In the playlist shown only because it is staged to be added.
+        readonly property bool pendingAddition: canRemove && row !== null && row.pendingAddition === true
         // Adding to a playlist (Experimental): the playlists this stick
         // has and the ones staged to be created, but not the one shown,
         // which already holds the track.
         readonly property bool canAdd: root.playlistEditing && filePath.length > 0 && !streaming
         readonly property var addTargets: canAdd
-            ? scanController.playlistNames.concat(root.newPlaylistNames)
-                .filter(n => n !== root.shownPlaylist)
-            : []
+            ? root.addTargetsFor(scanController.playlistNames, root.newPlaylistNames, root.shownPlaylist) : []
         // The playlist a track was last added to, when this stick has it.
         readonly property string lastAdd: ("lastAddPlaylist" in root.playlistEditController)
             && addTargets.indexOf(root.playlistEditController.lastAddPlaylist) >= 0
@@ -261,10 +264,13 @@ Page {
             objectName: "removeFromPlaylistItem"
             visible: trackMenu.canRemove
             height: visible ? implicitHeight : 0
-            text: trackMenu.staged ? qsTr("Keep in \"%1\"").arg(root.shownPlaylist)
-                                   : qsTr("Remove from \"%1\"").arg(root.shownPlaylist)
+            text: trackMenu.pendingAddition ? qsTr("Don't add to \"%1\"").arg(root.shownPlaylist)
+                : trackMenu.staged ? qsTr("Keep in \"%1\"").arg(root.shownPlaylist)
+                : qsTr("Remove from \"%1\"").arg(root.shownPlaylist)
             onTriggered: {
-                if (trackMenu.staged) {
+                if (trackMenu.pendingAddition) {
+                    root.playlistEditController.keepOutOfPlaylist(root.shownPlaylist, trackMenu.filePath);
+                } else if (trackMenu.staged) {
                     root.playlistEditController.keepInPlaylist(root.shownPlaylist, trackMenu.filePath);
                 } else {
                     root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, root.shownPlaylist,
@@ -311,8 +317,20 @@ Page {
         }
     }
 
+    // The new playlists first: they are what is being put together, and
+    // a stick's full list runs past the bottom of the window, where a
+    // last entry is out of reach.
+    function addTargetsFor(stickPlaylists, newPlaylists, shown) {
+        return newPlaylists.concat(stickPlaylists.filter(n => newPlaylists.indexOf(n) < 0))
+            .filter(n => n !== shown);
+    }
+
     readonly property var newPlaylistNames: ("newPlaylists" in root.playlistEditController)
         ? root.playlistEditController.newPlaylists : []
+    // The tracks staged into a playlist show in it, greyed, until Save.
+    readonly property var pendingAdditions: ("pendingAdditions" in root.playlistEditController)
+        ? root.playlistEditController.pendingAdditions : ({})
+    onPendingAdditionsChanged: scanController.setPendingAdditions(root.pendingAdditions)
 
     function openPlaylistMenu(name, row) {
         if (!root.playlistEditing) {
@@ -357,6 +375,7 @@ Page {
     // forget a playlist because this library happens not to have it.
     function selectPlaylist(index, name, remember) {
         root.selectedPlaylistIndex = index;
+        // -1: a playlist staged to be created, listed below the others.
         root.shownPlaylist = index === 0 ? "" : name;
         scanController.filterByPlaylist(index === 0 ? "" : name);
         if (remember !== false) {
@@ -917,10 +936,16 @@ Page {
                 selectedIndex: root.selectedPlaylistIndex
                 onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
                 isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
+                isEdited: name => ("isPlaylistEdited" in root.playlistEditController)
+                    && root.playlistEditController.isPlaylistEdited(name)
+                trackCountChange: name => ("trackCountChange" in root.playlistEditController)
+                    ? root.playlistEditController.trackCountChange(name) : 0
                 pendingRevision: root.playlistEditController.pendingRevision
                 onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
                 canCreate: root.playlistEditing
                 newPlaylists: root.newPlaylistNames
+                shownPlaylist: root.shownPlaylist
+                onNewPlaylistPicked: name => root.selectPlaylist(-1, name)
                 onCreateRequested: root.openCreatePlaylistDialog()
             }
         }
@@ -1049,6 +1074,7 @@ Page {
                     required property string comment
                     required property string album
                     required property string fallbackArtworkPath
+                    required property bool pendingAddition
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -1224,6 +1250,9 @@ Page {
                                 Label {
                                     text: title
                                     font.bold: true
+                                    // Staged to be added to the playlist shown.
+                                    font.italic: trackDelegate.pendingAddition
+                                    color: trackDelegate.pendingAddition ? Theme.textMuted : palette.windowText
                                     // Staged to come out of the playlist shown.
                                     font.strikeout: root.playlistEditing && root.shownPlaylist.length > 0
                                         && root.playlistEditController.pendingRevision >= 0
@@ -1592,6 +1621,7 @@ Page {
 
         MatchingPage {
             id: matchingPage
+            objectName: "matchingPage"
             visible: root.matchingPanelOpen
             SplitView.preferredWidth: Math.max(420, root.width * 0.38)
             SplitView.minimumWidth: 420
@@ -1607,6 +1637,7 @@ Page {
             anchorFallbackArtworkPath: root.anchorFallbackArtworkPath
             anchorPlaylistNames: root.anchorPlaylistNames
             onCloseRequested: root.matchingPanelOpen = false
+            onMenuRequested: (candidate, at) => root.openTrackMenu(candidate, at)
             // Just play it: the detail panel a Browse row opens shares
             // this side of the page with Matching, which stays.
             onPlayRequested: candidate => root.playbackController.load(root.format, root.currentPath(),

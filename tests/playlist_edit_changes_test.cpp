@@ -147,9 +147,9 @@ int main(int argc, char **argv)
 
     // 1. Which libraries have a playlist, read from the stick.
     const QStringList all{QStringLiteral("rekordbox"), QStringLiteral("onelibrary"), QStringLiteral("engine")};
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "Q1") == all);
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "F1/F1A") == all);
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "Nope").isEmpty());
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "Q1").having == all);
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1/F1A").having == all);
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "Nope").having.isEmpty());
     std::cout << "case 1 (the libraries holding a playlist) OK\n";
 
     // 2. a03 out of Q1, in all three, by path.
@@ -190,13 +190,13 @@ int main(int argc, char **argv)
     std::cout << "case 2 (a track out of a playlist in all three libraries) OK\n";
 
     // 3. The folder F1 with F1A, from all three; the tracks stay.
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "F1") == all);
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1").having == all);
     {
         const auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "F1", all));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
     }
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "F1").isEmpty());
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "F1/F1A").isEmpty());
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1").having.isEmpty());
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1/F1A").having.isEmpty());
     {
         infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
         assert(rows.trackExists(B01.pdbId) && rows.trackExists(C01.pdbId) && "export.pdb keeps the tracks");
@@ -207,7 +207,7 @@ int main(int argc, char **argv)
         assert(db.track_by_id(engineId[B01.relative]).has_value() && "Engine keeps the tracks");
         assert(!db.root_playlist_by_name("F1").has_value());
     }
-    assert(librariesWithPlaylist(pioneerQ, libraryQ, "Q1") == all && "the other playlist is untouched");
+    assert(playlistWhereabouts(pioneerQ, libraryQ, "Q1").having == all && "the other playlist is untouched");
     std::cout << "case 3 (a folder deleted from all three libraries, tracks kept) OK\n";
 
     // 4. Deleting tracks that are in no playlist: a10 is in none in any
@@ -291,7 +291,7 @@ int main(int argc, char **argv)
             db.create_root_playlist("AC").create_sub_playlist("DC");
         }
         assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "AC/DC") == 2);
-        assert(librariesWithSeveralPlaylists(pioneerQ, libraryQ, "AC/DC") == QStringList{QStringLiteral("engine")});
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "AC/DC").several == QStringList{QStringLiteral("engine")});
         SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
         const SaveLoopResult result =
             runSaveLoop({std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "AC/DC", QStringList{QStringLiteral("engine")})}, ctx);
@@ -303,12 +303,12 @@ int main(int argc, char **argv)
     // 7. A new playlist, "Fresh", made empty in all three, at the top
     //    level and last there; asked again, every library has it: a skip.
     {
-        assert(librariesOnStick(pioneerQ, libraryQ) == all);
-        assert(librariesOnStick(pioneerQ, QString()) == (QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
-        assert(librariesWithPlaylist(pioneerQ, libraryQ, "Fresh").isEmpty());
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "").onStick == all);
+        assert(playlistWhereabouts(pioneerQ, QString(), "").onStick == (QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").having.isEmpty());
         const auto result = save(std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Fresh", all));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
-        assert(librariesWithPlaylist(pioneerQ, libraryQ, "Fresh") == all);
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").having == all);
         infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
         uint32_t lastOrder = 0;
         std::string last;
@@ -325,7 +325,7 @@ int main(int argc, char **argv)
         assert(engineMembers(library, "Fresh").empty());
         const auto again = save(std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Fresh", all));
         assert(again.skippedIds.size() == 1 && "every library has it: a skip");
-        assert(librariesWithSeveralPlaylists(pioneerQ, libraryQ, "Fresh").isEmpty() && "not made twice");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Fresh").several.isEmpty() && "not made twice");
     }
     std::cout << "case 7 (a new playlist made in all three libraries, once) OK\n";
 

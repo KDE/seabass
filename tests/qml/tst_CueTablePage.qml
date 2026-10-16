@@ -73,6 +73,10 @@ TestCase {
         id: playlistEditComponent
         PlaylistEditController {}
     }
+    Component {
+        id: scanControllerComponent
+        ScanController {}
+    }
 
     // A real controller on a fresh copy of the fixture, scanned. `plant`
     // runs on the copy first.
@@ -88,6 +92,16 @@ TestCase {
         const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
         verify(session !== null);
         return {stick: stick, pioneer: pioneer, controller: controller, session: session, planted: planted};
+    }
+
+    // A playlist edit is looked up on the stick off the GUI thread and
+    // staged when that is done: whether it was, once it is.
+    function edited(browse, accepted) {
+        if (!accepted) {
+            return false;
+        }
+        tryCompare(browse, "busy", false, 60000);
+        return browse.errorMessage.length === 0;
     }
 
     function saveAndWait(session) {
@@ -270,7 +284,7 @@ TestCase {
     function test_aRefusedStageMarksNothingAndSaysWhy() {
         const t = scannedCopy(null);
         const browse = createTemporaryObject(playlistEditComponent, testCase);
-        verify(browse.deletePlaylist(t.pioneer, t.stick + "/Engine Library", "Playlist 000"),
+        verify(edited(browse, browse.deletePlaylist(t.pioneer, t.stick + "/Engine Library", "Playlist 000")),
                "Browse stages a playlist deletion: " + browse.errorMessage);
         compare(t.session.pendingCount, 1);
         t.controller.repairCueTables(["392"]);
@@ -282,48 +296,152 @@ TestCase {
     }
 
     // Browse's "Create new playlist" and "Add to" with the real
-    // controller: names it refuses, the one it stages listed until Save,
-    // made by Save in every library on the copy (so asking again is
-    // refused, naming them), a track added to it in the same save.
-    function test_aNewPlaylistIsMadeInEveryLibraryOnSave() {
+    // controller: names it refuses; the one it takes is staged, and so is
+    // a track added to it, which Browse's list shows in it, flagged, before
+    // anything is written; Save makes both in every library on the copy
+    // (so asking again is refused, naming them), and Browse lists the
+    // playlist in each library, an empty one included.
+    function test_aNewPlaylistAndItsTracksShowUntilSaveWritesThem() {
         const t = scannedCopy(null);
         const engine = t.stick + "/Engine Library";
         const browse = createTemporaryObject(playlistEditComponent, testCase);
-        verify(!browse.createPlaylist(t.pioneer, engine, "Playlist 000"), "a name the stick has");
+        verify(!edited(browse, browse.createPlaylist(t.pioneer, engine, "Playlist 000")), "a name the stick has");
         verify(browse.errorMessage.indexOf("already a playlist") >= 0, browse.errorMessage);
-        verify(!browse.createPlaylist(t.pioneer, engine, "  "), "no name");
-        verify(!browse.createPlaylist(t.pioneer, engine, "AC/DC"), "a folder path");
+        verify(!edited(browse, browse.createPlaylist(t.pioneer, engine, "  ")), "no name");
+        verify(!edited(browse, browse.createPlaylist(t.pioneer, engine, "AC/DC")), "a folder path");
         compare(t.session.pendingCount, 0);
-        verify(browse.createPlaylist(t.pioneer, engine, "  Fresh Picks "), browse.errorMessage);
+        verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "  Fresh Picks ")), browse.errorMessage);
+        verify(!t.session.writing, "nothing written before Save");
         compare(JSON.stringify(browse.newPlaylists), JSON.stringify(["Fresh Picks"]), "trimmed");
         verify(browse.isNewPlaylistStaged("Fresh Picks"));
-        verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "asked twice");
-        // And a track into it, in the same save.
-        verify(browse.addToPlaylist(t.pioneer, engine, "Fresh Picks", t.stick + "/Contents/795079.mp3", "A Track"),
-               browse.errorMessage);
-        compare(browse.lastAddPlaylist, "Fresh Picks");
-        compare(t.session.pendingCount, 2);
-        // A new playlist dropped takes the tracks staged into it along.
-        verify(browse.createPlaylist(t.pioneer, engine, "Gone Again"), browse.errorMessage);
-        verify(browse.addToPlaylist(t.pioneer, engine, "Gone Again", t.stick + "/Contents/795079.mp3", "A Track"));
+        verify(!edited(browse, browse.createPlaylist(t.pioneer, engine, "Fresh Picks")), "asked twice");
+        verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Left Empty")), browse.errorMessage);
+
+        // A track into it, shown there by Browse's list before Save.
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("onelibrary", t.pioneer);
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
+        scan.filterByPlaylist("Fresh Picks");
+        compare(scan.tracks.trackCount(), 0, "nothing in it yet");
+        const file = t.stick + "/Contents/795079.mp3";
+        // A playlist with tracks that does not hold the file yet.
+        scan.filterByPlaylist("");
+        let fileRow = null;
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            if (scan.tracks.trackAt(i).filePath === file) {
+                fileRow = scan.tracks.trackAt(i);
+            }
+        }
+        verify(fileRow !== null, "OneLibrary has a row for " + file);
+        const full = scan.playlistNames.filter(n => scan.playlistTrackCounts[n] > 0
+                                                    && fileRow.playlistNames.indexOf(n) < 0)[0];
+        verify(full !== undefined, JSON.stringify(scan.playlistTrackCounts));
+        scan.filterByPlaylist(full);
+        const inIt = scan.tracks.trackCount();
+        verify(inIt > 0);
+        verify(scan.tracks.trackAt(0).pendingAddition === false);
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Fresh Picks", file, "A Track")), browse.errorMessage);
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, full, file, "A Track")), browse.errorMessage);
+        compare(browse.lastAddPlaylist, full);
+        compare(createTemporaryObject(playlistEditComponent, testCase).lastAddPlaylist, full,
+                "remembered by a fresh controller (a restart)");
         compare(t.session.pendingCount, 4);
+        compare(browse.pendingAdditions["Fresh Picks"].join(), file);
+        compare(browse.trackCountChange("Fresh Picks"), 1);
+        verify(browse.isPlaylistEdited(full));
+        verify(!browse.isPlaylistEdited("Left Empty"));
+        const other = scan.playlistNames.filter(n => n !== full && scan.playlistTrackCounts[n] > 0)[0];
+        scan.filterByPlaylist(other);
+        const outFile = scan.tracks.trackAt(0).filePath;
+        verify(edited(browse, browse.removeFromPlaylist(t.pioneer, engine, other, outFile, "Out")), browse.errorMessage);
+        compare(browse.trackCountChange(other), -1, "one staged out");
+        verify(browse.isPlaylistEdited(other));
+        browse.keepInPlaylist(other, outFile);
+        verify(!browse.isPlaylistEdited(other));
+        compare(browse.trackCountChange(other), 0);
+        scan.filterByPlaylist(full);
+        compare(browse.pendingAdditions[full].join(), file);
+        scan.setPendingAdditions(browse.pendingAdditions);
+        compare(scan.tracks.trackCount(), inIt + 1, "added at the end of " + full);
+        const added = scan.tracks.trackAt(inIt);
+        compare(added.filePath, file);
+        verify(added.pendingAddition === true, "flagged");
+        scan.filterByPlaylist("Fresh Picks");
+        compare(scan.tracks.trackCount(), 1, "and shown in the new playlist");
+        verify(scan.tracks.trackAt(0).pendingAddition === true);
+        scan.filterByPlaylist("");
+        verify(scan.tracks.trackCount() > 1);
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            verify(scan.tracks.trackAt(i).pendingAddition === false, "no flag outside the playlist");
+        }
+        browse.keepOutOfPlaylist(full, file);
+        scan.setPendingAdditions(browse.pendingAdditions);
+        scan.filterByPlaylist(full);
+        compare(scan.tracks.trackCount(), inIt, "taken back");
+
+        // A new playlist dropped takes the tracks staged into it along.
+        // Asked back to back: the add waits for the create's turn, and
+        // sees it staged.
+        verify(browse.createPlaylist(t.pioneer, engine, "Gone Again"));
+        verify(browse.addToPlaylist(t.pioneer, engine, "Gone Again", file, "A Track"));
+        verify(browse.busy, "looked up off the GUI thread");
+        verify(edited(browse, true), browse.errorMessage);
+        compare(t.session.pendingCount, 5);
         browse.dropNewPlaylist("Gone Again");
-        compare(t.session.pendingCount, 2, "the create and its add both gone");
-        verify(!browse.isAdditionStaged("Gone Again", t.stick + "/Contents/795079.mp3"));
+        compare(t.session.pendingCount, 3, "the create and its add both gone");
+        verify(!browse.isAdditionStaged("Gone Again", file));
+        compare(Object.keys(browse.pendingAdditions).join(), "Fresh Picks");
+
         const summary = saveAndWait(t.session);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.written, 2, JSON.stringify(summary));
+        compare(summary.written, 3, JSON.stringify(summary));
+        compare(JSON.stringify(browse.pendingAdditions), "{}", "written, so no longer pending");
+        compare(browse.newPlaylists.length, 0);
         // The anonymized fixture spells its paths differently per library,
         // so only OneLibrary has a row for this file: the log says why the
         // other two were left alone.
         const log = stickFixture.readText(t.stick + "/Seabass/seabass.log");
         verify(log.indexOf("playlist-create: created \"Fresh Picks\" in 3 libraries") >= 0, log);
+        verify(log.indexOf("playlist-create: created \"Left Empty\" in 3 libraries") >= 0, log);
         verify(log.indexOf("to \"Fresh Picks\" in 1 libraries") >= 0, log);
         verify(log.indexOf("not added to \"Fresh Picks\" there: rekordbox has no row for the file") >= 0, log);
         verify(log.indexOf("not added to \"Fresh Picks\" there: Engine has no row for the file") >= 0, log);
-        compare(browse.newPlaylists.length, 0, "made, so no longer pending");
-        verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "the stick has it now");
+        verify(!edited(browse, browse.createPlaylist(t.pioneer, engine, "Fresh Picks")), "the stick has it now");
         compare(browse.errorMessage, "There is already a playlist \"Fresh Picks\" (in rekordbox, OneLibrary, Engine).");
+
+        // Browse lists both in every library, the empty one too.
+        for (const [format, path] of [["rekordbox", t.pioneer], ["onelibrary", t.pioneer], ["engine", engine]]) {
+            const again = createTemporaryObject(scanControllerComponent, testCase);
+            again.scan(format, path);
+            tryVerify(() => !again.busy && again.playlistNames.length > 0, 120000, format + " scanned");
+            for (const name of ["Fresh Picks", "Left Empty", "Playlist 000"]) {
+                verify(again.playlistNames.indexOf(name) >= 0, format + " lists " + name + ": "
+                       + JSON.stringify(again.playlistNames));
+            }
+        }
+    }
+
+    // The page picks its playlist again as a scan's names arrive (the one
+    // it showed before the rescan a save causes): the pick stands, the
+    // list shows that playlist and not every track.
+    function test_aPlaylistPickedAsTheNamesArriveStaysShown() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("onelibrary", stick + "/PIONEER");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "scanned");
+        const all = scan.tracks.trackCount();
+        const pick = scan.playlistNames.filter(n => scan.playlistTrackCounts[n] > 0
+                                                    && scan.playlistTrackCounts[n] < all)[0];
+        verify(pick !== undefined, JSON.stringify(scan.playlistTrackCounts));
+        let picked = 0;
+        scan.playlistNamesChanged.connect(() => { scan.filterByPlaylist(pick); ++picked; });
+        scan.scan("onelibrary", stick + "/PIONEER");
+        tryVerify(() => !scan.busy && picked > 0, 120000, "scanned again, the playlist picked meanwhile");
+        compare(scan.tracks.trackCount(), scan.playlistTrackCounts[pick], "the pick stands: " + pick);
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            verify(scan.tracks.trackAt(i).playlistNames.indexOf(pick) >= 0, "every row is in " + pick);
+        }
     }
 
     // Two rows staged; one's analysis file stops reading before the save.
