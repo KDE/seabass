@@ -93,7 +93,23 @@ TestCase {
             }
             function isNewPlaylistStaged(name) { return staged["n:" + name] === true; }
             property string lastAddPlaylist: ""
-            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex) {
+            // Set to a list of library names: the next add asks instead of
+            // staging (additionNeedsLibraries), as the real one does for a
+            // track some library holding the playlist has no row for.
+            property var missingForNextAdd: []
+            signal additionNeedsLibraries(string playlist, string filePath, string title, var missingLibraries,
+                                          int toIndex, var addedLibraries)
+            function addAnyway(playlist, filePath) { calls.push(["addAnyway", playlist, filePath]); }
+            function dropAddition(playlist, filePath) { calls.push(["dropAddition", playlist, filePath]); }
+            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom) {
+                if (missingForNextAdd.length > 0) {
+                    const missing = missingForNextAdd;
+                    missingForNextAdd = [];
+                    calls.push(["asked", playlist, filePath, moveFrom || ""]);
+                    additionNeedsLibraries(playlist, filePath, title, missing, toIndex === undefined ? -1 : toIndex,
+                                           ["rekordbox", "OneLibrary", "Engine"].filter(n => missing.indexOf(n) < 0));
+                    return true;
+                }
                 // A place only when one is given, as the page passes -1 for none.
                 const call = ["add", rekordboxPath, enginePath, playlist, filePath, title];
                 if (toIndex !== undefined && toIndex >= 0) {
@@ -112,6 +128,10 @@ TestCase {
                 staged["a:" + playlist + "|" + filePath] = true;
                 lastAddPlaylist = playlist;
                 pendingRevision++;
+                // A move's removal, staged after the add as the real one does.
+                if (moveFrom !== undefined && moveFrom.length > 0) {
+                    removeFromPlaylist(rekordboxPath, enginePath, moveFrom, filePath, title);
+                }
                 return true;
             }
             function keepOutOfPlaylist(playlist, filePath) {
@@ -587,6 +607,94 @@ TestCase {
                 "/nonexistent/d.mp3", "Dragged", 1]));
         page.sortAscending = false;
         verify(!gap.orderShown, "sorted the other way: no places");
+        cleanupExperimental();
+    }
+
+    // An add the controller asks about (a track some library holding the
+    // playlist has no row for): the page's dialog names the libraries left
+    // out, the ones reached and the player that would not see it, and each
+    // button answers as it says; Escape is "Don't add"; Open Sync drops the
+    // add and asks for Sync after Rekordbox Export.
+    Component { id: openSyncSpyComponent; SignalSpy { signalName: "openRekordboxExportSyncRequested" } }
+    function test_anAddTheControllerAsksAboutOpensTheDialog() {
+        const page = makeEditingPage(true);
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        const text = findChild(page, "missingLibrariesText");
+        const spy = createTemporaryObject(openSyncSpyComponent, testCase, {target: page});
+
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        tryCompare(dialog, "opened", true);
+        compare(dialog.title, "Not in every library");
+        compare(text.text, "\"A Track\" is not in the Engine library on this stick, so it would be added to \"Peak\" in "
+                + "rekordbox and OneLibrary only, and a Denon player would not see it there. Run Sync after Rekordbox "
+                + "Export first to bring the track into Engine.");
+        verify(text.text.indexOf("\u2014") < 0 && text.text.indexOf("--") < 0, "no dashes on screen");
+        compare(findChild(page, "openSyncButton").visible, true);
+        waitForRendering(page);
+        saveScreenshot(page, "browse_missing_libraries_dialog");
+        findChild(page, "addAnywayButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["addAnyway", "Peak", "/nonexistent/a.mp3"]]));
+
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/b.mp3", "B Track", -1);
+        tryCompare(dialog, "opened", true);
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["dropAddition", "Peak", "/nonexistent/b.mp3"]]));
+
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/c.mp3", "C Track", -1);
+        tryCompare(dialog, "opened", true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["dropAddition", "Peak", "/nonexistent/c.mp3"]]),
+                "Escape is Don't add");
+
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/d.mp3", "D Track", -1);
+        tryCompare(dialog, "opened", true);
+        findChild(page, "openSyncButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(spy.count, 1, "Sync after Rekordbox Export asked for");
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["dropAddition", "Peak", "/nonexistent/d.mp3"]]),
+                "and the add dropped");
+        const before = fake.calls.length;
+
+        // Two left out, of both makers: both named, both players, and no
+        // Open Sync when Engine has the track.
+        fake.missingForNextAdd = ["rekordbox", "Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/e.mp3", "E Track", -1);
+        tryCompare(dialog, "opened", true);
+        compare(text.text, "\"E Track\" is not in the rekordbox and Engine libraries on this stick, so it would be added "
+                + "to \"Peak\" in OneLibrary only, and Denon and Pioneer players would not see it there. Run Sync after "
+                + "Rekordbox Export first to bring the track into Engine. Export the track to this stick from rekordbox "
+                + "first to bring it into rekordbox.");
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        fake.missingForNextAdd = ["OneLibrary"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/f.mp3", "F Track", -1);
+        tryCompare(dialog, "opened", true);
+        verify(text.text.indexOf("a Pioneer player would not see it") > 0, text.text);
+        compare(findChild(page, "openSyncButton").visible, false, "Sync does not bring a track into OneLibrary");
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(spy.count, 1);
+        verify(fake.calls.length > before);
+
+        // The drag card's Move hands its source to the add, so the removal
+        // waits with it rather than being staged on its own.
+        fake.missingForNextAdd = ["Engine"];
+        const count = fake.calls.length;
+        page.addDraggedTrack("Peak", "Warmup");
+        tryCompare(dialog, "opened", true);
+        compare(JSON.stringify(fake.calls.slice(count)), JSON.stringify([["asked", "Peak", "", "Warmup"]]),
+                "asked with the source, and nothing removed");
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        verify(!fake.calls.some(c => c[0] === "remove"), "no removal on its own");
         cleanupExperimental();
     }
 

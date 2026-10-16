@@ -169,7 +169,8 @@ std::optional<std::vector<Id>> movedOrder(const std::vector<Id> &order, const st
 
 }  // namespace
 
-PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist)
+PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist,
+                                        const std::string &filePath)
 {
     PlaylistWhereabouts where;
     const auto note = [&](const char *library, int count) {
@@ -206,6 +207,28 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
         } catch (const std::exception &) {
         }
         note("engine", count);
+    }
+    if (!filePath.empty()) {
+        for (const QString &library : where.onStick) {
+            bool has = false;
+            try {
+                if (library == QLatin1String("rekordbox")) {
+                    has = !infrastructure::rekordbox::PdbRowWriter(exportPdbOf(pioneer))
+                               .trackIdsWithFilePath(pathOnStick(pioneer, filePath))
+                               .empty();
+                } else if (library == QLatin1String("onelibrary")) {
+                    has = !infrastructure::onelibrary::OneLibraryCueWriter(pioneer).contentIdsForFile(filePath).empty();
+                } else if (library == QLatin1String("engine")) {
+                    has = !infrastructure::engine::engineTrackIdsForFile(engine, engine, filePath).empty();
+                }
+            } catch (const std::exception &) {
+                // No row (OneLibraryRowMissing) or a library that will not
+                // read: either way not one the add would reach.
+            }
+            if (has) {
+                where.withFile << library;
+            }
+        }
     }
     return where;
 }

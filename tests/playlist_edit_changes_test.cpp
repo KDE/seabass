@@ -722,6 +722,23 @@ int main(int argc, char **argv)
     }
     std::cout << "case 10 (a playlist and a folder renamed in all three libraries) OK\n";
 
+    // 11. Which libraries have a row for a file, asked with the playlist
+    //     in one lookup, as an add needs to know before it is staged: a01
+    //     everywhere; b01 taken out of Engine (it is in no playlist since
+    //     case 3), as a track rekordbox exported and Engine has not been
+    //     synced to; a10 nowhere (deleted in case 4).
+    {
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q Two", file(A01)).withFile == all);
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q Two").withFile.isEmpty() && "asked without a file: none");
+        assert(infrastructure::engine::removeEngineTracks(pathToUtf8(library), {engineId[B01.relative]}) == 1);
+        const auto b01 = playlistWhereabouts(pioneerQ, libraryQ, "Q Two", file(B01));
+        assert((b01.withFile == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")})
+               && "Engine has no row for it");
+        assert(b01.having == all && "the playlist is in all three all the same");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q Two", file(A10)).withFile.isEmpty());
+    }
+    std::cout << "case 11 (the libraries with a row for a file, read with the playlist) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;

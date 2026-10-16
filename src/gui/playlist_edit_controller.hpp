@@ -106,8 +106,22 @@ public:
     // (from 0, its place after the add) when one is given: one change
     // either way. Staging it again replaces the add staged before.
     // Remembers the playlist as lastAddPlaylist.
+    //
+    // A file some library holding the playlist has no row for (a track
+    // rekordbox exported that Engine has not been synced to yet) is not
+    // staged at once: the add would leave that library alone, and its
+    // player would show the playlist short. additionNeedsLibraries asks
+    // the page, which answers addAnyway() or dropAddition(). `moveFrom`,
+    // when given, is the playlist the track is moved out of (the drag
+    // card's Move): its removal is staged with the add, after it, or not
+    // at all.
     Q_INVOKABLE bool addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
-                                   const QString &filePath, const QString &title, int toIndex = -1);
+                                   const QString &filePath, const QString &title, int toIndex = -1,
+                                   const QString &moveFrom = QString());
+    // The page's answers to additionNeedsLibraries, by the playlist and
+    // file it named.
+    Q_INVOKABLE void addAnyway(const QString &playlist, const QString &filePath);
+    Q_INVOKABLE void dropAddition(const QString &playlist, const QString &filePath);
     Q_INVOKABLE void keepOutOfPlaylist(const QString &playlist, const QString &filePath);
     Q_INVOKABLE bool isAdditionStaged(const QString &playlist, const QString &filePath) const;
     // The file to `toIndex` (from 0) in `playlist`'s order as Browse shows
@@ -167,13 +181,19 @@ signals:
     void pendingChanged();
     // A save wrote at least one of these edits: the page should rescan.
     void playlistsSaved();
+    // An add asked for is waiting: `missingLibraries` (display names:
+    // "rekordbox", "OneLibrary", "Engine") hold the playlist but have no
+    // row for the file; `addedLibraries` the ones the add would reach.
+    // Nothing is staged until addAnyway().
+    void additionNeedsLibraries(const QString &playlist, const QString &filePath, const QString &title,
+                                const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries);
 
 private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
     // Queues a lookup of `playlist` on the stick; `then` runs on the GUI
     // thread with what it found, unless a save is writing by then.
     void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
-                std::function<void(const PlaylistWhereabouts &)> then);
+                std::function<void(const PlaylistWhereabouts &)> then, const std::string &file = {});
     // The same for two paths read in one turn: a rename's old and new.
     void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
                 const std::string &also, std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then);
@@ -203,6 +223,21 @@ private:
     std::vector<QString> editsAddressing(const QString &path) const;
     // A staged new playlist renamed in place (see renamePlaylist).
     void renameNewPlaylist(const QString &playlist, const QString &renamed);
+    // An add as asked for, with the libraries its lookup found.
+    struct PendingAdd
+    {
+        QString rekordboxPath;
+        QString enginePath;
+        QString playlist;
+        QString filePath;
+        QString title;
+        int toIndex = -1;
+        QString moveFrom;
+        QStringList libraries;
+    };
+    void stageAdd(const PendingAdd &add);
+    // Adds waiting for the page's answer, by playlist + "|" + file.
+    std::map<QString, PendingAdd> m_waitingAdds;
 
     QPointer<LibraryEditSession> m_session;
     struct Lookup
@@ -211,6 +246,7 @@ private:
         QString enginePath;
         std::string playlist;
         std::string also;  // empty: one path
+        std::string file;  // asked of the first path (PlaylistWhereabouts::withFile)
         std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then;
     };
     std::deque<Lookup> m_lookups;

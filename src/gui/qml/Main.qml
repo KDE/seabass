@@ -626,8 +626,16 @@ ApplicationWindow {
     Component {
         id: scanPageComponent
         ScanPage {
+            id: scanPage
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
+            // The dialog about a track Engine does not have yet: Sync after
+            // Rekordbox Export for this stick, as Home opens it.
+            onOpenRekordboxExportSyncRequested: stackView.push(rekordboxExportSyncPageComponent, {
+                stickLabel: scanPage.stickLabel,
+                rekordboxPath: scanPage.rekordboxPath,
+                enginePath: scanPage.enginePath,
+            })
             onTrackDetailRequested: (scanController, trackIndex, format, libraryPath) => stackView.push(trackDetailPageComponent, {
                 scanController: scanController,
                 trackIndex: trackIndex,

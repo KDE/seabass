@@ -70,8 +70,18 @@ TestCase {
         id: realControllerComponent
         LibraryConsistencyController {}
     }
+    // The anonymized fixture spells its paths differently per library, so
+    // most of its tracks are in OneLibrary alone, and an add asks first
+    // (additionNeedsLibraries). The tests not about that answer "add
+    // anyway", as someone would who knows; askingEditComponent does not.
     Component {
         id: playlistEditComponent
+        PlaylistEditController {
+            onAdditionNeedsLibraries: (playlist, filePath) => addAnyway(playlist, filePath)
+        }
+    }
+    Component {
+        id: askingEditComponent
         PlaylistEditController {}
     }
     Component {
@@ -732,6 +742,12 @@ TestCase {
         verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Dragged Here")), browse.errorMessage);
         verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, "Dragged Here", t.stick + "/Contents/795079.mp3",
                                                    "A Track")), browse.errorMessage);
+        // The track is in OneLibrary alone on this fixture: the page asks.
+        const ask = findChild(page, "missingLibrariesDialog");
+        tryCompare(ask, "opened", true);
+        compare(t.session.pendingCount, 1, "the add waits for the answer");
+        findChild(ask, "addAnywayButton").clicked();
+        tryCompare(ask, "visible", false);
         compare(t.session.pendingCount, 2);
         compare(t.session.playlistsEdited, 1);
         verify(EditSessionRegistry.anyDirty, "quitting would ask");
@@ -843,6 +859,63 @@ TestCase {
             after.push(again.tracks.trackAt(i).sourceId);
         }
         compare(JSON.stringify(after), JSON.stringify(before), "the same tracks in the same order");
+    }
+
+    Component { id: addSpyComponent; SignalSpy { signalName: "additionNeedsLibraries" } }
+
+    // An add of a track some library holding the playlist has no row for
+    // (on the anonymized fixture only OneLibrary has 795079.mp3): nothing
+    // is staged, the page is asked with the libraries left out and the
+    // ones reached, and only "add anyway" stages the add; a move waits
+    // with it, both halves or neither.
+    function test_anAddToALibraryWithoutTheTrackWaitsForAnAnswer() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const browse = createTemporaryObject(askingEditComponent, testCase);
+        const spy = createTemporaryObject(addSpyComponent, testCase, {target: browse});
+        const file = t.stick + "/Contents/795079.mp3";
+        verify(browse.addToPlaylist(t.pioneer, engine, "Playlist 000", file, "A Track", 3));
+        tryCompare(browse, "busy", false, 60000);
+        compare(spy.count, 1, "asked");
+        const args = spy.signalArguments[0];
+        compare(args[0], "Playlist 000");
+        compare(args[1], file);
+        compare(args[2], "A Track");
+        compare(JSON.stringify(args[3]), JSON.stringify(["rekordbox", "Engine"]), "the libraries left out");
+        compare(args[4], 3, "the place asked for");
+        compare(JSON.stringify(args[5]), JSON.stringify(["OneLibrary"]), "the one it would reach");
+        compare(t.session.pendingCount, 0, "nothing staged while the page asks");
+        verify(!browse.isAdditionStaged("Playlist 000", file));
+        browse.dropAddition("Playlist 000", file);
+        browse.addAnyway("Playlist 000", file);
+        compare(t.session.pendingCount, 0, "dropped: an answer after it does nothing");
+
+        verify(browse.addToPlaylist(t.pioneer, engine, "Playlist 000", file, "A Track"));
+        tryCompare(browse, "busy", false, 60000);
+        compare(spy.count, 2);
+        browse.addAnyway("Playlist 000", file);
+        compare(t.session.pendingCount, 1, "added anyway: one add");
+        verify(browse.isAdditionStaged("Playlist 000", file));
+        browse.keepOutOfPlaylist("Playlist 000", file);
+        compare(t.session.pendingCount, 0);
+
+        // A move: the removal from the source waits for the answer too.
+        verify(browse.addToPlaylist(t.pioneer, engine, "Playlist 000", file, "A Track", -1, "Playlist 001"));
+        tryCompare(browse, "busy", false, 60000);
+        compare(spy.count, 3);
+        compare(t.session.pendingCount, 0, "neither half staged");
+        browse.dropAddition("Playlist 000", file);
+        compare(t.session.pendingCount, 0, "neither, on don't");
+        verify(browse.addToPlaylist(t.pioneer, engine, "Playlist 000", file, "A Track", -1, "Playlist 001"));
+        tryCompare(browse, "busy", false, 60000);
+        browse.addAnyway("Playlist 000", file);
+        tryCompare(browse, "busy", false, 60000);
+        compare(t.session.pendingCount, 2, "both, on add anyway");
+        verify(browse.isAdditionStaged("Playlist 000", file) && browse.isRemovalStaged("Playlist 001", file));
+        // Left clean for the cases after this one: anyDirty is the whole
+        // registry's.
+        t.session.discard();
+        compare(t.session.pendingCount, 0);
     }
 
     // The page picks its playlist again as a scan's names arrive (the one
