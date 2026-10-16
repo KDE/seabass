@@ -41,6 +41,13 @@ ListView {
     property var trackCountChange: name => 0
     // The playlist the page shows, so a new one picked is marked current.
     property string shownPlaylist: ""
+    // Dropping a dragged track on a playlist (Browse, Experimental): the
+    // rows that take one are every playlist but "All tracks", the one
+    // shown and one staged for deletion. heldDropTarget stays marked while
+    // the drag card asks what the drop should do.
+    property bool trackDropsEnabled: false
+    property string heldDropTarget: ""
+    signal trackDropped(string name)
     signal createRequested()
     // A playlist staged to be created was clicked.
     signal newPlaylistPicked(string name)
@@ -71,6 +78,9 @@ ListView {
         edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
         onPicked: root.playlistPicked(index, modelData)
+        acceptsTrackDrop: root.trackDropsEnabled && index > 0 && modelData !== root.shownPlaylist && !pendingDelete
+        heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
+        onTrackDropped: root.trackDropped(modelData)
         onContextRequested: {
             if (index > 0) {
                 root.playlistContextRequested(modelData, this);
@@ -93,6 +103,9 @@ ListView {
                 isCurrent: root.shownPlaylist === modelData
                 // Shows the tracks staged into it; its menu takes it back.
                 onPicked: root.newPlaylistPicked(modelData)
+                acceptsTrackDrop: root.trackDropsEnabled && modelData !== root.shownPlaylist
+                heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
+                onTrackDropped: root.trackDropped(modelData)
                 onContextRequested: root.playlistContextRequested(modelData, this)
             }
         }

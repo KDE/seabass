@@ -361,6 +361,24 @@ Page {
         trackMenu.popup(at);
     }
 
+    // ---- Dragging a track to a playlist (Experimental) ----
+    // The drag card Browse's rows and the Matching panel's results share;
+    // null with playlist editing off, and then nothing drags.
+    readonly property var trackDragCard: root.playlistEditing ? trackDrag : null
+    // The page's half of the drag contract (TrackDragItem has the rest):
+    // whether a track is being dragged, and which, as TrackDragItem.
+    // asMap() gives it, null when none is.
+    readonly property bool dragging: trackDrag.dragging
+    property var draggedTrack: null
+    onDraggingChanged: root.draggedTrack = root.dragging ? trackDrag.asMap() : null
+
+    // A Move takes the track out of the playlist Browse shows, so it is
+    // offered only for a track that is in it.
+    function moveSourceFor(track) {
+        return root.shownPlaylist.length > 0 && track.playlistNames
+            && track.playlistNames.indexOf(root.shownPlaylist) >= 0 ? root.shownPlaylist : "";
+    }
+
     // Browse is read-only until a cue is added: the session is opened
     // here (no lock), the first staged cue takes the lock and enables
     // the floating Save.
@@ -961,6 +979,11 @@ Page {
                 shownPlaylist: root.shownPlaylist
                 onNewPlaylistPicked: name => root.selectPlaylist(-1, name)
                 onCreateRequested: root.openCreatePlaylistDialog()
+                // A dragged track is dropped on a playlist row; the card
+                // then asks what to do (TrackDragItem).
+                trackDropsEnabled: root.playlistEditing
+                heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
+                onTrackDropped: name => trackDrag.dropOn(name, root.moveSourceFor(trackDrag))
             }
         }
 
@@ -1169,9 +1192,13 @@ Page {
                     // first). Streaming tracks are fine here: the column
                     // still shows their cues and playlists, only Play
                     // itself (on the artwork) is unavailable for those.
-                    MouseArea {
+                    // Press and move drags the track to a playlist
+                    // (Experimental, see TrackDragArea).
+                    TrackDragArea {
                         id: rowMouseArea
                         anchors.fill: parent
+                        trackDrag: root.trackDragCard
+                        track: trackDelegate
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: mouse => {
@@ -1245,8 +1272,12 @@ Page {
                             // claims clicks here for Play before they'd
                             // otherwise reach the row's own "open detail
                             // page" handler.
-                            MouseArea {
+                            // A drag that starts on the cover drags the
+                            // track as one from the rest of the row does.
+                            TrackDragArea {
                                 anchors.fill: parent
+                                trackDrag: root.trackDragCard
+                                track: trackDelegate
                                 hoverEnabled: true
                                 cursorShape: trackDelegate.streamingSource.length === 0
                                     ? Qt.PointingHandCursor : Qt.ArrowCursor
@@ -1699,6 +1730,7 @@ Page {
             anchorPlaylistNames: root.anchorPlaylistNames
             onCloseRequested: root.matchingPanelOpen = false
             onMenuRequested: (candidate, at) => root.openTrackMenu(candidate, at)
+            trackDrag: root.trackDragCard
             // Just play it: the detail panel a Browse row opens shares
             // this side of the page with Matching, which stays.
             onPlayRequested: candidate => root.playbackController.load(root.format, root.currentPath(),
@@ -1730,6 +1762,34 @@ Page {
             if (row >= 0) {
                 trackDetailPanel.trackCues = scanController.tracks.trackAt(row).cues;
             }
+        }
+    }
+
+    // While the drag card asks what a drop should do, a press anywhere
+    // else lets it go and does nothing besides: the user is answering the
+    // card, not carrying on with the page. Pressing the row again counts.
+    MouseArea {
+        objectName: "trackDropDismissArea"
+        anchors.fill: parent
+        z: trackDrag.z - 1
+        visible: trackDrag.confirming
+        acceptedButtons: Qt.AllButtons
+        onPressed: trackDrag.close()
+    }
+
+    TrackDragItem {
+        id: trackDrag
+        objectName: "trackDragItem"
+        keyNotation: root.appSettingsController.keyNotation
+        // Staged like an "Add to" from the row menu; Save writes it.
+        onAddChosen: playlist => root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath,
+                                                                            playlist, trackDrag.filePath, trackDrag.title)
+        // Both halves staged, in this order: the add is looked up first.
+        onMoveChosen: (playlist, fromPlaylist) => {
+            root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
+                                                      trackDrag.filePath, trackDrag.title);
+            root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, fromPlaylist,
+                                                           trackDrag.filePath, trackDrag.title);
         }
     }
 

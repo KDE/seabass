@@ -48,6 +48,9 @@ ColumnLayout {
     // A candidate's menu button was clicked: Browse opens its row menu
     // for it there.
     signal menuRequested(var candidate, Item at)
+    // Browse's drag card (TrackDragItem): a result is dragged to a
+    // playlist as a Browse row is. Null, nothing drags.
+    property var trackDrag: null
 
     spacing: 0
 
@@ -201,6 +204,7 @@ ColumnLayout {
 
     Timer {
         id: refreshDebounce
+        objectName: "refreshDebounce"
         interval: 200
         onTriggered: root.refresh()
     }
@@ -599,6 +603,15 @@ ColumnLayout {
             opacity: candidateDelegate.wheelHoverActive && !candidateDelegate.wheelHoverMatch ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
 
+            // Behind the row's controls: press and move drags the result
+            // to a playlist. The buttons and the cover keep their clicks.
+            TrackDragArea {
+                objectName: "candidateDragArea"
+                anchors.fill: parent
+                trackDrag: root.trackDrag
+                track: candidateDelegate.modelData
+            }
+
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 10
@@ -631,9 +644,11 @@ ColumnLayout {
                         }
                     }
                     HoverHandler { id: candidateArtHover }
-                    MouseArea {
+                    TrackDragArea {
                         objectName: "candidatePlayArea"
                         anchors.fill: parent
+                        trackDrag: root.trackDrag
+                        track: candidateDelegate.modelData
                         cursorShape: parent.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: {
                             if (parent.playable) {
