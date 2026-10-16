@@ -86,6 +86,16 @@ std::set<std::string> entriesOf(const fs::path &dir)
 // A save running in another connection: m.db mid-transaction, changed
 // pages already spilled into it and its journal live, holding the lock
 // until released -- then committed, so its work must survive intact.
+//
+// EXCLUSIVE from its BEGIN, waiting for readers to finish first. With a
+// plain BEGIN it took only RESERVED, and spilled (which takes EXCLUSIVE,
+// and makes the journal live) only if no connection held SHARED at that
+// moment; SQLite skips a spill it cannot lock for and lets the cache grow.
+// Then the journal stayed dead, the reader did not wait, read the old
+// titles holding SHARED, and the COMMIT, finding it, failed with
+// "database is locked": the two failures the Mac showed under load in
+// case 6. Taking EXCLUSIVE first is what the case means by a writer
+// mid-commit.
 class LiveWriter
 {
 public:
@@ -93,10 +103,11 @@ public:
         : m_thread([this, db]() {
               sqlite3 *handle = nullptr;
               assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &handle) == SQLITE_OK);
+              sqlite3_busy_timeout(handle, 10000);
               exec(handle, "PRAGMA journal_mode=DELETE");
               exec(handle, "PRAGMA cache_size=1");
               exec(handle, "PRAGMA cache_spill=1");
-              exec(handle, "BEGIN");
+              exec(handle, "BEGIN EXCLUSIVE");
               exec(handle, "UPDATE Track SET title = 'WRITTEN BY THE OTHER CONNECTION'");
               m_holding = true;
               while (!m_release) {
@@ -300,6 +311,7 @@ int main()
     {
         const std::set<std::string> keptNow = entriesOf(recovered);
         LiveWriter writer(liveDb);
+        assert(seabass::infrastructure::hasPendingJournal(liveDb) && "the writer's journal is live, as in case 5");
         std::thread releaser([&writer]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
             writer.release();
@@ -321,6 +333,57 @@ int main()
         }
         assert(entriesOf(recovered) == keptNow && "nothing copied aside");
         std::cout << "case 6 (the reader waits out a writer, nothing copied) OK\n";
+    }
+
+    // 7. Case 6 with a reader in the way as the writer starts: a connection
+    //    holding SHARED (a read in progress) when the writer begins. The
+    //    writer waits for it to end before it writes, so its journal is
+    //    live and its COMMIT finds no reader to fail on; the reader after
+    //    it waits the writer out and reads what it committed. This is the
+    //    Mac's failure made to happen on any machine: with a plain BEGIN,
+    //    the writer wrote without spilling, the journal stayed dead, and
+    //    case 6 failed both ways.
+    {
+        {
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(seabass::pathToUtf8(liveDb).c_str(), &db) == SQLITE_OK);
+            exec(db, "UPDATE Track SET title = 'BEFORE THE WRITER'");
+            sqlite3_close(db);
+        }
+        const std::set<std::string> keptNow = entriesOf(recovered);
+        sqlite3 *inTheWay = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(liveDb).c_str(), &inTheWay) == SQLITE_OK);
+        exec(inTheWay, "BEGIN");
+        exec(inTheWay, "SELECT count(*) FROM Track");  // SHARED, held until COMMIT
+        std::thread endRead([inTheWay]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            exec(inTheWay, "COMMIT");
+        });
+        LiveWriter writer(liveDb);
+        endRead.join();
+        sqlite3_close(inTheWay);
+        assert(seabass::infrastructure::hasPendingJournal(liveDb) && "the writer waited for the read, then spilled");
+        std::thread releaser([&writer]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            writer.release();
+        });
+        std::string thrown;
+        std::vector<seabass::domain::Track> read;
+        try {
+            read = readAll(live);
+        } catch (const std::exception &e) {
+            thrown = e.what();
+        }
+        releaser.join();
+        if (!thrown.empty()) {
+            std::cerr << "threw: " << thrown << "\n";
+        }
+        assert(thrown.empty() && read.size() == before);
+        for (const auto &track : read) {
+            assert(track.title == "WRITTEN BY THE OTHER CONNECTION" && "the writer's commit stands");
+        }
+        assert(entriesOf(recovered) == keptNow && "nothing copied aside");
+        std::cout << "case 7 (a reader in the way as the writer starts: it waits, then the reader waits for it) OK\n";
     }
 
     fs::remove_all(scratch, ec);
