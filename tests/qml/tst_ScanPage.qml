@@ -155,6 +155,8 @@ TestCase {
             property string streamingSource: ""
             property bool pendingAddition: false
             property bool pendingMove: false
+            // In "Peak", the playlist the menu tests show.
+            property var playlistNames: ["Peak"]
         }
     }
 
@@ -274,7 +276,8 @@ TestCase {
     // shown.
     function test_aMatchingResultHasTheRowMenu() {
         const page = makeEditingPage(true);
-        page.playlistEditController.newPlaylists = ["Chill"];
+        // "Peak" is shown and is a target too: the match is not in it.
+        page.playlistEditController.newPlaylists = ["Chill", "Peak"];
         page.shownPlaylist = "Peak";
         const menu = findChild(page, "trackMenu");
         const matching = findChild(page, "matchingPage");
@@ -288,6 +291,8 @@ TestCase {
         compare(findChild(page, "removeFromPlaylistItem").visible, false, "not in Peak");
         const addTo = findChild(page, "addToMenu");
         compare(menu.itemAt(menu.count - 1).subMenu, addTo);
+        compare(addTo.count, 2, "Chill and the shown Peak, which the match is not in");
+        compare(addTo.itemAt(1).text, "Peak");
         addTo.itemAt(0).triggered();
         compare(JSON.stringify(page.playlistEditController.calls[0]), JSON.stringify(["add",
                 "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Chill",
@@ -465,11 +470,15 @@ TestCase {
         tryCompare(h.gap, "gapIndex", 5, 2000);
         drag.Drag.drop();
         compare(JSON.stringify(h.moves), JSON.stringify([["/nonexistent/d.mp3", "Dragged", 4]]));
+        // Right below its own row: that would move nothing, so no gap
+        // opens (the row would seem to be in the list twice).
         drag = dragOver(h, {}, 100, 198);
-        tryCompare(h.gap, "gapIndex", 4, 2000);
+        wait(h.gap.hoverDelay + 200);
+        compare(h.gap.gapIndex, -1, "no gap just below its own row");
         drag.Drag.drop();
         drag = dragOver(h, {}, 100, 152);
-        tryCompare(h.gap, "gapIndex", 3, 2000);
+        wait(h.gap.hoverDelay + 200);
+        compare(h.gap.gapIndex, -1, "nor just above it");
         drag.Drag.drop();
         compare(h.moves.length, 1, "its own place asks for nothing");
     }
@@ -511,7 +520,7 @@ TestCase {
         const gap = findChild(page, "playlistDropGap");
         verify(gap !== null);
         compare(gap.parent, list, "over the list, not its scrolling content");
-        compare(gap.hoverDelay, 1500);
+        compare(gap.hoverDelay, 0, "opens at once: the drag is deliberate already");
         verify(gap.orderShown, "the playlist's own order");
         gap.hoverDelay = 300;
         gap.draggedIndex = 3;
@@ -715,7 +724,7 @@ TestCase {
         tryCompare(menu, "opened", true);
         compare(menu.itemAt(menu.count - 1).subMenu, addTo, "the last entry");
         compare(addTo.title, "Add to...");
-        compare(addTo.count, 1, "not the playlist shown");
+        compare(addTo.count, 1, "not a playlist it is in");
         compare(addTo.itemAt(0).text, "Chill");
         compare(last.visible, false, "nothing added yet");
         menu.itemAt(menu.count - 1).triggered();
@@ -755,11 +764,13 @@ TestCase {
 
     function test_addToListsTheNewPlaylistsFirst() {
         const page = makePage();
-        compare(JSON.stringify(page.addTargetsFor(["Chill", "Peak", "Warm"], ["Fresh"], "Peak")),
-                JSON.stringify(["Fresh", "Chill", "Warm"]));
-        compare(JSON.stringify(page.addTargetsFor(["Chill"], ["Fresh", "Chill"], "")),
+        compare(JSON.stringify(page.addTargetsFor(["Chill", "Peak", "Warm"], ["Fresh"], ["Peak"], "Peak")),
+                JSON.stringify(["Fresh", "Chill", "Warm"]), "a row of the playlist shown: not that one");
+        compare(JSON.stringify(page.addTargetsFor(["Chill", "Peak", "Warm"], ["Fresh"], ["Other"], "Peak")),
+                JSON.stringify(["Fresh", "Chill", "Peak", "Warm"]), "a track from elsewhere: the shown one too");
+        compare(JSON.stringify(page.addTargetsFor(["Chill"], ["Fresh", "Chill"], [], "")),
                 JSON.stringify(["Fresh", "Chill"]), "a name on both lists once");
-        compare(JSON.stringify(page.addTargetsFor(["Chill"], [], "Chill")), "[]");
+        compare(JSON.stringify(page.addTargetsFor(["Chill"], [], ["Chill"], "Chill")), "[]");
     }
 
     // A save that landed whole is said over the list (ConfirmationToast,
@@ -1058,6 +1069,22 @@ TestCase {
         walk(t.sidebar.contentItem);
         verify(found !== null, "a sidebar row for " + name);
         return found;
+    }
+
+    // The playlist shown takes a drop unless the dragged track is in it
+    // already (a Browse row of it): a track from elsewhere (a Matching
+    // result found while looking at it) lands in it like in any other.
+    function test_aPlaylistTakesADropUnlessTheTrackIsInIt() {
+        const t = makeDragPage(true);
+        t.page.selectPlaylist(1, "Held Playlist");
+        compare(t.page.shownPlaylist, "Held Playlist");
+        t.sidebar.droppedTrackPlaylists = ["Held Reversed"];
+        compare(playlistRow(t, "Held Playlist").acceptsTrackDrop, true, "shown, but the track is not in it");
+        compare(playlistRow(t, "Held Reversed").acceptsTrackDrop, true, "not shown: a target as ever");
+        t.sidebar.droppedTrackPlaylists = ["Held Playlist", "Held Reversed"];
+        compare(playlistRow(t, "Held Playlist").acceptsTrackDrop, false, "shown, and the track is in it");
+        compare(playlistRow(t, "Held Reversed").acceptsTrackDrop, true);
+        cleanupExperimental();
     }
 
     // Where a press on a track row lands: on the title column, clear of

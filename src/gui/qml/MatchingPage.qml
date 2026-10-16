@@ -570,6 +570,10 @@ ColumnLayout {
 
     ListView {
         id: candidatesListView
+        objectName: "candidatesList"
+        // Two rows of room past the last one: the edit mode's Save button
+        // floats over this corner of the page.
+        bottomMargin: 80
         // Not draggable when everything already fits.
         interactive: contentHeight > height
         Layout.fillWidth: true

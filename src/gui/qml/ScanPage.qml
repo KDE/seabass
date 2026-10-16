@@ -281,7 +281,8 @@ Page {
         // which already holds the track.
         readonly property bool canAdd: root.playlistEditing && filePath.length > 0 && !streaming
         readonly property var addTargets: canAdd
-            ? root.addTargetsFor(scanController.playlistNames, root.newPlaylistNames, root.shownPlaylist) : []
+            ? root.addTargetsFor(scanController.playlistNames, root.newPlaylistNames,
+                                 row && row.playlistNames ? row.playlistNames : [], root.shownPlaylist) : []
         // The playlist a track was last added to, when this stick has it.
         readonly property string lastAdd: ("lastAddPlaylist" in root.playlistEditController)
             && addTargets.indexOf(root.playlistEditController.lastAddPlaylist) >= 0
@@ -397,12 +398,17 @@ Page {
         }
     }
 
-    // The new playlists first: they are what is being put together, and
-    // a stick's full list runs past the bottom of the window, where a
-    // last entry is out of reach.
-    function addTargetsFor(stickPlaylists, newPlaylists, shown) {
+    // The playlists a track can be added to: every one but the playlist
+    // shown when the track is in it (inPlaylists: the row's own
+    // memberships). A Browse row of the playlist shown is in it; a
+    // Matching result is found while looking at the playlist it is wanted
+    // in, so for it the shown playlist is a target like any other. The
+    // new playlists first: they are what is being put together, and a
+    // stick's full list runs past the bottom of the window, where a last
+    // entry is out of reach.
+    function addTargetsFor(stickPlaylists, newPlaylists, inPlaylists, shown) {
         return newPlaylists.concat(stickPlaylists.filter(n => newPlaylists.indexOf(n) < 0))
-            .filter(n => n !== shown);
+            .filter(n => n !== shown || inPlaylists.indexOf(n) < 0);
     }
 
     readonly property var newPlaylistNames: ("newPlaylists" in root.playlistEditController)
@@ -1097,6 +1103,11 @@ Page {
                 // A dragged track is dropped on a playlist row; the card
                 // then asks what to do (TrackDragItem).
                 trackDropsEnabled: root.playlistEditing
+                // The playlist shown takes no drop of a track that is in it
+                // (a Browse row of it), and is a target like any other for
+                // one that is not (a Matching result).
+                droppedTrackPlaylists: root.draggedTrack && root.draggedTrack.playlistNames
+                    ? root.draggedTrack.playlistNames : []
                 heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
                 onTrackDropped: name => trackDrag.dropOn(name, root.moveSourceFor(trackDrag))
                 // No summary over the rows while a track is dragged onto
