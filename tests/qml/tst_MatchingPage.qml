@@ -204,8 +204,11 @@ TestCase {
     // (the popup is in its overlay), read under each row's name label,
     // must hold pixels unlike the row's ground beside it.
     function checkRowsDrawn(list, labelName, what) {
+        // The list's own window: the overlay of the test's window, or a
+        // window of the popup's own where popups are native windows.
         const ground = list.Window.contentItem;
         const image = grabImage(ground);
+        // Device pixels per logical one (PixelScale.js): 2 on a Retina Mac.
         const s = PixelScale.scale(image, ground);
         const lum = c => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
         let looked = 0;
@@ -218,16 +221,36 @@ TestCase {
                 continue;  // below the window's edge
             }
             const name = findChild(row, labelName);
-            const back = lum(PixelScale.pixel(image, ground, row.mapToItem(ground, 4, row.height / 2).x,
-                                              row.mapToItem(ground, 4, row.height / 2).y));
+            // Ink is measured against the label's own ground, the commonest
+            // shade under it, not a pixel taken beside it: whatever paints
+            // the row (a style's own shading, a hover, the current row's
+            // outline) is then what the text is told apart from.
             const origin = name.mapToItem(ground, 0, 0);
-            let ink = 0;
+            const shades = [];
             for (let y = 0; y < name.height; y += 1 / s) {
                 for (let x = 0; x < Math.min(name.width, 60); x += 1 / s) {
-                    ink += Math.abs(lum(PixelScale.pixel(image, ground, origin.x + x, origin.y + y)) - back) > 0.15 ? 1 : 0;
+                    shades.push(lum(PixelScale.pixel(image, ground, origin.x + x, origin.y + y)));
                 }
             }
-            verify(ink >= 3, what + ": row " + i + " (" + name.text + ") is drawn with its text, " + ink + " pixels of ink");
+            const sorted = shades.slice().sort((p, q) => p - q);
+            const back = sorted[Math.floor(sorted.length / 2)];
+            const ink = shades.filter(v => Math.abs(v - back) > 0.15).length;
+            if (ink < 3) {
+                // What a run elsewhere (a Mac) needs to say why: the grab,
+                // and the numbers the sampling worked from.
+                const file = screenshotDir && screenshotDir.length > 0
+                    ? screenshotDir + "/blank-row-" + what.replace(/[^A-Za-z0-9]+/g, "-") + "-row" + i + ".png" : "";
+                if (file.length > 0) {
+                    image.save(file);
+                }
+                fail(what + ": row " + i + " (" + name.text + ") shows no text: " + ink + " pixels of ink in "
+                     + shades.length + " sampled, shades " + sorted[0].toFixed(3) + " to "
+                     + sorted[sorted.length - 1].toFixed(3) + ", label at " + origin.x + "," + origin.y + " "
+                     + name.width + "x" + name.height + ", grab " + image.width + "x" + image.height + " of "
+                     + ground.width + "x" + ground.height + " (scale " + s + ", dpr " + Screen.devicePixelRatio
+                     + "), popup window " + (list.Window.window === testCase.Window.window ? "the test's" : "its own")
+                     + (file.length > 0 ? ", saved " + file : ""));
+            }
             ++looked;
         }
         verify(looked > 4, what + ": rows looked at " + looked);
