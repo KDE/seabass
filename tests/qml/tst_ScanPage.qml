@@ -1327,7 +1327,7 @@ TestCase {
         const row = playlistRow(t, "Held Playlist");
         const tile = findChild(row, "playlistThumbnailTile");
         compare(tile.visible, true);
-        compare(Math.round(tile.width), Math.round(Theme.scaled(24)));
+        compare(Math.round(tile.width), Math.round(Theme.scaled(18)));
         const image = findChild(row, "playlistThumbnail");
         verify(image.source.toString().startsWith("image://playlist-thumb/"), "the provider's");
         compare(t.controller.playlistThumbnails["Held Playlist"], image.source.toString());
