@@ -155,6 +155,33 @@ TestCase {
         return {page: page, controller: controller};
     }
 
+    // Sixty tracks with a disagreeing cue table do not fit the page: the
+    // list scrolls, with room under the last row for the floating Save
+    // button, and the last row can be brought on screen.
+    function test_aLongListOfRowsScrolls() {
+        const many = [];
+        for (let i = 0; i < 60; ++i) {
+            many.push({contentId: String(1000 + i), title: "Track " + i, artist: "Someone",
+                       filePath: "/S/Contents/t" + i + ".mp3", extra: "pad B at 1:07.751",
+                       fileCues: "pad A at 0:00.247", staged: false});
+        }
+        const t = makePage({cueTableRows: many});
+        const page = t.page;
+        const view = findChild(page, "cueTableRowsView");
+        verify(view !== null, "the list is a view");
+        tryVerify(() => view.contentHeight > view.height, 5000, "more than fits");
+        verify(view.interactive, "and so it scrolls");
+        verify(page.saveClearance > 0);
+        verify(view.bottomMargin >= page.saveClearance - 0.5, "room for the Save button under the last row");
+        view.contentY = view.contentHeight + view.bottomMargin - view.height;
+        const rows = findChild(page, "cueTableRows");
+        const last = rows.itemAt(59);
+        verify(last !== null);
+        const bottom = last.mapToItem(view, 0, last.height).y;
+        verify(bottom <= view.height + 0.5 && bottom > 0, "the last row is on screen at the end: " + bottom);
+        verify(bottom <= view.height - page.saveClearance + 0.5, "and clear of the Save button: " + bottom);
+    }
+
     function test_oneRowStagesThatRowAndUnstagesIt() {
         const t = makePage();
         const summary = findChild(t.page, "cueTableSummary");

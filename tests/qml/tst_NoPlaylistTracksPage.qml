@@ -72,6 +72,34 @@ TestCase {
         return text.indexOf(String.fromCharCode(0x2014)) < 0 && text.indexOf("-".repeat(2)) < 0;
     }
 
+    // Two hundred tracks in no playlist do not fit the page: the list
+    // scrolls, with room under the last row for the floating Save button,
+    // and the last row can be brought on screen.
+    function test_aLongListOfTracksScrolls() {
+        const many = [];
+        for (let i = 0; i < 200; ++i) {
+            many.push({filePath: "/S/Contents/t" + i + ".mp3", title: "Track " + i, artist: "Someone",
+                       libraries: "rekordbox", staged: false});
+        }
+        const controller = createTemporaryObject(controllerComponent, testCase, {noPlaylistTracks: many});
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null);
+        waitForRendering(page);
+        const view = findChild(page, "noPlaylistTracksView");
+        verify(view !== null, "the list is a view");
+        tryVerify(() => view.contentHeight > view.height, 5000, "more than fits");
+        verify(view.interactive, "and so it scrolls");
+        verify(page.saveClearance > 0);
+        verify(view.bottomMargin >= page.saveClearance - 0.5, "room for the Save button under the last row");
+        view.contentY = view.contentHeight + view.bottomMargin - view.height;
+        const rows = findChild(page, "noPlaylistTracks");
+        const last = rows.itemAt(199);
+        verify(last !== null);
+        const bottom = last.mapToItem(view, 0, last.height).y;
+        verify(bottom <= view.height + 0.5 && bottom > 0, "the last row is on screen at the end: " + bottom);
+        verify(bottom <= view.height - page.saveClearance + 0.5, "and clear of the Save button: " + bottom);
+    }
+
     function makePage(hasPlaylists) {
         const controller = createTemporaryObject(controllerComponent, testCase, {stickHasPlaylists: hasPlaylists});
         const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
