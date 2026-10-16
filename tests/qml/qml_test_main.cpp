@@ -715,6 +715,27 @@ public:
 
     Q_INVOKABLE QString missingArtwork() const { return m_artDir.filePath(QStringLiteral("not-there.jpg")); }
 
+    // Track i's own cover for holdCues(.., "distinct"), as a real stick
+    // has them: a JPEG, in a folder of its own, a flat colour from
+    // distinctArtworkColour(i).
+    Q_INVOKABLE QString distinctArtwork(int i)
+    {
+        const QString folder = m_artDir.filePath(QStringLiteral("Artwork/%1").arg(i, 5, 10, QLatin1Char('0')));
+        QDir().mkpath(folder);
+        const QString file = folder + QStringLiteral("/a%1.jpg").arg(i);
+        if (!QFile::exists(file)) {
+            QImage image(80, 80, QImage::Format_RGB32);
+            image.fill(QColor(distinctArtworkColour(i)));
+            image.save(file, "JPG", 95);
+        }
+        return file;
+    }
+    Q_INVOKABLE QString distinctArtworkColour(int i) const
+    {
+        static const char *const colours[] = {"#d02020", "#20a040", "#2050d0", "#e0c020", "#a020c0", "#20c0c0"};
+        return QString::fromLatin1(colours[i % 6]);
+    }
+
     // A cover in one flat colour ("#rrggbb"), as a file:// URL: tells the
     // tiles of a playlist's cover mosaic apart in a grab.
     Q_INVOKABLE QString colouredArtworkUrl(const QString &colour)
@@ -742,8 +763,9 @@ public:
     // gives each track a file (one that is not there), which dragging a
     // track to a playlist needs; without, they are file-less rows.
     // artwork: the cover every rekordbox track names, presentArtwork()
-    // when empty, none at all for "none"; another one is a stick whose
-    // covers changed.
+    // when empty, none at all for "none", a cover of its own for each
+    // track for "distinct" (distinctArtwork(i)); another one is a stick
+    // whose covers changed.
     Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false,
                               const QString &artwork = QString())
     {
@@ -752,7 +774,13 @@ public:
         const std::string present = artwork == QLatin1String("none")
             ? std::string() : (artwork.isEmpty() ? presentArtwork() : artwork).toStdString();
         const std::string missing = missingArtwork().toStdString();
-        auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
+        std::vector<std::string> distinct;
+        if (artwork == QLatin1String("distinct")) {
+            for (int i = 0; i < trackCount; ++i) {
+                distinct.push_back(distinctArtwork(i).toStdString());
+            }
+        }
+        auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing, distinct](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,
                                                           std::vector<seabass::domain::Track> &tracks,
                                                           seabass::gui::LibraryCatalogCache::StageNotes &,
@@ -777,7 +805,8 @@ public:
                     }
                     // Engine names art that is not on the stick; the
                     // rekordbox copy of the same song has a real one.
-                    track.artworkPath = format == "engine" ? missing : present;
+                    track.artworkPath = format == "engine" ? missing
+                        : distinct.empty() ? present : distinct[static_cast<size_t>(i)];
                     if (format == "engine") {
                         // Engine keeps its cues in the catalog.
                         seabass::domain::CuePoint cue;
