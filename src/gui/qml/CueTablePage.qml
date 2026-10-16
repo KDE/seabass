@@ -73,53 +73,73 @@ HealthCheckPage {
         }
     }
 
-    Repeater {
-        objectName: "cueTableRows"
-        model: root.rows
-        delegate: RowLayout {
-            id: tableRow
-            required property var modelData
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 0
-                Label {
+    // The tracks whose cue table disagrees, as many as there are: a list
+    // that scrolls, with room under the last row for the floating Save
+    // button, as the Playlists page has.
+    Flickable {
+        id: rowsView
+        objectName: "cueTableRowsView"
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        contentWidth: width
+        contentHeight: rowsColumn.implicitHeight
+        bottomMargin: root.saveClearance
+        interactive: contentHeight + bottomMargin > height
+        ScrollBar.vertical: BigScrollBar {}
+        ColumnLayout {
+            id: rowsColumn
+            width: rowsView.width
+            spacing: Theme.tightSpacing
+            Repeater {
+                objectName: "cueTableRows"
+                model: root.rows
+                delegate: RowLayout {
+                    id: tableRow
+                    required property var modelData
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    font.bold: true
-                    text: tableRow.modelData.title.length > 0 ? tableRow.modelData.title : tableRow.modelData.filePath
-                }
-                Label {
-                    Layout.fillWidth: true
-                    elide: Text.ElideMiddle
-                    color: Theme.textMuted
-                    text: (tableRow.modelData.artist.length > 0 ? tableRow.modelData.artist + " · " : "")
-                        + tableRow.modelData.filePath
-                }
-                Label {
-                    objectName: "extra_" + tableRow.modelData.contentId
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "Only in the table: " + tableRow.modelData.extra
-                }
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.textMuted
-                    text: "In the analysis file: " + tableRow.modelData.fileCues
-                }
-            }
-            Button {
-                objectName: "repair_" + tableRow.modelData.contentId
-                Layout.alignment: Qt.AlignTop
-                text: tableRow.modelData.staged ? "Unstage" : "Repair"
-                enabled: root.canStage
-                onClicked: {
-                    if (tableRow.modelData.staged) {
-                        consistencyController?.unstageCueTable(tableRow.modelData.contentId);
-                    } else {
-                        consistencyController?.repairCueTables([tableRow.modelData.contentId]);
+                    spacing: Theme.rowSpacing
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.bold: true
+                            text: tableRow.modelData.title.length > 0 ? tableRow.modelData.title : tableRow.modelData.filePath
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                            color: Theme.textMuted
+                            text: (tableRow.modelData.artist.length > 0 ? tableRow.modelData.artist + " · " : "")
+                                + tableRow.modelData.filePath
+                        }
+                        Label {
+                            objectName: "extra_" + tableRow.modelData.contentId
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: "Only in the table: " + tableRow.modelData.extra
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textMuted
+                            text: "In the analysis file: " + tableRow.modelData.fileCues
+                        }
+                    }
+                    Button {
+                        objectName: "repair_" + tableRow.modelData.contentId
+                        Layout.alignment: Qt.AlignTop
+                        text: tableRow.modelData.staged ? "Unstage" : "Repair"
+                        enabled: root.canStage
+                        onClicked: {
+                            if (tableRow.modelData.staged) {
+                                consistencyController?.unstageCueTable(tableRow.modelData.contentId);
+                            } else {
+                                consistencyController?.repairCueTables([tableRow.modelData.contentId]);
+                            }
+                        }
                     }
                 }
             }

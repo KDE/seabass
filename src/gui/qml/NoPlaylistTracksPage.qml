@@ -109,37 +109,57 @@ HealthCheckPage {
         }
     }
 
-    Repeater {
-        objectName: "noPlaylistTracks"
-        model: root.tracks
-        delegate: RowLayout {
-            id: trackRow
-            required property var modelData
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            SeabassCheckBox {
-                objectName: "pick_" + trackRow.modelData.filePath
-                visible: root.hasPlaylists
-                enabled: root.stagedCount === 0
-                checked: trackRow.modelData.staged || root.picked[trackRow.modelData.filePath] === true
-                onToggled: root.setPicked(trackRow.modelData.filePath, checked)
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 0
-                Label {
+    // The tracks, as many as the library has in no playlist (hundreds on a
+    // stick that was never sorted): a list that scrolls, with room under
+    // the last row for the floating Save button, as the Playlists page has.
+    Flickable {
+        id: tracksView
+        objectName: "noPlaylistTracksView"
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        contentWidth: width
+        contentHeight: tracksColumn.implicitHeight
+        bottomMargin: root.saveClearance
+        interactive: contentHeight + bottomMargin > height
+        ScrollBar.vertical: BigScrollBar {}
+        ColumnLayout {
+            id: tracksColumn
+            width: tracksView.width
+            spacing: Theme.tightSpacing
+            Repeater {
+                objectName: "noPlaylistTracks"
+                model: root.tracks
+                delegate: RowLayout {
+                    id: trackRow
+                    required property var modelData
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    font.bold: true
-                    font.strikeout: trackRow.modelData.staged
-                    text: trackRow.modelData.title.length > 0 ? trackRow.modelData.title : trackRow.modelData.filePath
-                }
-                Label {
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    color: Theme.textMuted
-                    text: (trackRow.modelData.artist.length > 0 ? trackRow.modelData.artist + " · " : "")
-                        + trackRow.modelData.libraries
+                    spacing: Theme.rowSpacing
+                    SeabassCheckBox {
+                        objectName: "pick_" + trackRow.modelData.filePath
+                        visible: root.hasPlaylists
+                        enabled: root.stagedCount === 0
+                        checked: trackRow.modelData.staged || root.picked[trackRow.modelData.filePath] === true
+                        onToggled: root.setPicked(trackRow.modelData.filePath, checked)
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.bold: true
+                            font.strikeout: trackRow.modelData.staged
+                            text: trackRow.modelData.title.length > 0 ? trackRow.modelData.title : trackRow.modelData.filePath
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            color: Theme.textMuted
+                            text: (trackRow.modelData.artist.length > 0 ? trackRow.modelData.artist + " · " : "")
+                                + trackRow.modelData.libraries
+                        }
+                    }
                 }
             }
         }
