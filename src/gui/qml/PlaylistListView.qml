@@ -62,6 +62,31 @@ ListView {
     }
     property string heldDropTarget: ""
     signal trackDropped(string name)
+    // Spring-loaded playlists: a dragged track held over a row that takes
+    // it for springLoadDelay opens that playlist (springLoaded) while the
+    // drag goes on, so it can be dropped at its place there. Another row
+    // starts the wait again; leaving the list stops it, and switches
+    // nothing back. As long as a summary waits, by default: the row asks
+    // for the same patience either way.
+    property int springLoadDelay: 1500
+    signal springLoaded(string name)
+    onHoveredDropTargetChanged: {
+        if (root.hoveredDropTarget.length > 0) {
+            springTimer.restart();
+        } else {
+            springTimer.stop();
+        }
+    }
+    Timer {
+        id: springTimer
+        objectName: "springLoadTimer"
+        interval: root.springLoadDelay
+        onTriggered: {
+            if (root.hoveredDropTarget.length > 0 && root.hoveredDropTarget !== root.shownPlaylist) {
+                root.springLoaded(root.hoveredDropTarget);
+            }
+        }
+    }
     signal createRequested()
     // A playlist staged to be created was clicked.
     signal newPlaylistPicked(string name)

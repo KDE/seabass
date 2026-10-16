@@ -55,11 +55,17 @@ Rectangle {
     readonly property string phase: internal.phase
     readonly property bool dragging: internal.phase === "dragging"
     readonly property bool confirming: internal.phase === "confirming"
+    // The card carries its own drag once it started (DragCarrier): the row
+    // it came from may be destroyed while it goes on.
+    readonly property bool carried: carrier.carrying
     // The playlist it was dropped on, while it asks.
     readonly property string targetPlaylist: internal.targetPlaylist
     // The playlist a Move takes the track out of; empty, and no Move
     // offered, unless Browse shows a playlist the track is in.
     readonly property string moveFrom: internal.moveFrom
+    // Where in the target playlist the track lands, when it was let go at
+    // a place in the list (from 0); -1, at the end, as for a playlist row.
+    readonly property int targetIndex: internal.targetIndex
 
     signal addChosen(string playlist)
     signal moveChosen(string playlist, string fromPlaylist)
@@ -102,6 +108,7 @@ Rectangle {
         card.playlistNames = track.playlistNames || [];
         internal.targetPlaylist = "";
         internal.moveFrom = "";
+        internal.targetIndex = -1;
         const at = from.mapToItem(card.parent, x, y);
         card.x = at.x - card.Drag.hotSpot.x;
         card.y = at.y - card.Drag.hotSpot.y;
@@ -114,13 +121,16 @@ Rectangle {
         card.opacity = 0;
         plopIn.restart();
         card.Drag.active = true;
+        carrier.carry();
     }
 
-    // A playlist row took the drop (its DropArea, through the page):
-    // `moveFrom` as the moveFrom above.
-    function dropOn(playlist, moveFrom) {
+    // A playlist row took the drop (its DropArea, through the page), or a
+    // place in the playlist shown did: `moveFrom` as the moveFrom above,
+    // `atIndex` as targetIndex.
+    function dropOn(playlist, moveFrom, atIndex) {
         internal.droppedOn = playlist;
         internal.pendingMoveFrom = moveFrom || "";
+        internal.pendingIndex = atIndex === undefined ? -1 : atIndex;
     }
 
     // The button was let go. Over a playlist the card stays and asks;
@@ -130,6 +140,7 @@ Rectangle {
             return;
         }
         internal.droppedOn = "";
+        carrier.putDown();
         card.Drag.drop();
         if (internal.droppedOn.length === 0) {
             card.close();
@@ -137,6 +148,7 @@ Rectangle {
         }
         internal.targetPlaylist = internal.droppedOn;
         internal.moveFrom = internal.pendingMoveFrom;
+        internal.targetIndex = internal.pendingIndex;
         internal.phase = "confirming";
         // Grown by its buttons, it may reach past the page's edge.
         Qt.callLater(card.keepInside);
@@ -149,6 +161,7 @@ Rectangle {
         if (internal.phase === "idle" || internal.phase === "closing") {
             return;
         }
+        carrier.putDown();
         card.Drag.active = false;
         internal.phase = "closing";
         plopIn.stop();
@@ -172,6 +185,8 @@ Rectangle {
         // Set by dropOn() while Drag.drop() is delivered.
         property string droppedOn: ""
         property string pendingMoveFrom: ""
+        property int targetIndex: -1
+        property int pendingIndex: -1
     }
 
     visible: internal.phase !== "idle"
@@ -265,6 +280,27 @@ Rectangle {
     }
 
     Keys.onEscapePressed: card.close()
+
+    // Follows the pointer from the row's MouseArea on, and lets go where
+    // the button is let go.
+    DragCarrier {
+        id: carrier
+        objectName: "dragCarrier"
+        onMoved: (sceneX, sceneY) => {
+            if (!card.parent) {
+                return;
+            }
+            const at = card.parent.mapFromItem(null, sceneX, sceneY);
+            card.x = at.x - card.Drag.hotSpot.x;
+            card.y = at.y - card.Drag.hotSpot.y;
+        }
+        onReleased: card.release()
+        onCanceled: {
+            if (card.dragging) {
+                card.close();
+            }
+        }
+    }
 
     // Clicks on the card itself stay on it: the page lets the card go on a
     // click anywhere else.
