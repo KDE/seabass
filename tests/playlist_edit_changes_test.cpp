@@ -32,6 +32,7 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -370,6 +371,127 @@ int main(int argc, char **argv)
         assert(fresher != 0 && !rows2.reorderPlaylist(fresher, {2}) && "export.pdb's Fresher is a02");
     }
     std::cout << "case 8 (a track added to a playlist in all three, also to one made in the same save) OK\n";
+
+    // 9. Moving a track within Q1 (a01, a02, a04, a05, a03 after case 8)
+    //    in all three: to the start, to the end, to the middle; the same
+    //    move again and a file Q1 does not hold are skips, each library
+    //    saying why. The order is read back from each library itself.
+    {
+        const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        const auto pdbIdOf = [&](const File &f) {
+            return infrastructure::rekordbox::PdbRowWriter(pdbPath).trackIdsWithFilePath("/Contents/" + std::string(f.relative)).front();
+        };
+        const auto assertOrder = [&](const std::vector<File> &files, const char *what) {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            uint32_t q1 = 0;
+            for (const auto &n : rows.playlistTree()) {
+                q1 = n.name == "Q1" ? n.id : q1;
+            }
+            std::vector<uint32_t> pdbWanted;
+            std::vector<int64_t> olWanted;
+            std::vector<std::int64_t> engineWanted;
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            for (const File &f : files) {
+                pdbWanted.push_back(pdbIdOf(f));
+                olWanted.push_back(w.contentIdsForFile(file(f)).front());
+                engineWanted.push_back(engineId[f.relative]);
+            }
+            if (rows.playlistTrackIds(q1) != pdbWanted) {
+                std::cerr << what << ": export.pdb's Q1 is not in the order asked\n";
+                assert(false);
+            }
+            std::vector<int64_t> olOrder;
+            std::vector<int64_t> sequence;
+            for (const auto &[content, seq] : w.playlistContent("Q1")) {
+                olOrder.push_back(content);
+                sequence.push_back(seq);
+            }
+            if (olOrder != olWanted) {
+                std::cerr << what << ": OneLibrary's Q1 is not in the order asked\n";
+                assert(false);
+            }
+            assert((sequence == std::vector<int64_t>{1, 2, 3, 4, 5}) && "OneLibrary numbered from 1 again");
+            if (engineMembers(library, "Q1") != engineWanted) {
+                std::cerr << what << ": Engine's Q1 is not in the order asked\n";
+                assert(false);
+            }
+        };
+        const std::string logFile = infrastructure::backup::operationLogForStickRoot(
+            infrastructure::backup::stickRootForCatalogPath(pathToUtf8(library)));
+        const auto logSince = [&](std::streamoff from) {
+            std::ifstream in(pathFromUtf8(logFile));
+            std::stringstream all;
+            all << in.rdbuf();
+            return all.str().substr(std::min<size_t>(static_cast<size_t>(from), all.str().size()));
+        };
+        const auto logSize = [&]() { return static_cast<std::streamoff>(logSince(0).size()); };
+        const auto move = [&](const File &f, int toIndex) {
+            return std::make_shared<MoveInPlaylistChange>(pioneerQ, libraryQ, "Q1", file(f), QStringLiteral("Tone"), toIndex, all);
+        };
+
+        assertOrder({A01, A02, A04, A05, A03}, "before");
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const auto targets = move(A03, 0)->filesToBackup(ctx);
+            assert(targets.size() == 3 && "every library it writes is backed up");
+            assert(targets[0].file == pdbPath && targets[0].label == "playlist-move");
+            assert(targets[1].file == infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
+            assert(targets[2].file == pathToUtf8(library / "Database2" / "m.db") && targets[2].label == "playlist-move");
+            assert(move(A03, 0)->id() == QStringLiteral("addcue:move-in-playlist:Q1|") + QString::fromStdString(file(A03)));
+            assert(move(A03, 0)->id() == move(A03, 3)->id() && "a second move of the file replaces the first");
+        }
+
+        std::streamoff mark = logSize();
+        auto result = save(move(A03, 0));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assertOrder({A03, A01, A02, A04, A05}, "to the start");
+        assert(logSince(mark).find("playlist-move: moved \"" + file(A03) + "\" to position 1 in \"Q1\" in 3 libraries")
+               != std::string::npos);
+
+        result = save(move(A03, 4));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assertOrder({A01, A02, A04, A05, A03}, "to the end");
+
+        result = save(move(A01, 2));
+        assert(result.appliedIds.size() == 1);
+        assertOrder({A02, A04, A01, A05, A03}, "to the middle");
+
+        result = save(move(A05, 99));
+        assert(result.appliedIds.size() == 1);
+        assertOrder({A02, A04, A01, A03, A05}, "past the end: last");
+
+        mark = logSize();
+        result = save(move(A01, 2));
+        const std::string noop = logSince(mark);
+        assert(result.skippedIds.size() == 1 && "already there: a skip");
+        assertOrder({A02, A04, A01, A03, A05}, "a move to where it is");
+        for (const char *library : {"rekordbox", "OneLibrary", "Engine"}) {
+            assert(noop.find("not moved in \"Q1\" there: " + std::string(library) + " has it there already") != std::string::npos);
+        }
+        assert(noop.find("playlist-move: \"" + file(A01) + "\" moved in \"Q1\" nowhere, skipped") != std::string::npos);
+
+        mark = logSize();
+        result = save(move(B01, 0));
+        assert(result.skippedIds.size() == 1 && "not in the playlist: a skip");
+        assertOrder({A02, A04, A01, A03, A05}, "a file Q1 does not hold");
+        const std::string absent = logSince(mark);
+        for (const char *library : {"rekordbox", "OneLibrary", "Engine"}) {
+            assert(absent.find("\"" + file(B01) + "\" not moved in \"Q1\" there: " + std::string(library)
+                               + "'s playlist does not hold the file")
+                   != std::string::npos);
+        }
+
+        // Only the libraries named are written: Engine keeps its order.
+        result = save(std::make_shared<MoveInPlaylistChange>(pioneerQ, libraryQ, "Q1", file(A05), QStringLiteral("Tone"), 0,
+                                                            QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
+        assert(result.appliedIds.size() == 1);
+        assert((engineMembers(library, "Q1")
+                == std::vector<std::int64_t>{engineId[A02.relative], engineId[A04.relative], engineId[A01.relative],
+                                             engineId[A03.relative], engineId[A05.relative]}));
+        result = save(move(A05, 0));
+        assertOrder({A05, A02, A04, A01, A03}, "level again");
+    }
+    std::cout << "case 9 (a track moved within a playlist in all three libraries) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

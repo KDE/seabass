@@ -196,4 +196,23 @@ bool insertIntoEnginePlaylist(const std::string &engineLibraryPath, const std::s
 bool insertAtStartOfEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath,
                                    std::int64_t trackId);
 
+// The track ids of the playlist at playlistPath in its order, walking the
+// entry chain from the head; a track Engine lists under two databaseUuids
+// is there twice. Throws when the path does not name exactly one playlist
+// or the chain does not walk.
+std::vector<std::int64_t> engineTrackIdsInPlaylist(const std::string &engineLibraryPath, const std::string &playlistPath);
+
+// Moves the track's entry in the playlist at playlistPath to right after
+// the entry for afterTrackId, or first with no anchor: Browse's move
+// within a playlist. The entry is relinked in place, with the pointer
+// updates insertIntoEnginePlaylist and Engine's delete trigger make, in
+// one transaction, so the row keeps its id, databaseUuid and
+// membershipReference (a player's own entry stays the player's) and the
+// list is never left without it. Refuses as insertIntoEnginePlaylist
+// does, and a track the list does not hold exactly once, an anchor it
+// does not hold, or the track as its own anchor. Returns false, writing
+// nothing, when the track is there already.
+bool moveInEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId,
+                          std::optional<std::int64_t> afterTrackId);
+
 }  // namespace seabass::infrastructure::engine

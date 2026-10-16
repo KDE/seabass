@@ -2145,6 +2145,15 @@ bool PdbRowWriter::reorderPlaylist(uint32_t playlistId, const std::vector<uint32
     return true;
 }
 
+std::vector<uint32_t> PdbRowWriter::playlistTrackIds(uint32_t playlistId) const
+{
+    std::vector<uint32_t> ids;
+    for (const auto &e : playlistEntriesOf(m_buffer, playlistId)) {
+        ids.push_back(e.trackId);
+    }
+    return ids;
+}
+
 void PdbRowWriter::rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds)
 {
     const auto old = playlistEntriesOf(m_buffer, playlistId);

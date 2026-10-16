@@ -163,4 +163,43 @@ private:
     QStringList m_libraries;
 };
 
+// Moves one file within a playlist to `toIndex` (from 0, its place in
+// the playlist after the move, as Browse shows it) in every library on the
+// stick named, each the way its own software writes an order: export.pdb's
+// entries rewritten from entry_index 1 as rekordbox does, the OneLibrary
+// rows numbered from 1 again, the Engine entry relinked in its chain. An
+// index past the end of a library's copy puts the file last there. A
+// library whose playlist does not hold the file, or holds it more than
+// once (which copy moves would be a guess), is left alone and the log says
+// why; nothing moved anywhere is a skip.
+class MoveInPlaylistChange : public PendingChange
+{
+public:
+    MoveInPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string filePath,
+                         QString title, int toIndex, QStringList libraries);
+
+    static QString idFor(const std::string &playlist, const std::string &filePath);
+
+    QString id() const override;
+    QString owner() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+    int toIndex() const { return m_toIndex; }
+
+private:
+    QString m_pioneerRoot;
+    QString m_enginePath;
+    std::string m_playlist;
+    std::string m_filePath;
+    QString m_title;
+    int m_toIndex = 0;
+    QStringList m_libraries;
+};
+
 }  // namespace seabass::gui
