@@ -8,7 +8,9 @@ import QtQuick.Layouts
 import SeabassGui
 
 // What a playlist holds, at a glance: shown beside its row in Browse's
-// sidebar after a moment's hover (PlaylistRowDelegate's summary hook).
+// sidebar after a moment's hover. The list owns one of these and moves
+// it from row to row (PlaylistListView's summary), so a long list of
+// playlists carries one popup, not one per row.
 // Its cover made from its tracks' covers, how many tracks and how long
 // they play, the BPM range, how many carry cue points, and the keys as
 // a pie in the Camelot wheel's colours (Theme.colorForKey, as KeyBadge
@@ -16,8 +18,10 @@ import SeabassGui
 // on colour alone.
 //
 // A tooltip in all but size: it never takes focus and never closes
-// itself. The row that opened it closes it: the pointer gone from both
-// the row and this popup, a press or the wheel in the row.
+// itself. The list closes it: the pointer gone from every row and from
+// this popup, a press or the wheel in a row. It rises a little as it
+// fades in and sinks as it fades out; moved to another playlist, its
+// content cross-fades rather than blinking.
 //
 // The pointer may come into it, and when it does the popup shows the
 // rest of what it knows below its first look: every key, not the
@@ -30,49 +34,98 @@ PanelPopup {
     id: popup
     objectName: "playlistSummaryPopup"
 
-    // The row it belongs to: it opens beside it.
-    required property Item row
     property string title: ""
     // ScanController.playlistSummary()'s map.
     property var summary: ({})
+    // The middle of the row it stands beside, in its parent's (the
+    // list's) coordinates. A move to another row slides it there.
+    property real rowCenter: 0
+    Behavior on rowCenter {
+        enabled: popup.opened
+        NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic }
+    }
+
+    // Shows another playlist. While open, the content fades out, changes
+    // and fades back in; closed, it simply takes the new one.
+    function showPlaylist(title, summary, rowCenter) {
+        popup.nextTitle = title;
+        popup.nextSummary = summary;
+        popup.rowCenter = rowCenter;
+        if (popup.visible) {
+            contentSwitch.restart();
+        } else {
+            contentSwitch.stop();
+            popup.contentItem.opacity = 1;
+            popup.applyNext();
+        }
+    }
+    property string nextTitle: ""
+    property var nextSummary: ({})
+    function applyNext() {
+        popup.title = popup.nextTitle;
+        popup.summary = popup.nextSummary;
+    }
+    SequentialAnimation {
+        id: contentSwitch
+        NumberAnimation {
+            target: popup.contentItem; property: "opacity"; to: 0
+            duration: Theme.shortTransitionDuration / 2; easing.type: Easing.InCubic
+        }
+        ScriptAction { script: popup.applyNext() }
+        NumberAnimation {
+            target: popup.contentItem; property: "opacity"; to: 1
+            duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic
+        }
+    }
     // "camelot" or "traditional", as the track list names keys.
     property string notation: "camelot"
 
     readonly property int count: popup.summary.count || 0
     readonly property var keys: popup.summary.keys || []
 
-    // The pointer in the popup, padding included (PlaylistRowDelegate
-    // keeps it open while this is true). Two handlers: the card's own
+    // The pointer in the popup, padding included (the list keeps it open
+    // while this is true). Two handlers: the card's own
     // hears the padding, but not the pointer over the content, whose
     // labels (each with a HoverHandler under org.kde.desktop) keep it
     // from anything beneath them; the content's own, an ancestor of
     // those labels, hears it there.
     readonly property bool hovered: popupHover.hovered || contentHover.hovered
     // Set once the pointer has been in, and kept while the popup is
-    // open, so the details do not fold away as the pointer crosses
-    // back to the row.
+    // open, from playlist to playlist, so the details do not fold away
+    // as the pointer crosses back to the rows.
     property bool expanded: false
-    // Where the popup stood when it expanded: its first look stays put
-    // and the details grow below it.
-    property real expandedY: 0
     onHoveredChanged: {
-        if (popup.hovered && !popup.expanded) {
-            popup.expandedY = popup.y;
+        if (popup.hovered) {
             popup.expanded = true;
         }
     }
+    onClosed: popup.expanded = false
+    // The height of its first look: centred on the row by that, so the
+    // details, once shown, grow below it and nothing under the pointer
+    // moves.
+    property real collapsedHeight: 0
+    onHeightChanged: {
+        if (!popup.expanded) {
+            popup.collapsedHeight = popup.height;
+        }
+    }
+    // How far below its place it stands while it rises in or sinks out.
+    property real lift: 0
 
-    // The BPM heatmap: bins from the summary, coloured from the ground to
-    // the accent by how full they are. A bin with anything in it is never
-    // fainter than a quarter of the way, so one track among many shows.
+    // The BPM heatmap: bins from the summary, coloured from a faint tone
+    // to the accent by how full they are. An empty bin keeps the faint
+    // tone, so the strip reads as one bar from the lowest tempo to the
+    // highest; a bin with anything in it is never fainter than a quarter
+    // of the way, so one track among many shows.
     readonly property var bpmBins: popup.summary.bpmBins || []
     readonly property int bpmBinWidth: popup.summary.bpmBinWidth || 1
     readonly property int bpmBinMax: popup.bpmBins.reduce((most, bin) => Math.max(most, bin.count), 0)
+    readonly property color emptyBinColor: Theme.mix(Theme.surface, Theme.text, 0.14)
     function binColor(count) {
         if (count <= 0 || popup.bpmBinMax <= 0) {
-            return Theme.groupBackground;
+            return popup.emptyBinColor;
         }
-        return Theme.mix(Theme.groupBackground, Theme.accent, 0.25 + 0.75 * count / popup.bpmBinMax);
+        return Theme.mix(popup.emptyBinColor, Theme.accent, 0.25 + 0.75 * count / popup.bpmBinMax);
     }
     function binLabel(edge) {
         return popup.bpmBinWidth === 1 ? String(edge) : edge + " to " + (edge + popup.bpmBinWidth - 1);
@@ -115,24 +168,45 @@ PanelPopup {
     readonly property int legendRows: 4
     readonly property var topKeys: popup.keys.slice().sort((a, b) => b.count - a.count).slice(0, popup.legendRows)
 
-    parent: row
-    // The row can go first when the list is torn down.
-    x: row ? Theme.snap(row.width + Theme.tightSpacing) : 0
-    y: popup.expanded ? popup.expandedY : (row ? Theme.snap((row.height - height) / 2) : 0)
+    // Beside the list, level with the row.
+    x: parent ? Theme.snap(parent.width + Theme.tightSpacing) : 0
+    y: Theme.snap(popup.rowCenter - popup.collapsedHeight / 2 + popup.lift)
     // Kept inside the window: the sidebar's last rows would otherwise
     // push it off the bottom.
     margins: Theme.pageMargin
-    width: Theme.scaled(320)
+    // Room for the BPM strip at its full width beside its labels.
+    width: Theme.scaled(360)
     modal: false
     dim: false
     focus: false
     closePolicy: Popup.NoAutoClose
 
+    // In: a fade and a small rise. Out: a fade and a sink, slower, so
+    // the eye sees it go rather than blink off.
     enter: Transition {
-        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120; easing.type: Easing.OutQuad }
+        ParallelAnimation {
+            NumberAnimation {
+                property: "opacity"; from: 0; to: 1
+                duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                property: "lift"; from: Theme.scaled(8); to: 0
+                duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic
+            }
+        }
     }
-
-    Component.onCompleted: popup.open()
+    exit: Transition {
+        ParallelAnimation {
+            NumberAnimation {
+                property: "opacity"; from: 1; to: 0
+                duration: 2 * Theme.shortTransitionDuration; easing.type: Easing.InCubic
+            }
+            NumberAnimation {
+                property: "lift"; from: 0; to: Theme.scaled(8)
+                duration: 2 * Theme.shortTransitionDuration; easing.type: Easing.InCubic
+            }
+        }
+    }
 
     // PanelPopup's card, with the pointer followed across all of it. The
     // wheel needs nothing here: a popup keeps it from what lies under it.
@@ -224,8 +298,8 @@ PanelPopup {
                         id: bpmStrip
                         objectName: "bpmStrip"
                         Layout.alignment: Qt.AlignVCenter
-                        implicitWidth: Theme.scaled(120)
-                        implicitHeight: Theme.scaled(6)
+                        implicitWidth: Theme.scaled(160)
+                        implicitHeight: Theme.scaled(12)
                         Repeater {
                             model: popup.bpmBins
                             delegate: Rectangle {
@@ -237,6 +311,65 @@ PanelPopup {
                                 width: Math.round((index + 1) * bpmStrip.width / popup.bpmBins.length) - x
                                 height: bpmStrip.height
                                 color: popup.binColor(count)
+                            }
+                        }
+                        // The pointer over the strip: the bin under it is
+                        // outlined, and a label just above the pointer
+                        // gives its tempo and how many tracks sit there.
+                        // At once and following the pointer, not a
+                        // ToolTip with its delay. The strip lies inside
+                        // the popup's content, so resting here is resting
+                        // in the popup.
+                        //
+                        // Read from the content's own HoverHandler, not
+                        // one of the strip's: under org.kde.desktop a
+                        // handler on the strip never heard the pointer,
+                        // while the content's, which the popup already
+                        // relies on, always does.
+                        readonly property point pointer: contentHover.hovered
+                            ? bpmStrip.mapFromItem(popup.contentItem, contentHover.point.position.x,
+                                                   contentHover.point.position.y)
+                            : Qt.point(-1, -1)
+                        readonly property bool pointerOn: popup.bpmBins.length > 0
+                            && pointer.x >= 0 && pointer.x < bpmStrip.width
+                            && pointer.y >= 0 && pointer.y < bpmStrip.height
+                        readonly property int hoveredBin: bpmStrip.pointerOn
+                            ? Math.max(0, Math.min(popup.bpmBins.length - 1,
+                                                   Math.floor(pointer.x / bpmStrip.width * popup.bpmBins.length)))
+                            : -1
+                        Rectangle {
+                            objectName: "bpmBinOutline"
+                            visible: bpmStrip.hoveredBin >= 0
+                            readonly property int bin: bpmStrip.hoveredBin
+                            x: Math.round(Math.max(0, bin) * bpmStrip.width / Math.max(1, popup.bpmBins.length))
+                            width: Math.round((Math.max(0, bin) + 1) * bpmStrip.width / Math.max(1, popup.bpmBins.length)) - x
+                            height: bpmStrip.height
+                            color: "transparent"
+                            border.color: Theme.text
+                            border.width: 1
+                        }
+                        Rectangle {
+                            objectName: "bpmHoverLabel"
+                            visible: bpmStrip.hoveredBin >= 0
+                            z: 1
+                            readonly property var bin: bpmStrip.hoveredBin >= 0 ? popup.bpmBins[bpmStrip.hoveredBin] : null
+                            readonly property string text: bin === null ? ""
+                                : popup.binLabel(bin.bpm) + ", "
+                                  + (bin.count === 0 ? "none" : bin.count === 1 ? "1 track" : bin.count + " tracks")
+                            x: Math.round(bpmStrip.pointer.x - width / 2)
+                            y: -height - Theme.tightSpacing / 2
+                            width: hoverText.implicitWidth + Theme.tightSpacing * 2
+                            height: hoverText.implicitHeight + Theme.tightSpacing
+                            radius: Theme.cornerRadius
+                            color: Theme.groupBackground
+                            border.color: Theme.border
+                            border.width: 1
+                            Label {
+                                id: hoverText
+                                anchors.centerIn: parent
+                                text: parent.text
+                                font.family: Theme.dataFamily
+                                font.pointSize: Theme.fontSmall
                             }
                         }
                     }
