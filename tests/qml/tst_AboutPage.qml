@@ -111,8 +111,11 @@ TestCase {
         const head = findChild(page, "aboutNameBlock");
         verify(mark !== null && head !== null, "the mark and the name block exist");
         const version = findChild(page, "aboutVersion");
-        verify(mark.mapToItem(page, mark.width, 0).x <= version.mapToItem(page, 0, 0).x + 0.5,
-               "the mark is left of the name block");
+        verify(mark.mapToItem(page, 0, 0).x >= head.mapToItem(page, head.width, 0).x - 0.5,
+               "the mark is right of the name block");
+        // The name block starts on the page's left line, with everything under it.
+        compare(Math.round(head.mapToItem(page, 0, 0).x), Math.round(note.mapToItem(page, 0, 0).x),
+                "the name starts where the body does");
         verify(Math.abs(mark.height - head.height) <= 1, "as tall as the block: " + mark.height + " vs " + head.height);
         verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
         // The introduction is in the name's column, under the version.
