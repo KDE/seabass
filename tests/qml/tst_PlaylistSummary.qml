@@ -81,10 +81,28 @@ TestCase {
         return item;
     }
 
+    // The list a row is in (rows sit in the list's contentItem).
+    function listOf(item) {
+        let at = item;
+        while (at !== null && at.summaryShown === undefined) {
+            at = at.parent;
+        }
+        verify(at !== null, "a list above " + item);
+        return at;
+    }
+    // The list's one summary popup's loader, for a row in it.
+    function loaderOf(r) {
+        return findChild(listOf(r), "summaryLoader");
+    }
+    // Whether the list shows its summary (not counting one fading out).
+    function shown(loader) {
+        return listOf(loader).summaryShown;
+    }
+
     function hoverOpen(r) {
         mouseMove(r, r.width / 2, r.height / 2);
-        const loader = findChild(r, "summaryLoader");
-        tryVerify(() => loader.active && loader.item && loader.item.opened, 3000, "the summary opens");
+        const loader = loaderOf(r);
+        tryVerify(() => shown(loader) && loader.item && loader.item.opened, 3000, "the summary opens");
         return loader;
     }
 
@@ -104,12 +122,12 @@ TestCase {
     function test_opensBesideTheRowOnlyAfterTheDelay() {
         const t = makeList();
         const r = row(t.list, 1);
-        const loader = findChild(r, "summaryLoader");
+        const loader = loaderOf(r);
         mouseMove(r, r.width / 2, r.height / 2);
         wait(testCase.delay / 3);
-        verify(!loader.active, "not before the delay");
+        verify(!shown(loader) && loader.item === null, "not before the delay");
         compare(t.fake.asked.length, 0, "nothing worked out for a row merely hovered");
-        tryVerify(() => loader.active && loader.item && loader.item.opened, 3000, "open after it");
+        tryVerify(() => shown(loader) && loader.item && loader.item.opened, 3000, "open after it");
         compare(JSON.stringify(t.fake.asked), JSON.stringify(["Peak"]));
         const popup = loader.item;
         compare(findChild(popup.contentItem, "summaryTitle").text, "Peak");
@@ -130,22 +148,160 @@ TestCase {
     function test_leavingBeforeTheDelayOpensNothing() {
         const t = makeList();
         const r = row(t.list, 1);
-        const loader = findChild(r, "summaryLoader");
+        const loader = loaderOf(r);
         mouseMove(r, r.width / 2, r.height / 2);
         wait(testCase.delay / 3);
         leave();
         wait(testCase.delay * 2);
-        verify(!loader.active);
+        verify(!shown(loader));
     }
 
-    function test_closesWhenThePointerLeavesTheRow() {
+    // Off every row and out of the popup: closed once the grace is over,
+    // not before.
+    function test_closesWhenThePointerLeavesTheRows() {
         const t = makeList();
         const r = row(t.list, 1);
         const loader = hoverOpen(r);
-        // Onto the next row: still the list, not this row.
+        leave();
+        wait(60);
+        compare(shown(loader), true, "still there within the grace");
+        tryVerify(() => !shown(loader), 1000, "closed after it");
+        tryCompare(loader.item, "visible", false, 2000, "and gone once it has faded");
+    }
+
+    // ---- One popup, moved from row to row ----
+
+    function countNamed(item, name) {
+        let n = item.objectName === name ? 1 : 0;
+        for (let i = 0; i < item.children.length; ++i) {
+            n += countNamed(item.children[i], name);
+        }
+        return n;
+    }
+
+    // The list carries one popup however many rows it has, made the
+    // first time it is needed and kept: every row it opens beside is
+    // shown by that same one.
+    function test_oneSummaryPopupForTheWholeList() {
+        const names = [];
+        for (let i = 0; i < 20; ++i) {
+            names.push("Playlist " + i);
+        }
+        const t = makeList(names);
+        compare(countNamed(t.list, "summaryLoader"), 1, "one loader, in the list");
+        const loader = findChild(t.list, "summaryLoader");
+        compare(loader.item, null, "nothing made before it is needed");
+        hoverOpen(row(t.list, 1));
+        const popup = loader.item;
+        verify(popup !== null);
+        leave();
+        tryCompare(popup, "visible", false, 2000);
+        compare(loader.item, popup, "kept once closed");
+        hoverOpen(row(t.list, 4));
+        compare(loader.item, popup, "the same popup beside another row");
+        compare(text(popup, "summaryTitle"), "Playlist 3");
+        compare(countNamed(t.list, "summaryLoader"), 1);
+    }
+
+    // With it open, another row held for the switch delay moves the popup
+    // there and gives it that playlist, in place: no close, the details
+    // still shown if they were. Passed over quicker than that, a row
+    // changes nothing.
+    function test_anotherRowSwitchesItInPlace() {
+        const names = [];
+        for (let i = 0; i < 12; ++i) {
+            names.push("Playlist " + i);
+        }
+        const t = makeList(names);
+        t.list.height = 560;
+        waitForRendering(t.list);
+        compare(t.list.summarySwitchDelay, 250);
+        const loader = hoverOpen(row(t.list, 6));
+        const popup = loader.item;
+        let closes = 0;
+        popup.aboutToHide.connect(() => { ++closes; });
+        // Into the popup, so its details show, then on down the list.
+        const p = popupPoint(loader);
+        mouseMove(p.item, p.x, p.y);
+        tryCompare(popup, "expanded", true);
+        const yBefore = popup.y;
+        t.fake.asked = [];
+        // Rows 7 and 8 passed by, row 9 held.
+        for (const i of [7, 8]) {
+            const r = row(t.list, i);
+            mouseMove(r, r.width / 2, r.height / 2);
+            wait(80);
+        }
+        const target = row(t.list, 9);
+        mouseMove(target, target.width / 2, target.height / 2);
+        wait(100);
+        compare(text(popup, "summaryTitle"), "Playlist 5", "not before the switch delay");
+        tryVerify(() => text(popup, "summaryTitle") === "Playlist 8", 1000, "switched to the row held");
+        compare(JSON.stringify(t.fake.asked), JSON.stringify(["Playlist 8"]), "rows passed by asked for nothing");
+        compare(closes, 0, "switched without closing");
+        compare(popup.visible, true);
+        compare(popup.expanded, true, "the details still shown");
+        tryVerify(() => popup.y > yBefore + 2 * target.height, 1000, "moved down to the row: " + yBefore + " to " + popup.y);
+        leave();
+        tryVerify(() => !shown(loader), 1000, "the grace still closes it");
+    }
+
+    // ---- Coming and going ----
+
+    Component {
+        id: samplerComponent
+        Timer {
+            property var target: null
+            property string property: "opacity"
+            property var seen: []
+            interval: 5
+            repeat: true
+            running: true
+            onTriggered: seen = seen.concat([target[property]])
+        }
+    }
+    function sampled(target, prop) {
+        return createTemporaryObject(samplerComponent, testCase, {target: target, property: prop});
+    }
+    function between(values) {
+        return values.some(v => v > 0.05 && v < 0.95);
+    }
+
+    // It fades in rising and fades out sinking, never a blink; a switch
+    // to another playlist fades the content, not the popup.
+    function test_itFadesInAndOutAndCrossFadesASwitch() {
+        const t = makeList(["Peak", "Warmup", "Closing"]);
+        const r = row(t.list, 1);
+        // Once open and closed, so the popup is there to watch from the
+        // start of its next appearance.
+        const loader = hoverOpen(r);
+        const popup = loader.item;
+        leave();
+        tryCompare(popup, "visible", false, 2000);
+        const opacity = sampled(popup, "opacity");
+        const lift = sampled(popup, "lift");
+        mouseMove(r, r.width / 2, r.height / 2);
+        tryCompare(popup, "opened", true, 3000);
+        wait(50);
+        verify(between(opacity.seen), "opacity through values between: " + opacity.seen.join(" "));
+        verify(lift.seen.some(v => v > 0.5) && lift.seen[lift.seen.length - 1] === 0, "a rise: " + lift.seen.join(" "));
+
+        const content = sampled(popup.contentItem, "opacity");
+        const whole = sampled(popup, "opacity");
         const next = row(t.list, 2);
         mouseMove(next, next.width / 2, next.height / 2);
-        tryCompare(loader, "active", false, 1000);
+        tryVerify(() => text(popup, "summaryTitle") === "Warmup", 2000);
+        wait(Theme.shortTransitionDuration * 2);
+        verify(content.seen.some(v => v < 0.5), "the content faded across: " + content.seen.join(" "));
+        verify(whole.seen.every(v => v > 0.99), "the popup itself did not blink");
+        compare(popup.contentItem.opacity, 1);
+
+        const going = sampled(popup, "opacity");
+        const sinking = sampled(popup, "lift");
+        leave();
+        tryCompare(popup, "visible", false, 2000);
+        verify(between(going.seen), "faded out: " + going.seen.join(" "));
+        verify(sinking.seen.some(v => v > 0.5), "and sank: " + sinking.seen.join(" "));
     }
 
     // ---- The pointer in the popup ----
@@ -156,26 +312,20 @@ TestCase {
     }
 
     // The delay is a moment, not a wait: 600 ms unless a host says
-    // otherwise, on the list and on a bare row alike.
+    // otherwise.
     function test_theDelayIsShort() {
         const fake = createTemporaryObject(fakeScanComponent, testCase, {playlistNames: ["Peak"], totalTrackCount: 4});
         const list = createTemporaryObject(defaultListComponent, testCase, {scanController: fake});
         compare(list.summaryDelay, 600);
-        const bare = createTemporaryObject(bareRowComponent, testCase, {y: 300});
-        compare(createTemporaryObject(plainRowComponent, testCase, {y: 340}).summaryDelay, 600);
         waitForRendering(list);
         const r = row(list, 1);
-        const loader = findChild(r, "summaryLoader");
+        const loader = loaderOf(r);
         const started = Date.now();
         mouseMove(r, r.width / 2, r.height / 2);
         wait(300);
-        verify(!loader.active, "not at once");
-        tryVerify(() => loader.active, 2000, "open after the delay");
+        verify(!shown(loader), "not at once");
+        tryVerify(() => shown(loader), 2000, "open after the delay");
         verify(Date.now() - started < 1000, "within the second: " + (Date.now() - started) + " ms");
-    }
-    Component {
-        id: plainRowComponent
-        PlaylistRowDelegate { index: 1; width: 240; name: "Plain" }
     }
 
     function popupPoint(loader) {
@@ -207,8 +357,8 @@ TestCase {
         verify(findChild(popup.contentItem, "keyLegendMore").visible);
         const p = popupPoint(loader);
         mouseMove(p.item, p.x, p.y);
-        wait(r.summaryGrace * 3);
-        compare(loader.active, true, "still open with the pointer in it");
+        wait(listOf(r).summaryGrace * 3);
+        compare(shown(loader), true, "still open with the pointer in it");
         compare(popup.hovered, true);
         tryVerify(() => findChild(popup.contentItem, "allKeys").visible, 1000, "the details shown");
         const entries = [];
@@ -229,10 +379,10 @@ TestCase {
         saveScreenshot(testCase.Window.contentItem, "playlist-summary-popup-expanded");
         // Back to the row: still open.
         mouseMove(r, r.width / 2, r.height / 2);
-        wait(r.summaryGrace * 2);
-        compare(loader.active, true, "back on the row");
+        wait(listOf(r).summaryGrace * 2);
+        compare(shown(loader), true, "back on the row");
         leave();
-        tryCompare(loader, "active", false, 1000);
+        tryVerify(() => !shown(loader), 1000, "closed");
     }
 
     // The gap between row and popup is crossed without the popup closing:
@@ -241,14 +391,14 @@ TestCase {
         const t = makeList();
         const r = row(t.list, 1);
         const loader = hoverOpen(r);
-        compare(r.summaryGrace, 200);
+        compare(listOf(r).summaryGrace, 200);
         // In the gap: right of the row, left of the popup.
         const popupLeft = loader.item.contentItem.mapToItem(r, 0, 0).x - loader.item.leftPadding;
         verify(popupLeft > r.width + 1, "a gap to stand in");
         mouseMove(r, (r.width + popupLeft) / 2, r.height / 2);
         wait(60);
-        compare(loader.active, true, "still open in the gap");
-        tryCompare(loader, "active", false, 1000, "closed once the grace is over");
+        compare(shown(loader), true, "still open in the gap");
+        tryVerify(() => !shown(loader), 1000, "closed once the grace is over");
     }
 
     // A press in the popup does not close it, nor does the wheel there,
@@ -270,11 +420,11 @@ TestCase {
         mouseMove(p.item, p.x, p.y);
         mousePress(p.item, p.x, p.y);
         mouseRelease(p.item, p.x, p.y);
-        wait(r.summaryGrace * 2);
-        compare(loader.active, true, "a press in it keeps it");
+        wait(listOf(r).summaryGrace * 2);
+        compare(shown(loader), true, "a press in it keeps it");
         mouseWheel(p.item, p.x, p.y, 0, -120);
-        wait(r.summaryGrace * 2);
-        compare(loader.active, true, "the wheel in it keeps it");
+        wait(listOf(r).summaryGrace * 2);
+        compare(shown(loader), true, "the wheel in it keeps it");
         compare(under.contentY, 0, "and scrolls nothing under it");
         compare(t.list.contentY, 0);
     }
@@ -286,11 +436,11 @@ TestCase {
         let picked = "";
         t.list.playlistPicked.connect((index, name) => { picked = name; });
         mousePress(r, r.width / 2, r.height / 2);
-        compare(loader.active, false, "closed on the press");
+        compare(shown(loader), false, "closed on the press");
         mouseRelease(r, r.width / 2, r.height / 2);
         compare(picked, "Peak");
         wait(testCase.delay * 2);
-        compare(loader.active, false, "and not opened again while the pointer stays");
+        compare(shown(loader), false, "and not opened again while the pointer stays");
     }
 
     function test_closesOnTheWheelAndTheListStillScrolls() {
@@ -303,7 +453,7 @@ TestCase {
         const loader = hoverOpen(r);
         compare(t.list.contentY, 0);
         mouseWheel(r, r.width / 2, r.height / 2, 0, -120);
-        compare(loader.active, false, "closed on the wheel");
+        compare(shown(loader), false, "closed on the wheel");
         tryVerify(() => t.list.contentY > 0, 2000, "the list scrolled");
     }
 
@@ -324,28 +474,28 @@ TestCase {
         const r = row(t.list, 1);
         const loader = hoverOpen(r);
         t.list.summariesEnabled = false;
-        compare(loader.active, false);
+        compare(shown(loader), false);
         leave();
         mouseMove(r, r.width / 2, r.height / 2);
         wait(testCase.delay * 2);
-        compare(loader.active, false, "not while switched off");
+        compare(shown(loader), false, "not while switched off");
     }
 
-    // Off unless the host turns it on: the Matching page's combo shows
-    // these rows in a popup of its own and never does.
+    // A row has no popup of its own: the Matching page's combo shows
+    // these rows in a popup of its own, and hovering one there opens
+    // nothing.
     Component {
         id: bareRowComponent
-        PlaylistRowDelegate { index: 1; width: 240; name: "Peak"; summaryDelay: testCase.delay }
+        PlaylistRowDelegate { index: 1; width: 240; name: "Peak" }
     }
     function test_aBareRowShowsNoSummary() {
         const r = createTemporaryObject(bareRowComponent, testCase, {y: 20});
-        let asked = 0;
-        r.summaryFor = () => { ++asked; return testCase.sampleSummary; };
         waitForRendering(r);
         mouseMove(r, r.width / 2, r.height / 2);
-        wait(testCase.delay * 2);
-        compare(findChild(r, "summaryLoader").active, false);
-        compare(asked, 0);
+        compare(r.rowHovered, true);
+        wait(800);
+        verify(findChild(r, "summaryLoader") === null, "no loader in a row");
+        verify(findChild(r, "playlistSummaryPopup") === null, "no popup in a row");
     }
 
     // ---- What it shows ----
@@ -362,7 +512,10 @@ TestCase {
     function makePopup(summary, props) {
         const anchor = createTemporaryObject(anchorComponent, testCase);
         const popup = createTemporaryObject(popupComponent, testCase,
-                                            Object.assign({row: anchor, title: "Peak Time", summary: summary}, props || {}));
+                                            Object.assign({title: "Peak Time", summary: summary,
+                                                           x: anchor.x + anchor.width + Theme.tightSpacing,
+                                                           rowCenter: anchor.y + anchor.height / 2}, props || {}));
+        popup.open();
         tryCompare(popup, "opened", true);
         return popup;
     }
@@ -433,7 +586,8 @@ TestCase {
     function test_theBpmStripIsAHeatmap() {
         const popup = makePopup(testCase.sampleSummary);
         const strip = findChild(popup.contentItem, "bpmStrip");
-        compare(Math.round(strip.width), Math.round(Theme.scaled(120)));
+        compare(Math.round(strip.width), Math.round(Theme.scaled(160)));
+        compare(Math.round(strip.height), Math.round(Theme.scaled(12)));
         const shown = bins(popup);
         compare(shown.length, 7);
         waitForRendering(popup.contentItem);
@@ -450,11 +604,13 @@ TestCase {
             sampled.push(image.pixel(Math.round(at.x * scale), Math.round(at.y * scale)));
         }
         const counts = testCase.sampleSummary.bpmBins.map(b => b.count);
-        verify(near(sampled[1], Theme.groupBackground), "123, empty, is the ground: " + sampled[1]);
+        // An empty bin is drawn, faint but there: the strip is one bar.
+        verify(near(sampled[1], popup.emptyBinColor), "123, empty, in the faint tone: " + sampled[1]);
+        verify(dist(sampled[1], Theme.surface) > 0.12, "and told apart from the card it sits on: " + sampled[1]);
         verify(near(sampled[3], Theme.accent), "125, the fullest, is the accent: " + sampled[3]);
         for (let i = 0; i < counts.length; ++i) {
             if (counts[i] > 0 && counts[i] < 18) {
-                verify(!near(sampled[i], Theme.groupBackground) && !near(sampled[i], Theme.accent),
+                verify(!near(sampled[i], popup.emptyBinColor) && !near(sampled[i], Theme.accent),
                        "bin " + i + " between the two: " + sampled[i]);
             }
             for (let j = 0; j < counts.length; ++j) {
@@ -487,6 +643,45 @@ TestCase {
         const onePixel = grabImage(ground).pixel(Math.round(oneAt.x * scale), Math.round(oneAt.y * scale));
         verify(near(onePixel, Theme.accent), "one full bin, in the accent: " + onePixel);
         verify(!findChild(popup.contentItem, "bpmMaxLabel").visible, "124 and 124.04 read as one value");
+    }
+
+    // The pointer on the strip: the bin under it outlined, and a label
+    // above the pointer with its tempo and count, following the pointer
+    // bin to bin and gone once it leaves the strip. Resting there keeps
+    // the popup open.
+    function test_hoveringTheStripNamesTheBin() {
+        const t = makeList();
+        const loader = hoverOpen(row(t.list, 1));
+        const popup = loader.item;
+        const strip = findChild(popup.contentItem, "bpmStrip");
+        const outline = findChild(popup.contentItem, "bpmBinOutline");
+        const label = findChild(popup.contentItem, "bpmHoverLabel");
+        const binWidth = strip.width / 7;
+        verify(!label.visible && !outline.visible);
+        const cases = [{bin: 0, text: "122, 2 tracks"}, {bin: 1, text: "123, none"}, {bin: 3, text: "125, 18 tracks"}];
+        for (const c of cases) {
+            const x = (c.bin + 0.5) * binWidth;
+            mouseMove(strip, x, strip.height / 2);
+            tryCompare(label, "text", c.text, 1000);
+            verify(label.visible && outline.visible, "shown over bin " + c.bin);
+            const shownBin = bins(popup)[c.bin];
+            compare(outline.x, shownBin.x, "the outline on bin " + c.bin);
+            compare(outline.width, shownBin.width);
+            const mid = label.mapToItem(strip, label.width / 2, label.height).x;
+            verify(Math.abs(mid - x) <= 1, "the label over the pointer: " + mid + " for " + x);
+            verify(label.mapToItem(strip, 0, label.height).y <= 0, "above the strip");
+        }
+        compare(shown(loader), true, "resting on the strip is resting in the popup");
+        const one = bins(popup)[6];
+        mouseMove(strip, one.x + one.width / 2, strip.height / 2);
+        tryCompare(label, "text", "128, 2 tracks", 1000);
+        popup.summary = Object.assign({}, testCase.sampleSummary, {bpmBinWidth: 2, bpmBins: [{bpm: 124, count: 1}]});
+        mouseMove(strip, strip.width / 2, strip.height / 2);
+        tryCompare(label, "text", "124 to 125, 1 track", 1000);
+        const p = popupPoint(loader);
+        mouseMove(p.item, p.x, p.y);
+        tryVerify(() => !label.visible && !outline.visible, 1000, "gone off the strip");
+        compare(shown(loader), true);
     }
 
     // Each key's slice in its Camelot colour, round from twelve o'clock in
@@ -805,7 +1000,7 @@ TestCase {
         let loader = hoverOpen(row(list, 0));
         compare(text(loader.item, "summaryCount"), all.count + " tracks");
         leave();
-        tryCompare(loader, "active", false);
+        tryVerify(() => !shown(loader), 1000, "closed");
         const first = scan.playlistNames[0];
         loader = hoverOpen(row(list, 1));
         compare(text(loader.item, "summaryTitle"), first);

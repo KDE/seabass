@@ -91,11 +91,131 @@ ListView {
     // A playlist staged to be created was clicked.
     signal newPlaylistPicked(string name)
     // Hovering a playlist shows its summary (PlaylistSummaryPopup.qml),
-    // "All tracks" the whole library's. Switched off while the pointer
-    // is busy with something else, such as dragging tracks onto a row.
+    // "All tracks" the whole library's, after summaryDelay. One popup for
+    // the whole list, made the first time it is needed and kept: the rows
+    // only say when the pointer is on them, and the list puts the popup
+    // beside the hovered one. With it open, another row held for
+    // summarySwitchDelay moves it there, content and all, without closing
+    // (a pointer travelling down the list passes rows by quicker than
+    // that); off every row and out of the popup for summaryGrace, it
+    // closes. A press or the wheel in a row closes it too, and it stays
+    // shut over that row until the pointer has been elsewhere.
+    // Switched off while the pointer is busy with something else, such as
+    // dragging tracks onto a row.
     property bool summariesEnabled: true
     property int summaryDelay: 600
+    property int summarySwitchDelay: 250
+    property int summaryGrace: 200
     property string keyNotation: "camelot"
+    // The row under the pointer that has a summary, or null.
+    property Item summaryHoverRow: null
+    // The row the popup stands beside, or is about to.
+    property Item summaryRow: null
+    // The row a press or the wheel dismissed the summary on.
+    property Item summaryDismissedRow: null
+    readonly property var summaryPopup: summaryLoader.item
+    // Shown, or on its way in: not once it is on its way out.
+    property bool summaryShown: false
+    readonly property bool summaryPopupHovered: summaryLoader.item !== null && summaryLoader.item.hovered === true
+    onSummaryPopupHoveredChanged: root.updateSummary()
+    onSummariesEnabledChanged: root.updateSummary()
+
+    function noteSummaryHover(row, over) {
+        if (over) {
+            if (row !== root.summaryDismissedRow) {
+                root.summaryDismissedRow = null;
+            }
+            root.summaryHoverRow = row;
+        } else if (root.summaryHoverRow === row) {
+            root.summaryHoverRow = null;
+        }
+        root.updateSummary();
+    }
+    function dismissSummary(row) {
+        root.summaryDismissedRow = row;
+        root.closeSummary();
+    }
+    function closeSummary() {
+        summaryOpenTimer.stop();
+        summarySwitchTimer.stop();
+        summaryGraceTimer.stop();
+        root.summaryShown = false;
+        if (root.summaryPopup !== null) {
+            root.summaryPopup.close();
+        }
+    }
+    function updateSummary() {
+        if (!root.summariesEnabled) {
+            root.closeSummary();
+            return;
+        }
+        const row = root.summaryHoverRow;
+        const showing = root.summaryShown;
+        if (row !== null && row !== root.summaryDismissedRow) {
+            summaryGraceTimer.stop();
+            if (!showing) {
+                if (root.summaryRow !== row || !summaryOpenTimer.running) {
+                    root.summaryRow = row;
+                    summaryOpenTimer.restart();
+                }
+            } else if (row !== root.summaryRow) {
+                summarySwitchTimer.restart();
+            } else {
+                summarySwitchTimer.stop();
+            }
+            return;
+        }
+        summaryOpenTimer.stop();
+        summarySwitchTimer.stop();
+        if (showing && !root.summaryPopupHovered) {
+            summaryGraceTimer.restart();
+        } else {
+            summaryGraceTimer.stop();
+        }
+    }
+    // The popup beside `row`, with its playlist's summary.
+    function showSummaryFor(row) {
+        root.summaryRow = row;
+        summaryLoader.active = true;
+        const center = row.mapToItem(root, 0, row.height / 2).y;
+        root.summaryPopup.showPlaylist(row.name, row.summaryFor(), center);
+        if (!root.summaryShown) {
+            root.summaryShown = true;
+            root.summaryPopup.open();
+        }
+    }
+    Timer {
+        id: summaryOpenTimer
+        interval: root.summaryDelay
+        onTriggered: {
+            if (root.summaryHoverRow !== null && root.summaryHoverRow === root.summaryRow) {
+                root.showSummaryFor(root.summaryRow);
+            }
+        }
+    }
+    Timer {
+        id: summarySwitchTimer
+        interval: root.summarySwitchDelay
+        onTriggered: {
+            if (root.summaryHoverRow !== null) {
+                root.showSummaryFor(root.summaryHoverRow);
+            }
+        }
+    }
+    Timer {
+        id: summaryGraceTimer
+        interval: root.summaryGrace
+        onTriggered: root.closeSummary()
+    }
+    Loader {
+        id: summaryLoader
+        objectName: "summaryLoader"
+        active: false
+        sourceComponent: PlaylistSummaryPopup {
+            parent: root
+            notation: root.keyNotation
+        }
+    }
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
@@ -137,10 +257,14 @@ ListView {
         edited: index > 0 && !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
         pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
-        summaryEnabled: root.summariesEnabled && !isNew
-        summaryDelay: root.summaryDelay
-        summaryFor: () => root.scanController.playlistSummary(index === 0 ? "" : modelData)
-        keyNotation: root.keyNotation
+        // The summary's part: the pointer on a row that has one, a
+        // press or the wheel there, and what to show for it.
+        function summaryFor() {
+            return root.scanController.playlistSummary(index === 0 ? "" : modelData);
+        }
+        onRowHoveredChanged: root.noteSummaryHover(this, rowHovered && !isNew)
+        onSummaryDismissed: root.dismissSummary(this)
+        Component.onDestruction: root.noteSummaryHover(this, false)
         // The index the page gets is the playlist's place among the
         // stick's (plus one for "All tracks"), whatever rows the list has
         // before it or has filtered out.
