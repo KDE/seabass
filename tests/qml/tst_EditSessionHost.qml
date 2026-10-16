@@ -29,6 +29,7 @@ TestCase {
             property int pendingCount: 0
             property var pendingDescriptions: []
             property int playlistsEdited: 0
+            property string editorOwner: ""
             property string writeLabel: ""
             property int writeCurrent: 0
             property int writeTotal: 0
@@ -207,6 +208,105 @@ TestCase {
         compare(label.text, "Clean Up", "a page's own label stands");
     }
 
+    // A session with `count` changes staged by Browse ("addcue"), on a
+    // host that is Browse.
+    function makeEditingHost(count) {
+        const t = makeHost();
+        t.host.feature = "addcue";
+        t.session.editorOwner = "addcue";
+        t.session.pendingDescriptions = ["Add to \"Peak\": One", "Add to \"Peak\": Two", "Create \"Fresh\"",
+                                         "Delete \"Old\""].slice(0, count);
+        t.session.pendingCount = count;
+        t.session.dirty = true;
+        t.session.state = "editing";
+        return t;
+    }
+
+    // Cancel stands beside Save while this page's changes are staged, and
+    // not while a save writes them, nothing is staged, or what is staged
+    // is another page's.
+    function test_theCancelButtonShowsBesideSave() {
+        const t = makeHost();
+        const cancel = findByObjectName(t.host, "cancelOverlayButton");
+        const save = findByObjectName(t.host, "saveOverlay");
+        verify(cancel !== null);
+        compare(cancel.visible, false, "nothing staged");
+        t.host.feature = "addcue";
+        t.session.editorOwner = "addcue";
+        t.session.pendingCount = 2;
+        t.session.dirty = true;
+        t.session.state = "editing";
+        compare(save.visible, true);
+        compare(cancel.visible, true);
+        compare(cancel.ToolTip.text, "Discard the staged changes");
+        const saveBox = save.mapToItem(t.host, 0, 0);
+        const cancelBox = cancel.mapToItem(t.host, 0, 0);
+        compare(Math.round(cancelBox.x + cancel.width + Theme.rowSpacing), Math.round(saveBox.x), "just left of Save");
+        compare(Math.round(cancelBox.y + cancel.height / 2), Math.round(saveBox.y + save.height / 2), "on its middle");
+        t.session.writing = true;
+        t.session.state = "writing";
+        compare(save.visible, true, "Save shows the write");
+        compare(cancel.visible, false, "nothing to cancel while writing");
+        t.session.writing = false;
+        t.session.state = "editing";
+        t.session.editorOwner = "sync";
+        compare(cancel.visible, false, "another page's changes");
+        t.session.editorOwner = "addcue";
+        t.host.saveLabel = "Clean Up";
+        compare(cancel.visible, true, "beside a page's own label too");
+    }
+
+    // One change staged goes at once: no question, nothing said after, and
+    // leaving needs no dialog any more.
+    function test_cancellingOneChangeDiscardsItAtOnce() {
+        const t = makeEditingHost(1);
+        const cancel = findByObjectName(t.host, "cancelOverlayButton");
+        mouseClick(cancel);
+        compare(t.session.calls[t.session.calls.length - 1], "discard");
+        compare(findByObjectName(t.host, "discardDialog").opened, false, "not asked");
+        compare(t.session.pendingCount, 0);
+        compare(cancel.visible, false);
+        compare(findByObjectName(t.host, "summaryDialog").opened, false, "nothing said");
+        let left = 0;
+        t.host.requestLeave(() => left++);
+        compare(left, 1, "leaves at once");
+        compare(findByObjectName(t.host, "unsavedDialog").opened, false);
+    }
+
+    // Several are asked about first, listed as the Save tooltip lists
+    // them; Keep editing keeps them, Discard drops them all.
+    function test_cancellingSeveralChangesAsksFirst() {
+        const t = makeEditingHost(4);
+        const cancel = findByObjectName(t.host, "cancelOverlayButton");
+        const dialog = findByObjectName(t.host, "discardDialog");
+        mouseClick(cancel);
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "Discard 4 staged changes?");
+        verify(dialog.detailText.indexOf("- Add to \"Peak\": One\n- Add to \"Peak\": Two\n- Create \"Fresh\"") === 0,
+               dialog.detailText);
+        verify(dialog.detailText.indexOf("- and 1 more") > 0, dialog.detailText);
+        verify(dialog.detailText.indexOf("Delete") < 0, "three listed, not four");
+        compare(t.session.calls.indexOf("discard"), -1, "nothing discarded before the answer");
+        waitForRendering(t.host);
+        saveScreenshot(t.host, "edit_mode_discard_dialog");
+        findByObjectName(dialog, "keepEditingButton").clicked();
+        tryCompare(dialog, "opened", false);
+        // Gone, not just closing: a style's exit transition keeps the
+        // modal's dimmer over the page until it ends.
+        tryCompare(dialog, "visible", false);
+        compare(t.session.calls.indexOf("discard"), -1, "kept");
+        compare(t.session.pendingCount, 4);
+
+        mouseClick(cancel);
+        tryCompare(dialog, "opened", true);
+        findByObjectName(dialog, "confirmDiscardButton").clicked();
+        tryCompare(dialog, "opened", false);
+        compare(t.session.calls[t.session.calls.length - 1], "discard");
+        compare(t.session.pendingCount, 0);
+        compare(cancel.visible, false);
+        compare(findByObjectName(t.host, "summaryDialog").opened, false, "nothing said");
+    }
+
     function test_lockRefusalOpensTheLockedDialog() {
         var t = makeHost();
         t.session.lockRefused({hostname: "studio", pid: 7, startedAtUtc: ""});
@@ -260,5 +360,11 @@ TestCase {
         host.destroy();
         wait(50);
         compare(registry.calls[registry.calls.length - 1], "close:EB9F-F032");
+    }
+
+    function saveScreenshot(item, name) {
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(item).save(screenshotDir + "/" + name + ".png");
+        }
     }
 }

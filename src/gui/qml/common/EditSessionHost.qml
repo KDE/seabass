@@ -301,6 +301,83 @@ Item {
         anchors.margins: 24
     }
 
+    // Beside Save, the way back out of edit mode without leaving the page:
+    // the staged changes thrown away. One change goes at once, as one
+    // click staged it; several are asked about first. Only while this
+    // page owns what is staged (another page's work is not this page's to
+    // throw away) and nothing is being written. Nothing is said after it:
+    // the toast and the summary are for saves.
+    IconToolButton {
+        id: cancelOverlayButton
+        objectName: "cancelOverlayButton"
+        visible: saveOverlayButton.visible && host.ownsStagedChanges && !host.writing
+        anchors.right: saveOverlayButton.left
+        anchors.rightMargin: Theme.rowSpacing
+        anchors.verticalCenter: saveOverlayButton.verticalCenter
+        implicitWidth: Theme.iconSizeNormal
+        implicitHeight: Theme.iconSizeNormal
+        text: "Cancel"
+        iconName: "edit-undo"
+        ToolTip.visible: hovered
+        ToolTip.delay: 400
+        ToolTip.text: "Discard the staged changes"
+        // Round, on the page's own ground: the Save button beside it is the
+        // prominent one.
+        background: Rectangle {
+            radius: height / 2
+            color: cancelOverlayButton.down ? Theme.rowPressed
+                : cancelOverlayButton.hovered ? Theme.rowHover : Theme.surface
+            border.color: Theme.border
+            border.width: 1
+        }
+        onClicked: host.requestDiscard()
+    }
+
+    // The Cancel button's click: one staged change is discarded at once,
+    // several only once the dialog is answered.
+    function requestDiscard() {
+        if (!host.ownsStagedChanges || host.writing) {
+            return;
+        }
+        if (host.session.pendingCount > 1) {
+            discardDialog.open();
+            return;
+        }
+        host.session.discard();
+    }
+
+    MessageDialog {
+        id: discardDialog
+        objectName: "discardDialog"
+        readonly property int count: host.session ? host.session.pendingCount : 0
+        severity: SeabassDialog.Warning
+        destructive: true
+        title: "Discard changes"
+        headline: "Discard " + discardDialog.count + " staged changes?"
+        // What they are, as the Save button's tooltip lists them: the
+        // first three, then how many more.
+        detailText: {
+            if (!host.session || discardDialog.count === 0) {
+                return "";
+            }
+            const shown = 3;
+            const lines = host.session.pendingDescriptions.slice(0, shown).map(line => "- " + line);
+            if (discardDialog.count > shown) {
+                lines.push("- and " + (discardDialog.count - shown) + " more");
+            }
+            return lines.join("\n") + "\n\nNothing has been written to the stick.";
+        }
+        acceptText: "Discard"
+        acceptObjectName: "confirmDiscardButton"
+        rejectText: "Keep editing"
+        rejectObjectName: "keepEditingButton"
+        onAccepted: {
+            if (host.session && host.ownsStagedChanges && !host.writing) {
+                host.session.discard();
+            }
+        }
+    }
+
     UnsavedChangesDialog {
         id: unsavedDialog
         objectName: "unsavedDialog"
