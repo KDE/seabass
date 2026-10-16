@@ -38,6 +38,7 @@ ListView {
     // Whether tracks are staged into or out of a playlist, and by how
     // many its count changes at Save (read again on pendingRevision).
     property var isEdited: name => false
+    property var isRenamed: name => false
     property var trackCountChange: name => 0
     // The playlist the page shows, so a new one picked is marked current.
     property string shownPlaylist: ""
@@ -82,6 +83,7 @@ ListView {
         isCurrent: ListView.isCurrentItem
         pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
+        pendingRename: index > 0 && root.pendingRevision >= 0 && root.isRenamed(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
         summaryEnabled: root.summariesEnabled
         summaryDelay: root.summaryDelay

@@ -115,6 +115,23 @@ TestCase {
                 pendingRevision++;
             }
             function isMoveStaged(playlist, filePath) { return staged["m:" + playlist + "|" + filePath] === true; }
+            property var pendingRenames: ({})
+            function renamePlaylist(rekordboxPath, enginePath, playlist, newName) {
+                calls.push(["rename", rekordboxPath, enginePath, playlist, newName]);
+                return true;
+            }
+            function keepPlaylistName(playlist) {
+                calls.push(["keepName", playlist]);
+                pendingRevision++;
+            }
+            function isRenameStaged(playlist) {
+                for (const from in pendingRenames) {
+                    if (from === playlist || pendingRenames[from] === playlist) {
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
     }
 
@@ -144,6 +161,76 @@ TestCase {
     Component {
         id: playlistRowComponent
         PlaylistRowDelegate { index: 1; width: 240 }
+    }
+
+    // A playlist staged to be renamed: listed under the new name in
+    // italics, greyed like a new one, its count as it is; tracks staged
+    // into it as well add the count after Save, in bold.
+    function test_aRenamedPlaylistIsItalicWithItsCount() {
+        const row = createTemporaryObject(playlistRowComponent, testCase,
+                                          {name: "Summit", count: 12, edited: true, pendingRename: true});
+        const labels = row.children[1].children;
+        compare(labels[0].font.italic, true);
+        compare(labels[0].font.bold, false, "a rename alone is not a track edit");
+        compare(String(labels[0].color), String(Theme.textMuted), "greyed");
+        compare(labels[1].text, "12", "its count unchanged");
+        row.countChange = 1;
+        compare(labels[0].font.bold, true);
+        compare(labels[1].text, "12 (13)");
+    }
+
+    // The playlist menu renames: the dialog opens on the current name (a
+    // playlist's own, not its folder's), and OK asks the controller.
+    function test_renamingAPlaylistAsksForTheNewName() {
+        const page = makeEditingPage(true);
+        const menu = findChild(page, "playlistMenu");
+        const dialog = findChild(page, "renamePlaylistDialog");
+        const field = findChild(page, "renamePlaylistNameField");
+        page.openPlaylistMenu("Crate/Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "keepPlaylistNameItem").visible, false, "not renamed");
+        const item = findChild(page, "renamePlaylistItem");
+        compare(item.text, "Rename playlist...");
+        item.triggered();
+        tryCompare(dialog, "opened", true);
+        compare(field.text, "Peak", "prefilled with its name");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_rename_playlist_dialog");
+        compare(page.playlistEditController.calls.length, 0, "nothing staged before OK");
+        field.text = "Summit";
+        dialog.accept();
+        compare(JSON.stringify(page.playlistEditController.calls[0]), JSON.stringify(["rename",
+                "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Crate/Peak", "Summit"]));
+        cleanupExperimental();
+    }
+
+    // A rename staged: the page's list takes the new name from the
+    // controller (no rescan), and the renamed playlist's menu offers to
+    // keep the old name.
+    function test_aStagedRenameOffersToKeepTheOldName() {
+        const page = makeEditingPage(true);
+        const fake = page.playlistEditController;
+        fake.pendingRenames = {"Peak": "Summit"};
+        fake.pendingRevision++;
+        compare(findChild(page, "scanController").currentPlaylistName("Peak"), "Summit",
+                "the list's names come from the controller's renames");
+        const menu = findChild(page, "playlistMenu");
+        const keep = findChild(page, "keepPlaylistNameItem");
+        page.openPlaylistMenu("Summit", page);
+        tryCompare(menu, "opened", true);
+        compare(keep.visible, true);
+        compare(keep.text, "Keep the name \"Peak\"");
+        keep.triggered();
+        compare(JSON.stringify(fake.calls[0]), JSON.stringify(["keepName", "Summit"]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+        page.openPlaylistMenu("Other", page);
+        tryCompare(menu, "opened", true);
+        compare(keep.visible, false, "another playlist keeps no name");
+        menu.close();
+        fake.pendingRenames = {};
+        compare(findChild(page, "scanController").currentPlaylistName("Summit"), "Peak", "taken back");
+        cleanupExperimental();
     }
 
     // A playlist with tracks staged into or out of it: bold italics, and
@@ -830,6 +917,32 @@ TestCase {
         tryVerify(() => browseFixture.cuePassWaiting(), 5000, "the cue pass is running, held");
         waitForRendering(page);
         return {page: page, controller: controller, list: list};
+    }
+
+    // A rename staged while the page shows the playlist: the sidebar lists
+    // the new name, still picked, the list still the playlist's tracks and
+    // the rows naming it anew; taken back, the old name, still picked.
+    // From the controller's renames alone: nothing is scanned again.
+    function test_thePlaylistShownStaysShownAcrossARenameAndItsTakeBack() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const t = makeHeldPage(3);
+        const fake = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        t.page.playlistEditController = fake;
+        t.page.selectPlaylist(1, "Held Playlist");
+        compare(t.page.shownPlaylist, "Held Playlist");
+        fake.pendingRenames = {"Held Playlist": "Held Renamed"};
+        compare(JSON.stringify(t.controller.playlistNames), JSON.stringify(["Held Renamed"]));
+        compare(t.page.shownPlaylist, "Held Renamed", "still the one shown, under its new name");
+        compare(t.page.selectedPlaylistIndex, 1);
+        compare(t.list.count, 3, "its tracks");
+        compare(t.controller.playlistTrackCounts["Held Renamed"], 3);
+        verify(t.controller.tracks.trackAt(0).playlistNames.indexOf("Held Renamed") >= 0);
+        fake.pendingRenames = {};
+        compare(JSON.stringify(t.controller.playlistNames), JSON.stringify(["Held Playlist"]));
+        compare(t.page.shownPlaylist, "Held Playlist", "taken back: the old name, still shown");
+        compare(t.list.count, 3);
+        browseFixture.releaseCues();
+        cleanupExperimental();
     }
 
     // Nothing under the list: the "N tracks" line repeated what the
