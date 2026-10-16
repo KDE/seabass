@@ -93,8 +93,42 @@ Page {
         function onErrorMessageChanged() {
             if (root.playlistEditController.errorMessage.length > 0) {
                 playlistEditMessage.show(root.playlistEditController.errorMessage, true);
+                // Refused: nothing is coming to take the held place.
+                root.settled();
             }
         }
+        // The edit asked for at a place is staged: the list shows it there
+        // (the page's pending* bindings answer the same signal), and the
+        // held place can close. After them, not before.
+        function onPendingChanged() {
+            if (root.settleGap >= 0) {
+                Qt.callLater(root.settled);
+            }
+        }
+    }
+
+    // A move or an add asked for at a place in the list is staged off the
+    // GUI thread (PlaylistEditController looks the playlist up first), so
+    // the list shows it a moment after the release. Meanwhile the place
+    // stays open, the faded copy in it (dropGap.heldIndex), so the rows
+    // never go back to their old order before sliding to the new one.
+    // Closed when the staging is shown, refused, or after a second at most.
+    property int settleGap: -1
+    property var settleTrack: null
+    function settle(gapIndex) {
+        root.settleGap = gapIndex;
+        root.settleTrack = trackDrag;
+        settleTimeout.restart();
+    }
+    function settled() {
+        settleTimeout.stop();
+        root.settleGap = -1;
+        root.settleTrack = null;
+    }
+    Timer {
+        id: settleTimeout
+        interval: 1000
+        onTriggered: root.settled()
     }
     MessagePopup {
         id: playlistEditMessage
@@ -1253,6 +1287,23 @@ Page {
                 ScrollBar.vertical: BigScrollBar {}
                 model: scanController.tracks
 
+                // A staged move or add slides the rows to their new places
+                // (setPendingEdits moves and inserts rows in place) rather
+                // than jumping there. Only `y`: the room a gap makes is the
+                // rows' Translate, a transform of its own, so a gap closing
+                // as the rows slide adds up with this instead of fighting it.
+                readonly property Transition slide: Transition {
+                    NumberAnimation {
+                        properties: "y"
+                        duration: Theme.shortTransitionDuration
+                        easing.type: Easing.OutQuad
+                    }
+                }
+                move: slide
+                moveDisplaced: slide
+                addDisplaced: slide
+                removeDisplaced: slide
+
                 // A plain Rectangle, not an ItemDelegate. Overriding a
                 // Material Control's `background:` property doesn't
                 // reliably replace its own implicit chrome (see
@@ -1624,12 +1675,15 @@ Page {
                     // A track from elsewhere gets a place too; the card then
                     // asks, holding the gap open meanwhile.
                     takesOtherTracks: true
-                    heldIndex: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag.targetIndex : -1
-                    heldTrack: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag : null
+                    heldIndex: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag.targetIndex : root.settleGap
+                    heldTrack: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag : root.settleTrack
                     onPlaceRequested: toIndex => trackDrag.dropOn(root.shownPlaylist, root.dropSourceFor(root.shownPlaylist),
                                                                   toIndex)
-                    onMoveRequested: (filePath, title, toIndex) => root.playlistEditController.moveInPlaylist(
-                        root.rekordboxPath, root.enginePath, root.shownPlaylist, filePath, title, toIndex)
+                    onMoveRequested: (filePath, title, toIndex) => {
+                        root.settle(dropGap.releasedIndex);
+                        root.playlistEditController.moveInPlaylist(root.rekordboxPath, root.enginePath,
+                                                                   root.shownPlaylist, filePath, title, toIndex);
+                    }
                 }
             }
 
@@ -2031,6 +2085,9 @@ Page {
     // One add, at the place the track was let go when it was (-1: at the
     // end): one change on the Save button, not an add and a move.
     function addDraggedTrack(playlist) {
+        if (trackDrag.targetIndex >= 0) {
+            root.settle(trackDrag.targetIndex);
+        }
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
                                                   trackDrag.filePath, trackDrag.title, trackDrag.targetIndex);
     }

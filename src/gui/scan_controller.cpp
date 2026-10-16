@@ -19,6 +19,7 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "domain/camelot_key.hpp"
@@ -181,47 +182,68 @@ void TrackListModel::setTracks(std::vector<domain::Track> tracks)
 
 void TrackListModel::updateTracks(std::vector<domain::Track> tracks)
 {
-    // The same tracks, or a new list? By sourceId, which is unique within
-    // one catalog; a repeated one makes the moves below ambiguous, so it
-    // counts as a new list too.
-    bool sameTracks = tracks.size() == m_tracks.size();
-    if (sameTracks) {
-        std::unordered_map<std::string, int> shown;
-        shown.reserve(m_tracks.size());
-        for (const auto &track : m_tracks) {
-            sameTracks = shown.emplace(track.sourceId, 0).second;
-            if (!sameTracks) {
-                break;
-            }
-        }
-        for (size_t i = 0; sameTracks && i < tracks.size(); ++i) {
-            auto it = shown.find(tracks[i].sourceId);
-            sameTracks = it != shown.end() && it->second++ == 0;
-        }
+    // The same tracks, a few more or fewer, or a new list? By sourceId,
+    // which is unique within one catalog; a repeated one makes the moves
+    // below ambiguous, so it counts as a new list too.
+    std::unordered_set<std::string> before;
+    before.reserve(m_tracks.size());
+    bool sameKind = true;
+    for (const auto &track : m_tracks) {
+        sameKind = sameKind && before.insert(track.sourceId).second;
     }
-    if (!sameTracks) {
+    std::unordered_set<std::string> after;
+    after.reserve(tracks.size());
+    for (const auto &track : tracks) {
+        sameKind = sameKind && after.insert(track.sourceId).second;
+    }
+    // A staged add or two shows as rows coming and going in place (the
+    // view slides the others aside); anything bigger is a new list.
+    constexpr size_t FewRows = 8;
+    size_t changed = 0;
+    for (const auto &id : before) {
+        changed += after.count(id) == 0 ? 1 : 0;
+    }
+    for (const auto &id : after) {
+        changed += before.count(id) == 0 ? 1 : 0;
+    }
+    if (!sameKind || changed > FewRows) {
         setTracks(std::move(tracks));
         return;
     }
 
+    // The rows going, last first.
+    for (size_t i = m_tracks.size(); i-- > 0;) {
+        if (after.count(m_tracks[i].sourceId) == 0) {
+            beginRemoveRows(QModelIndex(), static_cast<int>(i), static_cast<int>(i));
+            m_tracks.erase(m_tracks.begin() + static_cast<std::ptrdiff_t>(i));
+            endRemoveRows();
+        }
+    }
     // Into the new order one move at a time (a sort by cues reorders when
-    // the cues land): a move keeps the delegate, where a layout change
-    // would make the view rebuild every row. Nothing moves when the order
-    // held, which is every sort but the one by cues.
+    // the cues land, a staged move within the playlist shown moves a row),
+    // a new row inserted where it goes: a move keeps the delegate, where a
+    // layout change would make the view rebuild every row. Nothing moves
+    // when the order held.
     for (size_t i = 0; i < tracks.size(); ++i) {
-        if (m_tracks[i].sourceId == tracks[i].sourceId) {
+        if (i < m_tracks.size() && m_tracks[i].sourceId == tracks[i].sourceId) {
             continue;
         }
         size_t from = i + 1;
-        while (m_tracks[from].sourceId != tracks[i].sourceId) {
+        while (from < m_tracks.size() && m_tracks[from].sourceId != tracks[i].sourceId) {
             ++from;
         }
-        beginMoveRows(QModelIndex(), static_cast<int>(from), static_cast<int>(from), QModelIndex(),
-                      static_cast<int>(i));
-        std::rotate(m_tracks.begin() + static_cast<std::ptrdiff_t>(i),
-                    m_tracks.begin() + static_cast<std::ptrdiff_t>(from),
-                    m_tracks.begin() + static_cast<std::ptrdiff_t>(from) + 1);
-        endMoveRows();
+        if (from < m_tracks.size()) {
+            beginMoveRows(QModelIndex(), static_cast<int>(from), static_cast<int>(from), QModelIndex(),
+                          static_cast<int>(i));
+            std::rotate(m_tracks.begin() + static_cast<std::ptrdiff_t>(i),
+                        m_tracks.begin() + static_cast<std::ptrdiff_t>(from),
+                        m_tracks.begin() + static_cast<std::ptrdiff_t>(from) + 1);
+            endMoveRows();
+        } else {
+            beginInsertRows(QModelIndex(), static_cast<int>(i), static_cast<int>(i));
+            m_tracks.insert(m_tracks.begin() + static_cast<std::ptrdiff_t>(i), tracks[i]);
+            endInsertRows();
+        }
     }
     m_tracks = std::move(tracks);
     if (!m_tracks.empty()) {
@@ -692,7 +714,9 @@ void ScanController::setPendingEdits(const QVariantMap &additions, const QVarian
     }
     m_pendingAdditions = additions;
     m_pendingMoves = moves;
-    applyFilters();
+    // In place: a staged move or add slides the rows to their new places
+    // rather than rebuilding the list under the pointer.
+    applyFilters(true);
 }
 
 void ScanController::search(const QString &query)
