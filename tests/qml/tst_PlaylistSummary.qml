@@ -260,6 +260,18 @@ TestCase {
             onTriggered: seen = seen.concat([target[property]])
         }
     }
+    Component {
+        id: pairSamplerComponent
+        Timer {
+            property var a: null
+            property var b: null
+            property var seen: []
+            interval: 5
+            repeat: true
+            running: true
+            onTriggered: seen = seen.concat([[a.opacity, b.opacity]])
+        }
+    }
     function sampled(target, prop) {
         return createTemporaryObject(samplerComponent, testCase, {target: target, property: prop});
     }
@@ -286,15 +298,30 @@ TestCase {
         verify(between(opacity.seen), "opacity through values between: " + opacity.seen.join(" "));
         verify(lift.seen.some(v => v > 0.5) && lift.seen[lift.seen.length - 1] === 0, "a rise: " + lift.seen.join(" "));
 
-        const content = sampled(popup.contentItem, "opacity");
+        // A switch to a playlist with less to say: the old content fades
+        // out over the new as it fades in, both partly there at once, and
+        // the card's height goes to the new content's by way of the
+        // heights between.
+        const content = findChild(popup.contentItem, "summaryContent");
+        const snapshot = findChild(popup.contentItem, "contentSnapshot");
+        const pairs = createTemporaryObject(pairSamplerComponent, testCase, {a: snapshot, b: content});
+        const heights = sampled(popup, "height");
         const whole = sampled(popup, "opacity");
+        const before = popup.height;
+        t.fake.summary = Object.assign({}, testCase.sampleSummary, {keys: [], bpmBins: [], bpmMax: 0});
         const next = row(t.list, 2);
         mouseMove(next, next.width / 2, next.height / 2);
         tryVerify(() => text(popup, "summaryTitle") === "Warmup", 2000);
-        wait(Theme.shortTransitionDuration * 2);
-        verify(content.seen.some(v => v < 0.5), "the content faded across: " + content.seen.join(" "));
+        wait(Theme.shortTransitionDuration * 3);
+        verify(pairs.seen.some(p => p[0] > 0.1 && p[0] < 0.9 && p[1] > 0.1 && p[1] < 0.9),
+               "old and new partly visible together: " + JSON.stringify(pairs.seen));
         verify(whole.seen.every(v => v > 0.99), "the popup itself did not blink");
-        compare(popup.contentItem.opacity, 1);
+        compare(content.opacity, 1, "the new content alone at the end");
+        compare(snapshot.visible, false);
+        const after = popup.height;
+        verify(after < before - 10, "a smaller card: " + before + " to " + after);
+        verify(heights.seen.some(h => h < before - 2 && h > after + 2), "by way of the heights between: "
+               + heights.seen.join(" "));
 
         const going = sampled(popup, "opacity");
         const sinking = sampled(popup, "lift");

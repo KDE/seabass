@@ -45,17 +45,30 @@ PanelPopup {
         NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic }
     }
 
-    // Shows another playlist. While open, the content fades out, changes
-    // and fades back in; closed, it simply takes the new one.
+    // Shows another playlist. While open, the two blend: a picture of
+    // the content shown is laid over it and fades out while the new
+    // content fades in beneath, and the card's height follows. Closed, it
+    // simply takes the new one. The picture is taken before anything
+    // changes, so the new content is set only once it is there.
     function showPlaylist(title, summary, rowCenter) {
         popup.nextTitle = title;
         popup.nextSummary = summary;
         popup.rowCenter = rowCenter;
-        if (popup.visible) {
-            contentSwitch.restart();
-        } else {
+        const shown = popup.visible && summaryContent.width > 0 && summaryContent.height > 0;
+        const grabbing = shown && summaryContent.grabToImage(result => {
             contentSwitch.stop();
-            popup.contentItem.opacity = 1;
+            contentSnapshot.source = result.url;
+            contentSnapshot.width = summaryContent.width;
+            contentSnapshot.height = summaryContent.height;
+            contentSnapshot.opacity = 1;
+            summaryContent.opacity = 0;
+            popup.applyNext();
+            contentSwitch.restart();
+        });
+        if (!grabbing) {
+            contentSwitch.stop();
+            contentSnapshot.opacity = 0;
+            summaryContent.opacity = 1;
             popup.applyNext();
         }
     }
@@ -65,16 +78,15 @@ PanelPopup {
         popup.title = popup.nextTitle;
         popup.summary = popup.nextSummary;
     }
-    SequentialAnimation {
+    ParallelAnimation {
         id: contentSwitch
         NumberAnimation {
-            target: popup.contentItem; property: "opacity"; to: 0
-            duration: Theme.shortTransitionDuration / 2; easing.type: Easing.InCubic
+            target: contentSnapshot; property: "opacity"; to: 0
+            duration: Theme.shortTransitionDuration; easing.type: Easing.InOutCubic
         }
-        ScriptAction { script: popup.applyNext() }
         NumberAnimation {
-            target: popup.contentItem; property: "opacity"; to: 1
-            duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic
+            target: summaryContent; property: "opacity"; to: 1
+            duration: Theme.shortTransitionDuration; easing.type: Easing.InOutCubic
         }
     }
     // "camelot" or "traditional", as the track list names keys.
@@ -176,6 +188,15 @@ PanelPopup {
     margins: Theme.pageMargin
     // Room for the BPM strip at its full width beside its labels.
     width: Theme.scaled(360)
+    // The card's height, following its content's: animated while open,
+    // so a switch to a playlist with more or less to say, or the details
+    // coming in, resizes it rather than jumping.
+    property real shownHeight: implicitHeight
+    Behavior on shownHeight {
+        enabled: popup.opened
+        NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic }
+    }
+    height: popup.shownHeight
     modal: false
     dim: false
     focus: false
@@ -218,376 +239,398 @@ PanelPopup {
         HoverHandler { id: popupHover }
     }
 
-    contentItem: ColumnLayout {
-        spacing: Theme.sectionSpacing
+    // The content, and over it while a switch blends, a picture of the
+    // content it replaces fading out as the new fades in. Clipped: the
+    // card's height follows the content's, animated, and the content is
+    // already its new size while the card catches up.
+    contentItem: Item {
+        id: contentFrame
+        implicitWidth: summaryContent.implicitWidth
+        implicitHeight: summaryContent.implicitHeight
+        clip: true
         HoverHandler { id: contentHover }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
+        ColumnLayout {
+            id: summaryContent
+            objectName: "summaryContent"
+            width: parent.width
+            spacing: Theme.sectionSpacing
 
-            PlaylistCoverMosaic {
-                objectName: "coverMosaic"
-                Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: implicitWidth
-                Layout.preferredHeight: implicitHeight
-                covers: popup.summary.artwork || []
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignTop
-                spacing: Theme.tightSpacing
-
-                Label {
-                    objectName: "summaryTitle"
-                    Layout.fillWidth: true
-                    text: popup.title
-                    font.bold: true
-                    font.pointSize: Theme.cardTitleSize
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "summaryCount"
-                    text: popup.count === 1 ? "1 track" : popup.count + " tracks"
-                    color: Theme.textMuted
-                }
-                Label {
-                    objectName: "summaryDuration"
-                    visible: (popup.summary.totalDurationSeconds || 0) > 0
-                    text: popup.duration(popup.summary.totalDurationSeconds || 0)
-                    font.family: Theme.dataFamily
-                }
-            }
-        }
-
-        // One caption column, one value column: BPM, cue points, keys.
-        GridLayout {
-            Layout.fillWidth: true
-            visible: popup.count > 0
-            columns: 2
-            columnSpacing: Theme.rowSpacing
-            rowSpacing: Theme.tightSpacing
-
-            Label {
-                Layout.alignment: Qt.AlignTop
-                visible: bpmHeat.visible
-                text: "BPM"
-                color: Theme.textMuted
-            }
-            // The range as a strip, lowest at the left: where the
-            // playlist's tempos sit, and where most of them do.
-            ColumnLayout {
-                id: bpmHeat
-                objectName: "bpmHeat"
-                visible: popup.bpmBins.length > 0
-                spacing: Theme.tightSpacing / 2
-                readonly property bool oneValue: popup.formatBpm(popup.summary.bpmMin || 0)
-                    === popup.formatBpm(popup.summary.bpmMax || 0)
-                RowLayout {
-                    spacing: Theme.tightSpacing
-                    Label {
-                        objectName: "bpmMinLabel"
-                        text: popup.formatBpm(popup.summary.bpmMin || 0)
-                        font.family: Theme.dataFamily
-                        font.pointSize: Theme.fontSmall
-                    }
-                    Item {
-                        id: bpmStrip
-                        objectName: "bpmStrip"
-                        Layout.alignment: Qt.AlignVCenter
-                        implicitWidth: Theme.scaled(160)
-                        implicitHeight: Theme.scaled(12)
-                        Repeater {
-                            model: popup.bpmBins
-                            delegate: Rectangle {
-                                required property var modelData
-                                required property int index
-                                objectName: "bpmBin"
-                                readonly property int count: modelData.count
-                                x: Math.round(index * bpmStrip.width / popup.bpmBins.length)
-                                width: Math.round((index + 1) * bpmStrip.width / popup.bpmBins.length) - x
-                                height: bpmStrip.height
-                                color: popup.binColor(count)
-                            }
-                        }
-                        // The pointer over the strip: the bin under it is
-                        // outlined, and a label just above the pointer
-                        // gives its tempo and how many tracks sit there.
-                        // At once and following the pointer, not a
-                        // ToolTip with its delay. The strip lies inside
-                        // the popup's content, so resting here is resting
-                        // in the popup.
-                        //
-                        // Read from the content's own HoverHandler, not
-                        // one of the strip's: under org.kde.desktop a
-                        // handler on the strip never heard the pointer,
-                        // while the content's, which the popup already
-                        // relies on, always does.
-                        readonly property point pointer: contentHover.hovered
-                            ? bpmStrip.mapFromItem(popup.contentItem, contentHover.point.position.x,
-                                                   contentHover.point.position.y)
-                            : Qt.point(-1, -1)
-                        readonly property bool pointerOn: popup.bpmBins.length > 0
-                            && pointer.x >= 0 && pointer.x < bpmStrip.width
-                            && pointer.y >= 0 && pointer.y < bpmStrip.height
-                        readonly property int hoveredBin: bpmStrip.pointerOn
-                            ? Math.max(0, Math.min(popup.bpmBins.length - 1,
-                                                   Math.floor(pointer.x / bpmStrip.width * popup.bpmBins.length)))
-                            : -1
-                        Rectangle {
-                            objectName: "bpmBinOutline"
-                            visible: bpmStrip.hoveredBin >= 0
-                            readonly property int bin: bpmStrip.hoveredBin
-                            x: Math.round(Math.max(0, bin) * bpmStrip.width / Math.max(1, popup.bpmBins.length))
-                            width: Math.round((Math.max(0, bin) + 1) * bpmStrip.width / Math.max(1, popup.bpmBins.length)) - x
-                            height: bpmStrip.height
-                            color: "transparent"
-                            border.color: Theme.text
-                            border.width: 1
-                        }
-                        Rectangle {
-                            objectName: "bpmHoverLabel"
-                            visible: bpmStrip.hoveredBin >= 0
-                            z: 1
-                            readonly property var bin: bpmStrip.hoveredBin >= 0 ? popup.bpmBins[bpmStrip.hoveredBin] : null
-                            readonly property string text: bin === null ? ""
-                                : popup.binLabel(bin.bpm) + ", "
-                                  + (bin.count === 0 ? "none" : bin.count === 1 ? "1 track" : bin.count + " tracks")
-                            x: Math.round(bpmStrip.pointer.x - width / 2)
-                            y: -height - Theme.tightSpacing / 2
-                            width: hoverText.implicitWidth + Theme.tightSpacing * 2
-                            height: hoverText.implicitHeight + Theme.tightSpacing
-                            radius: Theme.cornerRadius
-                            color: Theme.groupBackground
-                            border.color: Theme.border
-                            border.width: 1
-                            Label {
-                                id: hoverText
-                                anchors.centerIn: parent
-                                text: parent.text
-                                font.family: Theme.dataFamily
-                                font.pointSize: Theme.fontSmall
-                            }
-                        }
-                    }
-                    Label {
-                        objectName: "bpmMaxLabel"
-                        visible: !bpmHeat.oneValue
-                        text: popup.formatBpm(popup.summary.bpmMax || 0)
-                        font.family: Theme.dataFamily
-                        font.pointSize: Theme.fontSmall
-                    }
-                }
-                Label {
-                    objectName: "bpmPeakLabel"
-                    visible: popup.bpmBins.length > 1
-                    text: "Most at " + popup.binLabel(popup.summary.bpmPeak || 0)
-                    color: Theme.textMuted
-                    font.pointSize: Theme.fontSmall
-                }
-            }
-
-            Label {
-                text: "Cue points"
-                color: Theme.textMuted
-            }
-            Label {
-                objectName: "summaryCues"
-                text: (popup.summary.withCues || 0) + " with, " + (popup.summary.withoutCues || 0) + " without"
-                font.family: Theme.dataFamily
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignTop
-                text: "Keys"
-                color: Theme.textMuted
-            }
             RowLayout {
+                Layout.fillWidth: true
                 spacing: Theme.rowSpacing
 
-                Canvas {
-                    id: keyPie
-                    objectName: "keyPie"
+                PlaylistCoverMosaic {
+                    objectName: "coverMosaic"
                     Layout.alignment: Qt.AlignTop
-                    Layout.preferredWidth: Theme.scaled(64)
-                    Layout.preferredHeight: Theme.scaled(64)
+                    Layout.preferredWidth: implicitWidth
+                    Layout.preferredHeight: implicitHeight
+                    covers: popup.summary.artwork || []
+                }
 
-                    // [{count, color}], round the wheel from twelve o'clock.
-                    readonly property var slices: popup.keys.map(entry => ({count: entry.count,
-                                                                           color: Theme.colorForKey(entry.camelot)}))
-                    readonly property int total: slices.reduce((sum, slice) => sum + slice.count, 0)
-                    // Tests wait on this: a Canvas paints a frame or more
-                    // after it is asked to.
-                    property int paintedCount: 0
-                    onPainted: keyPie.paintedCount += 1
-                    onSlicesChanged: requestPaint()
-                    onWidthChanged: requestPaint()
-                    onHeightChanged: requestPaint()
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: Theme.tightSpacing
 
-                    // As CueCoveragePie draws its two slices: filled
-                    // wedges, and the edges between them cut out of the
-                    // disc rather than painted over.
-                    onPaint: {
-                        const ctx = getContext("2d");
-                        ctx.reset();
-                        const cx = width / 2;
-                        const cy = height / 2;
-                        const r = Math.max(0, Math.min(width, height) / 2 - 1);
-                        if (r <= 0 || keyPie.total === 0) {
-                            return;
+                    Label {
+                        objectName: "summaryTitle"
+                        Layout.fillWidth: true
+                        text: popup.title
+                        font.bold: true
+                        font.pointSize: Theme.cardTitleSize
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "summaryCount"
+                        text: popup.count === 1 ? "1 track" : popup.count + " tracks"
+                        color: Theme.textMuted
+                    }
+                    Label {
+                        objectName: "summaryDuration"
+                        visible: (popup.summary.totalDurationSeconds || 0) > 0
+                        text: popup.duration(popup.summary.totalDurationSeconds || 0)
+                        font.family: Theme.dataFamily
+                    }
+                }
+            }
+
+            // One caption column, one value column: BPM, cue points, keys.
+            GridLayout {
+                Layout.fillWidth: true
+                visible: popup.count > 0
+                columns: 2
+                columnSpacing: Theme.rowSpacing
+                rowSpacing: Theme.tightSpacing
+
+                Label {
+                    Layout.alignment: Qt.AlignTop
+                    visible: bpmHeat.visible
+                    text: "BPM"
+                    color: Theme.textMuted
+                }
+                // The range as a strip, lowest at the left: where the
+                // playlist's tempos sit, and where most of them do.
+                ColumnLayout {
+                    id: bpmHeat
+                    objectName: "bpmHeat"
+                    visible: popup.bpmBins.length > 0
+                    spacing: Theme.tightSpacing / 2
+                    readonly property bool oneValue: popup.formatBpm(popup.summary.bpmMin || 0)
+                        === popup.formatBpm(popup.summary.bpmMax || 0)
+                    RowLayout {
+                        spacing: Theme.tightSpacing
+                        Label {
+                            objectName: "bpmMinLabel"
+                            text: popup.formatBpm(popup.summary.bpmMin || 0)
+                            font.family: Theme.dataFamily
+                            font.pointSize: Theme.fontSmall
                         }
-                        const top = -Math.PI / 2;
-                        const edges = [];
-                        let from = top;
-                        for (const slice of keyPie.slices) {
-                            const to = from + 2 * Math.PI * slice.count / keyPie.total;
-                            ctx.beginPath();
-                            ctx.moveTo(cx, cy);
-                            ctx.arc(cx, cy, r, from, to, false);
-                            ctx.closePath();
-                            ctx.fillStyle = slice.color;
-                            ctx.fill();
-                            edges.push(from);
-                            from = to;
+                        Item {
+                            id: bpmStrip
+                            objectName: "bpmStrip"
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: Theme.scaled(160)
+                            implicitHeight: Theme.scaled(12)
+                            Repeater {
+                                model: popup.bpmBins
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    required property int index
+                                    objectName: "bpmBin"
+                                    readonly property int count: modelData.count
+                                    x: Math.round(index * bpmStrip.width / popup.bpmBins.length)
+                                    width: Math.round((index + 1) * bpmStrip.width / popup.bpmBins.length) - x
+                                    height: bpmStrip.height
+                                    color: popup.binColor(count)
+                                }
+                            }
+                            // The pointer over the strip: the bin under it is
+                            // outlined, and a label just above the pointer
+                            // gives its tempo and how many tracks sit there.
+                            // At once and following the pointer, not a
+                            // ToolTip with its delay. The strip lies inside
+                            // the popup's content, so resting here is resting
+                            // in the popup.
+                            //
+                            // Read from the content's own HoverHandler, not
+                            // one of the strip's: under org.kde.desktop a
+                            // handler on the strip never heard the pointer,
+                            // while the content's, which the popup already
+                            // relies on, always does.
+                            readonly property point pointer: contentHover.hovered
+                                ? bpmStrip.mapFromItem(popup.contentItem, contentHover.point.position.x,
+                                                       contentHover.point.position.y)
+                                : Qt.point(-1, -1)
+                            readonly property bool pointerOn: popup.bpmBins.length > 0
+                                && pointer.x >= 0 && pointer.x < bpmStrip.width
+                                && pointer.y >= 0 && pointer.y < bpmStrip.height
+                            readonly property int hoveredBin: bpmStrip.pointerOn
+                                ? Math.max(0, Math.min(popup.bpmBins.length - 1,
+                                                       Math.floor(pointer.x / bpmStrip.width * popup.bpmBins.length)))
+                                : -1
+                            Rectangle {
+                                objectName: "bpmBinOutline"
+                                visible: bpmStrip.hoveredBin >= 0
+                                readonly property int bin: bpmStrip.hoveredBin
+                                x: Math.round(Math.max(0, bin) * bpmStrip.width / Math.max(1, popup.bpmBins.length))
+                                width: Math.round((Math.max(0, bin) + 1) * bpmStrip.width / Math.max(1, popup.bpmBins.length)) - x
+                                height: bpmStrip.height
+                                color: "transparent"
+                                border.color: Theme.text
+                                border.width: 1
+                            }
+                            Rectangle {
+                                objectName: "bpmHoverLabel"
+                                visible: bpmStrip.hoveredBin >= 0
+                                z: 1
+                                readonly property var bin: bpmStrip.hoveredBin >= 0 ? popup.bpmBins[bpmStrip.hoveredBin] : null
+                                readonly property string text: bin === null ? ""
+                                    : popup.binLabel(bin.bpm) + ", "
+                                      + (bin.count === 0 ? "none" : bin.count === 1 ? "1 track" : bin.count + " tracks")
+                                x: Math.round(bpmStrip.pointer.x - width / 2)
+                                y: -height - Theme.tightSpacing / 2
+                                width: hoverText.implicitWidth + Theme.tightSpacing * 2
+                                height: hoverText.implicitHeight + Theme.tightSpacing
+                                radius: Theme.cornerRadius
+                                color: Theme.groupBackground
+                                border.color: Theme.border
+                                border.width: 1
+                                Label {
+                                    id: hoverText
+                                    anchors.centerIn: parent
+                                    text: parent.text
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                }
+                            }
                         }
-                        if (keyPie.slices.length < 2) {
-                            return;
+                        Label {
+                            objectName: "bpmMaxLabel"
+                            visible: !bpmHeat.oneValue
+                            text: popup.formatBpm(popup.summary.bpmMax || 0)
+                            font.family: Theme.dataFamily
+                            font.pointSize: Theme.fontSmall
                         }
-                        ctx.globalCompositeOperation = "destination-out";
-                        ctx.strokeStyle = "black";
-                        ctx.lineWidth = Theme.chartSliceGap;
-                        ctx.lineCap = "butt";
-                        for (const angle of edges) {
-                            ctx.beginPath();
-                            ctx.moveTo(cx, cy);
-                            ctx.lineTo(cx + (r + 1) * Math.cos(angle), cy + (r + 1) * Math.sin(angle));
-                            ctx.stroke();
-                        }
-                        ctx.globalCompositeOperation = "source-over";
+                    }
+                    Label {
+                        objectName: "bpmPeakLabel"
+                        visible: popup.bpmBins.length > 1
+                        text: "Most at " + popup.binLabel(popup.summary.bpmPeak || 0)
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
                     }
                 }
 
-                // Swatch, key, count: the commonest keys, then how many
-                // more the pie holds.
-                ColumnLayout {
-                    objectName: "keyLegend"
-                    Layout.alignment: Qt.AlignTop
-                    spacing: Theme.tightSpacing / 2
+                Label {
+                    text: "Cue points"
+                    color: Theme.textMuted
+                }
+                Label {
+                    objectName: "summaryCues"
+                    text: (popup.summary.withCues || 0) + " with, " + (popup.summary.withoutCues || 0) + " without"
+                    font.family: Theme.dataFamily
+                }
 
-                    // The widest key name, so the counts line up.
-                    TextMetrics {
-                        id: keyWidth
-                        font.family: Theme.dataFamily
-                        text: popup.notation === "traditional" ? "F♯m" : "12A"
+                Label {
+                    Layout.alignment: Qt.AlignTop
+                    text: "Keys"
+                    color: Theme.textMuted
+                }
+                RowLayout {
+                    spacing: Theme.rowSpacing
+
+                    Canvas {
+                        id: keyPie
+                        objectName: "keyPie"
+                        Layout.alignment: Qt.AlignTop
+                        Layout.preferredWidth: Theme.scaled(64)
+                        Layout.preferredHeight: Theme.scaled(64)
+
+                        // [{count, color}], round the wheel from twelve o'clock.
+                        readonly property var slices: popup.keys.map(entry => ({count: entry.count,
+                                                                               color: Theme.colorForKey(entry.camelot)}))
+                        readonly property int total: slices.reduce((sum, slice) => sum + slice.count, 0)
+                        // Tests wait on this: a Canvas paints a frame or more
+                        // after it is asked to.
+                        property int paintedCount: 0
+                        onPainted: keyPie.paintedCount += 1
+                        onSlicesChanged: requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+
+                        // As CueCoveragePie draws its two slices: filled
+                        // wedges, and the edges between them cut out of the
+                        // disc rather than painted over.
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            const cx = width / 2;
+                            const cy = height / 2;
+                            const r = Math.max(0, Math.min(width, height) / 2 - 1);
+                            if (r <= 0 || keyPie.total === 0) {
+                                return;
+                            }
+                            const top = -Math.PI / 2;
+                            const edges = [];
+                            let from = top;
+                            for (const slice of keyPie.slices) {
+                                const to = from + 2 * Math.PI * slice.count / keyPie.total;
+                                ctx.beginPath();
+                                ctx.moveTo(cx, cy);
+                                ctx.arc(cx, cy, r, from, to, false);
+                                ctx.closePath();
+                                ctx.fillStyle = slice.color;
+                                ctx.fill();
+                                edges.push(from);
+                                from = to;
+                            }
+                            if (keyPie.slices.length < 2) {
+                                return;
+                            }
+                            ctx.globalCompositeOperation = "destination-out";
+                            ctx.strokeStyle = "black";
+                            ctx.lineWidth = Theme.chartSliceGap;
+                            ctx.lineCap = "butt";
+                            for (const angle of edges) {
+                                ctx.beginPath();
+                                ctx.moveTo(cx, cy);
+                                ctx.lineTo(cx + (r + 1) * Math.cos(angle), cy + (r + 1) * Math.sin(angle));
+                                ctx.stroke();
+                            }
+                            ctx.globalCompositeOperation = "source-over";
+                        }
                     }
+
+                    // Swatch, key, count: the commonest keys, then how many
+                    // more the pie holds.
+                    ColumnLayout {
+                        objectName: "keyLegend"
+                        Layout.alignment: Qt.AlignTop
+                        spacing: Theme.tightSpacing / 2
+
+                        // The widest key name, so the counts line up.
+                        TextMetrics {
+                            id: keyWidth
+                            font.family: Theme.dataFamily
+                            text: popup.notation === "traditional" ? "F♯m" : "12A"
+                        }
+                        Repeater {
+                            model: popup.topKeys
+                            delegate: RowLayout {
+                                required property var modelData
+                                objectName: "keyLegendEntry"
+                                spacing: Theme.tightSpacing
+                                Rectangle {
+                                    implicitWidth: Theme.chartSwatchSize
+                                    implicitHeight: Theme.chartSwatchSize
+                                    radius: 2
+                                    color: Theme.colorForKey(modelData.camelot)
+                                }
+                                Label {
+                                    objectName: "keyLegendKey"
+                                    Layout.minimumWidth: Math.ceil(keyWidth.advanceWidth)
+                                    text: popup.keyLabel(modelData)
+                                    font.family: Theme.dataFamily
+                                }
+                                Label {
+                                    objectName: "keyLegendCount"
+                                    text: modelData.count
+                                    font.family: Theme.dataFamily
+                                    color: Theme.textMuted
+                                }
+                            }
+                        }
+                        Label {
+                            objectName: "keyLegendMore"
+                            readonly property int more: popup.keys.length - popup.topKeys.length
+                            // Answered below once the popup has expanded.
+                            visible: more > 0 && !popup.expanded
+                            text: more === 1 ? "and 1 more" : "and " + more + " more"
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                        }
+                    }
+                }
+
+                // ---- What the pointer coming in reveals ----
+                Label {
+                    Layout.alignment: Qt.AlignTop
+                    visible: allKeys.visible
+                    text: "All keys"
+                    color: Theme.textMuted
+                }
+                Flow {
+                    id: allKeys
+                    objectName: "allKeys"
+                    Layout.fillWidth: true
+                    visible: popup.expanded && popup.keys.length > 0
+                    spacing: Theme.rowSpacing
                     Repeater {
-                        model: popup.topKeys
-                        delegate: RowLayout {
+                        model: popup.expanded ? popup.keys : []
+                        delegate: Row {
                             required property var modelData
-                            objectName: "keyLegendEntry"
-                            spacing: Theme.tightSpacing
+                            objectName: "allKeysEntry"
+                            spacing: Theme.tightSpacing / 2
+                            readonly property string label: popup.keyLabel(modelData) + " " + modelData.count
                             Rectangle {
-                                implicitWidth: Theme.chartSwatchSize
-                                implicitHeight: Theme.chartSwatchSize
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Theme.chartSwatchSize
+                                height: Theme.chartSwatchSize
                                 radius: 2
                                 color: Theme.colorForKey(modelData.camelot)
                             }
                             Label {
-                                objectName: "keyLegendKey"
-                                Layout.minimumWidth: Math.ceil(keyWidth.advanceWidth)
                                 text: popup.keyLabel(modelData)
                                 font.family: Theme.dataFamily
                             }
                             Label {
-                                objectName: "keyLegendCount"
                                 text: modelData.count
                                 font.family: Theme.dataFamily
                                 color: Theme.textMuted
                             }
                         }
                     }
-                    Label {
-                        objectName: "keyLegendMore"
-                        readonly property int more: popup.keys.length - popup.topKeys.length
-                        // Answered below once the popup has expanded.
-                        visible: more > 0 && !popup.expanded
-                        text: more === 1 ? "and 1 more" : "and " + more + " more"
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                    }
+                }
+
+                Label {
+                    visible: longestLabel.visible
+                    text: "Longest"
+                    color: Theme.textMuted
+                }
+                Label {
+                    id: longestLabel
+                    objectName: "longestTrack"
+                    Layout.fillWidth: true
+                    visible: popup.expanded && text.length > 0
+                    text: popup.trackLine(popup.summary.longest)
+                    elide: Text.ElideRight
+                }
+                Label {
+                    visible: shortestLabel.visible
+                    text: "Shortest"
+                    color: Theme.textMuted
+                }
+                Label {
+                    id: shortestLabel
+                    objectName: "shortestTrack"
+                    Layout.fillWidth: true
+                    // One track is its own longest and shortest: said once.
+                    visible: popup.expanded && text.length > 0 && popup.count > 1
+                    text: popup.trackLine(popup.summary.shortest)
+                    elide: Text.ElideRight
                 }
             }
+        }
 
-            // ---- What the pointer coming in reveals ----
-            Label {
-                Layout.alignment: Qt.AlignTop
-                visible: allKeys.visible
-                text: "All keys"
-                color: Theme.textMuted
-            }
-            Flow {
-                id: allKeys
-                objectName: "allKeys"
-                Layout.fillWidth: true
-                visible: popup.expanded && popup.keys.length > 0
-                spacing: Theme.rowSpacing
-                Repeater {
-                    model: popup.expanded ? popup.keys : []
-                    delegate: Row {
-                        required property var modelData
-                        objectName: "allKeysEntry"
-                        spacing: Theme.tightSpacing / 2
-                        readonly property string label: popup.keyLabel(modelData) + " " + modelData.count
-                        Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: Theme.chartSwatchSize
-                            height: Theme.chartSwatchSize
-                            radius: 2
-                            color: Theme.colorForKey(modelData.camelot)
-                        }
-                        Label {
-                            text: popup.keyLabel(modelData)
-                            font.family: Theme.dataFamily
-                        }
-                        Label {
-                            text: modelData.count
-                            font.family: Theme.dataFamily
-                            color: Theme.textMuted
-                        }
-                    }
-                }
-            }
-
-            Label {
-                visible: longestLabel.visible
-                text: "Longest"
-                color: Theme.textMuted
-            }
-            Label {
-                id: longestLabel
-                objectName: "longestTrack"
-                Layout.fillWidth: true
-                visible: popup.expanded && text.length > 0
-                text: popup.trackLine(popup.summary.longest)
-                elide: Text.ElideRight
-            }
-            Label {
-                visible: shortestLabel.visible
-                text: "Shortest"
-                color: Theme.textMuted
-            }
-            Label {
-                id: shortestLabel
-                objectName: "shortestTrack"
-                Layout.fillWidth: true
-                // One track is its own longest and shortest: said once.
-                visible: popup.expanded && text.length > 0 && popup.count > 1
-                text: popup.trackLine(popup.summary.shortest)
-                elide: Text.ElideRight
-            }
+        Image {
+            id: contentSnapshot
+            objectName: "contentSnapshot"
+            visible: opacity > 0
+            opacity: 0
+            smooth: true
         }
     }
 }
