@@ -1781,6 +1781,15 @@ Page {
         id: trackDrag
         objectName: "trackDragItem"
         keyNotation: root.appSettingsController.keyNotation
+        // Over the track list the card and the gap are one thing: while
+        // the pointer waits out the gap's delay the card says to hold; once
+        // the gap is open the faded row in it ("Move track here") is where
+        // the track lands, and the card stands back, smaller and dimmed,
+        // as the pointer. Only for a place that moves it: the gaps either
+        // side of its own row say nothing.
+        hint: dropGap.gapIndex < 0 && dropGap.hovering && dropGap.applies && dropGap.toIndexFor(dropGap.pending) >= 0
+            ? qsTr("Hold to move it here") : ""
+        dimmed: dropGap.gapIndex >= 0
         // Staged like an "Add to" from the row menu; Save writes it.
         onAddChosen: playlist => root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath,
                                                                             playlist, trackDrag.filePath, trackDrag.title)

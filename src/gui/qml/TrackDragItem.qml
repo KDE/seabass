@@ -42,6 +42,14 @@ Rectangle {
 
     property string keyNotation: "camelot"
 
+    // What letting go here would do, said on the card while it is dragged
+    // ("Hold to move it here" over the track list); empty, nothing said.
+    // And whether the card stands back: once a gap in the list is open,
+    // the faded row in it is where the track goes, and the card is only
+    // the pointer.
+    property string hint: ""
+    property bool dimmed: false
+
     // "idle" (not shown), "dragging", "confirming" (dropped, asking) or
     // "closing" (fading out).
     readonly property string phase: internal.phase
@@ -189,12 +197,27 @@ Rectangle {
 
     // Scaled about the pointer, so the card grows out from under it and
     // what the drop targets see (the hot spot) never moves.
-    transform: Scale {
-        id: plopScale
-        origin.x: card.Drag.hotSpot.x
-        origin.y: card.Drag.hotSpot.y
-        xScale: card.plop
-        yScale: card.plop
+    // Standing back, it also shrinks towards the pointer, off the faded
+    // row it would otherwise cover.
+    transform: [
+        Scale {
+            id: plopScale
+            origin.x: card.Drag.hotSpot.x
+            origin.y: card.Drag.hotSpot.y
+            xScale: card.plop
+            yScale: card.plop
+        },
+        Scale {
+            origin.x: card.Drag.hotSpot.x
+            origin.y: card.Drag.hotSpot.y
+            xScale: card.standBack
+            yScale: card.standBack
+        }
+    ]
+    readonly property real standBackScale: 0.6
+    property real standBack: card.dragging && card.dimmed ? card.standBackScale : 1
+    Behavior on standBack {
+        NumberAnimation { duration: Theme.shortTransitionDuration }
     }
     property real plop: 1
 
@@ -256,6 +279,10 @@ Rectangle {
         x: Theme.tightSpacing
         y: Theme.tightSpacing
         spacing: Theme.tightSpacing
+        opacity: card.dragging && card.dimmed ? 0.5 : 1
+        Behavior on opacity {
+            NumberAnimation { duration: Theme.shortTransitionDuration }
+        }
 
         // Browse's row, column for column, at its widths.
         RowLayout {
@@ -301,6 +328,15 @@ Rectangle {
                 objectName: "dragDuration"
                 text: card.formatDuration(card.durationSeconds)
             }
+        }
+
+        Label {
+            objectName: "dragHint"
+            visible: card.dragging && card.hint.length > 0
+            text: card.hint
+            color: Theme.textMuted
+            font.pointSize: Theme.fontSmall
+            Layout.alignment: Qt.AlignRight
         }
 
         // Once dropped: what the drop would do, as a choice.

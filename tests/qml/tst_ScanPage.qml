@@ -1147,6 +1147,75 @@ TestCase {
         cleanupExperimental();
     }
 
+    // The real drag over the playlist shown: held over the gap before the
+    // fourth row, the card says to hold, then the gap opens, the rows from
+    // there move down a row (the Translate on the real rows), and the card
+    // stands back. Let go there, the move is staged with
+    // the place the track takes, and the card fades as on any release
+    // that is not on a playlist: no question asked. Over a playlist row the
+    // gap never opens, however long the pointer waits.
+    function test_theRealDragReordersThePlaylistShown() {
+        const t = makeDragPage(true);
+        realAppSettings.hideStreamingTracks = false;
+        t.page.selectPlaylist(t.controller.playlistNames.indexOf("Held Playlist") + 1, "Held Playlist", false);
+        waitForRendering(t.page);
+        const gap = findChild(t.page, "playlistDropGap");
+        verify(gap.orderShown);
+        gap.hoverDelay = 400;
+        const row = t.list.itemAtIndex(0);
+        compare(row.title, "Held Track 1000");
+        const rowsY = [];
+        for (let i = 0; i < 6; ++i) {
+            rowsY.push(t.list.itemAtIndex(i).mapToItem(t.list, 0, 0).y);
+        }
+
+        // Over a playlist row first, for longer than the delay.
+        const target = playlistRow(t, "Held Reversed");
+        dragOnto(row, target);
+        compare(t.page.dragging, true);
+        tryCompare(target, "dropTarget", true);
+        wait(gap.hoverDelay * 3);
+        compare(gap.hovering, false, "the list hears nothing of a drag over the sidebar");
+        compare(gap.gapIndex, -1, "no gap over a playlist row");
+        compare(t.list.itemAtIndex(3).mapToItem(t.list, 0, 0).y, rowsY[3], "no row moved");
+        compare(findChild(t.card, "dragHint").visible, false);
+
+        // Then over the line between the third and fourth rows.
+        const line = t.list.itemAtIndex(3);
+        const at = line.mapToItem(row, grabPoint(line).x, 0);
+        for (let i = 1; i <= 3; ++i) {
+            mouseMove(row, at.x - 40 * (3 - i), at.y, 0, Qt.LeftButton);
+        }
+        mouseMove(row, at.x, at.y + 1, 0, Qt.LeftButton);
+        // A drag's moves reach the drop areas from the event loop.
+        tryVerify(() => !target.dropTarget, 2000, "the sidebar lets go of it over the list");
+        tryCompare(gap, "hovering", true);
+        compare(findChild(t.card, "dragHint").text, "Hold to move it here");
+        tryCompare(gap, "gapIndex", 3, 3000);
+        compare(findChild(t.card, "dragHint").visible, false, "the gap's own row says it now");
+        compare(t.card.dimmed, true);
+        for (let i = 0; i < 6; ++i) {
+            const shift = i >= 3 ? gap.rowHeight : 0;
+            tryCompare(t.list.itemAtIndex(i).transform[0], "y", shift, 2000, "row " + i + " shifted by " + shift);
+            compare(t.list.itemAtIndex(i).mapToItem(t.list, 0, 0).y, rowsY[i] + shift, "row " + i + " drawn there");
+        }
+        compare(findChild(t.page, "dropGapGhost").visible, true);
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "browse_reorder_real_drag");
+
+        mouseRelease(row, at.x, at.y + 1, Qt.LeftButton);
+        compare(JSON.stringify(t.fake.calls), JSON.stringify([["move", "/nonexistent/TESTSTICK/PIONEER",
+                "/nonexistent/TESTSTICK/Engine Library", "Held Playlist", "/nonexistent/HELD/Contents/held-1000.mp3",
+                "Held Track 1000", 2]]), "third place, counted without its own row");
+        compare(t.card.confirming, false, "the list's accept is no playlist drop");
+        tryCompare(t.card, "visible", false);
+        compare(gap.gapIndex, -1);
+        for (let i = 0; i < 6; ++i) {
+            tryCompare(t.list.itemAtIndex(i).transform[0], "y", 0, 2000);
+        }
+        cleanupExperimental();
+    }
+
     // A Matching result drags to a playlist as a Browse row does; a
     // streaming one does not.
     function test_aMatchingResultDragsToAPlaylist() {
