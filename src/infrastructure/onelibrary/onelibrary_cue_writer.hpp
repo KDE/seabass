@@ -331,6 +331,13 @@ public:
     // exactly the files it holds; sequenceNo from 1. Returns false when
     // the order is already that.
     bool reorderPlaylist(const std::string &playlistPath, const std::vector<std::string> &filePaths);
+    // The same by content row, for a file listed under more than one row:
+    // contentIds must be exactly the playlist's rows, each as often as
+    // now. What a move within a playlist writes (Browse).
+    bool reorderPlaylistContent(const std::string &playlistPath, const std::vector<int64_t> &contentIds);
+    // Every content row listing the file, oldest first (the ids
+    // playlistContent names); throws OneLibraryRowMissing when none does.
+    std::vector<int64_t> contentIdsForFile(const std::string &filePath);
 
     // Fills in a Clean Up survivor's missing bpm/key/artwork from
     // another copy in its duplicate group (see domain::

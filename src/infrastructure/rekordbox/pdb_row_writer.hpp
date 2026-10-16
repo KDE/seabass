@@ -362,6 +362,9 @@ public:
     // did moving a05 to the top of Q1. Returns false, writing nothing,
     // when the order is already that.
     bool reorderPlaylist(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
+    // playlistId's track ids in its order (entry_index), as many times as
+    // the playlist lists each: the order reorderPlaylist() is handed back.
+    std::vector<uint32_t> playlistTrackIds(uint32_t playlistId) const;
 
     // Bumps the sequence number for every page touched this session
     // (page.sequence <- the header's current sequence; then the header's

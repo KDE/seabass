@@ -4,6 +4,7 @@
 
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -28,6 +29,7 @@ constexpr const char *CreateLabel = "playlist-create";
 constexpr const char *DeleteLabel = "playlist-delete";
 constexpr const char *RemoveLabel = "playlist-remove";
 constexpr const char *AddLabel = "playlist-add";
+constexpr const char *MoveLabel = "playlist-move";
 
 std::string exportPdbOf(const std::string &pioneerRoot)
 {
@@ -128,6 +130,29 @@ std::vector<BackupTarget> backupsFor(const QStringList &libraries, const QString
         }
     }
     return targets;
+}
+
+// `order` (one library's copy of a playlist, by that library's ids) with
+// the one entry whose id is in `file` moved to `toIndex`, clamped to the
+// end. Nothing, with `why` saying so, when the copy holds the file not
+// exactly once.
+template<typename Id>
+std::optional<std::vector<Id>> movedOrder(const std::vector<Id> &order, const std::set<Id> &file, int toIndex,
+                                          const std::string &library, std::string &why)
+{
+    const auto held = std::count_if(order.begin(), order.end(), [&](Id id) { return file.count(id) > 0; });
+    if (held != 1) {
+        why = held == 0 ? library + "'s playlist does not hold the file"
+                        : library + "'s playlist holds the file " + std::to_string(held) + " times";
+        return std::nullopt;
+    }
+    std::vector<Id> moved = order;
+    const auto at = std::find_if(moved.begin(), moved.end(), [&](Id id) { return file.count(id) > 0; });
+    const Id id = *at;
+    moved.erase(at);
+    const size_t to = std::min(static_cast<size_t>(std::max(toIndex, 0)), moved.size());
+    moved.insert(moved.begin() + static_cast<std::ptrdiff_t>(to), id);
+    return moved;
 }
 
 }  // namespace
@@ -636,6 +661,168 @@ ChangeOutcome RemoveFromPlaylistChange::apply(SaveContext &ctx)
         return ChangeOutcome::skip();
     }
     ctx.log().record("playlist-remove: took \"" + m_filePath + "\" out of \"" + m_playlist + "\"");
+    return ChangeOutcome::success();
+}
+
+MoveInPlaylistChange::MoveInPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist,
+                                           std::string filePath, QString title, int toIndex, QStringList libraries)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
+      m_filePath(std::move(filePath)), m_title(std::move(title)), m_toIndex(toIndex), m_libraries(std::move(libraries))
+{
+}
+
+QString MoveInPlaylistChange::idFor(const std::string &playlist, const std::string &filePath)
+{
+    return QStringLiteral("addcue:move-in-playlist:") + QString::fromStdString(playlist) + QLatin1Char('|')
+           + QString::fromStdString(filePath);
+}
+
+QString MoveInPlaylistChange::id() const
+{
+    return idFor(m_playlist, m_filePath);
+}
+
+QString MoveInPlaylistChange::owner() const
+{
+    return QStringLiteral("addcue");
+}
+
+QString MoveInPlaylistChange::description() const
+{
+    return QStringLiteral("Move \"%1\" to position %2 in \"%3\"")
+        .arg(m_title)
+        .arg(m_toIndex + 1)
+        .arg(QString::fromStdString(m_playlist));
+}
+
+QString MoveInPlaylistChange::subject() const
+{
+    return m_title;
+}
+
+QString MoveInPlaylistChange::unit() const
+{
+    return QStringLiteral("playlist entries");
+}
+
+QString MoveInPlaylistChange::verb() const
+{
+    return QStringLiteral("moved");
+}
+
+QStringList MoveInPlaylistChange::formatsTouched() const
+{
+    return touched(m_libraries);
+}
+
+std::vector<BackupTarget> MoveInPlaylistChange::filesToBackup(SaveContext &) const
+{
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, MoveLabel);
+}
+
+ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
+{
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    int moved = 0;
+    std::vector<std::string> leftAlone;
+    try {
+        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, MoveLabel);
+            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            const auto playlist = pdbPlaylistId(rows, m_playlist);
+            const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
+            std::string why;
+            if (!playlist) {
+                leftAlone.push_back("rekordbox has no such playlist");
+            } else if (const auto order = movedOrder(rows.playlistTrackIds(*playlist),
+                                                     std::set<uint32_t>(ids.begin(), ids.end()), m_toIndex, "rekordbox", why)) {
+                if (rows.reorderPlaylist(*playlist, *order)) {
+                    if (!rows.commit()) {
+                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                    }
+                    session.noteItemApplied();
+                    ++moved;
+                } else {
+                    leftAlone.push_back("rekordbox has it there already");
+                }
+            } else {
+                leftAlone.push_back(why);
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), MoveLabel);
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            requireOneOneLibraryPlaylist(writer, m_playlist);
+            if (writer.playlistCountAtPath(m_playlist) == 0) {
+                leftAlone.push_back("OneLibrary has no such playlist");
+            } else {
+                std::vector<int64_t> file;
+                try {
+                    file = writer.contentIdsForFile(m_filePath);
+                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                    // No row for the file: the playlist cannot hold it,
+                    // which movedOrder says.
+                }
+                std::vector<int64_t> order;
+                for (const auto &[content, sequence] : writer.playlistContent(m_playlist)) {
+                    order.push_back(content);
+                }
+                std::string why;
+                if (const auto wanted =
+                        movedOrder(order, std::set<int64_t>(file.begin(), file.end()), m_toIndex, "OneLibrary", why)) {
+                    if (writer.reorderPlaylistContent(m_playlist, *wanted)) {
+                        ++moved;
+                    } else {
+                        leftAlone.push_back("OneLibrary has it there already");
+                    }
+                } else {
+                    leftAlone.push_back(why);
+                }
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("engine"))) {
+            const std::string engine = m_enginePath.toStdString();
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", engine, 1, MoveLabel);
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
+            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) == 0) {
+                leftAlone.push_back("Engine has no such playlist");
+            } else {
+                const auto ids =
+                    infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), session.realRoot(), m_filePath);
+                const auto order = infrastructure::engine::engineTrackIdsInPlaylist(session.writeRoot(), m_playlist);
+                std::string why;
+                if (const auto wanted =
+                        movedOrder(order, std::set<std::int64_t>(ids.begin(), ids.end()), m_toIndex, "Engine", why)) {
+                    // Engine orders by links, not numbers: the entry goes
+                    // after the one before its new place, or first.
+                    const auto at = std::find_if(wanted->begin(), wanted->end(), [&](std::int64_t id) {
+                        return std::find(ids.begin(), ids.end(), id) != ids.end();
+                    });
+                    const std::optional<std::int64_t> after =
+                        at == wanted->begin() ? std::nullopt : std::optional<std::int64_t>(*(at - 1));
+                    if (infrastructure::engine::moveInEnginePlaylist(session.writeRoot(), m_playlist, *at, after)) {
+                        session.noteItemApplied();
+                        ++moved;
+                    } else {
+                        leftAlone.push_back("Engine has it there already");
+                    }
+                } else {
+                    leftAlone.push_back(why);
+                }
+            }
+        }
+    } catch (const std::exception &e) {
+        return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    for (const auto &why : leftAlone) {
+        ctx.log().record("playlist-move: \"" + m_filePath + "\" not moved in \"" + m_playlist + "\" there: " + why);
+    }
+    if (moved == 0) {
+        ctx.log().record("playlist-move: \"" + m_filePath + "\" moved in \"" + m_playlist + "\" nowhere, skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record("playlist-move: moved \"" + m_filePath + "\" to position " + std::to_string(m_toIndex + 1) + " in \""
+                     + m_playlist + "\" in " + std::to_string(moved) + " libraries");
     return ChangeOutcome::success();
 }
 

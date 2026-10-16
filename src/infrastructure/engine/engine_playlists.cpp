@@ -969,4 +969,97 @@ bool removeFromEnginePlaylist(const std::string &engineLibraryPath, const std::s
     return true;
 }
 
+std::vector<std::int64_t> engineTrackIdsInPlaylist(const std::string &engineLibraryPath, const std::string &playlistPath)
+{
+    splitPlaylistPath(playlistPath);
+    PlaylistWriter db(engineLibraryPath);
+    const std::int64_t listId = uniquePlaylist(readPlaylistTree(db), playlistPath);
+    const auto order = listInOrder(listEntries(db, listId));
+    if (!order) {
+        throw std::runtime_error("engine: the entries of \"" + playlistPath + "\" do not form one chain");
+    }
+    return *order;
+}
+
+bool moveInEnginePlaylist(const std::string &engineLibraryPath, const std::string &playlistPath, std::int64_t trackId,
+                          std::optional<std::int64_t> afterTrackId)
+{
+    splitPlaylistPath(playlistPath);
+    PlaylistWriter db(engineLibraryPath);
+    const std::int64_t listId = uniquePlaylist(readPlaylistTree(db), playlistPath);
+    const auto entries = listEntries(db, listId);
+    const auto before = listInOrder(entries);
+    if (!before) {
+        throw std::runtime_error("engine: the entries of \"" + playlistPath
+                                 + "\" do not form one chain; refusing to move within it");
+    }
+    std::optional<std::int64_t> subject;
+    int held = 0;
+    for (const auto &[id, e] : entries) {
+        if (e.trackId == trackId) {
+            subject = id;
+            ++held;
+        }
+    }
+    if (held != 1) {
+        throw std::runtime_error("engine: \"" + playlistPath + "\" holds track id=" + std::to_string(trackId) + " "
+                                 + std::to_string(held) + " times, not once; refusing to move it");
+    }
+    if (afterTrackId && (*afterTrackId == trackId || std::count(before->begin(), before->end(), *afterTrackId) != 1)) {
+        throw std::runtime_error("engine: track id=" + std::to_string(*afterTrackId) + " is no anchor in \""
+                                 + playlistPath + "\" to move track id=" + std::to_string(trackId) + " after");
+    }
+
+    std::vector<std::int64_t> expected = *before;
+    std::erase(expected, trackId);
+    expected.insert(afterTrackId ? std::find(expected.begin(), expected.end(), *afterTrackId) + 1 : expected.begin(),
+                    trackId);
+    if (expected == *before) {
+        return false;
+    }
+
+    // Unlinked as trigger_before_delete_PlaylistEntity unlinks a deleted
+    // entry: the one pointing at it takes its next.
+    const std::int64_t entry = *subject;
+    db.run("UPDATE PlaylistEntity SET nextEntityId = ? WHERE listId = ? AND nextEntityId = ? AND id <> ?;",
+           {entries.at(entry).next, listId, entry, entry});
+    // Linked in again as playlist_entity_table::add links a new one: it
+    // takes the anchor's next (the head, to go first), and the entry that
+    // pointed there (the anchor; none for the head) points at it.
+    std::int64_t next = 0;
+    const auto now = listEntries(db, listId);
+    if (afterTrackId) {
+        for (const auto &[id, e] : now) {
+            if (e.trackId == *afterTrackId) {
+                next = e.next;
+                db.run("UPDATE PlaylistEntity SET nextEntityId = ? WHERE id = ?;", {entry, id});
+                break;
+            }
+        }
+    } else {
+        // The head of the list without the entry: the one nothing but the
+        // entry itself points at.
+        std::set<std::int64_t> pointedAt;
+        for (const auto &[id, e] : now) {
+            if (id != entry) {
+                pointedAt.insert(e.next);
+            }
+        }
+        for (const auto &[id, e] : now) {
+            if (id != entry && !pointedAt.count(id)) {
+                next = id;
+                break;
+            }
+        }
+    }
+    db.run("UPDATE PlaylistEntity SET nextEntityId = ? WHERE id = ?;", {next, entry});
+
+    if (listInOrder(listEntries(db, listId)) != expected) {
+        throw std::runtime_error("engine: \"" + playlistPath + "\" does not read back in the order asked after moving track id="
+                                 + std::to_string(trackId));
+    }
+    db.commit();
+    return true;
+}
+
 }  // namespace seabass::infrastructure::engine

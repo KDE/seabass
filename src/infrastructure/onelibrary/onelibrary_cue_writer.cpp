@@ -1263,6 +1263,19 @@ bool OneLibraryCueWriter::reorderPlaylist(const std::string &playlistPath, const
         }
         wanted.push_back(*member);
     }
+    return reorderPlaylistContent(playlistPath, wanted);
+}
+
+bool OneLibraryCueWriter::reorderPlaylistContent(const std::string &playlistPath, const std::vector<int64_t> &contentIds)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto id = playlistIdAtPath(db, playlistPath);
+    if (!id) {
+        throw std::runtime_error("onelibrary: no playlist \"" + playlistPath + "\"");
+    }
+    const std::vector<int64_t> now = contentOrder(db, *id);
+    const std::vector<int64_t> &wanted = contentIds;
     if (wanted == now) {
         return false;
     }
@@ -1298,6 +1311,11 @@ bool OneLibraryCueWriter::reorderPlaylist(const std::string &playlistPath, const
     }
     refreshStalenessBaseline();
     return true;
+}
+
+std::vector<int64_t> OneLibraryCueWriter::contentIdsForFile(const std::string &filePath)
+{
+    return contentIdsAt(verifyConnection(), toContentPath(m_stickRoot, filePath));
 }
 
 void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, const std::optional<int> &stars,
