@@ -78,6 +78,7 @@ TestCase {
                 pendingRevision++;
             }
             function isAdditionStaged(playlist, filePath) { return staged["a:" + playlist + "|" + filePath] === true; }
+            property string lastSavedSummary: ""
             function deletePlaylist(rekordboxPath, enginePath, playlist) {
                 calls.push(["delete", rekordboxPath, enginePath, playlist]);
                 staged["p:" + playlist] = true;
@@ -657,6 +658,41 @@ TestCase {
         compare(JSON.stringify(page.addTargetsFor(["Chill"], ["Fresh", "Chill"], "")),
                 JSON.stringify(["Fresh", "Chill"]), "a name on both lists once");
         compare(JSON.stringify(page.addTargetsFor(["Chill"], [], "Chill")), "[]");
+    }
+
+    // A save that landed whole is said over the list (ConfirmationToast,
+    // tested on its own), in the controller's words when it wrote playlist
+    // edits, the save's own otherwise; one that fell short is not (its
+    // summary dialog is).
+    function test_aCleanSaveIsSaidOverTheList() {
+        const page = makeEditingPage(true);
+        compare(findChild(page, "editHost").quietCleanSaves, true, "no summary dialog over the toast");
+        const toast = findChild(page, "savedToast");
+        const label = findChild(page, "confirmationToastLabel");
+        toast.duration = 400;
+        compare(toast.showing, false);
+        page.showSaved({written: 3, total: 3, skipped: 0, unit: "cues", verb: "added", error: "", cancelled: false});
+        compare(toast.showing, true);
+        compare(label.text, "3 cues added");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_saved_toast");
+        toast.dismiss();
+
+        page.playlistEditController.lastSavedSummary = "\"Peak\" saved: 2 tracks added";
+        page.showSaved({written: 2, total: 2, skipped: 0, unit: "playlist entries", verb: "added", error: "",
+                        cancelled: false});
+        compare(label.text, "\"Peak\" saved: 2 tracks added");
+        toast.dismiss();
+
+        page.showSaved({written: 1, total: 2, skipped: 1, unit: "playlist entries", verb: "added", error: "",
+                        cancelled: false});
+        compare(toast.showing, false, "a save that fell short gets the dialog, not the toast");
+        page.showSaved({written: 0, total: 0, skipped: 0, unit: "", verb: "", error: "", cancelled: false});
+        compare(toast.showing, false, "nothing written, nothing said");
+        page.showSaved({written: 2, total: 2, skipped: 0, unit: "playlist entries", verb: "added", error: "",
+                        warning: "the import counter could not be set", cancelled: false});
+        compare(toast.showing, false, "a warning is news the dialog carries");
+        cleanupExperimental();
     }
 
     function test_withoutExperimentalTracksHaveNoAddTo() {

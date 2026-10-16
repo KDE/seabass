@@ -77,12 +77,21 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
         if (m_session) {
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (m_staged.erase(changeId) > 0) {
+                    noteApplied(changeId);
                     forgetUnstagedNewPlaylists();
                     ++m_pendingRevision;
                     emit pendingChanged();
                 }
             });
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &summary) {
+                // Worded first: the page shows it when it hears of the save.
+                const QString described = describeApplied();
+                m_appliedKinds.clear();
+                m_appliedPlaylists.clear();
+                if (m_lastSavedSummary != described) {
+                    m_lastSavedSummary = described;
+                    emit lastSavedSummaryChanged();
+                }
                 if (summary.value("written").toInt() > 0) {
                     emit playlistsSaved();
                 }
@@ -436,6 +445,65 @@ void PlaylistEditController::onLookupFinished()
         done.then(where);
     }
     runNextLookup();
+}
+
+void PlaylistEditController::noteApplied(const QString &changeId)
+{
+    // "addcue:<kind>:<playlist>" or "addcue:<kind>:<playlist>|<file>".
+    const QStringList parts = changeId.split(QLatin1Char(':'));
+    if (parts.size() < 3) {
+        return;
+    }
+    const QString kind = parts.at(1);
+    const QString rest = parts.mid(2).join(QLatin1Char(':'));
+    ++m_appliedKinds[kind];
+    m_appliedPlaylists.insert(rest.section(QLatin1Char('|'), 0, 0));
+}
+
+QString PlaylistEditController::describeApplied() const
+{
+    if (m_appliedPlaylists.empty()) {
+        return {};
+    }
+    const auto tracks = [](int n, const char *verb) {
+        return QStringLiteral("%1 %2 %3").arg(n).arg(n == 1 ? QStringLiteral("track") : QStringLiteral("tracks"),
+                                                    QLatin1String(verb));
+    };
+    const bool one = m_appliedPlaylists.size() == 1;
+    const auto count = [&](const char *kind) {
+        const auto it = m_appliedKinds.find(QLatin1String(kind));
+        return it == m_appliedKinds.end() ? 0 : it->second;
+    };
+    // In the order a playlist's life runs, whatever order the save had.
+    QStringList parts;
+    if (const int n = count("create-playlist")) {
+        parts << (one ? QStringLiteral("created") : QStringLiteral("%1 created").arg(n));
+    }
+    if (const int n = count("add-to-playlist")) {
+        parts << tracks(n, "added");
+    }
+    if (const int n = count("move-in-playlist")) {
+        parts << tracks(n, "moved");
+    }
+    if (const int n = count("remove-from-playlist")) {
+        parts << tracks(n, "removed");
+    }
+    if (const int n = count("delete-playlist")) {
+        parts << (one ? QStringLiteral("deleted") : QStringLiteral("%1 deleted").arg(n));
+    }
+    int other = 0;
+    for (const auto &[kind, n] : m_appliedKinds) {
+        static const QStringList known{QStringLiteral("create-playlist"), QStringLiteral("add-to-playlist"),
+                                       QStringLiteral("move-in-playlist"), QStringLiteral("remove-from-playlist"),
+                                       QStringLiteral("delete-playlist")};
+        other += known.contains(kind) ? 0 : n;
+    }
+    if (other > 0) {
+        parts << QStringLiteral("%1 %2").arg(other).arg(other == 1 ? QStringLiteral("change") : QStringLiteral("changes"));
+    }
+    const QString head = one ? QStringLiteral("\"%1\" saved").arg(*m_appliedPlaylists.begin())
+                             : QStringLiteral("%1 playlists saved").arg(m_appliedPlaylists.size());
+    return head + QStringLiteral(": ") + parts.join(QStringLiteral(", "));
 }
 
 void PlaylistEditController::setBusy(bool busy)
