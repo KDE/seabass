@@ -368,6 +368,9 @@ ColumnLayout {
                     required property var modelData
                     name: modelData.name
                     count: modelData.count
+                    // The sidebar's thumbnails, the same per playlist.
+                    showsThumbnail: true
+                    thumbnailSource: (root.scanController.playlistThumbnails || {})[modelData.canonicalIndex === 0 ? "" : modelData.name] ?? ""
                     isCurrent: modelData.canonicalIndex === root.targetPlaylistIndex
                     // Sets this panel's own target only -- deliberately
                     // never touches Browse's own playlist filter (see

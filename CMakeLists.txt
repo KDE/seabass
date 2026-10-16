@@ -2591,6 +2591,16 @@ if(TARGET seabass_edit)
     target_include_directories(cover_cache_test PRIVATE src)
     target_link_libraries(cover_cache_test PRIVATE seabass_core Qt6::Core Qt6::Gui)
     add_test(NAME cover_cache_test COMMAND cover_cache_test)
+    # A playlist's thumbnail: composed from the covers through the cache,
+    # kept, read back, trimmed with the rest.
+    add_executable(playlist_thumbnail_test
+        src/gui/cover_cache.cpp
+        src/gui/playlist_thumbnail_provider.cpp
+        tests/playlist_thumbnail_test.cpp
+    )
+    target_include_directories(playlist_thumbnail_test PRIVATE src)
+    target_link_libraries(playlist_thumbnail_test PRIVATE seabass_core Qt6::Core Qt6::Gui Qt6::Quick)
+    add_test(NAME playlist_thumbnail_test COMMAND playlist_thumbnail_test)
     # And what it buys, against a real stick's covers, read-only: reads,
     # decoding, and the cache's next run and memory, timed apart.
     add_executable(cover_cache_timing src/gui/cover_cache.cpp tools/cover_cache_timing.cpp)

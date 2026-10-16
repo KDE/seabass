@@ -176,6 +176,7 @@ set(SEABASS_GUI_QML_FILES
     qml/PlaylistPickerCombo.qml
     qml/PlayerTrackRing.qml
     qml/PlaylistRowDelegate.qml
+    qml/PlaylistThumbnail.qml
     qml/PlaylistDropGap.qml
     qml/PlaylistListView.qml
     qml/TrackDragItem.qml
@@ -272,6 +273,8 @@ set(SEABASS_GUI_SOURCES
     drag_carrier.cpp
     cover_image_provider.hpp
     cover_image_provider.cpp
+    playlist_thumbnail_provider.hpp
+    playlist_thumbnail_provider.cpp
     settings_controller.hpp
     settings_controller.cpp
     app_settings_controller.hpp

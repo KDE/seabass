@@ -193,6 +193,13 @@ class ScanController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY playlistNamesChanged)
     Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY playlistNamesChanged)
+    // Each playlist's small cover for the sidebar, {name: source}, the
+    // library's own under "" for "All tracks": an
+    // "image://playlist-thumb/<id>" URL (PlaylistThumbnailProvider) made
+    // from the first four distinct covers in the playlist's own order, as
+    // the list's rows serve them (TrackListModel::artworkFor). "" for a
+    // playlist with no covers, whose row draws its neutral tile.
+    Q_PROPERTY(QVariantMap playlistThumbnails READ playlistThumbnails NOTIFY playlistNamesChanged)
     Q_PROPERTY(int totalTrackCount READ totalTrackCount NOTIFY playlistNamesChanged)
     // True between the two publications of a rekordbox scan: the list is
     // there, its cue counts are not yet. Sorting by cues meanwhile sorts
@@ -217,6 +224,7 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     QStringList playlistNames() const { return m_playlistNames; }
     QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
+    QVariantMap playlistThumbnails() const { return m_playlistThumbnails; }
     int totalTrackCount() const { return static_cast<int>(m_allTracks.size()); }
     bool cuesPending() const { return m_cuesPending; }
 
@@ -423,6 +431,11 @@ private:
     // The names and counts as scanned, before the aliases.
     QStringList m_scannedPlaylistNames;
     QVariantMap m_scannedPlaylistTrackCounts;
+    // By the name the catalog has (m_scannedPlaylistThumbnails) and by
+    // the name shown, renames applied (m_playlistThumbnails).
+    QVariantMap m_scannedPlaylistThumbnails;
+    QVariantMap m_playlistThumbnails;
+    void collectPlaylistThumbnails(const std::vector<domain::Track> &tracks);
     QVariantMap m_playlistAliases;
     // The aliases before their last change (the same after a scan).
     QVariantMap m_previousPlaylistAliases;

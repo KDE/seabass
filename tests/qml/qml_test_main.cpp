@@ -741,11 +741,16 @@ public:
     // told apart from the scan order and from a sort by title. withFiles
     // gives each track a file (one that is not there), which dragging a
     // track to a playlist needs; without, they are file-less rows.
-    Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false)
+    // artwork: the cover every rekordbox track names, presentArtwork()
+    // when empty, none at all for "none"; another one is a stick whose
+    // covers changed.
+    Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false,
+                              const QString &artwork = QString())
     {
         restore();
         auto gate = std::make_shared<Gate>();
-        const std::string present = presentArtwork().toStdString();
+        const std::string present = artwork == QLatin1String("none")
+            ? std::string() : (artwork.isEmpty() ? presentArtwork() : artwork).toStdString();
         const std::string missing = missingArtwork().toStdString();
         auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,

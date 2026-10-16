@@ -28,6 +28,21 @@ ComboBox {
     signal playlistPicked(int index, var modelData)
 
     textRole: "name"
+    // A model whose entries carry a `thumbnail` (a playlist's small cover,
+    // as ScanController.playlistThumbnails gives it) shows it on every
+    // row, left of the name; one without shows none.
+    readonly property bool showsThumbnails: {
+        const entries = root.model;
+        if (!entries || entries.length === undefined) {
+            return false;
+        }
+        for (let i = 0; i < entries.length; ++i) {
+            if (entries[i] && entries[i].thumbnail !== undefined) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // Typing while the popup is open (Sebastian's long lists): keys that
     // follow each other within typeAheadInterval build a filter, the list
@@ -211,6 +226,13 @@ ComboBox {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 6
+            PlaylistThumbnail {
+                visible: root.showsThumbnails
+                Layout.preferredWidth: implicitWidth
+                Layout.preferredHeight: implicitHeight
+                Layout.alignment: Qt.AlignVCenter
+                source: rowRoot.entry && rowRoot.entry.thumbnail ? rowRoot.entry.thumbnail : ""
+            }
             Label {
                 objectName: "pickerRowName"
                 text: root.textAt(rowRoot.sourceIndex)

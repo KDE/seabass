@@ -343,4 +343,26 @@ TestCase {
         }
         verify(looked > 4, what + ": rows looked at " + looked);
     }
+
+    // Entries that carry a thumbnail show it left of the name, on every
+    // row (an empty one as the neutral tile); a model without shows none.
+    function test_rowsShowThumbnailsWhenTheModelHasThem() {
+        const plain = createTemporaryObject(comboComponent, testCase, {model: testModel});
+        verify(!plain.showsThumbnails);
+        const withThumbs = [
+            {name: "All tracks", count: 42, thumbnail: browseFixture.colouredArtworkUrl("#c02020")},
+            {name: "Techno", count: 12, thumbnail: ""},
+        ];
+        const combo = createTemporaryObject(comboComponent, testCase, {model: withThumbs});
+        verify(combo.showsThumbnails);
+        mouseClick(combo);
+        tryVerify(() => combo.popup.visible && combo.popup.contentItem.itemAtIndex(1) !== null);
+        const first = combo.popup.contentItem.itemAtIndex(0);
+        const second = combo.popup.contentItem.itemAtIndex(1);
+        const tile = findChild(first, "playlistThumbnail").parent;
+        compare(tile.visible, true);
+        compare(findChild(first, "playlistThumbnail").source.toString(), withThumbs[0].thumbnail);
+        compare(findChild(second, "playlistThumbnailGlyph").visible, true, "no covers: the neutral tile");
+        combo.popup.close();
+    }
 }

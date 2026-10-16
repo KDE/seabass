@@ -42,6 +42,11 @@ Rectangle {
     // shows none in parentheses).
     property bool pendingRename: false
     readonly property bool tracksEdited: root.edited && !(root.pendingRename && root.countChange === 0)
+    // The playlist's small cover (ScanController.playlistThumbnails), left
+    // of its name, where the host shows them (showsThumbnail); "" draws
+    // the neutral tile, a playlist with no covers.
+    property bool showsThumbnail: false
+    property string thumbnailSource: ""
     signal picked()
     // Right click, or a long press on touch: Browse offers its playlist
     // menu here. The Matching page's combo ignores it.
@@ -94,6 +99,14 @@ Rectangle {
         // this the bar sat on top of the numbers.
         anchors.rightMargin: 8 + Theme.scaled(10)
         spacing: 6
+        PlaylistThumbnail {
+            objectName: "playlistThumbnailTile"
+            visible: root.showsThumbnail
+            Layout.preferredWidth: implicitWidth
+            Layout.preferredHeight: implicitHeight
+            Layout.alignment: Qt.AlignVCenter
+            source: root.showsThumbnail ? root.thumbnailSource : ""
+        }
         Label {
             objectName: "playlistRowName"
             text: root.name
@@ -105,6 +118,7 @@ Rectangle {
             color: root.pendingDelete || root.pendingNew || root.pendingRename ? Theme.textMuted : palette.windowText
         }
         Label {
+            objectName: "playlistRowCount"
             text: root.pendingNew ? (root.countChange > 0 ? qsTr("new (%1)").arg(root.countChange) : qsTr("new"))
                 : root.tracksEdited ? qsTr("%1 (%2)").arg(root.count).arg(root.count + root.countChange)
                 : root.count
