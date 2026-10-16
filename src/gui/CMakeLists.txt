@@ -341,6 +341,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/help-about.svg
     qml/icons/breeze/kt-check-data.svg
     qml/icons/breeze/link.svg
+    qml/icons/breeze/list-add.svg
     qml/icons/breeze/media-eject.svg
     qml/icons/breeze/media-flash-sd-mmc.svg
     qml/icons/breeze/media-playback-pause.svg

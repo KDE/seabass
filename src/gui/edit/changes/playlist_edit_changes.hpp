@@ -22,6 +22,40 @@ QStringList librariesWithPlaylist(const QString &pioneerRoot, const QString &eng
 // guess if it happens by Save.
 QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist);
 
+// The libraries the stick has at all, read now: "rekordbox" (an
+// export.pdb), "onelibrary", "engine" (an m.db). Where a new playlist
+// goes.
+QStringList librariesOnStick(const QString &pioneerRoot, const QString &enginePath);
+
+// Creates an empty playlist at the top level, last there, in every
+// library on the stick named, each through its own writer (#62's
+// reference export for the two rekordbox ones). A library that has a
+// playlist of that name by Save is left alone (made since, by the player
+// or rekordbox); nothing created anywhere is a skip.
+class CreatePlaylistChange : public PendingChange
+{
+public:
+    CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries);
+
+    static QString idFor(const std::string &playlist);
+
+    QString id() const override;
+    QString owner() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+private:
+    QString m_pioneerRoot;
+    QString m_enginePath;
+    std::string m_playlist;
+    QStringList m_libraries;
+};
+
 // Deletes a playlist (or a folder, with everything in it) from every
 // library on the stick that has it, each through its own writer, the way
 // rekordbox does it (#62). Tracks stay. Staged from Browse, so its owner

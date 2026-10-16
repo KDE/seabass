@@ -30,6 +30,12 @@ ListView {
     // pendingRevision moves.
     property var isPendingDelete: name => false
     property int pendingRevision: 0
+    // Creating a playlist (Browse, Experimental): the playlists staged to
+    // be created, shown after the stick's, and a last row that asks for a
+    // new one. Off, the list ends with the stick's playlists.
+    property bool canCreate: false
+    property var newPlaylists: []
+    signal createRequested()
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
@@ -58,6 +64,44 @@ ListView {
         onContextRequested: {
             if (index > 0) {
                 root.playlistContextRequested(modelData, this);
+            }
+        }
+    }
+
+    footer: Column {
+        width: root.width
+        visible: root.canCreate
+        height: visible ? implicitHeight : 0
+        Repeater {
+            model: root.canCreate ? root.newPlaylists : []
+            delegate: PlaylistRowDelegate {
+                required property string modelData
+                width: root.width
+                name: modelData
+                pendingNew: true
+                // Nothing to show until Save makes it; its menu takes it back.
+                onContextRequested: root.playlistContextRequested(modelData, this)
+            }
+        }
+        ItemDelegate {
+            objectName: "createPlaylistRow"
+            width: root.width
+            height: 32
+            leftPadding: 8
+            onClicked: root.createRequested()
+            contentItem: Row {
+                spacing: Theme.tightSpacing
+                SeabassIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconName: "list-add"
+                    size: Theme.iconSizeSmall * 0.75
+                    color: Theme.textMuted
+                }
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("Create new playlist")
+                    color: Theme.textMuted
+                }
             }
         }
     }

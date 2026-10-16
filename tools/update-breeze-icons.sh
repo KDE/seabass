@@ -95,5 +95,6 @@ actions/22/arrow-down.svg
 actions/22/arrow-up.svg
 actions/22/arrow-right.svg
 actions/22/checkmark.svg
+actions/22/list-add.svg
 status/22/dialog-warning.svg
 LIST

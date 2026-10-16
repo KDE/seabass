@@ -44,6 +44,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
         if (m_session) {
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (m_staged.erase(changeId) > 0) {
+                    forgetUnstagedNewPlaylists();
                     ++m_pendingRevision;
                     emit pendingChanged();
                 }
@@ -56,6 +57,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
                 if (!m_staged.empty()) {
                     m_staged.clear();
+                    m_newPlaylists.clear();
                     ++m_pendingRevision;
                     emit pendingChanged();
                 }
@@ -72,6 +74,60 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
         return false;
     }
     return true;
+}
+
+bool PlaylistEditController::createPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &name)
+{
+    setErrorMessage({});
+    const QString playlist = name.trimmed();
+    if (playlist.isEmpty()) {
+        setErrorMessage(QStringLiteral("A playlist needs a name."));
+        return false;
+    }
+    if (playlist.contains(QLatin1Char('/')) || playlist.contains(QLatin1Char(';'))) {
+        setErrorMessage(QStringLiteral("A playlist name cannot hold \"/\" or \";\"."));
+        return false;
+    }
+    if (!attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    const std::string path = playlist.toStdString();
+    if (m_staged.count(CreatePlaylistChange::idFor(path)) > 0) {
+        setErrorMessage(QStringLiteral("\"%1\" is already waiting to be created.").arg(playlist));
+        return false;
+    }
+    if (const QStringList having = librariesWithPlaylist(rekordboxPath, enginePath, path); !having.isEmpty()) {
+        setErrorMessage(QStringLiteral("There is already a playlist \"%1\" (in %2).").arg(playlist, displayNames(having)));
+        return false;
+    }
+    const QStringList libraries = librariesOnStick(rekordboxPath, enginePath);
+    if (libraries.isEmpty()) {
+        setErrorMessage(QStringLiteral("This stick has no library to add a playlist to."));
+        return false;
+    }
+    if (!m_session->stage(std::make_unique<CreatePlaylistChange>(rekordboxPath, enginePath, path, libraries))) {
+        return false;  // the session reported why (another page's edits)
+    }
+    m_staged.insert(CreatePlaylistChange::idFor(path));
+    m_newPlaylists << playlist;
+    ++m_pendingRevision;
+    emit pendingChanged();
+    return true;
+}
+
+void PlaylistEditController::dropNewPlaylist(const QString &name)
+{
+    unstage(CreatePlaylistChange::idFor(name.toStdString()));
+}
+
+bool PlaylistEditController::isNewPlaylistStaged(const QString &name) const
+{
+    return m_staged.count(CreatePlaylistChange::idFor(name.toStdString())) > 0;
+}
+
+void PlaylistEditController::forgetUnstagedNewPlaylists()
+{
+    m_newPlaylists.removeIf([this](const QString &name) { return !isNewPlaylistStaged(name); });
 }
 
 bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist)
@@ -138,6 +194,7 @@ void PlaylistEditController::unstage(const QString &changeId)
     if (m_session) {
         m_session->unstage(changeId);
     }
+    forgetUnstagedNewPlaylists();
     ++m_pendingRevision;
     emit pendingChanged();
 }

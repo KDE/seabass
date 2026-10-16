@@ -107,11 +107,17 @@ Page {
         property string playlist: ""
         readonly property bool staged: root.playlistEditController.pendingRevision >= 0
             && playlist.length > 0 && root.playlistEditController.isPlaylistStaged(playlist)
+        // One staged to be created: the menu takes the create back.
+        readonly property bool isNew: root.playlistEditController.pendingRevision >= 0
+            && playlist.length > 0 && root.playlistEditController.isNewPlaylistStaged(playlist)
         MenuItem {
             objectName: "deletePlaylistItem"
-            text: playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist...")
+            text: playlistMenu.isNew ? qsTr("Don't create this playlist")
+                : playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist...")
             onTriggered: {
-                if (playlistMenu.staged) {
+                if (playlistMenu.isNew) {
+                    root.playlistEditController.dropNewPlaylist(playlistMenu.playlist);
+                } else if (playlistMenu.staged) {
                     root.playlistEditController.keepPlaylist(playlistMenu.playlist);
                 } else {
                     deletePlaylistDialog.playlist = playlistMenu.playlist;
@@ -136,6 +142,48 @@ Page {
                 .arg(deletePlaylistDialog.playlist)
         }
         onAccepted: root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, deletePlaylistDialog.playlist)
+    }
+
+    // The list's last row: a name for a new, empty playlist, made in every
+    // library on the stick on Save.
+    Dialog {
+        id: createPlaylistDialog
+        objectName: "createPlaylistDialog"
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Create new playlist")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAboutToShow: newPlaylistNameField.text = ""
+        onOpened: newPlaylistNameField.forceActiveFocus()
+        Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
+            () => newPlaylistNameField.text.trim().length > 0)
+        ColumnLayout {
+            spacing: Theme.tightSpacing
+            Label {
+                Layout.preferredWidth: Math.min(implicitWidth, root.width * 0.6)
+                wrapMode: Text.Wrap
+                text: qsTr("It is made in every library on this stick. Nothing changes until you Save.")
+            }
+            TextField {
+                id: newPlaylistNameField
+                objectName: "newPlaylistNameField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Playlist name")
+                onAccepted: {
+                    if (text.trim().length > 0) {
+                        createPlaylistDialog.accept();
+                    }
+                }
+            }
+        }
+        onAccepted: root.playlistEditController.createPlaylist(root.rekordboxPath, root.enginePath,
+                                                               newPlaylistNameField.text)
+    }
+
+    function openCreatePlaylistDialog() {
+        if (root.playlistEditing) {
+            createPlaylistDialog.open();
+        }
     }
 
     Menu {
@@ -789,6 +837,10 @@ Page {
                 isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
                 pendingRevision: root.playlistEditController.pendingRevision
                 onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
+                canCreate: root.playlistEditing
+                newPlaylists: ("newPlaylists" in root.playlistEditController)
+                    ? root.playlistEditController.newPlaylists : []
+                onCreateRequested: root.openCreatePlaylistDialog()
             }
         }
 

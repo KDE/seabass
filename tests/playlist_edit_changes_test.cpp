@@ -300,6 +300,35 @@ int main(int argc, char **argv)
     }
     std::cout << "case 6 (an ambiguous playlist path is refused) OK\n";
 
+    // 7. A new playlist, "Fresh", made empty in all three, at the top
+    //    level and last there; asked again, every library has it: a skip.
+    {
+        assert(librariesOnStick(pioneerQ, libraryQ) == all);
+        assert(librariesOnStick(pioneerQ, QString()) == (QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
+        assert(librariesWithPlaylist(pioneerQ, libraryQ, "Fresh").isEmpty());
+        const auto result = save(std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Fresh", all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assert(librariesWithPlaylist(pioneerQ, libraryQ, "Fresh") == all);
+        infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+        uint32_t lastOrder = 0;
+        std::string last;
+        for (const auto &n : rows.playlistTree()) {
+            if (n.parentId == 0 && n.sortOrder >= lastOrder) {
+                lastOrder = n.sortOrder;
+                last = n.name;
+            }
+            assert(n.name != "Fresh" || (!n.isFolder && n.parentId == 0));
+        }
+        assert(last == "Fresh" && "export.pdb: last at the top level");
+        infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+        assert(w.playlistContent("Fresh").empty());
+        assert(engineMembers(library, "Fresh").empty());
+        const auto again = save(std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Fresh", all));
+        assert(again.skippedIds.size() == 1 && "every library has it: a skip");
+        assert(librariesWithSeveralPlaylists(pioneerQ, libraryQ, "Fresh").isEmpty() && "not made twice");
+    }
+    std::cout << "case 7 (a new playlist made in all three libraries, once) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;

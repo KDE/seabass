@@ -281,6 +281,31 @@ TestCase {
         compare(t.session.pendingCount, 0);
     }
 
+    // Browse's "Create new playlist" with the real controller: names it
+    // refuses, the one it stages listed until Save, made by Save in every
+    // library on the copy (so asking again is refused, naming them).
+    function test_aNewPlaylistIsMadeInEveryLibraryOnSave() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        verify(!browse.createPlaylist(t.pioneer, engine, "Playlist 000"), "a name the stick has");
+        verify(browse.errorMessage.indexOf("already a playlist") >= 0, browse.errorMessage);
+        verify(!browse.createPlaylist(t.pioneer, engine, "  "), "no name");
+        verify(!browse.createPlaylist(t.pioneer, engine, "AC/DC"), "a folder path");
+        compare(t.session.pendingCount, 0);
+        verify(browse.createPlaylist(t.pioneer, engine, "  Fresh Picks "), browse.errorMessage);
+        compare(JSON.stringify(browse.newPlaylists), JSON.stringify(["Fresh Picks"]), "trimmed");
+        verify(browse.isNewPlaylistStaged("Fresh Picks"));
+        verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "asked twice");
+        compare(t.session.pendingCount, 1);
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        compare(browse.newPlaylists.length, 0, "made, so no longer pending");
+        verify(!browse.createPlaylist(t.pioneer, engine, "Fresh Picks"), "the stick has it now");
+        compare(browse.errorMessage, "There is already a playlist \"Fresh Picks\" (in rekordbox, OneLibrary, Engine).");
+    }
+
     // Two rows staged; one's analysis file stops reading before the save.
     // The summary counts that row skipped and the other written.
     function test_aRowLeftAloneAtSaveTimeIsCountedSkipped() {
