@@ -23,6 +23,26 @@ MouseArea {
     // anything with the drag contract's fields.
     property var track: null
     readonly property bool draggable: area.trackDrag !== null && area.track !== null && area.trackDrag.canDrag(area.track)
+    // A press held this long shows the closed hand before anything moves:
+    // the track can be picked up. Longer than a click, shorter than a
+    // press and hold.
+    property int holdCursorDelay: 150
+    // Held down past that, or dragging.
+    property bool held: false
+    cursorShape: area.held ? Qt.ClosedHandCursor : Qt.ArrowCursor
+    Timer {
+        id: holdTimer
+        interval: area.holdCursorDelay
+        onTriggered: {
+            if (area.pressed && area.draggable) {
+                area.held = true;
+            }
+        }
+    }
+    onReleased: {
+        holdTimer.stop();
+        area.held = false;
+    }
 
     drag.target: area.draggable ? area.trackDrag : null
     // The card under the pointer from the start, where the drop targets
@@ -36,6 +56,7 @@ MouseArea {
     onPressed: mouse => {
         if (area.draggable) {
             area.trackDrag.arm(area.track, area, mouse.x, mouse.y);
+            holdTimer.restart();
         }
     }
     drag.onActiveChanged: {
@@ -43,13 +64,17 @@ MouseArea {
             return;
         }
         if (area.drag.active) {
+            area.held = true;
             area.trackDrag.start();
         } else {
+            area.held = false;
             area.trackDrag.release();
         }
     }
     // The grab taken away mid drag (a window losing the pointer): no drop.
     onCanceled: {
+        holdTimer.stop();
+        area.held = false;
         if (area.trackDrag && area.trackDrag.dragging) {
             area.trackDrag.close();
         }

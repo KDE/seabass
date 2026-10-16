@@ -50,6 +50,16 @@ ListView {
     // The playlists the dragged track is in: the shown one takes no drop
     // when it is among them.
     property var droppedTrackPlaylists: []
+    // The playlist a dragged track hovers right now, "" when none: the
+    // page's drag card says what the drop will do there.
+    property string hoveredDropTarget: ""
+    function noteDropTarget(name, over) {
+        if (over) {
+            root.hoveredDropTarget = name;
+        } else if (root.hoveredDropTarget === name) {
+            root.hoveredDropTarget = "";
+        }
+    }
     property string heldDropTarget: ""
     signal trackDropped(string name)
     signal createRequested()
@@ -83,7 +93,12 @@ ListView {
         name: modelData
         count: index === 0 ? root.scanController.totalTrackCount
             : (root.scanController.playlistTrackCounts[modelData] ?? 0)
-        isCurrent: ListView.isCurrentItem
+        // By the playlist shown, not ListView.isCurrentItem: a scan
+        // rebuilds the model, and the view then puts its current index
+        // back at the first row while the page keeps showing the playlist
+        // it opened on.
+        isCurrent: index === 0 ? root.shownPlaylist.length === 0 : modelData === root.shownPlaylist
+        onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
         pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
         pendingRename: index > 0 && root.pendingRevision >= 0 && root.isRenamed(modelData)
@@ -117,6 +132,7 @@ ListView {
                 pendingNew: true
                 countChange: root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
                 isCurrent: root.shownPlaylist === modelData
+                onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
                 // Shows the tracks staged into it; its menu takes it back.
                 onPicked: root.newPlaylistPicked(modelData)
                 acceptsTrackDrop: root.trackDropsEnabled

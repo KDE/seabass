@@ -653,7 +653,7 @@ ColumnLayout {
                         anchors.fill: parent
                         trackDrag: root.trackDrag
                         track: candidateDelegate.modelData
-                        cursorShape: parent.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        cursorShape: held ? Qt.ClosedHandCursor : parent.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: {
                             if (parent.playable) {
                                 root.playRequested(candidateDelegate.modelData);

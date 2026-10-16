@@ -1079,6 +1079,7 @@ Page {
             padding: 0
 
             PlaylistListView {
+                id: playlistSidebarList
                 objectName: "playlistList"
                 anchors.fill: parent
                 scanController: scanController
@@ -1330,6 +1331,7 @@ Page {
                     // (Experimental, see TrackDragArea).
                     TrackDragArea {
                         id: rowMouseArea
+                        objectName: "rowMouseArea"
                         anchors.fill: parent
                         trackDrag: root.trackDragCard
                         track: trackDelegate
@@ -1413,7 +1415,7 @@ Page {
                                 trackDrag: root.trackDragCard
                                 track: trackDelegate
                                 hoverEnabled: true
-                                cursorShape: trackDelegate.streamingSource.length === 0
+                                cursorShape: held ? Qt.ClosedHandCursor : trackDelegate.streamingSource.length === 0
                                     ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onClicked: {
                                     if (trackDelegate.streamingSource.length > 0) {
@@ -1921,7 +1923,12 @@ Page {
         // the track lands, and the card stands back, smaller and dimmed,
         // as the pointer. Only for a place that moves it: the gaps either
         // side of its own row say nothing.
-        hint: dropGap.gapIndex < 0 && dropGap.hovering && dropGap.applies && dropGap.toIndexFor(dropGap.pending) >= 0
+        // Over a playlist that takes the drop, the card says so (the row
+        // wears the outline too); over a place in the list that would
+        // move the track, the gap is the sign.
+        hint: playlistSidebarList.hoveredDropTarget.length > 0 && !trackDrag.confirming
+            ? qsTr("Drop to add to \"%1\"").arg(playlistSidebarList.hoveredDropTarget)
+            : dropGap.gapIndex < 0 && dropGap.hovering && dropGap.applies && dropGap.toIndexFor(dropGap.pending) >= 0
             ? qsTr("Hold to move it here") : ""
         dimmed: dropGap.gapIndex >= 0
         // Staged like an "Add to" from the row menu; Save writes it.
