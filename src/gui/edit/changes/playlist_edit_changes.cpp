@@ -32,14 +32,19 @@ constexpr const char *AddLabel = "playlist-add";
 constexpr const char *MoveLabel = "playlist-move";
 constexpr const char *RenameLabel = "playlist-rename";
 
+// Spelled one way, lexically_normal(): a root that arrives with '/' (a
+// QString from pathToQString) joined with fs::path's '\' on Windows read
+// C:/x/PIONEER\rekordbox\export.pdb, one file spelled unlike every other
+// mention of it. The backup plan already compares by normalizedPathKey();
+// the targets it lists are now spelled as their platform spells them.
 std::string exportPdbOf(const std::string &pioneerRoot)
 {
-    return pathToUtf8(pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb");
+    return pathToUtf8((pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb").lexically_normal());
 }
 
 std::string engineDbOf(const std::string &enginePath)
 {
-    return pathToUtf8(pathFromUtf8(enginePath) / "Database2" / "m.db");
+    return pathToUtf8((pathFromUtf8(enginePath) / "Database2" / "m.db").lexically_normal());
 }
 
 // Each node of a playlist tree (export.pdb's or OneLibrary's) with its
