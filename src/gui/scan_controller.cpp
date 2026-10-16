@@ -21,6 +21,7 @@
 #include "domain/camelot_key.hpp"
 #include "domain/track_matching.hpp"
 #include "domain/track_scope.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
 #include "application/phased_progress.hpp"
@@ -90,6 +91,8 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         return artworkFor(track);
     case FallbackArtworkPathRole:
         return fallbackArtworkFor(track);
+    case PendingAdditionRole:
+        return m_pendingAdditions.count(track.sourceId) > 0;
     case BpmRole:
         return track.bpm;
     case KeyRole:
@@ -142,6 +145,7 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {CommentRole, "comment"},
         {AlbumRole, "album"},
         {FallbackArtworkPathRole, "fallbackArtworkPath"},
+        {PendingAdditionRole, "pendingAddition"},
     };
 }
 
@@ -344,6 +348,7 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
             }
         }
         cancel.throwIfCancelled();
+        tracksResult.playlistPaths = playlistPathsIn(catalog, path.toStdString());
         tracksResult.cuesPending = cuesOutsideCatalog;
         tracksResult.generation = generation;
         emit relay->tracksRead(std::make_shared<ScanTaskResult>(std::move(tracksResult)));
@@ -546,6 +551,11 @@ void ScanController::publishTracks(ScanTaskResult &result)
             countByPlaylist[playlist.name]++;
         }
     }
+    // A playlist without tracks is still one: listed, at 0, so a new one
+    // shows up once it is made, and an emptied one does not vanish.
+    for (const auto &path : result.playlistPaths) {
+        uniquePlaylistNames.insert(path);
+    }
     m_playlistNames.clear();
     m_playlistTrackCounts.clear();
     for (const auto &name : uniquePlaylistNames) {
@@ -563,7 +573,6 @@ void ScanController::publishTracks(ScanTaskResult &result)
     // Before the list and before busy clears, so whatever reacts to
     // either already knows whether the cue counts it sees are final.
     setCuesPending(result.cuesPending);
-    emit playlistNamesChanged();
 
     // Playlist selection is catalog-specific (a name picked in one
     // format's playlist list may not exist, or mean the same thing, in
@@ -574,7 +583,13 @@ void ScanController::publishTracks(ScanTaskResult &result)
     // here used to leave the field showing a query no longer actually
     // applied. Keeping it applied here instead means the field's text
     // and the actually-filtered results never drift apart.
+    //
+    // Cleared BEFORE the names are announced: the page picks its playlist
+    // again in that signal (the one it showed last), and a clear after
+    // it threw that pick away, so the list showed every track under a
+    // sidebar that said otherwise.
     m_currentPlaylistFilter.clear();
+    emit playlistNamesChanged();
     applyFilters();
 
     setBusy(false);
@@ -595,6 +610,15 @@ void ScanController::publishCues(ScanTaskResult &result)
 void ScanController::filterByPlaylist(const QString &playlistName)
 {
     m_currentPlaylistFilter = playlistName;
+    applyFilters();
+}
+
+void ScanController::setPendingAdditions(const QVariantMap &additions)
+{
+    if (m_pendingAdditions == additions) {
+        return;
+    }
+    m_pendingAdditions = additions;
     applyFilters();
 }
 
@@ -724,8 +748,39 @@ void ScanController::applyFilters(bool inPlace)
     std::vector<domain::Track> result = m_allTracks;
     std::string playlistFilter = m_currentPlaylistFilter.toStdString();
 
+    std::set<std::string> pendingAdditions;
     if (!m_currentPlaylistFilter.isEmpty()) {
         result = domain::filterByScope(result, domain::TrackScope::playlist(playlistFilter));
+        // The tracks staged into it, after the ones it has, in the order
+        // they were added, as Save will write them.
+        const QStringList staged = m_pendingAdditions.value(m_currentPlaylistFilter).toStringList();
+        if (!staged.isEmpty()) {
+            int last = -1;
+            std::set<std::string> listed;
+            for (const auto &track : result) {
+                last = std::max(last, playlistPosition(track, playlistFilter).value_or(-1));
+                listed.insert(track.filePath);
+            }
+            for (const QString &file : staged) {
+                const std::string path = file.toStdString();
+                if (listed.count(path) > 0) {
+                    continue;
+                }
+                const auto it = std::find_if(m_allTracks.begin(), m_allTracks.end(),
+                                             [&](const domain::Track &t) { return t.filePath == path; });
+                if (it == m_allTracks.end()) {
+                    continue;
+                }
+                domain::Track track = *it;
+                domain::PlaylistMembership membership;
+                membership.name = playlistFilter;
+                membership.position = ++last;
+                track.playlists.push_back(membership);
+                listed.insert(path);
+                pendingAdditions.insert(track.sourceId);
+                result.push_back(std::move(track));
+            }
+        }
     }
 
     if (m_hideStreamingTracks) {
@@ -802,6 +857,7 @@ void ScanController::applyFilters(bool inPlace)
         return m_sortAscending ? lessAscending(a, b) : lessAscending(b, a);
     });
 
+    m_model.setPendingAdditions(std::move(pendingAdditions));
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {

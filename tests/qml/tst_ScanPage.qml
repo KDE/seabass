@@ -123,7 +123,86 @@ TestCase {
             property string filePath: "/nonexistent/a.mp3"
             property string title: "A Track"
             property string streamingSource: ""
+            property bool pendingAddition: false
         }
+    }
+
+    Component {
+        id: playlistRowComponent
+        PlaylistRowDelegate { index: 1; width: 240 }
+    }
+
+    // A playlist with tracks staged into or out of it: bold italics, and
+    // the count after Save in parentheses; a new one counts its tracks.
+    function test_anEditedPlaylistShowsItsNewCount() {
+        const row = createTemporaryObject(playlistRowComponent, testCase,
+                                          {name: "Peak", count: 12, edited: true, countChange: 1});
+        const labels = row.children[1].children;
+        compare(labels[0].font.bold, true);
+        compare(labels[0].font.italic, true);
+        compare(labels[1].text, "12 (13)");
+        row.countChange = -2;
+        compare(labels[1].text, "12 (10)");
+        row.edited = false;
+        compare(labels[1].text, "12");
+        compare(labels[0].font.bold, false);
+        row.pendingNew = true;
+        row.countChange = 2;
+        compare(labels[1].text, "new (2)");
+        row.countChange = 0;
+        compare(labels[1].text, "new");
+    }
+
+    // A Matching result's menu button opens Browse's row menu for it,
+    // Add to included; no "Remove from" for a track not in the playlist
+    // shown.
+    function test_aMatchingResultHasTheRowMenu() {
+        const page = makeEditingPage(true);
+        page.playlistEditController.newPlaylists = ["Chill"];
+        page.shownPlaylist = "Peak";
+        const menu = findChild(page, "trackMenu");
+        const matching = findChild(page, "matchingPage");
+        verify(matching !== null);
+        const candidate = {sourceId: "7", title: "Match", artist: "Someone", key: "8A", bpm: 124,
+                           filePath: "/nonexistent/m.mp3", streamingSource: "", artworkPath: "",
+                           fallbackArtworkPath: "", playlistNames: ["Other"]};
+        matching.menuRequested(candidate, page);
+        tryCompare(menu, "opened", true);
+        compare(menu.row, candidate);
+        compare(findChild(page, "removeFromPlaylistItem").visible, false, "not in Peak");
+        const addTo = findChild(page, "addToMenu");
+        compare(menu.itemAt(menu.count - 1).subMenu, addTo);
+        addTo.itemAt(0).triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[0]), JSON.stringify(["add",
+                "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Chill",
+                "/nonexistent/m.mp3", "Match"]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+        candidate.playlistNames = ["Peak"];
+        matching.menuRequested(candidate, page);
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "removeFromPlaylistItem").visible, true, "in Peak");
+        menu.close();
+        cleanupExperimental();
+    }
+
+    // A row shown in the playlist only because it is staged to be added:
+    // its menu takes the add back instead of offering a removal.
+    function test_aTrackStagedIntoThePlaylistShownCanBeTakenBack() {
+        const page = makeEditingPage(true);
+        const menu = findChild(page, "trackMenu");
+        const item = findChild(page, "removeFromPlaylistItem");
+        const row = createTemporaryObject(fakeRowComponent, testCase, {pendingAddition: true});
+        page.shownPlaylist = "Peak";
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, true);
+        compare(item.text, "Don't add to \"Peak\"");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[0]),
+                JSON.stringify(["keepOut", "Peak", "/nonexistent/a.mp3"]));
+        menu.close();
+        cleanupExperimental();
     }
 
     // Without Experimental: no playlist menu, and the row menu (Merge,
@@ -233,7 +312,8 @@ TestCase {
 
     // The list's last row, with Experimental on: it asks for a name, OK
     // only once there is one, and stages the create; the new playlist is
-    // listed until Save, and its menu takes it back.
+    // listed until Save, shows its staged tracks when clicked, and its
+    // menu takes it back.
     function test_theLastRowCreatesAPlaylist() {
         const page = makeEditingPage(true);
         const list = findChild(page, "playlistList");
@@ -265,6 +345,12 @@ TestCase {
                   5000, "the new one is listed above the create row");
         waitForRendering(page);
         saveScreenshot(page, "browse_new_playlist_pending");
+        // Clicked, it is the playlist shown (the tracks staged into it).
+        const pending = findChild(list, "createPlaylistRow").parent.children[0];
+        compare(pending.name, "Warm & Melodic 2");
+        mouseClick(pending);
+        compare(page.shownPlaylist, "Warm & Melodic 2");
+        tryCompare(pending, "isCurrent", true);
 
         const menu = findChild(page, "playlistMenu");
         page.openPlaylistMenu("Warm & Melodic 2", page);
@@ -338,6 +424,15 @@ TestCase {
         compare(fake.calls[2][3], "Chill");
         menu.close();
         cleanupExperimental();
+    }
+
+    function test_addToListsTheNewPlaylistsFirst() {
+        const page = makePage();
+        compare(JSON.stringify(page.addTargetsFor(["Chill", "Peak", "Warm"], ["Fresh"], "Peak")),
+                JSON.stringify(["Fresh", "Chill", "Warm"]));
+        compare(JSON.stringify(page.addTargetsFor(["Chill"], ["Fresh", "Chill"], "")),
+                JSON.stringify(["Fresh", "Chill"]), "a name on both lists once");
+        compare(JSON.stringify(page.addTargetsFor(["Chill"], [], "Chill")), "[]");
     }
 
     function test_withoutExperimentalTracksHaveNoAddTo() {

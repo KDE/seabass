@@ -26,6 +26,10 @@ Rectangle {
     // Staged to be created: in italics, "new" for a count, until Save
     // makes it.
     property bool pendingNew: false
+    // Tracks staged into or out of it: bold italics, and the count it
+    // will have after Save in parentheses.
+    property bool edited: false
+    property int countChange: 0
     signal picked()
     // Right click, or a long press on touch: Browse offers its playlist
     // menu here. The Matching page's combo ignores it.
@@ -71,11 +75,14 @@ Rectangle {
             Layout.fillWidth: true
             elide: Text.ElideRight
             font.strikeout: root.pendingDelete
-            font.italic: root.pendingNew
+            font.italic: root.pendingNew || root.edited
+            font.bold: root.edited
             color: root.pendingDelete || root.pendingNew ? Theme.textMuted : palette.windowText
         }
         Label {
-            text: root.pendingNew ? qsTr("new") : root.count
+            text: root.pendingNew ? (root.countChange > 0 ? qsTr("new (%1)").arg(root.countChange) : qsTr("new"))
+                : root.edited ? qsTr("%1 (%2)").arg(root.count).arg(root.count + root.countChange)
+                : root.count
             color: Qt.darker(Theme.textMuted, 1.3)
             font.pointSize: Theme.fontSmall
             horizontalAlignment: Text.AlignRight

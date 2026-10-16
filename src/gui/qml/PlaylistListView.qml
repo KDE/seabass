@@ -35,7 +35,15 @@ ListView {
     // new one. Off, the list ends with the stick's playlists.
     property bool canCreate: false
     property var newPlaylists: []
+    // Whether tracks are staged into or out of a playlist, and by how
+    // many its count changes at Save (read again on pendingRevision).
+    property var isEdited: name => false
+    property var trackCountChange: name => 0
+    // The playlist the page shows, so a new one picked is marked current.
+    property string shownPlaylist: ""
     signal createRequested()
+    // A playlist staged to be created was clicked.
+    signal newPlaylistPicked(string name)
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
@@ -60,6 +68,8 @@ ListView {
             : (root.scanController.playlistTrackCounts[modelData] ?? 0)
         isCurrent: ListView.isCurrentItem
         pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
+        edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
+        countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
         onPicked: root.playlistPicked(index, modelData)
         onContextRequested: {
             if (index > 0) {
@@ -79,7 +89,10 @@ ListView {
                 width: root.width
                 name: modelData
                 pendingNew: true
-                // Nothing to show until Save makes it; its menu takes it back.
+                countChange: root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
+                isCurrent: root.shownPlaylist === modelData
+                // Shows the tracks staged into it; its menu takes it back.
+                onPicked: root.newPlaylistPicked(modelData)
                 onContextRequested: root.playlistContextRequested(modelData, this)
             }
         }

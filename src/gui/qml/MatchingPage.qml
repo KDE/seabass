@@ -11,15 +11,12 @@ import SeabassGui
 // finds tracks compatible in key/BPM/
 // rating with whichever Browse row was last marked as the anchor (via
 // that row's own edit button), scoped to This Playlist -- a filter here
-// just like key/rating/BPM, not a separate write-target concept, so
-// every result is already a member and Before/After only ever moves it
-// to a new position (never inserts a track from elsewhere; see
-// findCompatibleTracks()'s own doc comment). The PREVIEW badge below is
-// deliberately separate from the page-level EXPERIMENTAL gate this whole
-// panel already sits behind: the search/filter side here is fully real,
-// only the actual Before/After write is a stub -- no format has a
-// playlist writer yet, so clicking one just reports previewStatus rather
-// than touching anything on disk.
+// just like key/rating/BPM, not a separate write-target concept (see
+// findCompatibleTracks()'s own doc comment). Each result has Browse's
+// row menu (menuRequested), so a match is added to a playlist from here
+// the way a Browse row is. The PREVIEW badge below is deliberately
+// separate from the page-level EXPERIMENTAL gate this whole panel
+// already sits behind.
 ColumnLayout {
     id: root
     required property var scanController
@@ -48,6 +45,9 @@ ColumnLayout {
     signal closeRequested()
     // A candidate's cover was clicked: play it, as a Browse row's cover does.
     signal playRequested(var candidate)
+    // A candidate's menu button was clicked: Browse opens its row menu
+    // for it there.
+    signal menuRequested(var candidate, Item at)
 
     spacing: 0
 
@@ -74,7 +74,6 @@ ColumnLayout {
     property var selectedKeyTiers: ["match", "relative", "harmonic"]
     property int minRating: 0
     property string resultQuery: ""
-    property string previewStatus: ""
     property var candidates: []
     // Driven by hovering a wedge or a legend row in a Camelot Wheel
     // popup opened from any KeyBadge on this panel (the anchor's own, or
@@ -146,11 +145,6 @@ ColumnLayout {
         }
         var oneDecimal = bpm.toFixed(1);
         return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
-    }
-
-    function previewNotSaved(action, trackTitle) {
-        root.previewStatus = "Preview: saving to the playlist isn't implemented yet. (" + action + " “"
-            + trackTitle + "”)";
     }
 
     // Additive toggle for the key-tier row: clicking a tier that isn't
@@ -256,8 +250,8 @@ ColumnLayout {
                         }
                         HoverHandler { id: previewBadgeHover }
                         ToolTip.visible: previewBadgeHover.hovered
-                        ToolTip.text: "Preview: finds compatible tracks for real, but Before/After doesn't "
-                            + "save to the playlist yet."
+                        ToolTip.text: "Preview: finds compatible tracks for real; ordering them in the "
+                            + "playlist is still to come."
                         ToolTip.delay: 300
                     }
                 }
@@ -570,17 +564,6 @@ ColumnLayout {
         }
     }
 
-    Label {
-        visible: root.previewStatus.length > 0
-        Layout.fillWidth: true
-        Layout.leftMargin: Theme.scaled(14)
-        Layout.rightMargin: Theme.scaled(14)
-        Layout.bottomMargin: Theme.scaled(6)
-        text: root.previewStatus
-        color: Theme.info
-        wrapMode: Text.WordWrap
-    }
-
     ListView {
         id: candidatesListView
         // Not draggable when everything already fits.
@@ -699,27 +682,17 @@ ColumnLayout {
                     ToolTip.text: "Track details"
                     onClicked: candidateInfoPopup.showFor(candidateDelegate.modelData)
                 }
+                // The same menu a Browse row has: merge, find matching
+                // tracks, add to a playlist.
                 IconToolButton {
-                    text: "Move before"
-                    iconName: "go-up"
-                    enabled: root.hasTarget
+                    id: candidateMenuButton
+                    objectName: "candidateMenuButton"
+                    text: "Track actions"
+                    iconName: "application-menu"
+                    Layout.preferredWidth: Theme.iconSizeSmall
                     ToolTip.visible: hovered
-                    // Always a move, never an insert: every candidate is
-                    // already a member of This Playlist by construction
-                    // now (see findCompatibleTracks() -- This Playlist is
-                    // a filter here, not just the write target).
-                    ToolTip.text: !root.hasTarget ? "Pick a playlist first"
-                        : "Move before “" + root.anchorTitle + "” in " + root.targetPlaylistName
-                    onClicked: root.previewNotSaved("moved before", candidateDelegate.modelData.title)
-                }
-                IconToolButton {
-                    text: "Move after"
-                    iconName: "go-down"
-                    enabled: root.hasTarget
-                    ToolTip.visible: hovered
-                    ToolTip.text: !root.hasTarget ? "Pick a playlist first"
-                        : "Move after “" + root.anchorTitle + "” in " + root.targetPlaylistName
-                    onClicked: root.previewNotSaved("moved after", candidateDelegate.modelData.title)
+                    ToolTip.text: "Track actions"
+                    onClicked: root.menuRequested(candidateDelegate.modelData, candidateMenuButton)
                 }
             }
         }
