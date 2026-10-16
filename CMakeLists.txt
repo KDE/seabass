@@ -1084,8 +1084,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # under test while being perfectly fine in the app -- a difference
         # between test and app that is invisible until someone looks at a
         # screenshot and mistrusts it.
-        set_source_files_properties(src/gui/qml/icons/seabass_soundbass.svg
-            PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_soundbass.svg)
+        set_source_files_properties(src/gui/qml/icons/seabass_mascot.png
+            PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_mascot.png)
+        set_source_files_properties(src/gui/qml/icons/seabass_icon.png
+            PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_icon.png)
         set_source_files_properties(src/gui/qml/icons/kde.svg
             PROPERTIES QT_RESOURCE_ALIAS qml/icons/kde.svg)
         # Same aliasing, same reason: DonationPage asks for
@@ -1105,7 +1107,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
             QML_FILES
                 ${SEABASS_GUI_QML_FILES_FROM_ROOT}
             RESOURCES
-                src/gui/qml/icons/seabass_soundbass.svg
+                src/gui/qml/icons/seabass_mascot.png
+                src/gui/qml/icons/seabass_icon.png
                 src/gui/qml/icons/kde.svg
                 src/gui/qml/images/sebas.png
                 ${SEABASS_GUI_ICONS_FROM_ROOT}

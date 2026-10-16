@@ -35,7 +35,7 @@ TestCase {
     when: windowShown
 
     readonly property string brandMark:
-        "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+        "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
 
     Component {
         id: windowLike

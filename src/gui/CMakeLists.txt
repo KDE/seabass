@@ -8,10 +8,10 @@ qt_add_executable(seabass
     main.cpp
 )
 if(WIN32)
-    # App icon (.exe icon + taskbar/Alt-Tab), generated from the same
-    # geometry as the seabass_soundbass.svg the QML UI itself uses.
-    # Regenerate both, from the repository root, with:
-    #   python3 tools/flatten_logo.py
+    # App icon (.exe icon + taskbar/Alt-Tab), derived from the mascot the
+    # QML UI itself shows (qml/icons/seabass_mascot.png, Nuno's artwork).
+    # Regenerate every icon form, from the repository root, with:
+    #   python3 tools/make_app_icons.py
     target_sources(seabass PRIVATE win/app_icon.rc)
     # UTF-8 as the process ANSI code page (Windows 10 1903+), for the
     # linked code that takes narrow paths: see win/app.manifest. MSVC's
@@ -22,7 +22,7 @@ if(WIN32)
     endif()
 endif()
 if(APPLE)
-    # The same icon as an .icns (also written by tools/flatten_logo.py),
+    # The same icon as an .icns (also written by tools/make_app_icons.py),
     # copied into the bundle's Resources and named by Info.plist.
     target_sources(seabass PRIVATE mac/app_icon.icns)
     set_source_files_properties(mac/app_icon.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -447,7 +447,8 @@ qt_add_qml_module(seabass
     QML_FILES
         ${SEABASS_GUI_QML_FILES}
     RESOURCES
-        qml/icons/seabass_soundbass.svg
+        qml/icons/seabass_mascot.png
+    qml/icons/seabass_icon.png
         qml/icons/kde.svg
         qml/images/sebas.png
         ${SEABASS_GUI_ICONS}
@@ -529,7 +530,7 @@ if(UNIX AND NOT APPLE)
     # Flathub show about the app, and what AppImage tooling reads for its
     # name and summary. Its id and launchable match the desktop file.
     install(FILES org.kde.seabass.metainfo.xml DESTINATION share/metainfo)
-    install(FILES qml/icons/seabass_soundbass.svg
-        DESTINATION share/icons/hicolor/scalable/apps
-        RENAME org.kde.seabass.svg)
+    install(FILES qml/icons/seabass_icon.png
+        DESTINATION share/icons/hicolor/1024x1024/apps
+        RENAME org.kde.seabass.png)
 endif()

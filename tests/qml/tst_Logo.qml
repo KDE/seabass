@@ -36,7 +36,7 @@ TestCase {
                     id: large
                     objectName: "logo200"
                     anchors.fill: parent
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(200, 200)
                 }
@@ -46,7 +46,7 @@ TestCase {
                 Image {
                     objectName: "logo96"
                     anchors.fill: parent
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(96, 96)
                 }
@@ -56,7 +56,7 @@ TestCase {
                 Image {
                     objectName: "logo32"
                     anchors.fill: parent
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(32, 32)
                 }

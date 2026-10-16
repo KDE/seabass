@@ -32,7 +32,7 @@ Item {
     // shows the brand mark, as for a track with no art at all: a cover
     // the catalog names and the stick lacks is no cover.
     property url fallbackSource
-    readonly property url brandMark: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+    readonly property url brandMark: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
     // How many of source and fallbackSource have failed to load.
     property int artworkFailures: 0
     onSourceChanged: layer.artworkFailures = 0

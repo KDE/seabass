@@ -126,7 +126,7 @@ int main(int argc, char **argv)
 {
     const bool useSystemTheme = exportMaterialPalette();
     QGuiApplication app(argc, argv);
-    app.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/SeabassGui/qml/icons/seabass_icon.png")));
     // The installed org.kde.seabass.desktop, by name: on Wayland this is the
     // app id a compositor matches the window's icon and taskbar entry by.
     QGuiApplication::setDesktopFileName(QStringLiteral("org.kde.seabass"));

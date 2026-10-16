@@ -399,7 +399,7 @@ ApplicationWindow {
         const fallback = isArt ? playbackCtrl.fallbackArtworkPath || "" : "";
         const src = watermarkRing.shows ? ""
             : isArt ? playbackCtrl.artworkPath
-            : "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg";
+            : "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png";
         const front = watermarkFrontIsA ? watermarkLayerA : watermarkLayerB;
         const back = watermarkFrontIsA ? watermarkLayerB : watermarkLayerA;
         if (window.watermarkSource === src + "\n" + fallback) {

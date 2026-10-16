@@ -101,7 +101,7 @@ TestCase {
 
     // Anything that is not a local file loads as it is.
     function test_aResourceLoadsAsItIs() {
-        const icon = "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg";
+        const icon = "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png";
         const art = make(icon, "");
         tryCompare(art, "showing", "source");
         compare(findChild(art, "artworkImage").source.toString(), icon);
