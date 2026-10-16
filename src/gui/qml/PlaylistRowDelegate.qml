@@ -48,13 +48,16 @@ Rectangle {
     signal contextRequested()
 
     // The playlist's summary (PlaylistSummaryPopup.qml), beside the row
-    // after this long a hover; the pointer leaving, a press or the wheel
-    // closes it. Off unless the host turns it on: the Matching page's
-    // combo shows these rows inside a popup of its own, where a second
-    // one would only be in the way. A host turns it off again while the
-    // pointer is busy with something else (a drag).
+    // after this long a hover. It stays while the pointer is on the row
+    // or in the popup, and closes summaryGrace after it has left both
+    // (long enough to cross the gap between them), or on a press or the
+    // wheel in the row. Off unless the host turns it on: the Matching
+    // page's combo shows these rows inside a popup of its own, where a
+    // second one would only be in the way. A host turns it off again
+    // while the pointer is busy with something else (a drag).
     property bool summaryEnabled: false
-    property int summaryDelay: 1500
+    property int summaryDelay: 600
+    property int summaryGrace: 200
     // Asked when the summary opens, not before, so a row merely passed
     // over works nothing out: ScanController.playlistSummary()'s map.
     property var summaryFor: () => ({})
@@ -63,7 +66,24 @@ Rectangle {
     property var summary: ({})
     function closeSummary() {
         summaryTimer.stop();
+        summaryGraceTimer.stop();
         summaryLoader.active = false;
+    }
+    // The pointer on the row, or in the summary it opened.
+    readonly property bool summaryHovered: rowHover.hovered
+        || (summaryLoader.item !== null && summaryLoader.item.hovered === true)
+    onSummaryHoveredChanged: {
+        if (root.summaryHovered) {
+            summaryGraceTimer.stop();
+            if (!summaryLoader.active && root.summaryEnabled) {
+                summaryTimer.restart();
+            }
+        } else {
+            summaryTimer.stop();
+            if (summaryLoader.active) {
+                summaryGraceTimer.restart();
+            }
+        }
     }
     onSummaryEnabledChanged: {
         if (!root.summaryEnabled) {
@@ -148,16 +168,7 @@ Rectangle {
     // HoverHandler of its own, and the MouseArea under the row's labels
     // never hears the pointer arrive, so the row shaded only in its
     // margins.
-    HoverHandler {
-        id: rowHover
-        onHoveredChanged: {
-            if (rowHover.hovered && root.summaryEnabled) {
-                summaryTimer.restart();
-            } else {
-                root.closeSummary();
-            }
-        }
-    }
+    HoverHandler { id: rowHover }
     Timer {
         id: summaryTimer
         interval: root.summaryDelay
@@ -165,6 +176,11 @@ Rectangle {
             root.summary = root.summaryFor();
             summaryLoader.active = true;
         }
+    }
+    Timer {
+        id: summaryGraceTimer
+        interval: root.summaryGrace
+        onTriggered: root.closeSummary()
     }
     Loader {
         id: summaryLoader

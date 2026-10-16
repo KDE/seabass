@@ -348,6 +348,13 @@ public:
     // as the sidebar's own count does.
     //   count, totalDurationSeconds, withCues, withoutCues
     //   bpmMin, bpmMax: over the tracks that have one, 0 when none does
+    //   bpmBins: [{bpm, count}] from the bin holding bpmMin to the one
+    //     holding bpmMax, every bin listed, empty ones at 0; `bpm` is the
+    //     bin's lower edge. bpmBinWidth BPM wide: 1, or 2 when the range
+    //     is wider than 40. Empty when no track has a BPM
+    //   bpmPeak: the lower edge of the fullest bin (the lowest of equals)
+    //   longest, shortest: {title, artist, durationSeconds} of the
+    //     longest and shortest track with a length, empty maps when none
     //   keys: [{camelot, key, count}] in wheel order (1A, 1B, 2A ...),
     //     enharmonic spellings folded into one wheel position, `key` the
     //     first spelling met; the tracks without a key that parses last,

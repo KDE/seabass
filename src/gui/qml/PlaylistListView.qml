@@ -94,7 +94,7 @@ ListView {
     // "All tracks" the whole library's. Switched off while the pointer
     // is busy with something else, such as dragging tracks onto a row.
     property bool summariesEnabled: true
-    property int summaryDelay: 1500
+    property int summaryDelay: 600
     property string keyNotation: "camelot"
 
     clip: true

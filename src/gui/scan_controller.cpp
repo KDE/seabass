@@ -11,6 +11,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1200,6 +1201,56 @@ QVariantMap ScanController::playlistSummary(const QString &playlist) const
         }
     }
 
+    // The BPM heatmap's bins. Whole BPMs, so a 128.5 sits with the
+    // 128s; two to a bin over a wide range, so a 60 to 180 playlist is
+    // not a hundred and twenty slivers.
+    QVariantList bpmBins;
+    int bpmBinWidth = 1;
+    double bpmPeak = 0.0;
+    if (bpmMax > 0.0) {
+        bpmBinWidth = bpmMax - bpmMin > 40.0 ? 2 : 1;
+        const auto binOf = [bpmBinWidth](double bpm) { return static_cast<int>(std::floor(bpm / bpmBinWidth)); };
+        const int first = binOf(bpmMin);
+        std::vector<int> counts(static_cast<std::size_t>(binOf(bpmMax) - first + 1), 0);
+        for (const auto &[position, track] : entries) {
+            if (track->bpm > 0.0) {
+                ++counts[static_cast<std::size_t>(binOf(track->bpm) - first)];
+            }
+        }
+        std::size_t peak = 0;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            const int edge = (first + static_cast<int>(i)) * bpmBinWidth;
+            bpmBins << QVariantMap{{"bpm", edge}, {"count", counts[i]}};
+            if (counts[i] > counts[peak]) {
+                peak = i;
+            }
+        }
+        bpmPeak = (first + static_cast<int>(peak)) * bpmBinWidth;
+    }
+
+    // The ends of the playlist by length, for the popup's details.
+    const domain::Track *longest = nullptr;
+    const domain::Track *shortest = nullptr;
+    for (const auto &[position, track] : entries) {
+        if (track->durationSeconds <= 0.0) {
+            continue;
+        }
+        if (longest == nullptr || track->durationSeconds > longest->durationSeconds) {
+            longest = track;
+        }
+        if (shortest == nullptr || track->durationSeconds < shortest->durationSeconds) {
+            shortest = track;
+        }
+    }
+    const auto trackEnd = [](const domain::Track *track) {
+        if (track == nullptr) {
+            return QVariantMap();
+        }
+        return QVariantMap{{"title", QString::fromStdString(track->title)},
+                           {"artist", QString::fromStdString(track->artist)},
+                           {"durationSeconds", track->durationSeconds}};
+    };
+
     QVariantList keys;
     for (const auto &[wheel, slot] : byWheel) {
         keys << QVariantMap{{"camelot", QString::number(wheel.first) + (wheel.second == 0 ? "A" : "B")},
@@ -1216,6 +1267,11 @@ QVariantMap ScanController::playlistSummary(const QString &playlist) const
     summary["keys"] = keys;
     summary["bpmMin"] = bpmMin;
     summary["bpmMax"] = bpmMax;
+    summary["bpmBins"] = bpmBins;
+    summary["bpmBinWidth"] = bpmBinWidth;
+    summary["bpmPeak"] = bpmPeak;
+    summary["longest"] = trackEnd(longest);
+    summary["shortest"] = trackEnd(shortest);
     summary["totalDurationSeconds"] = totalSeconds;
     summary["withCues"] = withCues;
     summary["withoutCues"] = count - withCues;
