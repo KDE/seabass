@@ -206,11 +206,13 @@ Page {
                 Image {
                     objectName: "aboutLogo"
                     source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
-                    Layout.preferredWidth: nameBlock.implicitHeight
-                    Layout.preferredHeight: nameBlock.implicitHeight
+                    // Twice the name block's height on a side (Sebastian,
+                    // 2026-10-16): the fish is the page's picture, not a badge.
+                    Layout.preferredWidth: nameBlock.implicitHeight * 2
+                    Layout.preferredHeight: nameBlock.implicitHeight * 2
                     Layout.alignment: Qt.AlignTop
-                    sourceSize.width: Math.ceil(nameBlock.implicitHeight)
-                    sourceSize.height: Math.ceil(nameBlock.implicitHeight)
+                    sourceSize.width: Math.ceil(nameBlock.implicitHeight * 2)
+                    sourceSize.height: Math.ceil(nameBlock.implicitHeight * 2)
                     fillMode: Image.PreserveAspectFit
                 }
             }

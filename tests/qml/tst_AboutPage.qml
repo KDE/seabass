@@ -116,7 +116,7 @@ TestCase {
         // The name block starts on the page's left line, with everything under it.
         compare(Math.round(head.mapToItem(page, 0, 0).x), Math.round(note.mapToItem(page, 0, 0).x),
                 "the name starts where the body does");
-        verify(Math.abs(mark.height - head.height) <= 1, "as tall as the block: " + mark.height + " vs " + head.height);
+        verify(Math.abs(mark.height - 2 * head.height) <= 2, "twice as tall as the block: " + mark.height + " vs " + head.height);
         verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
         // The introduction is in the name's column, under the version.
         const intro = findChild(page, "aboutIntro");
