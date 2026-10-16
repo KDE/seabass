@@ -48,7 +48,7 @@ Page {
     // first asks whether to keep what was changed on this visit or put it
     // back the way it was when the page opened (Sebastian, 2026-09-28).
     // The breadcrumb's Back keeps them, as it always did.
-    readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "exactMatchSeconds",
+    readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "showPlayCount", "exactMatchSeconds",
         "compareAudioSeconds", "ignoreCuesAtStart", "seabassHomeDirectory", "stickBackupDirectory",
         "useSystemTheme", "experimentalFeaturesEnabled"]
     readonly property var updateSettingKeys: ["automatic", "includeTesting"]
@@ -335,6 +335,28 @@ Page {
                     // instruction, so it is one clause at the end.
                     ToolTip.text: "Whether streaming tracks (TIDAL and similar) appear in Browse Library. "
                         + "They have no file on the stick, so nothing else is affected."
+                }
+            }
+
+            // Off by default (Sebastian, 2026-10-16): the column was
+            // seldom what anyone looked for, and its numbers seldom right.
+            ColumnLayout {
+                spacing: Theme.scaled(6)
+                Subtitle { text: "Play count" }
+                SeabassCheckBox {
+                    objectName: "showPlayCountCheckBox"
+                    Layout.leftMargin: root.settingIndent
+                    text: "Show play count (may be inaccurate)"
+                    checked: root.appSettingsController.showPlayCount
+                    onToggled: root.appSettingsController.showPlayCount = checked
+                }
+                Label {
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "A Plays column in Browse Library. Each player counts plays its own way, and the "
+                        + "counters on a stick are not kept in step, so the number is a rough guide at best."
                 }
             }
 

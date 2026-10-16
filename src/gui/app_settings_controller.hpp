@@ -28,6 +28,7 @@ class AppSettingsController : public QObject
     Q_PROPERTY(QString preferredFormat READ preferredFormat WRITE setPreferredFormat NOTIFY preferredFormatChanged)
     Q_PROPERTY(bool hideStreamingTracks READ hideStreamingTracks WRITE setHideStreamingTracks NOTIFY
                    hideStreamingTracksChanged)
+    Q_PROPERTY(bool showPlayCount READ showPlayCount WRITE setShowPlayCount NOTIFY showPlayCountChanged)
     Q_PROPERTY(QString keyNotation READ keyNotation WRITE setKeyNotation NOTIFY keyNotationChanged)
     // The three "Music" preferences. They are not read from here by the
     // code that acts on them: each setter pushes the trio into
@@ -94,6 +95,13 @@ public:
     // the user opts into hiding them.
     bool hideStreamingTracks() const { return m_hideStreamingTracks; }
     void setHideStreamingTracks(bool value);
+
+    // Whether Browse Library shows its Plays column. Off by default: the
+    // count is seldom what a DJ is looking for, and seldom right, since
+    // each player counts plays its own way and a stick's counters are
+    // never brought in step. The track panel keeps its own "Plays" line.
+    bool showPlayCount() const { return m_showPlayCount; }
+    void setShowPlayCount(bool value);
 
     // How KeyBadge.qml renders a musical key everywhere it appears
     // (Browse Library's Key column, Library Statistics' "Tracks per
@@ -198,6 +206,7 @@ signals:
     void useSystemThemeChanged();
     void preferredFormatChanged();
     void hideStreamingTracksChanged();
+    void showPlayCountChanged();
     void keyNotationChanged();
     void exactMatchSecondsChanged();
     void compareAudioSecondsChanged();
@@ -215,6 +224,7 @@ private:
     bool m_useSystemTheme = false;
     QString m_preferredFormat = QStringLiteral("rekordbox");
     bool m_hideStreamingTracks = false;
+    bool m_showPlayCount = false;
     QString m_keyNotation = QStringLiteral("camelot");
     int m_exactMatchSeconds = 2;
     int m_compareAudioSeconds = 10;

@@ -674,7 +674,14 @@ Page {
     // the tier stayed at 2, and the headers never went. Whether that
     // loop closed depended on the font -- not with macOS's, but with the
     // wider one the offscreen platform (and so the test suite) uses.
-    readonly property int browseTier: browseColumn.width >= 620 ? 2 : (browseColumn.width >= 340 ? 1 : 0)
+    //
+    // The full tier's threshold counts the Plays column only while it is
+    // shown (AppSettingsController.showPlayCount): without it the other
+    // columns fit that much sooner, and the step to the full tier comes
+    // where they do.
+    readonly property bool showPlayCount: root.appSettingsController.showPlayCount === true
+    readonly property real fullTierWidth: 620 - (root.showPlayCount ? 0 : root.playsColumnWidth + root.trackColumnSpacing)
+    readonly property int browseTier: browseColumn.width >= root.fullTierWidth ? 2 : (browseColumn.width >= 340 ? 1 : 0)
 
     // The list's sort, held here so the column headers and the Sort by
     // combo show one state. A header click sorts by its column, ascending
@@ -686,6 +693,7 @@ Page {
     // no column, so no header shows their direction: they always sort
     // ascending, and the direction the headers last showed is kept for
     // the next column sort rather than applied where nobody can see it.
+    // Plays only while its column is shown.
     readonly property var sortOptions: [
         { text: "Playlist Order", value: "playlist" },
         { text: "Title", value: "title" },
@@ -695,8 +703,18 @@ Page {
         { text: "Duration", value: "duration" },
         { text: "Cues", value: "cues" },
         { text: "Plays", value: "plays" },
-    ]
+    ].filter(option => option.value !== "plays" || root.showPlayCount)
     readonly property var columnSortKeys: ["title", "key", "bpm", "duration", "cues", "plays"]
+        .filter(key => key !== "plays" || root.showPlayCount)
+    // A list sorted by a column that goes away is put back in Playlist
+    // Order, rather than kept in an order nothing on screen explains.
+    onShowPlayCountChanged: {
+        if (!root.showPlayCount && root.sortField === "plays") {
+            root.sortField = "playlist";
+            root.sortAscending = true;
+            root.applySort();
+        }
+    }
     property string sortField: "playlist"
     property bool sortAscending: true
     // What Playlist Order is for the list shown, as the headers' tooltips
@@ -1192,7 +1210,7 @@ Page {
                         { label: "Time", key: "duration", width: root.timeColumnWidth },
                         { label: "Cues", key: "cues", width: root.cuesColumnWidth },
                         { label: "Plays", key: "plays", width: root.playsColumnWidth },
-                    ]
+                    ].filter(column => column.key !== "plays" || root.showPlayCount)
                     delegate: SortableTableHeader {
                         required property var modelData
                         objectName: "sortHeader_" + modelData.key
@@ -1535,7 +1553,7 @@ Page {
                         }
                         Label {
                             objectName: "rowCell_plays"
-                            visible: root.browseTier >= 2
+                            visible: root.browseTier >= 2 && root.showPlayCount
                             text: playCount >= 0 ? playCount : "--"
                             Layout.preferredWidth: root.playsColumnWidth
                         }

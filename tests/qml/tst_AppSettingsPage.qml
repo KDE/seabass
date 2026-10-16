@@ -81,6 +81,38 @@ TestCase {
         compare(fresh.useSystemTheme, false, "a stored true reads back as the app's own palette");
     }
 
+    // Browse's Plays column, off by default and kept across starts.
+    function test_show_play_count_is_off_by_default_and_persists() {
+        const before = controllerFixture.storeRawSetting("showPlayCount", undefined);
+        const fresh = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(fresh.showPlayCount, false, "off when nothing is stored");
+        fresh.showPlayCount = true;
+        const again = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(again.showPlayCount, true, "a new controller reads it back");
+        compare(controllerFixture.storeRawSetting("showPlayCount", false), true, "stored as showPlayCount");
+        const third = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(third.showPlayCount, false);
+        controllerFixture.storeRawSetting("showPlayCount", before);
+    }
+
+    // The checkbox shows the setting and changes it; the line under it
+    // says why the number is not to be trusted.
+    function test_the_play_count_checkbox_toggles_the_setting() {
+        settings.showPlayCount = false;
+        const page = make(900, 700);
+        const box = findChild(page, "showPlayCountCheckBox");
+        verify(box !== null);
+        compare(box.text, "Show play count (may be inaccurate)");
+        compare(box.checked, false);
+        mouseClick(box);
+        compare(settings.showPlayCount, true, "a click switches it on");
+        mouseClick(box);
+        compare(settings.showPlayCount, false, "and off again");
+        settings.showPlayCount = true;
+        compare(box.checked, true, "the box follows the setting");
+        settings.showPlayCount = false;
+    }
+
     function test_content_never_exceeds_the_window_width() {
         var page = make(700, 700);
         var scroll = findChild(page, "settingsScroll");
