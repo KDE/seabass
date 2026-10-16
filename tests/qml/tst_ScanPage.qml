@@ -682,7 +682,17 @@ TestCase {
         waitForRendering(page);
         saveScreenshot(page, "browse_new_playlist_pending");
         // Clicked, it is the playlist shown (the tracks staged into it).
-        const pending = findChild(list, "createPlaylistRow").parent.children[0];
+        let pending = null;
+        (function walk(item) {
+            if (pending === null && item.acceptsTrackDrop !== undefined && item.name === "Warm & Melodic 2") {
+                pending = item;
+            }
+            for (let i = 0; pending === null && i < item.children.length; ++i) {
+                walk(item.children[i]);
+            }
+        })(list.contentItem);
+        verify(pending !== null, "the new playlist has a row");
+        verify(pending.mapToItem(list.contentItem, 0, 0).y <= 32 + 1, "right under All tracks, not at the end");
         compare(pending.name, "Warm & Melodic 2");
         mouseClick(pending);
         compare(page.shownPlaylist, "Warm & Melodic 2");
@@ -1051,7 +1061,7 @@ TestCase {
                 sidebar: findChild(page, "playlistList"), card: findChild(page, "trackDragItem")};
     }
 
-    // The sidebar's row for a playlist, a new one in the footer included.
+    // The sidebar's row for a playlist, a new one included.
     function playlistRow(t, name) {
         let found = null;
         function walk(item) {
@@ -1107,7 +1117,7 @@ TestCase {
         cleanupExperimental();
     }
 
-    // A playlist staged to be created, in the sidebar's footer, shows it
+    // A playlist staged to be created, right under "All tracks", shows it
     // takes the drop like any other row: the accent outline while the
     // track hovers it, and the card says what the drop does.
     function test_aNewPlaylistShowsItTakesTheDrop() {

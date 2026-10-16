@@ -74,7 +74,12 @@ ListView {
 
     clip: true
     ScrollBar.vertical: BigScrollBar {}
-    property var allNames: ["All tracks"].concat(scanController.playlistNames)
+    // The playlists staged to be created come right under "All tracks":
+    // they are what is being put together, and at the end of a long
+    // list they sat below the window's edge, where a track dragged in
+    // from the right could not reach them.
+    property var allNames: ["All tracks"].concat(root.canCreate ? root.newPlaylists : [])
+        .concat(scanController.playlistNames)
     model: root.searchQuery.length === 0
         ? allNames
         : allNames.filter((n, i) => i === 0 || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
@@ -91,23 +96,31 @@ ListView {
         // delegate the same broken way).
         required property string modelData
         name: modelData
+        // Staged to be created: not on the stick yet, so no count, no
+        // summary, nothing to delete or rename; its menu takes it back.
+        readonly property bool isNew: root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
+        pendingNew: isNew
         count: index === 0 ? root.scanController.totalTrackCount
-            : (root.scanController.playlistTrackCounts[modelData] ?? 0)
+            : isNew ? 0 : (root.scanController.playlistTrackCounts[modelData] ?? 0)
         // By the playlist shown, not ListView.isCurrentItem: a scan
         // rebuilds the model, and the view then puts its current index
         // back at the first row while the page keeps showing the playlist
         // it opened on.
         isCurrent: index === 0 ? root.shownPlaylist.length === 0 : modelData === root.shownPlaylist
         onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
-        pendingDelete: index > 0 && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
-        edited: index > 0 && root.pendingRevision >= 0 && root.isEdited(modelData)
-        pendingRename: index > 0 && root.pendingRevision >= 0 && root.isRenamed(modelData)
+        pendingDelete: index > 0 && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
+        edited: index > 0 && !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
+        pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
-        summaryEnabled: root.summariesEnabled
+        summaryEnabled: root.summariesEnabled && !isNew
         summaryDelay: root.summaryDelay
         summaryFor: () => root.scanController.playlistSummary(index === 0 ? "" : modelData)
         keyNotation: root.keyNotation
-        onPicked: root.playlistPicked(index, modelData)
+        // The index the page gets is the playlist's place among the
+        // stick's (plus one for "All tracks"), whatever rows the list has
+        // before it or has filtered out.
+        onPicked: isNew ? root.newPlaylistPicked(modelData)
+            : root.playlistPicked(index === 0 ? 0 : root.scanController.playlistNames.indexOf(modelData) + 1, modelData)
         acceptsTrackDrop: root.trackDropsEnabled && index > 0 && !pendingDelete
             && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
         heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
@@ -123,25 +136,6 @@ ListView {
         width: root.width
         visible: root.canCreate
         height: visible ? implicitHeight : 0
-        Repeater {
-            model: root.canCreate ? root.newPlaylists : []
-            delegate: PlaylistRowDelegate {
-                required property string modelData
-                width: root.width
-                name: modelData
-                pendingNew: true
-                countChange: root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
-                isCurrent: root.shownPlaylist === modelData
-                onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
-                // Shows the tracks staged into it; its menu takes it back.
-                onPicked: root.newPlaylistPicked(modelData)
-                acceptsTrackDrop: root.trackDropsEnabled
-                    && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
-                heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
-                onTrackDropped: root.trackDropped(modelData)
-                onContextRequested: root.playlistContextRequested(modelData, this)
-            }
-        }
         ItemDelegate {
             objectName: "createPlaylistRow"
             width: root.width
