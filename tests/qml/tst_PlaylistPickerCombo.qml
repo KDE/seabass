@@ -73,4 +73,20 @@ TestCase {
         compare(pickedSpy.signalArguments[0][1].name, "House");
         tryVerify(function() { return !combo.popup.visible; });
     }
+
+    // A row shades with the pointer over its name, not only over its
+    // margins: under org.kde.desktop a Label has a HoverHandler of its
+    // own, and the MouseArea's hover under it never fired.
+    function test_aRowShadesUnderItsName() {
+        const combo = createTemporaryObject(comboComponent, testCase, {model: testModel});
+        mouseClick(combo);
+        tryVerify(() => combo.popup.visible && combo.popup.contentItem.itemAtIndex(2) !== null);
+        const row = combo.popup.contentItem.itemAtIndex(2);
+        const name = findChild(row, "pickerRowName");
+        compare(name.text, "House");
+        verify(!Qt.colorEqual(row.color, Theme.rowHover));
+        mouseMove(name, 4, name.height / 2);
+        tryVerify(() => Qt.colorEqual(row.color, Theme.rowHover), 1000, "shaded under the name: " + row.color);
+        combo.popup.close();
+    }
 }

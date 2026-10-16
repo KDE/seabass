@@ -281,4 +281,19 @@ TestCase {
         compare(row.stickWaveform(player, source).length, 1);
         compare(asked, ["engine /media/STICK/Engine Library 12"]);
     }
+
+    // The row shades with the pointer over its title: under
+    // org.kde.desktop a Label has a HoverHandler of its own, and the
+    // MouseArea's hover under it never fired.
+    function test_theRowShadesUnderItsTitle() {
+        const row = createTemporaryObject(rowComponent, testCase, {index: 1, y: 10});
+        waitForRendering(row);
+        const title = findChild(row, "rowTitle");
+        compare(title.text, "Major Tom");
+        verify(!row.hovered && !Qt.colorEqual(row.color, Theme.rowHover));
+        mouseMove(title, 4, title.height / 2);
+        tryVerify(() => row.hovered && Qt.colorEqual(row.color, Theme.rowHover), 1000, "shaded under the title: " + row.color);
+        mouseMove(testCase, testCase.width - 2, testCase.height - 2);
+        tryVerify(() => !row.hovered, 1000, "not once the pointer has gone");
+    }
 }

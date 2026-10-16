@@ -104,13 +104,23 @@ Rectangle {
                 implicitHeight: rowContent.implicitHeight
 
                 Rectangle {
+                    objectName: "mountRowShade"
                     anchors.fill: parent
                     anchors.margins: -Theme.tightSpacing
                     radius: Theme.cornerRadius
                     visible: !root.mounted
                     color: rowMouseArea.pressed ? Theme.rowPressed
-                        : rowMouseArea.containsMouse ? Theme.rowHover
+                        : rowHover.hovered ? Theme.rowHover
                         : "transparent"
+                }
+
+                // The row's hover, for its shade and its tooltip. Not the
+                // MouseArea's own: under org.kde.desktop a Label carries a
+                // HoverHandler of its own, and the MouseArea under the
+                // stick's name never hears the pointer arrive.
+                HoverHandler {
+                    id: rowHover
+                    enabled: !root.mounted && !root.thisRowBusy
                 }
 
                 MouseArea {
@@ -122,7 +132,7 @@ Rectangle {
                     // row's own task disables it.
                     enabled: !root.mounted && !root.thisRowBusy
                     hoverEnabled: !root.mounted && !root.thisRowBusy
-                    ToolTip.visible: containsMouse
+                    ToolTip.visible: rowHover.hovered
                     ToolTip.text: "Click to mount " + root.label
                     onClicked: root.mediaController.mountStick(root.devicePath)
                 }

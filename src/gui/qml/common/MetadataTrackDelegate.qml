@@ -146,7 +146,7 @@ Rectangle {
     readonly property real contentInset: (selectBox.visible ? selectBox.width + Theme.rowSpacing : 0)
         + artworkTile.width + Theme.rowSpacing
 
-    readonly property bool hovered: rowMouse.containsMouse
+    readonly property bool hovered: rowHover.hovered
 
     signal selectionToggled(bool selected)
     signal expandToggled()
@@ -165,10 +165,16 @@ Rectangle {
 
     width: ListView.view ? ListView.view.width : implicitWidth
     implicitHeight: layout.implicitHeight + 2 * Theme.tightSpacing
-    color: rowMouse.containsMouse ? Theme.rowHover
+    color: rowHover.hovered ? Theme.rowHover
          : (delegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
     radius: Theme.cornerRadius
     opacity: delegate.markedForRemoval ? 0.55 : 1.0
+
+    // Not rowMouse's own hover: a HoverHandler under the pointer keeps it
+    // from the MouseArea below, and the title has one for its tooltip
+    // (under org.kde.desktop every Label has one), so the row never
+    // shaded with the pointer on its text.
+    HoverHandler { id: rowHover }
 
     MouseArea {
         id: rowMouse

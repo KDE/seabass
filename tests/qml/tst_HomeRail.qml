@@ -95,6 +95,24 @@ TestCase {
         return Qt.colorEqual(String(a), String(b));
     }
 
+    // An unselected row shades, and a mounted stick offers its eject,
+    // with the pointer over its name (under org.kde.desktop a Label has a
+    // HoverHandler of its own, which a MouseArea's hover can lose to).
+    function test_aRowShadesUnderItsName() {
+        const frame = makeFrame(threeSticks(), {selectedStickKey: "/media/CARD"});
+        const main = findChild(frame.rail, "railStick:/media/MAIN");
+        const pill = findChild(main, "railPill");
+        verify(sameColor(pill.color, "transparent"));
+        const name = text(main);
+        mouseMove(name, 4, name.height / 2);
+        tryVerify(() => sameColor(pill.color, Theme.rowHover), 1000, "shaded under the name: " + pill.color);
+        if (main.ejectable) {
+            verify(findChild(main, "railEject").visible, "the eject is offered");
+        }
+        mouseMove(frame, 1, frame.height - 1);
+        tryVerify(() => sameColor(pill.color, "transparent"), 1000, "not once the pointer has gone");
+    }
+
     // The selected stick is the one row drawn on the group background in
     // full-strength DemiBold text; every other row is muted and plain.
     function test_selectedStickIsDrawnAsSelected() {

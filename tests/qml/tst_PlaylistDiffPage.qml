@@ -78,6 +78,34 @@ TestCase {
         compare(findChild(page, "verdict").text, "Playlist 019 is Playlist 000 plus 10 tracks.");
     }
 
+    // A row shades, and so does its partner, with the pointer over its
+    // text: under org.kde.desktop a Label has a HoverHandler of its own,
+    // and the MouseArea's hover under it never fired.
+    function test_aRowShadesUnderItsText() {
+        const page = openOnAFreshCopy();
+        const list = rowsOf(page);
+        const added = list.itemAtIndex(3);
+        compare(added.kind, "onlyB");
+        let title = null;
+        const walk = item => {
+            if (title === null && item.visible && item.text === added.rightTitle && item.width > 0) {
+                title = item;
+            }
+            for (let i = 0; i < item.children.length && title === null; ++i) {
+                walk(item.children[i]);
+            }
+        };
+        walk(added);
+        verify(title !== null, "the title of " + added.rightTitle);
+        mouseMove(page, 2, 2);
+        tryVerify(() => !added.hovered, 1000, "not hovered to begin with");
+        mouseMove(title, 4, title.height / 2);
+        tryVerify(() => added.hovered && Qt.colorEqual(added.color, Theme.rowHover), 1000,
+                  "shaded under the title: " + added.color);
+        mouseMove(page, 2, 2);
+        tryVerify(() => !added.hovered, 1000, "not once the pointer has gone");
+    }
+
     // The hundred identical rows fold to their last two plus one fold
     // row; the ten added rows follow, green, with a plus.
     function test_identicalRunsFoldAndOpenOnClick() {

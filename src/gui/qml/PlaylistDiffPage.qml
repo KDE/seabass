@@ -386,18 +386,26 @@ Page {
                     width: ListView.view.width
                     height: root.rowHeight
                     readonly property bool isFold: row.kind === "fold"
-                    readonly property bool hovered: rowMouse.containsMouse
+                    readonly property bool hovered: rowHover.hovered
                         || (diffList.hoveredPartner === row.index && diffList.hoveredPartner >= 0)
                     color: row.isFold ? Theme.groupBackground
                         : row.hovered ? Theme.rowHover
                         : (row.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
+
+                    // Not rowMouse's own hover: under org.kde.desktop a
+                    // Label carries a HoverHandler of its own, and the
+                    // MouseArea under the row's text never hears the
+                    // pointer arrive.
+                    HoverHandler {
+                        id: rowHover
+                        onHoveredChanged: diffList.hoveredPartner = rowHover.hovered ? row.partnerRow : -1
+                    }
 
                     MouseArea {
                         id: rowMouse
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: row.isFold ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onContainsMouseChanged: diffList.hoveredPartner = containsMouse ? row.partnerRow : -1
                         onClicked: {
                             if (row.isFold) {
                                 controller.expandFold(row.index);
