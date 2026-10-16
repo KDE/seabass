@@ -513,10 +513,14 @@ int main(int argc, char **argv)
     unchangedApartFrom({}, {});
 
     // Every row written carries what libdjinterop's own rows carry: a
-    // "%F %T" UTC time to the nanosecond, persisted, explicitly exported.
-    assert(scalar(db, "SELECT count(*) FROM Playlist WHERE lastEditTime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] "
-                      "[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' "
-                      "AND isPersisted = 1 AND isExplicitlyExported = 1;")
+    // "%F %T" UTC time, persisted, explicitly exported. The fraction has
+    // as many digits as the system clock counts: nine on Linux's
+    // nanosecond clock, six on macOS's microsecond one, where libdjinterop's
+    // own rows have six and ours nine. Either is a time Engine reads.
+    const std::string editTimeTo = "lastEditTime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] "
+                                   "[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9]";
+    assert(scalar(db, "SELECT count(*) FROM Playlist WHERE (" + editTimeTo + "' OR " + editTimeTo
+                          + "[0-9][0-9][0-9]') AND isPersisted = 1 AND isExplicitlyExported = 1;")
            == scalar(db, "SELECT count(*) FROM Playlist;"));
     assert(scalar(db, "SELECT count(DISTINCT databaseUuid) FROM PlaylistEntity;") == 1);
     assert(scalar(db, "SELECT count(*) FROM PlaylistEntity WHERE membershipReference <> 0;") == 0);
