@@ -562,6 +562,15 @@ TestCase {
         compare(leftOf(page, sectionBox.indicator), Theme.pageMargin);
         const create = createRow(page);
         compare(leftOf(page, findChild(rowItem(page, create), "rowCheck").indicator), Theme.pageMargin);
+        // Their padding is every side's, under any style: FluentWinUI3 sets
+        // leftPadding itself, which outweighs a plain `padding: 0`, and put
+        // both boxes 4 px off the line on Windows.
+        for (const control of [sectionBox, findChild(rowItem(page, create), "rowCheck"),
+                               findChild(header, "sectionChevron")]) {
+            verify(control !== null);
+            compare([control.leftPadding, control.rightPadding, control.topPadding, control.bottomPadding].join(),
+                    "0,0,0,0", control.objectName + "'s padding");
+        }
         // A row gap between the box and the chip, and the section's title
         // over its rows' chips.
         const chip = findChild(rowItem(page, create), "directionChip");

@@ -337,7 +337,12 @@ Page {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
                 implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
-                padding: 0
+                // Every side, not `padding`: a style that sets a side itself
+                // (FluentWinUI3 does) wins over it, and moved this off the line.
+                leftPadding: 0
+                rightPadding: 0
+                topPadding: 0
+                bottomPadding: 0
                 display: AbstractButton.IconOnly
                 text: "Play"
                 // SeabassIcon, as the Re-Analyze button: icon.source drew
@@ -659,7 +664,12 @@ Page {
                     objectName: "reanalyzeButton"
                     implicitWidth: Theme.iconSizeSmall
                     implicitHeight: Theme.iconSizeSmall
-                    padding: 0
+                    // Every side, not `padding`: a style that sets a side itself
+                    // (FluentWinUI3 does) wins over it, and moved this off the line.
+                    leftPadding: 0
+                    rightPadding: 0
+                    topPadding: 0
+                    bottomPadding: 0
                     flat: true
                     text: "Re-Analyze"
                     iconName: "view-refresh"

@@ -701,7 +701,12 @@ Page {
                                 objectName: "sectionCheck_" + sectionHeader.section
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: sectionHeader.writable
-                                padding: 0
+                                // Every side, not `padding`: a style that sets a side itself
+                                // (FluentWinUI3 does) wins over it, and moved this off the line.
+                                leftPadding: 0
+                                rightPadding: 0
+                                topPadding: 0
+                                bottomPadding: 0
                                 enabled: root.idle
                                 // Selected when every row of the section is.
                                 checked: sectionHeader.total > 0 && sectionHeader.ticked === sectionHeader.total
@@ -817,7 +822,12 @@ Page {
                             Layout.alignment: Qt.AlignVCenter
                             implicitWidth: Theme.iconSizeSmall
                             implicitHeight: Theme.iconSizeSmall
-                            padding: 0
+                            // Every side, not `padding`: a style that sets a side itself
+                            // (FluentWinUI3 does) wins over it, and moved this off the line.
+                            leftPadding: 0
+                            rightPadding: 0
+                            topPadding: 0
+                            bottomPadding: 0
                             flat: true
                             iconName: sectionHeader.collapsed ? "arrow-right" : "arrow-down"
                             iconSize: Theme.iconSizeSmall * 0.5
@@ -946,7 +956,12 @@ Page {
                                         && root.playbackController.currentFormat === (row.playTrack.side || "")
                                         && root.playbackController.currentSourceId === (row.playTrack.sourceId || "")
                                     anchors.fill: parent
-                                    padding: 0
+                                    // Every side, not `padding`: a style that sets a side itself
+                                    // (FluentWinUI3 does) wins over it, and moved this off the line.
+                                    leftPadding: 0
+                                    rightPadding: 0
+                                    topPadding: 0
+                                    bottomPadding: 0
                                     display: AbstractButton.IconOnly
                                     text: coverPlay.current && root.playbackController.playing ? "Pause" : "Play"
                                     visible: root.playbackController !== null && (row.playTrack.filePath || "").length > 0
@@ -1000,7 +1015,12 @@ Page {
                                             id: rowCheck
                                             objectName: "rowCheck"
                                             visible: row.writable
-                                            padding: 0
+                                            // Every side, not `padding`: a style that sets a side itself
+                                            // (FluentWinUI3 does) wins over it, and moved this off the line.
+                                            leftPadding: 0
+                                            rightPadding: 0
+                                            topPadding: 0
+                                            bottomPadding: 0
                                             enabled: root.idle
                                             checked: row.included
                                             ToolTip.visible: hovered
@@ -1069,7 +1089,12 @@ Page {
                                         Layout.alignment: Qt.AlignVCenter
                                         implicitWidth: Theme.iconSizeSmall
                                         implicitHeight: Theme.iconSizeSmall
-                                        padding: 0
+                                        // Every side, not `padding`: a style that sets a side itself
+                                        // (FluentWinUI3 does) wins over it, and moved this off the line.
+                                        leftPadding: 0
+                                        rightPadding: 0
+                                        topPadding: 0
+                                        bottomPadding: 0
                                         flat: true
                                         iconName: row.expanded ? "arrow-down" : "arrow-right"
                                         iconSize: Theme.iconSizeSmall * 0.5
