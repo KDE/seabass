@@ -978,6 +978,41 @@ TestCase {
         mouseRelease(row, p.x + 1, p.y, Qt.LeftButton);
     }
 
+    // A playlist row is a drop target while a track is dragged: its
+    // summary stays shut however long the drag hovers it, and while the
+    // card asks what the drop should do.
+    function test_noSummaryWhileATrackIsDraggedOverAPlaylist() {
+        const t = makeDragPage(true);
+        t.sidebar.summaryDelay = 300;
+        const row = t.list.itemAtIndex(0);
+        const target = playlistRow(t, "Held Playlist");
+        const loader = findChild(target, "summaryLoader");
+        dragOnto(row, target);
+        tryCompare(target, "dropTarget", true);
+        compare(t.page.dragging, true);
+        // Still over the row, a little moving, well past the delay.
+        for (let i = 0; i < 6; ++i) {
+            moveOnto(row, target);
+            wait(150);
+        }
+        compare(loader.active, false, "no summary while dragging");
+        // The drag holds the pointer, so the row hears no hover from it
+        // today; switched off as well, it stays shut should that change.
+        compare(t.sidebar.summariesEnabled, false, "summaries off while dragging");
+        dropOnto(row, target);
+        compare(t.card.confirming, true);
+        wait(900);
+        compare(loader.active, false, "nor while the card asks");
+        t.card.close();
+        tryCompare(t.card, "confirming", false);
+        // Hover is the summary's again once the drag is over.
+        const other = playlistRow(t, "Held Reversed");
+        mouseMove(other, other.width / 2, other.height / 2);
+        tryVerify(() => findChild(other, "summaryLoader").active, 3000, "a summary after the drag");
+        mouseMove(t.page, 2, 2);
+        cleanupExperimental();
+    }
+
     function isAccentOutlined(item) {
         return item.border.width === 2 && Qt.colorEqual(item.border.color, Theme.accent);
     }
