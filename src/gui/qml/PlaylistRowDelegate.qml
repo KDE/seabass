@@ -30,6 +30,13 @@ Rectangle {
     // will have after Save in parentheses.
     property bool edited: false
     property int countChange: 0
+    // A dragged track (TrackDragItem) may be dropped here. While one
+    // hovers, and while the drag card asks about the drop made here
+    // (heldDropTarget), the row wears the current row's accent outline.
+    property bool acceptsTrackDrop: false
+    property bool heldDropTarget: false
+    readonly property bool dropTarget: (trackDropArea.containsDrag && root.acceptsTrackDrop) || root.heldDropTarget
+    signal trackDropped()
     signal picked()
     // Right click, or a long press on touch: Browse offers its playlist
     // menu here. The Matching page's combo ignores it.
@@ -49,8 +56,8 @@ Rectangle {
     color: mouseArea.pressed ? Theme.rowPressed
         : mouseArea.containsMouse ? Theme.rowHover
         : (root.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-    border.color: root.isCurrent ? Theme.accent : "transparent"
-    border.width: root.isCurrent ? 2 : 0
+    border.color: root.isCurrent || root.dropTarget ? Theme.accent : "transparent"
+    border.width: root.isCurrent || root.dropTarget ? 2 : 0
     radius: Theme.cornerRadius
 
     MouseArea {
@@ -86,6 +93,18 @@ Rectangle {
             color: Qt.darker(Theme.textMuted, 1.3)
             font.pointSize: Theme.fontSmall
             horizontalAlignment: Text.AlignRight
+        }
+    }
+
+    DropArea {
+        id: trackDropArea
+        objectName: "playlistTrackDropArea"
+        anchors.fill: parent
+        enabled: root.acceptsTrackDrop
+        keys: ["seabass/track"]
+        onDropped: drop => {
+            drop.accept(Qt.CopyAction);
+            root.trackDropped();
         }
     }
 }

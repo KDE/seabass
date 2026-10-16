@@ -725,14 +725,16 @@ public:
 
     // reversedPlaylist adds a second playlist, "Held Reversed", holding
     // every track in the opposite order, so a playlist's own order can be
-    // told apart from the scan order and from a sort by title.
-    Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false)
+    // told apart from the scan order and from a sort by title. withFiles
+    // gives each track a file (one that is not there), which dragging a
+    // track to a playlist needs; without, they are file-less rows.
+    Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false)
     {
         restore();
         auto gate = std::make_shared<Gate>();
         const std::string present = presentArtwork().toStdString();
         const std::string missing = missingArtwork().toStdString();
-        auto stage = [gate, trackCount, reversedPlaylist, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
+        auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,
                                                           std::vector<seabass::domain::Track> &tracks,
                                                           seabass::gui::LibraryCatalogCache::StageNotes &,
@@ -748,6 +750,9 @@ public:
                     track.title = "Held Track " + std::to_string(1000 + i);
                     track.artist = "Held Artist";
                     track.durationSeconds = 200 + i;
+                    if (withFiles) {
+                        track.filePath = "/nonexistent/HELD/Contents/held-" + std::to_string(1000 + i) + ".mp3";
+                    }
                     track.playlists.push_back({"Held Playlist", i});
                     if (reversedPlaylist) {
                         track.playlists.push_back({"Held Reversed", trackCount - 1 - i});

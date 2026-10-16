@@ -839,6 +839,374 @@ TestCase {
         saveScreenshot(held.page, "browse-cues-settled");
     }
 
+    // ---- Dragging a track to a playlist (Experimental) ----
+
+    // Browse on six held tracks with files, in "Held Playlist" and "Held
+    // Reversed", with the stand-in playlist controller.
+    function makeDragPage(experimental, withFiles) {
+        browseFixture.holdCues(6, true, withFiles !== false);
+        verify(realAppSettings.experimentalBuildSupported, "an experimental build");
+        realAppSettings.experimentalFeaturesEnabled = experimental;
+        const page = makePage();
+        page.playlistEditController = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        const controller = findChild(page, "scanController");
+        const list = findChild(page, "trackListView");
+        tryCompare(list, "count", 6);
+        tryCompare(controller, "busy", false);
+        browseFixture.releaseCues();
+        tryCompare(controller, "cuesPending", false);
+        waitForRendering(page);
+        return {page: page, controller: controller, list: list, fake: page.playlistEditController,
+                sidebar: findChild(page, "playlistList"), card: findChild(page, "trackDragItem")};
+    }
+
+    // The sidebar's row for a playlist, a new one in the footer included.
+    function playlistRow(t, name) {
+        let found = null;
+        function walk(item) {
+            if (found !== null) {
+                return;
+            }
+            if (item.acceptsTrackDrop !== undefined && item.name === name) {
+                found = item;
+                return;
+            }
+            for (let i = 0; i < item.children.length; ++i) {
+                walk(item.children[i]);
+            }
+        }
+        walk(t.sidebar.contentItem);
+        verify(found !== null, "a sidebar row for " + name);
+        return found;
+    }
+
+    // Where a press on a track row lands: on the title column, clear of
+    // the cover (which plays) and the key badge (which opens the wheel).
+    function grabPoint(row) {
+        return Qt.point(Theme.iconSizeNormal + 3 * Theme.rowSpacing, row.height / 2);
+    }
+
+    // Presses on `row`, moves past the drag threshold and then onto the
+    // middle of `target`, in steps, and leaves the button down. A DropArea
+    // hears of a drag only from a move after it started, so every step is
+    // its own move.
+    function dragOnto(row, target) {
+        const start = grabPoint(row);
+        mousePress(row, start.x, start.y, Qt.LeftButton);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, start.x - 6 * i, start.y + 2 * i, 0, Qt.LeftButton);
+        }
+        moveOnto(row, target);
+    }
+    function moveOnto(row, target) {
+        const p = target.mapToItem(row, target.width / 2, target.height / 2);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, p.x + (4 - i) * 12, p.y + (4 - i) * 6, 0, Qt.LeftButton);
+        }
+        mouseMove(row, p.x + 1, p.y, 0, Qt.LeftButton);
+        return p;
+    }
+    function dropOnto(row, target) {
+        const p = target.mapToItem(row, target.width / 2, target.height / 2);
+        mouseRelease(row, p.x + 1, p.y, Qt.LeftButton);
+    }
+
+    function isAccentOutlined(item) {
+        return item.border.width === 2 && Qt.colorEqual(item.border.color, Theme.accent);
+    }
+
+    // A row dragged: the card plops up under the pointer with the track on
+    // it, the page says what is dragged, "All tracks" takes no drop and a
+    // playlist row lights up as the target. Let go there, nothing is staged:
+    // the card stays and asks, the target still marked, and only "Add to"
+    // stages, as the row menu's Add to does. With no playlist shown there
+    // is nothing to move the track out of, so no Move.
+    function test_aTrackDroppedOnAPlaylistAsksBeforeAnythingIsStaged() {
+        const t = makeDragPage(true);
+        const row = t.list.itemAtIndex(0);
+        compare(row.title, "Held Track 1000");
+        const all = playlistRow(t, "All tracks");
+        const target = playlistRow(t, "Held Playlist");
+        compare(t.card.visible, false);
+        compare(t.page.dragging, false);
+        compare(t.page.draggedTrack, null);
+
+        dragOnto(row, all);
+        compare(t.page.dragging, true, "a drag");
+        compare(t.card.visible, true);
+        compare(t.card.Drag.active, true);
+        compare(JSON.stringify(t.card.Drag.keys), JSON.stringify(["seabass/track"]));
+        compare(t.page.draggedTrack.title, "Held Track 1000");
+        compare(t.page.draggedTrack.filePath, "/nonexistent/HELD/Contents/held-1000.mp3");
+        compare(t.page.draggedTrack.sourceId, "1");
+        compare(t.page.draggedTrack.durationSeconds, 200);
+        compare(JSON.stringify(Object.keys(t.page.draggedTrack).sort()), JSON.stringify(["artist", "artworkPath",
+                "bpm", "durationSeconds", "fallbackArtworkPath", "filePath", "key", "playlistNames", "sourceId",
+                "streamingSource", "title"]), "the contract's fields");
+        compare(findChild(t.card, "dragTitle").text, "Held Track 1000");
+        compare(findChild(t.card, "dragArtist").text, "Held Artist");
+        compare(findChild(t.card, "dragDuration").text, "3:20");
+        compare(all.isCurrent, true, "All tracks is shown, and outlined for that");
+        verify(!all.dropTarget, "but is no target");
+        verify(!target.dropTarget);
+
+        const p = moveOnto(row, target);
+        tryCompare(target, "dropTarget", true);
+        verify(isAccentOutlined(target), "the target wears the accent outline");
+        tryCompare(t.card, "opacity", 1);
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "browse_drag_over_playlist");
+
+        dropOnto(row, target);
+        compare(t.page.dragging, false);
+        compare(t.page.draggedTrack, null);
+        compare(t.fake.calls.length, 0, "nothing staged on the drop");
+        compare(t.card.confirming, true, "the card stays and asks");
+        compare(t.card.visible, true);
+        verify(isAccentOutlined(target), "the target stays marked while the card asks");
+        const hot = t.card.mapToItem(row, t.card.Drag.hotSpot.x, t.card.Drag.hotSpot.y);
+        verify(Math.abs(hot.x - p.x) <= 2 && Math.abs(hot.y - p.y) <= 2, "where it was dropped: " + hot.x + "," + hot.y
+               + " for " + p.x + "," + p.y);
+        const add = findChild(t.card, "dropAddButton");
+        const move = findChild(t.card, "dropMoveButton");
+        compare(add.visible, true);
+        compare(add.text, "Add to \"Held Playlist\"");
+        compare(move.visible, false, "no playlist shown, nothing to move out of");
+        compare(t.page.trackPanelOpen, false, "a drag is no click");
+        compare(findChild(t.page, "trackMenu").opened, false, "nor a press and hold");
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "browse_drop_confirm_add");
+
+        mouseClick(add);
+        compare(JSON.stringify(t.fake.calls), JSON.stringify([["add", "/nonexistent/TESTSTICK/PIONEER",
+                "/nonexistent/TESTSTICK/Engine Library", "Held Playlist", "/nonexistent/HELD/Contents/held-1000.mp3",
+                "Held Track 1000"]]));
+        tryCompare(t.card, "visible", false);
+        verify(!isAccentOutlined(target));
+        cleanupExperimental();
+    }
+
+    // With a playlist shown that the track is in, the card also offers
+    // Move: the add to the target and the removal from the shown one, in
+    // that order. The shown playlist itself is no target.
+    function test_aTrackInThePlaylistShownCanBeMoved() {
+        const t = makeDragPage(true);
+        const reversed = t.controller.playlistNames.indexOf("Held Reversed");
+        t.page.selectPlaylist(reversed + 1, "Held Reversed", false);
+        waitForRendering(t.page);
+        const row = t.list.itemAtIndex(0);
+        compare(row.title, "Held Track 1005", "the reversed playlist's first");
+        const shown = playlistRow(t, "Held Reversed");
+        const target = playlistRow(t, "Held Playlist");
+
+        dragOnto(row, shown);
+        compare(t.page.dragging, true);
+        verify(!shown.dropTarget, "the playlist shown is no target");
+        dropOnto(row, shown);
+        compare(t.card.confirming, false, "let go over no target: nothing asked");
+        tryCompare(t.card, "visible", false);
+
+        dragOnto(row, target);
+        tryCompare(target, "dropTarget", true);
+        dropOnto(row, target);
+        compare(t.card.confirming, true);
+        const move = findChild(t.card, "dropMoveButton");
+        compare(move.visible, true);
+        compare(move.text, "Move to \"Held Playlist\"");
+        compare(findChild(t.card, "dropAddButton").text, "Add to \"Held Playlist\"");
+        tryCompare(t.card, "opacity", 1);
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "browse_drop_confirm_move");
+        compare(t.fake.calls.length, 0);
+        mouseClick(move);
+        compare(JSON.stringify(t.fake.calls), JSON.stringify([
+            ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Playlist",
+             "/nonexistent/HELD/Contents/held-1005.mp3", "Held Track 1005"],
+            ["remove", "Held Reversed", "/nonexistent/HELD/Contents/held-1005.mp3", "Held Track 1005"]]));
+        tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // The card asking goes away, staging nothing, on Escape, on a click
+    // anywhere else (which does nothing else), and on a press on the row
+    // it came from.
+    function test_aDropIsCancelledByEscapeOrAClickElsewhere() {
+        const t = makeDragPage(true);
+        const row = t.list.itemAtIndex(1);
+        const target = playlistRow(t, "Held Playlist");
+        const confirmDrop = () => {
+            dragOnto(row, target);
+            dropOnto(row, target);
+            compare(t.card.confirming, true);
+        };
+
+        confirmDrop();
+        tryCompare(t.card, "activeFocus", true);
+        keyClick(Qt.Key_Escape);
+        compare(t.card.confirming, false);
+        tryCompare(t.card, "visible", false);
+
+        confirmDrop();
+        mouseClick(t.list.itemAtIndex(3), grabPoint(row).x, row.height / 2);
+        tryCompare(t.card, "visible", false);
+        compare(t.page.trackPanelOpen, false, "the click only let the card go");
+
+        confirmDrop();
+        mousePress(row, grabPoint(row).x, row.height / 2);
+        compare(t.card.confirming, false, "the row pressed again");
+        mouseRelease(row, grabPoint(row).x, row.height / 2);
+        tryCompare(t.card, "visible", false);
+
+        // Let go over the list, not a playlist: the card goes at once.
+        dragOnto(row, t.list.itemAtIndex(4));
+        mouseRelease(row, grabPoint(row).x, row.height / 2 + row.height * 3);
+        compare(t.card.confirming, false);
+        tryCompare(t.card, "visible", false);
+        compare(t.fake.calls.length, 0, "nothing staged at all");
+        cleanupExperimental();
+    }
+
+    // A playlist staged for deletion takes no drop; one staged to be
+    // created does, from the end of the list.
+    function test_aDeletedPlaylistTakesNoDropANewOneDoes() {
+        const t = makeDragPage(true);
+        t.fake.staged["p:Held Playlist"] = true;
+        t.fake.pendingRevision++;
+        t.fake.newPlaylists = ["Fresh"];
+        waitForRendering(t.page);
+        const row = t.list.itemAtIndex(0);
+        const deleted = playlistRow(t, "Held Playlist");
+        dragOnto(row, deleted);
+        compare(t.page.dragging, true);
+        verify(!deleted.dropTarget, "staged for deletion");
+        dropOnto(row, deleted);
+        compare(t.card.confirming, false);
+        tryCompare(t.card, "visible", false);
+
+        const fresh = playlistRow(t, "Fresh");
+        compare(fresh.pendingNew, true);
+        dragOnto(row, fresh);
+        tryCompare(fresh, "dropTarget", true);
+        dropOnto(row, fresh);
+        compare(t.card.confirming, true);
+        compare(findChild(t.card, "dropAddButton").text, "Add to \"Fresh\"");
+        keyClick(Qt.Key_Escape);
+        tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // With drags on, a row still opens the details pane on a click and its
+    // menu on a right click or a press and hold, and its cover still plays.
+    function test_aDraggableRowStillClicks() {
+        const t = makeDragPage(true);
+        const row = t.list.itemAtIndex(2);
+        const at = grabPoint(row);
+        mouseClick(row, at.x, at.y);
+        compare(t.page.trackPanelOpen, true, "a click opens the details pane");
+        compare(findChild(t.page, "trackDetailPanel").trackSourceId, "3");
+        compare(t.card.visible, false, "and drags nothing");
+        const menu = findChild(t.page, "trackMenu");
+        mouseClick(row, at.x, at.y, Qt.RightButton);
+        tryCompare(menu, "opened", true);
+        menu.close();
+        tryCompare(menu, "visible", false);
+        mousePress(row, at.x, at.y);
+        tryCompare(menu, "opened", true, 3000, "a press and hold opens the menu");
+        mouseRelease(row, at.x, at.y);
+        menu.close();
+        tryCompare(menu, "visible", false);
+        const cover = findChild(row, "rowCell_artwork");
+        mouseClick(cover);
+        compare(realPlayback.currentSourceId, "3", "the cover plays");
+        realPlayback.stop();
+        compare(t.card.visible, false);
+        cleanupExperimental();
+    }
+
+    // Without Experimental nothing drags, and a track without a file (here
+    // the held rows without one, or a streaming one) cannot be dragged.
+    function test_nothingDragsWithoutExperimentalOrAFile() {
+        let t = makeDragPage(false);
+        let row = t.list.itemAtIndex(0);
+        dragOnto(row, playlistRow(t, "Held Playlist"));
+        compare(t.page.dragging, false, "Experimental off");
+        compare(t.card.visible, false);
+        dropOnto(row, playlistRow(t, "Held Playlist"));
+        compare(t.card.confirming, false);
+
+        t = makeDragPage(true, false);
+        row = t.list.itemAtIndex(0);
+        compare(row.filePath, "");
+        dragOnto(row, playlistRow(t, "Held Playlist"));
+        compare(t.page.dragging, false, "no file");
+        dropOnto(row, playlistRow(t, "Held Playlist"));
+        compare(t.card.confirming, false);
+        verify(!t.card.canDrag({filePath: "/nonexistent/s.mp3", streamingSource: "TIDAL"}), "a streaming track");
+        verify(t.card.canDrag({filePath: "/nonexistent/s.mp3", streamingSource: ""}));
+        compare(t.fake.calls.length, 0);
+        cleanupExperimental();
+    }
+
+    // A Matching result drags to a playlist as a Browse row does; a
+    // streaming one does not.
+    function test_aMatchingResultDragsToAPlaylist() {
+        const t = makeDragPage(true);
+        t.page.matchingPanelOpen = true;
+        const matching = findChild(t.page, "matchingPage");
+        waitForRendering(t.page);
+        // Results of our own, once a refresh due will not replace them.
+        tryCompare(findChild(matching, "refreshDebounce"), "running", false);
+        matching.candidates = [
+            {sourceId: "7", title: "Match", artist: "Someone", key: "8A", keyRelation: "", camelotLabel: "8A", bpm: 124,
+             rating: -1, durationSeconds: 245, filePath: "/nonexistent/m.mp3", streamingSource: "", artworkPath: "",
+             fallbackArtworkPath: "", playlistNames: [], cues: []},
+            {sourceId: "8", title: "Streamed", artist: "Someone", key: "8A", keyRelation: "", camelotLabel: "8A", bpm: 124,
+             rating: -1, durationSeconds: 245, filePath: "/nonexistent/s.mp3", streamingSource: "TIDAL", artworkPath: "",
+             fallbackArtworkPath: "", playlistNames: [], cues: []}];
+        waitForRendering(t.page);
+        // A result's drag area, found afresh each time: staging can
+        // rebuild the list.
+        function dragArea(title) {
+            let found = null;
+            function walk(item) {
+                if (item.objectName === "candidateDragArea" && item.track && item.track.title === title) {
+                    found = item;
+                }
+                for (let i = 0; i < item.children.length; ++i) {
+                    walk(item.children[i]);
+                }
+            }
+            walk(matching);
+            verify(found !== null, "a drag area for " + title);
+            return found;
+        }
+        const target = playlistRow(t, "Held Playlist");
+        let area = dragArea("Streamed");
+        dragOnto(area, target);
+        compare(t.page.dragging, false, "a streaming result");
+        dropOnto(area, target);
+        compare(t.card.confirming, false);
+
+        area = dragArea("Match");
+        dragOnto(area, target);
+        compare(t.page.dragging, true);
+        compare(t.page.draggedTrack.title, "Match");
+        compare(findChild(t.card, "dragBpm").text, "124");
+        compare(findChild(t.card, "dragDuration").text, "4:05");
+        tryCompare(target, "dropTarget", true);
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "matching_drag_over_playlist");
+        dropOnto(area, target);
+        compare(t.card.confirming, true);
+        compare(t.fake.calls.length, 0);
+        mouseClick(findChild(t.card, "dropAddButton"));
+        compare(JSON.stringify(t.fake.calls[0]), JSON.stringify(["add", "/nonexistent/TESTSTICK/PIONEER",
+                "/nonexistent/TESTSTICK/Engine Library", "Held Playlist", "/nonexistent/m.mp3", "Match"]));
+        tryCompare(t.card, "visible", false);
+
+        cleanupExperimental();
+    }
+
     // ---- Sorting by the column headers ----
 
     function header(page, key) {

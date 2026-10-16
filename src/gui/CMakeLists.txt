@@ -176,6 +176,8 @@ set(SEABASS_GUI_QML_FILES
     qml/PlaylistRowDelegate.qml
     qml/PlaylistDropGap.qml
     qml/PlaylistListView.qml
+    qml/TrackDragItem.qml
+    qml/TrackDragArea.qml
     qml/MatchingPage.qml
     qml/StarRating.qml
     qml/FormatUsbPage.qml
