@@ -528,7 +528,17 @@ TestCase {
         ScanController {}
     }
 
+    // Browse remembers the playlist picked (lastPlaylistName), and every
+    // page with a playlist picker opens on it, Sync included: a name left
+    // behind here scoped tst_SyncPage, which runs after this file in the
+    // same process, to a playlist none of its rows are in.
+    property string lastPlaylistBefore: ""
+    function init() {
+        lastPlaylistBefore = realAppSettings.lastPlaylistName;
+    }
+
     function cleanup() {
+        realAppSettings.lastPlaylistName = lastPlaylistBefore;
         browseFixture.restore();
     }
 

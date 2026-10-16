@@ -15,6 +15,7 @@
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/future_result.hpp"
 
 namespace seabass::gui
 {
@@ -357,10 +358,16 @@ void PlaylistEditController::onLookupFinished()
 {
     Lookup done = std::move(m_lookups.front());
     m_lookups.pop_front();
-    const PlaylistWhereabouts where = m_lookupWatcher.result();
-    // The stick may have started a save meanwhile; nothing is staged into
-    // a save that is writing.
-    if (attachSession(done.rekordboxPath, done.enginePath)) {
+    // playlistWhereabouts swallows what the readers throw, so this is for
+    // whatever else a worker can raise: said, not rethrown on the GUI
+    // thread (see future_result.hpp).
+    QString thrown;
+    const PlaylistWhereabouts where = takeResult(m_lookupWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        setErrorMessage(QStringLiteral("Could not read the stick's playlists: %1").arg(thrown));
+    } else if (attachSession(done.rekordboxPath, done.enginePath)) {
+        // The stick may have started a save meanwhile; nothing is staged
+        // into a save that is writing.
         done.then(where);
     }
     runNextLookup();
