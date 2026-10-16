@@ -439,6 +439,14 @@ int main(int argc, char **argv)
             SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
             const auto targets = move(A03, 0)->filesToBackup(ctx);
             assert(targets.size() == 3 && "every library it writes is backed up");
+#if defined(_WIN32)
+            // One spelling per target: a root handed over with '/' and joined with
+            // fs::path's '\' read C:/x/PIONEER\rekordbox\export.pdb.
+            for (const auto &target : targets) {
+                assert((target.file.find('/') == std::string::npos || target.file.find('\\') == std::string::npos)
+                       && "a backup target is spelled with one kind of separator");
+            }
+#endif
             assert(targets[0].file == pdbPath && targets[0].label == "playlist-move");
             assert(targets[1].file == infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
             assert(targets[2].file == pathToUtf8(library / "Database2" / "m.db") && targets[2].label == "playlist-move");
@@ -586,6 +594,14 @@ int main(int argc, char **argv)
             SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
             const auto targets = rename("Q1", "Q One", all)->filesToBackup(ctx);
             assert(targets.size() == 3 && "every library it writes is backed up");
+#if defined(_WIN32)
+            // One spelling per target: a root handed over with '/' and joined with
+            // fs::path's '\' read C:/x/PIONEER\rekordbox\export.pdb.
+            for (const auto &target : targets) {
+                assert((target.file.find('/') == std::string::npos || target.file.find('\\') == std::string::npos)
+                       && "a backup target is spelled with one kind of separator");
+            }
+#endif
             assert(targets[0].file == pdbPath && targets[0].label == "playlist-rename");
             assert(targets[1].file == infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
             assert(targets[2].file == mdb && targets[2].label == "playlist-rename");

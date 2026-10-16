@@ -169,7 +169,9 @@ const std::vector<domain::CueTableEntry> &OneLibraryCueTables::of(int64_t conten
 
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
 {
-    return pathToUtf8(pathFromUtf8(pioneerRoot) / "rekordbox" / "exportLibrary.db");
+    // lexically_normal(): one spelling per platform, whatever separators
+    // the root arrived with (see exportPdbOf in playlist_edit_changes.cpp).
+    return pathToUtf8((pathFromUtf8(pioneerRoot) / "rekordbox" / "exportLibrary.db").lexically_normal());
 }
 
 bool OneLibraryCueWriter::existsFor(const std::string &pioneerRoot)
