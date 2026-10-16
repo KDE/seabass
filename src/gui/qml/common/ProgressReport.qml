@@ -68,7 +68,10 @@ ColumnLayout {
 
     spacing: 8
 
-    RowLayout {
+    // A Flow, not a row: four steps in a narrow dialog ran off its edge
+    // ("Checking t..." on Restore onto a stick). They wrap instead.
+    Flow {
+        objectName: "phaseStrip"
         Layout.fillWidth: true
         spacing: 8
         visible: report.phases.length > 0
