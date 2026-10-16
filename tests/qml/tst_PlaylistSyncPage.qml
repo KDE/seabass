@@ -49,6 +49,11 @@ TestCase {
             property int danglingPlaylistEntryCount: 8
             property var danglingPlaylists: [{playlist: "Whaleshark Cooldown", entries: 8}]
             property bool danglingFixStaged: false
+            property int unresolvedPlaylistEntryCount: 120
+            property var unresolvedPlaylists: [{playlist: "50th Opening", entries: 8}, {playlist: "Warmup", entries: 112}]
+            property bool unresolvedFixStaged: false
+            function repairUnresolvedPlaylistEntries() { unresolvedFixStaged = true; }
+            function unstageUnresolvedPlaylistEntries() { unresolvedFixStaged = false; }
             property var calls: []
             function alignPlaylist(name, reference) {
                 calls.push("align " + name + " " + reference);
@@ -129,5 +134,27 @@ TestCase {
             wait(100);
             grabImage(page).save(screenshotDir + "/PlaylistSyncPage.png");
         }
+    }
+
+    // Entries the player cannot see: said with their playlists, and the
+    // button stages the repair and takes it back.
+    function test_entriesThePlayerCannotSeeAreListedAndRepaired() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        waitForRendering(page);
+        const summary = findChild(page, "unresolvedSummary");
+        verify(summary.visible, "shown");
+        verify(summary.text.indexOf("120 Engine playlist entries the player cannot see") === 0, summary.text);
+        verify(summary.text.indexOf("50th Opening: 8, Warmup: 112") > 0, summary.text);
+        verify(summary.text.indexOf("\u2014") < 0 && summary.text.indexOf("--") < 0, "no dashes on screen");
+        const button = findChild(page, "repairUnresolvedButton");
+        compare(button.text, "Repair Them");
+        button.clicked();
+        compare(controller.unresolvedFixStaged, true);
+        compare(button.text, "Unstage");
+        button.clicked();
+        compare(controller.unresolvedFixStaged, false);
+        controller.unresolvedPlaylistEntryCount = 0;
+        verify(!summary.visible, "none: nothing said");
     }
 }

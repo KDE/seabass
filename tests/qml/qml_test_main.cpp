@@ -45,6 +45,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include "gui/scan_controller.hpp"
@@ -620,6 +621,51 @@ public:
     {
         QFile::remove(file);
         return writeText(file, text);
+    }
+
+    // WHALESHARK3's case on a stick copy: the entries of the playlist titled
+    // `playlist` given `uuid` as their databaseUuid, a library their tracks
+    // do not name as their origin, so a player cannot resolve them. Returns
+    // how many entries changed, -1 on failure.
+    Q_INVOKABLE int plantUnresolvedEngineEntries(const QString &stickRoot, const QString &playlist, const QString &uuid)
+    {
+        const std::string file = stickRoot.toStdString() + "/Engine Library/Database2/m.db";
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return -1;
+        }
+        sqlite3_stmt *stmt = nullptr;
+        int changed = -1;
+        if (sqlite3_prepare_v2(db, "UPDATE PlaylistEntity SET databaseUuid = ? WHERE listId = "
+                                   "(SELECT id FROM Playlist WHERE title = ?);", -1, &stmt, nullptr) == SQLITE_OK) {
+            const std::string u = uuid.toStdString();
+            const std::string t = playlist.toStdString();
+            sqlite3_bind_text(stmt, 1, u.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, t.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(stmt) == SQLITE_DONE) {
+                changed = sqlite3_changes(db);
+            }
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return changed;
+    }
+
+    // How many entries of a stick copy's Engine playlists a player cannot
+    // resolve, read straight from m.db; -1 when it cannot be read.
+    Q_INVOKABLE int unresolvedEngineEntries(const QString &stickRoot) const
+    {
+        try {
+            int n = 0;
+            for (const auto &u : seabass::infrastructure::engine::unresolvedPlaylistEntries(stickRoot.toStdString()
+                                                                                             + "/Engine Library")) {
+                n += u.entries;
+            }
+            return n;
+        } catch (const std::exception &) {
+            return -1;
+        }
     }
 
     // #57: adds a row to a stick copy's OneLibrary cue table, for the cue

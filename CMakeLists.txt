@@ -952,6 +952,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
+        src/gui/edit/changes/repoint_playlist_entries_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp

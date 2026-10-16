@@ -49,6 +49,7 @@
 #include "gui/edit/changes/delete_tracks_change.hpp"
 #include "gui/edit/changes/level_cue_table_change.hpp"
 #include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
+#include "gui/edit/changes/repoint_playlist_entries_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -649,6 +650,8 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 }
                 if (!enginePath.isEmpty()) {
                     result.danglingPlaylistEntries = infrastructure::engine::danglingPlaylistEntries(enginePath.toStdString());
+                    result.unresolvedPlaylistEntries =
+                        infrastructure::engine::unresolvedPlaylistEntries(enginePath.toStdString());
                 }
                 result.noPlaylist = domain::findTracksInNoPlaylist(catalogs, key);
                 result.playlistsChecked = true;
@@ -991,6 +994,7 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_analysisState = {};
     m_playlistFindings.clear();
     m_danglingPlaylistEntries.clear();
+    m_unresolvedPlaylistEntries.clear();
     m_playlistsChecked = false;
     m_playlistsError.clear();
     m_noPlaylist = {};
@@ -1189,6 +1193,7 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
         if (result.playlistsChecked || !result.playlistsError.empty()) {
             m_playlistFindings = std::move(result.playlistFindings);
             m_danglingPlaylistEntries = std::move(result.danglingPlaylistEntries);
+            m_unresolvedPlaylistEntries = std::move(result.unresolvedPlaylistEntries);
             m_playlistsChecked = result.playlistsChecked;
             m_playlistsError = QString::fromStdString(result.playlistsError);
             m_noPlaylist = std::move(result.noPlaylist);
@@ -1367,6 +1372,13 @@ void LibraryConsistencyController::attachSession()
                     emit playlistsChanged();
                     return;
                 }
+                if (changeId == RepointPlaylistEntriesChange::idFor()) {
+                    m_unresolvedFixStaged = false;
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit playlistsChanged();
+                    return;
+                }
                 if (auto staged = m_stagedSampleRates.find(changeId); staged != m_stagedSampleRates.end()) {
                     // Counted like the cover art: the numbers come from
                     // the database this just wrote, so they are re-read
@@ -1451,6 +1463,7 @@ void LibraryConsistencyController::attachSession()
                 m_sampleRateFillStaged = false;
                 m_stagedPlaylists.clear();
                 m_danglingFixStaged = false;
+                m_unresolvedFixStaged = false;
                 m_stagedNoPlaylistFiles.clear();
                 emit playlistsChanged();
                 m_stagedCueTables.clear();
@@ -2048,6 +2061,58 @@ QVariantList LibraryConsistencyController::danglingPlaylists() const
     return list;
 }
 
+int LibraryConsistencyController::unresolvedPlaylistEntryCount() const
+{
+    int count = 0;
+    for (const auto &u : m_unresolvedPlaylistEntries) {
+        count += u.entries;
+    }
+    return count;
+}
+
+QVariantList LibraryConsistencyController::unresolvedPlaylists() const
+{
+    QVariantList list;
+    for (const auto &u : m_unresolvedPlaylistEntries) {
+        list << QVariantMap{{"playlist", QString::fromStdString(u.playlist)}, {"entries", u.entries}};
+    }
+    return list;
+}
+
+void LibraryConsistencyController::repairUnresolvedPlaylistEntries()
+{
+    const int count = unresolvedPlaylistEntryCount();
+    if (busy() || m_unresolvedFixStaged || count == 0 || m_enginePath.isEmpty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    if (!m_session->stage(std::make_unique<RepointPlaylistEntriesChange>(m_enginePath, count))) {
+        return;
+    }
+    m_unresolvedFixStaged = true;
+    emit playlistsChanged();
+    setStagedStatusMessage(QStringLiteral("Staged making %1 Engine playlist entr(ies) the player cannot see visible "
+                                          "again. Press Save to write it.")
+                               .arg(count));
+}
+
+void LibraryConsistencyController::unstageUnresolvedPlaylistEntries()
+{
+    if (!m_unresolvedFixStaged) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(RepointPlaylistEntriesChange::idFor());
+    }
+    m_unresolvedFixStaged = false;
+    emit playlistsChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::alignPlaylist(const QString &playlist, const QString &reference)
 {
     if (busy()) {
@@ -2456,7 +2521,8 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_importMarkStaged
+        && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_unresolvedFixStaged
+        && !m_importMarkStaged
         && m_stagedNoPlaylistFiles.empty() && m_stagedCueTables.empty()) {
         setStatusMessage({});
     }

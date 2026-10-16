@@ -32,6 +32,37 @@ std::vector<DanglingPlaylistEntries> danglingPlaylistEntries(const std::string &
 // many were deleted; throws when the database cannot be written.
 int removeDanglingPlaylistEntries(const std::string &databaseFile);
 
+// Playlist entries the player cannot see: the entry names a track the
+// library has (so it is not dangling), but its (databaseUuid, trackId)
+// matches no track's (originDatabaseUuid, originTrackId), nor, for a
+// track that names no origin, (the library's uuid, id). The player looks
+// entries up that way and shows the playlist without them; Seabass wrote
+// 120 such entries on WHALESHARK3 before its entries took the track's
+// origin uuid (see entityUuidFor in the .cpp). Per playlist, as for
+// dangling ones; read-only.
+struct UnresolvedPlaylistEntries
+{
+    std::string playlist;  // the playlist's own title (not its path)
+    int entries = 0;
+};
+std::vector<UnresolvedPlaylistEntries> unresolvedPlaylistEntries(const std::string &engineLibraryPath);
+
+// Repoints those entries in the library at `engineLibraryPath` (a write
+// root) to the uuid an entry for their track is written with now: the
+// track's originDatabaseUuid, or the library's own for a track naming
+// none. Only where that resolves (the track's originTrackId is its id, as
+// on every stick seen so far); an entry the list already holds its track
+// under the right uuid is a copy nobody can see, and goes. Anything else
+// is left as it is and counted. One transaction; every list touched must
+// walk in the order it had.
+struct RepointedPlaylistEntries
+{
+    int repointed = 0;
+    int removed = 0;
+    int leftAlone = 0;
+};
+RepointedPlaylistEntries repointUnresolvedPlaylistEntries(const std::string &engineLibraryPath);
+
 // A playlist's membership in the library at `engineLibraryPath` (a write
 // root: the stick's library or a save's scratch copy), the playlist named
 // by its full path as the Engine reader spells it ("Folder/List"). Add
