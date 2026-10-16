@@ -1044,15 +1044,16 @@ TestCase {
 
     // Browse on six held tracks with files, in "Held Playlist" and "Held
     // Reversed", with the stand-in playlist controller.
-    function makeDragPage(experimental, withFiles) {
-        browseFixture.holdCues(6, true, withFiles !== false);
+    function makeDragPage(experimental, withFiles, trackCount) {
+        const rows = trackCount === undefined ? 6 : trackCount;
+        browseFixture.holdCues(rows, true, withFiles !== false);
         verify(realAppSettings.experimentalBuildSupported, "an experimental build");
         realAppSettings.experimentalFeaturesEnabled = experimental;
         const page = makePage();
         page.playlistEditController = createTemporaryObject(fakePlaylistEditComponent, testCase);
         const controller = findChild(page, "scanController");
         const list = findChild(page, "trackListView");
-        tryCompare(list, "count", 6);
+        tryCompare(list, "count", rows);
         tryCompare(controller, "busy", false);
         browseFixture.releaseCues();
         tryCompare(controller, "cuesPending", false);
@@ -1738,6 +1739,84 @@ TestCase {
             ["move", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Reversed",
              "/nonexistent/c.mp3", "Carried", 1],
             ["remove", "Held Playlist", "/nonexistent/c.mp3", "Carried"]]));
+        tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // ---- Scrolling while dragging ----
+
+    // Held at the bottom edge of the track list, longer than it is tall,
+    // the list scrolls down, steadily, and stops at its end; held in the
+    // middle it stays; at the top edge it scrolls back up.
+    function test_theTrackListScrollsAtItsEdgeDuringADrag() {
+        const t = makeDragPage(true, true, 30);
+        const scroller = findChild(t.page, "trackListAutoScroller");
+        const row = t.list.itemAtIndex(0);
+        verify(t.list.contentHeight > t.list.height, "more rows than fit");
+        compare(t.list.contentY, scroller.minContentY);
+        const start = grabPoint(row);
+        mousePress(row, start.x, start.y, Qt.LeftButton);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, start.x, start.y + 6 * i, 0, Qt.LeftButton);
+        }
+        compare(t.page.dragging, true);
+        // The middle of the list: nothing moves.
+        mouseMove(t.list, start.x, t.list.height / 2, 0, Qt.LeftButton);
+        wait(300);
+        compare(t.list.contentY, scroller.minContentY, "not in an edge zone");
+        // The bottom edge.
+        mouseMove(t.list, start.x, t.list.height - scroller.edge / 2, 0, Qt.LeftButton);
+        tryVerify(() => t.list.contentY > scroller.minContentY + 20, 2000, "scrolls down");
+        const early = t.list.contentY;
+        wait(200);
+        verify(t.list.contentY > early, "steadily");
+        tryCompare(t.list, "contentY", scroller.maxContentY, 15000, "to the end");
+        wait(300);
+        compare(t.list.contentY, scroller.maxContentY, "and stops there");
+        compare(scroller.direction, 0);
+        // The top edge: back up.
+        mouseMove(t.list, start.x, scroller.edge / 2, 0, Qt.LeftButton);
+        tryVerify(() => t.list.contentY < scroller.maxContentY - 20, 2000, "scrolls up");
+        mouseMove(t.list, start.x, t.list.height / 2, 0, Qt.LeftButton);
+        const left = t.list.contentY;
+        wait(300);
+        compare(t.list.contentY, left, "stops on leaving the zone");
+        mouseRelease(t.list, start.x, t.list.height / 2, Qt.LeftButton);
+        keyClick(Qt.Key_Escape);
+        tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // The sidebar too: many playlists, the pointer held at its bottom edge.
+    function test_theSidebarScrollsAtItsEdgeDuringADrag() {
+        const t = makeDragPage(true);
+        const names = [];
+        for (let i = 0; i < 30; ++i) {
+            names.push("New " + (100 + i));
+        }
+        t.fake.newPlaylists = names;
+        waitForRendering(t.page);
+        const scroller = findChild(t.page, "sidebarAutoScroller");
+        verify(t.sidebar.contentHeight > t.sidebar.height, "more playlists than fit");
+        const before = t.sidebar.contentY;
+        const row = t.list.itemAtIndex(0);
+        const start = grabPoint(row);
+        mousePress(row, start.x, start.y, Qt.LeftButton);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, start.x - 6 * i, start.y, 0, Qt.LeftButton);
+        }
+        mouseMove(t.sidebar, t.sidebar.width / 2, t.sidebar.height / 2, 0, Qt.LeftButton);
+        wait(300);
+        compare(t.sidebar.contentY, before, "not in an edge zone");
+        mouseMove(t.sidebar, t.sidebar.width / 2, t.sidebar.height - scroller.edge / 2, 0, Qt.LeftButton);
+        tryVerify(() => t.sidebar.contentY > before + 20, 2000, "scrolls down");
+        tryCompare(t.sidebar, "contentY", scroller.maxContentY, 15000, "to the end");
+        wait(300);
+        compare(t.sidebar.contentY, scroller.maxContentY, "and stops there");
+        mouseMove(t.sidebar, t.sidebar.width / 2, t.sidebar.height / 2, 0, Qt.LeftButton);
+        mouseRelease(t.sidebar, t.sidebar.width / 2, t.sidebar.height / 2, Qt.LeftButton);
+        // Let go on a playlist: the card asks; Escape lets it go.
+        keyClick(Qt.Key_Escape);
         tryCompare(t.card, "visible", false);
         cleanupExperimental();
     }

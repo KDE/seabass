@@ -1983,6 +1983,34 @@ Page {
         }
     }
 
+    // While a track is dragged, the sidebar and the track list scroll when
+    // the pointer is held at their top or bottom edge, so a playlist or a
+    // place out of sight can still be reached. The pointer is the card's
+    // hot spot; `x` and `y` are the card's, read so the binding follows it.
+    function dragPointIn(view, x, y) {
+        return trackDrag.mapToItem(view, trackDrag.Drag.hotSpot.x, trackDrag.Drag.hotSpot.y);
+    }
+    function dragIsOver(view, at) {
+        return at.x >= 0 && at.x < view.width && at.y >= 0 && at.y < view.height;
+    }
+    DragAutoScroller {
+        id: listAutoScroller
+        objectName: "trackListAutoScroller"
+        property point at: root.dragging ? root.dragPointIn(trackListView, trackDrag.x, trackDrag.y) : Qt.point(-1, -1)
+        view: trackListView
+        active: root.dragging && root.dragIsOver(trackListView, at)
+        pointerY: at.y
+    }
+    DragAutoScroller {
+        id: sidebarAutoScroller
+        objectName: "sidebarAutoScroller"
+        property point at: root.dragging ? root.dragPointIn(playlistSidebarList, trackDrag.x, trackDrag.y)
+                                         : Qt.point(-1, -1)
+        view: playlistSidebarList
+        active: root.dragging && root.dragIsOver(playlistSidebarList, at)
+        pointerY: at.y
+    }
+
     function addDraggedTrack(playlist) {
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
                                                   trackDrag.filePath, trackDrag.title);
