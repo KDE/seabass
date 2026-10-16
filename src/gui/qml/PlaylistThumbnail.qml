@@ -14,8 +14,8 @@ Rectangle {
     id: root
     property string source: ""
 
-    implicitWidth: Theme.scaled(24)
-    implicitHeight: Theme.scaled(24)
+    implicitWidth: Theme.scaled(18)
+    implicitHeight: Theme.scaled(18)
     radius: Theme.cornerRadius / 2
     color: Theme.groupBackground
 
