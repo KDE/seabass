@@ -49,6 +49,21 @@ TestCase {
             property string errorMessage: ""
             property var staged: ({})
             property var calls: []
+            property var newPlaylists: []
+            function createPlaylist(rekordboxPath, enginePath, name) {
+                calls.push(["create", rekordboxPath, enginePath, name]);
+                staged["n:" + name] = true;
+                newPlaylists = newPlaylists.concat([name]);
+                pendingRevision++;
+                return true;
+            }
+            function dropNewPlaylist(name) {
+                calls.push(["dropNew", name]);
+                delete staged["n:" + name];
+                newPlaylists = newPlaylists.filter(n => n !== name);
+                pendingRevision++;
+            }
+            function isNewPlaylistStaged(name) { return staged["n:" + name] === true; }
             function deletePlaylist(rekordboxPath, enginePath, playlist) {
                 calls.push(["delete", rekordboxPath, enginePath, playlist]);
                 staged["p:" + playlist] = true;
@@ -199,6 +214,70 @@ TestCase {
         compare(page.shownPlaylist, "Tech House");
         page.selectPlaylist(0, "", false);
         compare(page.shownPlaylist, "");
+        cleanupExperimental();
+    }
+
+    // The list's last row, with Experimental on: it asks for a name, OK
+    // only once there is one, and stages the create; the new playlist is
+    // listed until Save, and its menu takes it back.
+    function test_theLastRowCreatesAPlaylist() {
+        const page = makeEditingPage(true);
+        const list = findChild(page, "playlistList");
+        const row = findChild(page, "createPlaylistRow");
+        verify(row !== null);
+        tryCompare(row, "visible", true);
+        const rowTop = row.mapToItem(list.contentItem, 0, 0).y;
+        verify(rowTop >= list.contentItem.childrenRect.y + 32 - 1, "after the playlists: " + rowTop);
+        compare(row.contentItem.children[1].text, "Create new playlist");
+        mouseClick(row);
+        const dialog = findChild(page, "createPlaylistDialog");
+        tryCompare(dialog, "opened", true);
+        const field = findChild(page, "newPlaylistNameField");
+        tryCompare(field, "activeFocus", true);
+        compare(dialog.standardButton(Dialog.Ok).enabled, false, "no name, no OK");
+        field.text = "   ";
+        compare(dialog.standardButton(Dialog.Ok).enabled, false, "spaces are no name");
+        field.text = "Warm & Melodic 2";
+        compare(dialog.standardButton(Dialog.Ok).enabled, true);
+        waitForRendering(page);
+        saveScreenshot(page, "browse_create_playlist_dialog");
+        compare(page.playlistEditController.calls.length, 0, "nothing staged before OK");
+        keyClick(Qt.Key_Return);
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(page.playlistEditController.calls[0]),
+                JSON.stringify(["create", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library",
+                                "Warm & Melodic 2"]));
+        tryVerify(() => findChild(list, "createPlaylistRow").mapToItem(list.contentItem, 0, 0).y >= rowTop + 32 - 1,
+                  5000, "the new one is listed above the create row");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_new_playlist_pending");
+
+        const menu = findChild(page, "playlistMenu");
+        page.openPlaylistMenu("Warm & Melodic 2", page);
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "deletePlaylistItem");
+        compare(item.text, "Don't create this playlist");
+        item.triggered();
+        compare(JSON.stringify(page.playlistEditController.calls[1]), JSON.stringify(["dropNew", "Warm & Melodic 2"]));
+        compare(page.playlistEditController.newPlaylists.length, 0);
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        // Opened again, the field starts empty.
+        mouseClick(row);
+        tryCompare(dialog, "opened", true);
+        compare(field.text, "");
+        dialog.reject();
+        compare(page.playlistEditController.calls.length, 2, "cancel stages nothing");
+        cleanupExperimental();
+    }
+
+    function test_withoutExperimentalTheListHasNoCreateRow() {
+        const page = makeEditingPage(false);
+        const row = findChild(page, "createPlaylistRow");
+        verify(row === null || !row.visible);
+        page.openCreatePlaylistDialog();
+        compare(findChild(page, "createPlaylistDialog").opened, false);
         cleanupExperimental();
     }
 

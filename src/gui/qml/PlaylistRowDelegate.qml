@@ -23,6 +23,9 @@ Rectangle {
     // Staged for deletion (Browse's playlist editing, Experimental): the
     // name is struck through until Save deletes it or Keep takes it back.
     property bool pendingDelete: false
+    // Staged to be created: in italics, "new" for a count, until Save
+    // makes it.
+    property bool pendingNew: false
     signal picked()
     // Right click, or a long press on touch: Browse offers its playlist
     // menu here. The Matching page's combo ignores it.
@@ -68,10 +71,11 @@ Rectangle {
             Layout.fillWidth: true
             elide: Text.ElideRight
             font.strikeout: root.pendingDelete
-            color: root.pendingDelete ? Theme.textMuted : palette.windowText
+            font.italic: root.pendingNew
+            color: root.pendingDelete || root.pendingNew ? Theme.textMuted : palette.windowText
         }
         Label {
-            text: root.count
+            text: root.pendingNew ? qsTr("new") : root.count
             color: Qt.darker(Theme.textMuted, 1.3)
             font.pointSize: Theme.fontSmall
             horizontalAlignment: Text.AlignRight

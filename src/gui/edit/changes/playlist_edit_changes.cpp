@@ -24,6 +24,7 @@ namespace seabass::gui
 namespace
 {
 
+constexpr const char *CreateLabel = "playlist-create";
 constexpr const char *DeleteLabel = "playlist-delete";
 constexpr const char *RemoveLabel = "playlist-remove";
 
@@ -177,6 +178,121 @@ QStringList librariesWithSeveralPlaylists(const QString &pioneerRoot, const QStr
     } catch (const std::exception &) {
     }
     return libraries;
+}
+
+QStringList librariesOnStick(const QString &pioneerRoot, const QString &enginePath)
+{
+    QStringList libraries;
+    const std::string pioneer = pioneerRoot.toStdString();
+    if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
+        libraries << QStringLiteral("rekordbox");
+    }
+    if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
+        libraries << QStringLiteral("onelibrary");
+    }
+    const std::string engine = enginePath.toStdString();
+    if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
+        libraries << QStringLiteral("engine");
+    }
+    return libraries;
+}
+
+CreatePlaylistChange::CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
+      m_libraries(std::move(libraries))
+{
+}
+
+QString CreatePlaylistChange::idFor(const std::string &playlist)
+{
+    return QStringLiteral("addcue:create-playlist:") + QString::fromStdString(playlist);
+}
+
+QString CreatePlaylistChange::id() const
+{
+    return idFor(m_playlist);
+}
+
+QString CreatePlaylistChange::owner() const
+{
+    return QStringLiteral("addcue");
+}
+
+QString CreatePlaylistChange::description() const
+{
+    return QStringLiteral("Create the playlist \"%1\"").arg(QString::fromStdString(m_playlist));
+}
+
+QString CreatePlaylistChange::subject() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
+QString CreatePlaylistChange::unit() const
+{
+    return QStringLiteral("playlists");
+}
+
+QString CreatePlaylistChange::verb() const
+{
+    return QStringLiteral("created");
+}
+
+QStringList CreatePlaylistChange::formatsTouched() const
+{
+    return touched(m_libraries);
+}
+
+std::vector<BackupTarget> CreatePlaylistChange::filesToBackup(SaveContext &) const
+{
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, CreateLabel);
+}
+
+ChangeOutcome CreatePlaylistChange::apply(SaveContext &ctx)
+{
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    int created = 0;
+    try {
+        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, CreateLabel);
+            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            if (!pdbPlaylistId(rows, m_playlist)) {
+                rows.createPlaylist(0, m_playlist, false);
+                if (!rows.commit()) {
+                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                }
+                session.noteItemApplied();
+                ++created;
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), CreateLabel);
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            requireOneOneLibraryPlaylist(writer, m_playlist);
+            if (writer.playlistCountAtPath(m_playlist) == 0) {
+                writer.createPlaylist("", m_playlist, false);
+                ++created;
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("engine"))) {
+            FormatWriteSession &session =
+                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), 1, CreateLabel);
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
+            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) == 0) {
+                infrastructure::engine::createEnginePlaylist(session.writeRoot(), m_playlist);
+                session.noteItemApplied();
+                ++created;
+            }
+        }
+    } catch (const std::exception &e) {
+        return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    if (created == 0) {
+        ctx.log().record("playlist-create: \"" + m_playlist + "\" is in every library already, skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record("playlist-create: created \"" + m_playlist + "\" in " + std::to_string(created) + " libraries");
+    return ChangeOutcome::success();
 }
 
 DeletePlaylistChange::DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)
