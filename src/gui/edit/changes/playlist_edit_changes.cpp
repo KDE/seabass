@@ -447,9 +447,9 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
 }
 
 AddToPlaylistChange::AddToPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string filePath,
-                                         QString title, QStringList libraries)
+                                         QString title, QStringList libraries, std::optional<int> toIndex)
     : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
-      m_filePath(std::move(filePath)), m_title(std::move(title)), m_libraries(std::move(libraries))
+      m_filePath(std::move(filePath)), m_title(std::move(title)), m_libraries(std::move(libraries)), m_toIndex(toIndex)
 {
 }
 
@@ -471,6 +471,11 @@ QString AddToPlaylistChange::owner() const
 
 QString AddToPlaylistChange::description() const
 {
+    if (m_toIndex) {
+        return QStringLiteral("Add \"%1\" to \"%2\" at position %3")
+            .arg(m_title, QString::fromStdString(m_playlist))
+            .arg(*m_toIndex + 1);
+    }
     return QStringLiteral("Add \"%1\" to \"%2\"").arg(m_title, QString::fromStdString(m_playlist));
 }
 
@@ -509,6 +514,9 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     const std::string pioneer = m_pioneerRoot.toStdString();
     int added = 0;
     std::vector<std::string> leftAlone;
+    // Added, but not put at the place asked (it should never be: the add
+    // just made the file's one entry).
+    std::vector<std::string> notPlaced;
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, AddLabel);
@@ -523,6 +531,20 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
                 }
                 session.noteItemApplied();
                 ++added;
+                // At its place: the entries rewritten in the new order, as
+                // a move within the playlist writes them (MoveInPlaylistChange).
+                if (m_toIndex) {
+                    infrastructure::rekordbox::PdbRowWriter placed(exportPdbOf(session.writeRoot()));
+                    std::string why;
+                    if (const auto order = movedOrder(placed.playlistTrackIds(*playlist), std::set<uint32_t>{ids.front()},
+                                                      *m_toIndex, "rekordbox", why)) {
+                        if (placed.reorderPlaylist(*playlist, *order) && !placed.commit()) {
+                            return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                        }
+                    } else {
+                        notPlaced.push_back(why);
+                    }
+                }
             }
         }
         if (m_libraries.contains(QStringLiteral("onelibrary"))) {
@@ -532,10 +554,28 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
             if (writer.playlistCountAtPath(m_playlist) == 0) {
                 leftAlone.push_back("OneLibrary has no such playlist");
             } else {
+                bool addedHere = false;
                 try {
-                    added += writer.addToPlaylist(m_playlist, m_filePath) ? 1 : 0;
+                    addedHere = writer.addToPlaylist(m_playlist, m_filePath);
                 } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
                     leftAlone.push_back("OneLibrary has no row for the file");
+                }
+                if (addedHere) {
+                    ++added;
+                    if (m_toIndex) {
+                        const auto file = writer.contentIdsForFile(m_filePath);
+                        std::vector<int64_t> order;
+                        for (const auto &[content, sequence] : writer.playlistContent(m_playlist)) {
+                            order.push_back(content);
+                        }
+                        std::string why;
+                        if (const auto wanted = movedOrder(order, std::set<int64_t>(file.begin(), file.end()), *m_toIndex,
+                                                           "OneLibrary", why)) {
+                            writer.reorderPlaylistContent(m_playlist, *wanted);
+                        } else {
+                            notPlaced.push_back(why);
+                        }
+                    }
                 }
             }
         }
@@ -555,6 +595,20 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
                                                                         std::nullopt)) {
                 session.noteItemApplied();
                 ++added;
+                if (m_toIndex) {
+                    // Relinked after the entry before its place, or first.
+                    const auto order = infrastructure::engine::engineTrackIdsInPlaylist(session.writeRoot(), m_playlist);
+                    std::string why;
+                    if (const auto wanted =
+                            movedOrder(order, std::set<std::int64_t>{ids.front()}, *m_toIndex, "Engine", why)) {
+                        const auto at = std::find(wanted->begin(), wanted->end(), ids.front());
+                        const std::optional<std::int64_t> after =
+                            at == wanted->begin() ? std::nullopt : std::optional<std::int64_t>(*(at - 1));
+                        infrastructure::engine::moveInEnginePlaylist(session.writeRoot(), m_playlist, ids.front(), after);
+                    } else {
+                        notPlaced.push_back(why);
+                    }
+                }
             }
         }
     } catch (const std::exception &e) {
@@ -563,12 +617,17 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     for (const auto &why : leftAlone) {
         ctx.log().record("playlist-add: \"" + m_filePath + "\" not added to \"" + m_playlist + "\" there: " + why);
     }
+    for (const auto &why : notPlaced) {
+        ctx.log().record("playlist-add: \"" + m_filePath + "\" added to \"" + m_playlist + "\" but not placed there: "
+                         + why);
+    }
     if (added == 0) {
         ctx.log().record("playlist-add: \"" + m_filePath + "\" added to \"" + m_playlist + "\" nowhere, skipped");
         return ChangeOutcome::skip();
     }
-    ctx.log().record("playlist-add: added \"" + m_filePath + "\" to \"" + m_playlist + "\" in " + std::to_string(added)
-                     + " libraries");
+    ctx.log().record("playlist-add: added \"" + m_filePath + "\" to \"" + m_playlist + "\""
+                     + (m_toIndex ? " at position " + std::to_string(*m_toIndex + 1) : std::string()) + " in "
+                     + std::to_string(added) + " libraries");
     return ChangeOutcome::success();
 }
 

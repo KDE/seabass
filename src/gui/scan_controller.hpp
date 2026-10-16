@@ -244,7 +244,8 @@ public:
     // added ({playlist: [file paths]}) at its end, flagged pendingAddition,
     // then the tracks to be moved ({playlist: [{filePath, toIndex}]}) at
     // their new place in its order, in the order moved, flagged
-    // pendingMove.
+    // pendingMove (a track added at a place is among them with "addedAt",
+    // put there and flagged pendingAddition only).
     Q_INVOKABLE void setPendingEdits(const QVariantMap &additions, const QVariantMap &moves);
     // The playlists staged to be renamed, {path in the scan: new path}, as
     // PlaylistEditController::pendingRenames has them: listed, filtered by

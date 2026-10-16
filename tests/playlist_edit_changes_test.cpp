@@ -495,8 +495,53 @@ int main(int argc, char **argv)
                                              engineId[A03.relative], engineId[A05.relative]}));
         result = save(move(A05, 0));
         assertOrder({A05, A02, A04, A01, A03}, "level again");
+
+        // 9b. An add at a place (a track dropped between two rows): one
+        //     change, the entry added and put there in each library. a03
+        //     is taken out first each time, then added back at the start,
+        //     in the middle, and past the end (last).
+        const auto placedAdd = [&](const File &f, int toIndex) {
+            return std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Q1", file(f), QStringLiteral("Tone"), all,
+                                                         toIndex);
+        };
+        const auto takeOut = [&](const File &f) {
+            const auto out = save(std::make_shared<RemoveFromPlaylistChange>(pioneerQ, libraryQ, "Q1", file(f),
+                                                                             QStringLiteral("Tone"), all));
+            assert(out.appliedIds.size() == 1);
+        };
+        assert(placedAdd(A03, 2)->id() == AddToPlaylistChange::idFor("Q1", file(A03))
+               && "a placed add and a plain one for the file replace each other");
+        assert(placedAdd(A03, 2)->description() == QStringLiteral("Add \"Tone\" to \"Q1\" at position 3"));
+        assert(placedAdd(A03, 2)->unit() == QStringLiteral("playlist entries") && placedAdd(A03, 2)->verb() == "added");
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            assert(placedAdd(A03, 2)->filesToBackup(ctx).size() == 3 && "every library it writes is backed up");
+        }
+
+        takeOut(A03);
+        mark = logSize();
+        result = save(placedAdd(A03, 0));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assertOrder({A03, A05, A02, A04, A01}, "added at the start");
+        assert(logSince(mark).find("playlist-add: added \"" + file(A03) + "\" to \"Q1\" at position 1 in 3 libraries")
+               != std::string::npos);
+
+        takeOut(A03);
+        result = save(placedAdd(A03, 2));
+        assert(result.appliedIds.size() == 1);
+        assertOrder({A05, A02, A03, A04, A01}, "added in the middle");
+
+        takeOut(A03);
+        result = save(placedAdd(A03, 99));
+        assert(result.appliedIds.size() == 1);
+        assertOrder({A05, A02, A04, A01, A03}, "added past the end: last");
+
+        // A library already holding the file is left alone, place and all.
+        result = save(placedAdd(A01, 0));
+        assert(result.skippedIds.size() == 1 && "already there: a skip");
+        assertOrder({A05, A02, A04, A01, A03}, "not moved by an add left alone");
     }
-    std::cout << "case 9 (a track moved within a playlist in all three libraries) OK\n";
+    std::cout << "case 9 (a track moved within a playlist, and added at a place, in all three libraries) OK\n";
 
     // 10. Renaming: Q1 to "Q One" in all three, read back by path with its
     //     tracks in their order; a name taken, an ambiguous path and an

@@ -1990,8 +1990,7 @@ Page {
             ? qsTr("Opened \"%1\": drop it where it goes").arg(root.springOpened) : ""
         dimmed: dropGap.gapIndex >= 0
         // Staged like an "Add to" from the row menu; Save writes it. Let go
-        // at a place in the list, the add is followed by a move there: a
-        // move staged after an add lands the new entry at that place.
+        // at a place in the list, the add carries that place.
         onAddChosen: playlist => root.addDraggedTrack(playlist)
         // The halves staged in this order: the add is looked up first.
         onMoveChosen: (playlist, fromPlaylist) => {
@@ -2029,13 +2028,11 @@ Page {
         pointerY: at.y
     }
 
+    // One add, at the place the track was let go when it was (-1: at the
+    // end): one change on the Save button, not an add and a move.
     function addDraggedTrack(playlist) {
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
-                                                  trackDrag.filePath, trackDrag.title);
-        if (trackDrag.targetIndex >= 0) {
-            root.playlistEditController.moveInPlaylist(root.rekordboxPath, root.enginePath, playlist,
-                                                       trackDrag.filePath, trackDrag.title, trackDrag.targetIndex);
-        }
+                                                  trackDrag.filePath, trackDrag.title, trackDrag.targetIndex);
     }
 
     BusyOverlay {

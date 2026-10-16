@@ -51,7 +51,8 @@ class PlaylistEditController : public QObject
     // The tracks staged to move within a playlist, as {playlist:
     // [{filePath, toIndex}]}, each list in the order they were moved (a
     // track moved again counts as moved last): Browse shows them at their
-    // new place until Save writes them.
+    // new place until Save writes them. A track added at a place is listed
+    // here too, at the point it was added, with "addedAt": true.
     Q_PROPERTY(QVariantMap pendingMoves READ pendingMoves NOTIFY pendingChanged)
     // The playlists staged to be renamed, as {path on the stick: new
     // path}: Browse lists them under the new name until Save writes it.
@@ -101,10 +102,12 @@ public:
     Q_INVOKABLE bool removeFromPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
                                         const QString &filePath, const QString &title);
     // The file at the end of `playlist` in every library on the stick
-    // that has it (or will: one staged to be created). Remembers the
-    // playlist as lastAddPlaylist.
+    // that has it (or will: one staged to be created), or at `toIndex`
+    // (from 0, its place after the add) when one is given: one change
+    // either way. Staging it again replaces the add staged before.
+    // Remembers the playlist as lastAddPlaylist.
     Q_INVOKABLE bool addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
-                                   const QString &filePath, const QString &title);
+                                   const QString &filePath, const QString &title, int toIndex = -1);
     Q_INVOKABLE void keepOutOfPlaylist(const QString &playlist, const QString &filePath);
     Q_INVOKABLE bool isAdditionStaged(const QString &playlist, const QString &filePath) const;
     // The file to `toIndex` (from 0) in `playlist`'s order as Browse shows

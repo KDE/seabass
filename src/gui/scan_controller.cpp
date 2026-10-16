@@ -888,7 +888,10 @@ void ScanController::applyFilters(bool inPlace)
                 const size_t to = std::min(static_cast<size_t>(std::max(move.value(QStringLiteral("toIndex")).toInt(), 0)),
                                            order.size());
                 order.insert(order.begin() + static_cast<std::ptrdiff_t>(to), row);
-                pendingMoves.insert(result[row].sourceId);
+                // A track added at a place is shown as added, not moved.
+                if (!move.value(QStringLiteral("addedAt")).toBool()) {
+                    pendingMoves.insert(result[row].sourceId);
+                }
             }
             for (size_t k = 0; k < order.size(); ++k) {
                 for (auto &membership : result[order[k]].playlists) {

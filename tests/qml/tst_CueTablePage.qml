@@ -522,6 +522,58 @@ TestCase {
         }
     }
 
+    // A track added at a place (dropped between two rows) with the real
+    // controllers: one change, previewed at its place, flagged as added
+    // and not moved; Save writes it there, and a rescan reads it there.
+    function test_aTrackAddedAtAPlaceShowsAndSavesThere() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan("onelibrary", t.pioneer);
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
+        const order = (s) => {
+            const files = [];
+            for (let i = 0; i < s.tracks.trackCount(); ++i) {
+                files.push(s.tracks.trackAt(i).filePath);
+            }
+            return files;
+        };
+        const file = t.stick + "/Contents/795079.mp3";
+        // A playlist of three or more that does not hold the file.
+        const playlist = scan.playlistNames.filter(n => {
+            if (scan.playlistTrackCounts[n] < 3) {
+                return false;
+            }
+            scan.filterByPlaylist(n);
+            return order(scan).indexOf(file) < 0;
+        })[0];
+        verify(playlist !== undefined, JSON.stringify(scan.playlistTrackCounts));
+        scan.filterByPlaylist(playlist);
+        const before = order(scan);
+
+        verify(edited(browse, browse.addToPlaylist(t.pioneer, engine, playlist, file, "Placed", 1)), browse.errorMessage);
+        compare(t.session.pendingCount, 1, "one change, not an add and a move");
+        compare(t.session.playlistsEdited, 1);
+        compare(browse.trackCountChange(playlist), 1);
+        verify(t.session.pendingDescriptions[0].indexOf("at position 2") > 0, t.session.pendingDescriptions[0]);
+        scan.setPendingEdits(browse.pendingAdditions, browse.pendingMoves);
+        const wanted = before.slice();
+        wanted.splice(1, 0, file);
+        compare(JSON.stringify(order(scan)), JSON.stringify(wanted), "previewed at its place");
+        verify(scan.tracks.trackAt(1).pendingAddition === true, "flagged as added");
+        verify(scan.tracks.trackAt(1).pendingMove === false, "not as moved");
+
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        const again = createTemporaryObject(scanControllerComponent, testCase);
+        again.scan("onelibrary", t.pioneer);
+        tryVerify(() => !again.busy && again.playlistNames.length > 0, 120000, "onelibrary scanned again");
+        again.filterByPlaylist(playlist);
+        compare(JSON.stringify(order(again)), JSON.stringify(wanted), "the stick holds it at its place");
+    }
+
     // Browse's rename with the real controllers on a stick copy. Staged,
     // the list names the playlist anew and shows its tracks under the new
     // name; a track then added to it is looked up by the old name (the
