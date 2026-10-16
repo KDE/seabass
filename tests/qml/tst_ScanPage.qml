@@ -64,6 +64,20 @@ TestCase {
                 pendingRevision++;
             }
             function isNewPlaylistStaged(name) { return staged["n:" + name] === true; }
+            property string lastAddPlaylist: ""
+            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title) {
+                calls.push(["add", rekordboxPath, enginePath, playlist, filePath, title]);
+                staged["a:" + playlist + "|" + filePath] = true;
+                lastAddPlaylist = playlist;
+                pendingRevision++;
+                return true;
+            }
+            function keepOutOfPlaylist(playlist, filePath) {
+                calls.push(["keepOut", playlist, filePath]);
+                delete staged["a:" + playlist + "|" + filePath];
+                pendingRevision++;
+            }
+            function isAdditionStaged(playlist, filePath) { return staged["a:" + playlist + "|" + filePath] === true; }
             function deletePlaylist(rekordboxPath, enginePath, playlist) {
                 calls.push(["delete", rekordboxPath, enginePath, playlist]);
                 staged["p:" + playlist] = true;
@@ -269,6 +283,74 @@ TestCase {
         compare(field.text, "");
         dialog.reject();
         compare(page.playlistEditController.calls.length, 2, "cancel stages nothing");
+        cleanupExperimental();
+    }
+
+    // The row menu ends in "Add to..." with every playlist but the one
+    // shown, a tick on the ones the track is staged into; once a track was
+    // added somewhere, "Add to <that one>" stands above it.
+    function test_aTrackIsAddedToAPlaylistFromItsMenu() {
+        const page = makeEditingPage(true);
+        const fake = page.playlistEditController;
+        fake.newPlaylists = ["Peak", "Chill"];  // the targets, with no stick scanned
+        const menu = findChild(page, "trackMenu");
+        const addTo = findChild(page, "addToMenu");
+        const last = findChild(page, "addToLastPlaylistItem");
+        const row = createTemporaryObject(fakeRowComponent, testCase);
+        page.shownPlaylist = "Peak";
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(menu.itemAt(menu.count - 1).subMenu, addTo, "the last entry");
+        compare(addTo.title, "Add to...");
+        compare(addTo.count, 1, "not the playlist shown");
+        compare(addTo.itemAt(0).text, "Chill");
+        compare(last.visible, false, "nothing added yet");
+        menu.itemAt(menu.count - 1).triggered();
+        tryCompare(addTo, "opened", true);
+        waitForRendering(page);
+        saveScreenshot(page, "browse_add_to_menu");
+        addTo.itemAt(0).triggered();
+        compare(JSON.stringify(fake.calls[0]), JSON.stringify(["add", "/nonexistent/TESTSTICK/PIONEER",
+                "/nonexistent/TESTSTICK/Engine Library", "Chill", "/nonexistent/a.mp3", "A Track"]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        page.shownPlaylist = "";
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(addTo.count, 2);
+        verify(addTo.itemAt(1).checked, "Chill: staged, ticked");
+        verify(!addTo.itemAt(0).checked);
+        compare(last.visible, true);
+        compare(last.text, "Don't add to \"Chill\"");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_add_to_last");
+        last.triggered();
+        compare(JSON.stringify(fake.calls[1]), JSON.stringify(["keepOut", "Chill", "/nonexistent/a.mp3"]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(last.text, "Add to \"Chill\"");
+        verify(!addTo.itemAt(1).checked, "taken back, no tick");
+        last.triggered();
+        compare(fake.calls[2][0], "add");
+        compare(fake.calls[2][3], "Chill");
+        menu.close();
+        cleanupExperimental();
+    }
+
+    function test_withoutExperimentalTracksHaveNoAddTo() {
+        const page = makeEditingPage(false);
+        page.playlistEditController.newPlaylists = ["Chill"];
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase), page);
+        tryCompare(menu, "opened", true);
+        for (let i = 0; i < menu.count; ++i) {
+            verify(!menu.itemAt(i).subMenu, "no submenu");
+        }
+        compare(findChild(page, "addToLastPlaylistItem").visible, false);
+        menu.close();
         cleanupExperimental();
     }
 

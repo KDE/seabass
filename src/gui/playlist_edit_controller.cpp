@@ -5,6 +5,7 @@
 #include "playlist_edit_controller.hpp"
 
 #include <memory>
+#include <vector>
 
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -25,6 +26,14 @@ QString displayNames(const QStringList &libraries)
                                                    : QStringLiteral("rekordbox"));
     }
     return names.join(QStringLiteral(", "));
+}
+
+// PlaylistEditController::lastAddPlaylist, for the run: Browse makes a
+// controller per page.
+QString &lastAdd()
+{
+    static QString name;
+    return name;
 }
 
 }  // namespace
@@ -115,8 +124,70 @@ bool PlaylistEditController::createPlaylist(const QString &rekordboxPath, const 
     return true;
 }
 
+QString PlaylistEditController::lastAddPlaylist() const
+{
+    return lastAdd();
+}
+
+bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                           const QString &filePath, const QString &title)
+{
+    setErrorMessage({});
+    if (playlist.isEmpty() || filePath.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    const std::string name = playlist.toStdString();
+    const bool isNew = isNewPlaylistStaged(playlist);
+    const QStringList libraries = isNew ? librariesOnStick(rekordboxPath, enginePath)
+                                        : librariesWithPlaylist(rekordboxPath, enginePath, name);
+    if (libraries.isEmpty()) {
+        setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+        return false;
+    }
+    if (const QStringList several = librariesWithSeveralPlaylists(rekordboxPath, enginePath, name); !several.isEmpty()) {
+        setErrorMessage(QStringLiteral("More than one playlist is called \"%1\" (in %2), so Seabass cannot tell which "
+                                       "one you mean. Rename one of them first.")
+                            .arg(playlist, displayNames(several)));
+        return false;
+    }
+    const std::string file = filePath.toStdString();
+    if (!m_session->stage(std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, name, file, title, libraries))) {
+        return false;
+    }
+    m_staged.insert(AddToPlaylistChange::idFor(name, file));
+    if (lastAdd() != playlist) {
+        lastAdd() = playlist;
+        emit lastAddPlaylistChanged();
+    }
+    ++m_pendingRevision;
+    emit pendingChanged();
+    return true;
+}
+
+void PlaylistEditController::keepOutOfPlaylist(const QString &playlist, const QString &filePath)
+{
+    unstage(AddToPlaylistChange::idFor(playlist.toStdString(), filePath.toStdString()));
+}
+
+bool PlaylistEditController::isAdditionStaged(const QString &playlist, const QString &filePath) const
+{
+    return m_staged.count(AddToPlaylistChange::idFor(playlist.toStdString(), filePath.toStdString())) > 0;
+}
+
 void PlaylistEditController::dropNewPlaylist(const QString &name)
 {
+    // The tracks staged into it go with it: without the playlist there
+    // is nothing to add them to.
+    const QString prefix = AddToPlaylistChange::idFor(name.toStdString(), std::string());
+    std::vector<QString> adds;
+    for (const QString &id : m_staged) {
+        if (id.startsWith(prefix)) {
+            adds.push_back(id);
+        }
+    }
+    for (const QString &id : adds) {
+        unstage(id);
+    }
     unstage(CreatePlaylistChange::idFor(name.toStdString()));
 }
 

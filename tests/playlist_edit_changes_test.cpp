@@ -329,6 +329,48 @@ int main(int argc, char **argv)
     }
     std::cout << "case 7 (a new playlist made in all three libraries, once) OK\n";
 
+    // 8. a03 (taken out of Q1 in case 2) added back, at the end, in all
+    //    three; asked again, a skip. Then a playlist created and filled in
+    //    one save, the create staged first.
+    {
+        const auto result = save(std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Q1", file(A03),
+                                                                       QStringLiteral("Tone A03"), all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+        uint32_t q1 = 0;
+        for (const auto &n : rows.playlistTree()) {
+            q1 = n.name == "Q1" ? n.id : q1;
+        }
+        assert(!rows.reorderPlaylist(q1, {1, 2, 4, 5, 3}) && "export.pdb's Q1 is a01, a02, a04, a05, a03");
+        infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+        const auto content = w.playlistContent("Q1");
+        assert(content.size() == 5 && content.back().second == 5 && "OneLibrary: last");
+        assert((engineMembers(library, "Q1")
+                == std::vector<std::int64_t>{engineId[A01.relative], engineId[A02.relative], engineId[A04.relative],
+                                             engineId[A05.relative], engineId[A03.relative]}));
+        const auto again = save(std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Q1", file(A03),
+                                                                      QStringLiteral("Tone A03"), all));
+        assert(again.skippedIds.size() == 1 && "already there: a skip");
+        assert(engineMembers(library, "Q1").size() == 5 && w.playlistContent("Q1").size() == 5);
+
+        SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+        const SaveLoopResult both = runSaveLoop(
+            {std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Fresher", all),
+             std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Fresher", file(A02), QStringLiteral("Tone A02"), all)},
+            ctx);
+        assert(both.error.isEmpty() && both.appliedIds.size() == 2 && both.skippedIds.isEmpty());
+        assert(engineMembers(library, "Fresher") == std::vector<std::int64_t>{engineId[A02.relative]});
+        infrastructure::onelibrary::OneLibraryCueWriter w2(pathToUtf8(pioneer));
+        assert(w2.playlistContent("Fresher").size() == 1);
+        infrastructure::rekordbox::PdbRowWriter rows2(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+        uint32_t fresher = 0;
+        for (const auto &n : rows2.playlistTree()) {
+            fresher = n.name == "Fresher" ? n.id : fresher;
+        }
+        assert(fresher != 0 && !rows2.reorderPlaylist(fresher, {2}) && "export.pdb's Fresher is a02");
+    }
+    std::cout << "case 8 (a track added to a playlist in all three, also to one made in the same save) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;

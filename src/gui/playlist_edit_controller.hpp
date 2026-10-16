@@ -32,6 +32,10 @@ class PlaylistEditController : public QObject
     // The playlists staged to be created, in the order asked for: the
     // list shows them until Save makes them.
     Q_PROPERTY(QStringList newPlaylists READ newPlaylists NOTIFY pendingChanged)
+    // The playlist a track was last added to, for the row menu's
+    // shortcut; empty until one was. Kept for the run, across pages and
+    // sticks (the menu leaves it out where the stick has no such playlist).
+    Q_PROPERTY(QString lastAddPlaylist READ lastAddPlaylist NOTIFY lastAddPlaylistChanged)
 
 public:
     explicit PlaylistEditController(QObject *parent = nullptr);
@@ -39,6 +43,7 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     int pendingRevision() const { return m_pendingRevision; }
     QStringList newPlaylists() const { return m_newPlaylists; }
+    QString lastAddPlaylist() const;
 
     // rekordboxPath is the stick's PIONEER folder and enginePath its
     // Engine Library folder; either may be empty. Return whether the
@@ -53,6 +58,13 @@ public:
     Q_INVOKABLE bool deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
     Q_INVOKABLE bool removeFromPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
                                         const QString &filePath, const QString &title);
+    // The file at the end of `playlist` in every library on the stick
+    // that has it (or will: one staged to be created). Remembers the
+    // playlist as lastAddPlaylist.
+    Q_INVOKABLE bool addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                   const QString &filePath, const QString &title);
+    Q_INVOKABLE void keepOutOfPlaylist(const QString &playlist, const QString &filePath);
+    Q_INVOKABLE bool isAdditionStaged(const QString &playlist, const QString &filePath) const;
     Q_INVOKABLE void keepPlaylist(const QString &playlist);
     Q_INVOKABLE void keepInPlaylist(const QString &playlist, const QString &filePath);
     Q_INVOKABLE bool isPlaylistStaged(const QString &playlist) const;
@@ -60,6 +72,7 @@ public:
 
 signals:
     void errorMessageChanged();
+    void lastAddPlaylistChanged();
     void pendingChanged();
     // A save wrote at least one of these edits: the page should rescan.
     void playlistsSaved();

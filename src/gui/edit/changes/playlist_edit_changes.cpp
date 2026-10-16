@@ -27,6 +27,7 @@ namespace
 constexpr const char *CreateLabel = "playlist-create";
 constexpr const char *DeleteLabel = "playlist-delete";
 constexpr const char *RemoveLabel = "playlist-remove";
+constexpr const char *AddLabel = "playlist-add";
 
 std::string exportPdbOf(const std::string &pioneerRoot)
 {
@@ -388,6 +389,127 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         return ChangeOutcome::skip();
     }
     ctx.log().record("playlist-delete: deleted \"" + m_playlist + "\" from " + std::to_string(deleted) + " libraries");
+    return ChangeOutcome::success();
+}
+
+AddToPlaylistChange::AddToPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string filePath,
+                                         QString title, QStringList libraries)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
+      m_filePath(std::move(filePath)), m_title(std::move(title)), m_libraries(std::move(libraries))
+{
+}
+
+QString AddToPlaylistChange::idFor(const std::string &playlist, const std::string &filePath)
+{
+    return QStringLiteral("addcue:add-to-playlist:") + QString::fromStdString(playlist) + QLatin1Char('|')
+           + QString::fromStdString(filePath);
+}
+
+QString AddToPlaylistChange::id() const
+{
+    return idFor(m_playlist, m_filePath);
+}
+
+QString AddToPlaylistChange::owner() const
+{
+    return QStringLiteral("addcue");
+}
+
+QString AddToPlaylistChange::description() const
+{
+    return QStringLiteral("Add \"%1\" to \"%2\"").arg(m_title, QString::fromStdString(m_playlist));
+}
+
+QString AddToPlaylistChange::subject() const
+{
+    return m_title;
+}
+
+QString AddToPlaylistChange::unit() const
+{
+    return QStringLiteral("playlist entries");
+}
+
+QString AddToPlaylistChange::verb() const
+{
+    return QStringLiteral("added");
+}
+
+QStringList AddToPlaylistChange::formatsTouched() const
+{
+    return touched(m_libraries);
+}
+
+std::vector<BackupTarget> AddToPlaylistChange::filesToBackup(SaveContext &) const
+{
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, AddLabel);
+}
+
+ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
+{
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    int added = 0;
+    std::vector<std::string> leftAlone;
+    try {
+        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, AddLabel);
+            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            const auto playlist = pdbPlaylistId(rows, m_playlist);
+            const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
+            if (!playlist || ids.empty()) {
+                leftAlone.push_back(playlist ? "rekordbox has no row for the file" : "rekordbox has no such playlist");
+            } else if (rows.appendPlaylistEntries(*playlist, {ids.front()}) > 0) {
+                if (!rows.commit()) {
+                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                }
+                session.noteItemApplied();
+                ++added;
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), AddLabel);
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            requireOneOneLibraryPlaylist(writer, m_playlist);
+            if (writer.playlistCountAtPath(m_playlist) == 0) {
+                leftAlone.push_back("OneLibrary has no such playlist");
+            } else {
+                try {
+                    added += writer.addToPlaylist(m_playlist, m_filePath) ? 1 : 0;
+                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                    leftAlone.push_back("OneLibrary has no row for the file");
+                }
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("engine"))) {
+            const std::string engine = m_enginePath.toStdString();
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", engine, 1, AddLabel);
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
+            const auto ids = infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), session.realRoot(), m_filePath);
+            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) == 0) {
+                leftAlone.push_back("Engine has no such playlist");
+            } else if (ids.size() != 1) {
+                // None: Engine does not have the track. Two: which one the
+                // playlist should hold is a guess (Clean Up first).
+                leftAlone.push_back(ids.empty() ? "Engine has no row for the file"
+                                                : "Engine has " + std::to_string(ids.size()) + " rows for the file");
+            } else if (infrastructure::engine::insertIntoEnginePlaylist(session.writeRoot(), m_playlist, ids.front(),
+                                                                        std::nullopt)) {
+                session.noteItemApplied();
+                ++added;
+            }
+        }
+    } catch (const std::exception &e) {
+        return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    for (const auto &why : leftAlone) {
+        ctx.log().record("playlist-add: \"" + m_filePath + "\" not added to \"" + m_playlist + "\" there: " + why);
+    }
+    if (added == 0) {
+        ctx.log().record("playlist-add: \"" + m_filePath + "\" added to \"" + m_playlist + "\" nowhere, skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record("playlist-add: added \"" + m_filePath + "\" to \"" + m_playlist + "\" in " + std::to_string(added)
+                     + " libraries");
     return ChangeOutcome::success();
 }
 
