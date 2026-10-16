@@ -13,6 +13,14 @@ if(WIN32)
     # Regenerate every icon form, from the repository root, with:
     #   python3 tools/make_app_icons.py
     target_sources(seabass PRIVATE win/app_icon.rc)
+    # The resource compiler's own dependency scan does not reach the icon
+    # an .rc names, so a changed app_icon.ico left the old icon in every
+    # incremental build (the generated mark outlived the mascot that
+    # replaced it, on Windows, until a clean build). Named here instead.
+    # The manifest only goes through the .rc on MinGW, where it is named
+    # too.
+    set_source_files_properties(win/app_icon.rc PROPERTIES OBJECT_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/win/app_icon.ico;${CMAKE_CURRENT_SOURCE_DIR}/win/app.manifest")
     # UTF-8 as the process ANSI code page (Windows 10 1903+), for the
     # linked code that takes narrow paths: see win/app.manifest. MSVC's
     # linker merges a .manifest source into the one CMake generates;
