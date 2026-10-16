@@ -29,10 +29,151 @@ ComboBox {
 
     textRole: "name"
 
-    delegate: Rectangle {
+    // Typing while the popup is open (Sebastian's long lists): keys that
+    // follow each other within typeAheadInterval build a filter, the list
+    // narrowed to the names holding the typed text (case folded) with the
+    // first of them current; Backspace takes a letter off, Escape clears
+    // the filter (a second Escape closes), Enter picks the current row.
+    // After a pause the typing starts over, and a letter typed alone
+    // jumps to the next name starting with it, as type-ahead does,
+    // without narrowing anything. The filter goes when the popup closes.
+    property int typeAheadInterval: 600
+    // What has been typed, while it filters the list; "" when it does not.
+    readonly property string typedFilter: typeAhead.filtering ? typeAhead.typed : ""
+    // The rows the popup lists, as indices into the model, in its order.
+    readonly property var shownRows: {
+        const rows = [];
+        const wanted = root.typedFilter.toLocaleLowerCase();
+        for (let i = 0; i < root.count; ++i) {
+            if (wanted.length === 0 || root.textAt(i).toLocaleLowerCase().includes(wanted)) {
+                rows.push(i);
+            }
+        }
+        return rows;
+    }
+
+    QtObject {
+        id: typeAhead
+        property string typed: ""
+        // The typed text narrows the list: from its second letter on, and
+        // still after Backspace takes it back to one.
+        property bool filtering: false
+        // The row current in the popup, as a place in shownRows.
+        property int current: -1
+        // A key moved the current row since the popup opened: it is shaded.
+        property bool keyed: false
+
+        function reset() {
+            keyed = false;
+            typed = "";
+            filtering = false;
+            pause.stop();
+        }
+        function key(text) {
+            keyed = true;
+            const fresh = !pause.running;
+            pause.restart();
+            if (fresh) {
+                typed = text;
+                filtering = false;
+                jumpToInitial(text);
+            } else {
+                typed += text;
+                filtering = true;
+                current = root.shownRows.length > 0 ? 0 : -1;
+            }
+        }
+        // The next name after the current row starting with `letter`,
+        // round the list.
+        function jumpToInitial(letter) {
+            const wanted = letter.toLocaleLowerCase();
+            const n = root.shownRows.length;
+            for (let step = 1; step <= n; ++step) {
+                const at = (current + step + n) % n;
+                if (root.textAt(root.shownRows[at]).toLocaleLowerCase().startsWith(wanted)) {
+                    current = at;
+                    return;
+                }
+            }
+        }
+        function backspace() {
+            if (typed.length === 0) {
+                return;
+            }
+            pause.restart();
+            typed = typed.slice(0, -1);
+            if (typed.length === 0) {
+                filtering = false;
+            }
+            current = root.shownRows.length > 0 ? 0 : -1;
+        }
+    }
+    Timer {
+        id: pause
+        interval: root.typeAheadInterval
+    }
+
+    // The combo's field says what is typed while it filters the list,
+    // above the popup, where the name picked shows otherwise.
+    displayText: root.typedFilter.length > 0 ? qsTr("Filter: %1").arg(root.typedFilter) : root.currentText
+
+    function pickShown(place) {
+        if (place < 0 || place >= root.shownRows.length) {
+            return;
+        }
+        const index = root.shownRows[place];
+        root.playlistPicked(index, root.model[index]);
+        root.popup.close();
+    }
+
+    // Before the ComboBox's own handling, which would search by initial
+    // and move its current index under the popup.
+    Keys.priority: Keys.BeforeItem
+    Keys.onPressed: event => {
+        if (!root.popup.visible) {
+            return;
+        }
+        if (event.key === Qt.Key_Escape) {
+            if (typeAhead.typed.length > 0) {
+                typeAhead.reset();
+                typeAhead.current = Math.max(0, root.shownRows.indexOf(root.currentIndex));
+                event.accepted = true;
+            }
+            return;  // a second Escape closes, as before
+        }
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            root.pickShown(typeAhead.current);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Backspace) {
+            typeAhead.backspace();
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+            typeAhead.keyed = true;
+            const step = event.key === Qt.Key_Down ? 1 : -1;
+            typeAhead.current = Math.max(0, Math.min(root.shownRows.length - 1, typeAhead.current + step));
+            event.accepted = true;
+        } else if (event.text.length > 0 && event.text.charCodeAt(0) >= 32
+                   && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+            typeAhead.key(event.text);
+            event.accepted = true;
+        }
+    }
+
+    // The popup's rows, its own: they list shownRows, indices into the
+    // model, so the ComboBox's delegateModel (one row per model entry) is
+    // not what they come from.
+    Component {
+        id: rowComponent
+    Rectangle {
         id: rowRoot
+        // The row's place in the popup's list, and the model entry it
+        // shows (shownRows[place]).
         required property int index
         required property var modelData
+        readonly property int sourceIndex: rowRoot.modelData
+        readonly property var entry: root.model[rowRoot.sourceIndex]
+        // Where the keys have put the current row since the popup opened.
+        readonly property bool keyCurrent: typeAhead.keyed && rowRoot.index === typeAhead.current
 
         // ListView.view first, then the item it was parented into, then
         // its own implicit width. The attached property is not always
@@ -47,11 +188,11 @@ ComboBox {
         height: 32
 
         color: rowMouseArea.pressed ? Theme.rowPressed
-            : rowHover.hovered ? Theme.rowHover
+            : rowHover.hovered || rowRoot.keyCurrent ? Theme.rowHover
             : (rowRoot.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-        border.color: rowRoot.index === root.currentIndex ? Theme.accent : "transparent"
-        border.width: rowRoot.index === root.currentIndex ? 2 : 0
-        radius: rowRoot.index === root.currentIndex ? 4 : 0
+        border.color: rowRoot.sourceIndex === root.currentIndex ? Theme.accent : "transparent"
+        border.width: rowRoot.sourceIndex === root.currentIndex ? 2 : 0
+        radius: rowRoot.sourceIndex === root.currentIndex ? 4 : 0
 
         // Not rowMouseArea's own hover: under org.kde.desktop a Label
         // carries a HoverHandler of its own, and the MouseArea under the
@@ -62,10 +203,7 @@ ComboBox {
             id: rowMouseArea
             anchors.fill: parent
             hoverEnabled: true
-            onClicked: {
-                root.playlistPicked(rowRoot.index, rowRoot.modelData);
-                root.popup.close();
-            }
+            onClicked: root.pickShown(rowRoot.index)
         }
 
         RowLayout {
@@ -75,17 +213,18 @@ ComboBox {
             spacing: 6
             Label {
                 objectName: "pickerRowName"
-                text: rowRoot.modelData.name
+                text: root.textAt(rowRoot.sourceIndex)
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
             Label {
-                text: rowRoot.modelData.count
+                text: rowRoot.entry && rowRoot.entry.count !== undefined ? rowRoot.entry.count : ""
                 color: Qt.darker(Theme.textMuted, 1.3)
                 font.pointSize: Theme.fontSmall
                 horizontalAlignment: Text.AlignRight
             }
         }
+    }
     }
 
     // The default popup doesn't size itself correctly against a custom
@@ -109,6 +248,10 @@ ComboBox {
         // instead of picking it, every time, before this.
         implicitHeight: Math.min(contentItem.implicitHeight, 320) + topPadding + bottomPadding
         padding: 1
+        // Each opening starts on the playlist picked, unfiltered: the
+        // filter went when the popup last closed.
+        onAboutToShow: typeAhead.current = root.shownRows.indexOf(root.currentIndex)
+        onClosed: typeAhead.reset()
 
         contentItem: ListView {
             clip: true
@@ -124,13 +267,16 @@ ComboBox {
             // "the popup must be a separate window": it is not, the rows
             // simply had no width.
             width: popupRoot.availableWidth
-            model: root.popup.visible ? root.delegateModel : null
-            // A custom popup replaces the default wiring that would
-            // otherwise apply the ComboBox's own `delegate:` automatically
-            // -- without this, the popup sizes correctly (real rows, real
-            // height) but renders nothing into any of them.
-            delegate: root.delegate
-            currentIndex: root.highlightedIndex
+            // The rows shown (every one, or the typed filter's), built
+            // from rowComponent; nothing while the popup is shut.
+            model: root.popup.visible ? root.shownRows : null
+            delegate: rowComponent
+            currentIndex: typeAhead.current
+            onCurrentIndexChanged: {
+                if (currentIndex >= 0) {
+                    positionViewAtIndex(currentIndex, ListView.Contain);
+                }
+            }
             ScrollBar.vertical: BigScrollBar {}
         }
         background: Rectangle {
