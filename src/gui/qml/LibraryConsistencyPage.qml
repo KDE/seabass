@@ -585,6 +585,7 @@ HealthCheckPage {
                                         Layout.preferredWidth: Theme.iconSizeNormal
                                         Layout.preferredHeight: Theme.iconSizeNormal
                                         color: Theme.surface
+                                        radius: Theme.coverRadius(Math.min(width, height))
                                         ArtworkImage {
                                             objectName: "issueTrackArtwork"
                                             anchors.fill: parent

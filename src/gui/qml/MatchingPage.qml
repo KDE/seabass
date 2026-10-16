@@ -270,6 +270,7 @@ ColumnLayout {
                         Layout.preferredWidth: Theme.iconSizeSmall
                         Layout.preferredHeight: Theme.iconSizeSmall
                         color: Theme.surface
+                        radius: Theme.coverRadius(Math.min(width, height))
                         ArtworkImage {
                             objectName: "anchorArtwork"
                             anchors.fill: parent
@@ -627,6 +628,7 @@ ColumnLayout {
                     Layout.preferredWidth: Theme.iconSizeSmall
                     Layout.preferredHeight: Theme.iconSizeSmall
                     color: Theme.surface
+                    radius: Theme.coverRadius(Math.min(width, height))
                     ArtworkImage {
                         objectName: "candidateArtwork"
                         anchors.fill: parent
@@ -641,6 +643,8 @@ ColumnLayout {
                         anchors.fill: parent
                         visible: candidateArtHover.hovered && parent.playable
                         color: "#80000000"
+                        // The cover's own corners.
+                        radius: parent.radius
                         SeabassIcon {
                             anchors.centerIn: parent
                             iconName: "media-playback-start"
@@ -777,6 +781,7 @@ ColumnLayout {
                     Layout.preferredWidth: Theme.iconSizeLarge
                     Layout.preferredHeight: Theme.iconSizeLarge
                     color: Theme.surface
+                    radius: Theme.coverRadius(Math.min(width, height))
                     ArtworkImage {
                         anchors.fill: parent
                         source: candidateInfoPopup.infoArtworkPath

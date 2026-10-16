@@ -142,6 +142,7 @@ Page {
                 Layout.preferredWidth: Theme.iconSizeLarge * 2
                 Layout.preferredHeight: Theme.iconSizeLarge * 2
                 color: Theme.surface
+                radius: Theme.coverRadius(Math.min(width, height))
                 ArtworkImage {
                     objectName: "trackPageArtwork"
                     anchors.fill: parent

@@ -41,18 +41,18 @@ TestCase {
         const art = make(fileUrl(browseFixture.presentArtwork()), fileUrl(browseFixture.missingArtwork()));
         tryCompare(art, "showing", "source");
         const image = findChild(art, "artworkImage");
-        compare(image.visible, true);
+        compare(art.drawn, true);
         compare(image.status, Image.Ready);
         // It fades in rather than popping in, and ends fully there.
-        tryCompare(image, "opacity", 1, 2000);
+        tryCompare(art, "reveal", 1, 2000);
     }
 
     // Nothing loaded, nothing to fade: transparent, so no half-drawn frame
     // shows before the art arrives.
     function test_nothingLoadedIsTransparent() {
         const art = make("", "");
-        const image = findChild(art, "artworkImage");
-        compare(image.opacity, 0);
+        compare(art.reveal, 0);
+        compare(art.drawn, false);
     }
 
     // The case the readers leave to it: an Engine row naming art that is
@@ -61,7 +61,7 @@ TestCase {
         const art = make(fileUrl(browseFixture.missingArtwork()), fileUrl(browseFixture.presentArtwork()));
         tryCompare(art, "showing", "fallback");
         const image = findChild(art, "artworkImage");
-        compare(image.visible, true);
+        compare(art.drawn, true);
         compare(image.status, Image.Ready);
         compare(art.chosenSource.toString(), fileUrl(browseFixture.presentArtwork()));
     }
@@ -69,7 +69,7 @@ TestCase {
     function test_anEmptySourceShowsTheFallback() {
         const art = make("", fileUrl(browseFixture.presentArtwork()));
         tryCompare(art, "showing", "fallback");
-        compare(findChild(art, "artworkImage").visible, true);
+        compare(art.drawn, true);
     }
 
     // Nothing drawn at all, not a broken-image frame: the row's own
@@ -80,6 +80,8 @@ TestCase {
         tryCompare(art, "sourceFailed", true, 5000, "the source was tried first");
         tryCompare(image, "status", Image.Error);
         compare(art.chosenSource.toString(), fileUrl(browseFixture.missingArtwork() + ".png"), "then the fallback");
+        compare(art.drawn, false);
+        compare(findChild(art, "roundedArtwork").visible, false, "nor by the shader");
         compare(image.visible, false);
         compare(art.showing, "");
     }

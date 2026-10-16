@@ -60,6 +60,7 @@ Rectangle {
             width: Theme.snap(rect.w * root.width - (rect.w < 1 ? half : 0))
             height: Theme.snap(rect.h * root.height - (rect.h < 1 ? half : 0))
             color: Theme.groupBackground
+            radius: Theme.coverRadius(Math.min(width, height))
             ArtworkImage {
                 objectName: "coverArt" + tile.index
                 anchors.fill: parent

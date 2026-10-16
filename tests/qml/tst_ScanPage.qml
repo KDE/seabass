@@ -2390,7 +2390,7 @@ TestCase {
         verify(row.fallbackArtworkPath.indexOf("cover.png") >= 0, "and the rekordbox art as its fallback");
         const art = findChild(row, "rowArtwork");
         tryCompare(art, "showing", "fallback");
-        compare(findChild(art, "artworkImage").visible, true);
+        compare(art.drawn, true);
         compare(row.cues.length, 1, "with its own cues from the start");
 
         // Played, the player carries the fallback too, from the queue.

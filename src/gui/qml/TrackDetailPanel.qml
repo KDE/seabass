@@ -450,6 +450,8 @@ Pane {
                 Rectangle {
                     anchors.fill: parent
                     color: "#80000000"
+                    // The cover's own corners.
+                    radius: artworkImage.radius
                     opacity: artworkHover.hovered && artwork.playable ? 1 : 0
                     visible: opacity > 0
                     Behavior on opacity { NumberAnimation { duration: 120 } }
@@ -755,7 +757,7 @@ Pane {
                             Layout.preferredWidth: Theme.iconSizeSmall
                             Layout.preferredHeight: Theme.iconSizeSmall
                             color: Theme.surface
-                            radius: 2
+                            radius: Theme.coverRadius(Math.min(width, height))
                             ArtworkImage {
                                 objectName: "artistTrackArtwork"
                                 anchors.fill: parent

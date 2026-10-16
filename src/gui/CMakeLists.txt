@@ -453,15 +453,16 @@ qt_add_qml_module(seabass
         ${SEABASS_GUI_SOURCES}
 )
 
-# TrackRing's fragment shader, compiled to .qsb at build time. Optional:
-# without Qt's shader tools there is no shader in the binary, TrackRing
-# reports itself unavailable and its caller shows the plain cover art.
+# TrackRing's and ArtworkImage's fragment shaders, compiled to .qsb at
+# build time. Optional: without Qt's shader tools there is no shader in
+# the binary, TrackRing reports itself unavailable and its caller shows
+# the plain cover art, and covers are drawn square.
 # A prefix of its own rather than the QML module's, which differs between
 # this target and seabass_qml_tests -- the QML names one URL for both.
 if(Qt6ShaderTools_FOUND)
     qt_add_shaders(seabass "seabass_shaders"
         PREFIX "/seabass"
-        FILES shaders/track_ring.frag)
+        FILES shaders/track_ring.frag shaders/rounded_art.frag)
 else()
     message(STATUS "Qt6 ShaderTools not found: TrackRing falls back to plain cover art")
 endif()
