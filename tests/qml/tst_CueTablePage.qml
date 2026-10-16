@@ -700,6 +700,46 @@ TestCase {
         verify(!EditSessionRegistry.anyDirty);
     }
 
+    // Browse's Cancel beside Save, with the real controllers: two playlist
+    // edits staged, Cancel asks, Discard drops both, the session is clean,
+    // nothing is said and Back leaves without asking.
+    function test_cancelDiscardsStagedPlaylistEdits() {
+        const t = scannedCopy(null);
+        const engine = t.stick + "/Engine Library";
+        const stack = createTemporaryObject(browseStackComponent, testCase);
+        const page = stack.push(browseComponent, {rekordboxPath: t.pioneer, enginePath: engine,
+                                                  playbackController: realPlayback,
+                                                  appSettingsController: realAppSettings});
+        tryCompare(stack, "busy", false);
+        const browse = page.playlistEditController;
+        verify(edited(browse, browse.createPlaylist(t.pioneer, engine, "Cancelled One")), browse.errorMessage);
+        verify(edited(browse, browse.deletePlaylist(t.pioneer, engine, "Playlist 000")), browse.errorMessage);
+        compare(t.session.pendingCount, 2);
+        const cancel = findChild(page, "cancelOverlayButton");
+        tryCompare(cancel, "visible", true);
+        mouseClick(cancel);
+        const dialog = findChild(page, "discardDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "Discard 2 staged changes?");
+        findChild(dialog, "confirmDiscardButton").clicked();
+        tryCompare(dialog, "opened", false);
+        // Gone, not just closing: a style's exit transition keeps the
+        // modal's dimmer over the page until it ends.
+        tryCompare(dialog, "visible", false);
+        compare(t.session.pendingCount, 0, "both gone");
+        verify(!t.session.dirty, "the session is clean");
+        verify(!EditSessionRegistry.anyDirty);
+        compare(browse.newPlaylists.length, 0);
+        verify(!browse.isPlaylistStaged("Playlist 000"));
+        compare(cancel.visible, false);
+        compare(findChild(page, "savedToast").visible, false, "nothing said");
+        let asked = false;
+        findChild(page, "unsavedDialog").aboutToShow.connect(() => { asked = true; });
+        mouseClick(findChild(page, "backButton"));
+        tryCompare(stack, "depth", 1);
+        verify(!asked, "left without asking");
+    }
+
     // The page picks its playlist again as a scan's names arrive (the one
     // it showed before the rescan a save causes): the pick stands, the
     // list shows that playlist and not every track.
