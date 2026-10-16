@@ -101,6 +101,8 @@ Item {
         id: panel
         objectName: "confirmationToastPanel"
         padding: Theme.rowSpacing
+        topPadding: Theme.scaled(14)
+        bottomPadding: Theme.scaled(14)
         background: Rectangle {
             color: Theme.surface
             border.color: Theme.borderSubtle
@@ -116,7 +118,7 @@ Item {
             spacing: Theme.rowSpacing
             Item {
                 id: markBox
-                width: Theme.scaled(40)
+                width: Theme.scaled(52)
                 height: width
                 anchors.verticalCenter: parent.verticalCenter
                 // 1 at show(), 0 when the toast goes: the ring's remaining
