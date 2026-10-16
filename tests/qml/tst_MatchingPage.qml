@@ -54,6 +54,16 @@ TestCase {
         return found;
     }
 
+    // The edit mode's Save button floats over the list's bottom corner:
+    // the list scrolls two rows past its last one, clear of it.
+    function test_theListScrollsClearOfTheSaveButton() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        verify(page !== null);
+        const list = findChild(page, "candidatesList");
+        verify(list !== null);
+        verify(list.bottomMargin >= 2 * 40, "two rows of room: " + list.bottomMargin);
+    }
+
     function test_aCandidatesCoverPlaysIt() {
         const page = createTemporaryObject(pageComponent, testCase);
         page.candidates = [candidate("2", "Bloom", ""), candidate("3", "Stream", "Beatport")];

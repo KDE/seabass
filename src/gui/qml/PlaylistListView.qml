@@ -47,6 +47,9 @@ ListView {
     // shown and one staged for deletion. heldDropTarget stays marked while
     // the drag card asks what the drop should do.
     property bool trackDropsEnabled: false
+    // The playlists the dragged track is in: the shown one takes no drop
+    // when it is among them.
+    property var droppedTrackPlaylists: []
     property string heldDropTarget: ""
     signal trackDropped(string name)
     signal createRequested()
@@ -90,7 +93,8 @@ ListView {
         summaryFor: () => root.scanController.playlistSummary(index === 0 ? "" : modelData)
         keyNotation: root.keyNotation
         onPicked: root.playlistPicked(index, modelData)
-        acceptsTrackDrop: root.trackDropsEnabled && index > 0 && modelData !== root.shownPlaylist && !pendingDelete
+        acceptsTrackDrop: root.trackDropsEnabled && index > 0 && !pendingDelete
+            && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
         heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
         onTrackDropped: root.trackDropped(modelData)
         onContextRequested: {
@@ -115,7 +119,8 @@ ListView {
                 isCurrent: root.shownPlaylist === modelData
                 // Shows the tracks staged into it; its menu takes it back.
                 onPicked: root.newPlaylistPicked(modelData)
-                acceptsTrackDrop: root.trackDropsEnabled && modelData !== root.shownPlaylist
+                acceptsTrackDrop: root.trackDropsEnabled
+                    && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
                 heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
                 onTrackDropped: root.trackDropped(modelData)
                 onContextRequested: root.playlistContextRequested(modelData, this)

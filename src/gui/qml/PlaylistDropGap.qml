@@ -41,8 +41,9 @@ Item {
     property real originY: 0
     property real rowHeight: 56
     property int rowCount: 0
-    // How long the pointer has to stay over one gap before it opens.
-    property int hoverDelay: 1500
+    // How long the pointer has to stay over one gap before it opens: none
+    // by default, the drag is deliberate already.
+    property int hoverDelay: 0
 
     // The open gap, before the row of that index (rowCount: after the
     // last), or -1.
@@ -119,7 +120,16 @@ Item {
             return;
         }
         const g = gapAt(pointerY + contentY);
+        // The gaps either side of the track's own row would move nothing:
+        // no gap there, or the row would seem to be in the list twice.
+        if (toIndexFor(g) < 0) {
+            collapse();
+            return;
+        }
         if (gapIndex >= 0) {
+            gapIndex = g;
+        } else if (hoverDelay <= 0) {
+            pending = g;
             gapIndex = g;
         } else if (g !== pending) {
             pending = g;
