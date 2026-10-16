@@ -192,16 +192,6 @@ Page {
                         }
                     }
 
-                    Label {
-                        objectName: "aboutIntro"
-                        text: "Confidently move between Pioneer and Denon DJ ecosystems. Seabass works on the "
-                            + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
-                            + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
-                        wrapMode: Text.WordWrap
-                        font.italic: true
-                        font.pointSize: Theme.baseFontPointSize * 1.1
-                        Layout.fillWidth: true
-                    }
                 }
                 Image {
                     objectName: "aboutLogo"
@@ -215,6 +205,26 @@ Page {
                     sourceSize.height: Math.ceil(nameBlock.implicitHeight * 2)
                     fillMode: Image.PreserveAspectFit
                 }
+            }
+
+            // A rule under the name and the mascot, the width of the page;
+            // the introduction starts below it, on the left line (Sebastian's
+            // sketch, 2026-10-16).
+            Rectangle {
+                objectName: "aboutRule"
+                Layout.fillWidth: true
+                implicitHeight: 1
+                color: Theme.borderSubtle
+            }
+            Label {
+                objectName: "aboutIntro"
+                text: "Confidently move between Pioneer and Denon DJ ecosystems. Seabass works on the "
+                    + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
+                    + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
+                wrapMode: Text.WordWrap
+                font.italic: true
+                font.pointSize: Theme.baseFontPointSize * 1.1
+                Layout.fillWidth: true
             }
 
             ColumnLayout {
