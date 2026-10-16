@@ -30,6 +30,7 @@ constexpr const char *DeleteLabel = "playlist-delete";
 constexpr const char *RemoveLabel = "playlist-remove";
 constexpr const char *AddLabel = "playlist-add";
 constexpr const char *MoveLabel = "playlist-move";
+constexpr const char *RenameLabel = "playlist-rename";
 
 std::string exportPdbOf(const std::string &pioneerRoot)
 {
@@ -848,6 +849,150 @@ ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
     }
     ctx.log().record("playlist-move: moved \"" + m_filePath + "\" to position " + std::to_string(m_toIndex + 1) + " in \""
                      + m_playlist + "\" in " + std::to_string(moved) + " libraries");
+    return ChangeOutcome::success();
+}
+
+RenamePlaylistChange::RenamePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string newName,
+                                           QStringList libraries)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
+      m_newName(std::move(newName)), m_libraries(std::move(libraries))
+{
+}
+
+QString RenamePlaylistChange::idFor(const std::string &playlist)
+{
+    return QStringLiteral("addcue:rename-playlist:") + QString::fromStdString(playlist);
+}
+
+std::string RenamePlaylistChange::renamedPath(const std::string &playlist, const std::string &newName)
+{
+    const size_t slash = playlist.rfind('/');
+    return slash == std::string::npos ? newName : playlist.substr(0, slash + 1) + newName;
+}
+
+QString RenamePlaylistChange::id() const
+{
+    return idFor(m_playlist);
+}
+
+QString RenamePlaylistChange::owner() const
+{
+    return QStringLiteral("addcue");
+}
+
+QString RenamePlaylistChange::description() const
+{
+    return QStringLiteral("Rename the playlist \"%1\" to \"%2\"")
+        .arg(QString::fromStdString(m_playlist), QString::fromStdString(m_newName));
+}
+
+QString RenamePlaylistChange::subject() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
+QString RenamePlaylistChange::unit() const
+{
+    return QStringLiteral("playlists");
+}
+
+QString RenamePlaylistChange::verb() const
+{
+    return QStringLiteral("renamed");
+}
+
+QStringList RenamePlaylistChange::formatsTouched() const
+{
+    return touched(m_libraries);
+}
+
+std::vector<BackupTarget> RenamePlaylistChange::filesToBackup(SaveContext &) const
+{
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, RenameLabel);
+}
+
+ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
+{
+    if (m_newName.empty() || QString::fromStdString(m_newName).trimmed().toStdString() != m_newName
+        || m_newName.find_first_of("/;") != std::string::npos) {
+        return ChangeOutcome::failure(QStringLiteral("\"%1\" is no playlist name: it must be non-empty, trimmed, "
+                                                     "and hold no \"/\" or \";\".")
+                                          .arg(QString::fromStdString(m_newName)));
+    }
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    const std::string renamed = renamedPath(m_playlist, m_newName);
+    if (renamed == m_playlist) {
+        ctx.log().record("playlist-rename: \"" + m_playlist + "\" has that name already, skipped");
+        return ChangeOutcome::skip();
+    }
+    // Why a library with `atOld` playlists at the old path and `atNew` at
+    // the new one is left alone, or nothing when it is renamed.
+    const auto refusal = [&](const std::string &library, int atOld, int atNew) -> std::optional<std::string> {
+        if (atOld == 0) {
+            return library + " has no such playlist";
+        }
+        if (atOld > 1) {
+            return library + " has " + std::to_string(atOld) + " playlists named \"" + m_playlist + "\"";
+        }
+        if (atNew > 0) {
+            return library + " has a playlist \"" + renamed + "\" already";
+        }
+        return std::nullopt;
+    };
+    int done = 0;
+    std::vector<std::string> leftAlone;
+    try {
+        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, RenameLabel);
+            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            const auto ids = pdbPlaylistIds(rows, m_playlist);
+            if (const auto why = refusal("rekordbox", static_cast<int>(ids.size()),
+                                         static_cast<int>(pdbPlaylistIds(rows, renamed).size()))) {
+                leftAlone.push_back(*why);
+            } else if (rows.renamePlaylist(ids.front(), m_newName)) {
+                if (!rows.commit()) {
+                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                }
+                session.noteItemApplied();
+                ++done;
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), RenameLabel);
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            if (const auto why = refusal("OneLibrary", writer.playlistCountAtPath(m_playlist),
+                                         writer.playlistCountAtPath(renamed))) {
+                leftAlone.push_back(*why);
+            } else if (writer.renamePlaylist(m_playlist, m_newName)) {
+                ++done;
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("engine"))) {
+            FormatWriteSession &session =
+                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), 1, RenameLabel);
+            const std::string root = session.writeRoot();
+            if (const auto why = refusal("Engine", infrastructure::engine::enginePlaylistCountAtPath(root, m_playlist),
+                                         infrastructure::engine::enginePlaylistCountAtPath(root, renamed))) {
+                leftAlone.push_back(*why);
+            } else if (const int smart = infrastructure::engine::engineSmartlistsFiledUnder(root, m_playlist); smart > 0) {
+                leftAlone.push_back("Engine has " + std::to_string(smart) + " smart playlists filed by its name");
+            } else if (infrastructure::engine::renameEnginePlaylist(root, m_playlist, renamed)) {
+                session.noteItemApplied();
+                ++done;
+            }
+        }
+    } catch (const std::exception &e) {
+        return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    for (const auto &why : leftAlone) {
+        ctx.log().record("playlist-rename: not renamed in \"" + m_playlist + "\" there: " + why);
+    }
+    if (done == 0) {
+        ctx.log().record("playlist-rename: \"" + m_playlist + "\" renamed nowhere, skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record("playlist-rename: renamed \"" + m_playlist + "\" to \"" + renamed + "\" in " + std::to_string(done)
+                     + " libraries");
     return ChangeOutcome::success();
 }
 

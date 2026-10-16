@@ -174,6 +174,15 @@ std::int64_t createEnginePlaylist(const std::string &engineLibraryPath, const st
 // false when fromPath and toPath are the same, true when it renamed.
 bool renameEnginePlaylist(const std::string &engineLibraryPath, const std::string &fromPath, const std::string &toPath);
 
+// How many smart playlists (the Smartlist table, Engine 3) are filed by
+// a path at or below playlistPath: Engine keeps a smart playlist's place
+// as its parent's and its next sibling's paths, titles joined by ";"
+// with one after the last (the PlaylistPath view's spelling), not by id.
+// Renaming that playlist would leave them pointing at a path that is gone,
+// which renameEnginePlaylist does not follow; a caller leaves the library
+// alone instead. 0 for a library with no Smartlist table.
+int engineSmartlistsFiledUnder(const std::string &engineLibraryPath, const std::string &playlistPath);
+
 // Puts the track into the playlist at playlistPath right after the entry
 // for afterTrackId. With no anchor, or an anchor that is not in the list
 // (the plan's rule: a writer appends when its anchor is missing), it goes

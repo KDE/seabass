@@ -327,6 +327,14 @@ public:
     // holds when a playlist is deleted on a device, and Seabass does not.
     // Returns how many playlists and folders went (0 when there is none).
     size_t deletePlaylist(const std::string &path);
+    // Renames the playlist or folder at `path` (its last segment; a
+    // folder's children follow it): the playlist row's name, the one
+    // column that carries it, the rest of the row and the level as they
+    // were. Throws std::invalid_argument for a name that is empty or holds
+    // a '/', or that its level already has, and std::runtime_error when
+    // there is no such playlist. Verified on a fresh connection. Returns
+    // false when the name is that already.
+    bool renamePlaylist(const std::string &path, const std::string &name);
     // Puts the playlist's rows in the order of filePaths, which must be
     // exactly the files it holds; sequenceNo from 1. Returns false when
     // the order is already that.

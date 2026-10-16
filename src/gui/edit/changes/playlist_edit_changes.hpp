@@ -207,4 +207,41 @@ private:
     QStringList m_libraries;
 };
 
+// Renames a playlist or a folder (the last segment of its path; the
+// folders above it stay, and a folder's children follow it) in every
+// library on the stick named, each through its own writer: export.pdb's
+// level rewritten as rekordbox writes a level, OneLibrary's playlist row
+// renamed, Engine's title. A library with no playlist at the old path,
+// two there, or one at the new path already, is left alone and the log
+// says why, and so is an Engine library with smart playlists filed by the
+// old path; nothing renamed anywhere is a skip. A name that is empty
+// (trimmed), or holds "/" or ";", fails.
+class RenamePlaylistChange : public PendingChange
+{
+public:
+    RenamePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::string newName,
+                         QStringList libraries);
+
+    static QString idFor(const std::string &playlist);
+    // `playlist` with its last segment replaced by `newName`.
+    static std::string renamedPath(const std::string &playlist, const std::string &newName);
+
+    QString id() const override;
+    QString owner() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+private:
+    QString m_pioneerRoot;
+    QString m_enginePath;
+    std::string m_playlist;
+    std::string m_newName;
+    QStringList m_libraries;
+};
+
 }  // namespace seabass::gui

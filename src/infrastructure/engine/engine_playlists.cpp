@@ -1062,4 +1062,26 @@ bool moveInEnginePlaylist(const std::string &engineLibraryPath, const std::strin
     return true;
 }
 
+int engineSmartlistsFiledUnder(const std::string &engineLibraryPath, const std::string &playlistPath)
+{
+    std::string spelled;
+    for (const auto &title : splitPlaylistPath(playlistPath)) {
+        spelled += title + ";";
+    }
+    PlaylistWriter db(engineLibraryPath);
+    bool hasTable = false;
+    db.run("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'Smartlist';", {},
+           [&](sqlite3_stmt *) { hasTable = true; });
+    if (!hasTable) {
+        return 0;
+    }
+    int filed = 0;
+    // instr() rather than substr(): it counts characters, not the bytes
+    // a UTF-8 title takes.
+    db.run("SELECT count(*) FROM Smartlist WHERE instr(parentPlaylistPath, ?) = 1 OR instr(nextPlaylistPath, ?) = 1;",
+           {spelled, spelled},
+           [&](sqlite3_stmt *s) { filed = sqlite3_column_int(s, 0); });
+    return filed;
+}
+
 }  // namespace seabass::infrastructure::engine

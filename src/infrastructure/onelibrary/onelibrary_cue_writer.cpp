@@ -1187,6 +1187,53 @@ int64_t OneLibraryCueWriter::createPlaylist(const std::string &parentPath, const
     return id;
 }
 
+bool OneLibraryCueWriter::renamePlaylist(const std::string &path, const std::string &name)
+{
+    if (name.empty() || name.find('/') != std::string::npos) {
+        throw std::invalid_argument("onelibrary: a playlist name must be non-empty and hold no '/'");
+    }
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    const auto id = playlistIdAtPath(db, path);
+    if (!id) {
+        throw std::runtime_error("onelibrary: no playlist \"" + path + "\"");
+    }
+    const auto rows = playlistRows(db);
+    const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return r.id == *id; });
+    if (row == rows.end()) {
+        throw std::runtime_error("onelibrary: no playlist \"" + path + "\"");
+    }
+    if (row->name == name) {
+        return false;
+    }
+    for (const auto &r : rows) {
+        if (r.parentId == row->parentId && r.id != *id && r.name == name) {
+            throw std::invalid_argument("onelibrary: \"" + name + "\" is already there");
+        }
+    }
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        SqlCipherStatement update(db, "UPDATE playlist SET name = ? WHERE playlist_id = ?");
+        update.bindText(1, name);
+        update.bindInt64(2, *id);
+        update.run();
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    const size_t slash = path.rfind('/');
+    const std::string renamed = slash == std::string::npos ? name : path.substr(0, slash + 1) + name;
+    if (playlistIdAtPath(verifyConnection(), renamed) != id) {
+        throw std::runtime_error("onelibrary: post-write verification failed, \"" + renamed + "\" is not there");
+    }
+    refreshStalenessBaseline();
+    return true;
+}
+
 size_t OneLibraryCueWriter::deletePlaylist(const std::string &path)
 {
     checkNotStale();
