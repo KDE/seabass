@@ -327,6 +327,7 @@ Rectangle {
                 Layout.preferredWidth: Theme.iconSizeNormal
                 Layout.preferredHeight: Theme.iconSizeNormal
                 color: Theme.surface
+                radius: Theme.coverRadius(Math.min(width, height))
                 ArtworkImage {
                     objectName: "dragArtwork"
                     anchors.fill: parent

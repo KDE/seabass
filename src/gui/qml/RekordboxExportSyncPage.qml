@@ -924,7 +924,7 @@ Page {
                                 y: Theme.tightSpacing
                                 width: root.coverSide
                                 height: root.coverSide
-                                radius: 2
+                                radius: Theme.coverRadius(Math.min(width, height))
                                 // Outlined: the surface is the odd rows' own tone.
                                 color: Theme.surface
                                 border.color: Theme.borderSubtle

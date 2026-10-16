@@ -573,7 +573,7 @@ TestCase {
         }
         if (data.n > 0) {
             // Each tile shows its own cover: sample its middle.
-            tryVerify(() => findChild(findChild(mosaic, "coverArt" + (data.tiles.length - 1)), "artworkImage").opacity === 1);
+            tryVerify(() => findChild(mosaic, "coverArt" + (data.tiles.length - 1)).reveal === 1);
             waitForRendering(mosaic);
             const image = grabImage(mosaic);
             const scale = image.width / mosaic.width;

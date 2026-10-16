@@ -412,6 +412,12 @@ QtObject {
     // this app drew at 4. One number, and the controls that borrow their
     // background from the style get given one of their own.
     readonly property real cornerRadius: scaled(4)
+    // Cover art's corners (ArtworkImage, and the placeholder tile behind
+    // one): half the usual radius on a small cover, where the full one
+    // eats too much of the picture, the usual one from iconSizeLarge up.
+    function coverRadius(side) {
+        return side < iconSizeLarge ? cornerRadius / 2 : cornerRadius;
+    }
     // How far a control may draw outside itself, which a clipping
     // container has to leave room for: FluentWinUI3's keyboard-focus
     // frame sits 3 px around its control (FocusFrame.outerFrameSize),

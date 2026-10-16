@@ -1178,7 +1178,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
             qt_add_shaders(seabass_qml_tests "seabass_shaders"
                 PREFIX "/seabass"
                 BASE src/gui
-                FILES src/gui/shaders/track_ring.frag)
+                FILES src/gui/shaders/track_ring.frag src/gui/shaders/rounded_art.frag)
         endif()
         # Both QML suites want a display; look for the thing that gives
         # them one before either is registered.

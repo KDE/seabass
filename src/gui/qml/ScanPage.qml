@@ -1458,6 +1458,7 @@ Page {
                             Layout.preferredWidth: root.artworkColumnWidth
                             Layout.preferredHeight: Theme.iconSizeNormal
                             color: Theme.surface
+                            radius: Theme.coverRadius(Math.min(width, height))
                             // An Engine row's own art first, the same song's
                             // rekordbox art when that does not load.
                             ArtworkImage {
@@ -1478,6 +1479,8 @@ Page {
                                 anchors.fill: parent
                                 visible: artworkHoverHandler.hovered && trackDelegate.streamingSource.length === 0
                                 color: "#80000000"
+                                // The cover's own corners.
+                                radius: parent.radius
                                 SeabassIcon {
                                     anchors.centerIn: parent
                                     iconName: "media-playback-start"

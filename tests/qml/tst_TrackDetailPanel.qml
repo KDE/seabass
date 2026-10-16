@@ -204,7 +204,7 @@ TestCase {
         tryCompare(byFallback[0], "showing", "fallback");
         tryCompare(byFallback[1], "sourceFailed", true);
         compare(byFallback[1].showing, "");
-        compare(findChild(byFallback[1], "artworkImage").visible, false, "nothing drawn, not a broken image");
+        compare(byFallback[1].drawn, false, "nothing drawn, not a broken image");
     }
 
     function test_closeButtonAsksThePage() {

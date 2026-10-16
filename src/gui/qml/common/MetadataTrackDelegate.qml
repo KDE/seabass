@@ -230,7 +230,7 @@ Rectangle {
                 id: artworkTile
                 Layout.preferredWidth: Theme.iconSizeNormal
                 Layout.preferredHeight: Theme.iconSizeNormal
-                radius: 3
+                radius: Theme.coverRadius(Math.min(width, height))
                 color: Theme.groupBackground
                 // A cover the catalog names but the stick does not have
                 // draws nothing; the tile behind it shows.
