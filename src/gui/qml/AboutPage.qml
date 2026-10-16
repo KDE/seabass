@@ -107,26 +107,16 @@ Page {
             y: 32
             spacing: Theme.sectionSpacing
 
-            // The mark and the name side by side, the mark as tall as the
-            // name block it stands beside (name, tagline, address, version);
-            // the website's introduction runs on under both, in the name's
-            // column, where it fits (Sebastian, 2026-09-28). The block
-            // takes what the row gives it and never widens the page.
+            // The name block (name, tagline, address, version) on the page's
+            // left line, where everything under it starts, and the mascot
+            // beside it on the right, as tall as the block (Sebastian,
+            // 2026-10-16: the mark had stood on the left and pushed the
+            // name in). The website's introduction runs on under the name.
+            // The block takes what the row gives it and never widens the page.
             RowLayout {
                 objectName: "aboutHead"
                 Layout.fillWidth: true
                 spacing: Theme.rowSpacing * 2
-                Image {
-                    objectName: "aboutLogo"
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
-                    Layout.preferredWidth: nameBlock.implicitHeight
-                    Layout.preferredHeight: nameBlock.implicitHeight
-                    Layout.alignment: Qt.AlignTop
-                    sourceSize.width: Math.ceil(nameBlock.implicitHeight)
-                    sourceSize.height: Math.ceil(nameBlock.implicitHeight)
-                    fillMode: Image.PreserveAspectFit
-                }
-
                 ColumnLayout {
                     id: headBlock
                     Layout.fillWidth: true
@@ -212,6 +202,16 @@ Page {
                         font.pointSize: Theme.baseFontPointSize * 1.1
                         Layout.fillWidth: true
                     }
+                }
+                Image {
+                    objectName: "aboutLogo"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
+                    Layout.preferredWidth: nameBlock.implicitHeight
+                    Layout.preferredHeight: nameBlock.implicitHeight
+                    Layout.alignment: Qt.AlignTop
+                    sourceSize.width: Math.ceil(nameBlock.implicitHeight)
+                    sourceSize.height: Math.ceil(nameBlock.implicitHeight)
+                    fillMode: Image.PreserveAspectFit
                 }
             }
 
