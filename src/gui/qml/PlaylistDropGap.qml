@@ -115,6 +115,7 @@ Item {
         const to = applies && gapIndex >= 0 ? toIndexFor(gapIndex) : -1;
         const track = draggedTrack;
         const adds = addsTrack;
+        gap.releasedIndex = to >= 0 ? gapIndex : -1;
         collapse();
         if (to < 0) {
             return false;
@@ -149,6 +150,11 @@ Item {
         }
         return Math.max(0, Math.min(rowCount, Math.round(row / rowHeight)));
     }
+
+    // The gap a release asked for something at, -1 when it asked for
+    // nothing: the page holds it open (heldIndex) until what it asked for
+    // is shown, so the rows never go back to where they were first.
+    property int releasedIndex: -1
 
     // The gap the pointer waits over until the delay opens it.
     property int pending: -1

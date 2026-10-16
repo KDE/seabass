@@ -45,11 +45,39 @@ TestCase {
     Component {
         id: fakePlaylistEditComponent
         QtObject {
+            id: fakeController
             property int pendingRevision: 0
             property string errorMessage: ""
             property var staged: ({})
             property var calls: []
             property var newPlaylists: []
+            // Staging as the real controller does it, a moment later (it
+            // looks the playlist up off the GUI thread first): a move or a
+            // placed add reaches pendingMoves/pendingAdditions, and
+            // pendingChanged fires, only when the stager runs. Off, nothing
+            // is ever previewed.
+            property bool asyncStaging: false
+            property var pendingAdditions: ({})
+            property var pendingMoves: ({})
+            signal pendingChanged()
+            property var queued: []
+            property Timer stager: Timer {
+                interval: 250
+                onTriggered: {
+                    const work = fakeController.queued;
+                    fakeController.queued = [];
+                    for (const fn of work) {
+                        fn();
+                    }
+                    fakeController.pendingChanged();
+                }
+            }
+            function stageLater(fn) {
+                if (asyncStaging) {
+                    queued.push(fn);
+                    stager.restart();
+                }
+            }
             function createPlaylist(rekordboxPath, enginePath, name) {
                 calls.push(["create", rekordboxPath, enginePath, name]);
                 staged["n:" + name] = true;
@@ -70,6 +98,15 @@ TestCase {
                 const call = ["add", rekordboxPath, enginePath, playlist, filePath, title];
                 if (toIndex !== undefined && toIndex >= 0) {
                     call.push(toIndex);
+                    stageLater(() => {
+                        const additions = Object.assign({}, pendingAdditions);
+                        additions[playlist] = (additions[playlist] || []).concat([filePath]);
+                        pendingAdditions = additions;
+                        const moves = Object.assign({}, pendingMoves);
+                        moves[playlist] = (moves[playlist] || []).concat([{filePath: filePath, toIndex: toIndex,
+                                                                          addedAt: true}]);
+                        pendingMoves = moves;
+                    });
                 }
                 calls.push(call);
                 staged["a:" + playlist + "|" + filePath] = true;
@@ -110,6 +147,11 @@ TestCase {
             function isRemovalStaged(playlist, filePath) { return staged["r:" + playlist + "|" + filePath] === true; }
             function moveInPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex) {
                 calls.push(["move", rekordboxPath, enginePath, playlist, filePath, title, toIndex]);
+                stageLater(() => {
+                    const moves = Object.assign({}, pendingMoves);
+                    moves[playlist] = (moves[playlist] || []).concat([{filePath: filePath, toIndex: toIndex}]);
+                    pendingMoves = moves;
+                });
                 staged["m:" + playlist + "|" + filePath] = true;
                 pendingRevision++;
                 return true;
@@ -1742,6 +1784,127 @@ TestCase {
              "/nonexistent/c.mp3", "Carried", 1],
             ["remove", "Held Playlist", "/nonexistent/c.mp3", "Carried"]]));
         tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // ---- A drop settles without jumping back ----
+
+    // Every frame or so, the lowest a row has been drawn (its y in the list,
+    // the gap's room included) while `watching` holds.
+    Component {
+        id: rowWatchComponent
+        Timer {
+            property var list: null
+            property string title: ""
+            property var watching: () => true
+            property real lowest: 1e9
+            property int samples: 0
+            interval: 8
+            repeat: true
+            running: true
+            onTriggered: {
+                if (!watching()) {
+                    return;
+                }
+                for (let i = 0; i < list.count; ++i) {
+                    const item = list.itemAtIndex(i);
+                    if (item && item.title === title) {
+                        lowest = Math.min(lowest, item.mapToItem(list, 0, 0).y);
+                        ++samples;
+                    }
+                }
+            }
+        }
+    }
+
+    // A track of the playlist shown, let go at a gap: the move is staged a
+    // moment later, as the real controller stages it. Until the list shows
+    // it the gap stays open, the rows below it never back at their old
+    // place; then the rows slide into the new order, the moved row where
+    // the gap was.
+    function test_aDroppedMoveSettlesWithoutJumpingBack() {
+        const t = makeDragPage(true);
+        realAppSettings.hideStreamingTracks = false;
+        t.fake.asyncStaging = true;
+        showPlaylist(t, "Held Playlist");
+        const gap = findChild(t.page, "playlistDropGap");
+        const row = t.list.itemAtIndex(0);
+        const rowHeight = gap.rowHeight;
+        // "Held Track 1003" is the fourth row: below the gap before it.
+        const below = t.list.itemAtIndex(3);
+        compare(below.title, "Held Track 1003");
+        const oldY = below.mapToItem(t.list, 0, 0).y;
+
+        dragOnto(row, t.list.itemAtIndex(1));
+        const at = moveOntoLine(row, t.list.itemAtIndex(3));
+        tryCompare(gap, "gapIndex", 3, 3000);
+        tryVerify(() => below.mapToItem(t.list, 0, 0).y >= oldY + rowHeight - 0.5, 2000, "room made");
+        const watch = createTemporaryObject(rowWatchComponent, testCase, {list: t.list, title: "Held Track 1003",
+            watching: () => Object.keys(t.fake.pendingMoves).length === 0});
+        const resets = createTemporaryObject(signalSpyComponent, testCase,
+                                             {target: t.controller.tracks, signalName: "modelReset"});
+        const rowMoves = createTemporaryObject(signalSpyComponent, testCase,
+                                               {target: t.controller.tracks, signalName: "rowsMoved"});
+        mouseRelease(row, at.x, at.y + 1, Qt.LeftButton);
+        compare(JSON.stringify(t.fake.calls[0].slice(3)), JSON.stringify(["Held Playlist",
+                "/nonexistent/HELD/Contents/held-1000.mp3", "Held Track 1000", 2]));
+        compare(Object.keys(t.fake.pendingMoves).length, 0, "not staged yet");
+        compare(findChild(t.page, "dropGapGhost").visible, true, "the gap held open");
+        tryVerify(() => Object.keys(t.fake.pendingMoves).length > 0, 3000, "staged");
+        verify(watch.samples > 5, "watched: " + watch.samples);
+        verify(watch.lowest >= oldY + rowHeight - 0.5,
+               "the row below the gap stayed down until the move showed: lowest " + watch.lowest + ", old " + oldY);
+        // Then the new order, slid into: 1001, 1002, 1000, 1003, ...
+        tryCompare(findChild(t.page, "dropGapGhost"), "visible", false, 3000);
+        const titles = () => {
+            const result = [];
+            for (let i = 0; i < 6; ++i) {
+                result.push(t.controller.tracks.trackAt(i).title);
+            }
+            return result;
+        };
+        compare(JSON.stringify(titles()), JSON.stringify(["Held Track 1001", "Held Track 1002", "Held Track 1000",
+                "Held Track 1003", "Held Track 1004", "Held Track 1005"]));
+        compare(resets.count, 0, "the list not rebuilt");
+        verify(rowMoves.count > 0, "its rows moved");
+        tryVerify(() => t.list.itemAtIndex(2) === row, 2000, "the moved row's own delegate, slid there");
+        for (let i = 0; i < 6; ++i) {
+            tryVerify(() => Math.abs(t.list.itemAtIndex(i).mapToItem(t.list, 0, 0).y - i * rowHeight) < 0.5, 2000,
+                      "row " + i + " settled in place");
+        }
+        cleanupExperimental();
+    }
+
+    // A track from elsewhere added at a place: after Add, until the add is
+    // staged, the place stays open and the rows below it stay down.
+    function test_aPlacedAddHoldsItsPlaceUntilStaged() {
+        const t = makeDragPage(true);
+        realAppSettings.hideStreamingTracks = false;
+        t.fake.asyncStaging = true;
+        showPlaylist(t, "Held Playlist");
+        const matching = showResults(t, [{title: "Stranger", filePath: "/nonexistent/x.mp3", playlistNames: ["Other"]}]);
+        const area = resultDragArea(matching, "Stranger");
+        const gap = findChild(t.page, "playlistDropGap");
+        const below = t.list.itemAtIndex(2);
+        const oldY = below.mapToItem(t.list, 0, 0).y;
+        const start = Qt.point(area.width / 2, area.height / 2);
+        mousePress(area, start.x, start.y, Qt.LeftButton);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(area, start.x - 8 * i, start.y, 0, Qt.LeftButton);
+        }
+        const at = moveOntoLine(area, t.list.itemAtIndex(2));
+        tryCompare(gap, "gapIndex", 2, 3000);
+        mouseRelease(area, at.x, at.y + 1, Qt.LeftButton);
+        compare(t.card.confirming, true);
+        tryVerify(() => below.mapToItem(t.list, 0, 0).y >= oldY + gap.rowHeight - 0.5, 2000);
+        const watch = createTemporaryObject(rowWatchComponent, testCase, {list: t.list, title: below.title,
+            watching: () => Object.keys(t.fake.pendingAdditions).length === 0});
+        mouseClick(findChild(t.card, "dropAddButton"));
+        compare(t.fake.calls.length, 1);
+        tryVerify(() => Object.keys(t.fake.pendingAdditions).length > 0, 3000, "staged");
+        verify(watch.samples > 5, "watched: " + watch.samples);
+        verify(watch.lowest >= oldY + gap.rowHeight - 0.5, "stayed down until staged: lowest " + watch.lowest);
+        tryCompare(findChild(t.page, "dropGapGhost"), "visible", false, 3000);
         cleanupExperimental();
     }
 

@@ -386,9 +386,11 @@ Rectangle {
                 text: qsTr("Add to \"%1\"").arg(card.targetPlaylist)
                 highlighted: true
                 onClicked: {
+                    // Asked for before the card lets go, so the page can
+                    // hold the place open until the add is shown there.
                     const playlist = card.targetPlaylist;
-                    card.close();
                     card.addChosen(playlist);
+                    card.close();
                 }
             }
             Button {
@@ -401,8 +403,8 @@ Rectangle {
                 onClicked: {
                     const playlist = card.targetPlaylist;
                     const from = card.moveFrom;
-                    card.close();
                     card.moveChosen(playlist, from);
+                    card.close();
                 }
             }
         }

@@ -69,12 +69,13 @@ public:
 
     void setTracks(std::vector<domain::Track> tracks);
 
-    // The same rows again with more in them (Browse's cue pass landing):
-    // rows the list already shows are updated where they stand, moved
-    // rather than rebuilt when the sort order changed, so the view keeps
-    // its delegates, its scroll position and its current row. Anything
-    // but the same set of tracks is a new list, and resets like
-    // setTracks().
+    // The same rows again with more in them (Browse's cue pass landing),
+    // or with a few staged edits shown (a track moved, added or taken
+    // out): rows the list already shows are updated where they stand,
+    // moved rather than rebuilt when the order changed, a few rows
+    // inserted or removed where they go, so the view keeps its delegates,
+    // its scroll position and its current row. More than a few rows
+    // different is a new list, and resets like setTracks().
     void updateTracks(std::vector<domain::Track> tracks);
 
     // Served as fallbackArtworkPath, and as artworkPath for a row whose
