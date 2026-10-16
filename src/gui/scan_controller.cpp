@@ -28,6 +28,7 @@
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
+#include "gui/playlist_thumbnail_provider.hpp"
 #include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -608,6 +609,10 @@ void ScanController::publishTracks(ScanTaskResult &result)
         m_scannedPlaylistNames << qName;
         m_scannedPlaylistTrackCounts[qName] = countByPlaylist[name];
     }
+    // The fallback art first: the thumbnails take the covers as the rows
+    // serve them, borrowed ones included.
+    m_model.setFallbackArtwork(std::move(result.fallbackArtwork));
+    collectPlaylistThumbnails(result.tracks);
     m_previousPlaylistAliases = m_playlistAliases;
     rebuildPlaylistNames();
 
@@ -616,7 +621,6 @@ void ScanController::publishTracks(ScanTaskResult &result)
     // in response to that signal would otherwise see the previous scan's
     // track count for one notification cycle.
     m_allTracks = std::move(result.tracks);
-    m_model.setFallbackArtwork(std::move(result.fallbackArtwork));
     // Before the list and before busy clears, so whatever reacts to
     // either already knows whether the cue counts it sees are final.
     setCuesPending(result.cuesPending);
@@ -658,10 +662,54 @@ void ScanController::rebuildPlaylistNames()
 {
     m_playlistNames.clear();
     m_playlistTrackCounts.clear();
+    m_playlistThumbnails.clear();
+    m_playlistThumbnails[QString()] = m_scannedPlaylistThumbnails.value(QString());
     for (const QString &name : m_scannedPlaylistNames) {
         const QString shown = aliasedPlaylistName(m_playlistAliases, name);
         m_playlistNames << shown;
         m_playlistTrackCounts[shown] = m_scannedPlaylistTrackCounts.value(name);
+        m_playlistThumbnails[shown] = m_scannedPlaylistThumbnails.value(name, QString());
+    }
+}
+
+void ScanController::collectPlaylistThumbnails(const std::vector<domain::Track> &tracks)
+{
+    constexpr int kThumbnailCovers = 4;
+    // A playlist's tracks in its own order, as its summary's mosaic takes
+    // them; the library's in scan order, as Browse lists them.
+    std::unordered_map<std::string, std::vector<std::pair<int, const domain::Track *>>> byPlaylist;
+    QStringList library;
+    for (const auto &track : tracks) {
+        for (const auto &membership : track.playlists) {
+            byPlaylist[membership.name].emplace_back(membership.position, &track);
+        }
+        if (library.size() < kThumbnailCovers) {
+            const QString source = m_model.artworkFor(track);
+            if (!source.isEmpty() && !library.contains(source)) {
+                library << source;
+            }
+        }
+    }
+    const auto sourceFor = [](const QStringList &covers) {
+        const QString id = PlaylistThumbnailProvider::idForCovers(covers);
+        return id.isEmpty() ? QString() : QStringLiteral("image://playlist-thumb/") + id;
+    };
+    m_scannedPlaylistThumbnails.clear();
+    m_scannedPlaylistThumbnails[QString()] = sourceFor(library);
+    for (auto &[name, entries] : byPlaylist) {
+        std::stable_sort(entries.begin(), entries.end(),
+                         [](const auto &a, const auto &b) { return a.first < b.first; });
+        QStringList covers;
+        for (const auto &[position, track] : entries) {
+            const QString source = m_model.artworkFor(*track);
+            if (!source.isEmpty() && !covers.contains(source)) {
+                covers << source;
+                if (covers.size() == kThumbnailCovers) {
+                    break;
+                }
+            }
+        }
+        m_scannedPlaylistThumbnails[QString::fromStdString(name)] = sourceFor(covers);
     }
 }
 

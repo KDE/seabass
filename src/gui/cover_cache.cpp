@@ -359,6 +359,35 @@ QImage CoverCache::cover(const QString &localPath, int side)
     return image;
 }
 
+QImage CoverCache::storedImage(const QString &key)
+{
+    const std::lock_guard<std::mutex> guard(m_lock);
+    if (const QImage *kept = m_memory.object(key)) {
+        m_counters.memoryHits++;
+        return *kept;
+    }
+    QImage stored;
+    if (lookup(key, stored)) {
+        m_counters.diskHits++;
+        m_memory.insert(key, new QImage(stored), static_cast<qsizetype>(stored.sizeInBytes() / 1024 + 1));
+        return stored;
+    }
+    return {};
+}
+
+void CoverCache::keepImage(const QString &key, const QImage &image)
+{
+    if (image.isNull()) {
+        return;
+    }
+    const QImage pixels = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const std::lock_guard<std::mutex> guard(m_lock);
+    m_memory.insert(key, new QImage(pixels), static_cast<qsizetype>(pixels.sizeInBytes() / 1024 + 1));
+    // No file behind it: a large one is encoded (scaled says so), a small
+    // one kept as pixels like a row's cover.
+    store(key, pixels, QByteArray(), true);
+}
+
 CoverCache::Counters CoverCache::counters() const
 {
     const std::lock_guard<std::mutex> guard(m_lock);

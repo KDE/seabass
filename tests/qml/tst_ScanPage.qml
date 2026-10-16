@@ -218,7 +218,8 @@ TestCase {
     function test_aRenamedPlaylistIsItalicWithItsCount() {
         const row = createTemporaryObject(playlistRowComponent, testCase,
                                           {name: "Summit", count: 12, edited: true, pendingRename: true});
-        const labels = row.children[1].children;
+        // The name and the count (the thumbnail tile comes first in the row).
+        const labels = [findChild(row, "playlistRowName"), findChild(row, "playlistRowCount")];
         compare(labels[0].font.italic, true);
         compare(labels[0].font.bold, false, "a rename alone is not a track edit");
         compare(String(labels[0].color), String(Theme.textMuted), "greyed");
@@ -287,7 +288,8 @@ TestCase {
     function test_anEditedPlaylistShowsItsNewCount() {
         const row = createTemporaryObject(playlistRowComponent, testCase,
                                           {name: "Peak", count: 12, edited: true, countChange: 1});
-        const labels = row.children[1].children;
+        // The name and the count (the thumbnail tile comes first in the row).
+        const labels = [findChild(row, "playlistRowName"), findChild(row, "playlistRowCount")];
         compare(labels[0].font.bold, true);
         compare(labels[0].font.italic, true);
         compare(labels[1].text, "12 (13)");
@@ -309,7 +311,7 @@ TestCase {
     function test_aPlaylistRowShadesUnderItsName() {
         const row = createTemporaryObject(playlistRowComponent, testCase, {name: "Peak Time", count: 12, y: 40});
         waitForRendering(row);
-        const name = row.children[1].children[0];
+        const name = findChild(row, "playlistRowName");
         compare(name.text, "Peak Time");
         verify(!Qt.colorEqual(row.color, Theme.rowHover));
         mouseMove(name, 4, name.height / 2);
@@ -1274,6 +1276,72 @@ TestCase {
         tryVerify(() => t.sidebar.summaryShown, 3000, "a summary after the drag");
         mouseMove(t.page, 2, 2);
         cleanupExperimental();
+    }
+
+    // ---- A playlist's thumbnail in the sidebar ----
+
+    // Browse on the held library, its sidebar open.
+    function makeThumbnailPage(artwork) {
+        browseFixture.holdCues(6, true, false, artwork || "");
+        const page = makePage();
+        const controller = findChild(page, "scanController");
+        tryCompare(findChild(page, "trackListView"), "count", 6);
+        tryCompare(controller, "busy", false);
+        browseFixture.releaseCues();
+        tryCompare(controller, "cuesPending", false);
+        waitForRendering(page);
+        return {page: page, controller: controller, sidebar: findChild(page, "playlistList")};
+    }
+
+    // Each sidebar row shows its playlist's thumbnail, composed by the
+    // playlist-thumb provider from the playlist's covers: the id is the
+    // covers themselves, the image comes back drawn in them. A stick
+    // whose covers changed asks for another image.
+    function test_aPlaylistRowShowsItsThumbnail() {
+        const t = makeThumbnailPage();
+        const row = playlistRow(t, "Held Playlist");
+        const tile = findChild(row, "playlistThumbnailTile");
+        compare(tile.visible, true);
+        compare(Math.round(tile.width), Math.round(Theme.scaled(24)));
+        const image = findChild(row, "playlistThumbnail");
+        const cover = browseFixture.presentArtworkUrl();
+        compare(image.source.toString(), "image://playlist-thumb/" + encodeURIComponent(cover),
+                "the id is the playlist's one cover");
+        compare(t.controller.playlistThumbnails["Held Playlist"], image.source.toString());
+        compare(t.controller.playlistThumbnails[""], image.source.toString(), "and All tracks has the same");
+        compare(findChild(playlistRow(t, "All tracks"), "playlistThumbnail").source.toString(), image.source.toString());
+        tryCompare(image, "status", Image.Ready, 5000);
+        compare(image.sourceSize.width, Math.ceil(image.width * Screen.devicePixelRatio), "composed at the pixels drawn");
+        // Drawn in the cover's colour (presentArtwork is 200, 40, 40).
+        waitForRendering(row);
+        const ground = testCase.Window.contentItem;
+        const at = image.mapToItem(ground, image.width / 2, image.height / 2);
+        const grab = grabImage(ground);
+        const scale = grab.width / ground.width;
+        const pixel = grab.pixel(Math.round(at.x * scale), Math.round(at.y * scale));
+        verify(Math.abs(pixel.r - 200 / 255) < 0.05 && Math.abs(pixel.g - 40 / 255) < 0.05,
+               "the cover's colour in the middle: " + pixel);
+        saveScreenshot(t.sidebar, "browse-sidebar-thumbnails");
+
+        // The same playlist with another cover: another id, another image.
+        const otherUrl = browseFixture.colouredArtworkUrl("#2050c0");
+        const t2 = makeThumbnailPage(decodeURIComponent(otherUrl.replace(/^file:\/\//, "")));
+        const image2 = findChild(playlistRow(t2, "Held Playlist"), "playlistThumbnail");
+        compare(image2.source.toString(), "image://playlist-thumb/" + encodeURIComponent(otherUrl));
+        verify(image2.source.toString() !== image.source.toString(), "a changed cover, a new key");
+        tryCompare(image2, "status", Image.Ready, 5000);
+    }
+
+    // A playlist with no covers shows the neutral tile, the track glyph
+    // on the ground tone, and asks the provider for nothing.
+    function test_aPlaylistWithoutCoversShowsTheNeutralTile() {
+        const t = makeThumbnailPage("none");
+        const row = playlistRow(t, "Held Playlist");
+        compare(t.controller.playlistThumbnails["Held Playlist"], "");
+        compare(findChild(row, "playlistThumbnail").source.toString(), "");
+        compare(findChild(row, "playlistThumbnailTile").visible, true);
+        compare(findChild(row, "playlistThumbnailGlyph").visible, true);
+        compare(Qt.colorEqual(findChild(row, "playlistThumbnailTile").color, Theme.groupBackground), true);
     }
 
     function isAccentOutlined(item) {

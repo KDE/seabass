@@ -41,9 +41,10 @@ private:
     QThreadPool m_pool;
 };
 
-// Registers the provider on `engine` as "cover", over the cache in
-// CoverCache::defaultDatabaseFile(); the app and the QML tests both
-// call this, so what the tests load is what the app loads.
+// Registers the provider on `engine` as "cover", and the playlist
+// thumbnails' (PlaylistThumbnailProvider) as "playlist-thumb", both over
+// the one cache in CoverCache::defaultDatabaseFile(); the app and the QML
+// tests both call this, so what the tests load is what the app loads.
 void registerCoverImageProvider(QQmlEngine *engine);
 
 }  // namespace seabass::gui

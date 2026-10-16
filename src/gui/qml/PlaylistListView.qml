@@ -257,6 +257,8 @@ ListView {
         edited: index > 0 && !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
         pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
+        showsThumbnail: true
+        thumbnailSource: isNew ? "" : ((root.scanController.playlistThumbnails || {})[index === 0 ? "" : modelData] ?? "")
         // The summary's part: the pointer on a row that has one, a
         // press or the wheel there, and what to show for it.
         function summaryFor() {

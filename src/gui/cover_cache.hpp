@@ -70,6 +70,15 @@ public:
     // unreadable or no image.
     QImage cover(const QString &localPath, int side);
 
+    // An image the app made itself and keeps here under a key of its own
+    // (a playlist's composed thumbnail: PlaylistThumbnailProvider), so the
+    // next request, in this run or the next, does not make it again. The
+    // key is the caller's to make content-addressed; such entries share
+    // the cap and its eviction with the covers. storedImage() is null when
+    // nothing is kept under the key.
+    QImage storedImage(const QString &key);
+    void keepImage(const QString &key, const QImage &image);
+
     // Where the app keeps it: the platform's cache directory
     // (~/.cache/seabass/covers.db on Linux), or under SEABASS_HOME when
     // that is set, so a sandboxed run never touches the real one.

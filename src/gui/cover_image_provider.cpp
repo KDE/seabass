@@ -12,6 +12,7 @@
 #include <atomic>
 
 #include "gui/cover_cache.hpp"
+#include "gui/playlist_thumbnail_provider.hpp"
 
 namespace seabass::gui
 {
@@ -100,8 +101,11 @@ QQuickImageResponse *CoverImageProvider::requestImageResponse(const QString &id,
 
 void registerCoverImageProvider(QQmlEngine *engine)
 {
-    engine->addImageProvider(QStringLiteral("cover"),
-                             new CoverImageProvider(std::make_shared<CoverCache>(CoverCache::defaultDatabaseFile())));
+    // One cache under both: a playlist's thumbnail is made from the covers
+    // the track list has already decoded.
+    const auto cache = std::make_shared<CoverCache>(CoverCache::defaultDatabaseFile());
+    engine->addImageProvider(QStringLiteral("cover"), new CoverImageProvider(cache));
+    engine->addImageProvider(QStringLiteral("playlist-thumb"), new PlaylistThumbnailProvider(cache));
 }
 
 }  // namespace seabass::gui
