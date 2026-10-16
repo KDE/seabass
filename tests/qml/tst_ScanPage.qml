@@ -1071,6 +1071,60 @@ TestCase {
         return found;
     }
 
+    // A press held on a row shows the closed hand before anything moves,
+    // so the track is known to be one that can be picked up; a click
+    // (shorter) and a release do not.
+    function test_aHeldPressShowsTheClosedHand() {
+        const t = makeDragPage(true);
+        const row = t.list.itemAtIndex(1);
+        const area = findChild(row, "rowMouseArea");
+        verify(area !== null);
+        compare(area.cursorShape, Qt.ArrowCursor);
+        const at = grabPoint(row);
+        mousePress(row, at.x, at.y);
+        compare(area.cursorShape, Qt.ArrowCursor, "not at the press");
+        tryCompare(area, "held", true, 2000);
+        compare(area.cursorShape, Qt.ClosedHandCursor, "held: the closed hand");
+        mouseRelease(row, at.x, at.y);
+        compare(area.held, false);
+        compare(area.cursorShape, Qt.ArrowCursor, "let go");
+        cleanupExperimental();
+    }
+
+    // The sidebar marks the playlist Browse opens on (the one remembered
+    // from last time), not the first row: the rows follow the playlist
+    // shown, whatever the list's own current index does when its model is
+    // rebuilt by a scan.
+    function test_theSidebarMarksTheRememberedPlaylistOnOpen() {
+        realAppSettings.lastPlaylistName = "Held Playlist";
+        const t = makeDragPage(true);
+        tryCompare(t.page, "shownPlaylist", "Held Playlist");
+        compare(playlistRow(t, "Held Playlist").isCurrent, true, "the remembered playlist is marked");
+        compare(playlistRow(t, "All tracks").isCurrent, false, "and the first row is not");
+        t.page.selectPlaylist(0, "");
+        compare(playlistRow(t, "All tracks").isCurrent, true);
+        compare(playlistRow(t, "Held Playlist").isCurrent, false);
+        cleanupExperimental();
+    }
+
+    // A playlist staged to be created, in the sidebar's footer, shows it
+    // takes the drop like any other row: the accent outline while the
+    // track hovers it, and the card says what the drop does.
+    function test_aNewPlaylistShowsItTakesTheDrop() {
+        const t = makeDragPage(true);
+        t.fake.newPlaylists = ["Fresh"];
+        const target = playlistRow(t, "Fresh");
+        const row = t.list.itemAtIndex(1);
+        dragOnto(row, target);
+        tryCompare(target, "dropTarget", true, 3000, "the new playlist wears the outline");
+        tryCompare(findChild(t.card, "dragHint"), "text", "Drop to add to \"Fresh\"");
+        mouseRelease(row, grabPoint(row).x, grabPoint(row).y);
+        tryCompare(t.card, "confirming", true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(t.card, "confirming", false);
+        cleanupExperimental();
+    }
+
     // The playlist shown takes a drop unless the dragged track is in it
     // already (a Browse row of it): a track from elsewhere (a Matching
     // result found while looking at it) lands in it like in any other.
@@ -1420,7 +1474,7 @@ TestCase {
         compare(gap.hovering, false, "the list hears nothing of a drag over the sidebar");
         compare(gap.gapIndex, -1, "no gap over a playlist row");
         compare(t.list.itemAtIndex(3).mapToItem(t.list, 0, 0).y, rowsY[3], "no row moved");
-        compare(findChild(t.card, "dragHint").visible, false);
+        compare(findChild(t.card, "dragHint").text, "Drop to add to \"Held Reversed\"", "the card says what a drop does");
 
         // Then over the line between the third and fourth rows.
         const line = t.list.itemAtIndex(3);
