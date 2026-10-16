@@ -112,11 +112,13 @@ PanelPopup {
     ]
 
     // The info area is as tall as the longest text it can ever show,
-    // measured at its own width: at least four lines, at most six, so
-    // none of them is elided. Fixed while the popup is open, whatever is hovered: if the
+    // measured at its own width: at least four lines, at most eight, so
+    // none of them is elided. Eight, not six: Qt 6.8's text layout takes
+    // seven lines for "Relative" at the info area's width on a Mac, and
+    // six cut it off. Fixed while the popup is open, whatever is hovered: if the
     // row grew with the text, the wheel below would shrink and move
     // while you hovered it, and the wedge under the pointer with it.
-    readonly property int infoMaxLines: 6
+    readonly property int infoMaxLines: 8
     property real infoRowHeight: Math.ceil(infoMetrics.lineSpacing * 4)
     function remeasureInfo() {
         let tallest = Math.ceil(infoMetrics.lineSpacing * 4);
