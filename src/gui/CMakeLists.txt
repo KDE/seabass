@@ -275,6 +275,7 @@ set(SEABASS_GUI_SOURCES
     cover_image_provider.cpp
     playlist_thumbnail_provider.hpp
     playlist_thumbnail_provider.cpp
+    pooled_image_response.hpp
     settings_controller.hpp
     settings_controller.cpp
     app_settings_controller.hpp

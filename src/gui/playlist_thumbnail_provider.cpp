@@ -6,15 +6,14 @@
 
 #include <QPainter>
 #include <QPainterPath>
-#include <QQuickTextureFactory>
 #include <QRectF>
-#include <QRunnable>
 #include <QUrl>
 
 #include <algorithm>
 #include <cmath>
 
 #include "gui/cover_cache.hpp"
+#include "gui/pooled_image_response.hpp"
 
 namespace seabass::gui
 {
@@ -66,39 +65,6 @@ QRect tileRect(int i, int n, int side)
     const int top = static_cast<int>(std::round(y));
     return {left, top, static_cast<int>(std::round(x + w)) - left, static_cast<int>(std::round(y + h)) - top};
 }
-
-class ThumbnailResponse : public QQuickImageResponse, public QRunnable
-{
-public:
-    ThumbnailResponse(PlaylistThumbnailProvider *provider, QString id, int side)
-        : m_provider(provider), m_id(std::move(id)), m_side(side)
-    {
-        // The engine deletes it once it has its finished().
-        setAutoDelete(false);
-    }
-
-    void run() override
-    {
-        if (!m_cancelled.load()) {
-            m_image = m_provider->thumbnail(m_id, m_side);
-        }
-        emit finished();
-    }
-
-    QQuickTextureFactory *textureFactory() const override
-    {
-        return QQuickTextureFactory::textureFactoryForImage(m_image);
-    }
-
-    void cancel() override { m_cancelled.store(true); }
-
-private:
-    PlaylistThumbnailProvider *m_provider;
-    QString m_id;
-    int m_side;
-    QImage m_image;
-    std::atomic<bool> m_cancelled{false};
-};
 
 }  // namespace
 
@@ -199,9 +165,11 @@ QImage PlaylistThumbnailProvider::thumbnail(const QString &id, int side)
 QQuickImageResponse *PlaylistThumbnailProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
 {
     const int side = requestedSize.isValid() ? std::max(requestedSize.width(), requestedSize.height()) : 48;
-    auto *response = new ThumbnailResponse(this, id, side);
-    m_pool.start(response);
-    return response;
+    // The provider outlives its jobs (its destructor waits for the pool);
+    // the response may not (see PooledImageResponse).
+    return PooledImageResponse::start(m_pool, [this, id, side](const std::atomic<bool> &, QString &) {
+        return thumbnail(id, side);
+    });
 }
 
 }  // namespace seabass::gui
