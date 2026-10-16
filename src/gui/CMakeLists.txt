@@ -267,6 +267,8 @@ set(SEABASS_GUI_SOURCES
     playback_controller.cpp
     cover_cache.hpp
     cover_cache.cpp
+    drag_carrier.hpp
+    drag_carrier.cpp
     cover_image_provider.hpp
     cover_image_provider.cpp
     settings_controller.hpp

@@ -68,14 +68,19 @@ MouseArea {
             area.trackDrag.start();
         } else {
             area.held = false;
-            area.trackDrag.release();
+            // Carried by the card since it started: the card lets go when
+            // the button does, not when this area loses the grab to it.
+            if (!area.trackDrag.carried) {
+                area.trackDrag.release();
+            }
         }
     }
     // The grab taken away mid drag (a window losing the pointer): no drop.
+    // Handing it to the card (TrackDragItem.carried) is no such loss.
     onCanceled: {
         holdTimer.stop();
         area.held = false;
-        if (area.trackDrag && area.trackDrag.dragging) {
+        if (area.trackDrag && area.trackDrag.dragging && !area.trackDrag.carried) {
             area.trackDrag.close();
         }
     }

@@ -452,13 +452,39 @@ Page {
     // asMap() gives it, null when none is.
     readonly property bool dragging: trackDrag.dragging
     property var draggedTrack: null
-    onDraggingChanged: root.draggedTrack = root.dragging ? trackDrag.asMap() : null
+    onDraggingChanged: {
+        root.draggedTrack = root.dragging ? trackDrag.asMap() : null;
+        if (root.dragging) {
+            // Where the track was picked up, kept for the drop: a playlist
+            // held open on the way (spring-loading) is not where it came
+            // from.
+            root.dragSource = root.moveSourceFor(trackDrag);
+            root.springOpened = "";
+        }
+    }
+    // The playlist the dragged track was picked up in ("" when it came
+    // from no playlist shown), and the one the drag has opened since.
+    property string dragSource: ""
+    property string springOpened: ""
 
     // A Move takes the track out of the playlist Browse shows, so it is
     // offered only for a track that is in it.
     function moveSourceFor(track) {
         return root.shownPlaylist.length > 0 && track.playlistNames
             && track.playlistNames.indexOf(root.shownPlaylist) >= 0 ? root.shownPlaylist : "";
+    }
+    // What a drop on `target` moves the track out of: where it was picked
+    // up, unless that is the target itself.
+    function dropSourceFor(target) {
+        return root.dragSource.length > 0 && root.dragSource !== target ? root.dragSource : "";
+    }
+
+    // A dragged track held over a playlist opens it, as a click on the row
+    // would, and the drag goes on in it.
+    function springLoad(name) {
+        const index = scanController.playlistNames.indexOf(name);
+        root.selectPlaylist(index >= 0 ? index + 1 : -1, name);
+        root.springOpened = name;
     }
 
     // Browse is read-only until a cue is added: the session is opened
@@ -1110,7 +1136,8 @@ Page {
                 droppedTrackPlaylists: root.draggedTrack && root.draggedTrack.playlistNames
                     ? root.draggedTrack.playlistNames : []
                 heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
-                onTrackDropped: name => trackDrag.dropOn(name, root.moveSourceFor(trackDrag))
+                onTrackDropped: name => trackDrag.dropOn(name, root.dropSourceFor(name))
+                onSpringLoaded: name => root.springLoad(name)
                 // No summary over the rows while a track is dragged onto
                 // them, or while the card asks what the drop should do.
                 summariesEnabled: !root.dragging && !trackDrag.confirming
@@ -1576,6 +1603,13 @@ Page {
                     contentY: trackListView.contentY
                     originY: trackListView.originY
                     rowCount: trackListView.count
+                    // A track from elsewhere gets a place too; the card then
+                    // asks, holding the gap open meanwhile.
+                    takesOtherTracks: true
+                    heldIndex: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag.targetIndex : -1
+                    heldTrack: trackDrag.confirming && trackDrag.targetIndex >= 0 ? trackDrag : null
+                    onPlaceRequested: toIndex => trackDrag.dropOn(root.shownPlaylist, root.dropSourceFor(root.shownPlaylist),
+                                                                  toIndex)
                     onMoveRequested: (filePath, title, toIndex) => root.playlistEditController.moveInPlaylist(
                         root.rekordboxPath, root.enginePath, root.shownPlaylist, filePath, title, toIndex)
                 }
@@ -1926,20 +1960,35 @@ Page {
         // Over a playlist that takes the drop, the card says so (the row
         // wears the outline too); over a place in the list that would
         // move the track, the gap is the sign.
-        hint: playlistSidebarList.hoveredDropTarget.length > 0 && !trackDrag.confirming
-            ? qsTr("Drop to add to \"%1\"").arg(playlistSidebarList.hoveredDropTarget)
+        // A playlist the drag opened says so until the gap takes over.
+        hint: trackDrag.confirming ? ""
+            : playlistSidebarList.hoveredDropTarget.length > 0
+            ? (playlistSidebarList.hoveredDropTarget === root.springOpened
+               ? qsTr("Opened \"%1\": drop it where it goes").arg(root.springOpened)
+               : qsTr("Drop to add to \"%1\"").arg(playlistSidebarList.hoveredDropTarget))
             : dropGap.gapIndex < 0 && dropGap.hovering && dropGap.applies && dropGap.toIndexFor(dropGap.pending) >= 0
-            ? qsTr("Hold to move it here") : ""
+            ? (dropGap.addsTrack ? qsTr("Hold to add it here") : qsTr("Hold to move it here"))
+            : dropGap.gapIndex < 0 && root.springOpened.length > 0
+            ? qsTr("Opened \"%1\": drop it where it goes").arg(root.springOpened) : ""
         dimmed: dropGap.gapIndex >= 0
-        // Staged like an "Add to" from the row menu; Save writes it.
-        onAddChosen: playlist => root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath,
-                                                                            playlist, trackDrag.filePath, trackDrag.title)
-        // Both halves staged, in this order: the add is looked up first.
+        // Staged like an "Add to" from the row menu; Save writes it. Let go
+        // at a place in the list, the add is followed by a move there: a
+        // move staged after an add lands the new entry at that place.
+        onAddChosen: playlist => root.addDraggedTrack(playlist)
+        // The halves staged in this order: the add is looked up first.
         onMoveChosen: (playlist, fromPlaylist) => {
-            root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
-                                                      trackDrag.filePath, trackDrag.title);
+            root.addDraggedTrack(playlist);
             root.playlistEditController.removeFromPlaylist(root.rekordboxPath, root.enginePath, fromPlaylist,
                                                            trackDrag.filePath, trackDrag.title);
+        }
+    }
+
+    function addDraggedTrack(playlist) {
+        root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
+                                                  trackDrag.filePath, trackDrag.title);
+        if (trackDrag.targetIndex >= 0) {
+            root.playlistEditController.moveInPlaylist(root.rekordboxPath, root.enginePath, playlist,
+                                                       trackDrag.filePath, trackDrag.title, trackDrag.targetIndex);
         }
     }
 

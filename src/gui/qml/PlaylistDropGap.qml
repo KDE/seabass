@@ -13,6 +13,9 @@ import QtQuick.Layouts
 // track here", and release() asks for the move to that place
 // (moveRequested). Moving on follows the pointer at once; leaving the
 // list, or a drag that is not one of the playlist's tracks, closes it.
+// With takesOtherTracks a track from elsewhere opens one too, "Add track
+// here", and its release asks for the place (placeRequested) for the page
+// to offer the add there.
 //
 // Every input is explicit, so the page wires it to whatever drag there is:
 // the drag item (Drag.keys ["seabass/track"], carrying the row's roles),
@@ -50,24 +53,54 @@ Item {
     property int gapIndex: -1
     readonly property real gapHeight: rowHeight
 
-    // The drag is a track of the playlist shown, which the list shows.
+    // A track from elsewhere (not in the playlist shown) gets a gap too
+    // when this is on: the place it would be added at. Its release does
+    // not stage anything itself (placeRequested): the page asks first.
+    property bool takesOtherTracks: false
+
+    // While the page asks what a drop at a gap should do, that gap stays
+    // open for the track that was let go there: heldIndex (-1, none) and
+    // heldTrack, the drag item that asks.
+    property int heldIndex: -1
+    property var heldTrack: null
+
+    readonly property bool trackOfPlaylist: draggedTrack !== null && draggedTrack !== undefined
+        && !!draggedTrack.playlistNames && draggedTrack.playlistNames.indexOf(playlist) >= 0
+    // The dragged track is not in the playlist shown: a gap adds it there.
+    readonly property bool addsTrack: draggedTrack !== null && draggedTrack !== undefined && !trackOfPlaylist
+    // The drag is a track of the playlist shown, which the list shows, or
+    // one from elsewhere when those are taken.
     readonly property bool applies: orderShown && playlist.length > 0 && draggedTrack !== null
-        && draggedTrack !== undefined && draggedIndex >= 0 && !!draggedTrack.playlistNames
-        && draggedTrack.playlistNames.indexOf(playlist) >= 0
+        && draggedTrack !== undefined && (trackOfPlaylist ? draggedIndex >= 0 : takesOtherTracks)
+
+    // The gap on screen, open under the pointer or held for the page's
+    // question, and the track it is for.
+    readonly property int shownIndex: gapIndex >= 0 ? gapIndex : heldIndex
+    readonly property var shownTrack: gapIndex >= 0 ? draggedTrack : heldTrack
+    readonly property bool shownAddsTrack: gapIndex >= 0 ? addsTrack
+        : (heldTrack !== null && heldTrack !== undefined && !!heldTrack.playlistNames
+           && heldTrack.playlistNames.indexOf(playlist) < 0)
 
     // The move a release at the open gap asks for: the place the track
     // takes in the playlist afterwards (the dragged row's own place no
     // longer counts below it).
     signal moveRequested(string filePath, string title, int toIndex)
+    // A track from elsewhere let go at the open gap: the place it would
+    // take in the playlist once added there.
+    signal placeRequested(int toIndex)
 
     // How far the row at `index` moves down to make the gap.
     function shiftFor(index) {
-        return gapIndex >= 0 && index >= gapIndex ? gapHeight : 0;
+        return shownIndex >= 0 && index >= shownIndex ? gapHeight : 0;
     }
 
     // Where the track goes when dropped at gap `g`, or -1 when that leaves
     // it where it is (the gaps on either side of its own row).
+    // A track from elsewhere has no row of its own here: gap g is place g.
     function toIndexFor(g) {
+        if (g >= 0 && addsTrack) {
+            return g;
+        }
         if (g < 0 || draggedIndex < 0) {
             return -1;
         }
@@ -77,14 +110,20 @@ Item {
 
     // The drag let go over the list: the move, when a gap is open and it
     // moves the track. Returns whether it asked for one.
+    // A track from elsewhere asks for its place instead (placeRequested).
     function release() {
-        const to = applies ? toIndexFor(gapIndex) : -1;
+        const to = applies && gapIndex >= 0 ? toIndexFor(gapIndex) : -1;
         const track = draggedTrack;
+        const adds = addsTrack;
         collapse();
         if (to < 0) {
             return false;
         }
-        gap.moveRequested(track.filePath, track.title, to);
+        if (adds) {
+            gap.placeRequested(to);
+        } else {
+            gap.moveRequested(track.filePath, track.title, to);
+        }
         return true;
     }
 
@@ -156,9 +195,9 @@ Item {
     Rectangle {
         id: ghost
         objectName: "dropGapGhost"
-        visible: gap.gapIndex >= 0
+        visible: gap.shownIndex >= 0
         x: 0
-        y: gap.originY + gap.gapIndex * gap.rowHeight - gap.contentY
+        y: gap.originY + gap.shownIndex * gap.rowHeight - gap.contentY
         width: gap.width
         height: gap.gapHeight
         radius: Theme.cornerRadius
@@ -175,22 +214,22 @@ Item {
             ArtworkImage {
                 Layout.preferredWidth: gap.gapHeight - 2 * Theme.tightSpacing
                 Layout.preferredHeight: gap.gapHeight - 2 * Theme.tightSpacing
-                source: gap.draggedTrack && gap.draggedTrack.artworkPath ? gap.draggedTrack.artworkPath : ""
-                fallbackSource: gap.draggedTrack && gap.draggedTrack.fallbackArtworkPath
-                    ? gap.draggedTrack.fallbackArtworkPath : ""
+                source: gap.shownTrack && gap.shownTrack.artworkPath ? gap.shownTrack.artworkPath : ""
+                fallbackSource: gap.shownTrack && gap.shownTrack.fallbackArtworkPath
+                    ? gap.shownTrack.fallbackArtworkPath : ""
             }
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 1
                 Label {
                     objectName: "dropGapTitle"
-                    text: gap.draggedTrack ? gap.draggedTrack.title : ""
+                    text: gap.shownTrack ? gap.shownTrack.title : ""
                     font.bold: true
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
                 Label {
-                    text: gap.draggedTrack ? gap.draggedTrack.artist : ""
+                    text: gap.shownTrack ? gap.shownTrack.artist : ""
                     color: Theme.textMuted
                     elide: Text.ElideRight
                     Layout.fillWidth: true
@@ -201,7 +240,7 @@ Item {
         Label {
             objectName: "dropGapLabel"
             anchors.centerIn: parent
-            text: qsTr("Move track here")
+            text: gap.shownAddsTrack ? qsTr("Add track here") : qsTr("Move track here")
             font.bold: true
             color: Theme.text
         }
