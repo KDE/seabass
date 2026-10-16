@@ -180,6 +180,8 @@ set(SEABASS_GUI_QML_FILES
     qml/PlaylistListView.qml
     qml/TrackDragItem.qml
     qml/TrackDragArea.qml
+    qml/PlaylistSummaryPopup.qml
+    qml/PlaylistCoverMosaic.qml
     qml/MatchingPage.qml
     qml/StarRating.qml
     qml/FormatUsbPage.qml
