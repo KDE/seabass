@@ -1001,6 +1001,31 @@ TestCase {
         return {page: page, controller: controller, list: list};
     }
 
+    // The pill above the sidebar names the playlist shown: a stick's, a
+    // new one staged to be created, a renamed one by its new name, and
+    // "All tracks" for the whole library.
+    function test_theSidebarPillNamesThePlaylistShown() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const t = makeHeldPage(3);
+        const fake = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        t.page.playlistEditController = fake;
+        const pill = findChild(t.page, "playlistSidebarButton");
+        t.page.selectPlaylist(0, "");
+        compare(pill.text, "All tracks");
+        t.page.selectPlaylist(1, "Held Playlist");
+        compare(pill.text, "Held Playlist");
+        fake.newPlaylists = ["Fresh"];
+        t.page.selectPlaylist(-1, "Fresh");
+        compare(pill.text, "Fresh", "a new playlist, not among the scan's names");
+        t.page.selectPlaylist(1, "Held Playlist");
+        fake.pendingRenames = {"Held Playlist": "Held Renamed"};
+        compare(pill.text, "Held Renamed", "a renamed one by its new name");
+        fake.pendingRenames = {};
+        compare(pill.text, "Held Playlist");
+        browseFixture.releaseCues();
+        cleanupExperimental();
+    }
+
     // A rename staged while the page shows the playlist: the sidebar lists
     // the new name, still picked, the list still the playlist's tracks and
     // the rows naming it anew; taken back, the old name, still picked.

@@ -689,8 +689,10 @@ Page {
     // collapses and expands it, unlike matchingPanelOpen above, which starts
     // collapsed.
     property bool playlistSidebarOpen: true
-    readonly property string currentPlaylistLabel: root.selectedPlaylistIndex === 0
-        ? "All tracks" : (scanController.playlistNames[root.selectedPlaylistIndex - 1] ?? "All tracks")
+    // The playlist shown, by the name it is listed under: a new one staged
+    // to be created (picked at index -1, not among the scan's names) and a
+    // renamed one's new name included.
+    readonly property string currentPlaylistLabel: root.shownPlaylist.length > 0 ? root.shownPlaylist : "All tracks"
 
     // How much of Browse's own row content fits once the panel above has
     // taken its share of the window: 2 (comfortable) shows every column,
