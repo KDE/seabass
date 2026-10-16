@@ -120,6 +120,8 @@ set(SEABASS_GUI_QML_FILES
     qml/common/WatermarkRing.qml
     qml/common/WriteProgressDialog.qml
     qml/common/OperationSummaryDialog.qml
+    qml/common/CheckmarkCanvas.qml
+    qml/common/ConfirmationToast.qml
     qml/common/LockedLibraryDialog.qml
     qml/common/StickRemovedDialog.qml
     qml/common/EditSessionHost.qml

@@ -397,6 +397,7 @@ TestCase {
         compare(summary.error, "", JSON.stringify(summary));
         compare(summary.written, 3, JSON.stringify(summary));
         compare(JSON.stringify(browse.pendingAdditions), "{}", "written, so no longer pending");
+        compare(browse.lastSavedSummary, "2 playlists saved: 2 created, 1 track added");
         compare(browse.newPlaylists.length, 0);
         // The anonymized fixture spells its paths differently per library,
         // so only OneLibrary has a row for this file: the log says why the

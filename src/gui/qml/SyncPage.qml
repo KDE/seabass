@@ -1082,30 +1082,10 @@ Page {
                 objectName: "syncedState"
                 visible: plansListView.justSynced
                 spacing: Theme.rowSpacing
-                Canvas {
-                    id: syncedMark
+                CheckmarkCanvas {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Theme.scaled(96)
                     height: Theme.scaled(96)
-                    readonly property color ink: Theme.good
-                    onInkChanged: requestPaint()
-                    onPaint: {
-                        const ctx = getContext("2d");
-                        ctx.reset();
-                        const w = width;
-                        ctx.strokeStyle = String(syncedMark.ink);
-                        ctx.lineWidth = w * 0.07;
-                        ctx.lineCap = "round";
-                        ctx.lineJoin = "round";
-                        ctx.beginPath();
-                        ctx.arc(w / 2, w / 2, w * 0.44, 0, 2 * Math.PI);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.moveTo(w * 0.29, w * 0.52);
-                        ctx.lineTo(w * 0.44, w * 0.67);
-                        ctx.lineTo(w * 0.72, w * 0.36);
-                        ctx.stroke();
-                    }
                 }
                 Label {
                     objectName: "syncedLabel"

@@ -384,16 +384,50 @@ Page {
     // the floating Save.
     EditSessionHost {
         id: editHost
+        objectName: "editHost"
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "addcue"
+        // A save that landed whole is said over the list (savedToast
+        // below), so it opens no summary; anything short of that still does.
+        quietCleanSaves: true
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
             ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
         stickLabel: root.stickLabel
         rekordboxPath: root.rekordboxPath
         enginePath: root.enginePath
+    }
+
+    // A save that landed whole, said over the list for a moment: what the
+    // playlist edits did (the controller words those), or what the save
+    // wrote, in its own unit.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: trackListView
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            // After the controller's own slot for this signal, which words
+            // the edits: it attached to the session later than this page did.
+            Qt.callLater(() => root.showSaved(summary));
+        }
+    }
+    function showSaved(summary) {
+        const whole = summary && !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written !== undefined && summary.written === summary.total;
+        if (!whole || !(summary.written > 0)) {
+            return;
+        }
+        const edits = ("lastSavedSummary" in root.playlistEditController)
+            ? root.playlistEditController.lastSavedSummary : "";
+        savedToast.show(edits.length > 0 ? edits : summary.written + " " + summary.unit + " " + summary.verb);
     }
 
     property int selectedPlaylistIndex: 0

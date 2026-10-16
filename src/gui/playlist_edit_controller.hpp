@@ -13,6 +13,7 @@
 #include <QVariantMap>
 
 #include <deque>
+#include <map>
 #include <functional>
 #include <set>
 #include <tuple>
@@ -57,6 +58,10 @@ class PlaylistEditController : public QObject
     // An edit asked for is being looked up on the stick (each catalog read
     // whole, off the GUI thread); the busy cursor shows meanwhile.
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // What the last save did with this page's playlist edits, in a line
+    // ("\"50th\" saved: 3 tracks added"), for the page to show; empty when
+    // it wrote none of them.
+    Q_PROPERTY(QString lastSavedSummary READ lastSavedSummary NOTIFY lastSavedSummaryChanged)
 
 public:
     explicit PlaylistEditController(QObject *parent = nullptr);
@@ -69,6 +74,7 @@ public:
     QVariantMap pendingMoves() const;
     QString lastAddPlaylist() const;
     bool busy() const { return m_busy; }
+    QString lastSavedSummary() const { return m_lastSavedSummary; }
 
     // rekordboxPath is the stick's PIONEER folder and enginePath its
     // Engine Library folder; either may be empty. Each looks the playlist
@@ -113,6 +119,7 @@ signals:
     void errorMessageChanged();
     void lastAddPlaylistChanged();
     void busyChanged();
+    void lastSavedSummaryChanged();
     void pendingChanged();
     // A save wrote at least one of these edits: the page should rescan.
     void playlistsSaved();
@@ -126,6 +133,10 @@ private:
     void runNextLookup();
     void onLookupFinished();
     void setBusy(bool busy);
+    // Tallies one change the running save applied (by its id), and words
+    // the tally once the save is done.
+    void noteApplied(const QString &changeId);
+    QString describeApplied() const;
     void setErrorMessage(const QString &message);
     void unstage(const QString &changeId);
     // Drops from m_newPlaylists every name whose create is no longer
@@ -144,6 +155,11 @@ private:
     std::deque<Lookup> m_lookups;
     QFutureWatcher<PlaylistWhereabouts> m_lookupWatcher;
     bool m_busy = false;
+    // The running save's applied changes: how many of each kind, and the
+    // playlists they were in.
+    std::map<QString, int> m_appliedKinds;
+    std::set<QString> m_appliedPlaylists;
+    QString m_lastSavedSummary;
     std::set<QString> m_staged;  // change ids
     QStringList m_newPlaylists;
     // Every add staged, in order, as (change id, playlist, file); the
