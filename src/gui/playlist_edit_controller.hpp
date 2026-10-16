@@ -12,11 +12,14 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <functional>
+#include <map>
+#include <memory>
 #include <set>
-#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "gui/edit/changes/playlist_edit_changes.hpp"
@@ -50,6 +53,11 @@ class PlaylistEditController : public QObject
     // track moved again counts as moved last): Browse shows them at their
     // new place until Save writes them.
     Q_PROPERTY(QVariantMap pendingMoves READ pendingMoves NOTIFY pendingChanged)
+    // The playlists staged to be renamed, as {path on the stick: new
+    // path}: Browse lists them under the new name until Save writes it.
+    // A playlist staged to be created is renamed in place instead (see
+    // renamePlaylist), so it is never here.
+    Q_PROPERTY(QVariantMap pendingRenames READ pendingRenames NOTIFY pendingChanged)
     // The playlist a track was last added to, for the row menu's
     // shortcut; empty until one was. Kept in the settings, across pages,
     // sticks and restarts (the menu leaves it out where the stick has no
@@ -72,6 +80,7 @@ public:
     QStringList newPlaylists() const { return m_newPlaylists; }
     QVariantMap pendingAdditions() const;
     QVariantMap pendingMoves() const;
+    QVariantMap pendingRenames() const;
     QString lastAddPlaylist() const;
     bool busy() const { return m_busy; }
     QString lastSavedSummary() const { return m_lastSavedSummary; }
@@ -115,6 +124,38 @@ public:
     Q_INVOKABLE bool isPlaylistStaged(const QString &playlist) const;
     Q_INVOKABLE bool isRemovalStaged(const QString &playlist, const QString &filePath) const;
 
+    // Renames `playlist` (its last segment; a folder takes its children
+    // along) to `newName`, trimmed, in every library on the stick that has
+    // it. Refuses a name that is empty or holds "/" or ";", one the stick
+    // has at the new path, a new playlist's or another rename's name, a
+    // playlist inside a folder being renamed or a folder holding one, and
+    // a second rename of a playlist edited under its new name since.
+    //
+    // How the edits after a rename find the playlist. Browse shows the new
+    // name at once, so every later edit is asked for under it, while the
+    // stick still has the old one until Save. Save applies the changes in
+    // the order they were staged, so the rename is written before every
+    // edit asked for after it, and those edits must address the playlist
+    // by its new name. Each edit is therefore looked up on the stick by
+    // the path it has there now (stickPathOf: the new name mapped back to
+    // the old, a renamed folder's children too), and staged under the name
+    // shown, which is the one the stick has by its turn. An edit staged
+    // before the rename keeps the old name, and is written before it. The
+    // queries take either name (namesOf). Taking the rename back
+    // (keepPlaylistName) takes back the edits addressed to the new name,
+    // which would find nothing at Save; a second rename would leave them
+    // addressing a name the first never gives it, so it is refused while
+    // there are any.
+    //
+    // A playlist staged to be created is renamed in place: its create and
+    // every edit staged into it are staged again under the new name, in
+    // their order. Nothing of it is on the stick to rename.
+    Q_INVOKABLE bool renamePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                    const QString &newName);
+    // Takes a rename back, the playlist named by either name.
+    Q_INVOKABLE void keepPlaylistName(const QString &playlist);
+    Q_INVOKABLE bool isRenameStaged(const QString &playlist) const;
+
 signals:
     void errorMessageChanged();
     void lastAddPlaylistChanged();
@@ -130,6 +171,9 @@ private:
     // thread with what it found, unless a save is writing by then.
     void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
                 std::function<void(const PlaylistWhereabouts &)> then);
+    // The same for two paths read in one turn: a rename's old and new.
+    void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
+                const std::string &also, std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then);
     void runNextLookup();
     void onLookupFinished();
     void setBusy(bool busy);
@@ -143,6 +187,19 @@ private:
     // staged, and from m_additions, m_removals and m_moves every change
     // that is not.
     void forgetUnstagedNewPlaylists();
+    // The path a playlist shown as `shown` has on the stick now: a staged
+    // rename's new path mapped back to its old one, a renamed folder's
+    // children too.
+    QString stickPathOf(const QString &shown) const;
+    // `shown` and, when a rename maps it, the stick's path: the names an
+    // edit of it may have been staged under.
+    QStringList namesOf(const QString &shown) const;
+    // Whether `path` is `folder` or lies below it.
+    static bool within(const QString &path, const QString &folder);
+    // The edits staged under a name at or below `path`.
+    std::vector<QString> editsAddressing(const QString &path) const;
+    // A staged new playlist renamed in place (see renamePlaylist).
+    void renameNewPlaylist(const QString &playlist, const QString &renamed);
 
     QPointer<LibraryEditSession> m_session;
     struct Lookup
@@ -150,10 +207,11 @@ private:
         QString rekordboxPath;
         QString enginePath;
         std::string playlist;
-        std::function<void(const PlaylistWhereabouts &)> then;
+        std::string also;  // empty: one path
+        std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then;
     };
     std::deque<Lookup> m_lookups;
-    QFutureWatcher<PlaylistWhereabouts> m_lookupWatcher;
+    QFutureWatcher<std::pair<PlaylistWhereabouts, PlaylistWhereabouts>> m_lookupWatcher;
     bool m_busy = false;
     // The running save's applied changes: how many of each kind, and the
     // playlists they were in.
@@ -162,13 +220,37 @@ private:
     QString m_lastSavedSummary;
     std::set<QString> m_staged;  // change ids
     QStringList m_newPlaylists;
-    // Every add staged, in order, as (change id, playlist, file); the
-    // ones no longer in m_staged are left out when read.
-    std::vector<std::tuple<QString, QString, QString>> m_additions;
-    // The same for every removal staged.
-    std::vector<std::tuple<QString, QString, QString>> m_removals;
-    // Every move staged, in order, as (change id, playlist, file, index).
-    std::vector<std::tuple<QString, QString, QString, int>> m_moves;
+    // One edit of a track's place in a playlist, as staged: `remake`
+    // makes its change again for the playlist under another name (a new
+    // playlist renamed in place), `sequence` says when it was staged
+    // across the three lists.
+    struct Edit
+    {
+        QString id;
+        QString playlist;
+        QString file;
+        int toIndex = -1;
+        std::uint64_t sequence = 0;
+        std::function<std::unique_ptr<PendingChange>(const std::string &playlist)> remake;
+    };
+    // Every add staged, in order; the ones no longer in m_staged are left
+    // out when read.
+    std::vector<Edit> m_additions;
+    // The same for every removal and every move staged.
+    std::vector<Edit> m_removals;
+    std::vector<Edit> m_moves;
+    // Every rename staged: its change id, the path on the stick, the new.
+    struct Rename
+    {
+        QString id;
+        QString from;
+        QString to;
+    };
+    std::vector<Rename> m_renames;
+    // How each staged new playlist's create is made again under another
+    // name, by its name.
+    std::map<QString, std::function<std::unique_ptr<PendingChange>(const std::string &playlist)>> m_creates;
+    std::uint64_t m_sequence = 0;
     int m_pendingRevision = 0;
     QString m_errorMessage;
 };
