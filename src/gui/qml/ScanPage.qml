@@ -110,6 +110,25 @@ Page {
         // One staged to be created: the menu takes the create back.
         readonly property bool isNew: root.playlistEditController.pendingRevision >= 0
             && playlist.length > 0 && root.playlistEditController.isNewPlaylistStaged(playlist)
+        // Staged to be renamed: the name the stick has, which Keep gives back.
+        readonly property string oldName: root.playlistEditController.pendingRevision >= 0 && playlist.length > 0
+            && ("pendingRenames" in root.playlistEditController)
+            ? root.oldPlaylistName(playlist) : ""
+        MenuItem {
+            objectName: "renamePlaylistItem"
+            text: qsTr("Rename playlist...")
+            onTriggered: {
+                renamePlaylistDialog.playlist = playlistMenu.playlist;
+                renamePlaylistDialog.open();
+            }
+        }
+        MenuItem {
+            objectName: "keepPlaylistNameItem"
+            visible: playlistMenu.oldName.length > 0
+            height: visible ? implicitHeight : 0
+            text: qsTr("Keep the name \"%1\"").arg(playlistMenu.oldName)
+            onTriggered: root.playlistEditController.keepPlaylistName(playlistMenu.playlist)
+        }
         MenuItem {
             objectName: "deletePlaylistItem"
             text: playlistMenu.isNew ? qsTr("Don't create this playlist")
@@ -142,6 +161,58 @@ Page {
                 .arg(deletePlaylistDialog.playlist)
         }
         onAccepted: root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, deletePlaylistDialog.playlist)
+    }
+
+    // A new name for a playlist (its last segment), given in every library
+    // on the stick on Save.
+    Dialog {
+        id: renamePlaylistDialog
+        objectName: "renamePlaylistDialog"
+        property string playlist: ""
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Rename playlist")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAboutToShow: renamePlaylistNameField.text = playlist.substring(playlist.lastIndexOf("/") + 1)
+        onOpened: {
+            renamePlaylistNameField.forceActiveFocus();
+            renamePlaylistNameField.selectAll();
+        }
+        Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
+            () => renamePlaylistNameField.text.trim().length > 0)
+        ColumnLayout {
+            spacing: Theme.tightSpacing
+            Label {
+                Layout.preferredWidth: Math.min(implicitWidth, root.width * 0.6)
+                wrapMode: Text.Wrap
+                text: qsTr("It is renamed in every library on this stick. Nothing changes until you Save.")
+            }
+            TextField {
+                id: renamePlaylistNameField
+                objectName: "renamePlaylistNameField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Playlist name")
+                onAccepted: {
+                    if (text.trim().length > 0) {
+                        renamePlaylistDialog.accept();
+                    }
+                }
+            }
+        }
+        onAccepted: root.playlistEditController.renamePlaylist(root.rekordboxPath, root.enginePath,
+                                                               renamePlaylistDialog.playlist, renamePlaylistNameField.text)
+    }
+
+    // The name the stick has for a playlist listed under a staged new one,
+    // or "" when none is staged for it.
+    function oldPlaylistName(shown) {
+        const renames = root.playlistEditController.pendingRenames;
+        for (const from in renames) {
+            if (renames[from] === shown) {
+                return from;
+            }
+        }
+        return "";
     }
 
     // The list's last row: a name for a new, empty playlist, made in every
@@ -345,6 +416,11 @@ Page {
     readonly property var pendingMoves: ("pendingMoves" in root.playlistEditController)
         ? root.playlistEditController.pendingMoves : ({})
     onPendingMovesChanged: scanController.setPendingEdits(root.pendingAdditions, root.pendingMoves)
+    // A playlist staged to be renamed is listed under its new name, its
+    // tracks the scanned playlist's.
+    readonly property var pendingRenames: ("pendingRenames" in root.playlistEditController)
+        ? root.playlistEditController.pendingRenames : ({})
+    onPendingRenamesChanged: scanController.setPlaylistAliases(root.pendingRenames)
 
     function openPlaylistMenu(name, row) {
         if (!root.playlistEditing) {
@@ -454,9 +530,11 @@ Page {
     // last-selected name doesn't match any playlist on this stick --
     // e.g. it was deleted, or this is a different stick than last time --
     // and keeps remembering it, since the next stick may well have it.
+    // A staged rename lists it under its new name, and a take-back under
+    // its old one again: currentPlaylistName follows it there.
     function restoreSelectedPlaylist() {
-        var wanted = root.appSettingsController.lastPlaylistName;
-        var idx = wanted.length > 0 ? scanController.playlistNames.indexOf(wanted) : -1;
+        const wanted = scanController.currentPlaylistName(root.appSettingsController.lastPlaylistName);
+        const idx = wanted.length > 0 ? scanController.playlistNames.indexOf(wanted) : -1;
         root.selectPlaylist(idx >= 0 ? idx + 1 : 0, wanted, false);
     }
 
@@ -1002,6 +1080,8 @@ Page {
                 selectedIndex: root.selectedPlaylistIndex
                 onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
                 isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
+                isRenamed: name => ("isRenameStaged" in root.playlistEditController)
+                    && root.playlistEditController.isRenameStaged(name)
                 isEdited: name => ("isPlaylistEdited" in root.playlistEditController)
                     && root.playlistEditController.isPlaylistEdited(name)
                 trackCountChange: name => ("trackCountChange" in root.playlistEditController)
