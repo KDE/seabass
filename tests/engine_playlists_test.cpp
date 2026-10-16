@@ -534,12 +534,20 @@ int main(int argc, char **argv)
     // Every row written carries what libdjinterop's own rows carry: a
     // "%F %T" UTC time, persisted, explicitly exported. The fraction has
     // as many digits as the system clock counts: nine on Linux's
-    // nanosecond clock, six on macOS's microsecond one, where libdjinterop's
-    // own rows have six and ours nine. Either is a time Engine reads.
-    const std::string editTimeTo = "lastEditTime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] "
-                                   "[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9]";
-    assert(scalar(db, "SELECT count(*) FROM Playlist WHERE (" + editTimeTo + "' OR " + editTimeTo
-                          + "[0-9][0-9][0-9]') AND isPersisted = 1 AND isExplicitlyExported = 1;")
+    // nanosecond clock, six on macOS's microsecond one, seven on
+    // Windows, whose system_clock (MSVC) ticks in 100 ns; libdjinterop's
+    // own rows have six. Any of them is a time Engine reads, so any
+    // fraction of one to nine digits is accepted here.
+    std::string editTimeIsAClockTime;
+    std::string digits;
+    for (int n = 1; n <= 9; ++n) {
+        digits += "[0-9]";
+        editTimeIsAClockTime += std::string(n == 1 ? "" : " OR ")
+            + "lastEditTime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]."
+            + digits + "'";
+    }
+    assert(scalar(db, "SELECT count(*) FROM Playlist WHERE (" + editTimeIsAClockTime
+                          + ") AND isPersisted = 1 AND isExplicitlyExported = 1;")
            == scalar(db, "SELECT count(*) FROM Playlist;"));
     assert(scalar(db, "SELECT count(DISTINCT databaseUuid) FROM PlaylistEntity;") == 1);
     assert(scalar(db, "SELECT count(*) FROM PlaylistEntity WHERE membershipReference <> 0;") == 0);
