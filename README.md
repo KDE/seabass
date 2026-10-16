@@ -104,6 +104,11 @@ Bundled components keep their own licences:
 | zlib (Windows builds only; Linux uses the system library) | `third_party/zlib/` | Zlib |
 | rekordbox format specs from [crate-digger](https://github.com/Deep-Symmetry/crate-digger), and the parser generated from them | `specs/`, `src/infrastructure/rekordbox/generated/` | EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only (used under LGPL-3.0-only) |
 | Breeze icons | `src/gui/qml/icons/breeze/` | LGPL-3.0-or-later |
-| Seabass logo, `prime4display.jpg` | `src/gui/qml/icons/`, top level | CC-BY-SA-4.0 |
+| The Seabass mascot, by [Nuno Pinheiro](https://nuno-icons.com/) | `artwork/`, `src/gui/qml/icons/`, `src/gui/win/`, `src/gui/mac/` | CC-BY-SA-4.0 |
+| The earlier Seabass logo, `prime4display.jpg` | `src/gui/qml/icons/`, top level | CC-BY-SA-4.0 |
 
 A binary build is therefore distributed under GPL-3.0.
+
+The mascot's licence covers the drawing: copy it, change it, share it, with
+Nuno Pinheiro named. It does not make another product Seabass; the fish
+identifies this one.

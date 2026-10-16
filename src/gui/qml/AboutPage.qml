@@ -35,6 +35,7 @@ Page {
     readonly property string websiteUrl: "https://vizzzion.org/seabass/"
     readonly property string sourceUrl: "https://invent.kde.org/multimedia/seabass"
     readonly property string kdeUrl: "https://kde.org/"
+    readonly property string artistUrl: "https://nuno-icons.com/"
 
     // Escape goes back, as the breadcrumb does. Only while this page is
     // the one showing: under the support page it pushes, that page's own
@@ -195,19 +196,33 @@ Page {
                     }
 
                 }
-                Image {
-                    objectName: "aboutLogo"
-                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
-                    // The right half of the head, the fish's own shape (1024 by
-                    // 613), standing on the rule under it (Sebastian's sketch,
-                    // 2026-10-16: titles left half, mascot right half).
+                // The right half of the head: the fish at its own shape (1024 by
+                // 613), standing on the rule under it, and its maker's name
+                // under it in small print (Sebastian's sketch, 2026-10-16:
+                // titles left half, mascot right half).
+                ColumnLayout {
+                    id: mascotColumn
                     readonly property real half: (parent.width - parent.spacing) / 2
                     Layout.preferredWidth: half
-                    Layout.preferredHeight: half * 613 / 1024
+                    Layout.maximumWidth: half
                     Layout.alignment: Qt.AlignBottom | Qt.AlignRight
-                    sourceSize.width: Math.ceil(half)
-                    sourceSize.height: Math.ceil(half * 613 / 1024)
-                    fillMode: Image.PreserveAspectFit
+                    spacing: 2
+                    Image {
+                        objectName: "aboutLogo"
+                        source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: mascotColumn.half * 613 / 1024
+                        sourceSize.width: Math.ceil(mascotColumn.half)
+                        sourceSize.height: Math.ceil(mascotColumn.half * 613 / 1024)
+                        fillMode: Image.PreserveAspectFit
+                    }
+                    Label {
+                        objectName: "aboutMascotCredit"
+                        text: "Mascot by Nuno Pinheiro"
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        Layout.alignment: Qt.AlignRight
+                    }
                 }
             }
 
@@ -294,20 +309,40 @@ Page {
                         TapHandler { onTapped: Qt.openUrlExternally(root.kdeUrl) }
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                     }
-                    Label {
-                        objectName: "aboutKdeText"
-                        text: "Seabass is developed under the <a href=\"" + root.kdeUrl + "\">KDE</a> umbrella. "
-                            + "Its source code is published on <a href=\"" + root.sourceUrl + "\">KDE's Invent</a> "
-                            + "for you to look at, to share it and to modify it."
-                        textFormat: Text.StyledText
-                        linkColor: Theme.accent
-                        wrapMode: Text.WordWrap
-                        font.pointSize: Theme.baseFontPointSize
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        onLinkActivated: link => Qt.openUrlExternally(link)
-                        HoverHandler {
-                            enabled: parent.hoveredLink.length > 0
-                            cursorShape: Qt.PointingHandCursor
+                        spacing: Theme.tightSpacing
+                        Label {
+                            objectName: "aboutKdeText"
+                            text: "Seabass is developed under the <a href=\"" + root.kdeUrl + "\">KDE</a> umbrella. "
+                                + "Its source code is published on <a href=\"" + root.sourceUrl + "\">KDE's Invent</a> "
+                                + "for you to look at, to share it and to modify it."
+                            textFormat: Text.StyledText
+                            linkColor: Theme.accent
+                            wrapMode: Text.WordWrap
+                            font.pointSize: Theme.baseFontPointSize
+                            Layout.fillWidth: true
+                            onLinkActivated: link => Qt.openUrlExternally(link)
+                            HoverHandler {
+                                enabled: parent.hoveredLink.length > 0
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                        }
+                        // Where the fish comes from, with the attribution its
+                        // licence asks for: it travels with the work.
+                        Label {
+                            objectName: "aboutArtworkCredit"
+                            text: "Artwork by <a href=\"" + root.artistUrl + "\">Nuno Pinheiro</a>, CC-BY-SA-4.0."
+                            textFormat: Text.StyledText
+                            linkColor: Theme.accent
+                            wrapMode: Text.WordWrap
+                            font.pointSize: Theme.baseFontPointSize
+                            Layout.fillWidth: true
+                            onLinkActivated: link => Qt.openUrlExternally(link)
+                            HoverHandler {
+                                enabled: parent.hoveredLink.length > 0
+                                cursorShape: Qt.PointingHandCursor
+                            }
                         }
                     }
                 }

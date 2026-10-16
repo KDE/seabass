@@ -44,15 +44,19 @@ Files: src/gui/qml/icons/seabass_soundbass.svg
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC-BY-SA-4.0
 
-Files: src/gui/qml/icons/seabass_mascot.png
+Files: artwork/seabass-nuno-pre.svg
+ artwork/seabass-nuno-pre.png
+ src/gui/qml/icons/seabass_mascot.png
  src/gui/qml/icons/seabass_icon.png
  src/gui/win/app_icon.ico
  src/gui/mac/app_icon.icns
-Copyright: 2026 Nuno
+Copyright: 2026 Nuno Pinheiro
 License: CC-BY-SA-4.0
-Comment: The Seabass mascot, drawn by Nuno (preview artwork, 2026-10-16); the
- square icon forms are derived from it by tools/make_app_icons.py. Full name
- and licence to be confirmed with Nuno before a release ships it.
+Comment: The Seabass mascot by Nuno Pinheiro (https://nuno-icons.com/):
+ artwork/ holds the drawing's source and preview; qml/icons/seabass_mascot.png
+ is the preview as the app shows it, and the square icon forms are derived from
+ it by tools/make_app_icons.py. The licence covers the drawing; presenting
+ another product as Seabass with it is not what it grants.
 
 # --- Portrait -------------------------------------------------------------
 # The photo on the Support page: Sebastian, of Sebastian, used with his

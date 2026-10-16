@@ -119,8 +119,18 @@ TestCase {
         const row = findChild(page, "aboutHead");
         verify(Math.abs(mark.width - (row.width - row.spacing) / 2) <= 1, "the right half: " + mark.width + " of " + row.width);
         verify(Math.abs(mark.height - mark.width * 613 / 1024) <= 1, "the fish's own shape");
-        verify(Math.abs(mark.mapToItem(page, 0, mark.height).y - row.mapToItem(page, 0, row.height).y) <= 1,
-               "standing on the row's bottom, where the rule is");
+        const caption = findChild(page, "aboutMascotCredit");
+        verify(caption !== null && caption.visible, "the mascot's maker is named under it");
+        compare(caption.text, "Mascot by Nuno Pinheiro");
+        verify(Math.abs(caption.mapToItem(page, 0, caption.height).y - row.mapToItem(page, 0, row.height).y) <= 1,
+               "the caption stands on the row's bottom, where the rule is");
+        verify(mark.mapToItem(page, 0, mark.height).y <= caption.mapToItem(page, 0, 0).y + 0.5,
+               "the fish right above its caption");
+        const credit = findChild(page, "aboutArtworkCredit");
+        verify(credit !== null && credit.visible, "the artwork credit is in the KDE note");
+        verify(credit.text.indexOf("Nuno Pinheiro") >= 0 && credit.text.indexOf(page.artistUrl) >= 0
+               && credit.text.indexOf("CC-BY-SA-4.0") >= 0, credit.text);
+        compare(page.artistUrl, "https://nuno-icons.com/");
         verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
         // The introduction is in the name's column, under the version.
         const intro = findChild(page, "aboutIntro");
