@@ -921,6 +921,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/save_loop.cpp
         src/gui/edit/rekordbox_baseline_ledger.hpp
         src/gui/edit/rekordbox_baseline_ledger.cpp
+        src/gui/edit/staged_edits_store.hpp
+        src/gui/edit/staged_edits_store.cpp
         src/gui/sleep_inhibitor.hpp
         src/gui/sleep_inhibitor.cpp
         src/gui/edit/format_write_session.hpp
@@ -2642,6 +2644,14 @@ if(TARGET seabass_edit)
     target_link_libraries(edit_session_registry_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME edit_session_registry_test COMMAND edit_session_registry_test)
     set_tests_properties(edit_session_registry_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    # Browse's staged playlist edits kept on this machine across a crash:
+    # the snapshot's round trip, its removal when nothing is staged, and a
+    # track's path re-rooted on another mount point.
+    add_executable(staged_edits_store_test tests/staged_edits_store_test.cpp)
+    target_include_directories(staged_edits_store_test PRIVATE src)
+    target_link_libraries(staged_edits_store_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME staged_edits_store_test COMMAND staged_edits_store_test)
 
     # The backup advisor's forget() against a step queued, running, or
     # waiting on the cue pass, through its fingerprint reader seam.

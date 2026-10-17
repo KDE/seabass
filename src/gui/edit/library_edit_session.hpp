@@ -108,6 +108,8 @@ public:
         return units;
     }
     QStringList pendingDescriptions() const;
+    // The staged changes' ids, in the order Save applies them.
+    QStringList pendingIds() const;
     int playlistsEdited() const;
     QString writeLabel() const { return m_writeLabel; }
     int writeCurrent() const { return m_writeCurrent; }

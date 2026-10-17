@@ -5,6 +5,7 @@
 #include "playlist_edit_controller.hpp"
 
 #include <QCursor>
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrentRun>
@@ -17,6 +18,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/future_result.hpp"
+#include "seabass_version.hpp"
 
 namespace seabass::gui
 {
@@ -69,6 +71,7 @@ PlaylistEditController::PlaylistEditController(QObject *parent) : QObject(parent
 {
     connect(&m_lookupWatcher, &QFutureWatcher<std::pair<PlaylistWhereabouts, PlaylistWhereabouts>>::finished, this,
             &PlaylistEditController::onLookupFinished);
+    connect(this, &PlaylistEditController::pendingChanged, this, &PlaylistEditController::writeSnapshot);
 }
 
 PlaylistEditController::~PlaylistEditController()
@@ -123,6 +126,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                     m_renames.clear();
                     m_creates.clear();
                     m_newPlaylists.clear();
+                    m_requests.clear();
                     ++m_pendingRevision;
                     emit pendingChanged();
                 }
@@ -192,6 +196,7 @@ bool PlaylistEditController::createPlaylist(const QString &rekordboxPath, const 
             return;  // the session reported why (another page's edits)
         }
         m_staged.insert(CreatePlaylistChange::idFor(path));
+        record(CreatePlaylistChange::idFor(path), {QStringLiteral("create"), playlist});
         m_creates[playlist] = remake;
         m_newPlaylists << playlist;
         ++m_pendingRevision;
@@ -208,6 +213,13 @@ QString PlaylistEditController::lastAddPlaylist() const
 bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
                                            const QString &filePath, const QString &title, int toIndex,
                                            const QString &moveFrom)
+{
+    return requestAdd(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, false);
+}
+
+bool PlaylistEditController::requestAdd(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                        const QString &filePath, const QString &title, int toIndex,
+                                        const QString &moveFrom, bool anyway)
 {
     setErrorMessage({});
     if (playlist.isEmpty() || filePath.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
@@ -233,13 +245,13 @@ bool PlaylistEditController::addToPlaylist(const QString &rekordboxPath, const Q
                 setErrorMessage(ambiguous(playlist, where.several));
                 return;
             }
-            const PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, libraries};
+            const PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, libraries, anyway};
             QStringList missing;
             QStringList reached;
             for (const QString &library : libraries) {
                 (where.withFile.contains(library) ? reached : missing) << displayNames({library});
             }
-            if (!missing.isEmpty()) {
+            if (!missing.isEmpty() && !anyway) {
                 m_waitingAdds[playlist + QLatin1Char('|') + filePath] = add;
                 emit additionNeedsLibraries(playlist, filePath, title, missing, toIndex, reached);
                 return;
@@ -268,6 +280,8 @@ void PlaylistEditController::stageAdd(const PendingAdd &add)
     m_staged.insert(id);
     std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
     m_additions.push_back({id, add.playlist, add.filePath, add.toIndex, ++m_sequence, remake});
+    // The add alone: the removal of a move is its own call, staged after.
+    record(id, {QStringLiteral("add"), add.playlist, add.filePath, add.title, add.toIndex, QString(), add.anyway});
     ++m_pendingRevision;
     emit pendingChanged();
     // The other half of a move, after the add: looked up in its turn.
@@ -282,7 +296,8 @@ void PlaylistEditController::addAnyway(const QString &playlist, const QString &f
     if (it == m_waitingAdds.end()) {
         return;
     }
-    const PendingAdd add = it->second;
+    PendingAdd add = it->second;
+    add.anyway = true;
     m_waitingAdds.erase(it);
     setErrorMessage({});
     if (attachSession(add.rekordboxPath, add.enginePath)) {
@@ -371,6 +386,7 @@ bool PlaylistEditController::moveInPlaylist(const QString &rekordboxPath, const 
         m_staged.insert(id);
         std::erase_if(m_moves, [&](const Edit &m) { return m.id == id; });
         m_moves.push_back({id, playlist, filePath, toIndex, ++m_sequence, remake});
+        record(id, {QStringLiteral("move"), playlist, filePath, title, toIndex});
         ++m_pendingRevision;
         emit pendingChanged();
     });
@@ -476,6 +492,7 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
             return;  // the session reported why (another page's edits)
         }
         m_staged.insert(DeletePlaylistChange::idFor(name));
+        record(DeletePlaylistChange::idFor(name), {QStringLiteral("delete"), playlist});
         ++m_pendingRevision;
         emit pendingChanged();
     });
@@ -512,6 +529,7 @@ bool PlaylistEditController::removeFromPlaylist(const QString &rekordboxPath, co
             std::erase_if(m_removals, [&](const Edit &r) { return r.id == id; });
             m_removals.push_back({id, playlist, filePath, -1, ++m_sequence, remake});
         }
+        record(id, {QStringLiteral("remove"), playlist, filePath, title});
         ++m_pendingRevision;
         emit pendingChanged();
     });
@@ -614,6 +632,9 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                m_staged.insert(id);
                std::erase_if(m_renames, [&](const Rename &r) { return r.id == id; });
                m_renames.push_back({id, from, renamed});
+               // Under the path the stick has: a second rename replaces the
+               // first in place, and is made again from the stick's name.
+               record(id, {QStringLiteral("rename"), from, QString(), QString(), -1, name});
                ++m_pendingRevision;
                emit pendingChanged();
            });
@@ -649,6 +670,7 @@ void PlaylistEditController::renameNewPlaylist(const QString &playlist, const QS
     const std::string name = renamed.toStdString();
     if (m_session->stage(remakeCreate(name))) {
         m_staged.insert(CreatePlaylistChange::idFor(name));
+        record(CreatePlaylistChange::idFor(name), {QStringLiteral("create"), renamed});
         m_creates[renamed] = remakeCreate;
         m_newPlaylists << renamed;
         for (Edit e : edits) {
@@ -658,6 +680,13 @@ void PlaylistEditController::renameNewPlaylist(const QString &playlist, const QS
                 continue;
             }
             m_staged.insert(id);
+            // The call made again under the new name, as the page would
+            // ask for it now.
+            if (const auto asked = m_requests.find(e.id); asked != m_requests.end()) {
+                StagedEditRequest request = asked->second;
+                request.playlist = renamed;
+                record(id, request);
+            }
             e.id = id;
             e.playlist = renamed;
             auto &list = e.toIndex >= 0 ? m_moves
@@ -770,7 +799,7 @@ void PlaylistEditController::runNextLookup()
         return;
     }
     if (m_lookups.empty()) {
-        setBusy(false);
+        setBusy(m_replaying);
         return;
     }
     setBusy(true);
@@ -800,6 +829,11 @@ void PlaylistEditController::onLookupFinished()
         done.then(where, also);
     }
     runNextLookup();
+    // A kept call's lookup is done (and whatever it queued after it).
+    if (m_replaying && m_lookups.empty() && !m_lookupWatcher.isRunning()) {
+        settleReplayCall(m_replayCurrent);
+        replayNext();
+    }
 }
 
 void PlaylistEditController::noteApplied(const QString &changeId)
@@ -937,10 +971,190 @@ bool PlaylistEditController::isRemovalStaged(const QString &playlist, const QStr
 
 void PlaylistEditController::setErrorMessage(const QString &message)
 {
+    // A kept call's refusal is gathered into one report at the end, not
+    // shown one by one.
+    if (m_replaying) {
+        if (!message.isEmpty()) {
+            m_replayError = message;
+        }
+        return;
+    }
     if (m_errorMessage != message) {
         m_errorMessage = message;
         emit errorMessageChanged();
     }
+}
+
+void PlaylistEditController::record(const QString &changeId, StagedEditRequest request)
+{
+    m_requests[changeId] = std::move(request);
+}
+
+QString PlaylistEditController::libraryIdFor(const QString &rekordboxPath, const QString &enginePath) const
+{
+    return EditSessionRegistry::instance()->libraryIdForPath(rekordboxPath.isEmpty() ? enginePath : rekordboxPath);
+}
+
+QString PlaylistEditController::mountPointFor(const QString &rekordboxPath, const QString &enginePath) const
+{
+    return EditSessionRegistry::instance()->mountPointForPath(rekordboxPath.isEmpty() ? enginePath : rekordboxPath);
+}
+
+void PlaylistEditController::writeSnapshot()
+{
+    // Written once the kept calls are all made, not call by call: a crash
+    // halfway through would leave half the batch.
+    if (m_replaying || !m_session) {
+        return;
+    }
+    std::erase_if(m_requests, [this](const auto &r) { return m_staged.count(r.first) == 0; });
+    StagedEdits edits;
+    edits.libraryId = m_session->libraryId();
+    // In the order Save applies them, which is the order they were asked
+    // for: a rename before the edits asked for under its new name.
+    for (const QString &id : m_session->pendingIds()) {
+        if (const auto it = m_requests.find(id); it != m_requests.end()) {
+            edits.requests.push_back(it->second);
+        }
+    }
+    if (edits.requests.empty()) {
+        if (m_ownsSnapshot) {
+            m_store.remove(m_snapshotLibraryId);
+            m_ownsSnapshot = false;
+        }
+        return;
+    }
+    edits.stickLabel = m_session->stickLabel();
+    edits.savedAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    edits.appVersion = QString::fromLatin1(version::Number);
+    const QString mountPoint = mountPointFor(m_session->rekordboxPath(), m_session->enginePath());
+    if (!m_store.write(edits, mountPoint)) {
+        qWarning("Could not keep the staged playlist edits in %s", qPrintable(m_store.pathFor(edits.libraryId)));
+    }
+    m_ownsSnapshot = true;
+    m_snapshotLibraryId = edits.libraryId;
+}
+
+QVariantMap PlaylistEditController::leftOverEdits(const QString &rekordboxPath, const QString &enginePath)
+{
+    const auto edits = m_store.read(libraryIdFor(rekordboxPath, enginePath), mountPointFor(rekordboxPath, enginePath));
+    if (!edits) {
+        return {};
+    }
+    return {{QStringLiteral("count"), static_cast<int>(edits->requests.size())},
+            {QStringLiteral("stickLabel"), edits->stickLabel},
+            {QStringLiteral("savedAtUtc"), edits->savedAtUtc}};
+}
+
+QString PlaylistEditController::leftOverEditsFile(const QString &rekordboxPath, const QString &enginePath)
+{
+    const QString id = libraryIdFor(rekordboxPath, enginePath);
+    return id.isEmpty() ? QString() : m_store.pathFor(id);
+}
+
+void PlaylistEditController::discardLeftOverEdits(const QString &rekordboxPath, const QString &enginePath)
+{
+    m_store.remove(libraryIdFor(rekordboxPath, enginePath));
+}
+
+bool PlaylistEditController::keepLeftOverEdits(const QString &rekordboxPath, const QString &enginePath)
+{
+    if (m_replaying) {
+        return false;
+    }
+    setErrorMessage({});
+    const QString id = libraryIdFor(rekordboxPath, enginePath);
+    const auto edits = m_store.read(id, mountPointFor(rekordboxPath, enginePath));
+    if (!edits || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    // Into a clean session only: another page's batch would refuse them
+    // one by one, and this one's would be mixed into it.
+    if (m_session->dirty()) {
+        setErrorMessage(QStringLiteral("Other edits are staged for this stick. Save or discard them first."));
+        return false;
+    }
+    m_ownsSnapshot = true;
+    m_snapshotLibraryId = id;
+    m_replay.assign(edits->requests.begin(), edits->requests.end());
+    m_replayTotal = static_cast<int>(m_replay.size());
+    m_replayRefusals.clear();
+    m_replayRekordboxPath = rekordboxPath;
+    m_replayEnginePath = enginePath;
+    m_replaying = true;
+    setBusy(true);
+    replayNext();
+    return true;
+}
+
+bool PlaylistEditController::issue(const StagedEditRequest &r)
+{
+    const QString &rb = m_replayRekordboxPath;
+    const QString &en = m_replayEnginePath;
+    if (r.kind == QLatin1String("create")) {
+        return createPlaylist(rb, en, r.playlist);
+    }
+    if (r.kind == QLatin1String("delete")) {
+        return deletePlaylist(rb, en, r.playlist);
+    }
+    if (r.kind == QLatin1String("add")) {
+        return requestAdd(rb, en, r.playlist, r.file, r.title, r.toIndex, QString(), r.anyway);
+    }
+    if (r.kind == QLatin1String("remove")) {
+        return removeFromPlaylist(rb, en, r.playlist, r.file, r.title);
+    }
+    if (r.kind == QLatin1String("move")) {
+        return moveInPlaylist(rb, en, r.playlist, r.file, r.title, r.toIndex);
+    }
+    if (r.kind == QLatin1String("rename")) {
+        return renamePlaylist(rb, en, r.playlist, r.newName);
+    }
+    m_replayError = QStringLiteral("Seabass does not know the edit \"%1\".").arg(r.kind);
+    return false;
+}
+
+void PlaylistEditController::replayNext()
+{
+    while (!m_replay.empty()) {
+        m_replayCurrent = m_replay.front();
+        m_replay.pop_front();
+        m_replayError.clear();
+        m_replayRevision = m_pendingRevision;
+        m_replayWaiting = m_waitingAdds.size();
+        const bool accepted = issue(m_replayCurrent);
+        if (accepted && (!m_lookups.empty() || m_lookupWatcher.isRunning())) {
+            return;  // onLookupFinished settles it and comes back here
+        }
+        if (!accepted && m_replayError.isEmpty()) {
+            m_replayError = QStringLiteral("An edit of \"%1\" could not be staged again.").arg(m_replayCurrent.playlist);
+        }
+        settleReplayCall(m_replayCurrent);
+    }
+    m_replaying = false;
+    setBusy(!m_lookups.empty());
+    writeSnapshot();
+    const int refused = static_cast<int>(m_replayRefusals.size());
+    if (refused > 0) {
+        setErrorMessage(QStringLiteral("%1 of %2 %3 could not be kept: %4")
+                            .arg(refused)
+                            .arg(m_replayTotal)
+                            .arg(m_replayTotal == 1 ? QStringLiteral("edit") : QStringLiteral("edits"),
+                                 m_replayRefusals.join(QLatin1Char(' '))));
+    }
+    emit leftOverEditsKept(m_replayTotal - refused, m_replayTotal, m_replayRefusals);
+}
+
+void PlaylistEditController::settleReplayCall(const StagedEditRequest &request)
+{
+    // Kept when it staged something, or asked the page (an add that now
+    // finds a library without the track, and was never confirmed).
+    if (m_replayError.isEmpty() && (m_pendingRevision != m_replayRevision || m_waitingAdds.size() > m_replayWaiting)) {
+        return;
+    }
+    m_replayRefusals << (m_replayError.isEmpty()
+                             ? QStringLiteral("An edit of \"%1\" could not be staged again.").arg(request.playlist)
+                             : m_replayError);
+    m_replayError.clear();
 }
 
 }  // namespace seabass::gui

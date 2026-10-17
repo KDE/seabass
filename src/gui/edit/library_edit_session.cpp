@@ -131,6 +131,15 @@ QStringList LibraryEditSession::pendingDescriptions() const
     return lines;
 }
 
+QStringList LibraryEditSession::pendingIds() const
+{
+    QStringList ids;
+    for (const auto &change : m_changes) {
+        ids << change->id();
+    }
+    return ids;
+}
+
 int LibraryEditSession::playlistsEdited() const
 {
     std::set<QString> playlists;

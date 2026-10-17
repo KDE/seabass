@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/edit/staged_edits_store.hpp"
 
 namespace seabass::gui
 {
@@ -173,6 +174,28 @@ public:
     Q_INVOKABLE void keepPlaylistName(const QString &playlist);
     Q_INVOKABLE bool isRenameStaged(const QString &playlist) const;
 
+    // What is staged outlives a crash. Every time it changes, the whole
+    // batch is written to this machine (StagedEditsStore) as the calls
+    // above that staged it, in their order; when nothing is staged the
+    // file goes, so a full save or a discard leaves none and a partial
+    // save leaves what it did not write. A crash leaves the last batch.
+    //
+    // The batch Seabass last kept for this stick and never saved, as
+    // {count, stickLabel, savedAtUtc}; empty when there is none.
+    Q_INVOKABLE QVariantMap leftOverEdits(const QString &rekordboxPath, const QString &enginePath);
+    // Stages it again by making the same calls in the same order, with
+    // these paths and the stick's files under its mount point of the day.
+    // Each is looked up on the stick again, so an edit the stick no longer
+    // allows (a playlist the player deleted meanwhile) is refused as a
+    // fresh one would be, and the rest go on. Busy while it runs; then
+    // leftOverEditsKept, and errorMessage names what could not be kept.
+    // An add confirmed past "Not in every library" is not asked again.
+    // Refused (false) while anything is staged into the stick.
+    Q_INVOKABLE bool keepLeftOverEdits(const QString &rekordboxPath, const QString &enginePath);
+    Q_INVOKABLE void discardLeftOverEdits(const QString &rekordboxPath, const QString &enginePath);
+    // Where the batch for this stick is kept.
+    Q_INVOKABLE QString leftOverEditsFile(const QString &rekordboxPath, const QString &enginePath);
+
 signals:
     void errorMessageChanged();
     void lastAddPlaylistChanged();
@@ -187,6 +210,9 @@ signals:
     // Nothing is staged until addAnyway().
     void additionNeedsLibraries(const QString &playlist, const QString &filePath, const QString &title,
                                 const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries);
+    // keepLeftOverEdits is done: `kept` of `total` edits are staged again,
+    // and `refusals` say why the others are not.
+    void leftOverEditsKept(int kept, int total, const QStringList &refusals);
 
 private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
@@ -234,8 +260,14 @@ private:
         int toIndex = -1;
         QString moveFrom;
         QStringList libraries;
+        // Confirmed past "Not in every library" (addAnyway, or kept so).
+        bool anyway = false;
     };
     void stageAdd(const PendingAdd &add);
+    // addToPlaylist, with the page's answer to additionNeedsLibraries
+    // given in advance when `anyway` (a kept add, see keepLeftOverEdits).
+    bool requestAdd(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                    const QString &filePath, const QString &title, int toIndex, const QString &moveFrom, bool anyway);
     // Adds waiting for the page's answer, by playlist + "|" + file.
     std::map<QString, PendingAdd> m_waitingAdds;
 
@@ -296,6 +328,40 @@ private:
     std::uint64_t m_sequence = 0;
     int m_pendingRevision = 0;
     QString m_errorMessage;
+
+    // The call that staged each change, by its id: what the snapshot
+    // holds. A change staged again (the same id) holds its last call.
+    std::map<QString, StagedEditRequest> m_requests;
+    void record(const QString &changeId, StagedEditRequest request);
+    // Writes what is staged, in the session's order, or removes the file
+    // when nothing is (pendingChanged).
+    void writeSnapshot();
+    QString libraryIdFor(const QString &rekordboxPath, const QString &enginePath) const;
+    QString mountPointFor(const QString &rekordboxPath, const QString &enginePath) const;
+    StagedEditsStore m_store;
+    // This controller wrote the stick's file, or took it over by keeping
+    // it: only then does an empty batch remove it. Another page's, or a
+    // batch not yet answered for, is left alone.
+    bool m_ownsSnapshot = false;
+    QString m_snapshotLibraryId;
+
+    // keepLeftOverEdits: the calls still to make, one at a time (each
+    // waits for its lookup), and what became of those made.
+    std::deque<StagedEditRequest> m_replay;
+    QString m_replayRekordboxPath;
+    QString m_replayEnginePath;
+    bool m_replaying = false;
+    int m_replayTotal = 0;
+    QStringList m_replayRefusals;
+    // The running call's refusal (setErrorMessage holds it back while
+    // replaying), and what staging it would have changed.
+    QString m_replayError;
+    int m_replayRevision = 0;
+    std::size_t m_replayWaiting = 0;
+    bool issue(const StagedEditRequest &request);
+    void replayNext();
+    void settleReplayCall(const StagedEditRequest &request);
+    StagedEditRequest m_replayCurrent;
 };
 
 }  // namespace seabass::gui
