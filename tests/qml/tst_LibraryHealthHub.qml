@@ -830,6 +830,88 @@ TestCase {
         }
     }
 
+    // A playlist only some libraries have, on a real scan of a fixture
+    // copy (Sebastian 2026-10-17: it came back after every save). Planted
+    // in rekordbox only, following rekordbox creates it in OneLibrary with
+    // the same tracks; planted in rekordbox and OneLibrary, Delete Playlist
+    // takes it out of both and the rescan lists it nowhere. The fixture's
+    // Engine library shares no file with the other two, so Engine gets no
+    // copy: a playlist there could hold none of these tracks.
+    function test_aPlaylistMissingSomewhereIsCreatedOrDeleted() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const followed = stickFixture.plantPlaylist(stick, "Planted Follow", ["rekordbox"], 3);
+        compare(followed.length, 3, "planted in rekordbox");
+        const deleted = stickFixture.plantPlaylist(stick, "Planted Delete", ["rekordbox", "onelibrary"], 2);
+        compare(deleted.length, 2, "planted in rekordbox and OneLibrary");
+        verify(stickFixture.playlistsIn(stick, "onelibrary").indexOf("Planted Follow") < 0, "precondition");
+        verify(stickFixture.playlistsIn(stick, "onelibrary").indexOf("Planted Delete") >= 0, "precondition");
+
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        compare(controller.playlistsError, "");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        const side = (row, format) => row.sides.find((x) => x.format === format);
+
+        const follow = find("Planted Follow");
+        verify(follow !== undefined && follow.missingSomewhere, "listed as missing somewhere");
+        const reference = follow.references.find((r) => r.format === "rekordbox");
+        verify(reference !== undefined, "rekordbox can be followed: " + JSON.stringify(follow.references));
+        compare(reference.creates.length, 1, JSON.stringify(reference));
+        compare(reference.creates[0], "OneLibrary");
+        compare(reference.createdTracks, 3);
+        verify(follow.references.every((r) => r.format === "rekordbox"), "a library without it is no reference");
+
+        const libraryId = EditSessionRegistry.libraryIdForPath(stick + "/PIONEER");
+        const session = EditSessionRegistry.sessionFor(libraryId, "TESTSTICK");
+        const save = () => {
+            let summary = null;
+            const done = (result) => { summary = result; };
+            session.saveFinished.connect(done);
+            session.save();
+            tryVerify(() => summary !== null, 120000, "the save finishes");
+            session.saveFinished.disconnect(done);
+            compare(summary.error, "", "the save wrote it: " + JSON.stringify(summary));
+            tryVerify(() => !controller.busy && controller.playlistsChecked, 300000, "the rescan finishes");
+        };
+
+        // One resolution per playlist: following replaces a staged delete.
+        controller.deletePlaylistEverywhere("Planted Follow");
+        compare(find("Planted Follow").staged, "delete");
+        controller.alignPlaylist("Planted Follow", "rekordbox");
+        compare(find("Planted Follow").staged, "rekordbox");
+        verify(session !== null);
+        compare(session.pendingCount, 1, "the follow alone");
+        save();
+        verify(stickFixture.playlistsIn(stick, "onelibrary").indexOf("Planted Follow") >= 0, "OneLibrary has it now");
+        // Still listed, since Engine lacks it, but only Engine, and
+        // nothing is left to follow.
+        const after = find("Planted Follow");
+        verify(after !== undefined, "Engine still lacks it");
+        verify(side(after, "onelibrary").hasPlaylist, JSON.stringify(after));
+        compare(side(after, "onelibrary").members, 3, "the three tracks: " + JSON.stringify(after));
+        compare(side(after, "onelibrary").lacking.length, 0);
+        compare(side(after, "rekordbox").lacking.length, 0);
+        verify(!side(after, "engine").hasPlaylist);
+        verify(after.references.every((r) => r.adds + r.removes + r.swaps === 0 && r.creates.length === 0),
+               "nothing left to do: " + JSON.stringify(after.references));
+
+        verify(find("Planted Delete") !== undefined, "the other planted playlist is listed");
+        controller.deletePlaylistEverywhere("Planted Delete");
+        compare(find("Planted Delete").staged, "delete", "staged as a delete");
+        verify(controller.statusMessage.indexOf("Staged deleting \"Planted Delete\" from rekordbox and OneLibrary.") === 0,
+               controller.statusMessage);
+        compare(session.pendingCount, 1);
+        save();
+        compare(find("Planted Delete"), undefined, "gone from the list after the rescan");
+        for (const library of ["rekordbox", "onelibrary", "engine"]) {
+            verify(stickFixture.playlistsIn(stick, library).indexOf("Planted Delete") < 0, "not in " + library);
+        }
+        verify(stickFixture.playlistsIn(stick, "rekordbox").indexOf("Planted Follow") >= 0, "the other stays");
+    }
+
     // The stray-cue headline counts tracks, each audio file once, and
     // says what the rules are: a cue a library mirrors is a row in each,
     // and "214 cues sit at 0:00" read as 214 separate problems while

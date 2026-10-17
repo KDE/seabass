@@ -230,6 +230,7 @@ int main(int argc, char **argv)
         auto db = djinterop::engine::create_database(pathToUtf8(engine));
         auto solo = db.create_root_playlist("Solo");
         auto both = db.create_root_playlist("Both");
+        auto sub = db.create_root_playlist("F1").create_sub_playlist("Sub");
         for (const char *f : {A01, A02, A03, X99}) {
             djinterop::track_snapshot s;
             s.relative_path = std::string("../Contents/") + f;
@@ -241,12 +242,17 @@ int main(int argc, char **argv)
             if (f == A03) {
                 both.add_track_back(t);
             }
+            if (f == A01) {
+                sub.add_track_back(t);
+            }
         }
     }
     {
         infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
         w.createPlaylist("", "Both", false);
         w.addToPlaylist("Both", file(A03));
+        // 3-folder.pdb has the folder F1; OneLibrary gets it here.
+        w.createPlaylist("", "F1", true);
     }
     const QString pioneerQ = pathToQString(pioneer);
     const QString engineQ = pathToQString(engine);
@@ -301,6 +307,26 @@ int main(int argc, char **argv)
         assert(infrastructure::rekordbox::rekordboxPlaylistIdsByPath(pathToUtf8(pioneer)).count("Solo") == 1);
     }
     std::cout << "case 3 (Follow Engine creates the playlist where it is missing, with what each library lists) OK\n";
+
+    // 3b. "F1/Sub", in Engine only, is created in the folder F1 the other
+    //     two have.
+    {
+        domain::Track a01 = catalogRow("rekordbox", "1", file(A01));
+        domain::PlaylistAlignment toPdb;
+        toPdb.format = "rekordbox";
+        toPdb.create = true;
+        toPdb.add = {a01};
+        domain::PlaylistAlignment toOneLibrary = toPdb;
+        toOneLibrary.format = "onelibrary";
+        toOneLibrary.add[0].format = "onelibrary";
+        const auto result = save(std::make_shared<AlignPlaylistChange>(
+            pioneerQ, engineQ, "F1/Sub", "engine", std::vector<domain::PlaylistAlignment>{toPdb, toOneLibrary}, 1));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        assert((pdbMembers(pioneer, "F1/Sub") == std::vector<uint32_t>{1}) && "export.pdb: in the folder F1");
+        assert((oneLibraryMembers(pioneer, "F1/Sub", {file(A01)}) == std::vector<std::string>{file(A01)})
+               && "OneLibrary: in the folder F1");
+    }
+    std::cout << "case 3b (a playlist in a folder is created in that folder) OK\n";
 
     // 4. "Both" is in OneLibrary and Engine (a03), not rekordbox. Library
     //    Health deletes it from the two that have it; a03 stays a track.

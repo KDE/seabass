@@ -210,6 +210,27 @@ keeps its batch on this machine while it is staged
 The other editors (Add Cue, Sync, Library Health, ...) do not keep their
 batches: those are made in seconds from a page that can make them again.
 
+## Library Health: a playlist only some libraries have
+
+The Playlists check lists playlists that differ between the stick's
+libraries. A playlist missing from some of them has two resolutions,
+both staged into Library Health's session like the other playlist fixes,
+written by Save, unstageable, and rescanned after the save. One is staged
+per playlist; staging either replaces the other.
+
+- **Follow <library>** (`alignPlaylist`, `AlignPlaylistChange`): each
+  library without the playlist gets it created (the same code as Browse's
+  `CreatePlaylistChange`, `createPlaylistIn`) and filled with the tracks of
+  the followed copy that this library lists. A created copy holds only
+  those: a file the library does not list stays out (and OneLibrary takes
+  only what rekordbox's copy will hold). A library that lists none of them
+  gets no copy, since an empty playlist is not one the check can see. A
+  playlist in a folder is created in that folder, which export.pdb and
+  OneLibrary must have already (Engine makes it).
+- **Delete Playlist** (`deletePlaylistEverywhere`): Browse's
+  `DeletePlaylistChange`, owned by `"library-health"` so the session takes
+  it, deletes the playlist from every library that has it. Tracks stay.
+
 ## Adding a staged change
 
 1. Subclass `PendingChange`: `id()` (stable, unique per unit),

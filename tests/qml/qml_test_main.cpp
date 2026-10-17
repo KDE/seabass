@@ -30,6 +30,10 @@
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/edit/save_context.hpp"
+#include "gui/edit/save_loop.hpp"
+#include "application/ports/cancellation_token.hpp"
 #include "gui/sync_controller.hpp"
 #include "gui/rekordbox_export_sync_list_model.hpp"
 #include "gui/cleanup_controller.hpp"
@@ -707,6 +711,72 @@ public:
             qWarning() << "plantCueTableRow:" << e.what();
             return {};
         }
+    }
+
+    // A playlist on a stick copy in only the libraries named ("rekordbox",
+    // "onelibrary", "engine"), holding `count` tracks export.pdb and
+    // OneLibrary both list, made and filled by Browse's own changes through
+    // the save loop, outside any edit session, so the page under test
+    // starts with a clean one. Returns the files, or nothing on failure.
+    Q_INVOKABLE QStringList plantPlaylist(const QString &stickRoot, const QString &name, const QStringList &libraries,
+                                          int count)
+    {
+        namespace gui = seabass::gui;
+        namespace ol = seabass::infrastructure::onelibrary;
+        const QString pioneer = stickRoot + QStringLiteral("/PIONEER");
+        const QString engine = stickRoot + QStringLiteral("/Engine Library");
+        QStringList files;
+        try {
+            seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.toStdString());
+            ol::OneLibraryCueWriter oneLibrary(pioneer.toStdString());
+            for (const auto &track : reader.readAll()) {
+                if (files.size() >= count) {
+                    break;
+                }
+                if (track.filePath.empty() || files.contains(QString::fromStdString(track.filePath))) {
+                    continue;
+                }
+                try {
+                    if (!oneLibrary.contentIdsForFile(track.filePath).empty()) {
+                        files << QString::fromStdString(track.filePath);
+                    }
+                } catch (const ol::OneLibraryRowMissing &) {
+                }
+            }
+        } catch (const std::exception &e) {
+            qWarning() << "plantPlaylist:" << e.what();
+            return {};
+        }
+        if (files.size() < count) {
+            return {};
+        }
+        std::vector<std::shared_ptr<gui::PendingChange>> changes;
+        changes.push_back(std::make_shared<gui::CreatePlaylistChange>(pioneer, engine, name.toStdString(), libraries));
+        for (const QString &file : files) {
+            changes.push_back(std::make_shared<gui::AddToPlaylistChange>(pioneer, engine, name.toStdString(),
+                                                                         file.toStdString(), file, libraries));
+        }
+        seabass::application::CancellationToken token;
+        gui::SaveContext ctx(token, seabass::application::NullProgressReporter::instance(), nullptr, {}, engine);
+        const gui::SaveLoopResult result = gui::runSaveLoop(changes, ctx);
+        if (!result.error.isEmpty() || !result.skippedIds.isEmpty()) {
+            qWarning() << "plantPlaylist:" << result.error << result.skippedIds;
+            return {};
+        }
+        return files;
+    }
+
+    // The playlists one library of a stick copy holds, by full path, read
+    // from the files (playlistPathsIn): "rekordbox", "onelibrary", "engine".
+    Q_INVOKABLE QStringList playlistsIn(const QString &stickRoot, const QString &library) const
+    {
+        const QString at = library == QStringLiteral("engine") ? stickRoot + QStringLiteral("/Engine Library")
+                                                               : stickRoot + QStringLiteral("/PIONEER");
+        QStringList out;
+        for (const auto &path : seabass::gui::playlistPathsIn(library.toStdString(), at.toStdString())) {
+            out << QString::fromStdString(path);
+        }
+        return out;
     }
 
 private:
