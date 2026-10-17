@@ -77,7 +77,10 @@ int main()
         assert(QFile::exists(path));
         assert(path.startsWith(directory + QLatin1Char('/')));
         assert(!path.mid(directory.size() + 1).contains(QLatin1Char('/')));
-        assert(!path.contains(QLatin1Char(':')));
+        // The file name only: on Windows the directory itself starts with
+        // "C:" (found by the Windows round on 484304fb). The id has a ':',
+        // so a store that did not sanitize would still fail here.
+        assert(!path.mid(directory.size() + 1).contains(QLatin1Char(':')));
         const auto read = store.read(written.libraryId, mount);
         assert(read.has_value());
         assert(read->libraryId == written.libraryId);
