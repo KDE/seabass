@@ -1388,22 +1388,14 @@ Page {
                 ScrollBar.vertical: BigScrollBar {}
                 model: scanController.tracks
 
-                // A staged move or add slides the rows to their new places
-                // (setPendingEdits moves and inserts rows in place) rather
-                // than jumping there. Only `y`: the room a gap makes is the
-                // rows' Translate, a transform of its own, so a gap closing
-                // as the rows slide adds up with this instead of fighting it.
-                readonly property Transition slide: Transition {
-                    NumberAnimation {
-                        properties: "y"
-                        duration: Theme.shortTransitionDuration
-                        easing.type: Easing.OutQuad
-                    }
-                }
-                move: slide
-                moveDisplaced: slide
-                addDisplaced: slide
-                removeDisplaced: slide
+                // No move or displaced transitions on this list. They slid
+                // the rows into a staged order (setPendingEdits moves and
+                // inserts rows in place), and Qt 6.11.1 crashed in
+                // QQuickItemView::animStopped, reading a delegate's y after
+                // the delegate was gone, when a wheel flick ended while such
+                // a transition and an in-place change overlapped (core of
+                // 2026-10-17 02:12, no Seabass frame). The rows take their
+                // new places at once; the gap's own Translate still animates.
 
                 // A plain Rectangle, not an ItemDelegate. Overriding a
                 // Material Control's `background:` property doesn't
