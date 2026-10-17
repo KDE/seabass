@@ -159,6 +159,57 @@ session; the summary shows once all are done (or the user cancelled),
 and the app quits on OK. While a write is running the window does not
 close at all.
 
+## Staged playlist edits survive a crash
+
+Staged changes live in memory until Save. On 2026-10-17 Seabass crashed
+a minute after a save; a crash, a kill or a power cut before one would
+have taken a batch of Browse playlist edits along, and those can take
+half an hour to put together. So Browse's playlist editing
+(`PlaylistEditController`: create, delete, add, remove, move, rename)
+keeps its batch on this machine while it is staged
+(`gui/edit/staged_edits_store.{hpp,cpp}`):
+
+- **A snapshot, not a log.** Whenever what the controller has staged
+  changes (`pendingChanged`), it writes the whole batch as one JSON file,
+  in the order Save applies it; when nothing is staged the file is
+  removed. A full save or a discard leaves none, a partial save (cancelled,
+  or a change that failed) leaves what it did not write, a crash leaves
+  the last batch. Nothing else deletes it.
+- **Local, never on the stick**: `appDataDirectory()/staged-edits/<library
+  id, made safe for a file name>.json`, next to the edit-lock cookies
+  (`~/Seabass/metadata`, see `infrastructure/local/app_data_directory.hpp`;
+  the QML suite runs it in its own sandboxed `SEABASS_HOME`). Staging
+  never writes the stick, which may be a browsed backup, read-only, or
+  pulled.
+- **Requests, not changes.** Each entry is the controller call that
+  staged it: `{kind, playlist, file, title, toIndex, newName, anyway}`,
+  with `stickLabel`, `libraryId`, `savedAtUtc` and `appVersion` beside
+  them. Track files are stored relative to the stick's mount point
+  (`EditSessionRegistry::mountPointForPath`) and re-rooted on the mount
+  point of the day. `anyway` marks an add confirmed past "Not in every
+  library", which is not asked again. A rename is kept under the path
+  the stick has, so a second rename (which replaces the first in place)
+  is made again from it.
+- **Kept through the front door.** When Browse opens a stick and the
+  file has entries, the session is clean (nothing staged by any page, not
+  writing) and Experimental is on, the page asks "Seabass last ran with
+  9 playlist edits staged for WHALESHARK3 and had not saved them. Keep
+  editing them?" Keep (`keepLeftOverEdits`) makes the same calls in the
+  same order, one at a time (each waits for its lookup, `busy`
+  meanwhile), so each is checked against the stick as a fresh request
+  would be: one the stick no longer allows is refused and the rest go on,
+  and the page says what could not be kept ("1 of 3 edits could not be
+  kept: ..."). The order alone reproduces the rename mapping (see
+  `renamePlaylist`): a rename is made before the edits asked for under
+  its new name. Discard removes the file. Until it is answered nothing is
+  staged. While another page's batch is in the session, or a save is
+  writing, the question waits until the session is clean (otherwise the
+  first new Browse edit would overwrite the file unasked); with
+  Experimental off it is not offered and the file stays for next time.
+
+The other editors (Add Cue, Sync, Library Health, ...) do not keep their
+batches: those are made in seconds from a page that can make them again.
+
 ## Adding a staged change
 
 1. Subclass `PendingChange`: `id()` (stable, unique per unit),

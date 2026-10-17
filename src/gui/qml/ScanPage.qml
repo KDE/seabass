@@ -348,6 +348,96 @@ Page {
         }
     }
 
+    // Playlist edits a crash, a kill or a power cut left staged (Seabass
+    // keeps them on this machine while they are, see StagedEditsStore):
+    // offered back once the page has its stick and its session. Not while
+    // anything is staged into the session or a save is writing: the
+    // question waits until the session is clean (the Connections below),
+    // so another page's batch saved from here does not leave this one to
+    // be overwritten by the first new edit. Not without Experimental
+    // (playlist editing is): the batch stays for next time. Nothing is
+    // staged until it is answered.
+    property bool leftOverEditsChecked: false
+    function offerLeftOverEdits() {
+        const controller = root.playlistEditController;
+        const session = editHost.session;
+        if (session === null || typeof controller.leftOverEdits !== "function") {
+            return;
+        }
+        if (!root.playlistEditing) {
+            root.leftOverEditsChecked = true;
+            return;
+        }
+        if (session.dirty || session.writing) {
+            return;
+        }
+        const offer = controller.leftOverEdits(root.rekordboxPath, root.enginePath);
+        if (offer.count > 0) {
+            leftOverEditsDialog.count = offer.count;
+            leftOverEditsDialog.stick = offer.stickLabel.length > 0 ? offer.stickLabel : root.stickLabel;
+            leftOverEditsDialog.open();
+        }
+        root.leftOverEditsChecked = true;
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        // dirty notifies through pendingChanged, writing through stateChanged.
+        function onPendingChanged() {
+            if (!root.leftOverEditsChecked) {
+                root.offerLeftOverEdits();
+            }
+        }
+        function onStateChanged() {
+            if (!root.leftOverEditsChecked) {
+                root.offerLeftOverEdits();
+            }
+        }
+    }
+    Dialog {
+        id: leftOverEditsDialog
+        objectName: "leftOverEditsDialog"
+        property int count: 0
+        property string stick: ""
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Unsaved playlist edits")
+        // Answered, never dismissed: Discard drops a batch that may have
+        // taken half an hour, and Keep stages it.
+        closePolicy: Popup.NoAutoClose
+        readonly property string text: (count === 1
+            ? qsTr("Seabass last ran with 1 playlist edit staged for %1 and had not saved it. Keep editing it?").arg(stick)
+            : qsTr("Seabass last ran with %1 playlist edits staged for %2 and had not saved them. Keep editing them?")
+                .arg(count).arg(stick))
+        Label {
+            objectName: "leftOverEditsText"
+            width: Math.min(implicitWidth, root.width * 0.6)
+            wrapMode: Text.Wrap
+            text: leftOverEditsDialog.text
+        }
+        footer: DialogButtonBox {
+            Button {
+                id: keepLeftOverEditsButton
+                objectName: "keepLeftOverEditsButton"
+                text: qsTr("Keep")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                objectName: "discardLeftOverEditsButton"
+                text: qsTr("Discard")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: {
+                    root.playlistEditController.discardLeftOverEdits(root.rekordboxPath, root.enginePath);
+                    leftOverEditsDialog.close();
+                }
+            }
+        }
+        // Keep is the default: the key that answers takes it.
+        onOpened: keepLeftOverEditsButton.forceActiveFocus()
+        onAccepted: root.playlistEditController.keepLeftOverEdits(root.rekordboxPath, root.enginePath)
+    }
+
     // The list's last row: a name for a new, empty playlist, made in every
     // library on the stick on Save.
     Dialog {
@@ -922,6 +1012,8 @@ Page {
     Component.onCompleted: {
         scanController.setHideStreamingTracks(root.appSettingsController.hideStreamingTracks);
         rescan();
+        // After EditSessionHost has opened the session.
+        Qt.callLater(root.offerLeftOverEdits);
     }
     onFormatChanged: rescan()
 

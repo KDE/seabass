@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtTest
@@ -1078,6 +1079,7 @@ TestCase {
     }
 
     function cleanup() {
+        cleanupLeftOvers();
         realAppSettings.lastPlaylistName = lastPlaylistBefore;
         // The Plays column is off by default; a test that showed it puts
         // the setting back.
@@ -3014,5 +3016,319 @@ TestCase {
         mouseClick(cues);
         waitForRendering(page);
         saveScreenshot(page, "browse-playlist-order");
+    }
+
+    // ---- Staged playlist edits outlive a crash (2026-10-17): Browse
+    // keeps the batch on this machine while it is staged, and offers it
+    // back when the stick is opened again. On a copy of the anonymized
+    // fixture, with the real controller the page builds. ----
+
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_CueTablePage).
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+    Component {
+        id: leftOverScanComponent
+        ScanController {}
+    }
+    // Stages into the session from outside the page (another page's
+    // edits), answering "add anyway" by itself.
+    Component {
+        id: leftOverEditComponent
+        PlaylistEditController {
+            onAdditionNeedsLibraries: (playlist, filePath) => addAnyway(playlist, filePath)
+        }
+    }
+    Component {
+        id: leftOverKeptSpy
+        SignalSpy { signalName: "leftOverEditsKept" }
+    }
+    // The stick copy a test left a batch for, removed by cleanup().
+    property var leftOverStick: null
+
+    // A fresh copy, a playlist on it of four or more different files in
+    // its order, and a file only OneLibrary has a row for (so adding it
+    // asks "Not in every library").
+    function leftOverCopy() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const t = {stick: stick, pioneer: stick + "/PIONEER", engine: stick + "/Engine Library"};
+        testCase.leftOverStick = t;
+        const scan = createTemporaryObject(leftOverScanComponent, testCase);
+        scan.scan("onelibrary", t.pioneer);
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 120000, "onelibrary scanned");
+        const order = () => {
+            const files = [];
+            for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+                files.push(scan.tracks.trackAt(i).filePath);
+            }
+            return files;
+        };
+        t.playlist = scan.playlistNames.filter(n => {
+            if (n === "Playlist 000" || scan.playlistTrackCounts[n] < 4) {
+                return false;
+            }
+            scan.filterByPlaylist(n);
+            return new Set(order()).size === order().length;
+        })[0];
+        verify(t.playlist !== undefined, JSON.stringify(scan.playlistTrackCounts));
+        scan.filterByPlaylist(t.playlist);
+        t.order = order();
+        const joined = stick + "/Contents/795079.mp3";
+        t.file = Qt.platform.os === "windows" ? joined.replace(/\//g, "\\") : joined;
+        return t;
+    }
+
+    // Opened, and its question about left-over edits answered or found
+    // moot; with `sessionInUse` the question is held back instead.
+    function leftOverPage(t, sessionInUse) {
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 880, height: 660, stickLabel: "TESTSTICK", rekordboxPath: t.pioneer, enginePath: t.engine,
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        verify(page !== null);
+        if (sessionInUse) {
+            wait(200);
+            compare(page.leftOverEditsChecked, false, "the question waits for a clean session");
+        } else {
+            tryCompare(page, "leftOverEditsChecked", true);
+        }
+        return page;
+    }
+
+    function leftOverSession(t) {
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(t.pioneer));
+        verify(session !== null);
+        return session;
+    }
+
+    // One edit asked for, looked up and staged (or refused).
+    function staged(browse, accepted) {
+        verify(accepted, browse.errorMessage);
+        tryCompare(browse, "busy", false, 60000);
+        compare(browse.errorMessage, "");
+    }
+
+    // Create, add (confirmed past "Not in every library"), move, rename,
+    // and a removal asked for under the new name: five edits.
+    function stageFive(page, t) {
+        const browse = page.playlistEditController;
+        staged(browse, browse.createPlaylist(t.pioneer, t.engine, "Kept Picks"));
+        verify(browse.addToPlaylist(t.pioneer, t.engine, "Kept Picks", t.file, "A Track"));
+        const ask = findChild(page, "missingLibrariesDialog");
+        tryCompare(ask, "opened", true);
+        findChild(ask, "addAnywayButton").clicked();
+        tryCompare(ask, "visible", false);
+        tryCompare(browse, "busy", false, 60000);
+        staged(browse, browse.moveInPlaylist(t.pioneer, t.engine, t.playlist, t.order[0], "Moving", 2));
+        staged(browse, browse.renamePlaylist(t.pioneer, t.engine, t.playlist, t.playlist + " Kept"));
+        staged(browse, browse.removeFromPlaylist(t.pioneer, t.engine, t.playlist + " Kept", t.order[1], "Out"));
+        compare(leftOverSession(t).pendingCount, 5);
+    }
+
+    // What a crash leaves: the page and its controller gone without a
+    // discard, and the session's memory with them. The kept file stays.
+    function crash(page, t, file) {
+        page.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        compare(leftOverSession(t).pendingCount, 0);
+        verify(stickFixture.fileExists(file), "the crash leaves the last batch");
+    }
+
+    function cleanupLeftOvers() {
+        if (testCase.leftOverStick !== null) {
+            EditSessionRegistry.discardAll();
+            realAppSettings.experimentalFeaturesEnabled = false;
+            const t = testCase.leftOverStick;
+            const browse = createTemporaryObject(leftOverEditComponent, testCase);
+            browse.discardLeftOverEdits(t.pioneer, t.engine);
+            testCase.leftOverStick = null;
+        }
+    }
+
+    function test_stagedPlaylistEditsSurviveACrashAndAreKept() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const page1 = leftOverPage(t);
+        verify(!findChild(page1, "leftOverEditsDialog").opened, "nothing was left over");
+        const browse1 = page1.playlistEditController;
+        const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
+        verify(file.length > 0);
+        // The suite's own data directory, never the real one.
+        const home = decodeURIComponent(StandardPaths.writableLocation(StandardPaths.HomeLocation).toString()
+                                        .replace(/^file:\/\//, ""));
+        verify(file.indexOf(home + "/Seabass/metadata/") !== 0, file);
+        verify(file.indexOf("/staged-edits/") > 0, file);
+        verify(!stickFixture.fileExists(file), "nothing written while nothing is staged");
+
+        stageFive(page1, t);
+        const session = leftOverSession(t);
+        verify(stickFixture.fileExists(file), "kept while staged");
+        const kept = stickFixture.readText(file);
+        verify(kept.indexOf(t.stick) < 0, "the stick's files are kept relative to its mount point: " + kept);
+        verify(kept.indexOf("\"anyway\": true") > 0, kept);
+        const descriptions = JSON.stringify(session.pendingDescriptions);
+        const label = findChild(page1, "saveButtonLabel").text;
+        verify(label.length > 0);
+        const additions = JSON.stringify(browse1.pendingAdditions);
+        const moves = JSON.stringify(browse1.pendingMoves);
+        const renames = JSON.stringify(browse1.pendingRenames);
+        const created = JSON.stringify(browse1.newPlaylists);
+        crash(page1, t, file);
+
+        const page2 = leftOverPage(t);
+        const browse2 = page2.playlistEditController;
+        const dialog = findChild(page2, "leftOverEditsDialog");
+        tryCompare(dialog, "opened", true);
+        compare(findChild(page2, "leftOverEditsText").text,
+                "Seabass last ran with 5 playlist edits staged for " + session.stickLabel
+                + " and had not saved them. Keep editing them?");
+        compare(session.pendingCount, 0, "nothing staged until it is answered");
+        const spy = createTemporaryObject(leftOverKeptSpy, testCase, {target: browse2});
+        findChild(dialog, "keepLeftOverEditsButton").clicked();
+        tryCompare(dialog, "visible", false);
+        tryCompare(spy, "count", 1, 60000);
+        compare(spy.signalArguments[0][0], 5, "all five kept");
+        compare(spy.signalArguments[0][1], 5);
+        verify(!browse2.busy);
+        compare(browse2.errorMessage, "");
+        compare(session.pendingCount, 5);
+        compare(JSON.stringify(session.pendingDescriptions), descriptions, "the same batch, in its order");
+        tryCompare(findChild(page2, "saveButtonLabel"), "text", label);
+        compare(JSON.stringify(browse2.pendingAdditions), additions, "the add on this mount's file");
+        compare(JSON.stringify(browse2.pendingMoves), moves);
+        compare(JSON.stringify(browse2.pendingRenames), renames);
+        compare(JSON.stringify(browse2.newPlaylists), created);
+        verify(stickFixture.fileExists(file), "kept again");
+
+        // Crashed again, and this time discarded: gone, and not offered.
+        crash(page2, t, file);
+        const page3 = leftOverPage(t);
+        const again = findChild(page3, "leftOverEditsDialog");
+        tryCompare(again, "opened", true);
+        findChild(again, "discardLeftOverEditsButton").clicked();
+        tryCompare(again, "visible", false);
+        compare(session.pendingCount, 0, "nothing staged");
+        verify(!stickFixture.fileExists(file), "the batch is gone");
+        page3.destroy();
+        wait(50);
+        const page4 = leftOverPage(t);
+        verify(!findChild(page4, "leftOverEditsDialog").opened, "not offered again");
+    }
+
+    function test_aSaveThatWritesEverythingLeavesNoBatch() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const page = leftOverPage(t);
+        const browse = page.playlistEditController;
+        const file = browse.leftOverEditsFile(t.pioneer, t.engine);
+        staged(browse, browse.createPlaylist(t.pioneer, t.engine, "Saved Picks"));
+        staged(browse, browse.moveInPlaylist(t.pioneer, t.engine, t.playlist, t.order[0], "Moving", 2));
+        verify(stickFixture.fileExists(file));
+        const session = leftOverSession(t);
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 2, JSON.stringify(summary));
+        compare(session.pendingCount, 0);
+        verify(!stickFixture.fileExists(file), "written whole: nothing left to keep");
+    }
+
+    function test_anEditTheStickNoLongerAllowsIsReportedAndTheRestKept() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const page1 = leftOverPage(t);
+        const browse1 = page1.playlistEditController;
+        const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
+        staged(browse1, browse1.createPlaylist(t.pioneer, t.engine, "Kept Picks"));
+        staged(browse1, browse1.deletePlaylist(t.pioneer, t.engine, "Playlist 000"));
+        staged(browse1, browse1.moveInPlaylist(t.pioneer, t.engine, t.playlist, t.order[0], "Moving", 2));
+        crash(page1, t, file);
+        // Between the crash and the next start the stick lost the playlist
+        // the delete was for: the batch now names one it does not have.
+        const text = stickFixture.readText(file);
+        verify(text.indexOf("\"playlist\": \"Playlist 000\"") > 0, text);
+        verify(stickFixture.writeText(file, text.replace("\"playlist\": \"Playlist 000\"",
+                                                         "\"playlist\": \"Playlist Lost\"")));
+
+        const page2 = leftOverPage(t);
+        const browse2 = page2.playlistEditController;
+        const dialog = findChild(page2, "leftOverEditsDialog");
+        tryCompare(dialog, "opened", true);
+        const spy = createTemporaryObject(leftOverKeptSpy, testCase, {target: browse2});
+        findChild(dialog, "keepLeftOverEditsButton").clicked();
+        tryCompare(spy, "count", 1, 60000);
+        compare(spy.signalArguments[0][0], 2);
+        compare(spy.signalArguments[0][1], 3);
+        const report = "1 of 3 edits could not be kept: No library on the stick has a playlist \"Playlist Lost\".";
+        compare(browse2.errorMessage, report);
+        const popup = findChild(page2, "playlistEditMessage");
+        tryCompare(popup, "opened", true);
+        compare(popup.headline, report);
+        const session = leftOverSession(t);
+        compare(session.pendingCount, 2, "the rest is kept");
+        verify(browse2.isNewPlaylistStaged("Kept Picks"));
+        verify(browse2.isMoveStaged(t.playlist, t.order[0]));
+        compare(browse2.leftOverEdits(t.pioneer, t.engine).count, 2, "and the batch is what was kept");
+    }
+
+    function test_withoutExperimentalLeftOverEditsAreNotOfferedButKept() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const page1 = leftOverPage(t);
+        const browse1 = page1.playlistEditController;
+        const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
+        staged(browse1, browse1.createPlaylist(t.pioneer, t.engine, "Kept Picks"));
+        crash(page1, t, file);
+        realAppSettings.experimentalFeaturesEnabled = false;
+        const page2 = leftOverPage(t);
+        verify(!findChild(page2, "leftOverEditsDialog").opened, "not offered");
+        compare(leftOverSession(t).pendingCount, 0);
+        verify(stickFixture.fileExists(file), "kept for next time");
+        compare(page2.playlistEditController.leftOverEdits(t.pioneer, t.engine).count, 1);
+    }
+
+    function test_leftOverEditsAreNotOfferedIntoASessionInUse() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const page1 = leftOverPage(t);
+        const browse1 = page1.playlistEditController;
+        const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
+        staged(browse1, browse1.createPlaylist(t.pioneer, t.engine, "Kept Picks"));
+        crash(page1, t, file);
+        const left = stickFixture.readText(file);
+        // Another page's edits in the session first. It keeps its own
+        // batch in the same place, so the one left over is put back.
+        const other = leftOverEditComponent.createObject(testCase);
+        staged(other, other.createPlaylist(t.pioneer, t.engine, "Elsewhere"));
+        verify(stickFixture.writeText(file, left));
+        compare(leftOverSession(t).pendingCount, 1);
+        const page2 = leftOverPage(t, true);
+        verify(!findChild(page2, "leftOverEditsDialog").opened, "not offered into a session in use");
+        compare(leftOverSession(t).pendingCount, 1, "nothing added to it");
+        compare(stickFixture.readText(file), left, "the batch left for next time");
+        verify(!page2.playlistEditController.keepLeftOverEdits(t.pioneer, t.engine), "and the controller refuses it");
+        compare(leftOverSession(t).pendingCount, 1);
+
+        // The other page gone and its batch discarded: the session is
+        // clean now, and the batch left over is asked about rather than
+        // left for the first new edit to overwrite.
+        other.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        compare(leftOverSession(t).pendingCount, 0);
+        const dialog = findChild(page2, "leftOverEditsDialog");
+        tryCompare(dialog, "opened", true);
+        compare(findChild(page2, "leftOverEditsText").text,
+                "Seabass last ran with 1 playlist edit staged for " + leftOverSession(t).stickLabel
+                + " and had not saved it. Keep editing it?");
+        findChild(dialog, "discardLeftOverEditsButton").clicked();
+        tryCompare(dialog, "visible", false);
+        verify(!stickFixture.fileExists(file), "answered: the batch is gone");
     }
 }
