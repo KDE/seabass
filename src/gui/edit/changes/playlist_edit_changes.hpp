@@ -49,6 +49,21 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
 // when the library is missing or cannot be read.
 std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::string &path);
 
+class SaveContext;
+
+// Creates an empty playlist at `playlist` ("Folder/List") in each library
+// named ("rekordbox", "onelibrary", "engine") that has none at that path
+// by now, during a save, each through its own writer (#62's reference
+// export for the two rekordbox ones), last in its level. A path with a
+// folder goes into that folder, which export.pdb and OneLibrary must
+// already have (Engine makes it). Returns the libraries it was created in;
+// throws when one cannot be written or holds the path more than once.
+// CreatePlaylistChange and AlignPlaylistChange (a playlist only some
+// libraries have, followed from one that has it) both create through it.
+QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const QString &enginePath,
+                             const std::string &playlist, const QStringList &libraries, int itemCountHint,
+                             const char *label);
+
 // Creates an empty playlist at the top level, last there, in every
 // library on the stick named, each through its own writer (#62's
 // reference export for the two rekordbox ones). A library that has a
@@ -81,12 +96,15 @@ private:
 
 // Deletes a playlist (or a folder, with everything in it) from every
 // library on the stick that has it, each through its own writer, the way
-// rekordbox does it (#62). Tracks stay. Staged from Browse, so its owner
-// is Browse's editor ("addcue").
+// rekordbox does it (#62). Tracks stay. Staged from Browse, whose editor
+// is "addcue", and from Library Health's Playlists check, whose session
+// belongs to "library-health": a session refuses a change of another
+// owner than the batch's, so the stager says whose it is.
 class DeletePlaylistChange : public PendingChange
 {
 public:
-    DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries);
+    DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
+                         QString owner = QStringLiteral("addcue"));
 
     static QString idFor(const std::string &playlist);
 
@@ -106,6 +124,7 @@ private:
     QString m_enginePath;
     std::string m_playlist;
     QStringList m_libraries;
+    QString m_owner;
 };
 
 // Puts one file at the end of a playlist in every library on the stick

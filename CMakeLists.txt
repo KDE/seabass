@@ -2985,7 +2985,8 @@ if(TARGET seabass_edit)
     if(NOT WIN32)
         target_link_libraries(align_playlist_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
-    add_test(NAME align_playlist_change_test COMMAND align_playlist_change_test)
+    add_test(NAME align_playlist_change_test COMMAND align_playlist_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/pdb_playlist_tree ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
 
     # Sync after Rekordbox Export's changes, each through the save loop on a
     # copy of the anonymized fixture, with Undo. OwnedChange first: the

@@ -276,6 +276,57 @@ std::vector<std::string> playlistPathsIn(const std::string &catalog, const std::
     return paths;
 }
 
+QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const QString &enginePath,
+                             const std::string &playlist, const QStringList &libraries, int itemCountHint,
+                             const char *label)
+{
+    const std::string pioneer = pioneerRoot.toStdString();
+    const size_t slash = playlist.rfind('/');
+    const std::string parent = slash == std::string::npos ? std::string() : playlist.substr(0, slash);
+    const std::string name = slash == std::string::npos ? playlist : playlist.substr(slash + 1);
+    QStringList created;
+    if (libraries.contains(QStringLiteral("rekordbox"))) {
+        FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, itemCountHint, label);
+        infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+        if (!pdbPlaylistId(rows, playlist)) {
+            uint32_t parentId = 0;
+            if (!parent.empty()) {
+                const auto folder = pdbPlaylistId(rows, parent);
+                if (!folder) {
+                    throw std::runtime_error("rekordbox has no folder \"" + parent + "\" to create \"" + name + "\" in");
+                }
+                parentId = *folder;
+            }
+            rows.createPlaylist(parentId, name, false);
+            if (!rows.commit()) {
+                throw std::runtime_error("could not write export.pdb");
+            }
+            session.noteItemApplied();
+            created << QStringLiteral("rekordbox");
+        }
+    }
+    if (libraries.contains(QStringLiteral("onelibrary"))) {
+        ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), label);
+        auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+        requireOneOneLibraryPlaylist(writer, playlist);
+        if (writer.playlistCountAtPath(playlist) == 0) {
+            writer.createPlaylist(parent, name, false);
+            created << QStringLiteral("onelibrary");
+        }
+    }
+    if (libraries.contains(QStringLiteral("engine"))) {
+        FormatWriteSession &session =
+            sharedFormatWriteSession(ctx, "engine", enginePath.toStdString(), itemCountHint, label);
+        requireOneEnginePlaylist(session.writeRoot(), playlist);
+        if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), playlist) == 0) {
+            infrastructure::engine::createEnginePlaylist(session.writeRoot(), playlist);
+            session.noteItemApplied();
+            created << QStringLiteral("engine");
+        }
+    }
+    return created;
+}
+
 CreatePlaylistChange::CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)
     : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
       m_libraries(std::move(libraries))
@@ -334,40 +385,10 @@ std::vector<BackupTarget> CreatePlaylistChange::filesToBackup(SaveContext &) con
 
 ChangeOutcome CreatePlaylistChange::apply(SaveContext &ctx)
 {
-    const std::string pioneer = m_pioneerRoot.toStdString();
     int created = 0;
     try {
-        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
-            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, CreateLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
-            if (!pdbPlaylistId(rows, m_playlist)) {
-                rows.createPlaylist(0, m_playlist, false);
-                if (!rows.commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                }
-                session.noteItemApplied();
-                ++created;
-            }
-        }
-        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
-            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), CreateLabel);
-            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
-            requireOneOneLibraryPlaylist(writer, m_playlist);
-            if (writer.playlistCountAtPath(m_playlist) == 0) {
-                writer.createPlaylist("", m_playlist, false);
-                ++created;
-            }
-        }
-        if (m_libraries.contains(QStringLiteral("engine"))) {
-            FormatWriteSession &session =
-                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), 1, CreateLabel);
-            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
-            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) == 0) {
-                infrastructure::engine::createEnginePlaylist(session.writeRoot(), m_playlist);
-                session.noteItemApplied();
-                ++created;
-            }
-        }
+        created = static_cast<int>(
+            createPlaylistIn(ctx, m_pioneerRoot, m_enginePath, m_playlist, m_libraries, 1, CreateLabel).size());
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
@@ -379,9 +400,10 @@ ChangeOutcome CreatePlaylistChange::apply(SaveContext &ctx)
     return ChangeOutcome::success();
 }
 
-DeletePlaylistChange::DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)
+DeletePlaylistChange::DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
+                                           QString owner)
     : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
-      m_libraries(std::move(libraries))
+      m_libraries(std::move(libraries)), m_owner(std::move(owner))
 {
 }
 
@@ -397,7 +419,7 @@ QString DeletePlaylistChange::id() const
 
 QString DeletePlaylistChange::owner() const
 {
-    return QStringLiteral("addcue");
+    return m_owner;
 }
 
 QString DeletePlaylistChange::description() const

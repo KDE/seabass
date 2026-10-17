@@ -5,6 +5,7 @@
 #include "gui/edit/changes/align_playlist_change.hpp"
 
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
@@ -108,8 +109,14 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
     const std::string pioneer = m_pioneerRoot.toStdString();
     int added = 0;
     int removed = 0;
+    QStringList created;
     try {
         for (const auto &a : m_alignments) {
+            if (a.create) {
+                // Made empty, then filled below like any other copy.
+                created << createPlaylistIn(ctx, m_pioneerRoot, m_enginePath, m_playlist,
+                                            QStringList{QString::fromStdString(a.format)}, m_itemCountHint, Label);
+            }
             if (a.format == "rekordbox") {
                 // Removals and additions the way rekordbox makes them
                 // (PdbRowWriter::removePlaylistEntries and
@@ -190,8 +197,23 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
-    ctx.log().record(std::string(Label) + ": \"" + m_playlist + "\" matched to " + m_reference + ": " +
-                     std::to_string(added) + " entr(ies) added, " + std::to_string(removed) + " removed");
+    std::string made;
+    if (!created.isEmpty()) {
+        QStringList names;
+        for (const QString &format : created) {
+            names << libraryName(format.toStdString());
+        }
+        made = "created in " + names.join(QStringLiteral(" and ")).toStdString() + ", ";
+    }
+    const std::string summary = std::string(Label) + ": \"" + m_playlist + "\" matched to " + libraryName(m_reference).toStdString()
+                                + ": " + made + std::to_string(added) + " entr(ies) added, " + std::to_string(removed) + " removed";
+    if (created.isEmpty() && added == 0 && removed == 0) {
+        // Every copy holds it already (a second save of the same change,
+        // or the player made the same edit): nothing was written.
+        ctx.log().record(summary + ", skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record(summary);
     return ChangeOutcome::success();
 }
 

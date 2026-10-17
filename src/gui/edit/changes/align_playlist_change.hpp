@@ -18,7 +18,10 @@ namespace seabass::gui
 // to and taken out of the others' copies of that playlist, each library
 // by its own writer. export.pdb's entries are appended to its last page
 // (#62); a page without room refuses the whole change. OneLibrary gains
-// only what rekordbox's copy will hold, so the two stay level.
+// only what rekordbox's copy will hold, so the two stay level. A library
+// that lacks the playlist (an alignment with `create`) gets it made first,
+// through the same code as Browse's CreatePlaylistChange, unless it has
+// one by Save.
 class AlignPlaylistChange : public PendingChange
 {
 public:
