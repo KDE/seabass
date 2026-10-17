@@ -391,4 +391,86 @@ TestCase {
         compare(crumb.title, "Clean Up Stray Cues");
         saveCrumbShot(page, "junk-cues-" + data.tag);
     }
+
+    // One row is one cue, one change is one track: the change strips every
+    // stray cue the track carries and staging marks every row of it. After
+    // the save every row of the track has to go too. Only the first went,
+    // so a track with two stray cues kept one row listed, unstaged, with
+    // its cue already off the stick: the list Sebastian saw still full
+    // after Save on 2026-10-17 (TESTSHARK, 409 cues, 132 tracks with two).
+    Component {
+        id: cuesOnlyControllerComponent
+        LibraryConsistencyController { scanDepth: LibraryConsistencyController.CuesOnly }
+    }
+    Component {
+        id: addCueComponent
+        AddCueController {}
+    }
+    readonly property int junkFormatRole: Qt.UserRole + 1
+    readonly property int junkTrackRole: Qt.UserRole + 4
+    function junkRow(model, i, role) {
+        return model.data(model.index(i, 0), role);
+    }
+    function saveSession(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 300000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+    function test_everyRowOfATrackGoesWhenItsCuesAreWritten() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const rb = stick + "/PIONEER";
+        const eng = stick + "/Engine Library";
+        // A rekordbox track the fixture lists with one stray cue gets a
+        // second one through Add Cue, saved and settled before the page.
+        const before = createTemporaryObject(cuesOnlyControllerComponent, testCase);
+        before.scan(rb, eng, "");
+        tryVerify(() => !before.busy, 300000, "the first scan finishes");
+        let planted = null;
+        for (let i = 0; i < before.junkCues.count && planted === null; ++i) {
+            if (junkRow(before.junkCues, i, testCase.junkFormatRole) === "rekordbox") {
+                planted = junkRow(before.junkCues, i, testCase.junkTrackRole);
+            }
+        }
+        verify(planted !== null, "precondition: a rekordbox track with a stray cue");
+        const adder = createTemporaryObject(addCueComponent, testCase);
+        adder.addCue("rekordbox", rb, planted.sourceId, 450, "memory", 0, "", "", false, 0, planted.title);
+        compare(adder.errorMessage, "");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(rb));
+        compare(session.pendingCount, 1, "the second cue is staged");
+        const plantedSave = saveSession(session);
+        compare(plantedSave.error, "", JSON.stringify(plantedSave));
+
+        const page = createTemporaryObject(stickPageComponent, testCase, {rekordboxPath: rb, enginePath: eng});
+        const controller = page.consistencyController;
+        const overlay = findChild(page, "junkCueBusyOverlay");
+        tryVerify(() => !overlay.visible, 300000, "the page's scan finishes");
+        compare(controller.errorMessage, "");
+        const rows = controller.junkCues.count;
+        const tracks = controller.junkCues.trackCount();
+        verify(rows > tracks, "precondition: a track with two stray cues (" + rows + " rows on " + tracks + " tracks)");
+        let plantedRows = 0;
+        for (let i = 0; i < rows; ++i) {
+            if (junkRow(controller.junkCues, i, testCase.junkFormatRole) === "rekordbox"
+                && junkRow(controller.junkCues, i, testCase.junkTrackRole).sourceId === planted.sourceId) {
+                ++plantedRows;
+            }
+        }
+        compare(plantedRows, 2, "the planted track has two rows");
+
+        controller.removeAllJunkCues();
+        verify(controller.statusMessage.indexOf("Staged removing " + rows + " stray cue") === 0, controller.statusMessage);
+        const summary = saveSession(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(controller.junkCues.count, 0, "every row of every track goes with the save");
+        // And the stick agrees.
+        controller.scan(rb, eng, "");
+        tryVerify(() => !controller.busy, 300000, "the second scan finishes");
+        compare(controller.errorMessage, "");
+        compare(controller.junkCues.count, 0, "nothing left on the stick either");
+    }
 }

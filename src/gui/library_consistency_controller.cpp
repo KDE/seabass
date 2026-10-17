@@ -1429,12 +1429,19 @@ void LibraryConsistencyController::attachSession()
                     if (it->second == changeId) {
                         // Removing a memory cue at 0:00 can't change file
                         // existence or which broken row matches which
-                        // survivor, so the row just goes (a re-scan after
+                        // survivor, so the rows just go (a re-scan after
                         // every removal was the entire cost of "removing
-                        // stray cues is slow").
-                        int index = indexOfJunkKey(it->first);
+                        // stray cues is slow"). Every row of the track:
+                        // one row is one cue, one change is one track and
+                        // strips all of its stray cues (stageJunkCue marks
+                        // them all staged for the same reason). Taking only
+                        // the first row out left a track's second cue
+                        // listed, unstaged, after the save had written it
+                        // off the stick: the list Sebastian saw still full
+                        // after Save on 2026-10-17 (TESTSHARK, 409 cues).
+                        const QString key = it->first;
                         m_stagedJunk.erase(it);
-                        if (index >= 0) {
+                        for (int index = indexOfJunkKey(key); index >= 0; index = indexOfJunkKey(key)) {
                             m_junkCueModel.removeAt(index);
                         }
                         clearStagedStatusIfNothingStaged();
