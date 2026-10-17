@@ -54,13 +54,17 @@ ColumnLayout {
 
     spacing: 0
 
-    // This panel's own target playlist -- defaults to whatever Browse is
-    // currently showing each time a new track is picked as the anchor
-    // (see onAnchorSourceIdChanged below), but from then on is entirely
-    // independent: the combo only ever writes to this, never back to
-    // Browse's own selectedPlaylistIndex.
+    // This panel's own target playlist -- follows whatever Browse is
+    // showing: seeded each time a new track is picked as the anchor, and
+    // again each time Browse moves to another playlist while the panel is
+    // open (until 2026-10-17 it kept the playlist it was opened from, so
+    // the panel and the list behind it showed two different playlists,
+    // Sebastian 2026-10-17). The combo can still pick another target
+    // meanwhile; it writes to this only, never back to Browse's own
+    // selectedPlaylistIndex.
     property int targetPlaylistIndex: 0
     onAnchorSourceIdChanged: root.targetPlaylistIndex = root.browseSelectedPlaylistIndex
+    onBrowseSelectedPlaylistIndexChanged: root.targetPlaylistIndex = root.browseSelectedPlaylistIndex
 
     // "" if "All tracks" is the target -- there's no real playlist to
     // write into, so Before/After stay disabled until a real one is

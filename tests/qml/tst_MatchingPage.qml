@@ -149,6 +149,30 @@ TestCase {
         checkRowsDrawn(list, "playlistRowName", what);
     }
 
+    // The panel's target playlist follows Browse: seeded from the playlist
+    // Browse shows when the anchor is picked, and again whenever Browse
+    // moves to another playlist while the panel is open. The combo's own
+    // pick holds until Browse moves again (Sebastian 2026-10-17: the panel
+    // kept the playlist it was opened from while Browse showed another).
+    function test_theTargetPlaylistFollowsBrowse() {
+        const scan = createTemporaryObject(fakeScanComponent, testCase);
+        namesFor(scan, 5, "Playlist ");
+        const page = createTemporaryObject(fakeScanPageComponent, testCase,
+                                           {scanController: scan, browseSelectedPlaylistIndex: 2});
+        compare(page.targetPlaylistIndex, 2, "seeded from Browse's playlist");
+        compare(page.targetPlaylistName, "Playlist 002");
+        page.browseSelectedPlaylistIndex = 3;
+        compare(page.targetPlaylistIndex, 3, "follows Browse while open");
+        page.targetPlaylistIndex = 1;  // the combo's own pick
+        compare(page.targetPlaylistName, "Playlist 001");
+        page.browseSelectedPlaylistIndex = 4;
+        compare(page.targetPlaylistIndex, 4, "Browse moving again wins over the pick");
+        page.anchorSourceId = "2";
+        compare(page.targetPlaylistIndex, 4, "a new anchor seeds from Browse too");
+        page.browseSelectedPlaylistIndex = 0;
+        compare(page.targetPlaylistName, "", "All tracks: no target");
+    }
+
     function test_thePlaylistComboHasNoBlankRows() {
         const scan = createTemporaryObject(fakeScanComponent, testCase);
         namesFor(scan, 30, "Playlist ");
