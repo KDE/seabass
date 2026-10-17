@@ -185,6 +185,26 @@ TestCase {
         tryCompare(summary, "opened", false);
     }
 
+    // Ctrl+S saves whenever the floating button would, and not otherwise
+    // (Sebastian 2026-10-17: a staged edit should not need the mouse).
+    function test_ctrlSSavesWhenTheButtonIsUp() {
+        const t = makeHost();
+        t.host.forceActiveFocus();
+        const before = t.session.calls.length;
+        keySequence(StandardKey.Save);
+        compare(t.session.calls.length, before, "nothing staged: the key does nothing");
+        t.session.dirty = true;
+        t.session.state = "editing";
+        t.session.pendingCount = 1;
+        tryCompare(findByObjectName(t.host, "saveButton"), "enabled", true);
+        keySequence(StandardKey.Save);
+        compare(t.session.calls[t.session.calls.length - 1], "save");
+        t.session.state = "writing";
+        const during = t.session.calls.length;
+        keySequence(StandardKey.Save);
+        compare(t.session.calls.length, during, "mid-write the key does nothing");
+    }
+
     // Only playlist edits staged: the button names playlists, one or
     // several; anything else staged, or a page with a label of its own,
     // and it says what it said before.

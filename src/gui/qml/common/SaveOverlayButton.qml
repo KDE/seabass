@@ -34,6 +34,18 @@ Item {
     // because that is when its progress matters most.
     visible: root.hasSession && (root.pendingCount > 0 || root.session.state === "writing")
 
+    // Ctrl+S (Cmd+S on the Mac) saves whenever the button would: a DJ who
+    // has just staged an edit should not have to reach for the mouse
+    // (Sebastian 2026-10-17). Only while the button is up and enabled, so
+    // the key does nothing on a page with nothing staged or mid-write.
+    Shortcut {
+        objectName: "saveShortcut"
+        sequences: [StandardKey.Save]
+        enabled: root.visible && root.canSave
+        context: Qt.WindowShortcut
+        onActivated: root.session.save()
+    }
+
     Button {
         id: button
         objectName: "saveButton"
