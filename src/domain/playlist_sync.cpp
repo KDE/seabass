@@ -131,6 +131,14 @@ std::vector<PlaylistDifference> findPlaylistDifferences(const PlaylistIndex &ind
                 }
                 const auto theirs = there.membersByPlaylist.find(name);
                 if (theirs == there.membersByPlaylist.end()) {
+                    // Still counted against a library without the
+                    // playlist: those members are what a copy created
+                    // there leaves out.
+                    for (const auto &[k, track] : mine->second) {
+                        if (!there.byKey.contains(k)) {
+                            notEverywhere.insert(k);
+                        }
+                    }
                     continue;
                 }
                 for (const auto &[k, track] : theirs->second) {
@@ -220,6 +228,23 @@ std::vector<PlaylistAlignment> alignTo(const PlaylistDifference &difference, con
         }
         const auto mine = target.membersByPlaylist.find(difference.name);
         if (mine == target.membersByPlaylist.end()) {
+            // A library without the playlist gets it made, holding what
+            // the reference's holds that this library lists: once Browse
+            // could create playlists (#62) there was no reason left to
+            // keep reporting it (Sebastian 2026-10-17: the same rows came
+            // back after every save). A member it does not list stays out,
+            // counted on the reference's side as notInEveryLibrary.
+            PlaylistAlignment alignment;
+            alignment.format = target.format;
+            alignment.create = true;
+            for (const auto &[k, track] : refMembers->second) {
+                if (const auto row = target.byKey.find(k); row != target.byKey.end()) {
+                    alignment.add.push_back(*row->second);
+                }
+            }
+            if (!alignment.add.empty()) {
+                out.push_back(std::move(alignment));
+            }
             continue;
         }
         PlaylistAlignment alignment;

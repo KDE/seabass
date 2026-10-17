@@ -87,10 +87,16 @@ std::vector<PlaylistDifference> findPlaylistDifferences(const PlaylistIndex &ind
 // What making every other library's copy of `difference` match
 // `reference` would do, per target format: tracks to add and tracks to
 // remove, each as that target's own rows. A target whose playlist is
-// missing, or the reference itself, gets nothing.
+// missing gets it made (`create`) and filled with the reference's members
+// it lists; one that lists none of them gets nothing, since an empty
+// playlist is not one the check can see. The reference itself, or a
+// reference that lacks the playlist, gets nothing.
 struct PlaylistAlignment
 {
     std::string format;
+    // This target lacks the playlist: it is made, empty, before the rows
+    // in `add` go in. `remove` is empty then.
+    bool create = false;
     std::vector<Track> add;     // the target's rows to add to its playlist
     std::vector<Track> remove;  // the target's rows to take out of it
     // Of `add`, how many replace a member in `remove` that is another

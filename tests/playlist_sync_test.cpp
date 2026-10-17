@@ -110,6 +110,41 @@ int main()
         std::cout << "case 2b (a replaced copy is swapped, not doubled) OK\n";
     }
 
+    // A playlist only Engine has, "Solo" with a.mp3 and d.mp3; rekordbox
+    // and OneLibrary list a.mp3 and not d.mp3. Following Engine creates it
+    // in both, each holding its own row for a.mp3 and nothing for d.mp3.
+    // Following a library that lacks it offers nothing: it has nothing to
+    // follow (Sebastian 2026-10-17).
+    {
+        const std::vector<PlaylistCatalog> solo = {
+            {"rekordbox", {row("rekordbox", "1", "a.mp3", {})}},
+            {"onelibrary", {row("onelibrary", "11", "a.mp3", {})}},
+            {"engine", {row("engine", "21", "a.mp3", {"Solo"}), row("engine", "24", "d.mp3", {"Solo"})}},
+        };
+        const auto diff = findPlaylistDifferences(solo, key);
+        assert(diff.size() == 1 && diff[0].name == "Solo" && diff[0].missingSomewhere());
+        assert(diff[0].side("engine")->notInEveryLibrary == 1 && "d.mp3, counted");
+        const auto toEngine = alignTo(diff[0], "engine", solo, key);
+        assert(toEngine.size() == 2);
+        assert(toEngine[0].format == "rekordbox" && toEngine[1].format == "onelibrary");
+        for (const auto &alignment : toEngine) {
+            assert(alignment.create && "the lacking library gets the playlist made");
+            assert(alignment.add.size() == 1 && "only what that library lists");
+            assert(alignment.add[0].sourceId == (alignment.format == "rekordbox" ? "1" : "11") && "its own row");
+            assert(alignment.remove.empty() && alignment.replacements == 0);
+        }
+        assert(alignTo(diff[0], "rekordbox", solo, key).empty() && "a reference without the playlist offers nothing");
+        assert(alignTo(diff[0], "onelibrary", solo, key).empty());
+        // Peak exists everywhere: nothing there is created.
+        for (const auto &alignment : alignTo(peak, "engine", catalogs, key)) {
+            assert(!alignment.create);
+        }
+        // Warmup (Engine only, a.mp3): rekordbox and OneLibrary get it made.
+        const auto warm = alignTo(warmup, "engine", catalogs, key);
+        assert(warm.size() == 2 && warm[0].create && warm[1].create);
+        std::cout << "case 2c (a library lacking the playlist gets it made with what it lists) OK\n";
+    }
+
     // Agreeing libraries, and one library alone: nothing.
     const std::vector<PlaylistCatalog> agreeing = {
         {"rekordbox", {row("rekordbox", "1", "a.mp3", {"Peak"})}},
