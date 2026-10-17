@@ -375,6 +375,7 @@ QVariantMap BackupAdvisorController::sourceToVariant(const StickBackupAdvice::So
     map["backupPath"] = pathToQString(source.backupPath);
     map["modifiedAt"] = isoTime(source.modifiedAtUnix);
     map["enoughSpace"] = source.enoughSpace;
+    map["usedBytes"] = static_cast<qulonglong>(source.usedBytes);
     map["detail"] = QString::fromStdString(source.detail);
     QString rekordboxPath;
     QString enginePath;
@@ -441,6 +442,11 @@ void BackupAdvisorController::recomputeAdvice()
         map["cueOverlap"] = result.cueOverlap;
         map["detail"] = QString::fromStdString(result.detail);
         map["cloneSource"] = sourceToVariant(result.cloneSource);
+        QVariantList cloneSources;
+        for (const auto &source : result.cloneSources) {
+            cloneSources << sourceToVariant(source);
+        }
+        map["cloneSources"] = cloneSources;
         map["updateSource"] = sourceToVariant(result.updateSource);
         map["diverged"] = result.diverged;
         map["cuesPending"] = cuesPendingFor(input, result);

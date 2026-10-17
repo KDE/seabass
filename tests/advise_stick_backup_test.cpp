@@ -251,13 +251,26 @@ int main()
         assert(advice.cloneSource.mountPoint == "/m/new");
         assert(advice.cloneSource.modifiedAtUnix == 200);
         assert(advice.cloneSource.enoughSpace);
+        assert(advice.cloneSource.usedBytes == 20 * GiB);
         assert(advice.updateSource.kind == Kind::None);
+        // Every peer is on offer, newest first, so the stick list can ask
+        // which to copy (the newest is not always the wanted one).
+        assert(advice.cloneSources.size() == 2);
+        assert(advice.cloneSources[0].label == "NEW" && advice.cloneSources[1].label == "OLD");
+        assert(advice.cloneSources[1].mountPoint == "/m/old" && advice.cloneSources[1].modifiedAtUnix == 100);
+        assert(advice.cloneSources[1].detail == "Copy OLD's library onto this stick.");
 
-        input.freeBytes = 20 * GiB;  // no room for the 64 MiB margin
+        // Room is judged per candidate: the older stick's smaller library
+        // still fits when the newest one does not.
+        input.peers[0].usedBytes = 10 * GiB;
+        input.freeBytes = 20 * GiB;  // no room for NEW's 20 GiB plus the 64 MiB margin
         advice = adviseStickBackup(input);
         assert(advice.cloneSource.kind == Kind::Stick);
         assert(!advice.cloneSource.enoughSpace);
         assert(advice.cloneSource.detail.find("Not enough space") != std::string::npos);
+        assert(advice.cloneSources[0].label == "NEW" && !advice.cloneSources[0].enoughSpace);
+        assert(advice.cloneSources[1].label == "OLD" && advice.cloneSources[1].enoughSpace);
+        input.peers[0].usedBytes = 20 * GiB;
 
         input.freeBytes = 0;  // unknown never blocks
         advice = adviseStickBackup(input);

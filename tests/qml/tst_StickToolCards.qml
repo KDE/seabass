@@ -995,4 +995,62 @@ TestCase {
         mouseMove(health, health.width / 2, health.height / 2);
         tryCompare(grid, "disabledCardUnderPointer", null, 2000);
     }
+
+    // Two sticks with a library beside this empty one: the card no longer
+    // copies the newest on its own, it asks which (Sebastian 2026-10-17,
+    // with a live stick and a test stick both plugged in). Each candidate
+    // is judged for room by itself.
+    function test_twoSticksToCopyFromAreAskedAbout() {
+        const live = {kind: "stick", label: "WHALESHARK3", mountPoint: "/media/WHALESHARK3", backupPath: "",
+                      modifiedAt: "2026-10-16T14:02:00", enoughSpace: true, usedBytes: 58 * 1024 * 1024 * 1024,
+                      detail: "Copy WHALESHARK3's library onto this stick.",
+                      rekordboxPath: "/media/WHALESHARK3/PIONEER", enginePath: "/media/WHALESHARK3/Engine Library"};
+        const test = mainCloneSource(true);  // MAIN, written later than the live stick
+        test.modifiedAt = "2026-10-17T11:06:00";
+        const advice = {"/media/SPARE": makeAdvice({cloneSource: test, cloneSources: [test, live]})};
+        const cards = makeCards(emptyStick(), "backup", advice);
+        const clone = card(cards, "Create Backup USB Stick");
+        compare(clone.enabled, true);
+        compare(clone.cardSubtitle, "2 sticks to copy from: MAIN, WHALESHARK3.");
+
+        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "cloneStickRequested"});
+        clone.clicked();
+        compare(spy.count, 0, "nothing starts before the question is answered");
+        const dialog = Live.findByObjectName(cards, "cloneSourceDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.title, "Copy which stick onto SPARE?");
+        const first = Live.findByObjectName(dialog, "cloneSourceChoice_0");
+        const second = Live.findByObjectName(dialog, "cloneSourceChoice_1");
+        compare(first.text, "MAIN, last written 2026-10-17 11:06");
+        compare(second.text, "WHALESHARK3, last written 2026-10-16 14:02, 58.0 GiB");
+        second.clicked();
+        tryCompare(dialog, "visible", false);
+        compare(spy.count, 1);
+        compare(argsOf(spy, 0), JSON.stringify(["WHALESHARK3", "/media/WHALESHARK3/PIONEER",
+                                               "/media/WHALESHARK3/Engine Library", "/media/SPARE", "SPARE", false]));
+
+        // The newest does not fit, the other does: the card stays enabled
+        // and the dialog greys out the one that does not.
+        const tight = mainCloneSource(false);
+        tight.modifiedAt = "2026-10-17T11:06:00";
+        const tightCards = makeCards(emptyStick(), "backup",
+                                     {"/media/SPARE": makeAdvice({cloneSource: tight, cloneSources: [tight, live]})});
+        const tightClone = card(tightCards, "Create Backup USB Stick");
+        compare(tightClone.enabled, true);
+        tightClone.clicked();
+        const tightDialog = Live.findByObjectName(tightCards, "cloneSourceDialog");
+        tryCompare(tightDialog, "opened", true);
+        compare(Live.findByObjectName(tightDialog, "cloneSourceChoice_0").enabled, false);
+        verify(Live.findByObjectName(tightDialog, "cloneSourceChoice_0").text.endsWith("(does not fit)"));
+        compare(Live.findByObjectName(tightDialog, "cloneSourceChoice_1").enabled, true);
+        tightDialog.close();
+
+        // One stick to copy from: no question, as before.
+        const oneCards = makeCards(emptyStick(), "backup",
+                                   {"/media/SPARE": makeAdvice({cloneSource: live, cloneSources: [live]})});
+        const oneSpy = createTemporaryObject(spyComponent, testCase, {target: oneCards, signalName: "cloneStickRequested"});
+        card(oneCards, "Create Backup USB Stick").clicked();
+        compare(oneSpy.count, 1);
+        compare(Live.findByObjectName(oneCards, "cloneSourceDialog").opened, false);
+    }
 }

@@ -127,8 +127,66 @@ Item {
     // one / is a newer copy of this stick's library.
     readonly property var cloneSource: root.advice && root.advice.cloneSource && root.advice.cloneSource.kind === "stick"
         ? root.advice.cloneSource : null
+    // Every mounted stick whose library could be copied onto this one,
+    // newest first; the advisor's cloneSource is its first. With two or
+    // more the card asks which, instead of taking the newest: with a live
+    // stick and a test stick both plugged in, the test stick is often the
+    // one written last (Sebastian 2026-10-17). An advice without the list
+    // (an older stub) offers the one source.
+    readonly property var cloneSources: {
+        // A JS array from a stub or a QVariantList from the advisor: both
+        // index and count, neither is relied on to be an Array.
+        const raw = root.advice ? root.advice.cloneSources : undefined;
+        const listed = [];
+        for (let i = 0; raw && i < (raw.length || 0); ++i) {
+            if (raw[i] && raw[i].kind === "stick") {
+                listed.push(raw[i]);
+            }
+        }
+        if (listed.length > 0) {
+            return listed;
+        }
+        return root.cloneSource !== null ? [root.cloneSource] : [];
+    }
     readonly property var updateSource: root.advice && root.advice.updateSource && root.advice.updateSource.kind !== "none"
         ? root.advice.updateSource : null
+    function requestClone(source) {
+        root.cloneStickRequested(source.label, source.rekordboxPath, source.enginePath, root.mountPoint, root.label, false);
+    }
+    // "Which stick to copy from": one row per candidate, the newest first,
+    // one that does not fit greyed out and saying so.
+    Dialog {
+        id: cloneSourceDialog
+        objectName: "cloneSourceDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        title: "Copy which stick onto " + (root.label.length > 0 ? root.label : "this stick") + "?"
+        standardButtons: Dialog.Cancel
+        ColumnLayout {
+            spacing: Theme.tightSpacing
+            Repeater {
+                model: root.cloneSources
+                delegate: Button {
+                    id: sourceChoice
+                    required property var modelData
+                    required property int index
+                    objectName: "cloneSourceChoice_" + index
+                    Layout.fillWidth: true
+                    enabled: modelData.enoughSpace !== false
+                    text: modelData.label
+                        + (modelData.modifiedAt && modelData.modifiedAt.length > 0
+                           ? ", last written " + modelData.modifiedAt.replace("T", " ").substring(0, 16) : "")
+                        + (modelData.usedBytes > 0 ? ", " + Theme.humanBytes(modelData.usedBytes) : "")
+                        + (modelData.enoughSpace === false ? " (does not fit)" : "")
+                    onClicked: {
+                        root.requestClone(sourceChoice.modelData);
+                        cloneSourceDialog.close();
+                    }
+                }
+            }
+        }
+    }
     // The full backup the advisor matched to this stick, by its library or
     // its hardware. Not "label": two sticks called NO NAME would put the
     // other one's backup first, marked "This stick", next to Delete. Not
@@ -630,18 +688,28 @@ Item {
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: root.cloneSource !== null ? root.cloneSource.detail : ""
+                // One candidate: its sentence. Several: say so, and the
+                // click asks which (cloneSourceDialog).
+                readonly property bool severalSources: root.cloneSources.length > 1
+                readonly property bool anySourceFits: root.cloneSources.some((source) => source.enoughSpace !== false)
+                cardSubtitle: severalSources
+                    ? root.cloneSources.length + " sticks to copy from: "
+                      + root.cloneSources.map((source) => source.label).join(", ") + "."
+                    : (root.cloneSource !== null ? root.cloneSource.detail : "")
                 cardIcon: "edit-copy"
                 visible: root.group === "backup" && root.showCreateBackupStick
                 // The source stick has to be mounted, which cloneSource
                 // being non-null already implies (peers are only ever
                 // mounted sticks).
-                enabled: !root.thisRowBusy && root.cloneSource !== null
-                    && root.mounted && root.cloneSource.enoughSpace !== false
+                enabled: !root.thisRowBusy && root.cloneSource !== null && root.mounted && anySourceFits
                 disabledReason: root.thisRowBusy ? "Wait until the stick has finished mounting or ejecting" : !root.mounted ? "Mount the stick first" : root.cloneSource === null ? "Plug in the stick to copy from" : "Not enough free space on this stick for the copy"
-                onClicked: root.cloneStickRequested(root.cloneSource.label,
-                    root.cloneSource.rekordboxPath, root.cloneSource.enginePath,
-                    root.mountPoint, root.label, false)
+                onClicked: {
+                    if (severalSources) {
+                        cloneSourceDialog.open();
+                    } else {
+                        root.requestClone(root.cloneSource);
+                    }
+                }
             }
             ActionCard {
                 objectName: "formatUsbCard"

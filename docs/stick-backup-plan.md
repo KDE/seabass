@@ -454,6 +454,11 @@ seeing the others as peers):
   (the typed confirmation stays), never hidden.
 - *Space*: used bytes of the source volume against the target's free
   bytes plus the restore margin; the clone page measures again.
+- *Which source*: every mounted stick with a library is a candidate
+  (`cloneSources`, newest first, room judged per candidate). With one,
+  the card copies it; with two or more, the card asks which stick to
+  copy, since the newest is not always the wanted one (a test stick is
+  often the one written last). Added 2026-10-17.
 
 Cancel during the backup step keeps the partial archive (the next run
 resumes); a backup outcome without the database (DJ software appeared,

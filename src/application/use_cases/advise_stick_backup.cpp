@@ -4,6 +4,8 @@
 
 #include "application/use_cases/advise_stick_backup.hpp"
 
+#include <algorithm>
+
 namespace seabass::application
 {
 
@@ -190,6 +192,7 @@ SourceRef peerSource(const PeerStick &peer, bool enoughSpace)
     source.mountPoint = peer.mountPoint;
     source.modifiedAtUnix = peer.catalogModifiedAtUnix;
     source.enoughSpace = enoughSpace;
+    source.usedBytes = peer.usedBytes;
     return source;
 }
 
@@ -295,19 +298,28 @@ StickBackupAdvice adviseDiskBackup(const StickBackupAdviceInput &input, const St
 // created from.
 void adviseClone(const StickBackupAdviceInput &input, StickBackupAdvice &advice)
 {
-    const PeerStick *best = nullptr;
+    // Every peer, newest first, each with its own room check: the first is
+    // the one-line offer, the whole list is what the stick list lets the
+    // DJ pick from when there are two or more. The newest is not always
+    // the wanted one: with a live stick and a test stick both plugged in,
+    // the test stick is often the one written last.
+    std::vector<const PeerStick *> peers;
     for (const PeerStick &peer : input.peers) {
-        if (best == nullptr || peer.catalogModifiedAtUnix > best->catalogModifiedAtUnix) {
-            best = &peer;
-        }
+        peers.push_back(&peer);
     }
-    if (best == nullptr) {
-        return;
+    std::stable_sort(peers.begin(), peers.end(), [](const PeerStick *a, const PeerStick *b) {
+        return a->catalogModifiedAtUnix > b->catalogModifiedAtUnix;
+    });
+    for (const PeerStick *peer : peers) {
+        const bool enoughSpace = fitsOn(input.freeBytes, peer->usedBytes);
+        SourceRef source = peerSource(*peer, enoughSpace);
+        source.detail = enoughSpace ? "Copy " + peer->label + "'s library onto this stick."
+                                    : "Not enough space on this stick for " + peer->label + "'s library.";
+        advice.cloneSources.push_back(std::move(source));
     }
-    const bool enoughSpace = fitsOn(input.freeBytes, best->usedBytes);
-    advice.cloneSource = peerSource(*best, enoughSpace);
-    advice.cloneSource.detail = enoughSpace ? "Copy " + best->label + "'s library onto this stick."
-                                            : "Not enough space on this stick for " + best->label + "'s library.";
+    if (!advice.cloneSources.empty()) {
+        advice.cloneSource = advice.cloneSources.front();
+    }
 }
 
 // Library stick: among the copies of the same library that are newer

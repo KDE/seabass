@@ -52,12 +52,14 @@ class BackupAdvisorController : public QObject
     Q_PROPERTY(QString backupDirectory READ backupDirectory WRITE setBackupDirectory NOTIFY backupDirectoryChanged)
     // mountPoint -> {state, matchedBy, backupPath, backupLabel,
     // backupCreatedAt, trackOverlap, cueOverlap, detail, cloneSource,
-    // updateSource, diverged, cuesPending}; see StickBackupAdvice for the state and
-    // matchedBy values. cloneSource / updateSource are maps {kind
-    // ("none" / "disk-backup" / "stick"), label, mountPoint, backupPath,
-    // modifiedAt, enoughSpace, detail, rekordboxPath, enginePath} -- the
-    // last two filled for stick sources so the list can open the clone
-    // page without another lookup. cuesPending: the verdict is what it
+    // cloneSources, updateSource, diverged, cuesPending}; see
+    // StickBackupAdvice for the state and matchedBy values. cloneSource /
+    // updateSource are maps {kind ("none" / "disk-backup" / "stick"),
+    // label, mountPoint, backupPath, modifiedAt, enoughSpace, usedBytes,
+    // detail, rekordboxPath, enginePath} -- the last two filled for stick
+    // sources so the list can open the clone page without another lookup;
+    // cloneSources is every peer stick that could be copied, newest first
+    // (cloneSource is its first). cuesPending: the verdict is what it
     // is if the cues have not changed, and they are still being read
     // (this stick's or a peer's); shown beside the verdict, not instead.
     Q_PROPERTY(QVariantMap advice READ advice NOTIFY adviceChanged)

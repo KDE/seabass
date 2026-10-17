@@ -97,6 +97,7 @@ struct StickBackupAdvice
         std::filesystem::path backupPath;  // DiskBackup only
         std::int64_t modifiedAtUnix = 0;   // the copy's catalog mtime, or the backup's creation time
         bool enoughSpace = true;           // this stick can hold that copy (best effort; false only when known not to)
+        std::uint64_t usedBytes = 0;       // Stick only: what the copy takes on its stick; 0: unknown
         std::string detail;                // one sentence for the stick list
     };
 
@@ -112,6 +113,11 @@ struct StickBackupAdvice
     // No library on this stick, and a peer stick has one: the newest peer
     // library, to create a backup stick from.
     SourceRef cloneSource;
+    // Every peer stick with a library, newest first (cloneSource is the
+    // first), each with its own room check: with two or more the stick
+    // list asks which to copy, instead of deciding by age alone (Sebastian
+    // 2026-10-17, with WHALESHARK3 and TESTSHARK both plugged in).
+    std::vector<SourceRef> cloneSources;
     // A library on this stick, and a newer copy of the same library exists
     // (a peer stick, or the disk backup): the newest one, to update this
     // stick from. A stick that is itself the newest copy gets none.
