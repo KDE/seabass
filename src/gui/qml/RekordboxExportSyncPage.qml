@@ -117,16 +117,24 @@ Page {
         root.applyFolds();
     }
     // A folded section keeps only its first row in the view, as an empty
-    // shell of height 0 that carries the section's header; the rest leave
-    // the view's "shown" group. Not rows of height 0 each: a thousand of
-    // those throw the ListView's estimate of where a row is, and it
-    // scrolls to the wrong section. The runs come from the rows' own
-    // sections (rowSections), never from counts and an assumed order, so
-    // a fold cannot drift onto another section's rows.
+    // shell of height 0 that carries the section's header; the rest stay
+    // out of the view's "shown" group. Not rows of height 0 each: a
+    // thousand of those throw the ListView's estimate of where a row is,
+    // and it scrolls to the wrong section. The runs come from the rows'
+    // own sections (rowSections), never from counts and an assumed order,
+    // so a fold cannot drift onto another section's rows.
+    //
+    // This is the one place a row joins the view: "shown" includes
+    // nothing by default, so after a reset the view gains each row only in
+    // the state its fold wants, and never holds a row it then loses. With
+    // every row joining first and the fold taking a folded section's rest
+    // back out, the first fold on Windows (2026-10-16/17) removed 1175 of
+    // 3089 rows from the middle and the end of the list, and the view's
+    // anchor jumped: the page opened halfway down.
     function applyFolds() {
         const sections = root.controller.rows.rowSections();
         if (sections.length !== rowsModel.items.count) {
-            return;  // the view has not caught up; the model's signal calls again
+            return;  // the view has not caught up; its signal calls again
         }
         let start = 0;
         while (start < sections.length) {
@@ -135,6 +143,8 @@ Page {
             while (end < sections.length && sections[end] === name) {
                 ++end;
             }
+            // Its first row always: it carries the section's header.
+            rowsModel.items.addGroups(start, 1, "shown");
             if (end - start > 1) {
                 if (root.isCollapsed(name)) {
                     rowsModel.items.removeGroups(start + 1, end - start - 1, "shown");
@@ -162,18 +172,21 @@ Page {
         groups: [
             DelegateModelGroup {
                 name: "shown"
-                includeByDefault: true
+                // Only applyFolds puts a row here (see there).
+                includeByDefault: false
             }
         ]
         filterOnGroup: "shown"
     }
-    // Rows come and go (an analysis, an answer): the folds hold, once the
-    // view has them.
+    // Rows come and go (an analysis, an answer): the folds hold. On the
+    // view's own "items" group, which changes once the DelegateModel has
+    // taken the model's change and before the view hears of it, so the
+    // view takes a reset or an insert with its folds already applied.
+    // Not on the model's modelReset: that reaches this page before the
+    // DelegateModel, whose items are still the old ones then.
     Connections {
-        target: root.controller.rows
-        function onModelReset() { Qt.callLater(root.applyFolds); }
-        function onRowsInserted() { Qt.callLater(root.applyFolds); }
-        function onRowsRemoved() { Qt.callLater(root.applyFolds); }
+        target: rowsModel.items
+        function onChanged() { root.applyFolds(); }
     }
     // RekordboxExportSyncListModel::Section's order.
     readonly property var sectionOrder: ["conflicts", "playlists", "tracksToAdd", "tracksToRemove", "membership",

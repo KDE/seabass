@@ -470,6 +470,21 @@ public:
         return model;
     }
 
+    // The same kind of rows at the scale of a real export (3060 rows, every
+    // one of the eleven sections, 1300 of them in the three that start
+    // folded), their delegates of different heights: a track's row is as
+    // tall as its cover, a playlist's is not, every seventh reason wraps.
+    // Empty until fillLargeExportSyncRows, so the page sees the reset an
+    // analysis makes. Owned by the fixture.
+    Q_INVOKABLE QObject *emptyExportSyncRows() { return new seabass::gui::RekordboxExportSyncListModel(this); }
+    // A model reset with the large proposal, as an analysis lands.
+    Q_INVOKABLE void fillLargeExportSyncRows(QObject *rows)
+    {
+        if (auto *model = qobject_cast<seabass::gui::RekordboxExportSyncListModel *>(rows)) {
+            model->setProposal(largeExportSyncProposal(), "/stick");
+        }
+    }
+
     // The stick's root, or empty on failure (which the test then fails
     // on, rather than skipping).
     Q_INVOKABLE QString stickCopy(const QString &fixtureRoot)
@@ -780,6 +795,132 @@ public:
     }
 
 private:
+    // fillLargeExportSyncRows' proposal: per section, in Section's order,
+    // 100 conflicts, 60 playlist creates, 400 adds, 200 removals, 600
+    // memberships, 150 ratings to Engine, 150 cue rows, 100 ratings back
+    // onto rekordbox, 1000 of Engine's own, 100 playlists only Engine has
+    // and 200 refused adds.
+    static seabass::domain::EngineUpdateProposal largeExportSyncProposal()
+    {
+        namespace d = seabass::domain;
+        int n = 0;
+        // Every seventh reason runs to two lines, every third has none.
+        const auto header = [&n](const std::string &key) {
+            d::EngineUpdateItemHeader h;
+            h.key = key;
+            h.checkedByDefault = true;
+            ++n;
+            if (n % 7 == 0) {
+                h.reasonText = "hand-built at scale, with a reason long enough to wrap onto a second line of the row "
+                               "at the width the test gives the page, so this row is taller than its neighbours";
+            } else if (n % 3 != 0) {
+                h.reasonText = "hand-built at scale";
+            }
+            return h;
+        };
+        const auto track = [](const std::string &name) {
+            d::Track t;
+            t.title = name;
+            t.artist = "Artist";
+            t.filename = name + ".mp3";
+            t.filePath = "/stick/Contents/" + name + ".mp3";
+            return t;
+        };
+        const auto name = [](const char *prefix, int i) { return std::string(prefix) + std::to_string(i); };
+        d::EngineUpdateProposal p;
+        for (int i = 0; i < 100; ++i) {
+            d::TrackToRemove gone;
+            gone.header = header("track|contents/" + name("gone", i) + ".mp3");
+            gone.engine = track(name("gone", i));
+            gone.pathKey = "contents/" + name("gone", i) + ".mp3";
+            d::EngineUpdateConflict conflict;
+            conflict.header = gone.header;
+            conflict.header.checkedByDefault = false;
+            conflict.header.conflict = true;
+            conflict.rekordboxSide = "Remove this track from Engine";
+            conflict.engineSide = "Keep it in Engine";
+            conflict.rekordboxChoice = {gone};
+            p.conflicts.push_back(conflict);
+        }
+        for (int i = 0; i < 60; ++i) {
+            d::PlaylistCreate create;
+            create.header = header("playlist|" + std::to_string(100 + i));
+            create.pdbId = static_cast<std::uint32_t>(100 + i);
+            create.path = name("New ", i);
+            p.playlistsToCreate.push_back(create);
+        }
+        for (int i = 0; i < 400; ++i) {
+            d::TrackToAdd add;
+            add.header = header("track|contents/" + name("add", i) + ".mp3");
+            add.rekordbox = track(name("add", i));
+            add.stickRelativePath = "Contents/" + name("add", i) + ".mp3";
+            add.pathKey = "contents/" + name("add", i) + ".mp3";
+            p.tracksToAdd.push_back(add);
+        }
+        for (int i = 0; i < 200; ++i) {
+            d::TrackToRemove removal;
+            removal.header = header("track|contents/" + name("remove", i) + ".mp3");
+            removal.engine = track(name("remove", i));
+            removal.pathKey = "contents/" + name("remove", i) + ".mp3";
+            p.tracksToRemove.push_back(removal);
+        }
+        for (int i = 0; i < 600; ++i) {
+            d::MembershipEdit m;
+            m.header = header("member|100|contents/" + name("member", i) + ".mp3");
+            m.pdbId = 100;
+            m.playlistPath = "New 0";
+            m.pathKey = "contents/" + name("member", i) + ".mp3";
+            m.track = track(name("member", i));
+            p.membership.push_back(m);
+        }
+        for (int i = 0; i < 250; ++i) {
+            d::MetadataEdit rating;
+            const bool toEngine = i < 150;
+            rating.header = header("rating|contents/" + name("rated", i) + ".mp3");
+            rating.direction = toEngine ? d::MetadataEdit::Direction::ToEngine : d::MetadataEdit::Direction::ToRekordbox;
+            rating.rekordbox = track(name("rated", i));
+            rating.engine = track(name("rated", i));
+            rating.pathKey = "contents/" + name("rated", i) + ".mp3";
+            rating.rating = 3;
+            (toEngine ? p.metadataToEngine : p.restoresToRekordbox).push_back(rating);
+        }
+        for (int i = 0; i < 150; ++i) {
+            d::CueEdit cues;
+            cues.header = header("cue|contents/" + name("cued", i) + ".mp3|pad1");
+            cues.plan.direction = d::SyncPlan::Direction::ToB;
+            cues.plan.match.trackA = track(name("cued", i));
+            cues.plan.match.trackB = track(name("cued", i));
+            cues.pathKey = "contents/" + name("cued", i) + ".mp3";
+            p.cuesToEngine.push_back(cues);
+        }
+        for (int i = 0; i < 1000; ++i) {
+            d::EngineOwnItem kept;
+            kept.header = header("track|contents/" + name("own", i) + ".mp3");
+            kept.header.checkedByDefault = false;
+            kept.engine = track(name("own", i));
+            p.engineOwnKept.push_back(kept);
+        }
+        for (int i = 0; i < 100; ++i) {
+            d::EngineOwnItem only;
+            only.header = header("playlist|engine|" + name("Engine only ", i));
+            only.header.checkedByDefault = false;
+            only.playlistPath = name("Engine only ", i);
+            only.engineOnlyPlaylist = true;
+            only.trackCount = i;
+            p.engineOwnKept.push_back(only);
+        }
+        for (int i = 0; i < 200; ++i) {
+            d::TrackToAdd refused;
+            refused.header = header("track|contents/" + name("missing", i) + ".mp3");
+            refused.header.checkedByDefault = false;
+            refused.rekordbox = track(name("missing", i));
+            refused.stickRelativePath = "Contents/" + name("missing", i) + ".mp3";
+            refused.pathKey = "contents/" + name("missing", i) + ".mp3";
+            p.notAdded.push_back(refused);
+        }
+        return p;
+    }
+
     QStringList m_roots;
 };
 

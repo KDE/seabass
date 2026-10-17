@@ -735,7 +735,10 @@ TestCase {
         id: fakeControllerComponent
         QtObject {
             property var rows: null
+            // Bumped by a test after it resets rows: the counts follow.
+            property int resets: 0
             readonly property var sectionCounts: {
+                resets;
                 const counts = {};
                 for (let i = 0; i < rows.rowCount(); ++i) {
                     const name = rows.data(rows.index(i, 0), testCase.role.section);
@@ -824,6 +827,138 @@ TestCase {
                 compare(item.title, rowData(page, i, "title"), "row " + i + "'s delegate shows its title");
             }
         }
+    }
+
+    // The page's "shown" group (rowsModel): the rows the view holds.
+    function shownGroup(page) {
+        const groups = page.rowsModel.groups;
+        for (let i = 0; i < groups.length; ++i) {
+            if (groups[i].name === "shown") {
+                return groups[i];
+            }
+        }
+        return null;
+    }
+    // What the view should hold for these rows with the page's folds.
+    function expectedShownTotal(page) {
+        const counts = {};
+        for (const name of page.controller.rows.rowSections()) {
+            counts[name] = (counts[name] || 0) + 1;
+        }
+        let total = 0;
+        for (const name in counts) {
+            total += expectedShown(page, name, counts[name]);
+        }
+        return total;
+    }
+    // A page on StickFixture's large hand-built rows, empty when it opens
+    // as a page is before its analysis lands; `rows` to fill and reset.
+    function openOnLargeRows() {
+        const rows = stickFixture.emptyExportSyncRows();
+        const fake = createTemporaryObject(fakeControllerComponent, testCase, {rows: rows});
+        const page = createTemporaryObject(pageComponent, testCase, {controller: fake});
+        verify(page !== null);
+        waitForRendering(page);
+        return {rows: rows, fake: fake, page: page};
+    }
+    // An analysis landing: the model reset with every row, and the fold
+    // after it.
+    function fillLargeRows(opened) {
+        stickFixture.fillLargeExportSyncRows(opened.rows);
+        ++opened.fake.resets;
+        const shown = shownGroup(opened.page);
+        tryVerify(() => shown.count === expectedShownTotal(opened.page), 2000, "the folds land");
+        waitForRendering(opened.page);
+        wait(50);
+        waitForRendering(opened.page);
+    }
+
+    // On Windows (2026-10-16/17) the page opened halfway down a real
+    // export: every row entered the view and the first fold then took 1175
+    // of 3089 back out of the middle and the end, and the view's anchor
+    // jumped. The view must only ever gain rows while the page opens: it
+    // holds nothing it then loses.
+    function test_theViewNeverLosesARowDuringTheOpen() {
+        const opened = openOnLargeRows();
+        const page = opened.page;
+        const list = listOf(page);
+        const shown = shownGroup(page);
+        verify(shown !== null);
+        compare(shown.count, 0);
+        const counts = [];
+        const positions = [];
+        const onCount = () => counts.push(shown.count);
+        const onMove = () => positions.push(Math.round(list.contentY) + "/" + Math.round(list.originY));
+        shown.countChanged.connect(onCount);
+        list.contentYChanged.connect(onMove);
+        list.originYChanged.connect(onMove);
+        fillLargeRows(opened);
+        shown.countChanged.disconnect(onCount);
+        list.contentYChanged.disconnect(onMove);
+        list.originYChanged.disconnect(onMove);
+        const total = expectedShownTotal(page);
+        console.log("rows " + page.rowsModel.items.count + ", shown at the end " + total + ", shown over the open: "
+                    + JSON.stringify(counts) + ", contentY/originY over the open: " + JSON.stringify(positions));
+        compare(page.rowsModel.items.count, 3060);
+        compare(total, 3060 - 1297, "1297 rows folded away at the start");
+        verify(counts.length > 0, "the view took the rows");
+        for (let i = 1; i < counts.length; ++i) {
+            verify(counts[i] >= counts[i - 1], "the view lost rows during the open: " + JSON.stringify(counts));
+        }
+        verify(Math.max(...counts) <= total, "the view held rows a fold then took out: " + JSON.stringify(counts));
+        compare(list.count, total);
+    }
+
+    // At the top: the list at its origin, the first section's header at
+    // the top of the view and the first row of it under that header.
+    function expectAtTheTop(page, when) {
+        const list = listOf(page);
+        compare(list.contentY, list.originY, when + ": the list is at its top");
+        const header = findChildWhere(list, (o) => o.objectName === "sectionHeader_conflicts" && o.visible);
+        verify(header !== null, when + ": the first section's header is built");
+        verify(Math.abs(header.y - list.contentY) < 1, when + ": the first header is at the top, " + header.y
+               + " against " + list.contentY);
+        compare(list.indexAt(list.width / 2, list.contentY + header.height + 1), 0,
+                when + ": the first row under it");
+        const first = list.itemAtIndex(0);
+        verify(first !== null);
+        compare(first.modelRow, 0);
+        compare(first.section, "conflicts");
+    }
+    // The page opens at the top, and comes back to it every time its rows
+    // are analysed again, a fold changed by hand kept by name.
+    function test_opensAtTheTopAndStaysThereThroughAReset() {
+        const opened = openOnLargeRows();
+        const page = opened.page;
+        const list = listOf(page);
+        fillLargeRows(opened);
+        console.log("after the open: contentY " + list.contentY + ", originY " + list.originY);
+        expectAtTheTop(page, "on open");
+        // Engine's own opened by hand, the list scrolled down it, then the
+        // rows analysed again.
+        page.toggleSection("engineOwnKept");
+        compare(shownBySection(page)["engineOwnKept"], 1000);
+        const kept = firstRowWhere(page, (i) => rowData(page, i, "section") === "engineOwnKept");
+        list.positionViewAtIndex(page.viewIndexOf(kept), ListView.Beginning);
+        waitForRendering(list);
+        verify(list.contentY > list.originY + 1000, "scrolled down: " + list.contentY);
+        const group = shownGroup(page);
+        const counts = [];
+        const onCount = () => counts.push(group.count);
+        group.countChanged.connect(onCount);
+        fillLargeRows(opened);
+        group.countChanged.disconnect(onCount);
+        console.log("after the second reset: contentY " + list.contentY + ", originY " + list.originY
+                    + ", shown over the reset: " + JSON.stringify(counts));
+        verify(counts.every((count) => count <= expectedShownTotal(page)),
+               "the view held rows a fold then took out: " + JSON.stringify(counts));
+        expectAtTheTop(page, "analysed again");
+        compare(page.isCollapsed("engineOwnKept"), false, "the hand's fold holds");
+        const shown = shownBySection(page);
+        compare(shown["engineOwnKept"], 1000);
+        compare(shown["engineOnlyPlaylists"], 1, "still folded");
+        compare(shown["notAdded"], 1, "still folded");
+        compare(shown["membership"], 600);
     }
 
     // A cue row, opened, draws each copy's cues on its waveform as Sync
