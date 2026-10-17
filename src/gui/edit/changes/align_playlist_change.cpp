@@ -205,8 +205,9 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
         }
         made = "created in " + names.join(QStringLiteral(" and ")).toStdString() + ", ";
     }
-    const std::string summary = std::string(Label) + ": \"" + m_playlist + "\" matched to " + libraryName(m_reference).toStdString()
-                                + ": " + made + std::to_string(added) + " entr(ies) added, " + std::to_string(removed) + " removed";
+    const std::string summary = std::string(Label) + ": \"" + m_playlist + "\" matched to "
+                                + libraryName(m_reference).toStdString() + ": " + made + std::to_string(added)
+                                + " entr(ies) added, " + std::to_string(removed) + " removed";
     if (created.isEmpty() && added == 0 && removed == 0) {
         // Every copy holds it already (a second save of the same change,
         // or the player made the same edit): nothing was written.
