@@ -454,10 +454,15 @@ void makeChoice(SyncPlan &plan, SyncPlan::Reason reason, std::string text)
 // own, and what a write onto Engine stores is X's cues as Engine holds
 // them (translateCuesForEngine).
 //
-// Memory cues agree when every one of X's that fits on a pad is on one,
-// and Engine's main cue is among X's memory cues (or neither has one).
-// When X lacks Engine's main cue AND Engine lacks a translation, X is
-// written first and Engine on the next sync: a plan has one direction.
+// Memory cues agree when every one of X's that fits on a pad is on one
+// (or is Engine's cue point). Engine's cue point, the main cue where CUE
+// returns, is Engine's own: its analysis places one on every track, a
+// few hundred milliseconds in, and rekordbox has no such thing (a Pioneer
+// player finds its load point live). It is never written onto X as a
+// memory cue, and X lacking it is no difference. Until 2026-10-17 it was
+// both, and WHALESHARK carried 207 memory cues in the first second that
+// were Engine's cue points copied by Sync, which Stray Cues then offered
+// to remove (Sebastian 2026-10-17).
 SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool aIsEngine, double toleranceMs,
                         const CueTolerance &tolerance)
 {
@@ -480,12 +485,30 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
         return result;
     }
 
+    // Engine's cue point. cuesFromEngine lists it among the memory cues,
+    // where it counts as Engine holding a memory cue of X's at that place;
+    // it is left out of what goes onto X (see above).
+    std::optional<CuePoint> mainE;
+    for (const CuePoint &cue : e.cues) {
+        if (cue.kind == CuePoint::Kind::Memory) {
+            mainE = cue;
+        }
+    }
+    const auto withoutCuePoint = [&](const std::vector<CuePoint> &memoryFromEngine) {
+        std::vector<CuePoint> kept;
+        for (const CuePoint &cue : memoryFromEngine) {
+            if (!(mainE && !cue.isLoop && samePosition(cue, *mainE, toleranceMs))) {
+                kept.push_back(cue);
+            }
+        }
+        return kept;
+    };
     // What a write onto X carries: Engine's own hot cues and loops, and
-    // every memory cue either side has (X's own, Engine's translations of
-    // them, and Engine's main cue), with X's colours kept.
+    // every memory cue either side has (X's own and Engine's translations
+    // of them, never Engine's cue point), with X's colours kept.
     const auto ontoX = [&](const std::vector<CuePoint> &hotFromEngine) {
         std::vector<CuePoint> cues = hotFromEngine;
-        for (const CuePoint &cue : unionByPosition(memoryX, seen.memoryCues, toleranceMs)) {
+        for (const CuePoint &cue : unionByPosition(memoryX, withoutCuePoint(seen.memoryCues), toleranceMs)) {
             cues.push_back(cue);
         }
         return keepExistingColours(std::move(cues), x.cues, toleranceMs);
@@ -506,9 +529,15 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
         return result;
     }
     if (x.cues.empty()) {
+        std::vector<CuePoint> cues = ontoX(seen.hotCues);
+        if (cues.empty()) {
+            // Engine holds its cue point and nothing else: nothing X takes.
+            result.kind = SyncPlan::Kind::AlreadyConsistent;
+            return result;
+        }
         result.kind = aIsEngine ? SyncPlan::Kind::AOnly : SyncPlan::Kind::BOnly;
         result.direction = toX;
-        result.cuesToApply = ontoX(seen.hotCues);
+        result.cuesToApply = std::move(cues);
         return result;
     }
 
@@ -522,22 +551,12 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
             memoryXHeld.push_back(cue);
         }
     }
-    std::optional<CuePoint> mainE;
-    for (const CuePoint &cue : e.cues) {
-        if (cue.kind == CuePoint::Kind::Memory) {
-            mainE = cue;
-        }
-    }
-    // Engine holds a memory cue as a pad or as its main cue; either is
-    // that cue at that place (seen.memoryCues has both).
-    const bool engineHoldsMemory = positionsCoveredBy(memoryXHeld, seen.memoryCues, toleranceMs);
-    bool xLacksMain = false;
-    if (mainE) {
-        xLacksMain = std::none_of(memoryX.begin(), memoryX.end(), [&](const CuePoint &cue) {
-            return !cue.isLoop && samePosition(cue, *mainE, toleranceMs);
-        });
-    }
-    const bool memoryAgrees = engineHoldsMemory && !xLacksMain;
+    // Engine holds a memory cue as a pad or as its cue point; either is
+    // that cue at that place (seen.memoryCues has both). X lacking Engine's
+    // cue point is no difference: it is not a memory cue (see above), so
+    // with no memory cue on X's side only a pad of Engine's would be one.
+    const bool memoryAgrees = memoryXHeld.empty() ? withoutCuePoint(seen.memoryCues).empty()
+                                                  : positionsCoveredBy(memoryXHeld, seen.memoryCues, toleranceMs);
     const HotDifference hotDifference = compareHotCues(hotX, seen.hotCues, toleranceMs);
 
     if (!hotDifference.any() && memoryAgrees && seen.uncertain.empty() && seen.loopEnds.empty()) {
@@ -557,7 +576,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     // without saying so; such pads are counted in the reason.
     if (!seen.loopEnds.empty()) {
         std::vector<CuePoint> withEngineEnds = memoryX;
-        std::vector<CuePoint> seenWithEngineEnds = seen.memoryCues;
+        std::vector<CuePoint> seenWithEngineEnds = withoutCuePoint(seen.memoryCues);
         for (const auto &loop : seen.loopEnds) {
             for (auto *list : {&withEngineEnds, &seenWithEngineEnds}) {
                 for (CuePoint &cue : *list) {
@@ -618,12 +637,10 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
     result.cuesIfBWins = aIsEngine ? ifXWins : ifEWins;
 
     if (!hotDifference.any()) {
-        // Only memory cues differ. X lacks Engine's main cue: X is written,
-        // it can hold every memory cue. Else Engine lacks a translation or
-        // its main cue: Engine is written. Either way the side written only
-        // gains: no clock is asked.
-        result.direction = xLacksMain ? toX : toE;
-        result.cuesToApply = xLacksMain ? ifEWins : ifXWins;
+        // Only memory cues differ: Engine lacks a translation of one of
+        // X's, so Engine is written. It only gains: no clock is asked.
+        result.direction = toE;
+        result.cuesToApply = ifXWins;
         return result;
     }
 

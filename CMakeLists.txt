@@ -2442,7 +2442,7 @@ seabass_cli_test(cli_scan_no_stick EXIT 1 ARGS scan --rekordbox
 seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469\\n" "onelibrary tracks: 1644\\n"
            "matched tracks:    1383\\n" "Would copy cues to Engine for 30 track\\(s\\)"
-           "Would copy cues to rekordbox for 9 track\\(s\\)" "Would copy cues to OneLibrary for 1 track\\(s\\)"
+           "Would copy cues to rekordbox for 8 track\\(s\\)" "Would copy cues to OneLibrary for 1 track\\(s\\)"
            "Cues differ on both sides for 2 track\\(s\\) in a way sync cannot settle"
            "  why: Pad 2: Engine empty, OneLibrary 0:26.332" "OneLibrary 1:37.583. and 1 more pad differs\\n"
            "  why: Pad 1 is 514 ms apart \\(more than half a beat at 128 BPM\\): Engine 0:30.765, OneLibrary 0:30.251, and 4 more pads differ\\n"
@@ -2471,8 +2471,9 @@ seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
 #   of those 3 paths is one conflict ("rekordbox has 3 playlists spelled
 #   ...") with no create and none of its 294, 93 and 164 membership rows:
 #   1 create left ("Playlist 01"), membership 1476 - 551 = 925, conflicts
-#   1242 + 3 = 1245, changes 1511 - 7 - 551 = 953. 17 Engine playlists
-#   have no rekordbox one: 17 kept.
+#   1242 + 3 = 1245, changes 1511 - 7 - 551 = 953, less the one track whose
+#   only difference was Engine's cue point (not a memory cue since
+#   2026-10-17): 952. 17 Engine playlists have no rekordbox one: 17 kept.
 # The conflict and kept totals (1245, 1177) and the change total are the
 # command's own answer, pinned against regressions. Exit 1: something to
 # do. No file in the copy appears, goes or changes.
@@ -2486,7 +2487,7 @@ seabass_cli_test(cli_sync_after_export EXIT 1
            "\\nNo earlier record of this stick\\. What rekordbox has and Engine lacks is taken as added in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to decide\\. Anything you leave undecided counts as Engine's own from now on and is not asked again\\.\\n"
            "\\nPlaylists to create, rename, delete \\(1\\)\\n" "\\nPlaylist membership \\(925\\)\\n"
            "\\nConflicts \\(1245\\)\\n" "\\nEngine's own, kept \\(1177\\)\\n"
-           "total: 953 change\\(s\\), 953 checked. 1245 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"
+           "total: 952 change\\(s\\), 952 checked. 1245 conflict\\(s\\). 1177 of Engine's own kept. 0 not added\\n"
            "read-only: nothing was written."
     COUNT "1=\\n  \\[x\\] create playlist \""
           "3=\\n      why: rekordbox has [23] playlists spelled \"Playlist?( 0)?\" here"

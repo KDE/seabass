@@ -170,7 +170,7 @@ TestCase {
                 + "Anything you leave undecided counts as Engine's own from now on and is not asked again.");
         verify(intro.visible);
         compare(findChild(page.header, "conflictFigure").value, "959");
-        compare(findChild(page.header, "checkedFigure").value, "953");
+        compare(findChild(page.header, "checkedFigure").value, "952");
         compare(findChild(page.header, "checkedFigure").label, "selected");
         compare(findChild(page.header, "stageButton").text, "Stage Selected");
         // What the three directions mean, one line each, the chip as rows
@@ -221,12 +221,12 @@ TestCase {
         compare(check.checked, true, "every membership row starts ticked");
         mouseClick(check);
         compare(page.controller.sectionCheckedCounts["membership"], 0);
-        compare(page.controller.checkedCount, 953 - 925);
-        compare(findChild(page.header, "checkedFigure").value, String(953 - 925));
+        compare(page.controller.checkedCount, 952 - 925);
+        compare(findChild(page.header, "checkedFigure").value, String(952 - 925));
         compare(check.checked, false);
         mouseClick(check);
         compare(page.controller.sectionCheckedCounts["membership"], 925);
-        compare(page.controller.checkedCount, 953);
+        compare(page.controller.checkedCount, 952);
         compare(check.checked, true);
         // No section-wide box where a tick writes nothing.
         compare(findChild(sectionHeader(page, "conflicts"), "sectionCheck_conflicts").visible, false);
@@ -324,12 +324,12 @@ TestCase {
                 ++changed;
             }
         }
-        compare(changed, 952);
+        compare(changed, 951);
         compare(created, 1);
         const legendText = (key) => findChild(findChildWhere(page.header, (o) => o.objectName === "overviewLegend_" + key),
                                               "overviewLegendText").text;
         compare(legendText("newPlaylists"), "1 playlist created");
-        compare(legendText("changed"), "779 tracks moved between playlists, 1 rating or comment changed, 17 tracks' cues changed, 9 restores onto rekordbox");
+        compare(legendText("changed"), "779 tracks moved between playlists, 1 rating or comment changed, 17 tracks' cues changed, 8 restores onto rekordbox");
         const expected = {newTracks: added, newPlaylists: created, changed: changed, removed: removed, other: other};
         verify(findChild(page.header, "overview").visible);
         for (const key in expected) {
@@ -376,7 +376,7 @@ TestCase {
         verify(clear.enabled);
         mouseClick(clear);
         compare(page.controller.conflictCount, 959);
-        compare(page.controller.checkedCount, 953);
+        compare(page.controller.checkedCount, 952);
         compare(rowData(page, 0, "resolvedSide"), "");
     }
 

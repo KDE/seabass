@@ -100,7 +100,9 @@ constexpr int FixtureConflictRows = 959;
 // own section.
 constexpr int FixtureKept = 1160;
 constexpr int FixtureEngineOnlyPlaylists = 17;
-constexpr int FixtureChecked = 953;
+// One fewer since 2026-10-17: the track whose only difference was Engine's
+// cue point, which is not a memory cue to copy onto rekordbox any more.
+constexpr int FixtureChecked = 952;
 
 void waitUntilIdle(RekordboxExportSyncController &controller)
 {
@@ -308,8 +310,9 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(categories.value("changed").toInt() == adds + changedElsewhere);
         assert(categories.value("removed").toInt() == removes + count(controller, "tracksToRemove"));
         assert(categories.value("other").toInt() == 0);
-        // 925 membership adds, 1 rating or comment, 17 cue rows, 9 restores.
-        assert(categories.value("changed").toInt() == 952);
+        // 925 membership adds, 1 rating or comment, 17 cue rows, 8 restores
+        // (9 until 2026-10-17: one was Engine's cue point as a memory cue).
+        assert(categories.value("changed").toInt() == 951);
         assert(!controller.proposalEmpty());
     }
     // The one line over the page, counted here off the rows: the
@@ -337,7 +340,7 @@ void testProposalTicksAndAnswers(const fs::path &fixture)
         assert(summary.value("tracksMoved").toInt() == static_cast<int>(moved.size()));
         assert(summary.value("playlistsCreated").toInt() == FixtureCreates);
         assert(legend.value("newPlaylists").toString() == QStringLiteral("1 playlist created"));
-        assert(legend.value("changed").toString() == QStringLiteral("779 tracks moved between playlists, 1 rating or comment changed, 17 tracks' cues changed, 9 restores onto rekordbox"));
+        assert(legend.value("changed").toString() == QStringLiteral("779 tracks moved between playlists, 1 rating or comment changed, 17 tracks' cues changed, 8 restores onto rekordbox"));
     }
 
     // The conflicts' buttons say what they do, as the page shows them

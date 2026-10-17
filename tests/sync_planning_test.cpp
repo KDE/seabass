@@ -259,9 +259,13 @@ int main()
     }
 
     // ...and the next sync carries it across. Hot cues now agree, Engine's
-    // 15s is not among rekordbox's memory cues, and Engine happens to be the
-    // newer side. The plan must still write rekordbox, the side that can
-    // hold every memory cue, with the union -- never Engine.
+    // cue point at 15 s is not among rekordbox's memory cues, and Engine
+    // happens to be the newer side. The cue point is Engine's own (not a
+    // memory cue: rekordbox never gets it), so the one difference left is
+    // the two memory cues Engine lacks pads for, and Engine is written.
+    // Until 2026-10-17 rekordbox was written first, with the cue point as
+    // a memory cue: that is how WHALESHARK came to carry 207 memory cues
+    // in the first second.
     {
         Track r = makeTrack("r1", "song.mp3", 200.0,
                             {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
@@ -276,28 +280,47 @@ int main()
         e.metadataModifiedAt = 1'800'000'000;
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         assert(plan.kind == SyncPlan::Kind::Conflict);
-        assert(plan.direction == SyncPlan::Direction::ToA && "memory cues resolve onto rekordbox, not Engine");
-        int memory = 0;
-        bool has15 = false;
+        assert(plan.direction == SyncPlan::Direction::ToB && "Engine gains the pads; rekordbox never gets the cue point");
+        std::vector<double> pads;
+        std::vector<double> mains;
         for (const auto &cue : plan.cuesToApply) {
-            if (cue.kind == CuePoint::Kind::Memory) {
-                memory++;
-                has15 = has15 || cue.positionMs == 15000.0;
-            }
+            (cue.kind == CuePoint::Kind::Hot ? pads : mains).push_back(cue.positionMs);
         }
-        assert(memory == 3 && has15);
-        std::cout << "case 13 (a memory-only difference writes the side that can hold every memory cue) OK\n";
+        assert((pads == std::vector<double>{1000.0, 10000.0, 20000.0}) && "rekordbox's memory cues take pads");
+        assert((mains == std::vector<double>{15000.0}) && "Engine's own cue point stays");
+        std::cout << "case 13 (a memory-only difference writes Engine, and the cue point is not a memory cue) OK\n";
 
-        // After that write Engine's main cue is among rekordbox's three, and
-        // the next sync gives Engine pads for the two it still lacks. Then
-        // the pair is consistent, with no memory cue lost on either side.
-        r.cues = plan.cuesToApply;
-        auto next = SyncPlanner::plan(SyncMatch{r, e}, now, now);
-        assert(next.direction == SyncPlan::Direction::ToB && "now Engine is the side missing something");
-        e.cues = next.cuesToApply;
+        // One sync settles it: rekordbox keeps its two, Engine its cue point.
+        e.cues = plan.cuesToApply;
         auto after = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         assert(after.kind == SyncPlan::Kind::AlreadyConsistent);
-        std::cout << "case 13b (two syncs settle it with no memory cue lost) OK\n";
+        assert(r.cues.size() == 3 && "rekordbox was not written");
+        std::cout << "case 13b (one sync settles it with no memory cue lost) OK\n";
+    }
+
+    // Engine's cue point alone is never a reason to write rekordbox. The
+    // shape of WHALESHARK on 2026-10-17: hot cue 1 on both sides, Engine's
+    // analysis-placed cue point at 1.5 s, nothing else. And a track with
+    // only a cue point against one with no cues at all.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1660.0, "#FF0000", ""}});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1660.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 1512.76, "", ""}});
+        e.format = "engine";
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent && "rekordbox lacking Engine's cue point is no difference");
+
+        Track bare = makeTrack("r2", "song.mp3", 200.0, {});
+        bare.format = "rekordbox";
+        // Past the first second, so the planner's stray-cue strip does not
+        // take it out before the question is asked.
+        Track pointOnly = makeTrack("e2", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Memory, 0, 1500.0, "", ""}});
+        pointOnly.format = "engine";
+        auto nothing = SyncPlanner::plan(SyncMatch{bare, pointOnly}, now, now);
+        assert(nothing.kind == SyncPlan::Kind::AlreadyConsistent && "a cue point alone is nothing rekordbox takes");
+        std::cout << "case 13c (Engine's cue point is Engine's own: never written onto rekordbox) OK\n";
     }
 
     // The third review's finding: an Engine track with no memory cue at all
@@ -558,21 +581,30 @@ int main()
         std::cout << "case (the main cue is the earliest memory cue Engine can hold) OK\n";
 
         // The reverse direction keeps rekordbox's own cue at 0:00: a sync
-        // onto rekordbox writes the union, and rekordbox can hold it.
+        // onto rekordbox (Engine alone has hot cues, so Engine wins) writes
+        // the union, and rekordbox can hold it. Engine's cue point at 1:30
+        // is not part of that union: it is Engine's own, not a memory cue.
+        Track r3 = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Memory, 0, 0.0, "", ""}});
+        r3.format = "rekordbox";
         Track e3 = makeTrack("e1", "song.mp3", 200.0,
                              {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""},
                               CuePoint{CuePoint::Kind::Memory, 0, 90000.0, "", ""}});
         e3.format = "engine";
-        auto back = SyncPlanner::plan(SyncMatch{r, e3}, now, now);
-        assert(back.direction == SyncPlan::Direction::ToA && "rekordbox lacks Engine's cue at 1:30");
+        auto back = SyncPlanner::plan(SyncMatch{r3, e3}, now, now);
+        assert(back.direction == SyncPlan::Direction::ToA && "rekordbox lacks Engine's hot cue");
         int atStart = 0;
+        int cuePoints = 0;
         for (const auto &cue : back.cuesToApply) {
             if (cue.kind == CuePoint::Kind::Memory && cue.positionMs == 0.0) {
                 atStart++;
             }
+            if (cue.kind == CuePoint::Kind::Memory && cue.positionMs == 90000.0) {
+                cuePoints++;
+            }
         }
         assert(atStart == 1 && "rekordbox keeps its cue at 0:00 when the preference says it counts");
-        std::cout << "case (a sync onto rekordbox keeps its cue at 0:00) OK\n";
+        assert(cuePoints == 0 && back.cuesToApply.size() == 2 && "Engine's cue point does not come along");
+        std::cout << "case (a sync onto rekordbox keeps its cue at 0:00, without Engine's cue point) OK\n";
         MatchingPolicy::reset();
     }
 
