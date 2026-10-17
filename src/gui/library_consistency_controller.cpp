@@ -46,6 +46,7 @@
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
 #include "gui/edit/changes/align_playlist_change.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/changes/delete_tracks_change.hpp"
 #include "gui/edit/changes/level_cue_table_change.hpp"
 #include "gui/edit/changes/remove_dangling_playlist_entries_change.hpp"
@@ -1985,6 +1986,27 @@ QString libraryNameOf(const std::string &format)
     return QStringLiteral("Engine");
 }
 
+// "rekordbox", "rekordbox and Engine", "rekordbox, OneLibrary and Engine".
+QString spokenList(const QStringList &items)
+{
+    if (items.size() < 2) {
+        return items.join(QString());
+    }
+    return items.mid(0, items.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(" and ") + items.last();
+}
+
+// The libraries holding the playlist, by name, in the stick's order.
+QStringList librariesHaving(const domain::PlaylistDifference &difference)
+{
+    QStringList names;
+    for (const auto &side : difference.sides) {
+        if (side.hasPlaylist) {
+            names << libraryNameOf(side.format);
+        }
+    }
+    return names;
+}
+
 QStringList titlesOf(const std::vector<domain::Track> &tracks)
 {
     QStringList titles;
@@ -2022,10 +2044,16 @@ QVariantList LibraryConsistencyController::playlistDifferences() const
             int adds = 0;
             int removes = 0;
             int swaps = 0;
+            QStringList creates;
+            int createdTracks = 0;
             for (const auto &a : alignments) {
                 adds += static_cast<int>(a.add.size());
                 removes += static_cast<int>(a.remove.size());
                 swaps += a.replacements;
+                if (a.create) {
+                    creates << libraryNameOf(a.format);
+                    createdTracks = std::max(createdTracks, static_cast<int>(a.add.size()));
+                }
             }
             const auto left = finding.leftOutByReference.find(format);
             references << QVariantMap{{"format", QString::fromStdString(format)},
@@ -2033,10 +2061,15 @@ QVariantList LibraryConsistencyController::playlistDifferences() const
                                       {"adds", adds - swaps},
                                       {"removes", removes - swaps},
                                       {"swaps", swaps},
-                                      {"leftOut", left == finding.leftOutByReference.end() ? 0 : left->second}};
+                                      {"leftOut", left == finding.leftOutByReference.end() ? 0 : left->second},
+                                      {"creates", creates},
+                                      {"createdTracks", createdTracks}};
         }
         m["references"] = references;
-        const auto staged = m_stagedPlaylists.find(AlignPlaylistChange::idFor(d.name));
+        auto staged = m_stagedPlaylists.find(AlignPlaylistChange::idFor(d.name));
+        if (staged == m_stagedPlaylists.end()) {
+            staged = m_stagedPlaylists.find(DeletePlaylistChange::idFor(d.name));
+        }
         m["staged"] = staged == m_stagedPlaylists.end() ? QString() : staged->second;
         list << m;
     }
@@ -2139,12 +2172,7 @@ void LibraryConsistencyController::alignPlaylist(const QString &playlist, const 
         return;
     }
     const QString id = AlignPlaylistChange::idFor(name);
-    if (m_stagedPlaylists.contains(id)) {
-        if (m_session) {
-            m_session->unstage(id);
-        }
-        m_stagedPlaylists.erase(id);
-    }
+    unstagePlaylistResolution(name);
     if (!m_session->stage(std::make_unique<AlignPlaylistChange>(m_rekordboxPath, m_enginePath, name, ref,
                                                                 alignments->second, 1))) {
         emit playlistsChanged();
@@ -2156,16 +2184,75 @@ void LibraryConsistencyController::alignPlaylist(const QString &playlist, const 
                                .arg(playlist, libraryNameOf(ref)));
 }
 
-void LibraryConsistencyController::unstagePlaylist(const QString &playlist)
+// The other resolution of a playlist only some libraries have, beside
+// following one of them (Sebastian 2026-10-17: "I wanted to get rid of
+// those playlists"): out of every library that has it, through Browse's
+// own DeletePlaylistChange, owned by this page's session.
+void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playlist)
 {
-    const QString id = AlignPlaylistChange::idFor(playlist.toStdString());
-    if (!m_stagedPlaylists.contains(id)) {
+    if (busy()) {
         return;
     }
-    if (m_session) {
-        m_session->unstage(id);
+    const std::string name = playlist.toStdString();
+    const PlaylistFinding *finding = nullptr;
+    for (const auto &f : m_playlistFindings) {
+        if (f.difference.name == name) {
+            finding = &f;
+        }
     }
-    m_stagedPlaylists.erase(id);
+    if (finding == nullptr) {
+        return;
+    }
+    QStringList formats;
+    for (const auto &side : finding->difference.sides) {
+        if (side.hasPlaylist) {
+            formats << QString::fromStdString(side.format);
+        }
+    }
+    if (formats.isEmpty()) {
+        return;
+    }
+    const QStringList names = librariesHaving(finding->difference);
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    unstagePlaylistResolution(name);
+    // This session's owner, as AlignPlaylistChange's: the session refuses
+    // a change of Browse's ("addcue") into Library Health's batch.
+    if (!m_session->stage(std::make_unique<DeletePlaylistChange>(m_rekordboxPath, m_enginePath, name, formats,
+                                                                 QStringLiteral("library-health")))) {
+        emit playlistsChanged();
+        return;
+    }
+    m_stagedPlaylists[DeletePlaylistChange::idFor(name)] = QStringLiteral("delete");
+    emit playlistsChanged();
+    setStagedStatusMessage(QStringLiteral("Staged deleting \"%1\" from %2. Press Save to write it.")
+                               .arg(playlist, spokenList(names)));
+}
+
+bool LibraryConsistencyController::unstagePlaylistResolution(const std::string &playlist)
+{
+    bool any = false;
+    for (const QString &id : {AlignPlaylistChange::idFor(playlist), DeletePlaylistChange::idFor(playlist)}) {
+        if (!m_stagedPlaylists.contains(id)) {
+            continue;
+        }
+        if (m_session) {
+            m_session->unstage(id);
+        }
+        m_stagedPlaylists.erase(id);
+        any = true;
+    }
+    return any;
+}
+
+void LibraryConsistencyController::unstagePlaylist(const QString &playlist)
+{
+    if (!unstagePlaylistResolution(playlist.toStdString())) {
+        return;
+    }
     emit playlistsChanged();
     clearStagedStatusIfNothingStaged();
 }

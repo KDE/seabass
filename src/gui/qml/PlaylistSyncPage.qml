@@ -9,8 +9,8 @@ import SeabassGui
 
 // Library Health's page for playlists that do not hold the same tracks in
 // every library on the stick (#61), and Engine playlist entries naming no
-// track. Each playlist is matched to the library the DJ picks; export.pdb
-// only loses entries here, since adding one is #62.
+// track. Each playlist is matched to the library the DJ picks, which
+// creates it where it is missing, or deleted from every library.
 HealthCheckPage {
     id: root
 
@@ -36,6 +36,18 @@ HealthCheckPage {
         return parts.join(", ");
     }
 
+    // "rekordbox", "rekordbox and Engine", "rekordbox, OneLibrary and Engine".
+    function spokenList(items) {
+        if (items.length < 2) {
+            return items.join("");
+        }
+        return items.slice(0, items.length - 1).join(", ") + " and " + items[items.length - 1];
+    }
+
+    function librariesHaving(difference) {
+        return difference.sides.filter((side) => side.hasPlaylist).map((side) => side.library);
+    }
+
     function referenceTip(reference) {
         const parts = [];
         if (reference.swaps > 0) {
@@ -47,7 +59,14 @@ HealthCheckPage {
         if (reference.removes > 0) {
             parts.push(reference.removes + " taken out");
         }
-        let text = "Make every other library's copy of this playlist hold what " + reference.library + "'s holds: "
+        const creates = reference.creates ?? [];
+        let text = "";
+        if (creates.length > 0) {
+            const tracks = reference.createdTracks ?? 0;
+            text = "Creates it in " + root.spokenList(creates) + " with " + tracks
+                + (tracks === 1 ? " track. " : " tracks. ");
+        }
+        text += "Make every other library's copy of this playlist hold what " + reference.library + "'s holds: "
             + (parts.length > 0 ? parts.join(", ") : "nothing to change") + ".";
         if (reference.leftOut > 0) {
             text += " " + reference.leftOut + (reference.leftOut === 1 ? " track stays" : " tracks stay")
@@ -85,7 +104,9 @@ HealthCheckPage {
               + " not hold the same tracks in every library on this stick. A Pioneer player reads the "
               + "rekordbox side and a Denon player the Engine side, so the set changes with the player. Pick "
               + "which library each playlist should follow; Seabass makes the others match. Only tracks every "
-              + "library lists are compared, and order is not. A track added to a playlist goes at its end."
+              + "library lists are compared, and order is not. A track added to a playlist goes at its end. "
+              + "A playlist only some libraries have can be created in the others from the one that has it, "
+              + "or deleted everywhere."
     }
 
     RowLayout {
@@ -183,13 +204,10 @@ HealthCheckPage {
                             text: root.sideLine(modelData)
                         }
                     }
-                    Label {
-                        visible: playlistRow.modelData.missingSomewhere
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Theme.textMuted
-                        text: "Seabass cannot create a playlist in a library that lacks it yet."
-                    }
+                    // A playlist missing somewhere used to say Seabass
+                    // could not create it (#61, before Browse could, #62)
+                    // and came back after every save; following a library
+                    // now creates it, and Delete Playlist removes it.
                     RowLayout {
                         spacing: Theme.rowSpacing
                         Repeater {
@@ -198,22 +216,41 @@ HealthCheckPage {
                                 required property var modelData
                                 objectName: "match_" + modelData.format
                                 readonly property bool hasWork: modelData.adds + modelData.removes + modelData.swaps > 0
+                                    || (modelData.creates ?? []).length > 0
                                 visible: hasWork && playlistRow.modelData.staged.length === 0
                                 text: "Follow " + modelData.library
                                 enabled: !consistencyController?.busy && !consistencyController?.writing
                                     && !consistencyController?.stickReadOnly
+                                readonly property string tip: root.referenceTip(modelData)
                                 ToolTip.visible: hovered
-                                ToolTip.text: root.referenceTip(modelData)
+                                ToolTip.text: tip
                                 onClicked: consistencyController?.alignPlaylist(playlistRow.modelData.name, modelData.format)
                             }
+                        }
+                        // The other resolution, on every row: gone from
+                        // every library that has it (Sebastian 2026-10-17).
+                        Button {
+                            objectName: "deletePlaylistButton"
+                            visible: playlistRow.modelData.staged.length === 0
+                            text: "Delete Playlist"
+                            enabled: !consistencyController?.busy && !consistencyController?.writing
+                                && !consistencyController?.stickReadOnly
+                            readonly property string tip: "Deletes \"" + playlistRow.modelData.name + "\" from "
+                                + root.spokenList(root.librariesHaving(playlistRow.modelData)) + ". Tracks stay."
+                            ToolTip.visible: hovered
+                            ToolTip.text: tip
+                            onClicked: consistencyController?.deletePlaylistEverywhere(playlistRow.modelData.name)
                         }
                         Label {
                             objectName: "stagedPlaylistNote"
                             visible: playlistRow.modelData.staged.length > 0
                             color: Theme.warnText
-                            text: "staged: following " + playlistRow.modelData.references
-                                .filter((r) => r.format === playlistRow.modelData.staged)
-                                .map((r) => r.library).join("") + ", not saved yet"
+                            text: playlistRow.modelData.staged === "delete"
+                                ? "staged: deleting from " + root.spokenList(root.librariesHaving(playlistRow.modelData))
+                                  + ", not saved yet"
+                                : "staged: following " + playlistRow.modelData.references
+                                    .filter((r) => r.format === playlistRow.modelData.staged)
+                                    .map((r) => r.library).join("") + ", not saved yet"
                         }
                         Button {
                             objectName: "unstagePlaylistButton"

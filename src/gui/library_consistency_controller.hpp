@@ -409,8 +409,11 @@ private:
     Q_PROPERTY(int playlistDifferenceCount READ playlistDifferenceCount NOTIFY playlistsChanged)
     // Each {name, missingSomewhere, sides: [{format, library, hasPlaylist,
     // members, lacking: [titles], extra: [titles], notInEveryLibrary}],
-    // references: [{format, library, adds, removes, leftOut}], staged:
-    // reference format or ""}.
+    // references: [{format, library, adds, removes, swaps, leftOut,
+    // creates: [library names the playlist is made in], createdTracks:
+    // the most any of those copies gets}], staged: the
+    // reference format followed, "delete", or ""}. `adds` counts the rows
+    // a created copy gets too.
     Q_PROPERTY(QVariantList playlistDifferences READ playlistDifferences NOTIFY playlistsChanged)
     Q_PROPERTY(int danglingPlaylistEntryCount READ danglingPlaylistEntryCount NOTIFY playlistsChanged)
     // Each {playlist, entries}.
@@ -632,8 +635,15 @@ public:
     // Stages making `playlist` hold, in every other library, what it
     // holds in `reference` ("rekordbox", "onelibrary", "engine"), within
     // what can be written (see PlaylistFinding). Staging another
-    // reference for the same playlist replaces the first.
+    // reference for the same playlist replaces the first. A library
+    // without the playlist gets it made, holding what it lists of the
+    // reference's.
     Q_INVOKABLE void alignPlaylist(const QString &playlist, const QString &reference);
+    // Stages deleting `playlist` from every library on the stick that has
+    // it; the tracks stay. One resolution per playlist: this replaces a
+    // staged alignPlaylist() of it, and that replaces this.
+    Q_INVOKABLE void deletePlaylistEverywhere(const QString &playlist);
+    // Takes back whichever of the two is staged for `playlist`.
     Q_INVOKABLE void unstagePlaylist(const QString &playlist);
     // Stages deleting these files (by filePath, from noPlaylistTracks) the
     // way Clean Up deletes a duplicate: out of every library, the file on
@@ -767,7 +777,12 @@ private:
     std::vector<infrastructure::engine::UnresolvedPlaylistEntries> m_unresolvedPlaylistEntries;
     bool m_playlistsChecked = false;
     QString m_playlistsError;
-    std::map<QString, QString> m_stagedPlaylists;  // change id -> reference format
+    // Change id -> the reference format followed, or "delete" for a
+    // DeletePlaylistChange; at most one of the two per playlist.
+    std::map<QString, QString> m_stagedPlaylists;
+    // Takes back what is staged for `playlist` (either resolution); true
+    // when something was.
+    bool unstagePlaylistResolution(const std::string &playlist);
     bool m_danglingFixStaged = false;
     bool m_unresolvedFixStaged = false;
     domain::NoPlaylistScan m_noPlaylist;

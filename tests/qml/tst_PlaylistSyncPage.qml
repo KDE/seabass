@@ -44,7 +44,8 @@ TestCase {
                          extra: [], notInEveryLibrary: 0},
                         {format: "engine", library: "Engine", hasPlaylist: true, members: 12, lacking: [], extra: [],
                          notInEveryLibrary: 0}],
-                references: [{format: "engine", library: "Engine", adds: 0, removes: 0, swaps: 0, leftOut: 0}]
+                references: [{format: "engine", library: "Engine", adds: 12, removes: 0, swaps: 0, leftOut: 0,
+                              creates: ["rekordbox"], createdTracks: 12}]
             }]
             property int danglingPlaylistEntryCount: 8
             property var danglingPlaylists: [{playlist: "Whaleshark Cooldown", entries: 8}]
@@ -55,17 +56,21 @@ TestCase {
             function repairUnresolvedPlaylistEntries() { unresolvedFixStaged = true; }
             function unstageUnresolvedPlaylistEntries() { unresolvedFixStaged = false; }
             property var calls: []
+            function setStaged(name, staged) {
+                playlistDifferences = playlistDifferences.map(
+                    (d) => d.name === name ? Object.assign({}, d, {staged: staged}) : d);
+            }
             function alignPlaylist(name, reference) {
                 calls.push("align " + name + " " + reference);
-                const list = playlistDifferences.slice();
-                list[0] = Object.assign({}, list[0], {staged: reference});
-                playlistDifferences = list;
+                setStaged(name, reference);
+            }
+            function deletePlaylistEverywhere(name) {
+                calls.push("delete " + name);
+                setStaged(name, "delete");
             }
             function unstagePlaylist(name) {
                 calls.push("unstage " + name);
-                const list = playlistDifferences.slice();
-                list[0] = Object.assign({}, list[0], {staged: ""});
-                playlistDifferences = list;
+                setStaged(name, "");
             }
             function removeDanglingPlaylistEntries() { danglingFixStaged = true; }
             function unstageDanglingPlaylistEntries() { danglingFixStaged = false; }
@@ -134,6 +139,73 @@ TestCase {
             wait(100);
             grabImage(page).save(screenshotDir + "/PlaylistSyncPage.png");
         }
+    }
+
+    // A playlist only Engine has: following Engine creates it in rekordbox
+    // (the tooltip says so), and Delete Playlist, on every row, stages
+    // deleting it from the libraries that have it, with a note and Unstage.
+    // The note that Seabass could not create it is gone (Sebastian
+    // 2026-10-17).
+    function test_aPlaylistMissingSomewhereIsCreatedOrDeleted() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null);
+        waitForRendering(page);
+        const rows = findChild(page, "playlistDifferences");
+        compare(rows.count, 2);
+        const skywalk = rows.itemAt(1);
+        const follow = findChild(skywalk, "match_engine");
+        verify(follow !== null && follow.visible, "Engine can be followed");
+        verify(follow.tip.indexOf("Creates it in rekordbox with 12 tracks.") === 0, follow.tip);
+        const remove = findChild(skywalk, "deletePlaylistButton");
+        verify(remove !== null && remove.visible && remove.enabled, "Delete Playlist on a row missing somewhere");
+        compare(remove.text, "Delete Playlist");
+        compare(remove.tip, "Deletes \"Skywalk\" from Engine. Tracks stay.");
+        const other = findChild(rows.itemAt(0), "deletePlaylistButton");
+        verify(other !== null && other.visible, "and on a row every library has");
+        compare(other.tip, "Deletes \"Minimal\" from rekordbox and Engine. Tracks stay.");
+
+        const sayings = [];
+        const collect = (item) => {
+            if (item.text !== undefined && typeof item.text === "string") {
+                sayings.push(item.text);
+            }
+            for (let i = 0; i < item.children.length; ++i) {
+                collect(item.children[i]);
+            }
+        };
+        collect(page);
+        verify(sayings.length > 0);
+        verify(sayings.every((t) => t.indexOf("cannot create a playlist") < 0), "the old note is gone");
+        const summary = findChild(page, "playlistsSummary");
+        verify(summary.text.indexOf("A playlist only some libraries have can be created in the others from the one "
+                                    + "that has it, or deleted everywhere.") > 0, summary.text);
+
+        // The model is replaced on every staging, so the row's items are
+        // looked up again each time.
+        const inSkywalk = (name) => findChild(rows.itemAt(1), name);
+        const last = () => controller.calls[controller.calls.length - 1];
+        remove.clicked();
+        compare(last(), "delete Skywalk");
+        waitForRendering(page);
+        verify(inSkywalk("stagedPlaylistNote").visible, "staged");
+        compare(inSkywalk("stagedPlaylistNote").text, "staged: deleting from Engine, not saved yet");
+        verify(!inSkywalk("deletePlaylistButton").visible && !inSkywalk("match_engine").visible, "one resolution at a time");
+        verify(inSkywalk("unstagePlaylistButton").visible);
+        inSkywalk("unstagePlaylistButton").clicked();
+        compare(last(), "unstage Skywalk");
+        waitForRendering(page);
+        verify(!inSkywalk("stagedPlaylistNote").visible && inSkywalk("deletePlaylistButton").visible
+               && inSkywalk("match_engine").visible, "unstaged");
+
+        inSkywalk("match_engine").clicked();
+        compare(last(), "align Skywalk engine");
+        waitForRendering(page);
+        compare(inSkywalk("stagedPlaylistNote").text, "staged: following Engine, not saved yet");
+        controller.writing = true;
+        controller.setStaged("Skywalk", "");
+        waitForRendering(page);
+        verify(!inSkywalk("deletePlaylistButton").enabled && !inSkywalk("match_engine").enabled, "not while writing");
     }
 
     // Entries the player cannot see: said with their playlists, and the
