@@ -118,7 +118,7 @@ TestCase {
                 "the name starts where the body does");
         const row = findChild(page, "aboutHead");
         verify(Math.abs(mark.width - (row.width - row.spacing) / 2) <= 1, "the right half: " + mark.width + " of " + row.width);
-        verify(Math.abs(mark.height - mark.width * 613 / 1024) <= 1, "the fish's own shape");
+        verify(Math.abs(mark.height - mark.width * 670 / 1024) <= 1, "the fish's own shape");
         const caption = findChild(page, "aboutMascotCredit");
         verify(caption !== null && caption.visible, "the mascot's maker is named under it");
         compare(caption.text, "Mascot by Nuno Pinheiro");

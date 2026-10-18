@@ -57,13 +57,13 @@ Item {
     // of the box on one axis and almost fills it on the other. These are
     // where the ink actually starts and stops, as a fraction of the
     // square, and they come straight from tools/flatten_logo.py's fitted
-    // bounds. The mascot (seabass_mascot.png, 1024 x 613, Nuno's artwork)
-    // spans the square's width with no air on its right at all, and its
-    // ink stops 21% above the square's bottom (the picture is centred
-    // vertically, plus 1.8% of its own air below the fins). Measured with
-    // PIL on the file; measure again for a new drawing.
+    // bounds. The mascot (seabass_mascot.png, 1024 x 670, Nuno's final
+    // rendering of 2026-10-18, cropped to its drawn pixels) spans the
+    // square's width with no air on either side, and its ink stops 17%
+    // above the square's bottom (the picture is centred vertically).
+    // tools/make_app_icons.py prints this number for a new drawing.
     readonly property real markPadX: 0.0
-    readonly property real markPadY: 0.2114
+    readonly property real markPadY: 0.1729
 
     // Where the mark's ink should end up relative to the window corner,
     // again as a fraction of this layer: clear of the right edge by about

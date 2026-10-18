@@ -4,19 +4,34 @@
 #
 # SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-"""Every icon form of the Seabass mascot, from Nuno's artwork.
+"""Every form of the Seabass mascot the app ships, from Nuno's artwork.
 
-The mark is a drawn fish (src/gui/qml/icons/seabass_mascot.png, wider than
-tall, transparent around it), not generated geometry: this script only
-derives the square forms the platforms want from it.
+The mark is a drawn fish, wider than tall, transparent around it: not
+generated geometry. Its source is artwork/seabass.svgz, whose filters only
+Inkscape renders faithfully, so Nuno renders it and the rendering is what
+this script starts from:
 
-  * src/gui/qml/icons/seabass_icon.png  -- 1024 x 1024, the fish centred
-                                           with a little air around it:
-                                           the window and taskbar icon.
-  * src/gui/win/app_icon.ico            -- the .exe icon on Windows.
-  * src/gui/mac/app_icon.icns           -- the app bundle icon on macOS.
+  * artwork/seabass-hires.png            -- Nuno's rendering, 1800 x 1172
+                                            (2026-10-18). The input.
+  * artwork/seabass-icon-256.png         -- Nuno's own 256 pixel icon, kept
+                                            as the reference for the square
+                                            form: the fish spans the full
+                                            width, centred vertically.
 
-Run from the repository root after a new mascot.png:
+What it writes:
+
+  * src/gui/qml/icons/seabass_mascot.png -- the fish, 1024 wide, cropped to
+                                            its drawn pixels: what the About
+                                            page, the home rail and the
+                                            watermark show.
+  * src/gui/qml/icons/seabass_icon.png   -- 1024 x 1024, the fish spanning
+                                            the width as in Nuno's icon:
+                                            the window and taskbar icon,
+                                            and the hicolor icon on Linux.
+  * src/gui/win/app_icon.ico             -- the .exe icon on Windows.
+  * src/gui/mac/app_icon.icns            -- the app bundle icon on macOS.
+
+Run from the repository root after a new rendering:
 
     python3 tools/make_app_icons.py
 
@@ -30,6 +45,10 @@ Mac draws in Finder's list view and Spotlight:
         sips -z $((s*2)) $((s*2)) src/gui/qml/icons/seabass_icon.png --out seabass.iconset/icon_${s}x${s}@2x.png
     done
     iconutil -c icns -o src/gui/mac/app_icon.icns seabass.iconset
+
+A new drawing also changes two measured numbers in the QML: the mascot's
+height (AboutPage.qml, tst_AboutPage.qml) and WatermarkLayer's markPadY,
+which this script prints.
 """
 
 from pathlib import Path
@@ -37,21 +56,32 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
+SOURCE = ROOT / "artwork/seabass-hires.png"
 MASCOT = ROOT / "src/gui/qml/icons/seabass_mascot.png"
 SQUARE = ROOT / "src/gui/qml/icons/seabass_icon.png"
 ICO = ROOT / "src/gui/win/app_icon.ico"
 ICNS = ROOT / "src/gui/mac/app_icon.icns"
 
+MASCOT_WIDTH = 1024
 SIDE = 1024
-# The fish fills this much of the square's width; the rest is air, so the
-# fins do not touch the icon's edge at small sizes.
-FILL = 0.92
+# The fish fills this much of the square's width. Nuno's own 256 pixel
+# icon (artwork/seabass-icon-256.png) spans the whole width, so the fins
+# reach the edge as they do there.
+FILL = 1.0
 
 
-def square_icon() -> Image.Image:
-    fish = Image.open(MASCOT).convert("RGBA")
-    # Tight to the drawn pixels first, so the air is even on every side.
-    fish = fish.crop(fish.getbbox())
+def drawn_fish() -> Image.Image:
+    # Tight to the drawn pixels, so the air is even on every side.
+    fish = Image.open(SOURCE).convert("RGBA")
+    return fish.crop(fish.getbbox())
+
+
+def mascot(fish: Image.Image) -> Image.Image:
+    height = round(fish.height * MASCOT_WIDTH / fish.width)
+    return fish.resize((MASCOT_WIDTH, height), Image.LANCZOS)
+
+
+def square_icon(fish: Image.Image) -> Image.Image:
     scale = SIDE * FILL / max(fish.width, fish.height)
     fish = fish.resize((round(fish.width * scale), round(fish.height * scale)), Image.LANCZOS)
     canvas = Image.new("RGBA", (SIDE, SIDE), (0, 0, 0, 0))
@@ -60,12 +90,19 @@ def square_icon() -> Image.Image:
 
 
 def main() -> None:
-    icon = square_icon()
+    fish = drawn_fish()
+    small = mascot(fish)
+    small.save(MASCOT, optimize=True)
+    icon = square_icon(fish)
     icon.save(SQUARE, optimize=True)
     icon.save(ICO, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     icon.save(ICNS, sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)])
-    for path in (SQUARE, ICO, ICNS):
+    for path in (MASCOT, SQUARE, ICO, ICNS):
         print(f"{path.relative_to(ROOT)}  {path.stat().st_size} bytes")
+    # WatermarkLayer places the mascot as if it sat centred in a square of
+    # its own width: how far above that square's bottom its ink stops.
+    pad_y = 1 - ((MASCOT_WIDTH - small.height) / 2 + small.height) / MASCOT_WIDTH
+    print(f"mascot {small.width} x {small.height}; WatermarkLayer markPadY {pad_y:.4f}")
 
 
 if __name__ == "__main__":

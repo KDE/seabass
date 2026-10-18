@@ -197,9 +197,10 @@ Page {
 
                 }
                 // The right half of the head: the fish at its own shape (1024 by
-                // 613), standing on the rule under it, and its maker's name
-                // under it in small print (Sebastian's sketch, 2026-10-16:
-                // titles left half, mascot right half).
+                // 670, Nuno's final rendering of 2026-10-18), standing on the
+                // rule under it, and its maker's name under it in small print
+                // (Sebastian's sketch, 2026-10-16: titles left half, mascot
+                // right half).
                 ColumnLayout {
                     id: mascotColumn
                     readonly property real half: (parent.width - parent.spacing) / 2
@@ -211,9 +212,9 @@ Page {
                         objectName: "aboutLogo"
                         source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_mascot.png"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: mascotColumn.half * 613 / 1024
+                        Layout.preferredHeight: mascotColumn.half * 670 / 1024
                         sourceSize.width: Math.ceil(mascotColumn.half)
-                        sourceSize.height: Math.ceil(mascotColumn.half * 613 / 1024)
+                        sourceSize.height: Math.ceil(mascotColumn.half * 670 / 1024)
                         fillMode: Image.PreserveAspectFit
                     }
                     Label {
