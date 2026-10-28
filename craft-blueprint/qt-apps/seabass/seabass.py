@@ -7,6 +7,16 @@ import os
 import info
 from CraftCore import CraftCore
 
+# Craft moved its platform, compiler and architecture tests off
+# CraftCore.compiler itself onto CraftCore.compiler.platform / .compiler /
+# .architecture (craft 3ebd7879, 2026-10-12; the Invent runners have had it
+# since 2026-10-24, and "'CraftCompiler' object has no attribute 'isLinux'"
+# failed every Windows and AppImage build until this). The Mac's Craft roots
+# that make the universal .dmg are older, so both spellings are answered.
+def _platform():
+    compiler = CraftCore.compiler
+    return compiler.platform if hasattr(compiler.platform, "isLinux") else compiler
+
 
 class subinfo(info.infoclass):
     def setTargets(self):
@@ -45,7 +55,7 @@ class subinfo(info.infoclass):
         # Optional: Seabass's own CMakeLists.txt falls back to
         # application::NullTrackMetadataProbe when TagLib isn't found.
         self.runtimeDependencies["libs/taglib"] = None
-        if CraftCore.compiler.isLinux:
+        if _platform().isLinux:
             # The AppImage cannot use the system's Plasma integration, so it
             # carries KDE's desktop style itself -- the look the app has on a
             # Plasma desktop. The app selects it when APPIMAGE is set (see
@@ -97,9 +107,9 @@ class Package(CMakePackageBase):
         # Keep the two real entry points; drop whatever else CMake put
         # in bin/ (test binaries, etc.) out of the packaged installer.
         self.addExecutableFilter(r"(bin|libexec)/(?!(seabass|seabass-cli)).*")
-        if CraftCore.compiler.isMacOS:
+        if _platform().isMacOS:
             self.blacklist_file.append(self.blueprintDir() / "blacklist_mac.txt")
-        if CraftCore.compiler.isWindows:
+        if _platform().isWindows:
             # The Start menu entries. Craft's NSIS installer makes none
             # unless it is told which executable to point at, and without
             # one the app could only be found by digging bin\seabass.exe

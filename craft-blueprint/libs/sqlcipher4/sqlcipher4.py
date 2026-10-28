@@ -29,6 +29,25 @@ from Package.MSBuildPackageBase import MSBuildPackageBase
 from Utils.Arguments import Arguments
 from Utils import CraftHash
 
+# Craft moved its platform, compiler and architecture tests off
+# CraftCore.compiler itself onto CraftCore.compiler.platform / .compiler /
+# .architecture (craft 3ebd7879, 2026-10-12); the Mac's Craft roots that
+# make the universal .dmg are older, so both spellings are answered here, as
+# in qt-apps/seabass/seabass.py.
+def _isMSVC():
+    compiler = CraftCore.compiler
+    return bool(compiler.compiler.isMSVC) if hasattr(compiler.compiler, "isMSVC") else bool(compiler.isMSVC())
+
+
+def _isMacOS():
+    compiler = CraftCore.compiler
+    return bool(compiler.platform.isMacOS) if hasattr(compiler.platform, "isMacOS") else bool(compiler.isMacOS)
+
+
+def _isNativeArchitecture():
+    compiler = CraftCore.compiler
+    return bool(compiler.architecture.isNative) if hasattr(compiler.architecture, "isNative") else bool(compiler.isNative())
+
 
 class subinfo(info.infoclass):
     def setTargets(self):
@@ -47,7 +66,7 @@ class subinfo(info.infoclass):
         self.runtimeDependencies["libs/zlib"] = None
         # The Unix build generates sources with tclsh; nothing uses Tcl at
         # runtime. Makefile.msc builds its own jimsh for that instead.
-        if not CraftCore.compiler.isMSVC():
+        if not _isMSVC():
             self.buildDependencies["libs/tcl"] = None
 
 
@@ -97,7 +116,7 @@ class PackageAutotools(AutoToolsPackageBase):
         # Dropping it loses nothing -- there is no separate target machine
         # here, and the architecture reaches the compiler through the -arch
         # Craft appends to CC and CXX.
-        if CraftCore.compiler.isMacOS and not CraftCore.compiler.isNative():
+        if _isMacOS() and not _isNativeArchitecture():
             self.platform = Arguments([arg for arg in self.platform.get() if not str(arg).startswith("--target=")])
 
     def _tclsh(self):
@@ -258,7 +277,7 @@ class PackageMSVC(MSBuildPackageBase):
         return True
 
 
-if CraftCore.compiler.isMSVC():
+if _isMSVC():
 
     class Package(PackageMSVC):
         pass
