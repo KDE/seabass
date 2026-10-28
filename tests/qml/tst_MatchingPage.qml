@@ -224,6 +224,30 @@ TestCase {
         }
     }
 
+    // The popup's list has rows of its own, never the combo's
+    // delegateModel. Under org.kde.breeze the combo's popup is a Menu
+    // with a ListView of its own on that delegateModel, and Qt 6.11 hands
+    // every view every row any of them makes (QQuickItemView::createdItem):
+    // a second list on the shared model kept rows it never asked for, lost
+    // them when the combo rebuilt the model on a change of
+    // playlistComboModel, and read one on its next wheel. Both Browse
+    // crashes of 2026-10-17 were that. tests/qml-storm/tst_ScanPageStorm.qml
+    // walks the list under those conditions; this pins the shape, since no
+    // style the suite runs shares the model.
+    function test_thePlaylistComboListHasRowsOfItsOwn() {
+        const scan = createTemporaryObject(fakeScanComponent, testCase);
+        namesFor(scan, 30, "Playlist ");
+        const page = createTemporaryObject(fakeScanPageComponent, testCase, {scanController: scan});
+        const combo = findChild(page, "playlistCombo");
+        waitForRendering(page);
+        mouseClick(combo);
+        tryVerify(() => combo.popup.opened, 3000, "opens");
+        const list = combo.popup.contentItem;
+        verify(list.model !== combo.delegateModel, "the list is not on the combo's delegateModel");
+        compare(list.model.length, page.playlistComboModel.length, "its rows are the page's own list");
+        compare(list.count, combo.count);
+    }
+
     // The text of every row in sight, as drawn: the window's own frame
     // (the popup is in its overlay), read under each row's name label,
     // must hold pixels unlike the row's ground beside it.

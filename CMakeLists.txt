@@ -1180,6 +1180,14 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # "Full stick backups" group on AppSettingsPage.
         target_compile_definitions(seabass_qml_tests PRIVATE
             $<$<BOOL:${SEABASS_EXPERIMENTAL}>:SEABASS_EXPERIMENTAL_BUILD>)
+        # ItemViewFixture reads a ListView's private bookkeeping, which is
+        # where the Browse wheel crash lived (tst_ScanPageStorm). Optional:
+        # a Qt without its private headers builds the suite without it.
+        find_package(Qt6 QUIET COMPONENTS QuickPrivate QmlModelsPrivate)
+        if(TARGET Qt6::QuickPrivate AND TARGET Qt6::QmlModelsPrivate)
+            target_link_libraries(seabass_qml_tests PRIVATE Qt6::QuickPrivate Qt6::QmlModelsPrivate)
+            target_compile_definitions(seabass_qml_tests PRIVATE SEABASS_HAVE_QUICK_PRIVATE=1)
+        endif()
 
         # The same shader the app carries, at the same URL -- see
         # src/gui/CMakeLists.txt. BASE drops the src/gui/ this target's
@@ -1376,7 +1384,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # runs it with a small default (3 seeds of 150 steps);
         # SEABASS_STORM_SEEDS, SEABASS_STORM_STEPS and
         # SEABASS_STORM_FIRST_SEED in the environment scale it for a
-        # nightly or a hunt, and -LE storm leaves it out.
+        # nightly or a hunt, and -LE storm leaves it out. The same lane
+        # holds tst_ScanPageStorm.qml, one page's lists wheel-scrolled
+        # while their rows change (the Browse crashes of 2026-10-17);
+        # SEABASS_PAGE_STORM_SCALE lengthens its walks the same way.
         if(SEABASS_XVFB_RUN)
             add_test(NAME seabass_qml_storm_tests
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"

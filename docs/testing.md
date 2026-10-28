@@ -577,6 +577,19 @@ length, `SEABASS_STORM_QUIT_STEPS` the quit leg's (0 leaves the leg
 out), and `SEABASS_STORM_FAILURES=<file>` appends one line per failing
 seed.
 
+`tst_ScanPageStorm.qml` in the same lane is the other kind of storm: one
+page, not the whole app. Browse's track list and the Matching panel's
+This Playlist list are wheel-scrolled while their rows change under
+them (staged edits, playlist switches, rescans, another track to match),
+at every moment the wheel can land relative to the model's signals. The
+check after each step is `ItemViewFixture` (`qml_test_main.cpp`), which
+reads the ListView's own record of delegates it holds without having
+asked for them and fails on one that has been destroyed, the read that
+was the Browse crashes of 2026-10-17; it needs Qt's private headers
+(`Qt6::QuickPrivate`), and without them the file only watches for the
+crash itself. Four minutes by default and ten at a hunt's length
+(`SEABASS_PAGE_STORM_SCALE=4`), which is why it is not in `tests/qml/`.
+
 **The sticks** are copies of the anonymized fixture, three per seed. They
 reach the app the way a real stick does, never by a side door: the media
 factory's locator lists them and a hotplug is announced through its

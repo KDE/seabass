@@ -4,6 +4,10 @@
 
 #include <QQmlContext>
 #include <QQmlEngine>
+#if SEABASS_HAVE_QUICK_PRIVATE
+#include <QtQmlModels/private/qqmlobjectmodel_p.h>
+#include <QtQuick/private/qquickitemview_p_p.h>
+#endif
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -2329,6 +2333,85 @@ private:
     int m_preparedStickTracks = 0;
 };
 
+#if SEABASS_HAVE_QUICK_PRIVATE
+// Reads a ListView's own bookkeeping of the delegates it holds without
+// having asked for them (QQuickItemViewPrivate::unrequestedItems). Both
+// Browse crashes of 2026-10-17 (02:12 and 16:57) read y() of an entry there
+// whose delegate was gone; this says whether such an entry exists, without
+// touching it: each delegate the view's model makes is watched through a
+// QPointer from the moment it is initialised.
+class ItemViewFixture : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool available READ available CONSTANT)
+public:
+    using QObject::QObject;
+    bool available() const { return true; }
+
+    Q_INVOKABLE bool watch(QQuickItem *view)
+    {
+        auto *itemView = qobject_cast<QQuickItemView *>(view);
+        if (!itemView) {
+            return false;
+        }
+        QQmlInstanceModel *model = QQuickItemViewPrivate::get(itemView)->model;
+        if (!model) {
+            return false;
+        }
+        connect(model, &QQmlInstanceModel::initItem, this, [this](int, QObject *object) {
+            if (auto *item = qobject_cast<QQuickItem *>(object)) {
+                m_made.insert(item, QPointer<QQuickItem>(item));
+            }
+        });
+        connect(model, &QQmlInstanceModel::createdItem, this, [this](int, QObject *object) {
+            if (auto *item = qobject_cast<QQuickItem *>(object)) {
+                m_made.insert(item, QPointer<QQuickItem>(item));
+            }
+        });
+        // A Menu's list holds its MenuItems through an ObjectModel, which
+        // makes nothing: its children are watched as they are put in.
+        if (auto *objects = qobject_cast<QQmlObjectModel *>(model)) {
+            const auto watchChildren = [this, objects]() {
+                for (int i = 0; i < objects->count(); ++i) {
+                    if (auto *item = qobject_cast<QQuickItem *>(objects->get(i))) {
+                        m_made.insert(item, QPointer<QQuickItem>(item));
+                    }
+                }
+            };
+            watchChildren();
+            connect(objects, &QQmlObjectModel::childrenChanged, this, watchChildren);
+        }
+        return true;
+    }
+    Q_INVOKABLE int unrequestedCount(QQuickItem *view) const
+    {
+        auto *itemView = qobject_cast<QQuickItemView *>(view);
+        return itemView ? static_cast<int>(QQuickItemViewPrivate::get(itemView)->unrequestedItems.size()) : -1;
+    }
+    // Entries whose delegate has been destroyed and that still carry a row
+    // (an index of 0 or more): the next refill calls y() on each of them.
+    Q_INVOKABLE int deadUnrequested(QQuickItem *view) const
+    {
+        auto *itemView = qobject_cast<QQuickItemView *>(view);
+        if (!itemView) {
+            return -1;
+        }
+        int dead = 0;
+        const auto &unrequested = QQuickItemViewPrivate::get(itemView)->unrequestedItems;
+        for (auto it = unrequested.cbegin(); it != unrequested.cend(); ++it) {
+            const auto made = m_made.constFind(it.key());
+            if (made != m_made.cend() && made->isNull() && it.value() >= 0) {
+                ++dead;
+            }
+        }
+        return dead;
+    }
+
+private:
+    QHash<QQuickItem *, QPointer<QQuickItem>> m_made;
+};
+#endif
+
 class Setup : public QObject
 {
     Q_OBJECT
@@ -2695,6 +2778,11 @@ void seedMetadataStoreForTests()
         }
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
         engine->rootContext()->setContextProperty(QStringLiteral("stormFixture"), new StormFixture(engine));
+#if SEABASS_HAVE_QUICK_PRIVATE
+        engine->rootContext()->setContextProperty(QStringLiteral("itemViewFixture"), new ItemViewFixture(engine));
+#else
+        engine->rootContext()->setContextProperty(QStringLiteral("itemViewFixture"), QVariant());
+#endif
         if (s_stormQuitLeg) {
             // The storm's quit leg is the app's ending on trial: fixtures
             // whose teardown waits for the workers would stand in for it.

@@ -409,7 +409,21 @@ ColumnLayout {
                     contentItem: ListView {
                         clip: true
                         implicitHeight: contentHeight
-                        model: playlistCombo.popup.visible ? playlistCombo.delegateModel : null
+                        // Rows of its own, not the combo's delegateModel.
+                        // Under org.kde.breeze (Plasma's style) that model
+                        // has other ListViews on it besides this one, and Qt
+                        // 6.11 hands every view a row any one of them made
+                        // (QQuickItemView::createdItem): this list kept rows
+                        // it never asked for in its unrequestedItems, never
+                        // heard when they were destroyed (the combo makes a
+                        // new delegateModel and deletes the old one whenever
+                        // playlistComboModel changes; the list leaves the
+                        // model while the popup is shut), and its next scroll
+                        // called y() on one that was gone. Both Browse
+                        // crashes of 2026-10-17 (02:12 and 16:57) were this
+                        // list: 320 high, 33 rows, a model it did not own,
+                        // a dead row 30 (tst_ScanPageStorm reproduces it).
+                        model: playlistCombo.popup.visible ? root.playlistComboModel : null
                         // A custom popup replaces the default wiring that
                         // would otherwise apply ComboBox's own `delegate:`
                         // automatically -- without this, the popup sizes
