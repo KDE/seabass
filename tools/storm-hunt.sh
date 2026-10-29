@@ -39,6 +39,10 @@ mkdir -p "$out"
 # The environment ctest runs the storm with, and nothing of this shell's
 # that could let a real stick in: SEABASS_IGNORE_REMOVABLE_MEDIA must be in it.
 env_file="$out/storm.env"
+if ! (cd "$build" && ctest -N -R '^seabass_qml_storm_tests$') | grep -q 'seabass_qml_storm_tests'; then
+    echo "storm-hunt: $build does not register seabass_qml_storm_tests; configure it with -DSEABASS_STORM_TESTS=ON" >&2
+    exit 2
+fi
 (cd "$build" && ctest -N -V -R '^seabass_qml_storm_tests$') \
     | sed -n '/Environment variables:/,/Test #/p' | sed -n 's/^[0-9]*:  //p' > "$env_file"
 if ! grep -q '^SEABASS_IGNORE_REMOVABLE_MEDIA=1$' "$env_file"; then

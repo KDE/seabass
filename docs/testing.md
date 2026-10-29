@@ -18,6 +18,8 @@ A bare `ctest` runs **every** registered test. A CTest label does not
 exclude anything by itself; only an explicit `-LE` does. (This section
 used to say the opposite -- that a bare `ctest` skipped the integration
 suite -- which was wrong in the direction that makes you run work twice.)
+The one test a default configure does not register is the storm lane,
+which takes `-DSEABASS_STORM_TESTS=ON` (see "The storm").
 
 ### `ctest` does not build, and a green suite does not mean your tree is green
 
@@ -560,16 +562,24 @@ reach: two things happening at once that nobody thought to put side by
 side.
 
 ```
-ctest -R seabass_qml_storm_tests                       # 3 seeds of 150 steps, a few minutes
+cmake -DSEABASS_STORM_TESTS=ON <build>                 # register it; a default configure does not
+ctest -R seabass_qml_storm_tests                       # 3 seeds of 150 steps and the page storm, six minutes
 SEABASS_STORM_FIRST_SEED=17 SEABASS_STORM_SEEDS=1 SEABASS_STORM_VERBOSE=1 \
     ctest -R seabass_qml_storm_tests -V                # replay one seed, step by step
 tools/storm-hunt.sh <build> <out> 1 200 4              # a hunt: 200 seeds in 4 processes
 ctest -LE storm                                        # everything else
 ```
 
-A bare `ctest` runs it, as it runs everything (see above); its default
-fits the ten minutes it is given, which is also why a hunt does not go
-through `ctest` (a `TIMEOUT` property is not raised by `ctest --timeout`).
+The lane is opt-in: `SEABASS_STORM_TESTS` is OFF by default, so a bare
+`ctest` on a default configure runs everything but the storm, and on
+Invent only the nightly and a release tag register it (`.gitlab-ci.yml`
+sets the option from the pipeline's rules). Until 2026-10-29 every push
+ran it too, and once the page storm joined the lane that cost each push
+eight minutes on the shared runner and, one evening, the whole job to a
+timeout. A hunt is minutes to hours of walks, so it is for a build on your
+own machine with the option on. The default fits the twenty minutes it
+is given, which is also why a hunt does not go through `ctest` (a
+`TIMEOUT` property is not raised by `ctest --timeout`).
 `tools/storm-hunt.sh` runs the same binary with the environment ctest
 gives the test, read from `ctest -N -V`, and refuses to start if that
 environment lets real sticks in. `SEABASS_STORM_STEPS` sets the walk's

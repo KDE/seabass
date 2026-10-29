@@ -208,9 +208,13 @@ endif()
 # a test into a skip. SEABASS_TESTS=OFF is the one way to build without
 # the suite, and it is recorded in CMakeCache.txt -- the exception is
 # always somebody's stated choice, never an accident of what happened to
-# be installed on the machine.
+# be installed on the machine. The storm lane is the other stated choice:
+# minutes of seeded walks that belong to a nightly or a hunt, not to every
+# ctest, so it is registered only when asked for (docs/testing.md "The
+# storm").
 option(SEABASS_GUI "Build the Qt GUI (requires Qt6)" ON)
 option(SEABASS_TESTS "Build and run the test suite" ON)
+option(SEABASS_STORM_TESTS "Also register the storm lane (tests/qml-storm) with ctest; minutes long, for nightlies and hunts" OFF)
 
 # System zlib, used to compress local cue-backup snapshots and full
 # metadata backups before they hit disk (see infrastructure/compression/).
@@ -1380,22 +1384,29 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # real Main.qml walked through sticks going in and out, pages
         # opened, cancelled and left, reads held or failing, and saves a
         # stick is pulled out of, seed by seed, then quit in a process of
-        # its own. Same binary and display as the suite above. A bare ctest
+        # its own. Same binary and display as the suite above. Registered
+        # only with SEABASS_STORM_TESTS=ON (the nightly and a local hunt;
+        # not a push's pipeline, not a bare local ctest), and then ctest
         # runs it with a small default (3 seeds of 150 steps);
         # SEABASS_STORM_SEEDS, SEABASS_STORM_STEPS and
-        # SEABASS_STORM_FIRST_SEED in the environment scale it for a
-        # nightly or a hunt, and -LE storm leaves it out. The same lane
-        # holds tst_ScanPageStorm.qml, one page's lists wheel-scrolled
-        # while their rows change (the Browse crashes of 2026-10-17);
-        # SEABASS_PAGE_STORM_SCALE lengthens its walks the same way.
-        if(SEABASS_XVFB_RUN)
+        # SEABASS_STORM_FIRST_SEED in the environment scale it, and
+        # -LE storm leaves it out. The same lane holds
+        # tst_ScanPageStorm.qml, one page's lists wheel-scrolled while
+        # their rows change (the Browse crashes of 2026-10-17);
+        # SEABASS_PAGE_STORM_SCALE lengthens its walks the same way. The
+        # lane takes about eight minutes on Invent's general-runner (half
+        # of it that file), so the limit leaves room for a slow one: at
+        # 600 it timed out there on 2026-10-28.
+        if(NOT SEABASS_STORM_TESTS)
+            message(STATUS "SEABASS_STORM_TESTS is OFF: the storm lane (tests/qml-storm) is not registered.")
+        elseif(SEABASS_XVFB_RUN)
             add_test(NAME seabass_qml_storm_tests
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
                     $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
             set_tests_properties(seabass_qml_storm_tests PROPERTIES
                 ENVIRONMENT "${_seabass_qml_test_env}"
                 LABELS "storm"
-                TIMEOUT 600
+                TIMEOUT 1200
                 RESOURCE_LOCK xvfb)
         elseif(WIN32)
             # Windows has no xvfb and needs none: the storm runs in a real

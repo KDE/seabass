@@ -776,12 +776,15 @@ linux:build-test:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       variables:
         CTEST_LABEL_ARGS: ""
+        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
     - if: '$CI_COMMIT_TAG'
       variables:
         CTEST_LABEL_ARGS: ""
+        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
     - when: on_success
       variables:
         CTEST_LABEL_ARGS: "-LE integration"
+        SEABASS_STORM_CMAKE: ""
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
     # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
@@ -813,11 +816,16 @@ linux:build-test:
     # have "proved" the flag was worthless for the wrong reason. If
     # anyone tries again, the knob is CMAKE_CXX_FLAGS_RELEASE and the
     # check is compile_commands.json.
+    # The storm lane (SEABASS_STORM_CMAKE, set by the rules above) is
+    # registered on the nightly and on a tag only: eight minutes of seeded
+    # walks that a push's gate does not need to wait for, and that timed
+    # this job out on 2026-10-28 when every push ran them.
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
       -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      $SEABASS_STORM_CMAKE
     # How much machine this container actually has, printed before it is
     # used. `nproc` on a shared runner reports the HOST's cores, not the
     # cgroup's quota, and Ninja's default job count is nproc + 2 -- so a
@@ -921,12 +929,15 @@ linux:qt68:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       variables:
         CTEST_LABEL_ARGS: ""
+        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
     - if: '$CI_COMMIT_TAG'
       variables:
         CTEST_LABEL_ARGS: ""
+        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
     - when: on_success
       variables:
         CTEST_LABEL_ARGS: "-LE integration"
+        SEABASS_STORM_CMAKE: ""
   script:
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64"
@@ -934,6 +945,7 @@ linux:qt68:
       -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      $SEABASS_STORM_CMAKE
     # Not Ubuntu's: configure must have found the Qt asked for.
     - grep -q "Qt6Core_DIR:PATH=$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64" build/CMakeCache.txt
     - |
