@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 import "PixelScale.js" as PixelScale
@@ -295,5 +296,83 @@ TestCase {
         tryVerify(() => row.hovered && Qt.colorEqual(row.color, Theme.rowHover), 1000, "shaded under the title: " + row.color);
         mouseMove(testCase, testCase.width - 2, testCase.height - 2);
         tryVerify(() => !row.hovered, 1000, "not once the pointer has gone");
+    }
+
+    // Stands in for PlaybackController: what the play key reads, and the
+    // one call it makes itself.
+    Component {
+        id: fakePlayerComponent
+        QtObject {
+            property bool hasTrack: false
+            property string currentFormat: ""
+            property string currentSourceId: ""
+            property string currentLibraryPath: ""
+            property bool playing: false
+            property int toggles: 0
+            function togglePlay() { toggles++; playing = !playing; }
+        }
+    }
+
+    // The play key on the cover: there only with a player and a track to
+    // name, shown on hover and while it is the track loaded, and disabled,
+    // saying why, where the file is not to hand.
+    function test_thePlayKey() {
+        const player = createTemporaryObject(fakePlayerComponent, testCase);
+        const source = {format: "backup", libraryPath: "", sourceId: "backup:7"};
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, y: 10, playSource: source, playUnavailableText: "Plug in HOME to play this track",
+        });
+        let requests = 0;
+        row.playRequested.connect(() => requests++);
+        waitForRendering(row);
+        const key = findChild(row, "rowPlayButton");
+        const cover = findChild(row, "rowArtwork").parent;
+        verify(key !== null);
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryVerify(() => row.hovered, 1000);
+        compare(key.visible, false, "no player, no key");
+
+        row.playbackController = player;
+        compare(key.visible, true, "hovered, with a player and a track to name");
+        compare(key.enabled, false, "but no file to play");
+        tryVerify(() => cover.ToolTip.visible, 2000);
+        compare(cover.ToolTip.text, "Plug in HOME to play this track", "and it says what would make it playable");
+        mouseClick(key);
+        compare(requests, 0, "a disabled key asks for nothing");
+
+        row.playFilePath = "/stick/Contents/track.mp3";
+        compare(key.enabled, true);
+        compare(cover.ToolTip.text, "Play this track, with its cues marked in the player");
+        mouseClick(key);
+        compare(requests, 1, "the page is asked to load it");
+        compare(player.toggles, 0);
+
+        row.playSource = {};
+        compare(key.visible, false, "nothing to name it by, no key");
+        row.playSource = source;
+
+        mouseMove(testCase, testCase.width - 2, testCase.height - 2);
+        tryVerify(() => !row.hovered, 1000);
+        compare(key.visible, false, "hidden once the pointer has gone");
+
+        // Loaded: shown without the pointer, as a pause key, and even with
+        // the file gone from under it the key still pauses what plays.
+        player.hasTrack = true;
+        player.currentFormat = "backup";
+        player.currentSourceId = "backup:7";
+        player.playing = true;
+        compare(key.visible, true, "shown while it is the track loaded");
+        compare(key.text, "Pause");
+        row.playFilePath = "";
+        compare(key.enabled, true);
+        mouseClick(key);
+        compare(player.toggles, 1, "pressing it pauses");
+        compare(requests, 1, "rather than loading it again");
+        compare(key.text, "Play");
+
+        // Another library's track with the same id is not this one.
+        player.currentLibraryPath = "/stick/PIONEER";
+        compare(row.isCurrentTrack, false);
+        compare(key.visible, false);
     }
 }

@@ -10,11 +10,14 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <filesystem>
+#include <system_error>
 #include <vector>
 
 #include "domain/track.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
+#include "gui/stick_path.hpp"
 
 namespace seabass::gui
 {
@@ -132,6 +135,52 @@ inline QVariantMap metadataWaveformSource(const domain::Track &stickTrack, const
         {QStringLiteral("libraryPath"), catalogQtPathForFormat(libraryPath, catalogRow->format)},
         {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
     };
+}
+
+// Where a stored track's audio file is now, or empty when no stick that
+// is plugged in has it. The backup holds no audio, so a stored row plays
+// from a stick: first the one it was backed up from, by label, then any
+// other, because a clone or a second stick with the same export keeps the
+// folders and not the label. `libraries` is one {label, catalogPath} per
+// stick with a library on it.
+//
+// A stat per stick: for the row under the pointer or the open one, never
+// for a whole list.
+inline QString storedTrackFileOnSticks(const QString &relativePath, const QString &stickLabel,
+                                       const QVariantList &libraries)
+{
+    if (relativePath.isEmpty()) {
+        return {};
+    }
+    // The store keeps stick-relative paths (stickRelativePath refuses the
+    // rest), and anything else would name a file off the stick.
+    const std::filesystem::path relative = pathFromQString(relativePath);
+    if (relative.has_root_path()) {
+        return {};
+    }
+    for (const auto &part : relative) {
+        if (part == "..") {
+            return {};
+        }
+    }
+    for (const bool sameLabel : {true, false}) {
+        for (const QVariant &entry : libraries) {
+            const QVariantMap library = entry.toMap();
+            if ((library.value(QStringLiteral("label")).toString() == stickLabel) != sameLabel) {
+                continue;
+            }
+            const QString root = stickRootOf(library.value(QStringLiteral("catalogPath")).toString());
+            if (root.isEmpty()) {
+                continue;
+            }
+            const std::filesystem::path file = pathFromQString(root) / relative;
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(file, ec)) {
+                return pathToQString(file);
+            }
+        }
+    }
+    return {};
 }
 
 }  // namespace seabass::gui

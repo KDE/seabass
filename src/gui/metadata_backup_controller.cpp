@@ -1045,6 +1045,12 @@ QVariantMap MetadataBackupController::waveformSourceAt(int row) const
                                   m_sourceLibraryPath);
 }
 
+QString MetadataBackupController::storedTrackFile(const QString &relativePath, const QString &stickLabel,
+                                                  const QVariantList &libraries) const
+{
+    return storedTrackFileOnSticks(relativePath, stickLabel, libraries);
+}
+
 QStringList MetadataBackupController::playlistsFor(qint64 trackId)
 {
     QStringList names;

@@ -525,6 +525,25 @@ public:
         return m_roots.last();
     }
 
+    // An empty directory of the test's own, removed with the fixture, for
+    // a test that lays out a stick by hand (makeDirectory, touchNew).
+    Q_INVOKABLE QString scratchDirectory()
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        static std::atomic<int> made{0};
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_scratch_" + std::to_string(QCoreApplication::applicationPid()) + "_"
+               + std::to_string(made++));
+        fs::remove_all(root, ec);
+        fs::create_directories(root, ec);
+        if (ec) {
+            return {};
+        }
+        m_roots.append(seabass::gui::pathToQString(root));
+        return m_roots.last();
+    }
+
     // stickCopy, with one real cover under the stick's PIONEER/Artwork that
     // every Engine track names (the anonymized fixture has its art
     // stripped): the Engine reader's AlbumArt.hash route, as Engine DJ's

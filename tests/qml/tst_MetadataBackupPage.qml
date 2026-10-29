@@ -520,6 +520,145 @@ TestCase {
         }
     }
 
+    // ---- playing a row ------------------------------------------------------
+
+    // Stands in for PlaybackController: records what it is asked to load,
+    // and then reports that track as the one loaded, as the real one does.
+    Component {
+        id: fakePlayerComponent
+        QtObject {
+            property bool hasTrack: false
+            property string currentFormat: ""
+            property string currentSourceId: ""
+            property string currentLibraryPath: ""
+            property bool playing: false
+            property var loads: []
+            function load(format, libraryPath, sourceId, filePath, title, artist, artworkPath, cues) {
+                loads = loads.concat([{format: format, libraryPath: libraryPath, sourceId: sourceId,
+                                       filePath: filePath, title: title, artist: artist, cues: cues}]);
+                hasTrack = true;
+                currentFormat = format;
+                currentSourceId = sourceId;
+                currentLibraryPath = libraryPath;
+                playing = true;
+            }
+            function togglePlay() { playing = !playing; }
+            function waveformFor(format, libraryPath, sourceId) { return []; }
+        }
+    }
+
+    // The media controller's stick list, as much of it as the page reads.
+    Component {
+        id: fakeSticksComponent
+        QtObject {
+            property var rows: []
+            readonly property int count: rows.length
+            signal countsChanged()
+            function get(i) { return rows[i]; }
+        }
+    }
+
+    function hoverRow(page, row) {
+        mouseMove(page, 1, 1);
+        tryVerify(() => !row.hovered, 1000);
+        mouseMove(row, row.width / 2, row.height / 2);
+        tryVerify(() => row.hovered, 1000);
+    }
+
+    // The backup holds no audio, so a stored row plays from a stick that
+    // has its file, with the backup's own cues handed to the player. While
+    // no stick has it, the key is there but disabled, and names the stick
+    // to plug in.
+    function test_aStoredRowPlaysFromAStickThatHasItsFile() {
+        const scratch = stickFixture.scratchDirectory();
+        verify(scratch.length > 0);
+        const stick = scratch + "/SEEDED";
+        verify(stickFixture.makeDirectory(stick + "/PIONEER"));
+        const sticks = createTemporaryObject(fakeSticksComponent, testCase, {rows: [{
+            label: "SEEDED", hasRekordbox: true, hasEngine: false, libraryId: "seeded",
+            rekordboxPath: stick + "/PIONEER", enginePath: "",
+        }]});
+        const player = createTemporaryObject(fakePlayerComponent, testCase);
+        const page = makeShowingTheStore({mediaController: {sticks: sticks}, playbackController: player});
+        const list = findChild(page, "storedTrackList");
+        // The harness's seeded track, backed up from SEEDED at
+        // Contents/seed-0.mp3. Found by title: other cases leave rows in
+        // the store that can sort ahead of it.
+        let row = null;
+        for (let i = 0; i < list.count && row === null; ++i) {
+            list.positionViewAtIndex(i, ListView.Contain);
+            const candidate = list.itemAtIndex(i);
+            if (candidate && candidate.title === "Seeded Track 1") {
+                row = candidate;
+            }
+        }
+        verify(row !== null, "the harness seeds this track");
+        compare(row.relativePath, "Contents/seed-0.mp3");
+        compare(row.stickLabel, "SEEDED");
+        const key = findChild(row, "rowPlayButton");
+        mouseMove(page, 1, 1);
+        tryVerify(() => !row.hovered, 1000);
+        compare(key.visible, false, "no key until the row is hovered");
+
+        hoverRow(page, row);
+        compare(key.visible, true);
+        compare(key.enabled, false, "SEEDED is plugged in but does not have the file");
+        compare(row.playUnavailableText, "Plug in SEEDED to play this track");
+
+        verify(stickFixture.makeDirectory(stick + "/Contents"));
+        verify(stickFixture.touchNew(stick + "/Contents/seed-0.mp3"));
+        hoverRow(page, row);
+        compare(key.enabled, true, "looked for again on the next hover, and found");
+        mouseClick(key);
+        compare(player.loads.length, 1);
+        const loaded = player.loads[0];
+        compare(loaded.filePath, stick + "/Contents/seed-0.mp3");
+        compare(loaded.format, "backup");
+        compare(loaded.sourceId, "backup:" + row.trackId);
+        compare(loaded.title, "Seeded Track 1");
+        compare(loaded.cues.length, row.cueCount, "the backup's cues, which are what the row is about");
+        compare(loaded.cues[0].positionMs, 1000);
+        compare(loaded.cues[0].kind, "hot");
+        compare(key.text, "Pause", "the loaded row's key pauses it");
+        mouseMove(page, 1, 1);
+        tryVerify(() => !row.hovered, 1000);
+        compare(key.visible, true, "and stays up while it is the track loaded");
+    }
+
+    // A stick's row plays the stick's file as the catalog row its waveform
+    // comes from, with the stick's cues.
+    function test_aStickRowPlaysAsItsCatalogRow() {
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        const stick = stickFixture.stickCopy(fixture);
+        verify(stick.length > 0, "the fixture copy must be made");
+        const player = createTemporaryObject(fakePlayerComponent, testCase);
+        const page = make({
+            stickLabel: "FIXTURE",
+            rekordboxPath: stick + "/PIONEER",
+            enginePath: stick + "/Engine Library",
+            playbackController: player,
+        });
+        const list = findChild(page, "proposalList");
+        tryVerify(() => !page.busy && list.visible && list.count > 0, 60000, "the stick must be read");
+        waitForRendering(page);
+        const row = list.itemAtIndex(0);
+        const key = findChild(row, "rowPlayButton");
+        hoverRow(page, row);
+        compare(key.visible, true);
+        compare(key.enabled, true);
+        mouseClick(key);
+        compare(player.loads.length, 1);
+        const loaded = player.loads[0];
+        const source = row.playSource;
+        verify(source.format === "rekordbox" || source.format === "engine", "a catalog row: " + source.format);
+        compare(loaded.format, source.format);
+        compare(loaded.libraryPath, source.libraryPath);
+        compare(loaded.sourceId, source.sourceId);
+        compare(loaded.filePath, row.relativePath, "the stick's own path, which the row holds");
+        compare(loaded.cues.length, row.cues.length, "the stick's cues");
+    }
+
     PlaybackController { id: realPlayer }
 
     function test_screenshot() {

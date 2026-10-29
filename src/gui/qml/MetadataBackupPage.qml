@@ -83,6 +83,7 @@ Page {
             // is: the other entries are sticks, and "the database on this
             // computer" is the distinction that matters when choosing.
             name: "Local Cue backup database",
+            label: "",
             isStore: true,
             catalogPath: "",
             rekordboxPath: "",
@@ -101,6 +102,7 @@ Page {
                 seen[path] = true;
                 list.push({
                     name: "USB Stick " + stick.label,
+                    label: stick.label,
                     isStore: false,
                     catalogPath: path,
                     rekordboxPath: stick.rekordboxPath,
@@ -117,6 +119,7 @@ Page {
             seen[root.libraryPath] = true;
             list.push({
                 name: "USB Stick " + root.stickLabel,
+                label: root.stickLabel,
                 isStore: false,
                 catalogPath: root.libraryPath,
                 rekordboxPath: root.rekordboxPath,
@@ -135,6 +138,8 @@ Page {
             && !seen[controller.sourceLibraryPath]) {
             list.push({
                 name: "USB Stick " + controller.sourceStickLabel + " (not connected)",
+                label: controller.sourceStickLabel,
+                connected: false,
                 isStore: false,
                 catalogPath: controller.sourceLibraryPath,
                 rekordboxPath: controller.sourceLibraryPath,
@@ -143,7 +148,15 @@ Page {
             });
         }
         root.sourceModel = list;
+        // Where a stored row's file may be: every stick the picker offers
+        // that is still there.
+        root.stickLibraries = list.filter(entry => !entry.isStore && entry.connected !== false)
+            .map(entry => ({ label: entry.label, catalogPath: entry.catalogPath }));
     }
+
+    // {label, catalogPath} per plugged-in stick with a library, for
+    // controller.storedTrackFile().
+    property var stickLibraries: []
 
     Component.onCompleted: {
         root.rebuildSourceModel();
@@ -400,7 +413,7 @@ Page {
                         ? controller.browseStore()
                         : controller.selectStick(entry.rekordboxPath.length > 0 ? entry.rekordboxPath
                                                                                 : entry.enginePath,
-                                                 entry.libraryId, entry.name);
+                                                 entry.libraryId, entry.label);
                     if (!accepted) {
                         switchSourceDialog.pendingEntry = entry;
                         switchSourceDialog.open();
@@ -701,6 +714,23 @@ Page {
                                                 controller.waveformSourceAt(proposalRow.index))
                     : []
                 waveformMissingText: "No waveform on the stick for this track"
+                // Played from the stick, as the catalog row the waveform
+                // comes from, so the player reads its beat grid too. A
+                // track only OneLibrary lists has no such row and plays
+                // as its file.
+                playbackController: root.playbackController
+                playSource: {
+                    const source = controller.waveformSourceAt(proposalRow.index);
+                    return source.format
+                        ? source
+                        : { format: "onelibrary", libraryPath: controller.sourceLibraryPath,
+                            sourceId: proposalRow.relativePath };
+                }
+                playFilePath: proposalRow.relativePath
+                onPlayRequested: root.playbackController.load(
+                    proposalRow.playSource.format, proposalRow.playSource.libraryPath,
+                    proposalRow.playSource.sourceId, proposalRow.playFilePath, proposalRow.title,
+                    proposalRow.artist, proposalRow.artworkUrl, proposalRow.cues)
                 // What the badge counts is not what is on the track but
                 // what a backup would change about it, and on a track
                 // the store already partly holds those are different
@@ -816,6 +846,25 @@ Page {
                 waveformCues: trackRow.openCues ? trackRow.openCues.cues : []
                 waveformDurationMs: trackRow.durationMs
                 waveformMissingText: "Waveform not part of backup"
+                // The backup holds no audio, so a stored row plays from a
+                // stick that has its file, looked for only for the row
+                // under the pointer or the open one. No catalog row
+                // stands behind it: the player gets the backup's cues and
+                // reads no analysis, and the row's own store id names it.
+                playbackController: root.playbackController
+                playSource: ({ format: "backup", libraryPath: "", sourceId: "backup:" + trackRow.trackId })
+                playFilePath: root.playbackController && (trackRow.hovered || trackRow.expanded)
+                    ? controller.storedTrackFile(trackRow.relativePath, trackRow.stickLabel, root.stickLibraries)
+                    : ""
+                playUnavailableText: trackRow.stickLabel.length > 0
+                    ? "Plug in " + trackRow.stickLabel + " to play this track"
+                    : "Plug in a stick with this track on it to play it"
+                onPlayRequested: {
+                    const detail = trackRow.openCues ? trackRow.openCues : controller.cueDetailFor(trackRow.trackId);
+                    root.playbackController.load(trackRow.playSource.format, trackRow.playSource.libraryPath,
+                        trackRow.playSource.sourceId, trackRow.playFilePath, trackRow.title, trackRow.artist,
+                        trackRow.artworkUrl, detail.cues || []);
+                }
                 // Fetched for the row the pointer is over, or the one
                 // that is open, and for no others. The list is paged
                 // precisely so that showing twenty rows costs twenty
@@ -973,7 +1022,7 @@ Page {
             } else {
                 controller.discardStagingAndSelectStick(
                     entry.rekordboxPath.length > 0 ? entry.rekordboxPath : entry.enginePath,
-                    entry.libraryId, entry.name);
+                    entry.libraryId, entry.label);
             }
         }
         onRejected: switchSourceDialog.pendingEntry = null

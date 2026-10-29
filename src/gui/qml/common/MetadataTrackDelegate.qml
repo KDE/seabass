@@ -137,6 +137,26 @@ Rectangle {
         return player.waveformFor(source.format, source.libraryPath, source.sourceId);
     }
 
+    // ---- playing it ----------------------------------------------------
+    // A play key on the cover, so the cues the row is about can be heard
+    // where they are: the player's waveform and ring mark them while it
+    // plays. Shown while the row is hovered, and while it is the track
+    // loaded, as a pause key then. No player or no playSource, no key.
+    property var playbackController: null
+    // Who the track is to the player, {format, libraryPath, sourceId}: what
+    // the page hands load(), and how this row knows it is the one loaded.
+    property var playSource: ({})
+    // The audio file, or empty where it cannot be played from here. The
+    // key is then shown disabled, and hovering it says playUnavailableText.
+    property string playFilePath: ""
+    property string playUnavailableText: ""
+    readonly property bool isCurrentTrack: delegate.playbackController !== null
+        && delegate.playbackController.hasTrack
+        && (delegate.playSource.format || "").length > 0
+        && delegate.playbackController.currentFormat === delegate.playSource.format
+        && delegate.playbackController.currentSourceId === (delegate.playSource.sourceId || "")
+        && delegate.playbackController.currentLibraryPath === (delegate.playSource.libraryPath || "")
+
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with
     // the title like they are. Only shown while expanded.
@@ -150,6 +170,9 @@ Rectangle {
 
     signal selectionToggled(bool selected)
     signal expandToggled()
+    // The play key, pressed on a row that is not the track loaded. The
+    // page loads it: the cues it hands the player are the page's to read.
+    signal playRequested()
 
     component DetailLabel: Label {
         color: Theme.textMuted
@@ -239,6 +262,54 @@ Rectangle {
                     anchors.fill: parent
                     source: delegate.artworkUrl
                     asynchronous: true
+                }
+                // On the tile rather than the key: a disabled key gets no
+                // hover, and that is the one that most needs explaining.
+                HoverHandler { id: coverHover }
+                ToolTip.visible: coverHover.hovered && playKey.visible
+                ToolTip.delay: 400
+                ToolTip.text: delegate.isCurrentTrack
+                    ? (delegate.playbackController.playing ? "Pause" : "Play")
+                    : (playKey.enabled ? "Play this track, with its cues marked in the player"
+                                       : delegate.playUnavailableText)
+
+                ToolButton {
+                    id: playKey
+                    objectName: "rowPlayButton"
+                    anchors.fill: parent
+                    // Every side, not `padding`: a style that sets a side itself
+                    // (FluentWinUI3 does) wins over it, and moved this off the line.
+                    leftPadding: 0
+                    rightPadding: 0
+                    topPadding: 0
+                    bottomPadding: 0
+                    display: AbstractButton.IconOnly
+                    text: delegate.isCurrentTrack && delegate.playbackController.playing ? "Pause" : "Play"
+                    visible: delegate.playbackController !== null && (delegate.playSource.format || "").length > 0
+                        && (delegate.hovered || delegate.isCurrentTrack)
+                    enabled: delegate.isCurrentTrack || delegate.playFilePath.length > 0
+                    contentItem: Item {
+                        SeabassIcon {
+                            anchors.centerIn: parent
+                            iconName: delegate.isCurrentTrack && delegate.playbackController.playing
+                                ? "media-playback-pause" : "media-playback-start"
+                            size: Theme.iconSizeSmall * 0.6
+                            color: "white"
+                            opacity: playKey.enabled ? 1 : 0.4
+                        }
+                    }
+                    background: Rectangle {
+                        radius: artworkTile.radius
+                        color: "black"
+                        opacity: playKey.hovered ? 0.55 : 0.4
+                    }
+                    onClicked: {
+                        if (delegate.isCurrentTrack) {
+                            delegate.playbackController.togglePlay();
+                            return;
+                        }
+                        delegate.playRequested();
+                    }
                 }
             }
 

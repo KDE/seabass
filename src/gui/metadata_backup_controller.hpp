@@ -380,6 +380,11 @@ public:
     // only a stick's analysis can supply one. Called by a row when it is
     // opened, never for the whole list.
     Q_INVOKABLE QVariantMap waveformSourceAt(int row) const;
+    // Where a stored row's audio file is on a plugged-in stick, or empty:
+    // see storedTrackFileOnSticks(). Asked by the row under the pointer or
+    // the open one, so the stat never runs for the whole list.
+    Q_INVOKABLE QString storedTrackFile(const QString &relativePath, const QString &stickLabel,
+                                        const QVariantList &libraries) const;
     // Every cue on one line each, for the hover tooltip on a closed
     // browse row's cue badge (an open one has cueDetailFor's). Called on
     // hover rather than per row: the browse

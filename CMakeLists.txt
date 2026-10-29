@@ -2804,6 +2804,13 @@ if(TARGET seabass_edit)
     add_test(NAME metadata_backup_select_all_test COMMAND metadata_backup_select_all_test)
     set_tests_properties(metadata_backup_select_all_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Metadata Backup plays a stored row from a stick that has its file:
+    # the stick it came from first, then any other.
+    add_executable(stored_track_file_test tests/stored_track_file_test.cpp)
+    target_include_directories(stored_track_file_test PRIVATE src tests)
+    target_link_libraries(stored_track_file_test PRIVATE seabass_edit Qt6::Core Qt6::Test)
+    add_test(NAME stored_track_file_test COMMAND stored_track_file_test)
+
     add_executable(playlist_diff_controller_test
         src/gui/playlist_diff_controller.cpp
         src/gui/stick_events.cpp
