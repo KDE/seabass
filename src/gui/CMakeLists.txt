@@ -540,7 +540,11 @@ if(UNIX AND NOT APPLE)
     # Flathub show about the app, and what AppImage tooling reads for its
     # name and summary. Its id and launchable match the desktop file.
     install(FILES org.kde.seabass.metainfo.xml DESTINATION share/metainfo)
-    install(FILES qml/icons/seabass_icon.png
-        DESTINATION share/icons/hicolor/1024x1024/apps
-        RENAME org.kde.seabass.png)
+    # One file per size hicolor's index.theme lists: an icon in a size
+    # directory the theme does not list (1024x1024) is never looked up.
+    foreach(size 16 22 24 32 48 64 128 256 512)
+        install(FILES linux/hicolor/${size}x${size}.png
+            DESTINATION share/icons/hicolor/${size}x${size}/apps
+            RENAME org.kde.seabass.png)
+    endforeach()
 endif()

@@ -26,8 +26,13 @@ What it writes:
                                             watermark show.
   * src/gui/qml/icons/seabass_icon.png   -- 1024 x 1024, the fish spanning
                                             the width as in Nuno's icon:
-                                            the window and taskbar icon,
-                                            and the hicolor icon on Linux.
+                                            the window and taskbar icon.
+  * src/gui/linux/hicolor/NxN.png        -- the same, at the sizes the
+                                            hicolor theme lists (16 to
+                                            512): the installed icon on
+                                            Linux. hicolor has no 1024
+                                            directory, so a lone 1024 icon
+                                            is never found.
   * src/gui/win/app_icon.ico             -- the .exe icon on Windows.
   * src/gui/mac/app_icon.icns            -- the app bundle icon on macOS.
 
@@ -61,6 +66,9 @@ MASCOT = ROOT / "src/gui/qml/icons/seabass_mascot.png"
 SQUARE = ROOT / "src/gui/qml/icons/seabass_icon.png"
 ICO = ROOT / "src/gui/win/app_icon.ico"
 ICNS = ROOT / "src/gui/mac/app_icon.icns"
+HICOLOR = ROOT / "src/gui/linux/hicolor"
+# The fixed-size app directories of hicolor's index.theme.
+HICOLOR_SIZES = (16, 22, 24, 32, 48, 64, 128, 256, 512)
 
 MASCOT_WIDTH = 1024
 SIDE = 1024
@@ -97,7 +105,11 @@ def main() -> None:
     icon.save(SQUARE, optimize=True)
     icon.save(ICO, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     icon.save(ICNS, sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)])
-    for path in (MASCOT, SQUARE, ICO, ICNS):
+    HICOLOR.mkdir(parents=True, exist_ok=True)
+    hicolor = [HICOLOR / f"{size}x{size}.png" for size in HICOLOR_SIZES]
+    for size, path in zip(HICOLOR_SIZES, hicolor):
+        icon.resize((size, size), Image.LANCZOS).save(path, optimize=True)
+    for path in (MASCOT, SQUARE, ICO, ICNS, *hicolor):
         print(f"{path.relative_to(ROOT)}  {path.stat().st_size} bytes")
     # WatermarkLayer places the mascot as if it sat centred in a square of
     # its own width: how far above that square's bottom its ink stops.

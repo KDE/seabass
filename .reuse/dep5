@@ -51,6 +51,7 @@ Files: artwork/seabass.svgz
  src/gui/qml/icons/seabass_icon.png
  src/gui/win/app_icon.ico
  src/gui/mac/app_icon.icns
+ src/gui/linux/hicolor/*.png
 Copyright: 2026 Nuno Pinheiro
 License: CC-BY-SA-4.0
 Comment: The Seabass mascot by Nuno Pinheiro (https://nuno-icons.com/):
