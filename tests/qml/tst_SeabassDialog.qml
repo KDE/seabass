@@ -44,6 +44,71 @@ TestCase {
         }
     }
 
+    Component {
+        id: disabledDefaultComponent
+        SeabassDialog {
+            title: "A default that is not enabled yet"
+            TextField { objectName: "field" }
+            footer: DialogButtonBox {
+                Button { objectName: "ok"; text: "OK"; enabled: false }
+                Button { objectName: "cancel"; text: "Cancel" }
+            }
+        }
+    }
+
+    // A relayout of the button box, as a button joining it, its alignment
+    // changing or it being shown again would cause.
+    function relayout(box) {
+        const was = box.alignment;
+        box.alignment = Qt.AlignLeft | Qt.AlignVCenter;
+        wait(50);
+        box.alignment = was;
+        wait(50);
+    }
+
+    // The default survives a relayout of the box. Since Qt 6.11 the box
+    // re-highlights on every polish from its own defaultButton, and a
+    // highlight assigned without it was wiped: the Create Playlist
+    // dialog lost OK as its default whenever the box laid itself out
+    // again after opening.
+    function test_theDefaultSurvivesARelayout() {
+        const dialog = createTemporaryObject(plainFooterComponent, testCase);
+        dialog.open();
+        tryCompare(dialog, "opened", true);
+        const first = findChild(dialog.footer, "first");
+        const second = findChild(dialog.footer, "second");
+        tryCompare(first, "activeFocus", true, 5000, "the declared default takes the focus");
+        relayout(dialog.footer);
+        compare(first.highlighted, true, "the declared default, after a relayout");
+        compare(second.highlighted, false);
+        // The relayout also takes the keyboard focus out of the footer
+        // (Qt 6.11's box focuses only a default of its own); given back,
+        // the arrows walk on from the default.
+        first.forceActiveFocus();
+        keyClick(Qt.Key_Right);
+        compare(second.highlighted, true);
+        relayout(dialog.footer);
+        compare(second.highlighted, true, "the selection, after a relayout");
+        compare(first.highlighted, false);
+        dialog.close();
+
+        // A default marked while it cannot be pressed yet (no name typed):
+        // marked all the same, and kept.
+        const asking = createTemporaryObject(disabledDefaultComponent, testCase);
+        asking.open();
+        tryCompare(asking, "opened", true);
+        const ok = findChild(asking.footer, "ok");
+        const cancel = findChild(asking.footer, "cancel");
+        // After the dialog's own pick on opening (the last enabled button),
+        // as Create Playlist marks it.
+        tryCompare(cancel, "activeFocus", true);
+        asking.markFooterDefault(ok);
+        relayout(asking.footer);
+        compare(ok.highlighted, true, "the disabled default stays marked");
+        compare(cancel.highlighted, false);
+        asking.close();
+    }
+
     function test_theArrowsMoveTheSelectionAndReturnPressesIt() {
         const dialog = createTemporaryObject(plainFooterComponent, testCase);
         verify(dialog !== null);

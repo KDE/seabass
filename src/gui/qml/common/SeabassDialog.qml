@@ -188,6 +188,14 @@ Dialog {
                 continue;
             }
             root.wiredButtons.push(button);
+            // A footer declaring its default (`highlighted: true`) has it
+            // remembered, and every button keeps to the remembered one
+            // (markFooterDefault).
+            if (button.highlighted === true && root.footerDefaultButton === null) {
+                root.markFooterDefault(button);
+            }
+            button.highlightedChanged.connect(() => root.keepFooterDefault(button));
+            root.keepFooterDefault(button);
             button.Keys.leftPressed.connect((event) => { root.moveFooterSelection(-1); event.accepted = true; });
             button.Keys.rightPressed.connect((event) => { root.moveFooterSelection(1); event.accepted = true; });
             button.Keys.returnPressed.connect((event) => { root.activateFooterSelection(); event.accepted = true; });
@@ -210,15 +218,38 @@ Dialog {
         return out;
     }
 
-    function selectFooterButton(target) {
-        var list = root.footerButtons();
-        for (var i = 0; i < list.length; ++i) {
-            // Assigned, not bound: DialogButtonBox writes to `highlighted`
-            // itself and simply discards a binding.
-            if (list[i].highlighted !== undefined) {
-                list[i].highlighted = (list[i] === target);
-            }
+    // The footer's default: `target` highlighted, every other button not,
+    // a disabled one included (Create Playlist marks OK before a name is
+    // typed). Remembered, and put back whenever a button's highlight
+    // changes behind it: since Qt 6.11 DialogButtonBox re-highlights its
+    // buttons on every polish (a button joining, the alignment set, the
+    // box shown) from a defaultButton of its own, so a highlight assigned
+    // without that was wiped at the next layout. Its defaultButton is not
+    // used instead: the box also hands that button the focus on every
+    // polish, out of a text field the dialog asks to be typed in.
+    // Assigned, not bound: a binding on `highlighted` is discarded too.
+    property Item footerDefaultButton: null
+    function markFooterDefault(target) {
+        root.footerDefaultButton = target;
+        const box = root.footer;
+        const buttons = box && box.contentChildren !== undefined ? box.contentChildren : [];
+        for (let i = 0; i < buttons.length; ++i) {
+            root.keepFooterDefault(buttons[i]);
         }
+        root.keepFooterDefault(target);
+    }
+    function keepFooterDefault(button) {
+        if (!button || button.highlighted === undefined || root.footerDefaultButton === null) {
+            return;
+        }
+        const wanted = button === root.footerDefaultButton;
+        if (button.highlighted !== wanted) {
+            button.highlighted = wanted;
+        }
+    }
+
+    function selectFooterButton(target) {
+        root.markFooterDefault(target);
         if (target) {
             target.forceActiveFocus();
         }

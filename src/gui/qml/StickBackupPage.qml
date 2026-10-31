@@ -204,14 +204,14 @@ Page {
         //
         // Reapplied on every open because selectFooterButton() assigns
         // `highlighted` on every footer button as focus moves, which
-        // discards any binding a Button declared for itself. (Qt is not
-        // the culprit: DialogButtonBox never touches `highlighted`.)
+        // discards any binding a Button declared for itself, and since Qt
+        // 6.11 DialogButtonBox re-highlights on every polish as well
+        // (SeabassDialog.markFooterDefault).
         // `focus: true` on the safe button is what makes the default hold
         // by construction rather than by being declared first, the way
         // MessageDialog does it.
         function applyDefaultButton() {
-            keepPartialButton.highlighted = true;
-            discardPartialButton.highlighted = false;
+            cancelDecisionDialog.markFooterDefault(keepPartialButton);
         }
         Component.onCompleted: cancelDecisionDialog.applyDefaultButton()
         // Both this and SeabassDialog's own onOpened run -- a derived
@@ -288,8 +288,7 @@ Page {
         // declared `highlighted: true` is discarded the first time anyone
         // tabs or arrows. Reapplied on every open for the same reason.
         function applyDefaultButton() {
-            deleteFailedBackupButton.highlighted = true;
-            keepFailedBackupButton.highlighted = false;
+            verifyFailedDialog.markFooterDefault(deleteFailedBackupButton);
         }
         Component.onCompleted: verifyFailedDialog.applyDefaultButton()
         // Both this and SeabassDialog's own onOpened run -- a derived
@@ -347,8 +346,7 @@ Page {
         // `highlighted` across the footer as focus moves, and because
         // `enabled` depends on the preflight this dialog is opened with.
         function applyDefaultButton() {
-            compactAcceptButton.highlighted = compactAcceptButton.enabled;
-            compactCancelButton.highlighted = !compactAcceptButton.enabled;
+            compactDialog.markFooterDefault(compactAcceptButton.enabled ? compactAcceptButton : compactCancelButton);
         }
         Component.onCompleted: compactDialog.applyDefaultButton()
         // Runs alongside SeabassDialog's own onOpened rather than

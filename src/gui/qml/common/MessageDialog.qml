@@ -61,15 +61,13 @@ SeabassDialog {
     // read correctly right after construction and was gone by the time
     // anyone could see it.
     function applyDefaultButton() {
-        // Assigned directly by id, NOT through the shared
-        // selectFooterButton(): that reads footer.contentChildren, which
-        // is empty while Component.onCompleted runs, so routing this
-        // through it left a destructive dialog with neither button
-        // highlighted -- Return would then have fallen to whatever the
-        // base class guessed. Caught by tst_MessageDialog, which asserts
-        // the default before the dialog is even opened.
-        acceptButton.highlighted = !(root.destructive && root.showReject);
-        rejectButton.highlighted = root.destructive && root.showReject;
+        // The button by id, which markFooterDefault() highlights itself:
+        // footer.contentChildren is empty while Component.onCompleted
+        // runs, and going only by it left a destructive dialog with
+        // neither button highlighted -- Return would then have fallen to
+        // whatever the base class guessed. Caught by tst_MessageDialog,
+        // which asserts the default before the dialog is even opened.
+        root.markFooterDefault(root.destructive && root.showReject ? rejectButton : acceptButton);
     }
     onDestructiveChanged: root.applyDefaultButton()
     Component.onCompleted: root.applyDefaultButton()

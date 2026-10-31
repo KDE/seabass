@@ -206,10 +206,6 @@ Page {
         // Assigned, as SeabassDialog's selectFooterButton does; set here
         // because OK is still disabled when the name is empty, and that
         // helper passes over a disabled button.
-        function markOkAsDefault() {
-            standardButton(Dialog.Ok).highlighted = true;
-            standardButton(Dialog.Cancel).highlighted = false;
-        }
         property string playlist: ""
         severity: SeabassDialog.Question
         title: qsTr("Rename playlist")
@@ -221,7 +217,7 @@ Page {
         // footer button: here the name is what is being asked for. OK is
         // marked as the default, because Return in the field is OK.
         onOpened: Qt.callLater(() => {
-            renamePlaylistDialog.markOkAsDefault();
+            renamePlaylistDialog.markFooterDefault(renamePlaylistDialog.standardButton(Dialog.Ok));
             renamePlaylistNameField.forceActiveFocus();
             renamePlaylistNameField.selectAll();
         })
@@ -448,10 +444,6 @@ Page {
         // Assigned, as SeabassDialog's selectFooterButton does; set here
         // because OK is still disabled when the name is empty, and that
         // helper passes over a disabled button.
-        function markOkAsDefault() {
-            standardButton(Dialog.Ok).highlighted = true;
-            standardButton(Dialog.Cancel).highlighted = false;
-        }
         severity: SeabassDialog.Question
         title: qsTr("Create new playlist")
         headline: qsTr("It is made in every library on this stick.")
@@ -460,7 +452,7 @@ Page {
         onAboutToShow: newPlaylistNameField.text = ""
         // Later than SeabassDialog's own onOpened, as in the rename dialog.
         onOpened: Qt.callLater(() => {
-            createPlaylistDialog.markOkAsDefault();
+            createPlaylistDialog.markFooterDefault(createPlaylistDialog.standardButton(Dialog.Ok));
             newPlaylistNameField.forceActiveFocus();
         })
         Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
