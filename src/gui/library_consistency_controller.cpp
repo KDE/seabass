@@ -105,6 +105,12 @@ QVariantMap brokenTrackToMap(const domain::Track &track)
     m["filePath"] = QString::fromStdString(track.filePath);
     m["artworkPath"] = toLocalFileUrl(track.artworkPath);
     m["durationMs"] = track.durationSeconds * 1000.0;
+    // What Browse's row shows beside the title: Clean Up Stray Cues lists
+    // its tracks the same way, and a streaming track's chip says why its
+    // cover has no play key.
+    m["bpm"] = track.bpm;
+    m["key"] = QString::fromStdString(track.key);
+    m["streamingSource"] = QString::fromStdString(track.streamingSource);
     QVariantList cues;
     for (const auto &c : track.cues) {
         QVariantMap cueMap;

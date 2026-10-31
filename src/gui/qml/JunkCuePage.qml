@@ -33,6 +33,9 @@ Page {
     required property string rekordboxPath
     required property string enginePath
     required property var appSettingsController
+    // Plays a row's track from its cover, as Browse's rows do. Optional:
+    // a page built without one (tests) shows no play key.
+    property var playbackController: null
 
     LibraryConsistencyController {
         id: ownController
@@ -66,6 +69,9 @@ Page {
         // not. Library Health's own save keeps saying "Save", because
         // that page really does stage several kinds of change.
         saveLabel: "Clean Up"
+        // A save that landed whole is said over the list (savedToast
+        // below), so it opens no summary; anything short of that still does.
+        quietCleanSaves: true
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
             ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
@@ -93,6 +99,23 @@ Page {
         if (format === "engine") return "Engine OS";
         if (format === "onelibrary") return "OneLibrary";
         return "DeviceLibrary";
+    }
+    function pathForFormat(format) {
+        return format === "engine" ? root.enginePath : root.rekordboxPath;
+    }
+    // The row's key, BPM and length, worded as Browse words them.
+    function formatBpm(bpm) {
+        if (bpm <= 0) {
+            return "--";
+        }
+        const oneDecimal = bpm.toFixed(1);
+        return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
+    }
+    function formatDuration(ms) {
+        const total = Math.round(ms / 1000);
+        const m = Math.floor(total / 60);
+        const s = total % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
     // Opens on the whole library, every time.
@@ -227,33 +250,36 @@ Page {
         }
     }
 
-    MessageDialog {
-        id: confirmRemoveJunkCueDialog
-        property int pendingIndex: -1
-        severity: SeabassDialog.Question
-        // What it stages is the track's stray cues, all of them: one
-        // change rewrites the cue list without any cue inside the first
-        // second, and the page now flips every one of that track's rows
-        // to "staged" as it happens. The old wording promised one cue
-        // and was contradicted on screen.
-        title: "Remove This Track's Stray Cues?"
-        headline: "Stages removing every cue this track has sitting at 0:00, not only this row; Save writes it."
-        detailText: "Backed up first."
-        acceptText: "Stage Removal"
-        onAccepted: if (pendingIndex >= 0) consistencyController.removeJunkCue(pendingIndex)
+    // Remove and Stage Removing All ask nothing first: they stage, and a
+    // staged removal is undone with the row's own Unstage until Clean Up
+    // writes it. The questions they used to ask were the write's, asked
+    // at the wrong moment (one of them even said "permanently removes"
+    // about a staging), and Clean Up still backs up before it writes.
+    //
+    // A save that landed whole, said over the list for a moment, in the
+    // summary's own words ("12 cues removed"). The list is empty by
+    // then: every row of a written track goes with the save.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: junkCueListView
+        anchors.centerIn: parent
     }
-
-    MessageDialog {
-        id: confirmRemoveAllJunkCuesDialog
-        severity: SeabassDialog.Warning
-        destructive: true
-        title: "Remove All " + junkCueListView.count + " Cue(s) at 0:00?"
-        headline: "This permanently removes every cue at 0:00 currently listed, across every "
-            + "catalog on this stick. A real write, not just dismissing them from view."
-        detailText: "Everything is backed up first, but make sure this is really what you want before "
-            + "continuing."
-        acceptText: "Stage Removal"
-        onAccepted: consistencyController.removeAllJunkCues()
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            Qt.callLater(() => root.showSaved(summary));
+        }
+    }
+    function showSaved(summary) {
+        const whole = summary && !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written !== undefined && summary.written === summary.total;
+        if (!whole || !(summary.written > 0)) {
+            return;
+        }
+        savedToast.show(summary.written + " " + summary.unit + " " + summary.verb);
     }
 
     MessageDialog {
@@ -326,6 +352,7 @@ Page {
                     Layout.fillWidth: true
                 }
                 Button {
+                    objectName: "stageAllButton"
                     text: "Stage Removing All"
                     // Nothing left to stage once they all are: the rows
                     // stay listed with their own Unstage buttons, so the
@@ -336,7 +363,7 @@ Page {
                     ToolTip.text: consistencyController.unstagedJunkCueCount === 0
                         ? "Every one of them is staged already. Press Clean Up to write it."
                         : "Stage removing every cue at 0:00 listed, in all catalogs."
-                    onClicked: confirmRemoveAllJunkCuesDialog.open()
+                    onClicked: consistencyController.removeAllJunkCues()
                 }
                 Button {
                     text: "Ignore All"
@@ -350,6 +377,7 @@ Page {
             // Room to scroll the last row clear of the Save overlay (bottom right).
             bottomMargin: 80
             id: junkCueListView
+            objectName: "junkCueListView"
             // Not draggable when everything already fits.
             interactive: contentHeight > height
             Layout.fillWidth: true
@@ -359,15 +387,25 @@ Page {
             spacing: 4
             ScrollBar.vertical: BigScrollBar {}
 
-            delegate: ItemDelegate {
+            // A track row as Browse draws one (ScanPage.qml's
+            // trackDelegate): the cover with its play key, the title over
+            // the artist, key, BPM and length, the playing row outlined
+            // with its waveform behind it. After those, what this page is
+            // about: why the row is here, which catalog, and the row's own
+            // Remove, Unstage and Ignore.
+            delegate: Rectangle {
                 id: junkDelegate
+                objectName: "junkCueRow"
                 width: ListView.view.width
-                hoverEnabled: false
+                // Taller only for the playing row, so its waveform is
+                // legible rather than a sliver.
+                height: junkDelegate.isPlaying ? 64 : 56
 
                 required property int index
                 required property string format
                 required property string title
                 required property string artist
+                required property var track
                 required property bool staged
                 // Required, like the roles above it: a plain property
                 // of the same name is NOT filled in from the model when
@@ -375,31 +413,176 @@ Page {
                 // empty and the line would never appear.
                 required property string reason
 
-                contentItem: RowLayout {
-                    spacing: 8
-                    // Title on top, and under it why this row is here.
-                    // Two checks feed this list: a cue at the very start
-                    // of the track, and one of a crowd of hot cues in
-                    // its first two seconds. Describing the second as
-                    // the first would be wrong, and every row here is an
-                    // offer to delete somebody's cue.
+                readonly property bool isPlaying: root.playbackController !== null
+                    && root.playbackController.hasTrack
+                    && root.playbackController.currentFormat === junkDelegate.format
+                    && root.playbackController.currentSourceId === (junkDelegate.track.sourceId || "")
+                readonly property string streamingSource: junkDelegate.track.streamingSource || ""
+
+                color: junkDelegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd
+                radius: Theme.cornerRadius
+                border.color: junkDelegate.isPlaying ? Theme.accent : "transparent"
+                border.width: junkDelegate.isPlaying ? 2 : 0
+
+                // The playing row's waveform, faded, behind its content.
+                Loader {
+                    active: junkDelegate.isPlaying
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    sourceComponent: WaveformView {
+                        opacity: 0.35
+                        waveformData: root.playbackController.waveform
+                        format: root.playbackController.currentFormat
+                        cueData: root.playbackController.cues
+                        trackDurationMs: root.playbackController.duration
+                        progress: root.playbackController.duration > 0
+                            ? root.playbackController.position / root.playbackController.duration : 0
+                    }
+                }
+                HoverHandler { id: rowHover }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.tightSpacing
+                    anchors.rightMargin: Theme.tightSpacing
+                    spacing: Theme.rowSpacing
+
+                    Rectangle {
+                        objectName: "rowCell_artwork"
+                        Layout.preferredWidth: Theme.iconSizeNormal
+                        Layout.preferredHeight: Theme.iconSizeNormal
+                        color: Theme.surface
+                        radius: Theme.coverRadius(Math.min(width, height))
+                        ArtworkImage {
+                            objectName: "rowArtwork"
+                            anchors.fill: parent
+                            source: junkDelegate.track.artworkPath || ""
+                        }
+                        // Play the row's track from its cover: shown while
+                        // the row is hovered, and while it is the track
+                        // playing, as a pause key then. Not for a streaming
+                        // track, which has no file to play.
+                        ToolButton {
+                            id: coverPlay
+                            objectName: "rowPlayButton"
+                            anchors.fill: parent
+                            // Every side, not `padding`: a style that sets
+                            // a side itself wins over it.
+                            leftPadding: 0
+                            rightPadding: 0
+                            topPadding: 0
+                            bottomPadding: 0
+                            display: AbstractButton.IconOnly
+                            text: junkDelegate.isPlaying && root.playbackController.playing ? "Pause" : "Play"
+                            visible: root.playbackController !== null
+                                && (junkDelegate.track.filePath || "").length > 0
+                                && junkDelegate.streamingSource.length === 0
+                                && (rowHover.hovered || coverPlay.hovered || junkDelegate.isPlaying)
+                            contentItem: Item {
+                                SeabassIcon {
+                                    anchors.centerIn: parent
+                                    iconName: junkDelegate.isPlaying && root.playbackController.playing
+                                        ? "media-playback-pause" : "media-playback-start"
+                                    size: Theme.iconSizeSmall * 0.75
+                                    color: "white"
+                                }
+                            }
+                            background: Rectangle {
+                                radius: Theme.coverRadius(Math.min(width, height))
+                                color: "black"
+                                opacity: coverPlay.hovered ? 0.55 : 0.4
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: junkDelegate.isPlaying
+                                ? (root.playbackController.playing ? "Pause" : "Play")
+                                : "Play " + root.formatLabel(junkDelegate.format) + "'s copy of the track"
+                            onClicked: {
+                                if (junkDelegate.isPlaying) {
+                                    root.playbackController.togglePlay();
+                                    return;
+                                }
+                                const t = junkDelegate.track;
+                                root.playbackController.load(junkDelegate.format, root.pathForFormat(junkDelegate.format),
+                                    t.sourceId, t.filePath, t.title, t.artist, t.artworkPath, t.cues);
+                            }
+                        }
+                    }
+
                     ColumnLayout {
-                        spacing: 0
+                        objectName: "rowCell_title"
                         Layout.fillWidth: true
-                        Label {
-                            text: junkDelegate.title + " - " + junkDelegate.artist
-                            elide: Text.ElideRight
+                        spacing: 1
+                        RowLayout {
                             Layout.fillWidth: true
+                            spacing: 6
+                            Label {
+                                text: junkDelegate.title
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            // Plain text, no logo (see AboutPage.qml's
+                            // trademark note): where a file-less row
+                            // comes from, and why its cover has no play key.
+                            Rectangle {
+                                visible: junkDelegate.streamingSource.length > 0
+                                radius: 3
+                                color: Theme.groupBackground
+                                border.color: Theme.borderSubtle
+                                implicitWidth: streamingLabel.implicitWidth + 8
+                                implicitHeight: streamingLabel.implicitHeight + 4
+                                Label {
+                                    id: streamingLabel
+                                    anchors.centerIn: parent
+                                    text: junkDelegate.streamingSource
+                                    font.pointSize: Theme.fontTiny
+                                    font.bold: true
+                                    color: Theme.textMuted
+                                }
+                            }
                         }
                         Label {
-                            objectName: "junkCueReason"
-                            visible: junkDelegate.reason.length > 0
-                            text: junkDelegate.reason
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                            font.pointSize: Theme.fontSmall
+                            text: junkDelegate.artist
                             color: Theme.textMuted
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
+                    }
+
+                    KeyBadge {
+                        objectName: "rowCell_key"
+                        keyName: junkDelegate.track.key || ""
+                        notation: root.appSettingsController.keyNotation
+                        Layout.preferredWidth: Theme.scaled(50)
+                    }
+                    Label {
+                        objectName: "rowCell_bpm"
+                        text: root.formatBpm(junkDelegate.track.bpm || 0)
+                        Layout.preferredWidth: 50
+                    }
+                    Label {
+                        objectName: "rowCell_duration"
+                        text: root.formatDuration(junkDelegate.track.durationMs || 0)
+                        Layout.preferredWidth: 60
+                    }
+
+                    // Why this row is here. Two checks feed this list: a
+                    // cue at the very start of the track, and one of a
+                    // crowd of hot cues in its first two seconds.
+                    // Describing the second as the first would be wrong,
+                    // and every row here is an offer to delete somebody's
+                    // cue.
+                    Label {
+                        objectName: "junkCueReason"
+                        visible: junkDelegate.reason.length > 0
+                        text: junkDelegate.reason
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: Theme.scaled(220)
+                        font.pointSize: Theme.fontSmall
+                        color: Theme.textMuted
+                        ToolTip.visible: reasonHover.hovered && truncated
+                        ToolTip.text: junkDelegate.reason
+                        HoverHandler { id: reasonHover }
                     }
                     Rectangle {
                         radius: 3
@@ -420,21 +603,28 @@ Page {
                         visible: junkDelegate.staged
                         label: "Staged"
                         badgeColor: Theme.warnText
-                        tooltipText: "Not on the stick yet: press Save."
+                        tooltipText: "Not on the stick yet: press Clean Up."
                     }
+                    // Stages, at once: every stray cue of this track, which
+                    // flips every row of it. Unstage takes it back out.
                     Button {
+                        objectName: "rowRemoveButton"
                         text: junkDelegate.staged ? "Unstage" : "Remove"
                         enabled: !consistencyController.busy && !consistencyController.writing
+                        ToolTip.visible: hovered
+                        ToolTip.text: junkDelegate.staged
+                            ? "Staged for removal, not on the stick yet: press Clean Up. Click to take it back out."
+                            : "Stage removing every cue this track has sitting at 0:00; Clean Up writes it, backed up first."
                         onClicked: {
                             if (junkDelegate.staged) {
                                 consistencyController.unstageJunkCue(junkDelegate.index);
                             } else {
-                                confirmRemoveJunkCueDialog.pendingIndex = junkDelegate.index;
-                                confirmRemoveJunkCueDialog.open();
+                                consistencyController.removeJunkCue(junkDelegate.index);
                             }
                         }
                     }
                     Button {
+                        objectName: "rowIgnoreButton"
                         text: "Ignore"
                         enabled: !consistencyController.busy
                         onClicked: consistencyController.ignoreJunkCue(junkDelegate.index)

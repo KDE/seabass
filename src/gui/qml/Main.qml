@@ -657,6 +657,7 @@ ApplicationWindow {
     Component {
         id: junkCuePageComponent
         JunkCuePage {
+            playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
         }
     }

@@ -26,6 +26,7 @@ TestCase {
     when: windowShown
 
     AppSettingsController { id: realAppSettings }
+    PlaybackController { id: realPlayback }
 
     Component {
         id: pageComponent
@@ -67,6 +68,7 @@ TestCase {
             rekordboxPath: ""
             enginePath: ""
             appSettingsController: realAppSettings
+            playbackController: realPlayback
         }
     }
 
@@ -472,5 +474,106 @@ TestCase {
         tryVerify(() => !controller.busy, 300000, "the second scan finishes");
         compare(controller.errorMessage, "");
         compare(controller.junkCues.count, 0, "nothing left on the stick either");
+    }
+
+    // The page on a copy of the fixture, its scan done.
+    function openScanned() {
+        const page = openOnAFreshCopy();
+        const overlay = findChild(page, "junkCueBusyOverlay");
+        tryVerify(() => !overlay.visible, 300000, "the page's scan finishes");
+        compare(page.consistencyController.errorMessage, "");
+        verify(page.consistencyController.junkCues.count > 0, "precondition: the fixture has stray cues");
+        return page;
+    }
+    readonly property int junkStagedRole: Qt.UserRole + 5
+    function rowItem(page, i) {
+        const list = findChild(page, "junkCueListView");
+        list.positionViewAtIndex(i, ListView.Beginning);
+        tryVerify(() => list.itemAtIndex(i) !== null, 5000, "row " + i + " is built");
+        return list.itemAtIndex(i);
+    }
+    function unstageEveryRow(controller) {
+        for (let i = 0; i < controller.junkCues.count; ++i) {
+            if (junkRow(controller.junkCues, i, testCase.junkStagedRole) === true) {
+                controller.unstageJunkCue(i);
+            }
+        }
+        compare(controller.stagedJunkCueCount, 0);
+    }
+
+    // Remove and Stage Removing All stage at once: nothing is asked first,
+    // the row reads Staged as the button goes up, and Unstage takes it back.
+    // They used to open a question each, worded as if the write were about
+    // to happen.
+    function test_removeStagesWithoutAsking() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        const row = rowItem(page, 0);
+        const remove = findChild(row, "rowRemoveButton");
+        compare(remove.text, "Remove");
+        mouseClick(remove);
+        compare(row.staged, true, "staged as the button goes up");
+        compare(remove.text, "Unstage");
+        verify(controller.stagedJunkCueCount >= 1);
+        mouseClick(remove);
+        compare(row.staged, false, "and taken back out");
+        compare(controller.stagedJunkCueCount, 0);
+
+        mouseClick(findChild(page, "stageAllButton"));
+        compare(controller.unstagedJunkCueCount, 0, "every row staged, nothing asked");
+        verify(controller.statusMessage.indexOf("Staged removing") === 0, controller.statusMessage);
+        unstageEveryRow(controller);
+    }
+
+    // A Clean Up that wrote everything it staged is said over the list,
+    // in the summary's own words, and opens no summary dialog.
+    function test_aFinishedCleanUpIsSaidOverTheList() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        mouseClick(findChild(page, "stageAllButton"));
+        compare(controller.unstagedJunkCueCount, 0);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(page.rekordboxPath));
+        const summary = saveSession(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.written > 0, JSON.stringify(summary));
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true);
+        compare(findChild(toast, "confirmationToastLabel").text, summary.written + " cues removed");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+        compare(controller.junkCues.count, 0, "the written rows are gone from under it");
+    }
+
+    // A row is drawn as Browse draws one: the cover, which plays the track
+    // while the row is hovered and stays while it is the track playing, and
+    // the key beside the title.
+    function test_aRowPlaysFromItsCover() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        let index = -1;
+        let track = null;
+        for (let i = 0; i < controller.junkCues.count && index < 0; ++i) {
+            const t = junkRow(controller.junkCues, i, testCase.junkTrackRole);
+            if ((t.filePath || "").length > 0 && (t.streamingSource || "").length === 0) {
+                index = i;
+                track = t;
+            }
+        }
+        verify(index >= 0, "precondition: a stray cue on a track with a file");
+        const item = rowItem(page, index);
+        verify(findChild(item, "rowArtwork") !== null, "the cover");
+        verify(findChild(item, "rowCell_key") !== null, "the key badge");
+        const play = findChild(item, "rowPlayButton");
+        mouseMove(page, 1, 1);
+        compare(play.visible, false, "hidden until the row is hovered");
+        mouseMove(item, item.width / 2, item.height / 2);
+        tryCompare(play, "visible", true);
+        mouseClick(play);
+        tryCompare(realPlayback, "currentSourceId", track.sourceId);
+        compare(realPlayback.currentFormat, item.format);
+        mouseMove(page, 1, 1);
+        verify(play.visible, "shown while it is the track playing");
+        tryCompare(item, "isPlaying", true);
+        realPlayback.pause();
     }
 }
