@@ -2231,6 +2231,8 @@ Page {
             : playlistSidebarList.hoveredDropTarget.length > 0
             ? (playlistSidebarList.hoveredDropTarget === root.springOpened
                ? qsTr("Opened \"%1\": drop it where it goes").arg(root.springOpened)
+               : trackDrag.playlistNames.indexOf(playlistSidebarList.hoveredDropTarget) >= 0
+               ? qsTr("Already in \"%1\"").arg(playlistSidebarList.hoveredDropTarget)
                : qsTr("Drop to add to \"%1\"").arg(playlistSidebarList.hoveredDropTarget))
             : dropGap.gapIndex < 0 && dropGap.hovering && dropGap.applies && dropGap.toIndexFor(dropGap.pending) >= 0
             ? (dropGap.addsTrack ? qsTr("Hold to add it here") : qsTr("Hold to move it here"))
@@ -2244,6 +2246,14 @@ Page {
         // The removal from the source is staged with the add, after it,
         // or not at all when the add is not (see missingLibrariesDialog).
         onMoveChosen: (playlist, fromPlaylist) => root.addDraggedTrack(playlist, fromPlaylist)
+        // Already in the playlist: a move to its last place, as a drag
+        // within the playlist stages it.
+        onMoveToEndChosen: playlist => {
+            const count = (scanController.playlistTrackCounts[playlist] ?? 0)
+                + playlistSidebarList.trackCountChange(playlist);
+            root.playlistEditController.moveInPlaylist(root.rekordboxPath, root.enginePath, playlist,
+                                                       trackDrag.filePath, trackDrag.title, Math.max(0, count - 1));
+        }
     }
 
     // While a track is dragged, the sidebar and the track list scroll when

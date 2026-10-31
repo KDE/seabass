@@ -1520,10 +1520,13 @@ TestCase {
     // is nothing to move the track out of, so no Move.
     function test_aTrackDroppedOnAPlaylistAsksBeforeAnythingIsStaged() {
         const t = makeDragPage(true);
+        // A playlist the track is not in yet.
+        t.fake.newPlaylists = ["Fresh"];
+        waitForRendering(t.page);
         const row = t.list.itemAtIndex(0);
         compare(row.title, "Held Track 1000");
         const all = playlistRow(t, "All tracks");
-        const target = playlistRow(t, "Held Playlist");
+        const target = playlistRow(t, "Fresh");
         compare(t.card.visible, false);
         compare(t.page.dragging, false);
         compare(t.page.draggedTrack, null);
@@ -1567,7 +1570,7 @@ TestCase {
         const add = findChild(t.card, "dropAddButton");
         const move = findChild(t.card, "dropMoveButton");
         compare(add.visible, true);
-        compare(add.text, "Add to \"Held Playlist\"");
+        compare(add.text, "Add to \"Fresh\"");
         compare(move.visible, false, "no playlist shown, nothing to move out of");
         compare(t.page.trackPanelOpen, false, "a drag is no click");
         compare(findChild(t.page, "trackMenu").opened, false, "nor a press and hold");
@@ -1576,7 +1579,7 @@ TestCase {
 
         mouseClick(add);
         compare(JSON.stringify(t.fake.calls), JSON.stringify([["add", "/nonexistent/TESTSTICK/PIONEER",
-                "/nonexistent/TESTSTICK/Engine Library", "Held Playlist", "/nonexistent/HELD/Contents/held-1000.mp3",
+                "/nonexistent/TESTSTICK/Engine Library", "Fresh", "/nonexistent/HELD/Contents/held-1000.mp3",
                 "Held Track 1000"]]));
         tryCompare(t.card, "visible", false);
         verify(!isAccentOutlined(target));
@@ -1588,13 +1591,14 @@ TestCase {
     // that order. The shown playlist itself is no target.
     function test_aTrackInThePlaylistShownCanBeMoved() {
         const t = makeDragPage(true);
+        t.fake.newPlaylists = ["Fresh"];
         const reversed = t.controller.playlistNames.indexOf("Held Reversed");
         t.page.selectPlaylist(reversed + 1, "Held Reversed", false);
         waitForRendering(t.page);
         const row = t.list.itemAtIndex(0);
         compare(row.title, "Held Track 1005", "the reversed playlist's first");
         const shown = playlistRow(t, "Held Reversed");
-        const target = playlistRow(t, "Held Playlist");
+        const target = playlistRow(t, "Fresh");
 
         dragOnto(row, shown);
         compare(t.page.dragging, true);
@@ -1609,17 +1613,71 @@ TestCase {
         compare(t.card.confirming, true);
         const move = findChild(t.card, "dropMoveButton");
         compare(move.visible, true);
-        compare(move.text, "Move to \"Held Playlist\"");
-        compare(findChild(t.card, "dropAddButton").text, "Add to \"Held Playlist\"");
+        compare(move.text, "Move to \"Fresh\"");
+        compare(findChild(t.card, "dropAddButton").text, "Add to \"Fresh\"");
         tryCompare(t.card, "opacity", 1);
         waitForRendering(t.page);
         saveScreenshot(t.page, "browse_drop_confirm_move");
         compare(t.fake.calls.length, 0);
         mouseClick(move);
         compare(JSON.stringify(t.fake.calls), JSON.stringify([
-            ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Playlist",
+            ["add", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Fresh",
              "/nonexistent/HELD/Contents/held-1005.mp3", "Held Track 1005"],
             ["remove", "Held Reversed", "/nonexistent/HELD/Contents/held-1005.mp3", "Held Track 1005"]]));
+        tryCompare(t.card, "visible", false);
+        cleanupExperimental();
+    }
+
+    // A track dropped on a playlist it is already in is not added a second
+    // time (Engine holds a track once per playlist): the hint says so on
+    // the way, and the card asks whether to move it to the end, Cancel
+    // the default, so Return or a stray click leaves the playlist as it
+    // was.
+    function test_aTrackAlreadyInThePlaylistAsksToMoveIt() {
+        const t = makeDragPage(true);
+        const row = t.list.itemAtIndex(0);
+        compare(row.title, "Held Track 1000");
+        const target = playlistRow(t, "Held Reversed");
+        compare(t.controller.playlistTrackCounts["Held Reversed"], 6);
+        const confirmDrop = () => {
+            dragOnto(row, target);
+            tryCompare(target, "dropTarget", true);
+            compare(findChild(t.card, "dragHint").text, "Already in \"Held Reversed\"");
+            dropOnto(row, target);
+            compare(t.card.confirming, true);
+            compare(t.card.alreadyInTarget, true);
+        };
+
+        confirmDrop();
+        compare(findChild(t.card, "dropAddButton").visible, false, "no second copy");
+        compare(findChild(t.card, "dropMoveButton").visible, false);
+        compare(findChild(t.card, "dropAlreadyInLabel").visible, true);
+        compare(findChild(t.card, "dropAlreadyInLabel").text, "Already in \"Held Reversed\"");
+        const toEnd = findChild(t.card, "dropMoveToEndButton");
+        const cancel = findChild(t.card, "dropCancelButton");
+        compare(toEnd.visible, true);
+        compare(toEnd.text, "Move to the end");
+        compare(toEnd.highlighted, false);
+        compare(cancel.visible, true);
+        compare(cancel.highlighted, true, "Cancel is the default");
+        tryCompare(t.card, "opacity", 1);
+        waitForRendering(t.page);
+        saveScreenshot(t.page, "browse_drop_already_in");
+        tryCompare(t.card, "activeFocus", true);
+        keyClick(Qt.Key_Return);
+        tryCompare(t.card, "visible", false);
+        compare(t.fake.calls.length, 0, "Return cancels");
+
+        confirmDrop();
+        mouseClick(findChild(t.card, "dropCancelButton"));
+        tryCompare(t.card, "visible", false);
+        compare(t.fake.calls.length, 0, "Cancel stages nothing");
+
+        confirmDrop();
+        mouseClick(findChild(t.card, "dropMoveToEndButton"));
+        compare(JSON.stringify(t.fake.calls), JSON.stringify([
+            ["move", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Held Reversed",
+             "/nonexistent/HELD/Contents/held-1000.mp3", "Held Track 1000", 5]]), "a move to its last place");
         tryCompare(t.card, "visible", false);
         cleanupExperimental();
     }
@@ -1815,7 +1873,7 @@ TestCase {
         compare(gap.hovering, false, "the list hears nothing of a drag over the sidebar");
         compare(gap.gapIndex, -1, "no gap over a playlist row");
         compare(t.list.itemAtIndex(3).mapToItem(t.list, 0, 0).y, rowsY[3], "no row moved");
-        compare(findChild(t.card, "dragHint").text, "Drop to add to \"Held Reversed\"", "the card says what a drop does");
+        compare(findChild(t.card, "dragHint").text, "Already in \"Held Reversed\"", "the card says what a drop does");
 
         // Then over the line between the third and fourth rows.
         const line = t.list.itemAtIndex(3);

@@ -16,9 +16,13 @@ import SeabassGui
 //
 // Dropped on a playlist, it does nothing yet. It stays where it landed and
 // asks: "Add to <playlist>", and "Move to <playlist>" when Browse shows a
-// playlist the track is in. Only a button stages anything, and Save
-// writes it, as for every other playlist edit: the user knows what will
-// happen before it does. Escape or a click anywhere else lets it go.
+// playlist the track is in. Dropped on a playlist the track is already
+// in, it says so and offers to move it to the end, Cancel the default: a
+// playlist holds a track once (Engine allows no second entry), so a
+// second Add would only have moved it. Only a button stages anything,
+// and Save writes it, as for every other playlist edit: the user knows
+// what will happen before it does. Escape or a click anywhere else lets
+// it go.
 //
 // The drag contract, which every drop target relies on (the playlist rows
 // here, and reordering within a playlist): Drag.keys is
@@ -66,9 +70,14 @@ Rectangle {
     // Where in the target playlist the track lands, when it was let go at
     // a place in the list (from 0); -1, at the end, as for a playlist row.
     readonly property int targetIndex: internal.targetIndex
+    // The playlist it was dropped on holds the track already.
+    readonly property bool alreadyInTarget: internal.targetPlaylist.length > 0
+        && card.playlistNames.indexOf(internal.targetPlaylist) >= 0
 
     signal addChosen(string playlist)
     signal moveChosen(string playlist, string fromPlaylist)
+    // Moved to the end of the playlist it is already in.
+    signal moveToEndChosen(string playlist)
 
     // A track with a file on this stick: a streaming track has none, and
     // nothing can be put into a playlist without one.
@@ -280,6 +289,18 @@ Rectangle {
     }
 
     Keys.onEscapePressed: card.close()
+    // Return takes the default; for a track already in the playlist that
+    // is Cancel.
+    Keys.onReturnPressed: {
+        if (card.confirming && card.alreadyInTarget) {
+            card.close();
+        }
+    }
+    Keys.onEnterPressed: {
+        if (card.confirming && card.alreadyInTarget) {
+            card.close();
+        }
+    }
 
     // Follows the pointer from the row's MouseArea on, and lets go where
     // the button is let go.
@@ -376,6 +397,13 @@ Rectangle {
             Layout.alignment: Qt.AlignRight
         }
 
+        Label {
+            objectName: "dropAlreadyInLabel"
+            visible: card.confirming && card.alreadyInTarget
+            text: qsTr("Already in \"%1\"").arg(card.targetPlaylist)
+            Layout.alignment: Qt.AlignRight
+        }
+
         // Once dropped: what the drop would do, as a choice.
         RowLayout {
             objectName: "dropChoices"
@@ -384,6 +412,7 @@ Rectangle {
             Layout.alignment: Qt.AlignRight
             Button {
                 objectName: "dropAddButton"
+                visible: !card.alreadyInTarget
                 text: qsTr("Add to \"%1\"").arg(card.targetPlaylist)
                 highlighted: true
                 onClicked: {
@@ -396,7 +425,7 @@ Rectangle {
             }
             Button {
                 objectName: "dropMoveButton"
-                visible: card.moveFrom.length > 0
+                visible: card.moveFrom.length > 0 && !card.alreadyInTarget
                 text: qsTr("Move to \"%1\"").arg(card.targetPlaylist)
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
@@ -407,6 +436,26 @@ Rectangle {
                     card.moveChosen(playlist, from);
                     card.close();
                 }
+            }
+            Button {
+                objectName: "dropMoveToEndButton"
+                visible: card.alreadyInTarget
+                text: qsTr("Move to the end")
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: qsTr("Move it to the end of \"%1\"").arg(card.targetPlaylist)
+                onClicked: {
+                    const playlist = card.targetPlaylist;
+                    card.moveToEndChosen(playlist);
+                    card.close();
+                }
+            }
+            Button {
+                objectName: "dropCancelButton"
+                visible: card.alreadyInTarget
+                text: qsTr("Cancel")
+                highlighted: true
+                onClicked: card.close()
             }
         }
     }
