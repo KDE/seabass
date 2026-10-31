@@ -16,7 +16,9 @@ import SeabassGui
 // the list that changed); it takes no space when it is not showing.
 Item {
     id: toast
-    property int duration: 3000
+    // Six seconds: three read as gone before it was read (Sebastian,
+    // 2026-10-31), and the pointer resting on it holds it anyway.
+    property int duration: 6000
     property string text: ""
     readonly property bool showing: internal.shown
     signal dismissed()
