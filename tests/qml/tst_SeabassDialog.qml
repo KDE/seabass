@@ -116,12 +116,10 @@ TestCase {
         tryCompare(dialog, "opened", true);
         const first = findChild(dialog.footer, "first");
         const second = findChild(dialog.footer, "second");
-        // Which button the dialog takes as its default is its own rule
-        // (SeabassDialog.focusDefaultFooterButton); what is tested here is
-        // the walk from wherever it starts.
-        tryVerify(() => first.activeFocus || second.activeFocus, 5000, "the dialog focused a button");
-        first.forceActiveFocus();
-        tryCompare(first, "activeFocus", true);
+        // The declared default takes the focus on opening, and the walk
+        // starts there.
+        tryCompare(first, "activeFocus", true, 5000, "the declared default is focused");
+        compare(first.highlighted, true);
         keyClick(Qt.Key_Right);
         compare(second.activeFocus, true, "Right moves the focus to the next button");
         compare(second.highlighted, true, "and the highlight goes with it");
@@ -144,7 +142,7 @@ TestCase {
         const field = findChild(dialog, "field");
         const first = findChild(dialog.footer, "first");
         const second = findChild(dialog.footer, "second");
-        tryVerify(() => first.activeFocus || second.activeFocus, 5000, "the dialog focused a button first");
+        tryCompare(first, "activeFocus", true, 5000, "the declared default is focused first");
         field.forceActiveFocus();
         tryCompare(field, "activeFocus", true);
         field.cursorPosition = 3;
