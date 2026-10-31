@@ -822,6 +822,10 @@ TestCase {
         tryCompare(dialog, "opened", true);
         const field = findChild(page, "newPlaylistNameField");
         tryCompare(field, "activeFocus", true);
+        // Return in the field is OK, so OK is the button marked as the
+        // default, not Cancel as SeabassDialog would pick on its own.
+        compare(dialog.standardButton(Dialog.Ok).highlighted, true, "OK is the default");
+        compare(dialog.standardButton(Dialog.Cancel).highlighted, false, "Cancel is not");
         compare(dialog.standardButton(Dialog.Ok).enabled, false, "no name, no OK");
         field.text = "   ";
         compare(dialog.standardButton(Dialog.Ok).enabled, false, "spaces are no name");

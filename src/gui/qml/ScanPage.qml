@@ -183,56 +183,58 @@ Page {
         }
     }
 
-    Dialog {
+    // The three playlist dialogs wear SeabassDialog's frame, which is
+    // what insets their buttons from the edge: a plain Dialog left them
+    // flush against the frame's right and bottom border.
+    SeabassDialog {
         id: deletePlaylistDialog
         objectName: "deletePlaylistDialog"
         property string playlist: ""
-        anchors.centerIn: parent
-        modal: true
+        severity: SeabassDialog.Question
         title: qsTr("Delete playlist")
+        headline: qsTr("Delete \"%1\" from every library on this stick?").arg(deletePlaylistDialog.playlist)
+        detailText: qsTr("Its tracks stay on the stick. Nothing changes until you Save.")
         standardButtons: Dialog.Ok | Dialog.Cancel
-        Label {
-            width: Math.min(implicitWidth, root.width * 0.6)
-            wrapMode: Text.Wrap
-            text: qsTr("Delete \"%1\" from every library on this stick? Its tracks stay on the stick. Nothing changes until you Save.")
-                .arg(deletePlaylistDialog.playlist)
-        }
         onAccepted: root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, deletePlaylistDialog.playlist)
     }
 
     // A new name for a playlist (its last segment), given in every library
     // on the stick on Save.
-    Dialog {
+    SeabassDialog {
         id: renamePlaylistDialog
         objectName: "renamePlaylistDialog"
+        // Assigned, as SeabassDialog's selectFooterButton does; set here
+        // because OK is still disabled when the name is empty, and that
+        // helper passes over a disabled button.
+        function markOkAsDefault() {
+            standardButton(Dialog.Ok).highlighted = true;
+            standardButton(Dialog.Cancel).highlighted = false;
+        }
         property string playlist: ""
-        anchors.centerIn: parent
-        modal: true
+        severity: SeabassDialog.Question
         title: qsTr("Rename playlist")
+        headline: qsTr("It is renamed in every library on this stick.")
+        detailText: qsTr("Nothing changes until you Save.")
         standardButtons: Dialog.Ok | Dialog.Cancel
         onAboutToShow: renamePlaylistNameField.text = playlist.substring(playlist.lastIndexOf("/") + 1)
-        onOpened: {
+        // Later than SeabassDialog's own onOpened, which hands focus to a
+        // footer button: here the name is what is being asked for. OK is
+        // marked as the default, because Return in the field is OK.
+        onOpened: Qt.callLater(() => {
+            renamePlaylistDialog.markOkAsDefault();
             renamePlaylistNameField.forceActiveFocus();
             renamePlaylistNameField.selectAll();
-        }
+        })
         Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
             () => renamePlaylistNameField.text.trim().length > 0)
-        ColumnLayout {
-            spacing: Theme.tightSpacing
-            Label {
-                Layout.preferredWidth: Math.min(implicitWidth, root.width * 0.6)
-                wrapMode: Text.Wrap
-                text: qsTr("It is renamed in every library on this stick. Nothing changes until you Save.")
-            }
-            TextField {
-                id: renamePlaylistNameField
-                objectName: "renamePlaylistNameField"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Playlist name")
-                onAccepted: {
-                    if (text.trim().length > 0) {
-                        renamePlaylistDialog.accept();
-                    }
+        TextField {
+            id: renamePlaylistNameField
+            objectName: "renamePlaylistNameField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("Playlist name")
+            onAccepted: {
+                if (text.trim().length > 0) {
+                    renamePlaylistDialog.accept();
                 }
             }
         }
@@ -440,33 +442,37 @@ Page {
 
     // The list's last row: a name for a new, empty playlist, made in every
     // library on the stick on Save.
-    Dialog {
+    SeabassDialog {
         id: createPlaylistDialog
         objectName: "createPlaylistDialog"
-        anchors.centerIn: parent
-        modal: true
+        // Assigned, as SeabassDialog's selectFooterButton does; set here
+        // because OK is still disabled when the name is empty, and that
+        // helper passes over a disabled button.
+        function markOkAsDefault() {
+            standardButton(Dialog.Ok).highlighted = true;
+            standardButton(Dialog.Cancel).highlighted = false;
+        }
+        severity: SeabassDialog.Question
         title: qsTr("Create new playlist")
+        headline: qsTr("It is made in every library on this stick.")
+        detailText: qsTr("Nothing changes until you Save.")
         standardButtons: Dialog.Ok | Dialog.Cancel
         onAboutToShow: newPlaylistNameField.text = ""
-        onOpened: newPlaylistNameField.forceActiveFocus()
+        // Later than SeabassDialog's own onOpened, as in the rename dialog.
+        onOpened: Qt.callLater(() => {
+            createPlaylistDialog.markOkAsDefault();
+            newPlaylistNameField.forceActiveFocus();
+        })
         Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
             () => newPlaylistNameField.text.trim().length > 0)
-        ColumnLayout {
-            spacing: Theme.tightSpacing
-            Label {
-                Layout.preferredWidth: Math.min(implicitWidth, root.width * 0.6)
-                wrapMode: Text.Wrap
-                text: qsTr("It is made in every library on this stick. Nothing changes until you Save.")
-            }
-            TextField {
-                id: newPlaylistNameField
-                objectName: "newPlaylistNameField"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Playlist name")
-                onAccepted: {
-                    if (text.trim().length > 0) {
-                        createPlaylistDialog.accept();
-                    }
+        TextField {
+            id: newPlaylistNameField
+            objectName: "newPlaylistNameField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("Playlist name")
+            onAccepted: {
+                if (text.trim().length > 0) {
+                    createPlaylistDialog.accept();
                 }
             }
         }
