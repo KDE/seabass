@@ -823,8 +823,9 @@ TestCase {
         const field = findChild(page, "newPlaylistNameField");
         tryCompare(field, "activeFocus", true);
         // Return in the field is OK, so OK is the button marked as the
-        // default, not Cancel as SeabassDialog would pick on its own.
-        compare(dialog.standardButton(Dialog.Ok).highlighted, true, "OK is the default");
+        // default, not Cancel as SeabassDialog would pick on its own. Marked
+        // a moment after opening (Qt.callLater), as the field's focus is.
+        tryCompare(dialog.standardButton(Dialog.Ok), "highlighted", true, 2000, "OK is the default");
         compare(dialog.standardButton(Dialog.Cancel).highlighted, false, "Cancel is not");
         compare(dialog.standardButton(Dialog.Ok).enabled, false, "no name, no OK");
         field.text = "   ";
