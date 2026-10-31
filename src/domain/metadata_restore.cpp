@@ -5,6 +5,7 @@
 #include "domain/metadata_restore.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <set>
 #include <tuple>
@@ -36,7 +37,16 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
 {
     std::vector<MetadataRestoreProposal> proposals;
 
-    for (const auto &[stick, stored] : matchTracks(stickTracks, storedTracks)) {
+    // An Engine streaming link is no file on this stick and has no
+    // catalog row a restore could write (collapseCatalogRows), and the
+    // store never takes one in. Left out before matching, so a stored
+    // track still finds the local copy of the same recording.
+    std::vector<Track> restorable;
+    restorable.reserve(stickTracks.size());
+    std::copy_if(stickTracks.begin(), stickTracks.end(), std::back_inserter(restorable),
+                 [](const Track &track) { return track.streamingSource.empty(); });
+
+    for (const auto &[stick, stored] : matchTracks(restorable, storedTracks)) {
         MetadataRestoreProposal proposal;
         proposal.stickTrack = *stick;
         proposal.storedId = stored->sourceId;

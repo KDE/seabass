@@ -102,6 +102,8 @@ struct MetadataRestoreProposal
 //
 // Returns only proposals that offer something. A track already carrying
 // everything the store has is not a decision anyone needs to make.
+// An Engine streaming link on the stick is never one: it has no catalog
+// row to write, and the store never takes one in either.
 std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track> &stickTracks,
                                                           const std::vector<Track> &storedTracks,
                                                           std::int64_t stickModifiedAt);

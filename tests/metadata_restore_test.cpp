@@ -657,5 +657,30 @@ int main()
         std::cout << "case tempo (half a beat of the agreed tempo, else 60 ms) OK\n";
     }
 
+    // ---- an Engine streaming link is never a restore target ----------------
+    //
+    // WHALESHARK, 2026-10-31: thirteen TIDAL rows matched stored tracks by
+    // artist and title and were listed, but a streaming row has no catalog
+    // row to write (collapseCatalogRows), so ticking one staged nothing and
+    // said nothing. The store never takes one in either
+    // (hasStorableIdentity in metadata_backup_plan.cpp).
+    {
+        Track streaming = stickTrack("Erste");
+        streaming.format = "engine";
+        streaming.streamingSource = "TIDAL";
+        streaming.filename = "ae24417ebce87d5de4b1b5ac952e0aa881e9ea23.mp4";
+        Track stored = storedTrack("Erste");
+        stored.cues = {hotCue(1, 32000.0)};
+        assert(planMetadataRestore({streaming}, {stored}, StickWrittenRecently).empty()
+               && "a streaming link is not offered a restore");
+
+        // And it does not stand in the way of the file itself: the stored
+        // track still finds the local copy on the same stick.
+        Track local = stickTrack("Erste");
+        const auto proposals = planMetadataRestore({streaming, local}, {stored}, StickWrittenRecently);
+        assert(proposals.size() == 1 && proposals[0].stickTrack.streamingSource.empty());
+        std::cout << "case streaming (an Engine streaming link is never offered a restore) OK\n";
+    }
+
     return 0;
 }
