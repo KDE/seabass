@@ -102,10 +102,6 @@ SeabassDialog {
 
     footer: DialogButtonBox {
         Button {
-            Keys.onReturnPressed: dialog.activateFooterSelection()
-            Keys.onEnterPressed: dialog.activateFooterSelection()
-            Keys.onLeftPressed: dialog.moveFooterSelection(-1)
-            Keys.onRightPressed: dialog.moveFooterSelection(1)
             objectName: "okButton"
             text: "OK"
             highlighted: true

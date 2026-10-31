@@ -144,8 +144,8 @@ Dialog {
             root.footer.topPadding = Theme.scaled(8);
         }
     }
-    onFooterChanged: root.alignFooter()
-    Component.onCompleted: root.alignFooter()
+    onFooterChanged: { root.alignFooter(); root.wireFooterKeys(); }
+    Component.onCompleted: { root.alignFooter(); root.wireFooterKeys(); }
 
     // --- Keyboard: every dialog answers the same way ---
     //
@@ -158,10 +158,43 @@ Dialog {
     // arrows moved focus without moving the highlight, the dialog would
     // be showing one answer while Return performed another.
     //
-    // The arrow keys are handled on the BUTTONS, never on the dialog: a
-    // dialog with a text field in it (TypedConfirmDialog asks you to type
-    // a word) must let Left/Right move the cursor. Bound at the dialog
-    // level they would steal it.
+    // The keys are taken on the footer's BUTTONS, wired here once for
+    // every dialog, never on the dialog itself: a dialog with a text
+    // field in it (TypedConfirmDialog asks you to type a word) must let
+    // Left/Right move the cursor, and a key the field takes never reaches
+    // a button. On the buttons, not on the footer either: under every
+    // style but Basic the DialogButtonBox's own list view takes the
+    // arrows before the box sees them. Wired from here rather than
+    // declared on each button, because each button declaring four
+    // handlers is how several footers came to declare none (Browse's
+    // playlist dialogs, the software-running and eject-held questions)
+    // and their arrows went nowhere. A footer declaring them as well
+    // would move the selection twice per press, so none does.
+    property Item wiredFooter: null
+    property var wiredButtons: []
+    function wireFooterKeys() {
+        const box = root.footer;
+        if (!box || box.contentChildren === undefined) {
+            return;
+        }
+        if (box !== root.wiredFooter) {
+            root.wiredFooter = box;
+            root.wiredButtons = [];
+            box.contentChildrenChanged.connect(root.wireFooterKeys);
+        }
+        for (let i = 0; i < box.contentChildren.length; ++i) {
+            const button = box.contentChildren[i];
+            if (!button || button.Keys === undefined || root.wiredButtons.indexOf(button) >= 0) {
+                continue;
+            }
+            root.wiredButtons.push(button);
+            button.Keys.leftPressed.connect((event) => { root.moveFooterSelection(-1); event.accepted = true; });
+            button.Keys.rightPressed.connect((event) => { root.moveFooterSelection(1); event.accepted = true; });
+            button.Keys.returnPressed.connect((event) => { root.activateFooterSelection(); event.accepted = true; });
+            button.Keys.enterPressed.connect((event) => { root.activateFooterSelection(); event.accepted = true; });
+        }
+    }
+
     function footerButtons() {
         var box = root.footer;
         if (!box || box.contentChildren === undefined) {

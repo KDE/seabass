@@ -228,10 +228,6 @@ Page {
                 objectName: "keepPartialButton"
                 text: "Keep for Later"
                 focus: true
-                Keys.onReturnPressed: cancelDecisionDialog.activateFooterSelection()
-                Keys.onEnterPressed: cancelDecisionDialog.activateFooterSelection()
-                Keys.onLeftPressed: cancelDecisionDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: cancelDecisionDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) cancelDecisionDialog.selectFooterButton(keepPartialButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
@@ -239,10 +235,6 @@ Page {
                 id: discardPartialButton
                 objectName: "discardPartialButton"
                 text: root.hasBackup ? "Discard This Update" : "Delete Partial Backup"
-                Keys.onReturnPressed: cancelDecisionDialog.activateFooterSelection()
-                Keys.onEnterPressed: cancelDecisionDialog.activateFooterSelection()
-                Keys.onLeftPressed: cancelDecisionDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: cancelDecisionDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) cancelDecisionDialog.selectFooterButton(discardPartialButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
                 onClicked: {
@@ -314,10 +306,6 @@ Page {
                 objectName: "deleteFailedBackupButton"
                 text: "Delete Backup"
                 focus: true
-                Keys.onReturnPressed: verifyFailedDialog.activateFooterSelection()
-                Keys.onEnterPressed: verifyFailedDialog.activateFooterSelection()
-                Keys.onLeftPressed: verifyFailedDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: verifyFailedDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) verifyFailedDialog.selectFooterButton(deleteFailedBackupButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
@@ -325,10 +313,6 @@ Page {
                 id: keepFailedBackupButton
                 objectName: "keepFailedBackupButton"
                 text: "Keep Failed Backup"
-                Keys.onReturnPressed: verifyFailedDialog.activateFooterSelection()
-                Keys.onEnterPressed: verifyFailedDialog.activateFooterSelection()
-                Keys.onLeftPressed: verifyFailedDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: verifyFailedDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) verifyFailedDialog.selectFooterButton(keepFailedBackupButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
@@ -386,10 +370,6 @@ Page {
                 // button holding focus before it runs.
                 focus: true
                 enabled: compactDialog.preflight.enoughFreeSpace === true && compactDialog.preflight.reclaimableBytes > 0
-                Keys.onReturnPressed: compactDialog.activateFooterSelection()
-                Keys.onEnterPressed: compactDialog.activateFooterSelection()
-                Keys.onLeftPressed: compactDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: compactDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) compactDialog.selectFooterButton(compactAcceptButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
@@ -397,10 +377,6 @@ Page {
                 id: compactCancelButton
                 objectName: "compactCancelButton"
                 text: "Cancel"
-                Keys.onReturnPressed: compactDialog.activateFooterSelection()
-                Keys.onEnterPressed: compactDialog.activateFooterSelection()
-                Keys.onLeftPressed: compactDialog.moveFooterSelection(-1)
-                Keys.onRightPressed: compactDialog.moveFooterSelection(1)
                 onActiveFocusChanged: if (activeFocus) compactDialog.selectFooterButton(compactCancelButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }

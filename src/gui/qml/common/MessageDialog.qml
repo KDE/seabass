@@ -93,10 +93,6 @@ SeabassDialog {
             KeyNavigation.right: rejectButton.visible ? rejectButton : null
             KeyNavigation.left: rejectButton.visible ? rejectButton : null
             onActiveFocusChanged: if (activeFocus) root.selectFooterButton(acceptButton)
-            Keys.onReturnPressed: root.activateFooterSelection()
-            Keys.onEnterPressed: root.activateFooterSelection()
-            Keys.onLeftPressed: root.moveFooterSelection(-1)
-            Keys.onRightPressed: root.moveFooterSelection(1)
             // DialogButtonBox turns AcceptRole into accepted() by itself,
             // but DestructiveRole into rejected() -- so the destructive
             // path has to say what it means explicitly.
@@ -114,10 +110,6 @@ SeabassDialog {
             objectName: root.alternateObjectName
             visible: root.alternateText.length > 0
             text: root.alternateText
-            Keys.onReturnPressed: root.activateFooterSelection()
-            Keys.onEnterPressed: root.activateFooterSelection()
-            Keys.onLeftPressed: root.moveFooterSelection(-1)
-            Keys.onRightPressed: root.moveFooterSelection(1)
             onActiveFocusChanged: if (activeFocus) root.selectFooterButton(alternateButton)
             // ActionRole: the box leaves it alone, so it neither accepts nor
             // rejects -- it says what it did and closes.
@@ -137,10 +129,6 @@ SeabassDialog {
             KeyNavigation.left: acceptButton
             KeyNavigation.right: acceptButton
             onActiveFocusChanged: if (activeFocus) root.selectFooterButton(rejectButton)
-            Keys.onReturnPressed: root.activateFooterSelection()
-            Keys.onEnterPressed: root.activateFooterSelection()
-            Keys.onLeftPressed: root.moveFooterSelection(-1)
-            Keys.onRightPressed: root.moveFooterSelection(1)
             DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
         }
     }
