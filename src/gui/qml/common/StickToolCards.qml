@@ -155,15 +155,15 @@ Item {
     }
     // "Which stick to copy from": one row per candidate, the newest first,
     // one that does not fit greyed out and saying so.
-    Dialog {
+    SeabassDialog {
         id: cloneSourceDialog
         objectName: "cloneSourceDialog"
         parent: Overlay.overlay
-        anchors.centerIn: parent
-        modal: true
+        severity: SeabassDialog.Question
         title: "Copy which stick onto " + (root.label.length > 0 ? root.label : "this stick") + "?"
         standardButtons: Dialog.Cancel
         ColumnLayout {
+            Layout.fillWidth: true
             spacing: Theme.tightSpacing
             Repeater {
                 model: root.cloneSources

@@ -23,22 +23,15 @@ Page {
 
     // What the ten taps on the version line did. The checkbox it talks
     // about has just appeared below.
-    Dialog {
+    SeabassDialog {
         id: testingRevealedDialog
         objectName: "testingRevealedDialog"
         anchors.centerIn: Overlay.overlay
-        // Explicit, for the reason StickListPage's dialogs give: content
-        // sized from the dialog must not size the dialog.
-        width: 460
-        modal: true
+        severity: SeabassDialog.Info
         title: "Alpha and beta versions"
+        headline: "Seabass will now also tell you about alpha and beta versions."
+        detailText: "A checkbox in the Updates section lets you turn that off again."
         standardButtons: Dialog.Ok
-        Label {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: "Seabass will now also tell you about alpha and beta versions. "
-                + "A checkbox in the Updates section lets you turn that off again."
-        }
     }
 
     signal anonymizeLibraryRequested()

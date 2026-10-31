@@ -177,12 +177,13 @@ Page {
         closePolicy: Popup.NoAutoClose
     }
 
-    Dialog {
+    SeabassDialog {
         id: confirmDialog
         objectName: "confirmDialog"
-        anchors.centerIn: parent
-        modal: true
-        width: 460
+        // The warning panel below carries its own icon and the strongest
+        // colours in the app; a badge beside it would say it twice.
+        showBadge: false
+        severity: root.nothingToLose ? SeabassDialog.Warning : SeabassDialog.Error
         title: "Format " + (root.selectedDisk ? root.selectedDisk.label : "") + "?"
 
         // The confirmation text a person must type back exactly -- the
@@ -207,7 +208,7 @@ Page {
         onAccepted: controller.format(root.selectedDisk.wholeDiskPath, root.selectedFilesystem, volumeLabelField.text)
 
         ColumnLayout {
-            width: parent.width
+            Layout.fillWidth: true
             spacing: 14
 
             // The strongest warning in this app -- every other destructive

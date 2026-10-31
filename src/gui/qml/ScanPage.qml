@@ -254,7 +254,7 @@ Page {
     // track (rekordbox exported it, Engine has not been synced since): the
     // add would leave that library alone and its player show the playlist
     // short, so it waits for an answer. Nothing is staged meanwhile.
-    Dialog {
+    SeabassDialog {
         id: missingLibrariesDialog
         objectName: "missingLibrariesDialog"
         property string playlist: ""
@@ -264,9 +264,10 @@ Page {
         property var added: []
         readonly property bool engineMissing: missing.indexOf("Engine") >= 0
         readonly property bool pioneerMissing: missing.indexOf("rekordbox") >= 0 || missing.indexOf("OneLibrary") >= 0
-        anchors.centerIn: parent
-        modal: true
+        severity: SeabassDialog.Warning
         title: qsTr("Not in every library")
+        headline: missingLibrariesDialog.text
+        messageObjectName: "missingLibrariesText"
         closePolicy: Popup.CloseOnEscape
         function names(list) {
             return list.length <= 1 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
@@ -287,12 +288,7 @@ Page {
             }
             return lines.join(" ");
         }
-        Label {
-            objectName: "missingLibrariesText"
-            width: Math.min(implicitWidth, root.width * 0.6)
-            wrapMode: Text.Wrap
-            text: missingLibrariesDialog.text
-        }
+        // No default marked: SeabassDialog takes the last, Don't add.
         footer: DialogButtonBox {
             Button {
                 objectName: "openSyncButton"
@@ -392,14 +388,15 @@ Page {
             }
         }
     }
-    Dialog {
+    SeabassDialog {
         id: leftOverEditsDialog
         objectName: "leftOverEditsDialog"
         property int count: 0
         property string stick: ""
-        anchors.centerIn: parent
-        modal: true
+        severity: SeabassDialog.Question
         title: qsTr("Unsaved playlist edits")
+        headline: leftOverEditsDialog.text
+        messageObjectName: "leftOverEditsText"
         // Answered, never dismissed: Discard drops a batch that may have
         // taken half an hour, and Keep stages it.
         closePolicy: Popup.NoAutoClose
@@ -407,15 +404,10 @@ Page {
             ? qsTr("Seabass last ran with 1 playlist edit staged for %1 and had not saved it. Keep editing it?").arg(stick)
             : qsTr("Seabass last ran with %1 playlist edits staged for %2 and had not saved them. Keep editing them?")
                 .arg(count).arg(stick))
-        Label {
-            objectName: "leftOverEditsText"
-            width: Math.min(implicitWidth, root.width * 0.6)
-            wrapMode: Text.Wrap
-            text: leftOverEditsDialog.text
-        }
+        // Keep is the default (highlighted, so SeabassDialog focuses it):
+        // the key that answers takes it.
         footer: DialogButtonBox {
             Button {
-                id: keepLeftOverEditsButton
                 objectName: "keepLeftOverEditsButton"
                 text: qsTr("Keep")
                 highlighted: true
@@ -431,8 +423,6 @@ Page {
                 }
             }
         }
-        // Keep is the default: the key that answers takes it.
-        onOpened: keepLeftOverEditsButton.forceActiveFocus()
         onAccepted: root.playlistEditController.keepLeftOverEdits(root.rekordboxPath, root.enginePath)
     }
 

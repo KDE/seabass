@@ -1520,6 +1520,10 @@ add_executable(no_plain_checkboxes_test tests/no_plain_checkboxes_test.cpp)
 target_compile_definitions(no_plain_checkboxes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_plain_checkboxes_test COMMAND no_plain_checkboxes_test)
 
+add_executable(no_plain_dialogs_test tests/no_plain_dialogs_test.cpp)
+target_compile_definitions(no_plain_dialogs_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME no_plain_dialogs_test COMMAND no_plain_dialogs_test)
+
 add_executable(no_raw_icon_toolbuttons_test tests/no_raw_icon_toolbuttons_test.cpp)
 target_compile_definitions(no_raw_icon_toolbuttons_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_raw_icon_toolbuttons_test COMMAND no_raw_icon_toolbuttons_test)

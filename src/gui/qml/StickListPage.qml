@@ -411,23 +411,15 @@ Page {
         }
         return null;
     }
-    Dialog {
+    SeabassDialog {
         id: openFolderError
         objectName: "openFolderError"
-        property alias text: openFolderErrorLabel.text
+        property string text: ""
         anchors.centerIn: Overlay.overlay
-        // Explicit, so the dialog's implicit width never has to be derived
-        // from content that is itself sized from the dialog -- the loop
-        // Qt reports as "Binding loop detected for implicitWidth".
-        width: 460
-        modal: true
+        severity: SeabassDialog.Error
         title: "Cannot open that folder"
+        headline: openFolderError.text
         standardButtons: Dialog.Ok
-        Label {
-            id: openFolderErrorLabel
-            width: parent.width
-            wrapMode: Text.WordWrap
-        }
     }
     // The counts behind the menu's backup entries, and nothing
     // else. Both are probes that open nothing and create nothing -- see
