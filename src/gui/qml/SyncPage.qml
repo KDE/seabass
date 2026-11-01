@@ -102,7 +102,13 @@ Page {
             && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
             && !(summary.skipped > 0) && summary.written === summary.total;
         if (whole) {
-            savedToast.show(syncController.syncedCueCount > 0
+            // An Undo Last Save comes through here too, and it synced no
+            // cues: in this page's words it read "Marked as already
+            // imported". It gets the summary's own words, as the other
+            // pages say every save.
+            const undo = summary.unit === "undo steps";
+            savedToast.show(undo ? summary.written + " " + summary.unit + " " + summary.verb
+                : syncController.syncedCueCount > 0
                 ? root.plural(syncController.syncedCueCount, "cue") + " synced"
                 : "Marked as already imported");
         }

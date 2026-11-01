@@ -383,6 +383,54 @@ TestCase {
         verify(!findChild(page, "nothingToSyncLabel").visible, "rows are left, so no empty state");
     }
 
+    // Undo Last Save finishes through the same signal as a save, and
+    // synced no cues: the toast says what the undo did, not this page's
+    // "Marked as already imported", and no summary dialog opens.
+    function test_anUndoIsSaidInItsOwnWords() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 720, rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        verify(page !== null, "page did not instantiate");
+        const controller = findChild(page, "syncController");
+        tryCompare(controller, "busy", true, 5000);
+        tryCompare(controller, "busy", false, 300000);
+        const list = listOf(page);
+        let row = null;
+        for (let r = 0; r < list.count && row === null; ++r) {
+            const candidate = list.itemAtIndex(r);
+            if (candidate !== null && !candidate.needsDecision) {
+                row = candidate;
+            }
+        }
+        verify(row !== null, "precondition: a track ready to sync");
+        controller.setAllIncluded(false);
+        controller.setIncluded(row.planIndex, true);
+        controller.stageSelected(false);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        tryCompare(session, "pendingCount", 1, 5000);
+        compare(saveSession(session).error, "");
+        tryCompare(controller, "busy", false, 300000);
+        verify(session.canUndo, "precondition: the save can be undone");
+
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.undoLastSave();
+        tryVerify(() => summary !== null, 300000, "the undo finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.unit, "undo steps", JSON.stringify(summary));
+
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000);
+        compare(findChild(toast, "confirmationToastLabel").text,
+                summary.written + " undo steps written");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over an undo that landed whole");
+        tryCompare(controller, "busy", false, 300000);
+    }
+
     // With a playlist picked, "nothing to sync" is about that playlist, and
     // says so: the picker is easy to forget, and the library may not be.
     function test_nothingToSyncNamesThePickedPlaylist() {

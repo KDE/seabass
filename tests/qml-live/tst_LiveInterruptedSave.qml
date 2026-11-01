@@ -172,12 +172,15 @@ TestCase {
         compare(s.interruptedSave, false, "the session no longer calls the last save unfinished");
         tryCompare(banner, "visible", false, 5000, "the notice is gone");
         verify(!stickFixture.fileExists(saveNote), "the note is gone from the stick");
-        // The page as a person sees it once the undo is over: its summary
-        // read and closed, the progress gone, the page's own rescan done.
+        // The page as a person sees it once the undo is over: what it did
+        // said over the list, the progress gone, the page's own rescan
+        // done. An undo that landed whole is a toast on Sync Cue Points,
+        // as a save is, not a summary to close (b8751a09).
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000, "the undo says what it did");
+        compare(findChild(toast, "confirmationToastLabel").text, summary.written + " undo steps written");
         const dialog = findChild(page, "summaryDialog");
-        tryCompare(dialog, "opened", true, 5000, "the undo says what it did");
-        findChild(dialog, "okButton").clicked();
-        tryVerify(function() { return !dialog.visible; }, 5000);
+        verify(dialog === null || !dialog.visible, "no summary to close over an undo that landed whole");
         tryVerify(function() { return !findChild(page, "writeProgressDialog").visible; }, 10000);
         tryVerify(function() { return Live.settled(opened.ctrl); }, 300000);
         shot(page, "live-interrupted-save-undone");
