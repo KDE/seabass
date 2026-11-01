@@ -1334,6 +1334,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
             # four cores it ran past 2,400 s, so ctest counts it as four
             # and runs it nearly alone, and the bound leaves room to grow.
             set_tests_properties(seabass_qml_tests PROPERTIES TIMEOUT 3000 PROCESSORS 4)
+        else()
+            # The same growth elsewhere: on the Mac (Round 11, 2026-11-01)
+            # the suite ran past the rig's 900 s under -j6, while one of
+            # its files alone takes a minute. A bound of its own, so the
+            # caller's --timeout cannot cut it short, and counted as four
+            # so it does not share the cores with five siblings.
+            set_tests_properties(seabass_qml_tests PROPERTIES TIMEOUT 2400 PROCESSORS 4)
         endif()
 
         # The same suite again, under the style the Linux build actually
@@ -1373,7 +1380,11 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style")
                 set_tests_properties(seabass_qml_desktop_style_tests PROPERTIES
                     ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style;SEABASS_IGNORE_REMOVABLE_MEDIA=1"
-                    RESOURCE_LOCK xvfb)
+                    RESOURCE_LOCK xvfb
+                    # Software GL on every frame: 1,425 cases took 913 s on
+                    # their own on the rig laptop (2026-11-01), past the
+                    # rig's 900 s, which killed Round 11's run near its end.
+                    TIMEOUT 2400 PROCESSORS 4)
             else()
                 message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
                     "Install kf6-qqc2-desktop-style to run the suite under the style the Linux build ships.")
