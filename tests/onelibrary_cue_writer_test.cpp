@@ -888,6 +888,77 @@ int main()
         std::cout << "case: every write by path reaches each row listing the file OK\n";
     }
 
+    // A content row whose path differs from the file's only in letter
+    // case. SHAKEDOWN_8's exportLibrary.db lists
+    // "/Contents/Akki (De)/Midnight/..." while the folder on the stick,
+    // and in export.pdb and Engine, is "Contents/AKKI (DE)/Midnight/".
+    // FAT32 and exFAT are case-insensitive, so both name one file, and the
+    // writer must find the row the way the stick finds the file: a Clean
+    // Up Stray Cues save stopped at 202 of 283 on "no content row" here.
+    // A row in the exact spelling wins over one in another case, and two
+    // rows in two other spellings are not guessed between.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        createFixture(pioneerRoot);
+        const std::string dbPath = OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot));
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec("INSERT INTO content (content_id, title, path) VALUES "
+                    "(17, 'Midnight', '/Contents/Akki (De)/Midnight/AKKI (DE) - Midnight.mp3'), "
+                    "(20, 'Same', '/Contents/Same.mp3'), (21, 'Same', '/Contents/SAME.mp3'), "
+                    "(30, 'Twice', '/Contents/Twice.mp3'), (31, 'Twice', '/Contents/TWICE.mp3'), "
+                    "(40, 'Olmuhle', '/Contents/\xC3\x89mile/\xC3\x96lm\xC3\xBChle.mp3');");
+        }
+        auto value = [&](const std::string &sql) {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement statement(db, sql);
+            statement.step();
+            return statement.columnInt64(0);
+        };
+        const int64_t cueCount = static_cast<int64_t>(sampleCues().size());
+
+        const std::string akki = pathToUtf8(scratch / "Contents" / "AKKI (DE)" / "Midnight" / "AKKI (DE) - Midnight.mp3");
+        OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
+        writer.writeCuesForPath(akki, sampleCues());
+        assert(writer.hasTrackAtPath(akki));
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 17") == cueCount);
+        assert(writer.contentIdsForFile(akki) == std::vector<int64_t>{17});
+
+        // Exact spelling first: only row 20, not its upper-case twin.
+        writer.writeCuesForPath(pathToUtf8(scratch / "Contents" / "Same.mp3"), sampleCues());
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 20") == cueCount);
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 21") == 0);
+
+        // Two other spellings: no guess, the row is missing as before.
+        const std::string twice = pathToUtf8(scratch / "Contents" / "twice.mp3");
+        assert(!writer.hasTrackAtPath(twice));
+        bool refused = false;
+        try {
+            writer.writeCuesForPath(twice, sampleCues());
+        } catch (const OneLibraryRowMissing &) {
+            refused = true;
+        }
+        assert(refused);
+        assert(value("SELECT count(*) FROM cue WHERE content_id IN (30, 31)") == 0);
+
+        // exFAT folds case beyond ASCII too.
+        const std::string olmuhle = pathToUtf8(scratch / "Contents" / "\xC3\xA9MILE" / "\xC3\xB6LM\xC3\x9CHLE.mp3");
+        assert(writer.hasTrackAtPath(olmuhle));
+        writer.writeCuesForPath(olmuhle, sampleCues());
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 40") == cueCount);
+
+        writer.removeTrackByPath(akki);
+        assert(value("SELECT count(*) FROM content WHERE content_id = 17") == 0);
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 17") == 0);
+        assert(!writer.hasTrackAtPath(akki));
+        std::cout << "case: a content row is found whatever its letter case OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

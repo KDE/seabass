@@ -19,6 +19,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "application/path_key.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
@@ -70,18 +71,65 @@ std::string toContentPath(const std::string &stickRoot, const std::string &track
 namespace
 {
 
-// Every content row at `contentPath`, oldest first. A real
-// exportLibrary.db can list one file under more than one row (193 files on
-// RV2), and the reader shows whichever it meets, so a write meant for the
-// file has to reach all of them.
-std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPath)
+// The content rows whose path names `contentPath` the way the stick's
+// filesystem does, oldest first; empty when none does.
+//
+// The exact spelling first, and only it when there is one. Otherwise any
+// row whose path differs only as FAT32 and exFAT do not tell apart:
+// letter case and combining marks, by normalizedPathKey (path_key.hpp).
+// SHAKEDOWN_8's exportLibrary.db lists "/Contents/Akki (De)/Midnight/"
+// for a folder spelled "AKKI (DE)" on the stick and in export.pdb and
+// Engine; an exact match found no row and stopped a save partway. The
+// fold is the app's own rather than SQLite's NOCASE, which folds ASCII
+// only, while exFAT folds "Ö" as well as "O".
+//
+// The fallback reads every path in the table, which is a few thousand
+// rows, and only for a file the exact lookup missed.
+//
+// Rows in two or more other spellings are not chosen between: nothing
+// says which of them the player reads, so this answers "none", as it did
+// before it folded anything.
+std::vector<int64_t> contentIdsMatching(SqlCipherDb &db, const std::string &contentPath)
 {
     std::vector<int64_t> ids;
-    SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ? ORDER BY content_id");
-    find.bindText(1, contentPath);
-    while (find.step()) {
-        ids.push_back(find.columnInt64(0));
+    {
+        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ? ORDER BY content_id");
+        find.bindText(1, contentPath);
+        while (find.step()) {
+            ids.push_back(find.columnInt64(0));
+        }
     }
+    if (!ids.empty()) {
+        return ids;
+    }
+    const std::string wanted = application::normalizedPathKey(contentPath);
+    if (wanted.empty()) {
+        return ids;
+    }
+    std::optional<std::string> spelling;
+    SqlCipherStatement scan(db, "SELECT content_id, path FROM content WHERE path IS NOT NULL ORDER BY content_id");
+    while (scan.step()) {
+        std::string path = scan.columnText(1);
+        if (application::normalizedPathKey(path) != wanted) {
+            continue;
+        }
+        if (spelling && *spelling != path) {
+            return {};
+        }
+        spelling = std::move(path);
+        ids.push_back(scan.columnInt64(0));
+    }
+    return ids;
+}
+
+// Every content row of the file at `contentPath`, oldest first; see
+// contentIdsMatching() for which rows those are. A real exportLibrary.db
+// can list one file under more than one row (193 files on RV2), and the
+// reader shows whichever it meets, so a write meant for the file has to
+// reach all of them.
+std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPath)
+{
+    std::vector<int64_t> ids = contentIdsMatching(db, contentPath);
     if (ids.empty()) {
         throw OneLibraryRowMissing("onelibrary: no content row for path " + contentPath);
     }
@@ -622,11 +670,9 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
 
     std::string contentPath = toContentPath(m_stickRoot, filePath);
     SqlCipherDb &db = writeConnection();
+    // Every row listing the file; see contentIdsAt().
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
     {
-
-        // Every row listing the file; see contentIdsAt().
-        const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
-
         db.exec("BEGIN IMMEDIATE;");
         try {
             // No FK/cascade enforcement exists anywhere in this schema
@@ -672,13 +718,17 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
 
     // Correctness verification: re-open fresh and confirm the row (and
     // its dependents) are actually gone, same "re-read the committed
-    // result before trusting it" convention as writeCuesForPath().
+    // result before trusting it" convention as writeCuesForPath(). By
+    // the rows removed rather than by the path asked about, which can be
+    // spelled in another letter case than theirs.
     SqlCipherDb &verifyDb = verifyConnection();
-    SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM content WHERE path = ?");
-    verify.bindText(1, contentPath);
-    verify.step();
-    if (verify.columnInt64(0) != 0) {
-        throw std::runtime_error("onelibrary: post-removal verification failed, content row still present");
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM content WHERE content_id = ?");
+        verify.bindInt64(1, contentId);
+        verify.step();
+        if (verify.columnInt64(0) != 0) {
+            throw std::runtime_error("onelibrary: post-removal verification failed, content row still present");
+        }
     }
 
     // Refresh the staleness baseline, see writeCuesForPath()'s own
@@ -690,9 +740,7 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
 bool OneLibraryCueWriter::hasTrackAtPath(const std::string &filePath)
 {
     checkNotStale();
-    SqlCipherStatement find(writeConnection(), "SELECT 1 FROM content WHERE path = ? LIMIT 1");
-    find.bindText(1, toContentPath(m_stickRoot, filePath));
-    return find.step();
+    return !contentIdsMatching(writeConnection(), toContentPath(m_stickRoot, filePath)).empty();
 }
 
 void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doomedFilePath,
