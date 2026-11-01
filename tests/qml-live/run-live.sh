@@ -97,9 +97,12 @@ run() {  # name, extra env assignments...
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'
     # The test binary's own status, not the filter's: a pipeline ends with
     # sed, which succeeds whatever the tests did, so a run full of FAILs
-    # used to exit 0 and a caller counted it as passed.
+    # used to exit 0 and a caller counted it as passed. Read before any
+    # other command: every command, `local` included, replaces PIPESTATUS,
+    # and a `local bad=0` here once made every failed test read as passed.
+    local status="${PIPESTATUS[0]}"
     local bad=0
-    [ "${PIPESTATUS[0]}" -eq 0 ] || bad=1
+    [ "$status" -eq 0 ] || bad=1
     # And a skip: QtTest exits 0 for it, but a test that did not run has
     # proved nothing.
     if grep -q "^SKIP" "$log" 2>/dev/null; then
