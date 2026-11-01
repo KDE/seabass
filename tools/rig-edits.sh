@@ -205,6 +205,25 @@ w10_record_state() {
     local file="$stick/Seabass/rekordbox-baseline.tsv.gz"
     if [ -e "$file" ]; then sha256sum "$file" | cut -d' ' -f1; else echo absent; fi
 }
+# A plan with nothing proposed in any group ("<group>: 0 (0 ticked)" on
+# every count line) whose conflict lines all appear in an earlier plan.
+w10_only_old_conflicts() {  # plan before, plan after
+    local before="$1" after="$2" counts proposed line
+    counts="$(grep -cE '^  [A-Za-z][A-Za-z ,]*: [0-9]+ \([0-9]+ ticked\)$' "$after")"
+    proposed="$(grep -E '^  [A-Za-z][A-Za-z ,]*: [0-9]+ \([0-9]+ ticked\)$' "$after" | grep -cvE ': 0 \(0 ticked\)$')"
+    if [ "$counts" -eq 0 ] || [ "$proposed" -ne 0 ]; then
+        echo "  the plan after the sync still proposes something ($proposed of $counts groups)"
+        return 1
+    fi
+    while IFS= read -r line; do
+        if ! grep -qxF -- "$line" "$before"; then
+            echo "  a conflict the sync raised: $line"
+            return 1
+        fi
+    done < <(grep -E '^  conflict ' "$after")
+    echo "  nothing proposed; $(grep -cE '^  conflict ' "$after") conflict(s), all already there before the sync"
+    return 0
+}
 eu() { "$build/rig_engine_update" --rekordbox "$stick/PIONEER" --engine "$stick/Engine Library" "$@"; }
 
 engine_update_check() {
@@ -252,7 +271,14 @@ engine_update_check() {
             eu --plan > "$state/plan-after.txt"
             rc=$?
             cat "$state/plan-after.txt"
-            [ "$rc" -eq 0 ]
+            # Empty but for conflicts the stick already had: --plan exits 1
+            # for a conflict too, and a reference that carries a question
+            # of its own (Round 11: three files Engine lists twice, in
+            # SHAKEDOWN_8 and TESTRIG_2 alike) asks it before the sync and
+            # after it, whatever the sync did. So: nothing proposed in any
+            # group, and every conflict left was already in the plan
+            # before the sync, which means the sync raised none.
+            [ "$rc" -eq 0 ] || w10_only_old_conflicts "$state/plan-before.txt" "$state/plan-after.txt"
             w10 plan-empty-after-sync $?
 
             eu --check-back "$track"
