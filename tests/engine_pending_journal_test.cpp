@@ -308,7 +308,19 @@ int main()
 
     // 6. The reader waits a writer out rather than failing, and the
     //    writer's committed work is what it then reads.
+    //
+    //    The titles go back first, as in case 7: case 5's writer committed
+    //    the very title this one writes, and SQLite 3.51 (the Mac's system
+    //    library) writes no page for an UPDATE that changes nothing, so
+    //    there was no journal for the assertion below to find. Older
+    //    SQLite wrote the pages anyway, which is why only the Mac failed.
     {
+        {
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(seabass::pathToUtf8(liveDb).c_str(), &db) == SQLITE_OK);
+            exec(db, "UPDATE Track SET title = 'BEFORE THE WRITER'");
+            sqlite3_close(db);
+        }
         const std::set<std::string> keptNow = entriesOf(recovered);
         LiveWriter writer(liveDb);
         assert(seabass::infrastructure::hasPendingJournal(liveDb) && "the writer's journal is live, as in case 5");
