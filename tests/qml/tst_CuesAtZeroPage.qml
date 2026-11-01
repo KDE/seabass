@@ -44,7 +44,32 @@ TestCase {
             function scan(a, b, c) { scanCalls++; }
             function cancelScan() {}
             function undoLastOperation() {}
+            property var removed: []
+            property int removeAllCalls: 0
+            property var unstaged: []
+            function removeJunkCue(i) { removed.push(i); removedChanged(); }
+            function removeAllJunkCues() { removeAllCalls++; }
+            function unstageJunkCue(i) { unstaged.push(i); unstagedChanged(); }
         }
+    }
+
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    function saveSession(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 300000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    function junkRow(model, index, role) {
+        return model.data(model.index(index, 0), role);
     }
 
     Component {
@@ -236,6 +261,63 @@ TestCase {
         compare(removeAll.enabled, false, "everything staged: nothing left to press it for");
         page.destroy();
         wait(0);
+    }
+
+    // Remove and Remove All stage at once: nothing is asked first, since
+    // a staged removal is taken back with the row's own Unstage until Save
+    // writes it.
+    function test_removeStagesWithoutAsking() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const row = {track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
+                             durationMs: 0, cues: [], side: "engine", sourceId: "1", artworkPath: ""},
+                     staged: false, format: "engine", positionMs: 0,
+                     reason: "at the very start of the track"};
+        controller.junkCues.append(row);
+        controller.junkCues.append(row);
+        controller.unstagedJunkCueCount = 2;
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+        waitForRendering(page);
+
+        mouseClick(findButton(page, "Remove All"));
+        compare(controller.removeAllCalls, 1, "Remove All staged without a question");
+        const list = findChild(page, "junkCueList");
+        tryVerify(() => list.itemAtIndex(1) !== null, 5000);
+        const remove = findButton(list.itemAtIndex(1), "Remove");
+        verify(remove !== null, "the row has its Remove");
+        mouseClick(remove);
+        compare(controller.removed, [1], "the row's Remove staged that row without a question");
+        page.destroy();
+        wait(0);
+    }
+
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the summary's own words, and opens no summary dialog. On a
+    // copy of the fixture stick, scanned by the page's own controller.
+    function test_aFinishedSaveIsSaidOverTheList() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        verify(page !== null, "the page must instantiate");
+        const controller = page.consistencyController;
+        tryCompare(controller, "busy", false, 300000);
+        verify(controller.junkCues.count > 0, "precondition: the fixture has cues that look accidental");
+
+        mouseClick(findButton(page, "Remove All"));
+        tryCompare(controller, "unstagedJunkCueCount", 0, 5000);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        verify(session.pendingCount > 0, "the removals are staged");
+        const summary = saveSession(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.written > 0, JSON.stringify(summary));
+
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000);
+        compare(findChild(toast, "confirmationToastLabel").text, summary.written + " cues removed");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+        compare(controller.junkCues.count, 0, "the written rows are gone from under it");
     }
 
     // Buttons are found by their label, the words the user reads.

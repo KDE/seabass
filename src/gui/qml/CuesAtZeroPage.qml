@@ -23,30 +23,13 @@ HealthCheckPage {
     checkTitle: "Cues at 0:00"
     // Opened without the hub, it reads cues and nothing else.
     ownScanDepth: LibraryConsistencyController.CuesOnly
-
-    MessageDialog {
-        id: confirmRemoveJunkCueDialog
-        property int pendingIndex: -1
-        severity: SeabassDialog.Question
-        title: "Stage removing this cue?"
-        headline: "Removes this cue sitting at 0:00 from the track."
-        detailText: "Backed up first."
-        acceptText: "Stage Removal"
-        onAccepted: if (pendingIndex >= 0) consistencyController?.removeJunkCue(pendingIndex)
-    }
-
-    MessageDialog {
-        id: confirmRemoveAllJunkCuesDialog
-        severity: SeabassDialog.Warning
-        destructive: true
-        // The model's count, the same number the card on the hub says.
-        title: "Stage removing all " + consistencyController?.junkCues.count + " cue(s) that look accidental?"
-        headline: "This stages removing every cue at 0:00 currently listed, across every catalog on "
-            + "this stick. Once you press Save that is a real write, not just dismissing them from view."
-        detailText: "Everything is backed up first, but make sure this is really what you want."
-        acceptText: "Stage Removal"
-        onAccepted: consistencyController?.removeAllJunkCues()
-    }
+    // Remove and Remove All stage, and a staged removal is undone with the
+    // row's own Unstage until Save writes it, so neither asks first; Save
+    // still backs up before it writes. A save that landed whole is said
+    // with the toast (HealthCheckPage), as Clean Up Stray Cues says it.
+    // Ignore All keeps its question: it is not a staging, and there is no
+    // Unstage for it.
+    quietCleanSaves: true
 
     MessageDialog {
         id: confirmIgnoreAllJunkCuesDialog
@@ -86,8 +69,7 @@ HealthCheckPage {
                 && consistencyController?.unstagedJunkCueCount > 0
             ToolTip.visible: hovered
             // It stages; it does not remove. The row buttons
-            // beside it and the confirmation this opens both
-            // said so already -- this one promised an
+            // beside it say so too -- this one promised an
             // immediate permanent delete, which is the wrong
             // thing to tell someone in both directions: they
             // either avoid a reversible action thinking it is
@@ -98,7 +80,7 @@ HealthCheckPage {
                 : consistencyController?.unstagedJunkCueCount === 0
                 ? "Every one of them is staged already. Press Save to write it."
                 : "Stage removing every cue at 0:00 listed, in all catalogs. Save writes it."
-            onClicked: confirmRemoveAllJunkCuesDialog.open()
+            onClicked: consistencyController?.removeAllJunkCues()
         }
         Button {
             visible: consistencyController?.junkCues.count > 0
@@ -183,8 +165,7 @@ HealthCheckPage {
                     if (junkDelegate.staged) {
                         consistencyController?.unstageJunkCue(junkDelegate.index);
                     } else {
-                        confirmRemoveJunkCueDialog.pendingIndex = junkDelegate.index;
-                        confirmRemoveJunkCueDialog.open();
+                        consistencyController?.removeJunkCue(junkDelegate.index);
                     }
                 }
                 playbackController: root.playbackController

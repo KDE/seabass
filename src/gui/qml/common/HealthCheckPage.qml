@@ -44,6 +44,12 @@ Page {
     // The edit-session registry. The app's singleton unless a test hands
     // in a fake, as tst_EditSessionHost does; read when the page is built.
     property alias editSessionRegistry: editHost.registry
+    // A check page that says a finished save itself sets this: a save that
+    // landed whole is then said over the list with the countdown toast, in
+    // the summary's own words ("12 cues removed"), and opens no summary
+    // dialog. Anything short of whole still gets the dialog. Off, the
+    // dialog comes after every save, as it always did.
+    property alias quietCleanSaves: editHost.quietCleanSaves
 
     // The hub can be torn down before the page, taking its controller with
     // it (a stick pulled and its changes discarded does exactly that). So
@@ -108,6 +114,32 @@ Page {
         stickLabel: root.stickLabel
         rekordboxPath: root.rekordboxPath
         enginePath: root.enginePath
+    }
+
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        anchors.centerIn: parent
+        // Above the page's content, below the edit host's Save (900).
+        z: 850
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            Qt.callLater(() => root.sayWholeSave(summary));
+        }
+    }
+    function sayWholeSave(summary) {
+        if (!editHost.quietCleanSaves || !summary || !(summary.written > 0)) {
+            return;
+        }
+        const whole = !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            savedToast.show(summary.written + " " + summary.unit + " " + summary.verb);
+        }
     }
 
     header: ToolBar {
