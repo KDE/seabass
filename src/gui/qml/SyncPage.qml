@@ -62,11 +62,10 @@ Page {
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
-        // Once the list is empty the page itself says the save is done
-        // (the checkmark and "N cues synced" below), so a save that landed
-        // whole opens no summary on top of it. A save that leaves rows
-        // behind, or any that did not land whole, still gets one.
-        quietCleanSaves: syncController.planCount === 0 && syncController.conflictCount === 0
+        // A save that landed whole is said with the toast below and the
+        // list is read again from the stick, so it opens no summary.
+        // Anything short of whole still gets the dialog.
+        quietCleanSaves: true
         feature: "sync"
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
@@ -74,6 +73,40 @@ Page {
         stickLabel: root.stickLabel
         rekordboxPath: root.rekordboxPath
         enginePath: root.enginePath
+    }
+
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the page's own words ("12 cues synced"), and the catalogs
+    // are read again so the list shows what is left to sync. Above the
+    // scan's scrim: the toast is what the Save click was waiting for, and
+    // the re-analysis it starts must not dim it.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            Qt.callLater(() => root.afterSave(summary));
+        }
+    }
+    function afterSave(summary) {
+        if (!summary || !(summary.written > 0)) {
+            return;
+        }
+        const whole = !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            savedToast.show(syncController.syncedCueCount > 0
+                ? root.plural(syncController.syncedCueCount, "cue") + " synced"
+                : "Marked as already imported");
+        }
+        root.analyzeInScope();
     }
 
     // "All tracks" first (no meaningful single count across up to three
@@ -1084,31 +1117,9 @@ Page {
                 ]
             }
 
-            // Nothing left after a save: said large, where the list was.
-            readonly property bool justSynced: plansListView.count === 0 && !syncController.busy
-                && !syncController.writing && !root.searching && syncController.syncedCueCount > 0
-
-            GoldenColumn {
-                objectName: "syncedState"
-                visible: plansListView.justSynced
-                spacing: Theme.rowSpacing
-                CheckmarkCanvas {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: Theme.scaled(96)
-                    height: Theme.scaled(96)
-                }
-                Label {
-                    objectName: "syncedLabel"
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.plural(syncController.syncedCueCount, "cue") + " synced"
-                    color: Theme.good
-                    font.pointSize: Theme.fontLarge
-                }
-            }
-
             EmptyState {
                 objectName: "nothingToSyncLabel"
-                visible: plansListView.count === 0 && !syncController.busy && !plansListView.justSynced
+                visible: plansListView.count === 0 && !syncController.busy
                 tone: root.searching ? "info" : "good"
                 iconName: root.searching ? "edit-find" : "checkmark"
                 // Names the playlist when one is picked: the result is about

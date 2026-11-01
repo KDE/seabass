@@ -526,12 +526,6 @@ void SyncController::unstageRekordboxImportMark()
     emit importStateChanged();
 }
 
-void SyncController::noteSyncedForTesting(int cues)
-{
-    m_syncedCueCount = cues;
-    emit syncedChanged();
-}
-
 void SyncController::setImportStateForTesting(bool playerWillOfferImport)
 {
     m_importState = {};

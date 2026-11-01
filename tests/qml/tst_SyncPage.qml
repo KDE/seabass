@@ -310,24 +310,77 @@ TestCase {
         tryCompare(row, "visible", false, 2000);
     }
 
-    // After a save that left nothing to sync, the empty list says so,
-    // large: a checkmark and how many cues came across. Before any save
-    // it says there is nothing to sync, as it always did.
-    function test_theEmptyListSaysHowManyCuesWereSynced() {
-        var page = openPage(1100, 720);
-        var controller = findChild(page, "syncController");
-        verify(syncPageFixture.fillEmpty(controller));
-        var done = findChild(page, "syncedState");
-        var nothing = findChild(page, "nothingToSyncLabel");
-        tryCompare(nothing, "visible", true, 2000);
-        verify(!done.visible, "nothing was synced in this visit");
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
 
-        controller.noteSyncedForTesting(12);
-        tryCompare(done, "visible", true, 2000);
-        verify(!nothing.visible, "one message at a time");
-        compare(findChild(page, "syncedLabel").text, "12 cues synced");
-        controller.noteSyncedForTesting(1);
-        compare(findChild(page, "syncedLabel").text, "1 cue synced");
+    function saveSession(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 300000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the page's own words, and the catalogs are read again: the
+    // written row is gone, what is left to sync stays, and no summary
+    // dialog opens. On a copy of the fixture stick, through a real save.
+    function test_aSaveIsSaidOverTheListAndTheListIsReadAgain() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 720, rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        verify(page !== null, "page did not instantiate");
+        const controller = findChild(page, "syncController");
+        tryCompare(controller, "busy", true, 5000);
+        tryCompare(controller, "busy", false, 300000);
+        const list = listOf(page);
+        verify(list.count > 2, "precondition: the fixture has tracks to sync, found " + list.count);
+        const before = list.count;
+
+        let row = null;
+        for (let r = 0; r < list.count && row === null; ++r) {
+            const candidate = list.itemAtIndex(r);
+            if (candidate !== null && !candidate.needsDecision) {
+                row = candidate;
+            }
+        }
+        verify(row !== null, "precondition: a track ready to sync");
+        const title = row.title;
+        controller.setAllIncluded(false);
+        controller.setIncluded(row.planIndex, true);
+        controller.stageSelected(false);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        tryCompare(session, "pendingCount", 1, 5000);
+
+        const summary = saveSession(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        // Counted as each change lands, so complete by the time the save is.
+        const expectedCues = controller.syncedCueCount;
+        verify(expectedCues > 0, "the save counts the cues that came across");
+
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000);
+        compare(findChild(toast, "confirmationToastLabel").text,
+                expectedCues + (expectedCues === 1 ? " cue" : " cues") + " synced");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+
+        // Read again from the stick: one row fewer, and not the written one.
+        tryCompare(controller, "busy", false, 300000);
+        tryCompare(list, "count", before - 1, 5000);
+        for (let r = 0; r < list.count; ++r) {
+            const left = list.itemAtIndex(r);
+            if (left !== null) {
+                verify(left.title !== title, "the written track is still listed: " + title);
+            }
+        }
+        verify(!findChild(page, "nothingToSyncLabel").visible, "rows are left, so no empty state");
     }
 
     // With a playlist picked, "nothing to sync" is about that playlist, and

@@ -177,7 +177,6 @@ public:
     // Test seam: the state as if read from a stick.
     Q_INVOKABLE void setImportStateForTesting(bool playerWillOfferImport);
     // Test seam: as if a save had brought this many cues across.
-    Q_INVOKABLE void noteSyncedForTesting(int cues);
 
     // Picks one side of conflicts()[conflictIndex] (the row's
     // conflictIndex role): it becomes an ordinary plan, appended and
