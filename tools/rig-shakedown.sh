@@ -409,16 +409,15 @@ references_unchanged() {
 # because of the other.
 suite() {
     # A stick, so the two screenshot cases that want one stop skipping.
-    # They are the only tests in the non-live suite that read
-    # SEABASS_LIVE_STICK, and they only read it: they point the Metadata
-    # Backup and Restore pages at the stick's catalogs and grab the
-    # result. Everything else in the suite ignores it.
+    # They and stick_performance_live_test (which reads the stick's
+    # audio, and writes nothing without SEABASS_LIVE_WRITE) are the
+    # tests in the non-live suite that read SEABASS_LIVE_STICK; the two
+    # point the Metadata Backup and Restore pages at the stick's catalogs
+    # and grab the result. Everything else in the suite ignores it.
     #
     # B rather than A because B is the stick this rig treats as
-    # expendable, and this runs before B1/B3 have put either back to its
-    # reference, so whatever state the last round left is what gets
-    # photographed. That is fine for a screenshot and would not be for
-    # an assertion.
+    # expendable. This runs after B3 has put B back to its reference, so
+    # what gets read and photographed is the reference library.
     #
     # ctest alone leaves them skipped, which is how they have always
     # run: a skip in a release gate proves nothing, and these two are
@@ -1162,8 +1161,7 @@ resume_after_keep() {
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --cancel-at 20 keep && "$build/rig_backup" "$B" "$out/backups-fb/$b.zip"
 }
 
-# ---- setup and suite -------------------------------------------------
-check S1-suite suite
+# ---- setup -----------------------------------------------------------
 check S2-reference-links reference_links
 check S3-sandboxed-profile sandbox_profile
 check S4-references-unchanged references_unchanged
@@ -1194,6 +1192,15 @@ check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick 
 # different states and comparing them answers nothing.
 { catalog_digests "$A"; catalog_digests "$B"; } > "$out/catalog-digest-baseline.txt" 2>/dev/null || true
 echo "catalog digests recorded: $(grep -c . "$out/catalog-digest-baseline.txt" 2>/dev/null || echo 0) catalog(s)"
+
+# ---- the suite -------------------------------------------------------
+# After the restores, not first: the suite points its stick-reading tests
+# at B (see suite()), and before B3 that is whatever the last round, or
+# the last person, left on it. Round 11's Mac stick arrived empty and
+# stick_performance_live_test, which asserts there is audio to measure,
+# went red for it. After the baselines too, so R6 would see it if any
+# of those tests ever wrote to the stick.
+check S1-suite suite
 
 # ---- reads -----------------------------------------------------------
 check R1-R3-read-A env RIG_PART_SUFFIX=-A "$build/rig_read" "$A" "$refA"
