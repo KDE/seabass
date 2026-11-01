@@ -38,6 +38,10 @@ struct SaveLoopResult
     // the same removals twice.
     QString warning;
     bool cancelled = false;  // stopped between two changes on request
+    // The save failed and everything it had written went back: the stick
+    // is as it was before it, and every change is still pending. A save
+    // lands whole or not at all; see SaveContext::rollBackSave().
+    bool rolledBack = false;
     std::vector<UndoableBackup> backups;
     // Bytes freed by releasing old automatic backups after this save,
     // which only happens when the stick was below its headroom. Worth
@@ -49,10 +53,11 @@ struct SaveLoopResult
 
 // The one save loop every session runs (worker thread): applies changes
 // in order, checks the token between them, runs the finish hooks, and
-// says exactly which changes landed. A finish-hook failure (a scratch
-// copy that could not be committed) reports every change as still
-// pending -- nothing it covered reached the stick -- so a retry re-applies
-// them; the per-item writers are idempotent.
+// says exactly which changes landed. It lands whole or not at all: a
+// change that fails, or a finish hook that cannot commit its scratch copy,
+// sends every change of the save back (rolledBack) and reports all of them
+// as still pending, so a retry re-applies them; the per-item writers are
+// idempotent. A cancel is not a failure: the changes before it stand.
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx);
 
 }  // namespace seabass::gui

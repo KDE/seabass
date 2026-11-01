@@ -13,7 +13,7 @@ import SeabassGui
 // only way out; the page decides what happens after (stay, or go back
 // to where the user came from).
 //
-// summary: {written, total, unit, cancelled, error} plus an optional
+// summary: {written, total, unit, cancelled, error, rolledBack} plus an optional
 // verb ("written" by default; "deleted" for a prune), an optional
 // detail line that replaces the default cancel explanation, and an
 // optional skipped count (part of total, not of written).
@@ -27,6 +27,10 @@ SeabassDialog {
     readonly property string verb: dialog.summary.verb !== undefined ? dialog.summary.verb : "written"
     readonly property bool cancelled: dialog.summary.cancelled === true
     readonly property string error: dialog.summary.error !== undefined ? dialog.summary.error : ""
+    // The save failed and went back whole: nothing on the stick changed,
+    // and every change is still staged. Said as that, not as "0 of 283
+    // cues removed. Then: ...", which reads as a count of what landed.
+    readonly property bool rolledBack: dialog.summary.rolledBack === true
     // Everything was written, but something after it was not finished --
     // a write-ahead log that would not fold. Never "Done" in silence:
     // before this existed the same state was reported as an error, and a
@@ -58,6 +62,9 @@ SeabassDialog {
     // that looks identical at a glance. Naming the shortfall only when
     // there is one makes the two outcomes different shapes.
     readonly property string countSentence: {
+        if (dialog.rolledBack) {
+            return "Nothing was saved. The stick is as it was before.";
+        }
         // The noun agrees with the number it follows, which is the
         // total in both shapes: "1 cue added", but "1 of 9 groups
         // cleaned up" -- there are nine groups, one of which was done.
@@ -94,7 +101,8 @@ SeabassDialog {
         : dialog.cancelled ? SeabassDialog.Warning
         : SeabassDialog.Info
     closePolicy: Popup.NoAutoClose
-    title: dialog.error.length > 0 ? "Stopped with an error"
+    title: dialog.rolledBack ? "Nothing was changed"
+        : dialog.error.length > 0 ? "Stopped with an error"
         : (dialog.warning.length > 0 && !dialog.cancelled) ? "Done, with something left over"
         : dialog.cancelled ? "Cancelled"
         : dialog.skipped > 0 ? "Done, with some skipped"
@@ -129,7 +137,9 @@ SeabassDialog {
             visible: text.length > 0
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
             text: [dialog.skippedSentence,
-                   dialog.error.length > 0 ? "Then: " + dialog.error
+                   dialog.rolledBack ? "The save stopped because: " + dialog.error
+                       + " Your changes are still staged, so you can save again once that is fixed."
+                   : dialog.error.length > 0 ? "Then: " + dialog.error
                    : (dialog.warning.length > 0 && dialog.cancelled)
                        ? "Stopped at your request. " + dialog.warning
                    : dialog.warning.length > 0 ? dialog.warning

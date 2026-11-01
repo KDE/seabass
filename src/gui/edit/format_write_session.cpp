@@ -101,6 +101,15 @@ void FormatWriteSession::commit(bool ok)
         m_ctx.log().record(m_label + ": nothing was applied to the " + m_format + " scratch copy; discarding it");
         return;
     }
+    // A failed save goes back whole (SaveContext::rollBackSave()), so what
+    // the changes before the failure put in the copy stays out of the
+    // stick with the rest. A cancelled one still commits them: each landed
+    // whole, and the user stopped the save, nothing went wrong with it.
+    if (m_ctx.saveFailed()) {
+        m_ctx.log().record(m_label + ": the save failed and goes back whole; discarding the " + m_format
+                           + " scratch copy (" + std::to_string(m_itemsApplied) + " update(s))");
+        return;
+    }
     fs::path scratchFile = m_scratch->path / m_scratchSubdir / m_scratchFilename;
     if (!infrastructure::copyFileDurablyAtomic(pathToUtf8(scratchFile), m_dbFile)) {
         m_ctx.log().record(m_label + ": FAILED to commit the " + m_format + " scratch copy back onto the stick");

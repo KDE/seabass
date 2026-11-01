@@ -544,40 +544,67 @@ void SaveContext::protectForThisChange(const std::string &file)
         members.push_back(target + "-journal");
     }
     for (const std::string &member : members) {
-        if (!m_protected.insert(application::normalizedPathKey(member)).second) {
+        const std::string key = application::normalizedPathKey(member);
+        if (!m_protected.insert(key).second) {
             continue;
         }
-        Checkpoint checkpoint{member, {}};
+        // The first time this save protects a file, the copy is the file
+        // as it was before the save, and the save keeps it (rollBackSave()).
+        // Not for a scratch copy: it is not on the stick, and a failed save
+        // throws it away rather than putting anything back into it.
+        const bool firstInSave = !isScratchCopy(member) && !m_saveProtected.contains(key);
+        Checkpoint checkpoint{member, {}, firstInSave};
         const fs::path memberPath = pathFromUtf8(member);
         std::error_code ec;
         if (fs::is_regular_file(memberPath, ec)) {
-            if (!m_checkpointDir) {
-                fs::path dir = fs::temp_directory_path()
-                    / ("seabass-change-checkpoint-"
+            std::optional<infrastructure::ScratchDirGuard> &dir = firstInSave ? m_saveCheckpointDir : m_checkpointDir;
+            if (!dir) {
+                fs::path made = fs::temp_directory_path()
+                    / (std::string(firstInSave ? "seabass-save-checkpoint-" : "seabass-change-checkpoint-")
                        + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-                fs::create_directories(dir);
-                m_checkpointDir.emplace(dir);
+                fs::create_directories(made);
+                dir.emplace(made);
             }
             // Refused up front with the numbers, rather than as a bare "no
             // space left" halfway through a copy. Either way the change
             // fails before it has written anything.
             const std::uintmax_t size = fs::file_size(memberPath);
-            const std::uintmax_t available = fs::space(m_checkpointDir->path).available;
+            const std::uintmax_t available = fs::space(dir->path).available;
             if (available < size) {
                 throw std::runtime_error("not enough temporary space to protect " + pathToUtf8(memberPath.filename())
                                          + " before writing it: needs " + std::to_string(size / (1024 * 1024))
-                                         + " MB in " + pathToUtf8(m_checkpointDir->path.parent_path()) + ", "
+                                         + " MB in " + pathToUtf8(dir->path.parent_path()) + ", "
                                          + std::to_string(available / (1024 * 1024)) + " MB free");
             }
             // A counter, not m_checkpoints.size(): see the member's own
             // comment. The vector shrinks under redirectWrites() and the
             // names must not be reissued when it does.
-            const fs::path copy = m_checkpointDir->path / std::to_string(m_nextCheckpointName++);
+            const fs::path copy = dir->path / std::to_string(m_nextCheckpointName++);
             checkpoint.copy = pathToUtf8(copy);
             fs::copy_file(memberPath, copy, fs::copy_options::overwrite_existing);
         }
+        if (firstInSave) {
+            // Only once the copy exists: a copy that threw above leaves the
+            // file unprotected for the save too, and the change fails before
+            // it writes anything.
+            m_saveProtected.insert(key);
+            m_saveCheckpoints.push_back(checkpoint);
+        }
         m_checkpoints.push_back(std::move(checkpoint));
     }
+}
+
+bool SaveContext::isScratchCopy(const std::string &file) const
+{
+    const std::string key = application::normalizedPathKey(file);
+    for (const auto &[live, written] : m_redirects) {
+        for (const char *suffix : {"", "-wal", "-journal"}) {
+            if (application::normalizedPathKey(written + suffix) == key) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::string SaveContext::writeTargetFor(const std::string &liveFile) const
@@ -592,9 +619,11 @@ void SaveContext::redirectWrites(const std::string &liveFile, const std::string 
 {
     m_redirects[application::normalizedPathKey(liveFile)] = writtenFile;
     // The live file is not written again until the session commits, after
-    // every change, so a copy of it taken earlier in this change is dead
-    // weight -- a whole database held in temp beside the scratch copy and
-    // that copy's own checkpoint.
+    // every change, so this change has no use for a copy of it -- a whole
+    // database held in temp beside the scratch copy and that copy's own
+    // checkpoint. Unless the copy is the save's: a commit that lands
+    // before another one fails has replaced the live file, and that copy
+    // is what rollBackSave() puts back. It stays in m_saveCheckpoints.
     std::vector<std::string> live{liveFile};
     if (pathFromUtf8(liveFile).extension() == ".db") {
         live.push_back(liveFile + "-wal");
@@ -610,7 +639,7 @@ void SaveContext::redirectWrites(const std::string &liveFile, const std::string 
                 return false;
             }
             std::error_code ec;
-            if (!checkpoint.copy.empty()) {
+            if (!checkpoint.copy.empty() && !checkpoint.keptForSave) {
                 fs::remove(pathFromUtf8(checkpoint.copy), ec);
             }
             return true;
@@ -629,28 +658,11 @@ void SaveContext::endChange()
     m_inChange = false;
 }
 
-std::optional<QString> SaveContext::rollBackChange()
+std::optional<QString> SaveContext::putBack(const std::vector<Checkpoint> &checkpoints,
+                                            std::set<std::string> &notPutBack, int &putBackCount)
 {
-    // Which registered databases this save actually wrote -- asked now,
-    // because the next line destroys the writers that know.
-    std::set<std::string> written;
-    for (const auto &[key, database] : m_walDatabases) {
-        if (database.wrote && database.wrote()) {
-            written.insert(key);
-        }
-    }
-
-    // Writers first. A SQLite connection that closes checkpoints its WAL
-    // into the database, so closing one after the restore would write the
-    // failed change straight back over it.
-    m_shared.clear();
-
     std::optional<QString> firstError;
-    int putBack = 0;
-    // Which files did NOT go back. A database with any of its set in here
-    // has its .db from one generation beside sidecars from another.
-    std::set<std::string> notPutBack;
-    for (auto it = m_checkpoints.rbegin(); it != m_checkpoints.rend(); ++it) {
+    for (auto it = checkpoints.rbegin(); it != checkpoints.rend(); ++it) {
         try {
             std::error_code ec;
             if (it->copy.empty()) {
@@ -693,7 +705,7 @@ std::optional<QString> SaveContext::rollBackChange()
                     if (!infrastructure::removeEntry(pathFromUtf8(it->original), failure)) {
                         throw std::runtime_error("could not remove " + it->original + ": " + failure);
                     }
-                    ++putBack;
+                    ++putBackCount;
                 }
                 continue;
             }
@@ -705,7 +717,7 @@ std::optional<QString> SaveContext::rollBackChange()
             if (!infrastructure::copyFileDurablyAtomic(it->copy, it->original)) {
                 throw std::runtime_error("could not put back " + it->original);
             }
-            ++putBack;
+            ++putBackCount;
         } catch (const std::exception &e) {
             notPutBack.insert(application::normalizedPathKey(it->original));
             if (!firstError) {
@@ -714,7 +726,7 @@ std::optional<QString> SaveContext::rollBackChange()
         }
     }
     // The -shm indexes a -wal that was just replaced; SQLite rebuilds it.
-    for (const Checkpoint &checkpoint : m_checkpoints) {
+    for (const Checkpoint &checkpoint : checkpoints) {
         const std::string suffix = "-wal";
         if (checkpoint.original.size() > suffix.size()
             && checkpoint.original.compare(checkpoint.original.size() - suffix.size(), suffix.size(), suffix) == 0) {
@@ -724,6 +736,76 @@ std::optional<QString> SaveContext::rollBackChange()
         }
     }
 
+    return firstError;
+}
+
+bool SaveContext::setAsideMixedSidecars(const std::string &dbPath, const std::set<std::string> &notPutBack)
+{
+    const bool mixed = notPutBack.contains(application::normalizedPathKey(dbPath))
+                       || notPutBack.contains(application::normalizedPathKey(dbPath + "-wal"))
+                       || notPutBack.contains(application::normalizedPathKey(dbPath + "-journal"));
+    if (!mixed) {
+        return false;
+    }
+    // One generation's database beside another's sidecars. Leaving
+    // them in place is NOT inert: SQLite replays a valid -wal (or
+    // rolls back a -journal) into whatever .db sits beside it on the
+    // next open, with no cross-check -- and something opens it within
+    // seconds. So the sidecars are renamed out of SQLite's reach.
+    // Renamed rather than removed, the way FilesystemBackupStore
+    // treats a restore's stale sidecars but keeping the bytes: this
+    // path is already a failure, and nothing here should destroy
+    // what someone may still want back.
+    std::vector<std::string> moved;
+    for (const char *suffix : {"-wal", "-shm", "-journal"}) {
+        const fs::path side = pathFromUtf8(dbPath + suffix);
+        std::error_code ec;
+        if (!fs::exists(side, ec) || ec) {
+            continue;
+        }
+        fs::path stale = side;
+        stale += ".seabass-stale";
+        fs::remove(stale, ec);
+        fs::rename(side, stale, ec);
+        if (!ec) {
+            moved.push_back(pathToUtf8(side.filename()));
+        }
+    }
+    if (!moved.empty() && hasStick()) {
+        std::string list;
+        for (const std::string &name : moved) {
+            list += (list.empty() ? "" : ", ") + name;
+        }
+        log().record("save: moved " + list + " aside as .seabass-stale: the rollback could not put "
+                     + pathToUtf8(pathFromUtf8(dbPath).filename())
+                     + " back in step with them, and SQLite would replay them into the wrong generation "
+                       "on the next open. The backup taken before this save holds the state to go back to.");
+    }
+    return true;
+}
+
+std::optional<QString> SaveContext::rollBackChange()
+{
+    // Which registered databases this save actually wrote -- asked now,
+    // because the next line destroys the writers that know.
+    std::set<std::string> written;
+    for (const auto &[key, database] : m_walDatabases) {
+        if (database.wrote && database.wrote()) {
+            written.insert(key);
+        }
+    }
+
+    // Writers first. A SQLite connection that closes checkpoints its WAL
+    // into the database, so closing one after the restore would write the
+    // failed change straight back over it.
+    m_shared.clear();
+
+    // Which files did NOT go back. A database with any of its set in here
+    // has its .db from one generation beside sidecars from another.
+    std::set<std::string> notPutBack;
+    int putBackCount = 0;
+    const std::optional<QString> firstError = putBack(m_checkpoints, notPutBack, putBackCount);
+
     // Then the logs themselves. Keyed on the databases this save WROTE, not
     // on the files the failing change protected: a save whose OneLibrary
     // rows came from earlier changes leaves a log nobody folds when the
@@ -731,44 +813,7 @@ std::optional<QString> SaveContext::rollBackChange()
     // destroyed before the restore (above), so their close did whatever
     // passive checkpoint it could and nothing will try again.
     for (const auto &[key, database] : m_walDatabases) {
-        const bool mixed = notPutBack.contains(key)
-                           || notPutBack.contains(application::normalizedPathKey(database.path + "-wal"))
-                           || notPutBack.contains(application::normalizedPathKey(database.path + "-journal"));
-        if (mixed) {
-            // One generation's database beside another's sidecars. Leaving
-            // them in place is NOT inert: SQLite replays a valid -wal (or
-            // rolls back a -journal) into whatever .db sits beside it on the
-            // next open, with no cross-check -- and something opens it within
-            // seconds. So the sidecars are renamed out of SQLite's reach.
-            // Renamed rather than removed, the way FilesystemBackupStore
-            // treats a restore's stale sidecars but keeping the bytes: this
-            // path is already a failure, and nothing here should destroy
-            // what someone may still want back.
-            std::vector<std::string> moved;
-            for (const char *suffix : {"-wal", "-shm", "-journal"}) {
-                const fs::path side = pathFromUtf8(database.path + suffix);
-                std::error_code ec;
-                if (!fs::exists(side, ec) || ec) {
-                    continue;
-                }
-                fs::path stale = side;
-                stale += ".seabass-stale";
-                fs::remove(stale, ec);
-                fs::rename(side, stale, ec);
-                if (!ec) {
-                    moved.push_back(pathToUtf8(side.filename()));
-                }
-            }
-            if (!moved.empty() && hasStick()) {
-                std::string list;
-                for (const std::string &name : moved) {
-                    list += (list.empty() ? "" : ", ") + name;
-                }
-                log().record("save: moved " + list + " aside as .seabass-stale: the rollback could not put "
-                             + pathToUtf8(pathFromUtf8(database.path).filename())
-                             + " back in step with them, and SQLite would replay them into the wrong generation "
-                               "on the next open. The backup taken before this save holds the state to go back to.");
-            }
+        if (setAsideMixedSidecars(database.path, notPutBack)) {
             continue;
         }
         if (!written.contains(key)) {
@@ -795,7 +840,7 @@ std::optional<QString> SaveContext::rollBackChange()
     if (hasStick()) {
         log().record(firstError ? "save: putting back what the failed change had written FAILED: "
                                       + firstError->toStdString()
-                                : "save: put back " + std::to_string(putBack)
+                                : "save: put back " + std::to_string(putBackCount)
                                       + " file(s) the failed change had written");
     }
 
@@ -806,6 +851,49 @@ std::optional<QString> SaveContext::rollBackChange()
     m_protected.clear();
     m_checkpointDir.reset();
     m_inChange = false;
+    return firstError;
+}
+
+std::optional<QString> SaveContext::rollBackSave()
+{
+    // Every writer closed before anything goes back, for the reason
+    // rollBackChange() gives; the write sessions too, whose finish hooks
+    // have run by now and whose scratch copies are not coming back.
+    m_shared.clear();
+    m_wholeSaveShared.clear();
+
+    std::set<std::string> notPutBack;
+    int putBackCount = 0;
+    const std::optional<QString> firstError = putBack(m_saveCheckpoints, notPutBack, putBackCount);
+
+    // No log is folded here, unlike after a change: each database went back
+    // together with its sidecars, as they were before the save, and folding
+    // would rewrite the .db from what was already beside it. Only a database
+    // with part of its set put back is dealt with, the same way.
+    std::set<std::string> databases;
+    for (const Checkpoint &checkpoint : m_saveCheckpoints) {
+        std::string path = checkpoint.original;
+        for (const std::string suffix : {"-wal", "-journal"}) {
+            if (path.size() > suffix.size() && path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                path.resize(path.size() - suffix.size());
+            }
+        }
+        if (pathFromUtf8(path).extension() == ".db") {
+            databases.insert(path);
+        }
+    }
+    for (const std::string &database : databases) {
+        setAsideMixedSidecars(database, notPutBack);
+    }
+    if (hasStick()) {
+        log().record(firstError ? "save: putting the stick back as it was before this save FAILED: "
+                                      + firstError->toStdString()
+                                : "save: put the stick back as it was before this save (" + std::to_string(putBackCount)
+                                      + " file(s) put back)");
+    }
+    m_saveCheckpoints.clear();
+    m_saveProtected.clear();
+    m_saveCheckpointDir.reset();
     return firstError;
 }
 

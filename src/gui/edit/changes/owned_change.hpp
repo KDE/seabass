@@ -57,6 +57,7 @@ public:
     int unitsSkipped() const override;
     QString verb() const override;
     QString playlistEdited() const override;
+    QString unitKey() const override;
     QStringList formatsTouched() const override;
     QString owner() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;

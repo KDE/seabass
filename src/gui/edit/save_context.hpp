@@ -79,6 +79,14 @@ public:
 //   way (backupOnce() does, so does a scratch copy), is copied aside before
 //   it runs; if it fails, the save's writers are closed and those files are
 //   put back, so no catalog keeps half of a change that failed.
+// - markSaveFailed() / rollBackSave(): and so does the save. The first copy
+//   any change takes of a file is that file as it was before the save, and
+//   is kept until the save ends; a save that fails anywhere -- a change, or
+//   a scratch copy's commit -- puts every one of them back, and a scratch
+//   copy commits nothing. Sebastian, 2026-11-01: a change left half written
+//   has no use. Round 11 found a junk-cue save stopped at 202 of 283 that
+//   left Engine and OneLibrary rewritten and the analysis files not, which
+//   is the three formats of one library disagreeing because of Seabass.
 class SaveContext
 {
 public:
@@ -243,6 +251,22 @@ public:
     // back.
     void onChangeEnd(std::function<void(bool landed)> hook);
 
+    // This save is going back whole: from here no scratch copy commits
+    // (FormatWriteSession asks), and the save loop calls rollBackSave()
+    // once the finish hooks have closed what they hold. Set by the save
+    // loop when a change failed, or when a finish hook's commit did.
+    void markSaveFailed() { m_saveFailed = true; }
+    bool saveFailed() const { return m_saveFailed; }
+    // Closes every writer, then puts every file this save wrote back as it
+    // was before the save: the copy the first change to protect it took. A
+    // scratch copy is not among them; it never reached the stick, or, when
+    // its commit landed before another failed, the live file it replaced
+    // is (the copy beginChange() took before the redirect, kept for this).
+    // No write-ahead log is folded afterwards: a database and its sidecars
+    // go back together, as they were. Returns the first file that could not
+    // be put back; the save's backup records are then the way back.
+    std::optional<QString> rollBackSave();
+
     // A database this save wrote through a connection that keeps a
     // write-ahead log, and how to fold it. Registered by whoever opens the
     // writer, so a rolled-back save can fold what its restore brought back
@@ -359,7 +383,28 @@ private:
     {
         std::string original;
         std::string copy;  // empty when the file did not exist
+        // The copy is the file as it was before the save, and the save's
+        // own (m_saveCheckpoints holds it too, in m_saveCheckpointDir): a
+        // change that drops this checkpoint must not delete the copy.
+        bool keptForSave = false;
     };
+    // Puts every checkpoint in `checkpoints` back, newest first: copies
+    // over, files that did not exist removed. Fills `notPutBack` with the
+    // ones that did not go back and counts in `putBack` the ones that did;
+    // returns the first error.
+    std::optional<QString> putBack(const std::vector<Checkpoint> &checkpoints, std::set<std::string> &notPutBack,
+                                   int &putBack);
+    // A database with only part of its set put back has one generation's
+    // .db beside another's sidecars, which SQLite would replay into it on
+    // the next open: its sidecars are renamed out of reach. True when it
+    // was one of those.
+    bool setAsideMixedSidecars(const std::string &dbPath, const std::set<std::string> &notPutBack);
+    // A scratch copy (a redirectWrites() target) or one of its sidecars.
+    bool isScratchCopy(const std::string &file) const;
+    bool m_saveFailed = false;
+    std::optional<infrastructure::ScratchDirGuard> m_saveCheckpointDir;
+    std::vector<Checkpoint> m_saveCheckpoints;
+    std::set<std::string> m_saveProtected;  // normalizedPathKey, this save
     bool m_inChange = false;
     std::optional<infrastructure::ScratchDirGuard> m_checkpointDir;
     std::vector<Checkpoint> m_checkpoints;

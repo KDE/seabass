@@ -208,7 +208,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     size_t done = 0;
     for (size_t index = 0; index < changes.size(); ++index) {
         const auto &change = changes[index];
-        if (ctx.cancel().cancelled()) {
+        // Between units only: the rest of a unit a cancel arrived inside
+        // still lands (PendingChange::unitKey()).
+        if (ctx.cancel().cancelled() && (index == 0 || change->unitKey() != changes[index - 1]->unitKey())) {
             result.cancelled = true;
             break;
         }
@@ -234,20 +236,13 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             // back: a file removed from Engine but still listed by rekordbox
             // is the one state a DJ cannot repair from the page.
             if (auto undoError = ctx.rollBackChange()) {
-                result.error += QStringLiteral(", and putting back what it had already written failed (%1); "
-                                               "restore this save's backup")
+                result.error += QStringLiteral(", and putting back what it had already written failed (%1)")
                                     .arg(*undoError);
-            } else if (result.appliedIds.isEmpty()) {
-                // Nothing was applied and everything went back, so the
-                // backup this save took is a copy of a stick that never
-                // changed. Round 5 found one left on a stick too full to
-                // save to: a complete record, taking the space the save
-                // had just been refused for. Only in this one case --
-                // a change that DID apply needs its backup to undo from,
-                // and a rollback that left anything behind needs it
-                // more than that.
-                ctx.discardBackupsTakenThisSave();
             }
+            // And the changes before it go back too: the save lands whole
+            // or not at all (SaveContext::rollBackSave(), below, once the
+            // finish hooks have closed what they hold).
+            ctx.markSaveFailed();
             break;
         }
         ctx.endChange();
@@ -258,9 +253,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         ctx.progress().tick(backupUnits + ++done);
     }
 
-    // After a cancel or a failure too: the changes that did land are
-    // committed by the finish hooks below, and any of them may have moved
-    // the sequence.
+    // After a cancel: the changes that did land are committed by the
+    // finish hooks below, and any of them may have moved the sequence. Not
+    // after a failure, which goes back whole and so moved nothing.
     // "Mark as imported" in the same save carries the sequence from when
     // it was staged, and a repair later in the save may move the pdb past
     // it; the step below reads the sequence as the save left it.
@@ -272,21 +267,35 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // stays one short of full until the stick is committed.
     ctx.status(QStringLiteral("Committing changes to the stick"));
     ctx.progress().tick(backupUnits + changes.size());
-    QString importWarning = keepImportLevel(ctx, importLevelWanted);
+    QString importWarning = ctx.saveFailed() ? QString() : keepImportLevel(ctx, importLevelWanted);
 
-    // ok means "the whole batch went through"; a cancel or a failure hands
-    // the hooks false so a scratch copy commits only what completed.
+    // ok means "the whole batch went through". A cancel hands the hooks
+    // false, so a scratch copy commits what completed; a failed save
+    // (ctx.saveFailed()) has it commit nothing.
     const auto finish = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled);
+    if (finish.error) {
+        // A commit that did not land: whatever the others committed, and
+        // whatever the changes wrote straight onto the stick, goes back
+        // with it, or the formats would disagree by exactly that commit.
+        ctx.markSaveFailed();
+    }
+    std::optional<QString> rollbackError;
+    if (ctx.saveFailed()) {
+        rollbackError = ctx.rollBackSave();
+        result.rolledBack = !rollbackError;
+        result.appliedIds.clear();
+        result.skippedIds.clear();
+    }
     // Only when nothing actually failed: a warning saying "the changes are
     // applied, do not save again" beside an error that clears appliedIds
     // would contradict itself.
-    if (finish.warning && !finish.error && result.error.isEmpty()) {
+    if (finish.warning && !ctx.saveFailed() && result.error.isEmpty()) {
         // Everything landed; a tidy-up did not. Said out loud, but the
         // changes stay applied -- clearing them would have the user save
         // the same removals twice.
         result.warning = *finish.warning;
     }
-    if (importLevelWanted && importWarning.isEmpty()) {
+    if (importLevelWanted && importWarning.isEmpty() && !ctx.saveFailed()) {
         importWarning = settleImportLevel(ctx);
     }
 
@@ -297,11 +306,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     QStringList afterCommitWarnings;
     {
         SaveContext::AfterCommit after;
-        if (!finish.error) {
+        if (!ctx.saveFailed()) {
             after.appliedIds = result.appliedIds;
             after.skippedIds = result.skippedIds;
         }
-        after.succeeded = result.error.isEmpty() && !result.cancelled && !finish.error;
+        after.succeeded = result.error.isEmpty() && !result.cancelled && !ctx.saveFailed();
         for (const auto &change : changes) {
             if (after.appliedIds.contains(change->id()) && !after.skippedIds.contains(change->id())) {
                 for (auto &write : change->rekordboxWrites()) {
@@ -352,6 +361,22 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     if (!result.error.isEmpty()) {
         for (const QString &warning : afterCommitWarnings) {
             result.error += QStringLiteral("; ") + warning;
+        }
+    }
+    if (ctx.saveFailed()) {
+        if (rollbackError) {
+            // The one case a failed save leaves something written: the
+            // backup records are the way back, so they stay, and the note
+            // on the stick keeps Undo Last Save on offer.
+            result.error += QStringLiteral("; putting the stick back as it was before this save failed (%1), so "
+                                           "Undo Last Save restores this save's backup")
+                                .arg(*rollbackError);
+        } else {
+            // Everything went back, so the records this save took are
+            // copies of a stick that never changed. Round 5 found one left
+            // on a stick too full to save to: a complete record, taking
+            // the space the save had just been refused for.
+            ctx.discardBackupsTakenThisSave();
         }
     }
     // Only after the whole batch went through, and only if the stick is

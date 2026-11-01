@@ -543,8 +543,10 @@ int main()
 
             RestoreMetadataChange change("rekordbox", root, QString::fromStdString(targetId), proposal);
             assert(change.apply(ctx).ok);
-            // ok == false: a later track in the same batch failed, or the
-            // DJ cancelled. This one already committed its rating.
+            // ok == false without a failed save: the DJ cancelled after this
+            // track (a failure sends the whole save back instead, see
+            // SaveContext::rollBackSave()). This one already committed its
+            // rating, and a cancel keeps it.
             assert(!ctx.runFinishHooks(false).error);
         }
 
@@ -557,7 +559,24 @@ int main()
             }
         }
         assert(found);
-        std::cout << "case 9: a failed batch keeps the ratings it already committed\n";
+        std::cout << "case 9: a cancelled batch keeps the ratings it already committed\n";
+    }
+
+    // One track's restore is one unit whichever catalog a change writes,
+    // so a cancel cannot stop between its rekordbox and its Engine change;
+    // another track is another unit.
+    {
+        MetadataRestoreProposal track;
+        track.stickTrack.filePath = "/Volumes/STICK/Contents/Artist/Song.mp3";
+        MetadataRestoreProposal other = track;
+        other.stickTrack.filePath = "/Volumes/STICK/Contents/Artist/Other.mp3";
+        const RestoreMetadataChange rekordbox("rekordbox", "/Volumes/STICK/PIONEER", "7", track);
+        const RestoreMetadataChange engine("engine", "/Volumes/STICK/Engine Library", "41", track);
+        const RestoreMetadataChange next("engine", "/Volumes/STICK/Engine Library", "42", other);
+        assert(rekordbox.id() != engine.id());
+        assert(rekordbox.unitKey() == engine.unitKey() && "one track, one unit");
+        assert(engine.unitKey() != next.unitKey() && "another track, another unit");
+        std::cout << "case unit (a track's catalog changes share one unit) OK\n";
     }
 
     std::cout << "restore_metadata_change_test: all cases passed\n";

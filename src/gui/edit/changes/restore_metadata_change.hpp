@@ -36,6 +36,10 @@ public:
                            domain::MetadataRestoreProposal proposal, int itemCountHint = 1);
 
     QString id() const override;
+    // The track, whichever catalog: the changes MetadataRestoreController
+    // stages for one track are one restore, and a cancel lets all of them
+    // land or none.
+    QString unitKey() const override;
     QString description() const override;
     QString unit() const override;
     QString verb() const override;

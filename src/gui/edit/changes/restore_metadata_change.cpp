@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "application/path_key.hpp"
 #include "application/ports/cue_writer.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/save_context.hpp"
@@ -327,6 +328,14 @@ RestoreMetadataChange::RestoreMetadataChange(QString format, QString path, QStri
 QString RestoreMetadataChange::id() const
 {
     return "metadata-restore:" + m_format + ":" + m_sourceId;
+}
+
+QString RestoreMetadataChange::unitKey() const
+{
+    if (m_proposal.stickTrack.filePath.empty()) {
+        return id();
+    }
+    return "metadata-restore:" + QString::fromStdString(application::normalizedPathKey(m_proposal.stickTrack.filePath));
 }
 
 QString RestoreMetadataChange::description() const

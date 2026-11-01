@@ -35,6 +35,11 @@ QString OwnedChange::id() const
     return m_owner + QLatin1Char(':') + m_inner->id();
 }
 
+QString OwnedChange::unitKey() const
+{
+    return m_owner + QLatin1Char(':') + m_inner->unitKey();
+}
+
 QString OwnedChange::description() const
 {
     return m_inner->description();

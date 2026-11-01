@@ -592,6 +592,9 @@ void LibraryEditSession::onSaveFinished()
         // without being told to save again.
         {"warning", result.warning},
         {"failedId", result.failedId},
+        // The save failed and went back whole: nothing on the stick
+        // changed, and every change is still pending.
+        {"rolledBack", result.rolledBack},
     };
 
     setWriting(false);

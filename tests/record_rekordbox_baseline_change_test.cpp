@@ -62,6 +62,25 @@ const QString SyncOntoEngineId = QStringLiteral("rekordbox-export-sync:sync:engi
 
 }  // namespace
 
+// Stops the save after itself, as the DJ pressing Cancel would.
+class CancellingChange : public PendingChange
+{
+public:
+    explicit CancellingChange(QString id) : m_id(std::move(id)) {}
+    QString id() const override { return m_id; }
+    QString description() const override { return QStringLiteral("stops the save"); }
+    QString unit() const override { return QStringLiteral("tracks"); }
+    QStringList formatsTouched() const override { return {}; }
+    ChangeOutcome apply(SaveContext &ctx) override
+    {
+        const_cast<application::CancellationToken &>(ctx.cancel()).cancel();
+        return ChangeOutcome::success();
+    }
+
+private:
+    QString m_id;
+};
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -158,9 +177,10 @@ int main(int argc, char **argv)
         std::cout << "case 2 (over an earlier baseline; Undo restores it byte for byte) OK\n";
     }
 
-    // 3. A save that stops: the landed change's item is recorded, the
-    //    failed change's keeps the previous value. Then a save where the
-    //    first change fails records nothing at all.
+    // 3. A save that stops on request: the landed change's item is
+    //    recorded, the one not reached keeps the previous value. A save that
+    //    FAILS after a change landed goes back whole and records nothing,
+    //    and so does one whose first change fails.
     {
         const auto stick = testing::makeEngineChangeStick(fixture, "record_stopped");
         testing::levelImportCounter(stick);
@@ -177,14 +197,15 @@ int main(int argc, char **argv)
         next.tracks = {testing::baselineRow(stick, tracks[0], 3, ValueOrigin::Unknown, 4000.0),
                        testing::baselineRow(stick, tracks[1], 3, ValueOrigin::Unknown, 4000.0)};
         const QString failId = QStringLiteral("rekordbox-export-sync:fail");
+        const QString stopId = QStringLiteral("rekordbox-export-sync:stop");
         const RecordRekordboxBaselineChange::AppliedBy appliedBy = {
             {SyncOntoEngineId.toStdString(), {"rating:" + k1}}, {failId.toStdString(), {"rating:" + k2}}};
         const SaveLoopResult saved = testing::saveChanges(
-            {owned(testing::syncOntoEngine(stick)), std::make_shared<testing::FailingChange>(failId),
-             record(stick, next, appliedBy)},
+            {owned(testing::syncOntoEngine(stick)), std::make_shared<CancellingChange>(stopId),
+             std::make_shared<testing::FailingChange>(failId), record(stick, next, appliedBy)},
             stick.pioneerPath(), stick.enginePath());
-        assert(saved.failedId == failId);
-        assert((saved.appliedIds == QStringList{SyncOntoEngineId}) && "the record change itself was not reached");
+        assert(saved.cancelled && saved.failedId.isEmpty());
+        assert((saved.appliedIds == QStringList{SyncOntoEngineId, stopId}) && "the record change itself was not reached");
         const auto recorded = testing::readBaseline(stick);
         assert(recorded && recorded->pdbSequence == testing::FixtureSequence);
         assert(recorded->tracks.size() == 2);
@@ -192,6 +213,17 @@ int main(int argc, char **argv)
                && "landed: the new value");
         assert(recorded->findTrack(k2)->rating == 1 && recorded->findTrack(k2)->ratingOrigin == ValueOrigin::Rekordbox
                && "did not land: the previous value and origin");
+
+        {
+            const std::string baselineBefore = testing::fileBytes(testing::baselineFileOf(stick));
+            const SaveLoopResult failed = testing::saveChanges(
+                {owned(testing::syncOntoEngine(stick)), std::make_shared<testing::FailingChange>(failId),
+                 record(stick, next, appliedBy)},
+                stick.pioneerPath(), stick.enginePath());
+            assert(failed.failedId == failId && failed.appliedIds.isEmpty() && failed.rolledBack);
+            assert(testing::fileBytes(testing::baselineFileOf(stick)) == baselineBefore
+                   && "the change that ran went back with the save, so nothing is recorded");
+        }
 
         const std::string before = testing::fileBytes(testing::baselineFileOf(stick));
         const SaveLoopResult nothing = testing::saveChanges(

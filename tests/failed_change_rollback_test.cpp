@@ -20,9 +20,14 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
@@ -141,9 +146,10 @@ int main()
 {
     auto &noProgress = application::NullProgressReporter::instance();
 
-    // 1. Plain files. The change before the failing one keeps its write;
-    //    the failing one's writes are undone, including a file it created
-    //    and one it wrote without declaring (protected on the way).
+    // 1. Plain files. The failing change's writes are undone, including a
+    //    file it created and one it wrote without declaring (protected on
+    //    the way), and so is the change before it: a save lands whole or
+    //    not at all.
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_plain");
         const fs::path &stick = scratch.path;
@@ -174,15 +180,17 @@ int main()
                                              }),
         };
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds == QStringList{"a"});
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
         assert(result.failedId == "b");
         assert(result.error == "the second catalog refused");
-        assert(read(pdb) == "pdb-from-a");
+        assert(read(pdb) == "pdb-original" && "the change before the failure goes back too");
         assert(read(anlz) == "anlz-original");
         assert(read(extra) == "extra-original");
         assert(!fs::exists(created));
-        assert(read(stick / "Seabass" / "seabass.log").find("put back 4 file(s)") != std::string::npos);
-        std::cout << "case 1 (a failed change's writes are put back, earlier changes kept) OK\n";
+        const std::string log = read(stick / "Seabass" / "seabass.log");
+        assert(log.find("put back 4 file(s)") != std::string::npos);
+        assert(log.find("put the stick back as it was before this save") != std::string::npos);
+        std::cout << "case 1 (a failed change's writes are put back, and the save's before it) OK\n";
     }
 
     // 2. A change that throws is rolled back the same way.
@@ -207,8 +215,9 @@ int main()
     }
 
     // 3. Through a scratch copy. Both changes write the copy, not the stick;
-    //    the commit at the end must carry the first change and not the
-    //    second, and say it applied one update, not two.
+    //    the second fails, so the save goes back whole and the copy is not
+    //    committed at all: the first change's update stays off the stick
+    //    with the second's.
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_scratch");
         const fs::path &stick = scratch.path;
@@ -236,17 +245,19 @@ int main()
             }),
         };
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds == QStringList{"a"});
-        assert(read(mdb) == std::string(1 << 20, 'a'));
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        assert(read(mdb) == std::string(1 << 20, 'o') && "neither change reached the stick");
         const std::string log = read(stick / "Seabass" / "seabass.log");
-        assert(log.find("committed the engine scratch copy (1 update(s))") != std::string::npos);
-        std::cout << "case 3 (a scratch copy commits the changes that landed, not the one that failed) OK\n";
+        assert(log.find("discarding the engine scratch copy (1 update(s))") != std::string::npos);
+        assert(log.find("committed the engine scratch copy") == std::string::npos);
+        std::cout << "case 3 (a failed save commits no scratch copy, not even what landed in it) OK\n";
     }
 
     // 4. A WAL database with its writer still open. Putting the file back
     //    while the connection lives would let its close write the failed
     //    change's WAL frames straight back in, so this is the case that
-    //    proves the writers are closed first.
+    //    proves the writers are closed first. Both changes go back: the
+    //    save lands whole or not at all.
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal");
         const fs::path &stick = scratch.path;
@@ -283,8 +294,10 @@ int main()
             }),
         };
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds == QStringList{"a"});
-        assert(cueCount(dbPath, 1) == 2);
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        // Both changes' frames gone: a writer still open at the restore
+        // would have written them straight back in on close.
+        assert(cueCount(dbPath, 1) == 0 && "a went back with the save");
         assert(cueCount(dbPath, 2) == 0);
         std::cout << "case 4 (a WAL database is put back with its writer closed first) OK\n";
     }
@@ -293,7 +306,9 @@ int main()
     //    earlier one wrote it. The rollback's fold used to be keyed to the
     //    FAILING change's protected files, so nothing folded here: change
     //    a's rows were reported applied while they sat in a -wal that a
-    //    player reading exportLibrary.db alone would not see.
+    //    player reading exportLibrary.db alone would not see. Since a save
+    //    goes back whole, a's rows go back too: the database and its log
+    //    end byte for byte as they were before the save.
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal_other");
         const fs::path &stick = scratch.path;
@@ -314,10 +329,12 @@ int main()
         // quiet test SQLite folds the log on close by itself and the check
         // would pass with the fold deleted.
         SqlCipherLibrary readerLib;
-        SqlCipherDb reader(readerLib, pathToUtf8(dbPath), /*readOnly=*/true);
-        reader.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-        SqlCipherStatement holdOpen(reader, "SELECT content_id, title FROM content;");
-        assert(holdOpen.step() && "the reader holds a read transaction open across the save");
+        std::optional<SqlCipherDb> reader;
+        reader.emplace(readerLib, pathToUtf8(dbPath), /*readOnly=*/true);
+        reader->exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        std::optional<SqlCipherStatement> holdOpen;
+        holdOpen.emplace(*reader, "SELECT content_id, title FROM content;");
+        assert(holdOpen->step() && "the reader holds a read transaction open across the save");
 
         CancellationToken token;
         SaveContext ctx(token, noProgress, {}, pathToQString(pioneer), {});
@@ -333,9 +350,24 @@ int main()
                 return ChangeOutcome::failure("something else refused");
             }),
         };
+        const std::string dbBefore = read(dbPath);
+        const fs::path walPath = pathFromUtf8(pathToUtf8(dbPath) + "-wal");
+        std::error_code walEc;
+        const bool walBefore = fs::exists(walPath, walEc);
+        const std::string walBytesBefore = walBefore ? read(walPath) : std::string();
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds == QStringList{"a"});
+        // The reader goes before anything opens the database again: the save
+        // put the database and its log back under it, and a connection that
+        // still maps the old shared-memory index would read the new files
+        // through it. Nothing holds a stick's database open across a save
+        // but this test's reader, which is here for the fold above.
+        holdOpen.reset();
+        reader.reset();
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
         assert(read(unrelated) == "before");
+        assert(read(dbPath) == dbBefore && "the database is as it was before the save");
+        assert(fs::exists(walPath, walEc) == walBefore && "and so is its log");
+        assert(!walBefore || read(walPath) == walBytesBefore);
 
         // The rollback looked at the database this save WROTE, not at what
         // the failing change protected, and said what it found. Without that
@@ -353,8 +385,8 @@ int main()
             std::cerr << "case 5: the rollback did not report the fold:\n" << logText << "\n";
         }
         assert(folded && "the rollback measures the database the save wrote, whatever the failure touched");
-        assert(cueCount(dbPath, 1) == 1);
-        std::cout << "case 5 (a database an earlier change wrote is folded even when the failure is elsewhere) OK\n";
+        assert(cueCount(dbPath, 1) == 0 && "a's rows went back with the save");
+        std::cout << "case 5 (a database an earlier change wrote goes back even when the failure is elsewhere) OK\n";
     }
 
     // 6. The database itself could not be put back. Folding then writes one
@@ -503,7 +535,9 @@ int main()
             std::cout << "case 7 SKIPPED (this platform still answered whether a file in an unsearchable "
                          "directory exists, so the blind rollback could not be constructed)\n";
         } else {
-            assert(read(pdb) == "pdb-from-a" && "the rest of the rollback still ran");
+            assert(read(pdb) == "pdb-original" && "the rest of the rollback still ran, the save's included");
+            assert(!result.rolledBack && !result.backups.empty()
+                   && "a save that could not go back whole keeps its backup for Undo");
             assert(fs::exists(created, ec) && "the file really was left behind");
             // Said out loud, in the save's own error and in the stick's
             // log: a rollback that could not tell is not a rollback that
@@ -572,28 +606,59 @@ int main()
         }
 
         {
-            // The other half, and the more important one: a change that
-            // DID apply needs its backup, because that backup is the way
-            // back from it. Undo lives on exactly this.
+            // A change that applied, followed by one that failed: the save
+            // goes back whole, so the first change's write goes back too,
+            // and its backup is then a copy of a stick that never changed.
             write(pdb, "pdb-original");
             CancellationToken token;
             SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
+            int recordsDuringTheSave = -1;
             std::vector<std::shared_ptr<PendingChange>> changes = {
                 std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                     write(pdb, "pdb-from-a");
                     return ChangeOutcome::success();
                 }),
                 std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
+                    recordsDuringTheSave = recordsNow();
                     write(pdb, "pdb-from-b");
                     return ChangeOutcome::failure("the second catalog refused");
                 }),
             };
             auto result = runSaveLoop(changes, ctx);
+            assert(recordsDuringTheSave == 1 && "the save did take its backup before writing");
+            assert(result.appliedIds.isEmpty() && result.rolledBack);
+            assert(read(pdb) == "pdb-original" && "a's write went back with b's");
+            assert(recordsNow() == 0 && "so the backup of it does not stay");
+            assert(result.backups.empty());
+            std::cout << "case 8b (a change that applied goes back with the one that failed) OK\n";
+        }
+
+        {
+            // The other half, and the more important one: a save that
+            // stopped on request keeps what landed, and a change that
+            // landed needs its backup, because that backup is the way
+            // back from it. Undo lives on exactly this.
+            write(pdb, "pdb-original");
+            CancellationToken token;
+            SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
+            std::vector<std::shared_ptr<PendingChange>> changes = {
+                std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &c) {
+                    write(pdb, "pdb-from-a");
+                    const_cast<CancellationToken &>(c.cancel()).cancel();
+                    return ChangeOutcome::success();
+                }),
+                std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
+                    write(pdb, "pdb-from-b");
+                    return ChangeOutcome::success();
+                }),
+            };
+            auto result = runSaveLoop(changes, ctx);
+            assert(result.cancelled && !result.rolledBack);
             assert(result.appliedIds == QStringList{"a"});
-            assert(read(pdb) == "pdb-from-a");
+            assert(read(pdb) == "pdb-from-a" && "a cancel keeps what landed whole");
             assert(recordsNow() > 0 && "a save that applied something keeps the backup to undo from");
             assert(!result.backups.empty() && "and offers it");
-            std::cout << "case 8b (a save that applied something keeps its backup) OK\n";
+            std::cout << "case 8c (a cancelled save keeps what landed, and its backup) OK\n";
         }
     }
 
@@ -651,6 +716,108 @@ int main()
                && "and the second file is NOT restored from the third file's copy");
         std::cout << "case 9 (a redirect does not make two checkpoints share a name) OK\n";
     }
+
+    // 10. Every change landed and a commit at the end did not. The writes
+    //     the changes made straight onto the stick go back with it, or the
+    //     formats would disagree by exactly that commit.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_commit");
+        const fs::path &stick = scratch.path;
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        const fs::path anlz = stick / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.EXT";
+        write(pdb, "pdb-original");
+        write(anlz, "anlz-original");
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(anlz)}, [&](SaveContext &) {
+                write(anlz, "anlz-from-a");
+                return ChangeOutcome::success();
+            }),
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &c) {
+                write(pdb, "pdb-from-b");
+                c.onFinish([](bool) { throw std::runtime_error("the stick refused the commit"); });
+                return ChangeOutcome::success();
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        assert(result.error == "the stick refused the commit");
+        assert(read(anlz) == "anlz-original" && read(pdb) == "pdb-original");
+        std::cout << "case 10 (a commit that fails sends the whole save back) OK\n";
+    }
+
+    // 11. One commit landed and the next did not. The file the first one
+    //     replaced goes back from the copy its change took before the save
+    //     wrote it, which a redirect to a scratch copy used to delete.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_two_commits");
+        const fs::path &stick = scratch.path;
+        const fs::path engineLibrary = stick / "Engine Library";
+        const fs::path mdb = engineLibrary / "Database2" / "m.db";
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        write(mdb, std::string(1 << 20, 'o'));
+        write(pdb, "pdb-original");
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), pathToQString(engineLibrary));
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("engine", std::vector<std::string>{pathToUtf8(mdb)}, [&](SaveContext &c) {
+                FormatWriteSession &session =
+                    sharedFormatWriteSession(c, "engine", pathToUtf8(engineLibrary), 100000, "rollback-test");
+                assert(session.usesScratch());
+                write(pathFromUtf8(session.writeRoot()) / "Database2" / "m.db", std::string(1 << 20, 'e'));
+                session.noteItemApplied();
+                return ChangeOutcome::success();
+            }),
+            // Registered after the session's own hook, so it runs after the
+            // Engine copy has been committed onto the stick.
+            std::make_shared<ScriptedChange>("rekordbox", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &c) {
+                write(pdb, "pdb-from-the-change");
+                c.onFinish([](bool) { throw std::runtime_error("the rekordbox commit did not land"); });
+                return ChangeOutcome::success();
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        const std::string log = read(stick / "Seabass" / "seabass.log");
+        assert(log.find("committed the engine scratch copy") != std::string::npos
+               && "the Engine commit did land, which is the case this is about");
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        assert(read(mdb) == std::string(1 << 20, 'o') && "and the database it replaced is back");
+        assert(read(pdb) == "pdb-original");
+        std::cout << "case 11 (a commit that landed goes back when the next one fails) OK\n";
+    }
+
+#if !defined(_WIN32)
+    // 12. The rollback itself cannot finish: the folder the file sits in
+    //     will not take it back. Then the save's backup is the way back, so
+    //     it stays, the save offers it for Undo, and the error says so.
+    if (::geteuid() != 0) {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_stuck");
+        const fs::path &stick = scratch.path;
+        const fs::path anlzDir = stick / "PIONEER" / "USBANLZ" / "P001";
+        const fs::path anlz = anlzDir / "ANLZ0000.EXT";
+        write(anlz, "anlz-original");
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(anlz)}, [&](SaveContext &) {
+                write(anlz, "anlz-from-a");
+                return ChangeOutcome::success();
+            }),
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{}, [&](SaveContext &) {
+                fs::permissions(anlzDir, fs::perms::owner_read | fs::perms::owner_exec);
+                return ChangeOutcome::failure("the second catalog refused");
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        fs::permissions(anlzDir, fs::perms::owner_all);
+        assert(!result.rolledBack && result.appliedIds.isEmpty());
+        assert(read(anlz) == "anlz-from-a" && "the case: the write could not be put back");
+        assert(result.error.contains(QStringLiteral("Undo Last Save")) && "the error says where the way back is");
+        assert(!result.backups.empty() && "and the backup it means is kept and offered");
+        std::cout << "case 12 (a rollback that cannot finish keeps the backup for Undo) OK\n";
+    }
+#endif
 
     std::cout << "failed_change_rollback_test: all cases passed\n";
     return 0;

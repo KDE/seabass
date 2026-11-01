@@ -94,6 +94,20 @@ private:
     std::function<void(SaveContext &)> m_extra;
 };
 
+// A FakeChange that is one piece of a larger unit (PendingChange::unitKey()).
+class UnitPiece : public FakeChange
+{
+public:
+    UnitPiece(QString id, QString unit, Behavior behavior, Log &log)
+        : FakeChange(std::move(id), behavior, log), m_unit(std::move(unit))
+    {
+    }
+    QString unitKey() const override { return m_unit; }
+
+private:
+    QString m_unit;
+};
+
 struct Counter
 {
     int created = 0;
@@ -315,8 +329,9 @@ int main()
         std::cout << "case 2 (cancel stops between changes) OK\n";
     }
 
-    // 3. A failing change stops the loop; it and the rest stay pending.
-    //    A throwing one is reported the same way, with its message.
+    // 3. A failing change stops the loop, and the save goes back whole:
+    //    every change stays pending, the ones before it included. A
+    //    throwing one is reported the same way, with its message.
     {
         Log log;
         CancellationToken token;
@@ -327,7 +342,8 @@ int main()
             std::make_shared<FakeChange>("c", Behavior::Ok, log),
         };
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds == (QStringList{"a"}));
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        assert(log.applied == (QStringList{"a"}) && "a did run before b failed");
         assert(result.failedId == "b" && result.error == "nope" && !result.cancelled);
 
         SaveContext ctx2(token, noProgress, {}, rb, {});
@@ -337,6 +353,27 @@ int main()
         auto r2 = runSaveLoop(throwing, ctx2);
         assert(r2.appliedIds.isEmpty() && r2.failedId == "x" && r2.error == "boom");
         std::cout << "case 3 (failure stops the loop) OK\n";
+    }
+
+    // 2b. A cancel that arrives inside a unit -- one track written in a
+    //     piece per catalog -- lets the rest of that unit land, then stops
+    //     before the next. A track restored in rekordbox and not in Engine
+    //     is the half-written state a cancel must never leave.
+    {
+        Log log;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, rb, {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<UnitPiece>("t1:rekordbox", "t1", Behavior::CancelDuringApply, log),
+            std::make_shared<UnitPiece>("t1:engine", "t1", Behavior::Ok, log),
+            std::make_shared<UnitPiece>("t2:rekordbox", "t2", Behavior::Ok, log),
+            std::make_shared<UnitPiece>("t2:engine", "t2", Behavior::Ok, log),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.cancelled && !result.rolledBack);
+        assert(result.appliedIds == (QStringList{"t1:rekordbox", "t1:engine"}) && "t1 lands whole, t2 not at all");
+        assert(log.applied == (QStringList{"t1:rekordbox", "t1:engine"}));
+        std::cout << "case 2b (a cancel inside a unit lets the unit finish) OK\n";
     }
 
     // 4. An already-cancelled token applies nothing at all.
@@ -417,7 +454,7 @@ int main()
             std::make_shared<FakeChange>("b", Behavior::Ok, log),
         };
         auto result = runSaveLoop(changes, ctx);
-        assert(result.appliedIds.isEmpty());
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
         assert(result.error == "commit failed");
         assert(laterRan);
         std::cout << "case 7 (finish hook failure) OK\n";
