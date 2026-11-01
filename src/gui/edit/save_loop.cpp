@@ -206,6 +206,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     }
 
     size_t done = 0;
+    // Said only if the save's own rollback (below) does not put it right:
+    // that one starts from the copies taken before the save, so a stick it
+    // put back has nothing left of the change whose put-back failed.
+    std::optional<QString> changeUndoError;
     for (size_t index = 0; index < changes.size(); ++index) {
         const auto &change = changes[index];
         // Between units only: the rest of a unit a cancel arrived inside
@@ -235,10 +239,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             // Whatever the change had already written, in any catalog, goes
             // back: a file removed from Engine but still listed by rekordbox
             // is the one state a DJ cannot repair from the page.
-            if (auto undoError = ctx.rollBackChange()) {
-                result.error += QStringLiteral(", and putting back what it had already written failed (%1)")
-                                    .arg(*undoError);
-            }
+            changeUndoError = ctx.rollBackChange();
             // And the changes before it go back too: the save lands whole
             // or not at all (SaveContext::rollBackSave(), below, once the
             // finish hooks have closed what they hold).
@@ -283,6 +284,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     if (ctx.saveFailed()) {
         rollbackError = ctx.rollBackSave();
         result.rolledBack = !rollbackError;
+        if (changeUndoError && rollbackError) {
+            result.error += QStringLiteral(", and putting back what it had already written failed (%1)")
+                                .arg(*changeUndoError);
+        }
         result.appliedIds.clear();
         result.skippedIds.clear();
     }

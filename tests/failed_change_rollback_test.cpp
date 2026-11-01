@@ -787,6 +787,45 @@ int main()
         std::cout << "case 11 (a commit that landed goes back when the next one fails) OK\n";
     }
 
+    // 11b. Case 11 the other way round: the commit that fails runs first.
+    //      The Engine copy behind it is then never written to the stick at
+    //      all, rather than written and put back again.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_first_commit");
+        const fs::path &stick = scratch.path;
+        const fs::path engineLibrary = stick / "Engine Library";
+        const fs::path mdb = engineLibrary / "Database2" / "m.db";
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        write(mdb, std::string(1 << 20, 'o'));
+        write(pdb, "pdb-original");
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), pathToQString(engineLibrary));
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("rekordbox", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &c) {
+                write(pdb, "pdb-from-the-change");
+                c.onFinish([](bool) { throw std::runtime_error("the rekordbox commit did not land"); });
+                return ChangeOutcome::success();
+            }),
+            std::make_shared<ScriptedChange>("engine", std::vector<std::string>{pathToUtf8(mdb)}, [&](SaveContext &c) {
+                FormatWriteSession &session =
+                    sharedFormatWriteSession(c, "engine", pathToUtf8(engineLibrary), 100000, "rollback-test");
+                assert(session.usesScratch());
+                write(pathFromUtf8(session.writeRoot()) / "Database2" / "m.db", std::string(1 << 20, 'e'));
+                session.noteItemApplied();
+                return ChangeOutcome::success();
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        const std::string log = read(stick / "Seabass" / "seabass.log");
+        assert(log.find("committed the engine scratch copy") == std::string::npos
+               && "the Engine copy is not written onto a save that has already failed");
+        assert(log.find("discarding the engine scratch copy") != std::string::npos);
+        assert(result.appliedIds.isEmpty() && result.rolledBack);
+        assert(read(mdb) == std::string(1 << 20, 'o'));
+        assert(read(pdb) == "pdb-original");
+        std::cout << "case 11b (a failed commit stops the commits after it) OK\n";
+    }
+
 #if !defined(_WIN32)
     // 12. The rollback itself cannot finish: the folder the file sits in
     //     will not take it back. Then the save's backup is the way back, so

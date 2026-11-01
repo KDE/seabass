@@ -138,6 +138,7 @@ SeabassDialog {
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
             text: [dialog.skippedSentence,
                    dialog.rolledBack ? "The save stopped because: " + dialog.error
+                       + (/[.!?]$/.test(dialog.error) ? "" : ".")
                        + " Your changes are still staged, so you can save again once that is fixed."
                    : dialog.error.length > 0 ? "Then: " + dialog.error
                    : (dialog.warning.length > 0 && dialog.cancelled)

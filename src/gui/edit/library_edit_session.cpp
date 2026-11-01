@@ -533,6 +533,14 @@ void LibraryEditSession::onSaveFinished()
             }
         } else {
             stillPendingUnits += change->unitsWritten();
+            // A failed save that could not go back whole left part of its
+            // changes on the stick, none of them in appliedIds: whatever
+            // they touched is re-read rather than shown as it was.
+            if (!result.error.isEmpty() && !result.rolledBack) {
+                for (const QString &format : change->formatsTouched()) {
+                    formats.insert(format);
+                }
+            }
         }
     }
     m_changes.erase(std::remove_if(m_changes.begin(), m_changes.end(),

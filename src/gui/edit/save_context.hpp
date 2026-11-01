@@ -169,13 +169,14 @@ public:
     // total announced from this is the count it ticks to.
     size_t countBackupFiles(const std::vector<BackupTarget> &targets) const;
     // Throws away the records this save took, for the one case where
-    // they are certainly not wanted: nothing was applied and the
-    // rollback put everything back, so they are backups of a stick that
-    // never changed. Round 5 found one on a stick too full for the save
-    // to proceed -- a complete record, backup.zip and manifest, taking
-    // space that the save had just refused for want of. NOT called when
-    // a change applied (its backup is the way back from it) or when the
-    // rollback left anything behind (then it is the only way back).
+    // they are certainly not wanted: the save failed and rollBackSave()
+    // put everything back, so they are backups of a stick that never
+    // changed. Round 5 found one on a stick too full for the save to
+    // proceed -- a complete record, backup.zip and manifest, taking
+    // space that the save had just refused for want of. NOT called after
+    // a save that landed or was cancelled (its backup is the way back
+    // from what landed) or when the rollback left anything behind (then
+    // it is the only way back).
     void discardBackupsTakenThisSave();
     // The id of the backup this save made for `file` (empty if none yet),
     // for records that want to name it (the pending-deletion manifest).
@@ -402,6 +403,9 @@ private:
     // A scratch copy (a redirectWrites() target) or one of its sidecars.
     bool isScratchCopy(const std::string &file) const;
     bool m_saveFailed = false;
+    // The .seabass-stale files setAsideMixedSidecars() made in this save,
+    // removed again once rollBackSave() has put everything back.
+    std::vector<std::string> m_setAsideThisSave;
     std::optional<infrastructure::ScratchDirGuard> m_saveCheckpointDir;
     std::vector<Checkpoint> m_saveCheckpoints;
     std::set<std::string> m_saveProtected;  // normalizedPathKey, this save

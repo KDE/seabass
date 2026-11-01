@@ -408,7 +408,7 @@ void SaveContext::discardBackupsTakenThisSave()
         // undo of a save that changed nothing.
         noteSaveInProgress();
         if (hasStick() && removed > 0) {
-            log().record("save: nothing was applied and everything went back, so " + std::to_string(removed)
+            log().record("save: everything went back as it was before the save, so " + std::to_string(removed)
                          + " backup record(s) this save had taken were removed");
         }
         if (hasStick() && !stayed.empty()) {
@@ -769,6 +769,7 @@ bool SaveContext::setAsideMixedSidecars(const std::string &dbPath, const std::se
         fs::rename(side, stale, ec);
         if (!ec) {
             moved.push_back(pathToUtf8(side.filename()));
+            m_setAsideThisSave.push_back(pathToUtf8(stale));
         }
     }
     if (!moved.empty() && hasStick()) {
@@ -860,6 +861,10 @@ std::optional<QString> SaveContext::rollBackSave()
     // rollBackChange() gives; the write sessions too, whose finish hooks
     // have run by now and whose scratch copies are not coming back.
     m_shared.clear();
+    // Their hooks point into the sessions, and nothing after a failed save
+    // is a change or a finish to call them for.
+    m_changeEndHooks.clear();
+    m_finishHooks.clear();
     m_wholeSaveShared.clear();
 
     std::set<std::string> notPutBack;
@@ -891,6 +896,16 @@ std::optional<QString> SaveContext::rollBackSave()
                                 : "save: put the stick back as it was before this save (" + std::to_string(putBackCount)
                                       + " file(s) put back)");
     }
+    if (!firstError) {
+        // A failed change's rollback that could not put a database back
+        // moved its sidecars aside. Everything is as it was before the save
+        // now, so those bytes are of a state the stick never kept.
+        for (const std::string &stale : m_setAsideThisSave) {
+            std::error_code ec;
+            fs::remove(pathFromUtf8(stale), ec);
+        }
+    }
+    m_setAsideThisSave.clear();
     m_saveCheckpoints.clear();
     m_saveProtected.clear();
     m_saveCheckpointDir.reset();
@@ -975,6 +990,11 @@ SaveContext::FinishOutcome SaveContext::runFinishHooks(bool ok)
             if (!outcome.error) {
                 outcome.error = QString::fromStdString(e.what());
             }
+            // The save goes back whole (rollBackSave()), so the hooks still
+            // to run commit nothing: a scratch copy written onto the stick
+            // only to be put back is two whole databases written to a stick
+            // that has just failed a write.
+            m_saveFailed = true;
         }
     }
     return outcome;
