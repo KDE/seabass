@@ -415,6 +415,11 @@ suite() {
     # point the Metadata Backup and Restore pages at the stick's catalogs
     # and grab the result. Everything else in the suite ignores it.
     #
+    # Not read-only: those two pages scan the stick as the app does, and
+    # the scan leaves Seabass/caches (durations.jsonl, metadata.jsonl)
+    # on it. FB-restore-B-from-reference and X2-B-at-reference put B back
+    # and prove it at the end of the round.
+    #
     # B rather than A because B is the stick this rig treats as
     # expendable. This runs after B3 has put B back to its reference, so
     # what gets read and photographed is the reference library.

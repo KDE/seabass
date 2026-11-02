@@ -554,12 +554,19 @@ TestCase {
         // The scan runs on a worker thread. Waiting on the list rather
         // than on a fixed delay, so a slow machine does not shoot an
         // empty page and call it a pass.
+        //
+        // Two minutes, as the Restore page's twin waits: the rig points
+        // this at stick B straight after restoring it, and a first read
+        // of a freshly restored stick has no Seabass/caches yet, so every
+        // track's length is read from its file over USB. 15 s was enough
+        // only for a stick an earlier read had left its caches on (Linux
+        // Round 11: about 16 s cold, 1.4 s warm).
         var list = findChild(page, "proposalList");
         verify(list, "the stick's list must exist");
         tryVerify(function () { return list.visible; }, 15000,
                   "the stick's list must become the visible one");
         tryVerify(function () { return !findChild(page, "sourceSummary").text.startsWith("Reading"); },
-                  15000, "the scan must finish");
+                  120000, "the scan must finish");
         waitForRendering(page);
         var image = grabImage(page);
         image.save(screenshotDir + "/MetadataBackupPage-stick.png");
