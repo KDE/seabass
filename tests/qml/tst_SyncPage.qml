@@ -422,10 +422,11 @@ TestCase {
         compare(summary.error, "", JSON.stringify(summary));
         compare(summary.unit, "undo steps", JSON.stringify(summary));
 
+        // The save's own toast can still be up when the undo finishes, so
+        // "showing" alone proves nothing: wait for the undo's words.
         const toast = findChild(page, "savedToast");
-        tryCompare(toast, "showing", true, 5000);
-        compare(findChild(toast, "confirmationToastLabel").text,
-                summary.written + " undo steps written");
+        tryCompare(findChild(toast, "confirmationToastLabel"), "text", summary.written + " undo steps written", 5000);
+        verify(toast.showing, "the undo's toast is up");
         const dialog = findChild(page, "summaryDialog");
         verify(dialog === null || !dialog.visible, "no summary dialog over an undo that landed whole");
         tryCompare(controller, "busy", false, 300000);
