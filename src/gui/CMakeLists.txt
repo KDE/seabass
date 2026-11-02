@@ -319,6 +319,8 @@ set(SEABASS_GUI_SOURCES
     edit/direct_write_hold.cpp
     system_font_metrics.hpp
     system_font_metrics.cpp
+    library_access.hpp
+    library_access.cpp
 )
 
 # Seabass as a media player on the session bus -- how media keys reach a

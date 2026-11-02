@@ -206,6 +206,10 @@ TestCase {
     function makeEditingPage(experimental) {
         verify(realAppSettings.experimentalBuildSupported, "an experimental build");
         realAppSettings.experimentalFeaturesEnabled = experimental;
+        // A library that reads, with nothing in it: the page's own read
+        // of a path that is not there fails, and its error dialog is
+        // modal over everything these tests click.
+        browseFixture.holdCues(0);
         const page = makePage();
         page.playlistEditController = createTemporaryObject(fakePlaylistEditComponent, testCase);
         return page;
@@ -3393,5 +3397,89 @@ TestCase {
         findChild(dialog, "discardLeftOverEditsButton").clicked();
         tryCompare(dialog, "visible", false);
         verify(!stickFixture.fileExists(file), "answered: the batch is gone");
+    }
+
+    // ---- A library that cannot be read is said in a dialog, not in a
+    // red line over an empty list. ----
+
+    Component {
+        id: stackComponent
+        StackView {
+            width: 880; height: 660
+            initialItem: Item {}
+        }
+    }
+
+    function openFailingPage(pioneer) {
+        const stack = createTemporaryObject(stackComponent, testCase);
+        verify(stack !== null);
+        const page = stack.push(pageComponent, {
+            stickLabel: "REFUSED", rekordboxPath: pioneer, enginePath: "",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        verify(page !== null);
+        const dialog = findChild(page, "scanErrorDialog");
+        verify(dialog !== null);
+        tryCompare(dialog, "opened", true, 10000, "the failed read opens the dialog");
+        return {stack: stack, page: page, dialog: dialog};
+    }
+
+    // Refused by the system (what macOS does to an app not allowed onto
+    // removable volumes): the dialog says how to allow it, the file
+    // under that, and on macOS offers the settings page. OK goes back to
+    // the stick list: the page has nothing to show.
+    function test_aRefusedLibraryIsExplainedInADialog() {
+        if (Qt.platform.os === "windows") {
+            skip("POSIX permissions only: Windows has no chmod 000, so the Linux and macOS lanes run this");
+        }
+        const pioneer = browseFixture.failReading(true);
+        verify(pioneer.length > 0, "the catalog could not be made unreadable (is this run root?)");
+        const t = openFailingPage(pioneer);
+        compare(t.dialog.title, "Not allowed to read this library");
+        compare(t.dialog.headline, LibraryAccess.deniedHeadline + " " + LibraryAccess.deniedAdvice);
+        verify(t.dialog.detailText.indexOf("could not open") === 0, t.dialog.detailText);
+        compare(findChild(t.dialog, "openPrivacySettingsButton").visible, Qt.platform.os === "osx",
+                "the settings page on macOS, where there is one to open");
+        wait(400);  // the dialog fades in
+        saveScreenshot(t.page, "scan-page-library-refused");
+        findChild(t.dialog, "scanErrorOkButton").clicked();
+        tryCompare(t.stack, "depth", 1, 5000, "OK goes back where Browse was opened from");
+    }
+
+    // Any other failure says the reader's own words, still in a dialog,
+    // and nothing about permissions.
+    function test_aFailedReadIsSaidInADialog() {
+        const pioneer = browseFixture.failReading(false);
+        const t = openFailingPage(pioneer);
+        compare(t.dialog.title, "Cannot read this library");
+        verify(t.dialog.headline.indexOf("could not open") === 0, t.dialog.headline);
+        compare(t.dialog.detailText, "");
+        compare(findChild(t.dialog, "openPrivacySettingsButton").visible, false);
+        findChild(t.dialog, "scanErrorOkButton").clicked();
+        tryCompare(t.stack, "depth", 1, 5000);
+    }
+
+    // A failure once the page has had a list (a rescan, another format,
+    // the cues) leaves the page where it is: going back would throw away
+    // a library that was readable a moment ago.
+    function test_aFailureAfterAListStaysOnThePage() {
+        browseFixture.holdCues(3);
+        const stack = createTemporaryObject(stackComponent, testCase);
+        const page = stack.push(pageComponent, {
+            stickLabel: "TESTSTICK", rekordboxPath: "/nonexistent/TESTSTICK/PIONEER", enginePath: "",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        const controller = findChild(page, "scanController");
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        tryCompare(controller, "busy", false);
+
+        browseFixture.failReading(false);
+        page.rescan();
+        const dialog = findChild(page, "scanErrorDialog");
+        tryCompare(dialog, "opened", true, 10000);
+        compare(dialog.title, "Cannot read this library");
+        findChild(dialog, "scanErrorOkButton").clicked();
+        tryCompare(dialog, "visible", false);
+        wait(100);
+        compare(stack.depth, 2, "the page stays");
+        compare(stack.currentItem, page);
     }
 }

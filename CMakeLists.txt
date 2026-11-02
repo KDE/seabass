@@ -459,6 +459,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_engine_anonymizer.cpp
     src/infrastructure/media/media_factory.cpp
     src/infrastructure/media/stick_root_scan.cpp
+    src/infrastructure/paths/read_access.cpp
     src/infrastructure/backup/filesystem_backup_store.cpp
     src/infrastructure/backup/stick_space.cpp
     src/infrastructure/backup/stick_write_lock.cpp
@@ -2676,6 +2677,7 @@ if(TARGET seabass_edit)
 
     add_executable(stick_list_order_test
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/library_catalog_cache.cpp
         tests/stick_list_order_test.cpp
@@ -2692,6 +2694,7 @@ if(TARGET seabass_edit)
         src/gui/edit/edit_session_registry.cpp
         src/gui/edit/library_edit_session.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/qt_progress_reporter.hpp
@@ -2732,6 +2735,7 @@ if(TARGET seabass_edit)
         src/gui/edit/library_edit_session.cpp
         src/gui/edit/direct_write_hold.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/sleep_inhibitor.cpp
@@ -2753,6 +2757,7 @@ if(TARGET seabass_edit)
         src/gui/edit/library_edit_session.cpp
         src/gui/edit/direct_write_hold.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/qt_progress_reporter.hpp
@@ -2774,6 +2779,7 @@ if(TARGET seabass_edit)
         src/gui/edit/library_edit_session.cpp
         src/gui/edit/direct_write_hold.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/sleep_inhibitor.cpp
@@ -2828,6 +2834,7 @@ if(TARGET seabass_edit)
         src/gui/edit/library_edit_session.cpp
         src/gui/edit/direct_write_hold.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/qt_progress_reporter.hpp
@@ -2883,6 +2890,7 @@ if(TARGET seabass_edit)
 
     add_executable(open_folder_test
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/library_catalog_cache.cpp
         tests/open_folder_test.cpp
@@ -2898,6 +2906,7 @@ if(TARGET seabass_edit)
     # answered without one, and the role follows refreshSyncNeeded().
     add_executable(engine_update_role_test
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/library_catalog_cache.cpp
         tests/engine_update_role_test.cpp
@@ -3083,6 +3092,7 @@ if(TARGET seabass_edit)
         src/gui/edit/edit_session_registry.cpp
         src/gui/edit/library_edit_session.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/qt_progress_reporter.hpp
@@ -4148,6 +4158,7 @@ if(TARGET seabass_edit)
         src/gui/edit/library_edit_session.cpp
         src/gui/edit/direct_write_hold.cpp
         src/gui/media_controller.cpp
+        src/gui/library_access.cpp
         src/gui/stick_events.cpp
         src/gui/write_guard.cpp
         src/gui/qt_progress_reporter.hpp

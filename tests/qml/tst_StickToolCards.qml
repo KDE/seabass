@@ -857,6 +857,31 @@ TestCase {
         compare(card(makeCards(engineOnly, "explore", {}), "Browse Library").enabled, true);
     }
 
+    // A library on the stick that the system will not let Seabass open
+    // (macOS, until it may read removable volumes) is no library to
+    // browse: Browse stays in sight, disabled, and says how to allow it.
+    // A stick with no library at all has no Browse card to grey out.
+    function test_browseSaysWhyALibraryCannotBeRead() {
+        const refused = emptyStick({libraryAccessDenied: true});
+        const cards = makeCards(refused, "explore", {});
+        const browse = card(cards, "Browse Library");
+        verify(browse !== null && browse.visible, "Browse stays in sight");
+        compare(browse.enabled, false, "nothing it could open");
+        compare(browse.cardSubtitle, "Seabass is not allowed to read this stick");
+        compare(browse.disabledReason, LibraryAccess.deniedHeadline + " " + LibraryAccess.deniedAdvice);
+        saveScreenshot(cards, "stick-tool-cards-library-refused");
+
+        const none = card(makeCards(emptyStick({}), "explore", {}), "Browse Library");
+        verify(none === null || !none.visible, "no library, no Browse");
+
+        // One catalog refused, the other readable: Browse opens that one,
+        // and says what it always says.
+        const half = makeStick({hasRekordbox: false, rekordboxPath: "", libraryAccessDenied: true});
+        const halfBrowse = card(makeCards(half, "explore", {}), "Browse Library");
+        compare(halfBrowse.enabled, true);
+        compare(halfBrowse.cardSubtitle, "View tracks, playlists and cues");
+    }
+
     // ---- Maintain's clean-up cards (they had a Housekeeping page) -----
 
     // Stand-ins for the two quick probes the group takes when it shows.

@@ -146,6 +146,9 @@ struct ScanTaskResult
     // full path, the empty ones among them, which no track names.
     std::vector<std::string> playlistPaths;
     QString errorMessage;  // empty on success
+    // The read failed because the system refused to open the catalog
+    // (infrastructure::ReadAccess::Denied), not because it is damaged.
+    bool accessDenied = false;
     bool cancelled = false;  // stopped via cancelScan(); tracks is empty, errorMessage too
     // The scan() this belongs to, so a result from a scan that has since
     // been replaced or cancelled is dropped.
@@ -191,6 +194,10 @@ class ScanController : public QObject
     Q_PROPERTY(int scanCurrent READ scanCurrent NOTIFY scanProgressChanged)
     Q_PROPERTY(int scanTotal READ scanTotal NOTIFY scanProgressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+    // The last error was the system refusing to let Seabass open the
+    // catalog: the page says how to allow it (LibraryAccess) rather than
+    // only which file it could not open.
+    Q_PROPERTY(bool accessDenied READ accessDenied NOTIFY errorMessageChanged)
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY playlistNamesChanged)
     Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY playlistNamesChanged)
     // Each playlist's small cover for the sidebar, {name: source}, the
@@ -222,6 +229,7 @@ public:
     int scanCurrent() const { return m_scanCurrent; }
     int scanTotal() const { return m_scanTotal; }
     QString errorMessage() const { return m_errorMessage; }
+    bool accessDenied() const { return m_accessDenied; }
     QStringList playlistNames() const { return m_playlistNames; }
     QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
     QVariantMap playlistThumbnails() const { return m_playlistThumbnails; }
@@ -409,7 +417,7 @@ private:
     void setBusy(bool busy);
     void setCuesPending(bool pending);
     void setScanProgress(int current, int total);
-    void setErrorMessage(const QString &message);
+    void setErrorMessage(const QString &message, bool accessDenied);
     // inPlace: the same tracks with more in them, see
     // TrackListModel::updateTracks().
     void applyFilters(bool inPlace = false);
@@ -455,6 +463,7 @@ private:
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_errorMessage;
+    bool m_accessDenied = false;
 };
 
 }  // namespace seabass::gui

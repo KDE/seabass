@@ -77,26 +77,9 @@ private:
 
 namespace fs = std::filesystem;
 
-// The catalog file whose mtime stands in for "has this catalog changed
-// since it was last scanned" -- same files SyncController::runAnalyzeTask
-// already checks for its own (narrower) staleness purposes.
-fs::path freshnessFile(const std::string &format, const std::string &path)
-{
-    if (format == "rekordbox") {
-        return pathFromUtf8(path) / "rekordbox" / "export.pdb";
-    }
-    if (format == "engine") {
-        return pathFromUtf8(path) / "Database2" / "m.db";
-    }
-    if (format == "onelibrary") {
-        return pathFromUtf8(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(path));
-    }
-    throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
-}
-
 std::chrono::system_clock::time_point realMtime(const std::string &format, const std::string &path)
 {
-    return infrastructure::toSystemClock(fs::last_write_time(freshnessFile(format, path)));
+    return infrastructure::toSystemClock(fs::last_write_time(LibraryCatalogCache::catalogFile(format, path)));
 }
 
 // The analysis files a cue pass over `tracks` reads: each row's .DAT and
@@ -362,6 +345,22 @@ LibraryCatalogCache &LibraryCatalogCache::instance()
 void LibraryCatalogCache::setInstanceForTesting(LibraryCatalogCache *cache)
 {
     s_instanceForTesting.store(cache);
+}
+
+// The same files SyncController::runAnalyzeTask checks for its own
+// (narrower) staleness purposes.
+std::filesystem::path LibraryCatalogCache::catalogFile(const std::string &format, const std::string &path)
+{
+    if (format == "rekordbox") {
+        return pathFromUtf8(path) / "rekordbox" / "export.pdb";
+    }
+    if (format == "engine") {
+        return pathFromUtf8(path) / "Database2" / "m.db";
+    }
+    if (format == "onelibrary") {
+        return pathFromUtf8(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(path));
+    }
+    throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
 }
 
 LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime), m_countFn(realCount)

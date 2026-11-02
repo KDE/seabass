@@ -107,6 +107,10 @@ public:
         // request per stick (MediaController::requestEngineUpdate); this
         // model only holds the answer.
         EngineUpdateRole,
+        // A library file is on the stick but the system would not let
+        // Seabass open it (DetectedStick::libraryAccessDenied):
+        // hasRekordbox and hasEngine stay false, and the card says why.
+        LibraryAccessDeniedRole,
     };
 
     // What one stick's engine-update request found: the two roles above.

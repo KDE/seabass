@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -63,6 +64,12 @@ namespace seabass::gui
 class LibraryCatalogCache
 {
 public:
+    // The file a catalog is read from: export.pdb under the PIONEER
+    // folder, Database2/m.db under the Engine Library folder, or
+    // OneLibrary's exportLibrary.db. Its mtime says whether the catalog
+    // changed; whether it opens says whether it can be read at all.
+    static std::filesystem::path catalogFile(const std::string &format, const std::string &path);
+
     // How much of a library a caller needs, in the order the cache reads
     // it: Tracks is the catalog file alone (about 0.1 s cold on a stick),
     // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick)

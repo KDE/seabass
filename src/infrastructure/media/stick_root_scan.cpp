@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/paths/read_access.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::media
@@ -22,10 +23,23 @@ void scanMountedRoot(const std::string &mountPoint, DetectedStick &stick)
     fs::path pdbPath = root / "PIONEER" / "rekordbox" / "export.pdb";
     fs::path engineDbPath = engine::engineMainDatabasePath(root);
 
-    if (fs::exists(pdbPath, ec)) {
+    // A library is only found if it can be read: a refused one would be
+    // offered to every card and fail on the first click.
+    const auto readable = [&stick](const fs::path &file) {
+        std::error_code existsEc;
+        if (!fs::exists(file, existsEc)) {
+            return false;
+        }
+        if (probeReadAccess(file) == ReadAccess::Denied) {
+            stick.libraryAccessDenied = true;
+            return false;
+        }
+        return true;
+    };
+    if (readable(pdbPath)) {
         stick.rekordboxPath = pathToUtf8(root / "PIONEER");
     }
-    if (fs::exists(engineDbPath, ec)) {
+    if (readable(engineDbPath)) {
         stick.enginePath = pathToUtf8(engine::engineLibraryPath(root));
     }
 

@@ -32,6 +32,7 @@
 #include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/read_access.hpp"
 
 namespace seabass::gui
 {
@@ -330,6 +331,20 @@ std::shared_ptr<const FallbackArtwork> borrowRekordboxArt(const std::vector<doma
     return fallback;
 }
 
+// Whether the system refuses to open this catalog's file. Every reader
+// words a failed open its own way ("could not open", "unable to open
+// database file"), so it is asked of the file itself. Never throws: it
+// runs in the handler that turns a failure into a result.
+bool catalogRefused(const std::string &catalog, const std::string &path) noexcept
+{
+    try {
+        return infrastructure::probeReadAccess(LibraryCatalogCache::catalogFile(catalog, path))
+            == infrastructure::ReadAccess::Denied;
+    } catch (...) {
+        return false;
+    }
+}
+
 // Runs entirely on a background thread (see ScanController::scan()) - no
 // access to the controller itself, so everything it needs travels in by
 // value and its results travel back out: the Tracks result through the
@@ -436,6 +451,7 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
         ScanTaskResult failed;
         failed.phase = tracksPublished ? ScanTaskResult::Phase::Cues : ScanTaskResult::Phase::Tracks;
         failed.errorMessage = QString::fromStdString(e.what());
+        failed.accessDenied = catalogRefused(catalog, path.toStdString());
         return report(std::move(failed));
     } catch (...) {
         ScanTaskResult failed;
@@ -470,7 +486,7 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
     // A cue phase still running belongs to the list this scan replaces.
     m_scanCancel.cancel();
     setCuesPending(false);
-    setErrorMessage({});
+    setErrorMessage({}, false);
     setScanProgress(0, 0);
     setBusy(true);
 
@@ -559,7 +575,7 @@ void ScanController::handleResult(ScanTaskResult &result)
     }
     if (!result.errorMessage.isEmpty()) {
         // A failed cue phase leaves the list it already published up.
-        setErrorMessage(result.errorMessage);
+        setErrorMessage(result.errorMessage, result.accessDenied);
         setCuesPending(false);
         setBusy(false);
         return;
@@ -1382,12 +1398,13 @@ void ScanController::setScanProgress(int current, int total)
     emit scanProgressChanged();
 }
 
-void ScanController::setErrorMessage(const QString &message)
+void ScanController::setErrorMessage(const QString &message, bool accessDenied)
 {
-    if (m_errorMessage == message) {
+    if (m_errorMessage == message && m_accessDenied == accessDenied) {
         return;
     }
     m_errorMessage = message;
+    m_accessDenied = accessDenied;
     emit errorMessageChanged();
 }
 

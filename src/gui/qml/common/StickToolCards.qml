@@ -96,6 +96,10 @@ Item {
     readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
     readonly property bool isFolder: root.hasRow && root.row.isFolder === true
     readonly property bool isBrowsedBackup: root.hasRow && root.row.isBrowsedBackup === true
+    // A library is on the stick, but the system will not let Seabass
+    // open it: hasRekordbox and hasEngine are false, as for none, and
+    // Browse stays in sight, disabled, to say why.
+    readonly property bool libraryAccessDenied: root.hasRow && root.row.libraryAccessDenied === true
     // The kernel mounted this stick read-only, which is what a damaged
     // filesystem looks like after an unclean unplug. Nothing can be
     // written until it has been checked, so every card that writes goes
@@ -205,14 +209,16 @@ Item {
     readonly property bool thisRowBusy: root.mediaController.busy
         && root.mediaController.busyDevicePath === root.devicePath
     // A disabled card's reason when the stick has no library at all.
-    readonly property string noLibraryReason: "No rekordbox or Engine library on this stick"
+    readonly property string noLibraryReason: root.libraryAccessDenied
+        ? LibraryAccess.deniedHeadline + " " + LibraryAccess.deniedAdvice
+        : "No rekordbox or Engine library on this stick"
 
     // ---- Which card shows, one line each, the rules of the old list.
     // Every writing card is withheld for a browsed backup (`writable`):
     // its analysis files are in the archive, not on disk, and its
     // directory is replaced on the next open. Browse, Statistics and
     // Metadata Backup only read, and stay.
-    readonly property bool showBrowse: root.hasKnownLibrary
+    readonly property bool showBrowse: root.hasKnownLibrary || root.libraryAccessDenied
     // Reads the same catalogs Browse does.
     readonly property bool showCompare: root.hasKnownLibrary
     readonly property bool showStatistics: root.hasKnownLibrary
@@ -408,7 +414,8 @@ Item {
                 Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Browse Library"
-                cardSubtitle: "View tracks, playlists and cues"
+                cardSubtitle: root.libraryAccessDenied && !root.hasKnownLibrary ? "Seabass is not allowed to read this stick"
+                                                       : "View tracks, playlists and cues"
                 cardIcon: "view-media-track"
                 visible: root.group === "explore" && root.showBrowse
                 enabled: root.hasRekordbox || root.hasEngine

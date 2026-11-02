@@ -16,6 +16,7 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "infrastructure/paths/read_access.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
@@ -1163,7 +1164,50 @@ public:
         releaseCues();
         m_gate.reset();
         seabass::gui::ScanController::setCatalogCacheForTesting(nullptr);
+        if (!m_refusedPdb.empty()) {
+            std::error_code ec;
+            std::filesystem::permissions(seabass::pathFromUtf8(m_refusedPdb),
+                                         std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                         std::filesystem::perm_options::replace, ec);
+            m_refusedPdb.clear();
+        }
     }
+
+    // A rekordbox catalog whose read fails the way a real one does,
+    // "could not open .../export.pdb", with the file really there. refuse
+    // takes every permission off it, so the scan's check finds what macOS
+    // does for an app not allowed onto removable volumes. Returns the
+    // PIONEER folder to browse, or "" when the file could not be made
+    // unreadable (root reads it anyway; Windows has no chmod 000).
+    Q_INVOKABLE QString failReading(bool refuse)
+    {
+        restore();
+        const std::filesystem::path pioneer = seabass::pathFromUtf8(m_artDir.filePath(QStringLiteral("refused/PIONEER")).toStdString());
+        const std::filesystem::path pdb = pioneer / "rekordbox" / "export.pdb";
+        std::filesystem::create_directories(pdb.parent_path());
+        { std::ofstream(pdb, std::ios::binary) << "a catalog"; }
+        if (refuse) {
+            std::filesystem::permissions(pdb, std::filesystem::perms::none, std::filesystem::perm_options::replace);
+            m_refusedPdb = seabass::pathToUtf8(pdb);
+            if (seabass::infrastructure::probeReadAccess(pdb) != seabass::infrastructure::ReadAccess::Denied) {
+                restore();
+                return {};
+            }
+        }
+        const std::string message = "could not open " + seabass::pathToUtf8(pdb);
+        auto stage = [message](seabass::gui::LibraryCatalogCache::Detail, const std::string &, const std::string &,
+                               std::vector<seabass::domain::Track> &, seabass::gui::LibraryCatalogCache::StageNotes &,
+                               seabass::application::ProgressReporter &, seabass::application::CancellationToken) {
+            throw std::runtime_error(message);
+        };
+        auto mtime = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+        m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(stage, mtime));
+        seabass::gui::ScanController::setCatalogCacheForTesting(m_caches.back().get());
+        return QString::fromStdString(seabass::pathToUtf8(pioneer));
+    }
+
+private:
+    std::string m_refusedPdb;
 };
 
 // Every page that reads a stick through the catalog cache, run against

@@ -44,6 +44,10 @@ struct DetectedStick
     // an internal disk) is a real library and stays writable. Decided
     // from the marker file in the directory, so it survives a restart.
     bool isBrowsedBackup = false;
+    // A library file is there but the system refused to open it (macOS
+    // until Seabass is allowed onto removable volumes): its path below
+    // stays empty, as for no library, and this says why.
+    bool libraryAccessDenied = false;
     std::optional<std::string> rekordboxPath;  // the "PIONEER" folder, if export.pdb was found under it
     std::optional<std::string> enginePath;     // the "Engine Library" folder, if Database2/m.db was found under it
 

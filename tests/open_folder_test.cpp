@@ -23,13 +23,19 @@
 #include <iostream>
 #include <string>
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include "scratch_path.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/library_access.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/media_controller.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
+#include "infrastructure/paths/read_access.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -454,6 +460,56 @@ int main(int argc, char **argv)
         assert(!model->data(model->index(plain), DetectedStickListModel::HasOneLibraryRole).toBool());
         std::cout << "case 12 (hasOneLibrary follows exportLibrary.db) OK\n";
     }
+
+    // A library the system will not let Seabass open is not a library it
+    // found: macOS lists a USB stick to an app that may not read files on
+    // it, and Browse Library failed on export.pdb ("could not open"). The
+    // catalog that can be read is still found; the refused one is said.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        const fs::path refused = scratch / "refused";
+        makeStickShapedFolder(refused, true, true);
+        const fs::path pdb = refused / "PIONEER" / "rekordbox" / "export.pdb";
+        assert(seabass::infrastructure::probeReadAccess(pdb) == seabass::infrastructure::ReadAccess::Readable);
+        assert(seabass::infrastructure::probeReadAccess(refused / "nothing-here")
+               == seabass::infrastructure::ReadAccess::Missing);
+        fs::permissions(pdb, fs::perms::none, fs::perm_options::replace);
+        assert(seabass::infrastructure::probeReadAccess(pdb) == seabass::infrastructure::ReadAccess::Denied);
+        {
+            MediaController controller;
+            assert(controller.openFolder(pathToQString(refused)).isEmpty());
+            const auto *model = controller.sticksModel();
+            const int row = rowForMountPoint(*model, pathToUtf8(refused));
+            assert(row >= 0);
+            const auto &stick = model->sticks()[static_cast<size_t>(row)];
+            assert(!stick.rekordboxPath.has_value());
+            assert(stick.enginePath.has_value());
+            assert(stick.libraryAccessDenied);
+            assert(model->data(model->index(row), DetectedStickListModel::LibraryAccessDeniedRole).toBool());
+            assert(!model->data(model->index(row), DetectedStickListModel::HasRekordboxRole).toBool());
+        }
+        // Nothing readable at all: refused with how to allow it, not with
+        // "no library in that folder".
+        fs::remove(refused / "Engine Library" / "Database2" / "m.db");
+        {
+            MediaController controller;
+            const QString message = controller.openFolder(pathToQString(refused));
+            assert(message == seabass::gui::LibraryAccess::deniedFolderMessage());
+            assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(refused)) < 0);
+        }
+        fs::permissions(pdb, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+        std::cout << "case 12b (a library the system refuses is not found, and says why) OK\n";
+    } else {
+        // Not skipped: root opens a file with no permissions, so the
+        // case cannot be built, and a check that did not run is a fail.
+        std::cerr << "FAIL: case 12b needs permissions to bind, and this run is root. Run the suite as an ordinary "
+                     "user.\n";
+        return 1;
+    }
+#else
+    std::cerr << "SKIPPED case 12b (a library the system refuses): POSIX permissions only, so the Linux and macOS "
+                 "lanes are where it runs.\n";
+#endif
 
     // Closing a folder by another spelling of its path. The folder is kept
     // by its native canonical path; a page hands back the forward-slash

@@ -1368,20 +1368,61 @@ Page {
         }
     }
 
-    Label {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: 12
-        visible: scanController.errorMessage.length > 0
-        text: scanController.errorMessage
-        color: Theme.danger
-        wrapMode: Text.WordWrap
+    // A failed read is said in a dialog, not in a line over the list.
+    // Refused by the system (macOS, until Seabass may read removable
+    // volumes): how to allow it, with the file underneath. Anything
+    // else: the reader's own words. When this page never had a list,
+    // closing it goes back the way every exit does (editHost), and only
+    // while the page is on top: an empty page has nothing to offer. A
+    // failure after a list was up (its cues, a rescan, another format)
+    // leaves the page where it is.
+    property bool everListed: false
+    SeabassDialog {
+        id: scanErrorDialog
+        objectName: "scanErrorDialog"
+        anchors.centerIn: Overlay.overlay
+        severity: SeabassDialog.Error
+        closePolicy: Popup.CloseOnEscape
+        title: scanController.accessDenied ? "Not allowed to read this library" : "Cannot read this library"
+        headline: scanController.accessDenied ? LibraryAccess.deniedHeadline + " " + LibraryAccess.deniedAdvice
+                                              : scanController.errorMessage
+        detailText: scanController.accessDenied ? scanController.errorMessage : ""
+        footer: DialogButtonBox {
+            Button {
+                objectName: "openPrivacySettingsButton"
+                visible: scanController.accessDenied && LibraryAccess.privacySettingsUrl.length > 0
+                text: "Open Privacy Settings"
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: Qt.openUrlExternally(LibraryAccess.privacySettingsUrl)
+            }
+            Button {
+                objectName: "scanErrorOkButton"
+                text: "OK"
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        onClosed: {
+            const stack = root.StackView.view;
+            if (!root.everListed && stack && stack.currentItem === root) {
+                editHost.requestLeave(() => stack.pop());
+            }
+        }
+    }
+    Connections {
+        target: scanController
+        function onErrorMessageChanged() {
+            if (scanController.errorMessage.length > 0) {
+                scanErrorDialog.open();
+            }
+        }
+        function onTracksPublished() {
+            root.everListed = true;
+        }
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.topMargin: scanController.errorMessage.length > 0 ? 40 : 0
         // The header's inset, so the list starts on the same left line
         // as the breadcrumb and the search field above it.
         anchors.leftMargin: Theme.pageMargin

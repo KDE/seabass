@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "media_controller.hpp"
+#include "library_access.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
@@ -116,6 +117,8 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         return stick.isFolder;
     case IsBrowsedBackupRole:
         return stick.isBrowsedBackup;
+    case LibraryAccessDeniedRole:
+        return stick.libraryAccessDenied;
     case LibraryIdRole:
         return QString::fromStdString(stick.identity.libraryId());
     case HardwareSerialRole:
@@ -192,6 +195,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {HasOneLibraryRole, "hasOneLibrary"},
         {SyncNeededRole, "syncNeeded"},
         {EngineUpdateRole, "engineUpdate"},
+        {LibraryAccessDeniedRole, "libraryAccessDenied"},
         {ReadOnlyRole, "readOnly"},
     };
 }
@@ -329,6 +333,7 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
                 && have.mounted == stick.mounted && have.isSdCard == stick.isSdCard
                 && have.isFolder == stick.isFolder && have.isBrowsedBackup == stick.isBrowsedBackup
                 && have.rekordboxPath == stick.rekordboxPath && have.enginePath == stick.enginePath
+                && have.libraryAccessDenied == stick.libraryAccessDenied
                 && have.capacityBytes == stick.capacityBytes
                 && have.hasNoFilesystem == stick.hasNoFilesystem && have.rootEntries == stick.rootEntries
                 && have.identity.libraryId() == stick.identity.libraryId();
@@ -604,6 +609,7 @@ void MediaController::detect()
         application::DetectedStick folder = *m_openedFolder;
         folder.rekordboxPath.reset();
         folder.enginePath.reset();
+        folder.libraryAccessDenied = false;
         const std::filesystem::path dir = pathFromUtf8(folder.mountPoint);
         std::error_code dirEc;
         if (std::filesystem::is_directory(dir, dirEc) && !dirEc) {
@@ -752,6 +758,9 @@ QString MediaController::openFolder(const QString &path, const QString &label)
     folder.isFolder = true;
     folder.label = folderLabelFor(dir, label);
     infrastructure::media::scanMountedRoot(canonical, folder);
+    if (!folder.rekordboxPath.has_value() && !folder.enginePath.has_value() && folder.libraryAccessDenied) {
+        return LibraryAccess::deniedFolderMessage();
+    }
     if (!folder.rekordboxPath.has_value() && !folder.enginePath.has_value()) {
         return tr("No rekordbox or Engine DJ library in that folder. Open the folder that holds "
                   "\"PIONEER\" or \"Engine Library\", not one of those itself.");

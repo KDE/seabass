@@ -104,7 +104,7 @@ Page {
     // takes a fresh copy of a row whenever the model says it changed, and
     // the stick row and the cards get the new object.
     readonly property var rowRoles: ["label", "mountPoint", "devicePath", "mounted", "hasRekordbox", "hasEngine",
-        "hasOneLibrary", "syncNeeded", "engineUpdate", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryId",
+        "hasOneLibrary", "syncNeeded", "engineUpdate", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryAccessDenied", "libraryId",
         "safeToUnplug", "readOnly", "capacityBytes"]
     property var rows: []
     property bool rowsLoaded: false
