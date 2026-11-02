@@ -99,12 +99,21 @@ TestCase {
         tryCompare(card, "readOnly", true, 10000);
         compare(findChild(card, "readOnlyBadge").visible, true);
         compare(Live.cardInRow(page, lockedKey, "Browse Library").readOnly, false);
-        // The lock is this library's alone: any other stick's cards stay
-        // writable, which the first-card version could never have told.
+        // The lock is this library's alone: no other stick's cards are
+        // locked by it, which the first-card version could never have
+        // told. "Not locked" rather than "writable": a volume mounted
+        // read-only (a mounted installer image on the Mac, Round 11) is
+        // listed too, and its cards are rightly read-only for that reason.
         keys.filter(function(key) { return key !== lockedKey; }).forEach(function(key) {
             const other = Live.cardInRow(page, key, "Clean Up Duplicates");
             verify(other !== null, key + " has a Clean Up Duplicates card, shown or not");
-            compare(other.readOnly, false, key + "'s Clean Up Duplicates card stays writable");
+            const tools = Live.find(Live.stickRow(page, key), function(item) {
+                return item.lockedByOther !== undefined && item.stickReadOnly !== undefined;
+            });
+            verify(tools !== null, key + "'s cards are found");
+            compare(tools.lockedByOther, false, key + " is not locked by the lock on " + stickLabel);
+            compare(other.readOnly, tools.stickReadOnly,
+                    key + "'s Clean Up Duplicates card is read-only only if " + key + " is mounted read-only");
         });
         // Back to the locked stick's card, on screen: a click at the centre
         // of a card outside the window lands nowhere and opens nothing, so
