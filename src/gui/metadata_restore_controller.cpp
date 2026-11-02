@@ -546,19 +546,14 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
     if (changes.empty() || !ensureSession()) {
         return;
     }
+    // In one call: a track's restore is one unit, staged whole or not at
+    // all, never in rekordbox and not in Engine. Refused, the session
+    // reports why and the page shows it.
     QStringList staged;
-    for (auto &change : changes) {
-        const QString changeId = change->id();
-        if (!m_session->stage(std::move(change))) {
-            // Refused: the session reports why and the page shows it.
-            // Anything already staged for this track stays staged --
-            // undoing a partial batch here would be a second, silent
-            // decision on top of the refusal.
-            break;
-        }
-        staged << changeId;
+    for (const auto &change : changes) {
+        staged << change->id();
     }
-    if (staged.isEmpty()) {
+    if (!m_session->stageAll(std::move(changes))) {
         return;
     }
     m_model.setStagedChanges(index, staged);

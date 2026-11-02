@@ -110,6 +110,8 @@ public:
     QStringList pendingDescriptions() const;
     // The staged changes' ids, in the order Save applies them.
     QStringList pendingIds() const;
+    // What is staged, in save order, to read and not to change.
+    const std::vector<std::shared_ptr<PendingChange>> &pendingChanges() const { return m_changes; }
     int playlistsEdited() const;
     QString writeLabel() const { return m_writeLabel; }
     int writeCurrent() const { return m_writeCurrent; }

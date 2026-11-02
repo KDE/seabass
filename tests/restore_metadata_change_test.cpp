@@ -24,6 +24,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -32,7 +33,9 @@
 #include "application/ports/progress_reporter.hpp"
 #include "domain/metadata_restore.hpp"
 #include "domain/track.hpp"
+#include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
+#include "gui/edit/save_loop.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -175,6 +178,26 @@ void applyChange(const Fixture &fixture, const MetadataRestoreProposal &proposal
     assert(outcome.ok);
     assert(!ctx.runFinishHooks(true).error);
 }
+
+// A change that cancels the save once it has landed, the way the DJ's
+// Cancel arrives while a track is being written.
+class CancelsAfterApply final : public OwnedChange
+{
+public:
+    CancelsAfterApply(std::unique_ptr<PendingChange> inner, CancellationToken &token)
+        : OwnedChange(QStringLiteral("test"), std::move(inner)), m_token(token)
+    {
+    }
+    ChangeOutcome apply(SaveContext &ctx) override
+    {
+        const ChangeOutcome outcome = OwnedChange::apply(ctx);
+        m_token.cancel();
+        return outcome;
+    }
+
+private:
+    CancellationToken &m_token;
+};
 
 }  // namespace
 
@@ -574,9 +597,84 @@ int main()
         const RestoreMetadataChange engine("engine", "/Volumes/STICK/Engine Library", "41", track);
         const RestoreMetadataChange next("engine", "/Volumes/STICK/Engine Library", "42", other);
         assert(rekordbox.id() != engine.id());
-        assert(rekordbox.unitKey() == engine.unitKey() && "one track, one unit");
-        assert(engine.unitKey() != next.unitKey() && "another track, another unit");
+        assert(rekordbox.unitKeys() == engine.unitKeys() && "one track, one unit");
+        assert(engine.unitKeys() != next.unitKeys() && "another track, another unit");
         std::cout << "case unit (a track's catalog changes share one unit) OK\n";
+    }
+
+    // A cancel that arrives while a track is restored lets the rest of
+    // that track's restore land even when it is staged after another
+    // track's, and does not let that other track's land. The second piece
+    // is a change on another row standing in for the same file in another
+    // catalog: a unit is the file, whichever catalog row writes it.
+    {
+        const fs::path scratch = seabass::testing::scratchRoot() / "seabass_restore_metadata_change_cancel_unit";
+        std::error_code ec;
+        fs::remove_all(scratch, ec);
+        fs::create_directories(scratch);
+        const fs::path source =
+            fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+        const fs::path pioneer = scratch / "PIONEER";
+        fs::copy(source, pioneer, fs::copy_options::recursive);
+
+        std::vector<Track> unrated;
+        {
+            seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
+            for (const auto &track : reader.readAll()) {
+                if (!track.rating && !track.filePath.empty() && unrated.size() < 3) {
+                    unrated.push_back(track);
+                }
+            }
+        }
+        assert(unrated.size() == 3);
+        const auto restoreOf = [](const Track &row, const std::string &filePath) {
+            MetadataRestoreProposal proposal;
+            proposal.storedId = "stored-" + row.sourceId;
+            proposal.stickTrack.sourceId = row.sourceId;
+            proposal.stickTrack.filePath = filePath;
+            proposal.stickTrack.title = row.title;
+            proposal.ratingOffered = true;
+            proposal.rating = 4;
+            return proposal;
+        };
+        const QString root = pathToQString(pioneer);
+        const Track &a = unrated[0];
+        const Track &b = unrated[1];
+        const Track &aElsewhere = unrated[2];
+        CancellationToken token;
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<CancelsAfterApply>(
+                std::make_unique<RestoreMetadataChange>("rekordbox", root, QString::fromStdString(a.sourceId),
+                                                        restoreOf(a, a.filePath)),
+                token),
+            std::make_shared<OwnedChange>(
+                QStringLiteral("test"),
+                std::make_unique<RestoreMetadataChange>("rekordbox", root, QString::fromStdString(b.sourceId),
+                                                        restoreOf(b, b.filePath))),
+            std::make_shared<OwnedChange>(
+                QStringLiteral("test"),
+                std::make_unique<RestoreMetadataChange>("rekordbox", root, QString::fromStdString(aElsewhere.sourceId),
+                                                        restoreOf(aElsewhere, a.filePath))),
+        };
+        auto &noProgress = seabass::application::NullProgressReporter::instance();
+        SaveLoopResult result;
+        {
+            SaveContext ctx(token, noProgress, {}, root, {});
+            result = runSaveLoop(changes, ctx);
+        }
+        assert(result.cancelled && result.error.isEmpty());
+        assert(result.appliedIds == (QStringList{changes[0]->id(), changes[2]->id()})
+               && "the track's second piece lands, the other track does not");
+
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pathToUtf8(pioneer));
+        for (const auto &track : after.readAll()) {
+            if (track.sourceId == a.sourceId || track.sourceId == aElsewhere.sourceId) {
+                assert(track.rating && *track.rating == 4 && "both pieces of the cancelled track landed");
+            } else if (track.sourceId == b.sourceId) {
+                assert(!track.rating && "the track after the cancel was not touched");
+            }
+        }
+        std::cout << "case cancel-unit (a cancel finishes a track's restore staged apart, and nothing else) OK\n";
     }
 
     std::cout << "restore_metadata_change_test: all cases passed\n";

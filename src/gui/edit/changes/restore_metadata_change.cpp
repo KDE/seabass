@@ -330,12 +330,13 @@ QString RestoreMetadataChange::id() const
     return "metadata-restore:" + m_format + ":" + m_sourceId;
 }
 
-QString RestoreMetadataChange::unitKey() const
+QStringList RestoreMetadataChange::unitKeys() const
 {
     if (m_proposal.stickTrack.filePath.empty()) {
-        return id();
+        return {id()};
     }
-    return "metadata-restore:" + QString::fromStdString(application::normalizedPathKey(m_proposal.stickTrack.filePath));
+    return {"metadata-restore:"
+            + QString::fromStdString(application::normalizedPathKey(m_proposal.stickTrack.filePath))};
 }
 
 QString RestoreMetadataChange::description() const

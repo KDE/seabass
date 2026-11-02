@@ -12,7 +12,9 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "application/phased_progress.hpp"
@@ -90,9 +92,11 @@ using Section = RekordboxExportSyncListModel::Section;
 // A change this page stages with something of its own said about it: an
 // id of its own (the chosen cues of a conflict, staged after the track's
 // other cue write, which has the same id), a description (a rating sent
-// to Engine is not "put back"), or the unit and verb the save's summary
-// is told in. Everything else is the wrapped change's, as OwnedChange has
-// it. A change this page already owns keeps its id unless one is given:
+// to Engine is not "put back"), the unit and verb the save's summary
+// is told in, or the tracks and playlists it writes, which a cancel does
+// not split (RekordboxExportSyncController::unitKeysOf()). Everything else
+// is the wrapped change's, as OwnedChange has it. A change this page
+// already owns keeps its id unless one is given:
 // wrapping it a second time must not rename it.
 class PageChange final : public OwnedChange
 {
@@ -103,6 +107,7 @@ public:
         QString description;
         QString unit;
         QString verb;
+        QStringList unitKeys;
     };
 
     PageChange(std::unique_ptr<PendingChange> inner, Said said)
@@ -123,10 +128,18 @@ public:
     }
     QString unit() const override { return m_said.unit.isEmpty() ? OwnedChange::unit() : m_said.unit; }
     QString verb() const override { return m_said.verb.isEmpty() ? OwnedChange::verb() : m_said.verb; }
+    QStringList unitKeys() const override
+    {
+        if (!m_said.unitKeys.isEmpty()) {
+            return m_said.unitKeys;
+        }
+        return inner().owner() == rekordboxExportSyncOwner() ? inner().unitKeys() : OwnedChange::unitKeys();
+    }
 
 private:
     Said m_said;
 };
+
 
 QString q(const std::string &text)
 {
@@ -477,6 +490,41 @@ void RekordboxExportSyncController::unstageAll()
     m_model.clearStaged();
     clearStagedStatusIfNothingStaged();
     emit stagedChanged();
+}
+
+QStringList RekordboxExportSyncController::unitKeysOf(const std::vector<Row> &rows,
+                                                      const std::vector<std::size_t> &rowIndexes)
+{
+    QStringList keys;
+    const auto add = [&keys](const QString &key) {
+        if (!keys.contains(key)) {
+            keys << key;
+        }
+    };
+    const auto track = [&add](const std::string &pathKey) {
+        add(QStringLiteral("track:") + QString::fromStdString(pathKey));
+    };
+    const auto playlist = [&add](std::uint32_t pdbId) { add(QStringLiteral("playlist:") + QString::number(pdbId)); };
+    for (std::size_t i : rowIndexes) {
+        if (!rows[i].edit) {
+            continue;
+        }
+        std::visit(
+            [&](const auto &e) {
+                using E = std::decay_t<decltype(e)>;
+                if constexpr (std::is_same_v<E, domain::PlaylistCreate> || std::is_same_v<E, domain::PlaylistRename>
+                              || std::is_same_v<E, domain::PlaylistDelete>) {
+                    playlist(e.pdbId);
+                } else if constexpr (std::is_same_v<E, domain::MembershipEdit>) {
+                    playlist(e.pdbId);
+                    track(e.pathKey);
+                } else {
+                    track(e.pathKey);
+                }
+            },
+            *rows[i].edit);
+    }
+    return keys;
 }
 
 QString RekordboxExportSyncController::describeMetadataWrite(const std::vector<domain::MetadataEdit> &edits,
@@ -842,7 +890,8 @@ void RekordboxExportSyncController::stageSelected()
     std::vector<std::pair<std::vector<std::size_t>, QString>> rowsOfChange;
     std::set<std::pair<QString, QString>> unitsAndVerbs;
     for (Planned &p : planned) {
-        std::unique_ptr<PendingChange> change = p.make(engineChanges);
+        std::unique_ptr<PendingChange> change = std::make_unique<PageChange>(
+            p.make(engineChanges), PageChange::Said{{}, {}, {}, {}, unitKeysOf(rows, p.rows)});
         std::vector<std::string> keys;
         for (std::size_t i : p.rows) {
             for (const auto &key : withCueItems(rows[i].header)) {

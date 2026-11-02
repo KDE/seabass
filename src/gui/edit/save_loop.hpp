@@ -57,7 +57,15 @@ struct SaveLoopResult
 // change that fails, or a finish hook that cannot commit its scratch copy,
 // sends every change of the save back (rolledBack) and reports all of them
 // as still pending, so a retry re-applies them; the per-item writers are
-// idempotent. A cancel is not a failure: the changes before it stand.
+// idempotent. A cancel is not a failure: the changes before it stand,
+// and so do the rest of the units they belong to (changesACancelLetsLand()).
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx);
+
+// Which of changes[from..] a cancel arriving before changes[from] still
+// lets land, given the unit keys of the changes that landed: those linked
+// to one of them through PendingChange::unitKeys(), directly or through
+// other changes still to come. Indexed like `changes`; false before `from`.
+std::vector<bool> changesACancelLetsLand(const QStringList &landedKeys,
+                                         const std::vector<std::shared_ptr<PendingChange>> &changes, size_t from);
 
 }  // namespace seabass::gui

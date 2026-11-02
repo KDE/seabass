@@ -132,13 +132,16 @@ public:
     // names one (LibraryEditSession::playlistsEdited), so a user who only
     // moved tracks between playlists is told what Save writes.
     virtual QString playlistEdited() const { return {}; }
-    // The unit a cancel must not split. Changes that share one are a
-    // single edit written in pieces, one per catalog, and are staged next
-    // to each other; a cancel that arrives inside one lets the rest of it
-    // land before the save stops, so a track is never left restored in
-    // rekordbox and not in Engine (Sebastian, 2026-11-01: a cancel keeps
-    // whole units only). Each change is its own unit unless it says so.
-    virtual QString unitKey() const { return id(); }
+    // The units a cancel must not split. Changes that share a key are one
+    // edit written in pieces -- a track's restore in each catalog, a
+    // track added to Engine and put into its playlists -- and so are
+    // changes linked through others that do. A cancel lets every change
+    // still to come that is linked to one that landed land too, wherever
+    // it is staged, and stops the rest, so a track is never left restored
+    // in rekordbox and not in Engine, or in Engine and not in its playlist
+    // (Sebastian, 2026-11-01: a cancel keeps whole units only). Each
+    // change is its own unit unless it says so.
+    virtual QStringList unitKeys() const { return {id()}; }
     // Catalog formats this change writes ("rekordbox", "engine",
     // "onelibrary"), for cache invalidation after the save.
     virtual QStringList formatsTouched() const = 0;

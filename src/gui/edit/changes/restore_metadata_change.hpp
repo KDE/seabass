@@ -39,7 +39,7 @@ public:
     // The track, whichever catalog: the changes MetadataRestoreController
     // stages for one track are one restore, and a cancel lets all of them
     // land or none.
-    QString unitKey() const override;
+    QStringList unitKeys() const override;
     QString description() const override;
     QString unit() const override;
     QString verb() const override;

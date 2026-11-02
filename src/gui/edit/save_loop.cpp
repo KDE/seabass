@@ -13,6 +13,7 @@
 #include "infrastructure/engine/engine_import_state.hpp"
 
 #include <exception>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -129,6 +130,53 @@ QString settleImportLevel(SaveContext &ctx)
 
 }  // namespace
 
+// Linked through a change still to come too, because a playlist's
+// membership change that holds a track already added to Engine holds the
+// tracks not yet added as well, and without them it would fail and send
+// the whole save back.
+std::vector<bool> changesACancelLetsLand(const QStringList &landedKeys,
+                                 const std::vector<std::shared_ptr<PendingChange>> &changes, size_t from)
+{
+    // Union-find over the keys, with every landed key in one set: a
+    // change still to come lands when any of its keys is in that set.
+    std::map<QString, QString> parent;
+    const auto find = [&parent](QString key) {
+        while (parent.at(key) != key) {
+            parent[key] = parent.at(parent.at(key));
+            key = parent.at(key);
+        }
+        return key;
+    };
+    const auto join = [&](const QString &a, const QString &b) {
+        parent.try_emplace(a, a);
+        parent.try_emplace(b, b);
+        const QString rootA = find(a);
+        const QString rootB = find(b);
+        if (rootA != rootB) {
+            parent[rootB] = rootA;
+        }
+    };
+    // Not a key any change can have: the set the landed changes are in.
+    const QString landed = QStringLiteral("\x01landed");
+    parent.try_emplace(landed, landed);
+    for (const QString &key : landedKeys) {
+        join(landed, key);
+    }
+    std::vector<QStringList> keysOf(changes.size());
+    for (size_t index = from; index < changes.size(); ++index) {
+        keysOf[index] = changes[index]->unitKeys();
+        for (const QString &key : keysOf[index]) {
+            join(keysOf[index].front(), key);
+        }
+    }
+    std::vector<bool> lands(changes.size(), false);
+    const QString landedRoot = find(landed);
+    for (size_t index = from; index < changes.size(); ++index) {
+        lands[index] = !keysOf[index].isEmpty() && find(keysOf[index].front()) == landedRoot;
+    }
+    return lands;
+}
+
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx)
 {
     SaveLoopResult result;
@@ -206,6 +254,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     }
 
     size_t done = 0;
+    // The unit keys of every change that landed, and once a cancel has
+    // arrived, which of the changes still to come belong to a unit one of
+    // them started (changesACancelLetsLand()).
+    QStringList landedKeys;
+    std::vector<bool> finishesAUnit;
     // Said only if the save's own rollback (below) does not put it right:
     // that one starts from the copies taken before the save, so a stick it
     // put back has nothing left of the change whose put-back failed.
@@ -213,10 +266,16 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     for (size_t index = 0; index < changes.size(); ++index) {
         const auto &change = changes[index];
         // Between units only: the rest of a unit a cancel arrived inside
-        // still lands (PendingChange::unitKey()).
-        if (ctx.cancel().cancelled() && (index == 0 || change->unitKey() != changes[index - 1]->unitKey())) {
-            result.cancelled = true;
-            break;
+        // still lands, wherever it is staged (PendingChange::unitKeys()),
+        // and nothing else does.
+        if (ctx.cancel().cancelled()) {
+            if (!result.cancelled) {
+                result.cancelled = true;
+                finishesAUnit = changesACancelLetsLand(landedKeys, changes, index);
+            }
+            if (!finishesAUnit[index]) {
+                continue;
+            }
         }
         ctx.status(change->subject());
         ChangeOutcome outcome;
@@ -247,6 +306,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             break;
         }
         ctx.endChange();
+        landedKeys << change->unitKeys();
         result.appliedIds << change->id();
         if (outcome.skipped) {
             result.skippedIds << change->id();

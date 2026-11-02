@@ -94,18 +94,18 @@ private:
     std::function<void(SaveContext &)> m_extra;
 };
 
-// A FakeChange that is one piece of a larger unit (PendingChange::unitKey()).
+// A FakeChange that is one piece of a larger unit (PendingChange::unitKeys()).
 class UnitPiece : public FakeChange
 {
 public:
-    UnitPiece(QString id, QString unit, Behavior behavior, Log &log)
-        : FakeChange(std::move(id), behavior, log), m_unit(std::move(unit))
+    UnitPiece(QString id, QStringList units, Behavior behavior, Log &log)
+        : FakeChange(std::move(id), behavior, log), m_units(std::move(units))
     {
     }
-    QString unitKey() const override { return m_unit; }
+    QStringList unitKeys() const override { return m_units; }
 
 private:
-    QString m_unit;
+    QStringList m_units;
 };
 
 struct Counter
@@ -364,16 +364,41 @@ int main()
         CancellationToken token;
         SaveContext ctx(token, noProgress, {}, rb, {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<UnitPiece>("t1:rekordbox", "t1", Behavior::CancelDuringApply, log),
-            std::make_shared<UnitPiece>("t1:engine", "t1", Behavior::Ok, log),
-            std::make_shared<UnitPiece>("t2:rekordbox", "t2", Behavior::Ok, log),
-            std::make_shared<UnitPiece>("t2:engine", "t2", Behavior::Ok, log),
+            std::make_shared<UnitPiece>("t1:rekordbox", QStringList{"t1"}, Behavior::CancelDuringApply, log),
+            std::make_shared<UnitPiece>("t1:engine", QStringList{"t1"}, Behavior::Ok, log),
+            std::make_shared<UnitPiece>("t2:rekordbox", QStringList{"t2"}, Behavior::Ok, log),
+            std::make_shared<UnitPiece>("t2:engine", QStringList{"t2"}, Behavior::Ok, log),
         };
         auto result = runSaveLoop(changes, ctx);
         assert(result.cancelled && !result.rolledBack);
         assert(result.appliedIds == (QStringList{"t1:rekordbox", "t1:engine"}) && "t1 lands whole, t2 not at all");
         assert(log.applied == (QStringList{"t1:rekordbox", "t1:engine"}));
         std::cout << "case 2b (a cancel inside a unit lets the unit finish) OK\n";
+    }
+
+    // 2c. The pieces of a unit staged apart, and linked through a change
+    //     that holds more than one: Sync after Rekordbox Export adds t1 and
+    //     t3 to Engine, puts both into playlist p, and writes t1's cues
+    //     last. A cancel while t1 is added lets t3's add, the membership
+    //     and t1's cues land -- t3 because the membership holds it -- and
+    //     not t9's cues, which share nothing with them.
+    {
+        Log log;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, rb, {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<UnitPiece>("add-t1", QStringList{"t1"}, Behavior::CancelDuringApply, log),
+            std::make_shared<UnitPiece>("add-t3", QStringList{"t3"}, Behavior::Ok, log),
+            std::make_shared<UnitPiece>("cues-t9", QStringList{"t9"}, Behavior::Ok, log),
+            std::make_shared<UnitPiece>("members-p", QStringList{"p", "t1", "t3"}, Behavior::Ok, log),
+            std::make_shared<UnitPiece>("cues-t1", QStringList{"t1"}, Behavior::Ok, log),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.cancelled && !result.rolledBack);
+        assert(result.appliedIds == (QStringList{"add-t1", "add-t3", "members-p", "cues-t1"})
+               && "every piece linked to t1 lands, in staging order, and t9's cues do not");
+        assert(log.applied == result.appliedIds);
+        std::cout << "case 2c (a cancel finishes a unit staged apart, and what it is linked through) OK\n";
     }
 
     // 4. An already-cancelled token applies nothing at all.
