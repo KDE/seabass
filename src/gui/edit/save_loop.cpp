@@ -4,6 +4,8 @@
 
 #include "gui/edit/save_loop.hpp"
 
+#include <QSet>
+
 #include "infrastructure/durable_file_write.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
@@ -12,8 +14,8 @@
 #include "gui/sleep_inhibitor.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 
+#include <algorithm>
 #include <exception>
-#include <map>
 #include <utility>
 #include <vector>
 
@@ -135,44 +137,29 @@ QString settleImportLevel(SaveContext &ctx)
 // tracks not yet added as well, and without them it would fail and send
 // the whole save back.
 std::vector<bool> changesACancelLetsLand(const QStringList &landedKeys,
-                                 const std::vector<std::shared_ptr<PendingChange>> &changes, size_t from)
+                                         const std::vector<std::shared_ptr<PendingChange>> &changes, size_t from)
 {
-    // Union-find over the keys, with every landed key in one set: a
-    // change still to come lands when any of its keys is in that set.
-    std::map<QString, QString> parent;
-    const auto find = [&parent](QString key) {
-        while (parent.at(key) != key) {
-            parent[key] = parent.at(parent.at(key));
-            key = parent.at(key);
-        }
-        return key;
-    };
-    const auto join = [&](const QString &a, const QString &b) {
-        parent.try_emplace(a, a);
-        parent.try_emplace(b, b);
-        const QString rootA = find(a);
-        const QString rootB = find(b);
-        if (rootA != rootB) {
-            parent[rootB] = rootA;
-        }
-    };
-    // Not a key any change can have: the set the landed changes are in.
-    const QString landed = QStringLiteral("\x01landed");
-    parent.try_emplace(landed, landed);
-    for (const QString &key : landedKeys) {
-        join(landed, key);
-    }
+    std::vector<bool> lands(changes.size(), false);
     std::vector<QStringList> keysOf(changes.size());
     for (size_t index = from; index < changes.size(); ++index) {
         keysOf[index] = changes[index]->unitKeys();
-        for (const QString &key : keysOf[index]) {
-            join(keysOf[index].front(), key);
-        }
     }
-    std::vector<bool> lands(changes.size(), false);
-    const QString landedRoot = find(landed);
-    for (size_t index = from; index < changes.size(); ++index) {
-        lands[index] = !keysOf[index].isEmpty() && find(keysOf[index].front()) == landedRoot;
+    // Grown until nothing more joins: a change that shares a key with the
+    // set lands, and brings its own keys into it.
+    QSet<QString> unit(landedKeys.begin(), landedKeys.end());
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (size_t index = from; index < changes.size(); ++index) {
+            if (lands[index]) {
+                continue;
+            }
+            const QStringList &keys = keysOf[index];
+            if (std::any_of(keys.begin(), keys.end(), [&unit](const QString &key) { return unit.contains(key); })) {
+                lands[index] = true;
+                unit.unite(QSet<QString>(keys.begin(), keys.end()));
+                grew = true;
+            }
+        }
     }
     return lands;
 }
@@ -344,6 +331,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     if (ctx.saveFailed()) {
         rollbackError = ctx.rollBackSave();
         result.rolledBack = !rollbackError;
+        // A change a cancel let land that then failed: nothing the cancel
+        // would have kept was kept, so the save reads as the failure it is
+        // and not as a cancel (the pages decide on `cancelled` first).
+        result.cancelled = false;
         if (changeUndoError && rollbackError) {
             result.error += QStringLiteral(", and putting back what it had already written failed (%1)")
                                 .arg(*changeUndoError);

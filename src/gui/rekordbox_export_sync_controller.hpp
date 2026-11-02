@@ -136,10 +136,12 @@ public:
     // (EngineUpdateReason::ExportDropped); otherwise Engine's value goes
     // over rekordbox's, and is said to be Engine's. Public for tests.
     static QString describeMetadataWrite(const std::vector<domain::MetadataEdit> &edits, bool toEngine);
-    // The tracks and playlists the change staged for these rows writes,
-    // which a cancel does not split (PendingChange::unitKeys()): a track
-    // added to Engine, its memberships and its cues are one unit through
-    // the track, a playlist's create and its members through the playlist.
+    // The units the change staged for these rows belongs to, which a
+    // cancel does not split (PendingChange::unitKeys()): each row's key and
+    // the keys it depends on, so a playlist's members land with its create
+    // or rename and those of the folders above it, and a track's
+    // memberships with its add; and a track's cue writes are one unit.
+    // Public for tests.
     static QStringList unitKeysOf(const std::vector<RekordboxExportSyncListModel::Row> &rows,
                                   const std::vector<std::size_t> &rowIndexes);
 

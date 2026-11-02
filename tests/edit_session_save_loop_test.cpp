@@ -401,6 +401,23 @@ int main()
         std::cout << "case 2c (a cancel finishes a unit staged apart, and what it is linked through) OK\n";
     }
 
+    // 2d. A change a cancel let land fails: the save goes back whole and
+    //     reads as the failure it is, not as a cancel. Nothing the cancel
+    //     would have kept was kept, and the pages decide on `cancelled`.
+    {
+        Log log;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, rb, {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<UnitPiece>("add-t1", QStringList{"t1"}, Behavior::CancelDuringApply, log),
+            std::make_shared<UnitPiece>("members-p", QStringList{"p", "t1"}, Behavior::Fail, log),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(!result.cancelled && "a failed save is not reported as cancelled");
+        assert(!result.error.isEmpty() && result.rolledBack && result.appliedIds.isEmpty());
+        std::cout << "case 2d (a linked change that fails after a cancel fails the save, not cancels it) OK\n";
+    }
+
     // 4. An already-cancelled token applies nothing at all.
     {
         Log log;

@@ -68,6 +68,9 @@
 #include <variant>
 #include <vector>
 
+#include "application/ports/cancellation_token.hpp"
+#include "application/ports/progress_reporter.hpp"
+#include "gui/edit/save_context.hpp"
 #include "engine_change_fixture.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -82,6 +85,7 @@ using seabass::pathFromUtf8;
 using seabass::pathToUtf8;
 using seabass::gui::EditSessionRegistry;
 using seabass::gui::LibraryEditSession;
+using seabass::gui::PendingChange;
 using seabass::gui::RekordboxExportSyncController;
 using seabass::gui::RekordboxExportSyncListModel;
 using Section = RekordboxExportSyncListModel::Section;
@@ -1187,27 +1191,73 @@ void testDeclinedByDependency(const fs::path &fixture)
                  "members) OK\n";
 }
 
+// A staged change that cancels the save once it has landed, the way the
+// DJ's Cancel arrives while it is written. Everything else is the staged
+// change's own.
+class CancelsOnceLanded final : public PendingChange
+{
+public:
+    CancelsOnceLanded(std::shared_ptr<PendingChange> staged, seabass::application::CancellationToken &token)
+        : m_staged(std::move(staged)), m_token(token)
+    {
+    }
+    QString id() const override { return m_staged->id(); }
+    QString description() const override { return m_staged->description(); }
+    QString subject() const override { return m_staged->subject(); }
+    QString unit() const override { return m_staged->unit(); }
+    int unitsWritten() const override { return m_staged->unitsWritten(); }
+    int unitsSkipped() const override { return m_staged->unitsSkipped(); }
+    QString verb() const override { return m_staged->verb(); }
+    QString playlistEdited() const override { return m_staged->playlistEdited(); }
+    QStringList unitKeys() const override { return m_staged->unitKeys(); }
+    QStringList formatsTouched() const override { return m_staged->formatsTouched(); }
+    QString owner() const override { return m_staged->owner(); }
+    std::vector<seabass::gui::BackupTarget> filesToBackup(seabass::gui::SaveContext &ctx) const override
+    {
+        return m_staged->filesToBackup(ctx);
+    }
+    std::vector<seabass::gui::RekordboxWrite> rekordboxWrites() const override { return m_staged->rekordboxWrites(); }
+    void beforeSave(seabass::gui::SaveContext &ctx) override { m_staged->beforeSave(ctx); }
+    seabass::gui::ChangeOutcome apply(seabass::gui::SaveContext &ctx) override
+    {
+        const auto outcome = m_staged->apply(ctx);
+        m_token.cancel();
+        return outcome;
+    }
+
+private:
+    std::shared_ptr<PendingChange> m_staged;
+    seabass::application::CancellationToken &m_token;
+};
+
+// The staged changes saved as the session would, with a cancel arriving
+// while changes[cancelAt] is written.
+seabass::gui::SaveLoopResult saveCancelledAt(const testing::EngineChangeStick &stick,
+                                             std::vector<std::shared_ptr<PendingChange>> changes, std::size_t cancelAt)
+{
+    seabass::application::CancellationToken token;
+    changes[cancelAt] = std::make_shared<CancelsOnceLanded>(changes[cancelAt], token);
+    seabass::gui::SaveContext ctx(token, seabass::application::NullProgressReporter::instance(), {},
+                                  stick.pioneerPath(), stick.enginePath());
+    return seabass::gui::runSaveLoop(changes, ctx);
+}
+
 // 11. A cancel never splits what one staged change of this page shares
 //     with another (PendingChange::unitKeys()): a playlist's create and
-//     its members, a track added to Engine and the playlists it goes
-//     into, a conflict's chosen cues and the track's other cue write,
-//     staged last. Asked of the staged changes themselves, through the
-//     save loop's own rule.
+//     its members, a track added to Engine and the playlist it goes into,
+//     a conflict's chosen cues and the track's other cue write, staged
+//     last. Saved with the cancel arriving, on the stick: what a cancel
+//     lets land must land, not fail for want of what it depends on.
 void testCancelUnits(const fs::path &fixture)
 {
-    const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_cancel_units");
-    RekordboxExportSyncController controller;
-    analyze(controller, stick);
-    assert(controller.errorMessage().isEmpty());
-    const auto untickAll = [&controller]() {
+    const auto untickAll = [](RekordboxExportSyncController &controller) {
         for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
                                     "cuesToEngine", "restoresToRekordbox"}) {
             controller.setSectionIncluded(QString::fromLatin1(section), false);
         }
         assert(controller.checkedCount() == 0);
     };
-    const auto keysOf = [](const seabass::gui::PendingChange &change) { return change.unitKeys(); };
-    const auto stagedChanges = [&]() {
+    const auto stagedChanges = [](RekordboxExportSyncController &controller, const testing::EngineChangeStick &stick) {
         controller.stageSelected();
         if (!controller.errorMessage().isEmpty()) {
             std::cerr << controller.errorMessage().toStdString() << "\n";
@@ -1215,169 +1265,163 @@ void testCancelUnits(const fs::path &fixture)
         assert(controller.errorMessage().isEmpty());
         return sessionOf(stick)->pendingChanges();
     };
-    const auto pathKeyOf = [](const Row &row) {
-        return std::visit(
-            [](const auto &e) -> std::string {
-                if constexpr (requires { e.pathKey; }) {
-                    return e.pathKey;
-                } else {
-                    return {};
-                }
-            },
-            *row.edit);
+    const auto leafOf = [](const std::string &path) {
+        return path.rfind('/') == std::string::npos ? path : path.substr(path.rfind('/') + 1);
     };
 
     // A playlist's create and its members, and cues of a track that is
-    // in none of it. A cancel after the create lets the members land and
-    // not the cues, nor the record.
+    // in none of it. A cancel while the playlist is created lets its
+    // members land and not the cues: the playlist is on Engine, whole.
     {
-        untickAll();
+        const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_cancel_units");
+        RekordboxExportSyncController controller;
+        analyze(controller, stick);
+        assert(controller.errorMessage().isEmpty());
+        untickAll(controller);
         const int create = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
         const Row createRow = rowsOf(controller)[static_cast<std::size_t>(create)];
-        const QString playlistKey = QStringLiteral("playlist:")
-            + QString::number(std::get<seabass::domain::PlaylistCreate>(*createRow.edit).pdbId);
+        const std::string playlistPath = std::get<seabass::domain::PlaylistCreate>(*createRow.edit).path;
         std::set<std::string> memberTracks;
         for (int m : rowsDependingOn(controller, createRow.header.key)) {
             controller.setIncluded(m, true);
-            memberTracks.insert(pathKeyOf(rowsOf(controller)[static_cast<std::size_t>(m)]));
+            memberTracks.insert(
+                std::get<seabass::domain::MembershipEdit>(*rowsOf(controller)[static_cast<std::size_t>(m)].edit).pathKey);
         }
         assert(!memberTracks.empty());
-        std::string cueTrack;
-        for (std::size_t i = 0; i < rowsOf(controller).size(); ++i) {
+        bool cues = false;
+        for (std::size_t i = 0; i < rowsOf(controller).size() && !cues; ++i) {
             const Row &row = rowsOf(controller)[i];
-            if (row.section == Section::CuesToEngine && row.fromConflictUid < 0 && !memberTracks.count(pathKeyOf(row))) {
+            if (row.section == Section::CuesToEngine && row.fromConflictUid < 0
+                && !memberTracks.count(std::get<seabass::domain::CueEdit>(*row.edit).pathKey)) {
                 controller.setIncluded(static_cast<int>(i), true);
-                cueTrack = pathKeyOf(row);
-                break;
+                cues = true;
             }
         }
-        assert(!cueTrack.empty());
-        const auto changes = stagedChanges();
+        assert(cues);
+        const auto changes = stagedChanges(controller, stick);
         assert(changes.size() == 4 && "the create, the members, the cues, the record");
-        assert(keysOf(*changes[0]).contains(playlistKey) && "the create is staged first");
-        const std::vector<bool> lands = seabass::gui::changesACancelLetsLand(keysOf(*changes[0]), changes, 1);
-        int members = 0;
-        for (std::size_t i = 1; i < changes.size(); ++i) {
-            const QStringList keys = keysOf(*changes[i]);
-            if (keys.contains(playlistKey)) {
-                ++members;
-                assert(lands[i] && "the playlist's members land with its create");
-            } else {
-                assert(!lands[i] && "what shares nothing with the create does not");
-            }
+        const auto result = saveCancelledAt(stick, changes, 0);
+        if (!result.error.isEmpty()) {
+            std::cerr << result.error.toStdString() << "\n";
         }
-        assert(members == 1);
-        assert(keysOf(*changes[2]).contains(QStringLiteral("track:") + QString::fromStdString(cueTrack)));
+        assert(result.cancelled && result.error.isEmpty());
+        assert(result.appliedIds == (QStringList{changes[0]->id(), changes[1]->id()})
+               && "the create and its members land, the cues do not");
+        assert(testing::rootPlaylistTracks(stick.db, leafOf(playlistPath)).size() == memberTracks.size()
+               && "the playlist is on Engine with every member");
+        sessionOf(stick)->unstageAll(sessionOf(stick)->pendingIds());
     }
 
-    // A track added to Engine and the memberships that hold it: a cancel
-    // after the add lets every one of them land. The fixture's Engine has
-    // every track, so one that is in a playlist is taken out of it first,
-    // on a stick of its own, for the analysis to add back.
+    // A track added to Engine and the membership that holds it. The
+    // fixture's Engine has every track, so a member of the playlist the
+    // analysis creates is taken out of it first (and its file put on the
+    // stick, which the fixture has no audio for) for the analysis to add
+    // back. A cancel while it is added lets the membership land.
     {
-        const auto taken = testing::makeEngineChangeStick(fixture, "export_sync_cancel_units_add");
+        const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_cancel_units_add");
         RekordboxExportSyncController controller;
-        analyze(controller, taken);
+        analyze(controller, stick);
         assert(controller.errorMessage().isEmpty());
-        // A member of the playlist the analysis creates, taken out of Engine.
-        // The fixture has no audio, and a file the stick does not have is
-        // not added, so it is put there too.
+        std::string playlistPath;
         {
             const int create = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
-            const auto members = rowsDependingOn(controller, rowsOf(controller)[static_cast<std::size_t>(create)].header.key);
+            const Row &createRow = rowsOf(controller)[static_cast<std::size_t>(create)];
+            playlistPath = std::get<seabass::domain::PlaylistCreate>(*createRow.edit).path;
+            const auto members = rowsDependingOn(controller, createRow.header.key);
             assert(!members.empty());
             const auto &member =
                 std::get<seabass::domain::MembershipEdit>(*rowsOf(controller)[static_cast<std::size_t>(members.front())].edit);
             const std::string name = pathToUtf8(pathFromUtf8(member.track.filePath).filename());
-            assert(testing::sqlExec(taken.db, "DELETE FROM Track WHERE path LIKE '%/" + name + "';"));
+            assert(testing::sqlExec(stick.db, "DELETE FROM Track WHERE path LIKE '%/" + name + "';"));
             const fs::path file = pathFromUtf8(member.track.filePath);
             fs::create_directories(file.parent_path());
-            std::ofstream(file, std::ios::binary) << "not really audio";
+            // Adding it reads its sample rate, so it is a real MP3: a few
+            // seconds of silent MPEG-1 Layer III frames, 128 kbit/s at
+            // 44.1 kHz (417 bytes each).
+            std::ofstream mp3(file, std::ios::binary);
+            for (int frame = 0; frame < 200; ++frame) {
+                std::string bytes(417, '\0');
+                bytes[0] = '\xFF';
+                bytes[1] = '\xFB';
+                bytes[2] = '\x90';
+                bytes[3] = '\x00';
+                mp3 << bytes;
+            }
         }
-        analyze(controller, taken);
+        analyze(controller, stick);
         assert(controller.errorMessage().isEmpty());
-        const auto untickAll = [&controller]() {
-            for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership",
-                                        "metadataToEngine", "cuesToEngine", "restoresToRekordbox"}) {
-                controller.setSectionIncluded(QString::fromLatin1(section), false);
-            }
-        };
-        const auto stagedChanges = [&]() {
-            controller.stageSelected();
-            assert(controller.errorMessage().isEmpty());
-            return sessionOf(taken)->pendingChanges();
-        };
-        untickAll();
-        int add = -1;
-        std::vector<int> dependents;
-        for (std::size_t i = 0; i < rowsOf(controller).size() && add < 0; ++i) {
-            const Row &row = rowsOf(controller)[i];
-            if (row.section == Section::TracksToAdd) {
-                dependents = rowsDependingOn(controller, row.header.key);
-                if (!dependents.empty()) {
-                    add = static_cast<int>(i);
-                }
-            }
-        }
-        assert(add >= 0 && "the fixture adds a track that a playlist holds");
+        untickAll(controller);
+        const int add = firstRow(controller, Section::TracksToAdd);
+        assert(add >= 0 && "the analysis adds the track back");
+        const std::vector<int> holding = rowsDependingOn(controller, rowsOf(controller)[static_cast<std::size_t>(add)].header.key);
+        assert(!holding.empty() && "and a membership holds it");
         controller.setIncluded(add, true);
-        for (int d : dependents) {
-            controller.setIncluded(d, true);
+        for (int m : holding) {
+            controller.setIncluded(m, true);
         }
-        const QString trackKey =
-            QStringLiteral("track:") + QString::fromStdString(pathKeyOf(rowsOf(controller)[static_cast<std::size_t>(add)]));
-        const auto changes = stagedChanges();
+        const auto changes = stagedChanges(controller, stick);
+        // The add is the first change that holds the track's key: the
+        // memberships after it depend on it, the create before it does not.
+        const QString trackKey = QString::fromStdString(rowsOf(controller)[static_cast<std::size_t>(add)].header.key);
         std::size_t addAt = changes.size();
         for (std::size_t i = 0; i < changes.size(); ++i) {
-            if (keysOf(*changes[i]).contains(trackKey)) {
+            if (changes[i]->unitKeys().contains(trackKey)) {
                 addAt = i;
                 break;
             }
         }
-        assert(addAt < changes.size());
-        QStringList landed;
-        for (std::size_t i = 0; i <= addAt; ++i) {
-            landed << keysOf(*changes[i]);
+        assert(addAt + 1 < changes.size());
+        const auto result = saveCancelledAt(stick, changes, addAt);
+        if (!result.error.isEmpty()) {
+            std::cerr << result.error.toStdString() << "\n";
         }
-        const std::vector<bool> lands = seabass::gui::changesACancelLetsLand(landed, changes, addAt + 1);
-        int holding = 0;
-        for (std::size_t i = addAt + 1; i < changes.size(); ++i) {
-            if (keysOf(*changes[i]).contains(trackKey)) {
-                ++holding;
-                assert(lands[i] && "a membership of the added track lands with the add");
-            }
-        }
-        assert(holding >= 1);
-        sessionOf(taken)->unstageAll(sessionOf(taken)->pendingIds());
+        assert(result.cancelled && result.error.isEmpty());
+        assert(result.appliedIds.size() == static_cast<qsizetype>(changes.size() - 1)
+               && "everything but the record lands: the playlist, the add and its membership");
+        assert(testing::rootPlaylistTracks(stick.db, leafOf(playlistPath)).size() == holding.size()
+               && "the added track is in its playlist");
+        sessionOf(stick)->unstageAll(sessionOf(stick)->pendingIds());
     }
 
-    // A cue conflict answered toward rekordbox: the chosen cues are a
-    // change of their own, staged after the track's other cue write, and
-    // the track's unit all the same. The fixture has no cue conflict (it
-    // has no record for the two sides to have moved from), so the rows
-    // are built here and asked of the rule the staging uses.
+    // A conflict's chosen cues and the track's other cue write, and a
+    // membership of a playlist inside a renamed folder. The fixture has
+    // neither (no record for two sides to have moved from, no folder to
+    // rename), so the rows are built here and asked of the rule the
+    // staging uses.
     {
-        Row other;
-        other.section = Section::CuesToEngine;
-        seabass::domain::CueEdit cues;
-        cues.pathKey = "contents/night.mp3";
-        other.edit = cues;
-        Row answer = other;
+        const auto cueRow = [](const std::string &key, const std::string &pathKey) {
+            Row row;
+            row.section = Section::CuesToEngine;
+            row.header.key = key;
+            seabass::domain::CueEdit cues;
+            cues.pathKey = pathKey;
+            row.edit = cues;
+            return row;
+        };
+        Row answer = cueRow("cue|contents/night.mp3|2", "contents/night.mp3");
         answer.fromConflictUid = 3;
-        Row unrelated = other;
-        seabass::domain::CueEdit elsewhere;
-        elsewhere.pathKey = "contents/day.mp3";
-        unrelated.edit = elsewhere;
-        const std::vector<Row> rows{other, unrelated, answer};
-        const QStringList track = RekordboxExportSyncController::unitKeysOf(rows, {0});
-        assert(track == QStringList{QStringLiteral("track:contents/night.mp3")});
-        assert(RekordboxExportSyncController::unitKeysOf(rows, {2}) == track
-               && "the answer is the track's unit, staged apart from its other cue write");
-        assert(RekordboxExportSyncController::unitKeysOf(rows, {1}) != track);
+        Row rename;
+        rename.section = Section::Playlists;
+        rename.header.key = "playlist|10";
+        rename.edit = seabass::domain::PlaylistRename{};
+        Row member;
+        member.section = Section::Membership;
+        member.header.key = "member|11|contents/day.mp3";
+        member.header.dependsOn = {"playlist|10", "playlist|11"};
+        member.edit = seabass::domain::MembershipEdit{};
+        const std::vector<Row> rows{cueRow("cue|contents/night.mp3|1", "contents/night.mp3"),
+                                    cueRow("cue|contents/day.mp3|1", "contents/day.mp3"), answer, rename, member};
+        const auto shares = [&rows](std::size_t a, std::size_t b) {
+            const QStringList left = RekordboxExportSyncController::unitKeysOf(rows, {a});
+            const QStringList right = RekordboxExportSyncController::unitKeysOf(rows, {b});
+            return std::any_of(left.begin(), left.end(), [&right](const QString &key) { return right.contains(key); });
+        };
+        assert(shares(0, 2) && "the chosen cues are the track's unit, staged apart from its other cue write");
+        assert(!shares(0, 1) && "another track's cues are not");
+        assert(shares(3, 4) && "a membership lands with the rename of the folder above its playlist");
     }
-    sessionOf(stick)->unstageAll(sessionOf(stick)->pendingIds());
-    std::cout << "case 11 (a cancel never splits a create from its members, an add from its playlists, or a "
-                 "conflict's answer from its track) OK\n";
+    std::cout << "case 11 (a cancel lands a create with its members and an add with its playlist, and links a "
+                 "conflict's answer to its track and a member to its folder's rename) OK\n";
 }
 
 // 10. See the top of the file.

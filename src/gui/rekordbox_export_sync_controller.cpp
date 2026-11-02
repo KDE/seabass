@@ -12,7 +12,6 @@
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -93,8 +92,8 @@ using Section = RekordboxExportSyncListModel::Section;
 // id of its own (the chosen cues of a conflict, staged after the track's
 // other cue write, which has the same id), a description (a rating sent
 // to Engine is not "put back"), the unit and verb the save's summary
-// is told in, or the tracks and playlists it writes, which a cancel does
-// not split (RekordboxExportSyncController::unitKeysOf()). Everything else
+// is told in, or the units a cancel does not split
+// (RekordboxExportSyncController::unitKeysOf()). Everything else
 // is the wrapped change's, as OwnedChange has it. A change this page
 // already owns keeps its id unless one is given:
 // wrapping it a second time must not rename it.
@@ -495,34 +494,31 @@ void RekordboxExportSyncController::unstageAll()
 QStringList RekordboxExportSyncController::unitKeysOf(const std::vector<Row> &rows,
                                                       const std::vector<std::size_t> &rowIndexes)
 {
+    // The planner's own graph: a row's key and every key it depends on,
+    // the same links the page ticks rows together by. A membership depends
+    // on its playlist's create or rename and on those of the folders above
+    // it, and on the add of a track not yet in Engine; whatever a cancel
+    // lets land, it lets what that needs land with it.
     QStringList keys;
-    const auto add = [&keys](const QString &key) {
-        if (!keys.contains(key)) {
-            keys << key;
+    const auto add = [&keys](const std::string &key) {
+        const QString text = QString::fromStdString(key);
+        if (!text.isEmpty() && !keys.contains(text)) {
+            keys << text;
         }
     };
-    const auto track = [&add](const std::string &pathKey) {
-        add(QStringLiteral("track:") + QString::fromStdString(pathKey));
-    };
-    const auto playlist = [&add](std::uint32_t pdbId) { add(QStringLiteral("playlist:") + QString::number(pdbId)); };
     for (std::size_t i : rowIndexes) {
-        if (!rows[i].edit) {
-            continue;
+        add(rows[i].header.key);
+        for (const auto &key : rows[i].header.dependsOn) {
+            add(key);
         }
-        std::visit(
-            [&](const auto &e) {
-                using E = std::decay_t<decltype(e)>;
-                if constexpr (std::is_same_v<E, domain::PlaylistCreate> || std::is_same_v<E, domain::PlaylistRename>
-                              || std::is_same_v<E, domain::PlaylistDelete>) {
-                    playlist(e.pdbId);
-                } else if constexpr (std::is_same_v<E, domain::MembershipEdit>) {
-                    playlist(e.pdbId);
-                    track(e.pathKey);
-                } else {
-                    track(e.pathKey);
-                }
-            },
-            *rows[i].edit);
+        // A conflict's chosen cues are a change of their own, staged after
+        // the track's other cue write and linked to nothing else in the
+        // graph: the track is the unit both write.
+        if (rows[i].edit) {
+            if (const auto *cues = std::get_if<domain::CueEdit>(&*rows[i].edit)) {
+                add("cues-of|" + cues->pathKey);
+            }
+        }
     }
     return keys;
 }
