@@ -95,8 +95,8 @@ struct WriteScope
     bool catalogRows = false;
     // Also writes the OneLibrary copy of the same library. Some workflows
     // mirror there and some do not, and it is not inferable from the
-    // format -- Add Cue, Local Cue restore and stray-cue removal mirror;
-    // Sync and duplicate-cue consolidation do not. Getting this wrong in
+    // format -- Add Cue, Local Cue restore, stray-cue removal and
+    // duplicate-cue consolidation mirror; Sync does not. Getting this wrong in
     // either direction is a real defect: too few leaves a file overwritten
     // with no backup, too many has Undo restore a file the save never
     // touched.

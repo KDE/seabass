@@ -2989,6 +2989,16 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME add_cue_mirror_failure_test COMMAND add_cue_mirror_failure_test)
 
+    add_executable(copy_cues_mirror_test tests/copy_cues_mirror_test.cpp)
+    target_include_directories(copy_cues_mirror_test PRIVATE src)
+    target_compile_definitions(copy_cues_mirror_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(copy_cues_mirror_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(copy_cues_mirror_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME copy_cues_mirror_test COMMAND copy_cues_mirror_test)
+
     add_executable(save_backup_discard_under_lock_test tests/save_backup_discard_under_lock_test.cpp)
     target_include_directories(save_backup_discard_under_lock_test PRIVATE src)
     target_compile_definitions(save_backup_discard_under_lock_test PRIVATE

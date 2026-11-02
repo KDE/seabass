@@ -36,6 +36,11 @@ namespace
 struct DuplicatesFormatContext
 {
     std::unique_ptr<application::CueWriter> writer;
+    // rekordbox only: the Device Library Plus half of the same library,
+    // written with every copy as Merge Cues and Add Cue do, so the two
+    // Pioneer formats never disagree after a save. Owned by the save
+    // (SaveContext::shared), not by this context.
+    infrastructure::onelibrary::OneLibraryCueWriter *mirror = nullptr;
 };
 
 // oneLibrarySourceIdToPath is only consulted when format == "onelibrary"
@@ -50,6 +55,14 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
     if (format == "rekordbox") {
         std::string pioneerRoot = path.toStdString();
         ctx->writer = std::make_unique<infrastructure::rekordbox::RekordboxCueWriter>(pioneerRoot);
+        // A database that is there and will not open throws, and the save
+        // puts this change back; a stick without one has nothing to
+        // disagree with. See mirrorCuesOrExplain().
+        if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneerRoot)) {
+            saveCtx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot),
+                               "duplicate-cue-consolidation");
+            ctx->mirror = &sharedOneLibraryWriter(saveCtx, pioneerRoot);
+        }
     } else if (format == "onelibrary") {
         std::string pioneerRoot = path.toStdString();  // same PIONEER root rekordbox uses, see scan()'s own comment
         auto adapter = std::make_unique<OneLibraryCueWriterAdapter>(pioneerRoot, oneLibrarySourceIdToPath);
@@ -110,7 +123,7 @@ std::vector<BackupTarget> CopyCuesChange::filesToBackup(SaveContext &ctx) const
     std::vector<BackupTarget> targets;
     for (const auto &target : m_op.targets) {
         for (const auto &file :
-             filesWrittenFor(WriteScope{}, {m_format.toStdString(), target.sourceId}, m_path, ctx)) {
+             filesWrittenFor(WriteScope{.oneLibraryMirror = true}, {m_format.toStdString(), target.sourceId}, m_path, ctx)) {
             targets.push_back({file, "duplicate-cue-consolidation"});
         }
     }
@@ -133,12 +146,19 @@ ChangeOutcome CopyCuesChange::apply(SaveContext &ctx)
 
     for (const auto &target : m_op.targets) {
         for (const auto &file :
-             filesWrittenFor(WriteScope{}, {m_format.toStdString(), target.sourceId}, m_path, ctx)) {
+             filesWrittenFor(WriteScope{.oneLibraryMirror = true}, {m_format.toStdString(), target.sourceId}, m_path, ctx)) {
             ctx.backupOnce(file, "duplicate-cue-consolidation");
         }
         format.writer->writeHotCues(target.sourceId, m_op.source.cues);
         ctx.log().record("copied " + std::to_string(m_op.source.cues.size()) + " cue(s) from track id="
                          + m_op.source.sourceId + " to track id=" + target.sourceId);
+        if (format.mirror && !target.filePath.empty()) {
+            const QString failed = mirrorCuesOrExplain(*format.mirror, target.filePath, m_op.source.cues, ctx,
+                                                       "duplicate-cue-consolidation", QStringLiteral("copy the cues"));
+            if (!failed.isEmpty()) {
+                return ChangeOutcome::failure(failed);
+            }
+        }
     }
     return ChangeOutcome::success();
 }
