@@ -326,4 +326,55 @@ TestCase {
         compare(report.unitsDone, 900, "the bar follows the count");
         controller.busy = false;
     }
+
+    Component {
+        id: realStatisticsComponent
+        StickStatisticsController {}
+    }
+
+    function diskUsageChild(controller, label) {
+        for (const child of controller.diskUsage.root.children) {
+            if (child.label === label) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    function scanStatistics(controller, stick) {
+        controller.scan("STATS", stick + "/PIONEER", stick + "/Engine Library");
+        tryVerify(() => !controller.busy, 60000, "the scan must end");
+        compare(controller.errorMessage, "", "and succeed");
+    }
+
+    // The real controller on a copy of the fixture stick: Seabass's own
+    // backups are a slice of their own, and no longer inside Other /
+    // Unaccounted. Every other slice reads the same both times, so what
+    // Other gains between the two scans is what the stick gained, less
+    // the backups slice, to the byte.
+    function test_seabassBackupsAreTheirOwnSlice() {
+        const stick = stickFixture.stickCopy(decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library")
+            .toString().replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1")));
+        verify(stick.length > 0, "the fixture copy must be made");
+        const controller = createTemporaryObject(realStatisticsComponent, testCase);
+
+        scanStatistics(controller, stick);
+        verify(diskUsageChild(controller, "Seabass Backups") === null, "no backups folder, no slice");
+        const otherBefore = diskUsageChild(controller, "Other / Unaccounted").sizeBytes;
+        const usedBefore = controller.diskUsage.usedBytes;
+
+        backupFixture.plantRecords(stick, 2, 1);
+        scanStatistics(controller, stick);
+        const backups = diskUsageChild(controller, "Seabass Backups");
+        verify(backups !== null, "the backups have their slice");
+        verify(backups.sizeBytes > 0, "with their size");
+        const labels = controller.diskUsage.root.children.map(child => child.label);
+        compare(labels.indexOf("Seabass Backups") + 1, labels.indexOf("Other / Unaccounted"),
+                "just before Other / Unaccounted: " + JSON.stringify(labels));
+        const otherAfter = diskUsageChild(controller, "Other / Unaccounted").sizeBytes;
+        const usedAfter = controller.diskUsage.usedBytes;
+        compare(otherAfter, otherBefore + (usedAfter - usedBefore) - backups.sizeBytes,
+                "Other / Unaccounted no longer holds the backups");
+        browseFixture.waitForScans();
+    }
 }

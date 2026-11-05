@@ -6,6 +6,7 @@
 
 #include "gui/stick_path.hpp"
 #include "gui/future_result.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -222,7 +223,18 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         }
         const std::size_t rekordboxWalkUnits = directoryWalkUnits(rekordboxPath.toStdString());
         const std::size_t engineWalkUnits = directoryWalkUnits(enginePath.toStdString());
-        plan(rekordboxWalkUnits + engineWalkUnits);
+        // Seabass's own backups (Seabass/backups), named in the treemap
+        // rather than left inside Other / Unaccounted: a save's backups can
+        // be a large share of a full stick, and the Delete Orphaned Files
+        // page prunes the old ones.
+        const std::string catalogPath = !rekordboxPath.isEmpty() ? rekordboxPath.toStdString() : enginePath.toStdString();
+        const std::string backupsDir = catalogPath.empty() ? std::string()
+            : pathToUtf8(infrastructure::paths::stickBackupsDir(
+                  pathFromUtf8(infrastructure::paths::stickRootForCatalogPath(catalogPath))));
+        std::error_code backupsEc;
+        const bool hasBackupsDir = !backupsDir.empty() && fs::is_directory(pathFromUtf8(backupsDir), backupsEc);
+        const std::size_t backupsWalkUnits = hasBackupsDir ? directoryWalkUnits(backupsDir) : 0;
+        plan(rekordboxWalkUnits + engineWalkUnits + backupsWalkUnits);
         cancel.throwIfCancelled();
 
         application::PhasedProgress progress(*reporter, "Scanning stick statistics", plannedTotal.value_or(0));
@@ -299,9 +311,13 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
                                                 "Sizing the Engine Library folder", engineWalkUnits);
         }
         metadataBytes = metadataBytes > artworkBytes ? metadataBytes - artworkBytes : 0;
+        std::uint64_t backupsBytes = 0;
+        if (hasBackupsDir) {
+            backupsBytes = directorySizeBytes(backupsDir, cancel, progress, "Sizing Seabass backups", backupsWalkUnits);
+        }
 
         std::uint64_t usedBytes = hwInfo.totalBytes > hwInfo.freeBytes ? hwInfo.totalBytes - hwInfo.freeBytes : 0;
-        std::uint64_t accountedBytes = audioBytes + artworkBytes + metadataBytes;
+        std::uint64_t accountedBytes = audioBytes + artworkBytes + metadataBytes + backupsBytes;
         std::uint64_t otherBytes = usedBytes > accountedBytes ? usedBytes - accountedBytes : 0;
 
         domain::DiskUsageNode audioNode = domain::DiskUsageAnalyzer::byArtist(combinedTracks, 10);
@@ -315,9 +331,15 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
             {measuredArtwork.engineUnreadable ? "Artwork (Engine covers could not be read)" : "Artwork", artworkBytes,
              {}},
             {"Database & Analysis Files", metadataBytes, {}},
-            {"Other / Unaccounted", otherBytes, {}},
-            {"Free Space", hwInfo.freeBytes, {}},
         };
+        // Only when there is something in it: a stick Seabass never saved
+        // to, or one whose backups were all pruned, would otherwise carry a
+        // zero-size slice, which is noise beside the others.
+        if (backupsBytes > 0) {
+            root.children.push_back({"Seabass Backups", backupsBytes, {}});
+        }
+        root.children.push_back({"Other / Unaccounted", otherBytes, {}});
+        root.children.push_back({"Free Space", hwInfo.freeBytes, {}});
 
         QVariantMap diskUsageMap;
         diskUsageMap["totalBytes"] = QVariant::fromValue<qulonglong>(hwInfo.totalBytes);
