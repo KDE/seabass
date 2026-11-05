@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "domain/duplicate_cue_consolidation.hpp"
+#include "domain/junk_cue.hpp"
 
 #include <cmath>
 #include <map>
@@ -253,8 +254,19 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
     ConsolidationPlan result;
     result.group = group;
 
+    // The plan is made on the cues worth keeping, with the stray ones
+    // left out (junk_cue.hpp). A copy whose only cue is a stray memory
+    // cue at 0:00 has no cues to offer, and the copy that does offer its
+    // cues offers them without its stray ones: on 2026-11-05 Cues on
+    // Duplicate Copies copied "2 cue(s)" from one copy of No Limit onto
+    // three others, and one of the two was the memory cue at 0:00 that
+    // Clean Up Stray Cues then listed on all four.
+    std::vector<Track> kept = group.tracks;
+    for (auto &track : kept) {
+        track.cues = withoutJunkCues(track.cues);
+    }
     std::vector<const Track *> withCues;
-    for (const auto &track : group.tracks) {
+    for (const auto &track : kept) {
         if (!track.cues.empty()) {
             withCues.push_back(&track);
         }

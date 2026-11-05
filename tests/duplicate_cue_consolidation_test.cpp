@@ -25,6 +25,37 @@ Track makeTrack(std::string id, std::string filename, double duration, std::vect
 
 int main()
 {
+    // A stray cue never travels and never counts. One copy has a hot cue
+    // and the memory cue at 0:00 rekordbox's export leaves behind, the
+    // second copy has only that memory cue, the third nothing: the plan
+    // is unambiguous, both others are targets, and what they get is the
+    // hot cue alone.
+    {
+        const CuePoint stray{CuePoint::Kind::Memory, 0, 0.0, "#000000", ""};
+        const CuePoint drop{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"};
+        std::vector<Track> tracks = {
+            makeTrack("1", "song.mp3", 200.0, {drop, stray}, "Song", "Artist"),
+            makeTrack("2", "song-1.mp3", 200.0, {stray}, "Song", "Artist"),
+            makeTrack("3", "song-2.mp3", 200.0, {}, "Song", "Artist"),
+        };
+        auto groups = DuplicateTrackFinder::find(tracks);
+        assert(groups.size() == 1);
+        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        assert(plan.kind == ConsolidationPlan::Kind::Unambiguous && "a copy with only a stray cue has no cues");
+        assert(plan.source->sourceId == "1");
+        assert(plan.source->cues.size() == 1 && "the stray cue is not copied along");
+        assert(plan.source->cues[0].comment == "drop");
+        assert(plan.targets.size() == 2);
+        // Two copies that agree once their stray cues are left out agree.
+        std::vector<Track> agree = {
+            makeTrack("1", "song.mp3", 200.0, {drop, stray}, "Song", "Artist"),
+            makeTrack("2", "song-1.mp3", 200.0, {drop}, "Song", "Artist"),
+        };
+        groups = DuplicateTrackFinder::find(agree);
+        assert(groups.size() == 1);
+        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::AlreadyConsistent);
+    }
+
     // Case 1: unambiguous -- one copy has cues, other doesn't.
     {
         std::vector<Track> tracks = {
