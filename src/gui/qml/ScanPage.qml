@@ -734,7 +734,10 @@ Page {
         function onSaveFinished(summary) {
             // After the controller's own slot for this signal, which words
             // the edits: it attached to the session later than this page did.
-            Qt.callLater(() => root.showSaved(summary));
+            // The page may be gone by the time this runs: a save finishing
+            // as the user leaves (the storm walks off mid-save), and root
+            // is null then.
+            Qt.callLater(() => { if (root) { root.showSaved(summary); } });
         }
     }
     function showSaved(summary) {

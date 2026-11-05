@@ -278,7 +278,10 @@ Page {
         target: editHost.session
         ignoreUnknownSignals: true
         function onSaveFinished(summary) {
-            Qt.callLater(() => root.showSaved(summary));
+            // The page may be gone by the time this runs: a save finishing
+            // as the user leaves (the storm walks off mid-save), and root
+            // is null then.
+            Qt.callLater(() => { if (root) { root.showSaved(summary); } });
         }
     }
     function showSaved(summary) {
