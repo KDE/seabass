@@ -89,7 +89,51 @@ Page {
             + "originally orphaned it was already backed up separately, when the duplicate was first "
             + "cleaned up; that backup restores the database entry, not this file."
         acceptText: "Delete"
-        onAccepted: cleanupController.deleteSelectedPendingFiles()
+        onAccepted: {
+            root.refusedAction = "delete";
+            cleanupController.deleteSelectedPendingFiles();
+        }
+    }
+
+    MessageDialog {
+        id: confirmPruneBackupsDialog
+        objectName: "confirmPruneBackupsDialog"
+        severity: SeabassDialog.Warning
+        destructive: true
+        title: "Delete " + cleanupController.staleBackupCount + " Backup(s) From Earlier Saves?"
+        headline: "This frees " + cleanupController.staleBackupBytesHuman + ". Seabass made these backups "
+            + "before earlier saves, and nothing in Seabass can restore from them any more."
+        detailText: "Backups you asked for yourself are kept, and so are the ones Undo Last Save still needs. "
+            + "The stick's library is not touched."
+        acceptText: "Delete"
+        onAccepted: {
+            root.refusedAction = "prune";
+            cleanupController.pruneStaleBackups();
+        }
+    }
+
+    // Which write the lock refusal stopped, so Remove Lock retries that one.
+    property string refusedAction: "delete"
+
+    // A prune that removed every backup it set out to is said in a toast
+    // that goes by itself; anything less opens the summary dialog.
+    ConfirmationToast {
+        id: prunedToast
+        objectName: "prunedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    function afterPrune(summary) {
+        const whole = summary.written > 0
+            && !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            prunedToast.show(summary.written === 1 ? "1 backup deleted" : summary.written + " backups deleted");
+        } else {
+            summaryDialog.show(summary);
+        }
     }
 
     // Write mode: the lock refusal, the summary (OK goes back after a
@@ -99,7 +143,11 @@ Page {
         objectName: "lockedDialog"
         onRemoveLockRequested: {
             EditSessionRegistry.removeLock(lockedDialog.libraryId);
-            cleanupController.deleteSelectedPendingFiles();
+            if (root.refusedAction === "prune") {
+                cleanupController.pruneStaleBackups();
+            } else {
+                cleanupController.deleteSelectedPendingFiles();
+            }
         }
     }
     OperationSummaryDialog {
@@ -117,6 +165,7 @@ Page {
             lockedDialog.openFor(EditSessionRegistry.libraryIdForPath(root.hasEngine ? root.enginePath : root.rekordboxPath), holder);
         }
         function onPendingDeletionsWriteFinished(summary) { summaryDialog.show(summary); }
+        function onStaleBackupsPruneFinished(summary) { root.afterPrune(summary); }
     }
 
     ColumnLayout {
@@ -235,6 +284,93 @@ Page {
                 detail: "Every earlier cleanup's files are either still in use or already deleted."
             }
         }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 8
+            spacing: 12
+            Label {
+                objectName: "staleBackupCountLabel"
+                text: cleanupController.staleBackupCount + " backup(s) from earlier saves are no longer needed"
+                font.bold: true
+            }
+            Label {
+                visible: cleanupController.staleBackupCount > 0
+                text: "(" + cleanupController.staleBackupBytesHuman + " total)"
+                color: Theme.textMuted
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "pruneBackupsButton"
+                text: "Prune Backups"
+                enabled: !cleanupController.busy && cleanupController.staleBackupCount > 0
+                onClicked: confirmPruneBackupsDialog.open()
+            }
+        }
+        Label {
+            text: "Seabass backs up the files it is about to change before every save. Only the latest save "
+                + "can be undone from inside Seabass, so earlier backups only take space. Backups you asked "
+                + "for yourself are not listed here."
+            color: Theme.textMuted
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+
+        // A bounded height of its own, so a long list of orphaned files
+        // above never squeezes it away, and a long list here never takes
+        // the page from the files.
+        ListView {
+            id: staleBackupsListView
+            objectName: "staleBackupsList"
+            interactive: contentHeight > height
+            Layout.fillWidth: true
+            Layout.preferredHeight: 180
+            Layout.minimumHeight: 100
+            clip: true
+            model: cleanupController.staleBackups
+            spacing: 2
+
+            ScrollBar.vertical: BigScrollBar {}
+
+            delegate: ItemDelegate {
+                id: backupDelegate
+                width: ListView.view.width
+                hoverEnabled: false
+
+                required property var modelData
+
+                contentItem: RowLayout {
+                    spacing: 8
+                    Label {
+                        text: backupDelegate.modelData.when
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: 260
+                    }
+                    Label {
+                        text: backupDelegate.modelData.label
+                        elide: Text.ElideMiddle
+                        color: Theme.textMuted
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: backupDelegate.modelData.sizeHuman
+                        color: Theme.textMuted
+                        Layout.preferredWidth: 70
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+
+            EmptyState {
+                objectName: "staleBackupsEmptyState"
+                visible: staleBackupsListView.count === 0 && !cleanupController.busy
+                    && !cleanupController.listingStaleBackups
+                tone: "good"
+                iconName: "checkmark"
+                text: "No old backups."
+                detail: "Every backup on this stick is one Seabass can still undo from, or one you asked for."
+            }
+        }
     }
 
     BusyOverlay {
@@ -242,7 +378,8 @@ Page {
         busy: cleanupController.busy
         current: cleanupController.scanCurrent
         total: cleanupController.scanTotal
-        label: cleanupController.writing ? "Deleting files. Do not remove your USB stick." : "Loading..."
+        label: cleanupController.pruningBackups ? "Deleting backups. Do not remove your USB stick."
+            : cleanupController.writing ? "Deleting files. Do not remove your USB stick." : "Loading..."
         cancellable: cleanupController.writeCancellable
         onCancelRequested: cleanupController.cancelWrite()
     }

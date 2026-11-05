@@ -118,6 +118,16 @@ public:
     int writeTotal() const { return m_writeTotal; }
     bool cancelRequested() const { return m_cancelRequested; }
     bool canUndo() const { return !m_lastBackups.empty(); }
+    // The backup records Undo Last Save would restore, by id: what a
+    // prune of old backups must leave on the stick.
+    QStringList lastSaveBackupIds() const
+    {
+        QStringList ids;
+        for (const auto &backup : m_lastBackups) {
+            ids << backup.id;
+        }
+        return ids;
+    }
     bool interruptedSave() const { return m_interruptedSave; }
     bool stickPresent() const { return m_stickPresent; }
     QString stickIdentityStrength() const { return m_stickIdentityStrength; }

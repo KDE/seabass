@@ -6,6 +6,7 @@
 
 #include <QAbstractListModel>
 #include <QStringList>
+#include <QVariantList>
 #include <QVariantMap>
 #include <QFutureWatcher>
 #include <QObject>
@@ -14,6 +15,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -272,6 +274,35 @@ struct PendingDeletionApplyResult
     bool cancelled = false;
 };
 
+// One automatic backup record nothing in Seabass can restore from any
+// more, as the Delete Orphaned Files page lists it. See
+// CleanupController::refreshStaleBackups().
+struct StaleBackup
+{
+    QString id;
+    QString label;
+    QString when;
+    std::uint64_t bytes = 0;
+};
+
+// Result of a background listing of stale backups. `generation` lets the
+// controller drop an answer a newer request has overtaken.
+struct StaleBackupsListResult
+{
+    std::vector<StaleBackup> backups;
+    int generation = 0;
+};
+
+// Result of a background prune, see CleanupController::pruneStaleBackups().
+struct StaleBackupsPruneResult
+{
+    QString errorMessage;
+    int removed = 0;
+    int failed = 0;
+    int total = 0;
+    bool cancelled = false;
+};
+
 // Wraps DuplicateCleanupPlanner + both formats' LibraryCleanupWriter
 // implementations for QML: scans a library, finds duplicate groups,
 // plans a survivor for each, and (for included groups) removes every
@@ -345,6 +376,18 @@ class CleanupController : public QObject
     Q_PROPERTY(int pendingDeletionsIncludedCount READ pendingDeletionsIncludedCount NOTIFY pendingDeletionsChanged)
     Q_PROPERTY(QString totalPendingBytesHuman READ totalPendingBytesHuman NOTIFY pendingDeletionsChanged)
     Q_PROPERTY(QString includedPendingBytesHuman READ includedPendingBytesHuman NOTIFY pendingDeletionsChanged)
+    // The automatic backups from earlier saves that nothing in Seabass can
+    // restore from any more (see refreshStaleBackups()), oldest first, each
+    // {id, label, when, sizeHuman, bytes}.
+    Q_PROPERTY(QVariantList staleBackups READ staleBackups NOTIFY staleBackupsChanged)
+    Q_PROPERTY(int staleBackupCount READ staleBackupCount NOTIFY staleBackupsChanged)
+    Q_PROPERTY(QString staleBackupBytesHuman READ staleBackupBytesHuman NOTIFY staleBackupsChanged)
+    // The write running is pruneStaleBackups(), not the file deletion, so
+    // the page can say which it is.
+    Q_PROPERTY(bool pruningBackups READ pruningBackups NOTIFY writingChanged)
+    // True from a refreshStaleBackups() until its answer lands, so the page
+    // does not say "no old backups" about a stick it has not looked at yet.
+    Q_PROPERTY(bool listingStaleBackups READ listingStaleBackups NOTIFY staleBackupsChanged)
 
 public:
     explicit CleanupController(QObject *parent = nullptr);
@@ -375,6 +418,11 @@ public:
     int pendingDeletionsIncludedCount() const { return m_pendingModel.includedCount(); }
     QString totalPendingBytesHuman() const;
     QString includedPendingBytesHuman() const;
+    QVariantList staleBackups() const;
+    int staleBackupCount() const { return static_cast<int>(m_staleBackups.size()); }
+    QString staleBackupBytesHuman() const;
+    bool pruningBackups() const { return m_pruning; }
+    bool listingStaleBackups() const { return m_listingStaleBackups; }
 
     // format is "rekordbox" or "engine"; path is the corresponding
     // DetectedStick.rekordboxPath / .enginePath.
@@ -460,6 +508,21 @@ public:
     Q_INVOKABLE void cancelWrite();
     bool writeCancellable() const { return m_writing && !m_pendingDeleteCancel.cancelled(); }
 
+    // Lists, on a worker thread, the automatic backup records on this
+    // stick that Undo Last Save cannot use: every one except those the
+    // library's open edit session would restore and those an interrupted
+    // save's note names. Undo is the only thing in Seabass that reads a
+    // record back, so the rest only take space. A backup the user asked
+    // for is never listed. No backups folder is an empty list, not an
+    // error.
+    Q_INVOKABLE void refreshStaleBackups();
+    // Deletes the listed stale backups, oldest first, under the stick's
+    // write lock, cancellable between two records like
+    // deleteSelectedPendingFiles(). What Undo needs is worked out again
+    // right before it starts, and only records that are still stale then
+    // go. staleBackupsPruneFinished() carries the summary.
+    Q_INVOKABLE void pruneStaleBackups();
+
     bool scanCancellable() const { return m_scan.busy() && !writing(); }
     Q_INVOKABLE void cancelScan();
 
@@ -477,6 +540,9 @@ signals:
     // After deleteSelectedPendingFiles(): {written, total, unit, verb,
     // cancelled, error}, the OperationSummaryDialog shape.
     void pendingDeletionsWriteFinished(const QVariantMap &summary);
+    void staleBackupsChanged();
+    // After pruneStaleBackups(): the same OperationSummaryDialog shape.
+    void staleBackupsPruneFinished(const QVariantMap &summary);
     // Another instance is editing this library; no file was deleted.
     void lockRefused(const QVariantMap &holder);
 
@@ -487,6 +553,11 @@ private:
     void startScanRequest(const QString &key, bool restart, AsyncRequest<CleanupTaskResult>::Work work);
     void onRescanFinished(CleanupTaskResult &&result);
     void onDeletePendingFinished();
+    void onPruneFinished();
+    // The backup records Undo Last Save could still use that the GUI
+    // thread knows of: the open session's. The interrupted-save note is
+    // read on the worker, beside the records themselves.
+    std::set<std::string> sessionBackupIds() const;
     void attachSession();
     void stagePlan(size_t rawIndex);
     int cleanupItemCountHint() const;
@@ -525,6 +596,11 @@ private:
     };
     std::map<std::string, StagedInfo> m_stagedBySurvivor;  // survivor sourceId -> what is staged
     QFutureWatcher<PendingDeletionApplyResult> m_pendingWriteWatcher;
+    QFutureWatcher<StaleBackupsPruneResult> m_pruneWatcher;
+    std::vector<StaleBackup> m_staleBackups;
+    int m_staleGeneration = 0;
+    bool m_pruning = false;
+    bool m_listingStaleBackups = false;
     QString m_format;
     QString m_playlistName;
     QStringList m_playlistNames;

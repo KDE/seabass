@@ -77,6 +77,14 @@ public:
     // GUI's cancellable Clean Up), so both ways of cleaning up choose the
     // same backups.
     std::vector<application::BackupRecord> pruneCandidates(size_t keepCount);
+    // Every automatic backup whose id is not in `keep`, oldest first, and
+    // never a user-requested one. Undo Last Save is the only thing in
+    // Seabass that reads a record back, and it reads only the records of
+    // the latest save: the ones an open session holds and the ones an
+    // interrupted save's note names. A caller passes those as `keep`, and
+    // what comes back is what nothing in Seabass can restore from any
+    // more (the Delete Orphaned Files page's prune).
+    std::vector<application::BackupRecord> staleAutomaticRecords(const std::set<std::string> &keep);
 
     // Deletes automatic backups, oldest first, until at least bytesWanted
     // has been freed or only the newest automatic record is left. Returns

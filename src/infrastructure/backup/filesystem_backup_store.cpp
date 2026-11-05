@@ -829,6 +829,17 @@ std::vector<BackupRecord> FilesystemBackupStore::pruneCandidates(size_t keepCoun
     return automatic;
 }
 
+std::vector<BackupRecord> FilesystemBackupStore::staleAutomaticRecords(const std::set<std::string> &keep)
+{
+    std::vector<BackupRecord> stale;
+    for (auto &record : list()) {  // oldest first
+        if (record.origin == BackupOrigin::Automatic && keep.count(record.id) == 0) {
+            stale.push_back(std::move(record));
+        }
+    }
+    return stale;
+}
+
 application::PruneResult FilesystemBackupStore::prune(size_t keepCount)
 {
     sweepDeadRecords(m_baseDirectory);

@@ -13,7 +13,9 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QDateTime>
 #include <QStringList>
+#include <QTimeZone>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -46,6 +48,8 @@
 #include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
+#include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
@@ -764,6 +768,105 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
     return result;
 }
 
+// The backup directory of the stick whose catalog `path` is.
+std::string backupDirForCatalog(const QString &path)
+{
+    return infrastructure::backup::backupDirForStickRoot(
+        infrastructure::paths::stickRootForCatalogPath(path.toStdString()));
+}
+
+// What Undo Last Save could still use: the session's records, passed in
+// from the GUI thread, and the ones an interrupted save's note names.
+std::set<std::string> undoableIds(const std::string &backupDir, std::set<std::string> keep)
+{
+    for (const std::string &id : infrastructure::backup::interruptedSaveRecords(backupDir)) {
+        keep.insert(id);
+    }
+    return keep;
+}
+
+// A record id starts with the UTC time it was made, "YYYYMMDDTHHMMSS",
+// shown in local time. The id itself when it does not parse.
+QString backupWhen(const QString &id)
+{
+    QDateTime when = QDateTime::fromString(id.left(15), QStringLiteral("yyyyMMdd'T'HHmmss"));
+    if (!when.isValid()) {
+        return id;
+    }
+    when.setTimeZone(QTimeZone::UTC);
+    return when.toLocalTime().toString(QStringLiteral("d MMM yyyy, HH:mm"));
+}
+
+// Runs on a worker thread: a record's size is a walk of its directory,
+// and over USB that is not something the window waits for.
+StaleBackupsListResult runListStaleBackupsTask(std::string backupDir, std::set<std::string> keep, int generation)
+{
+    StaleBackupsListResult result;
+    result.generation = generation;
+    std::error_code ec;
+    if (!fs::is_directory(pathFromUtf8(backupDir), ec)) {
+        return result;
+    }
+    infrastructure::backup::FilesystemBackupStore store(backupDir);
+    for (const auto &record : store.staleAutomaticRecords(undoableIds(backupDir, std::move(keep)))) {
+        StaleBackup backup;
+        backup.id = QString::fromStdString(record.id);
+        backup.label = QString::fromStdString(record.label);
+        backup.when = backupWhen(backup.id);
+        backup.bytes = record.sizeBytes;
+        result.backups.push_back(std::move(backup));
+    }
+    return result;
+}
+
+// Runs on a worker thread (see CleanupController::pruneStaleBackups()).
+// `shown` is what the page listed and the user agreed to delete; of
+// those, only the ones still stale now, with the interrupted-save note
+// read again under the lock, are removed.
+StaleBackupsPruneResult runPruneStaleBackupsTask(QString path, std::set<std::string> keep,
+                                                 std::set<std::string> shown,
+                                                 application::CancellationToken cancel)
+{
+    StaleBackupsPruneResult result;
+    try {
+        const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(path.toStdString());
+        const std::string backupDir = infrastructure::backup::backupDirForStickRoot(stickRoot);
+        // The same lock every other writer takes: a save from another
+        // Seabass makes and reads records in this folder.
+        infrastructure::backup::StickWriteLock lock(
+            pathFromUtf8(infrastructure::backup::writeLockPathForBackupDir(backupDir)));
+        infrastructure::logging::FileOperationLog log(
+            pathToUtf8(infrastructure::paths::stickOperationLog(pathFromUtf8(stickRoot))));
+        infrastructure::backup::FilesystemBackupStore store(backupDir);
+
+        std::vector<application::BackupRecord> stale;
+        for (auto &record : store.staleAutomaticRecords(undoableIds(backupDir, std::move(keep)))) {
+            if (shown.count(record.id) > 0) {
+                stale.push_back(std::move(record));
+            }
+        }
+        result.total = static_cast<int>(stale.size());
+        for (const auto &record : stale) {  // oldest first
+            if (cancel.cancelled()) {
+                result.cancelled = true;
+                break;
+            }
+            if (store.remove(record.id)) {
+                result.removed++;
+                log.record("cleanup: deleted backup from an earlier save, no longer needed for undo -> " + record.id);
+            } else {
+                result.failed++;
+                log.record("cleanup: failed to delete backup from an earlier save -> " + record.id);
+            }
+        }
+    } catch (const infrastructure::backup::StickBusyError &e) {
+        result.errorMessage = QString::fromStdString(e.what());
+    } catch (const std::exception &e) {
+        result.errorMessage = QString::fromStdString(e.what());
+    }
+    return result;
+}
+
 CleanupTaskResult runRescanTask(QString format, QString path, QString playlistName, QString searchQuery,
                                  std::shared_ptr<QtProgressReporter> reporter,
                                 application::CancellationToken cancel)
@@ -1018,7 +1121,11 @@ CleanupController::~CleanupController()
     // stick that is gone would freeze the window.
     if (m_deleting) {
         m_pendingDeleteCancel.cancel();
-        finishWriteDetached(m_pendingWriteWatcher.future(), m_writeHold.handOver());
+        if (m_pruning) {
+            finishWriteDetached(m_pruneWatcher.future(), m_writeHold.handOver());
+        } else {
+            finishWriteDetached(m_pendingWriteWatcher.future(), m_writeHold.handOver());
+        }
     }
 }
 
@@ -1026,6 +1133,8 @@ CleanupController::CleanupController(QObject *parent) : QObject(parent)
 {
     connect(&m_pendingWriteWatcher, &QFutureWatcher<PendingDeletionApplyResult>::finished, this,
             &CleanupController::onDeletePendingFinished);
+    connect(&m_pruneWatcher, &QFutureWatcher<StaleBackupsPruneResult>::finished, this,
+            &CleanupController::onPruneFinished);
 }
 
 QString CleanupController::totalWastedBytesHuman() const
@@ -1104,7 +1213,7 @@ void CleanupController::loadPendingDeletionsOnly(const QString &format, const QS
     m_format = format;
     m_path = path;
     attachSession();
-    refreshPendingDeletions();
+    refreshPendingDeletions();  // which lists the stale backups too
 }
 
 void CleanupController::planManualMerge(const QString &format, const QString &path, const QString &sourceIdA,
@@ -1541,6 +1650,144 @@ void CleanupController::refreshPendingDeletions()
     }
     m_pendingModel.setEntries(std::move(filtered));
     emit pendingDeletionsChanged();
+    refreshStaleBackups();
+}
+
+std::set<std::string> CleanupController::sessionBackupIds() const
+{
+    std::set<std::string> ids;
+    auto *registry = EditSessionRegistry::instance();
+    const QString libraryId = registry->libraryIdForPath(m_path);
+    // hasSession() first: sessionFor() makes an idle session when there is
+    // none, and listing backups is no reason to.
+    if (libraryId.isEmpty() || !registry->hasSession(libraryId)) {
+        return ids;
+    }
+    if (LibraryEditSession *session = registry->sessionFor(libraryId)) {
+        for (const QString &id : session->lastSaveBackupIds()) {
+            ids.insert(id.toStdString());
+        }
+    }
+    return ids;
+}
+
+void CleanupController::refreshStaleBackups()
+{
+    if (m_path.isEmpty()) {
+        return;
+    }
+    const int generation = ++m_staleGeneration;
+    if (!m_listingStaleBackups) {
+        m_listingStaleBackups = true;
+        emit staleBackupsChanged();
+    }
+    auto *watcher = new QFutureWatcher<StaleBackupsListResult>(this);
+    connect(watcher, &QFutureWatcher<StaleBackupsListResult>::finished, this, [this, watcher]() {
+        watcher->deleteLater();
+        StaleBackupsListResult result = takeResult(*watcher);
+        if (result.generation != m_staleGeneration) {
+            return;  // a newer listing is on its way
+        }
+        m_staleBackups = std::move(result.backups);
+        m_listingStaleBackups = false;
+        emit staleBackupsChanged();
+    });
+    watcher->setFuture(QtConcurrent::run(
+        [backupDir = backupDirForCatalog(m_path), keep = sessionBackupIds(), generation]() mutable {
+            return runListStaleBackupsTask(std::move(backupDir), std::move(keep), generation);
+        }));
+}
+
+QVariantList CleanupController::staleBackups() const
+{
+    QVariantList list;
+    for (const auto &backup : m_staleBackups) {
+        list << QVariantMap{
+            {"id", backup.id},
+            {"label", backup.label},
+            {"when", backup.when},
+            {"sizeHuman", humanSize(backup.bytes)},
+            {"bytes", static_cast<qulonglong>(backup.bytes)},
+        };
+    }
+    return list;
+}
+
+QString CleanupController::staleBackupBytesHuman() const
+{
+    std::uint64_t total = 0;
+    for (const auto &backup : m_staleBackups) {
+        total += backup.bytes;
+    }
+    return humanSize(total);
+}
+
+void CleanupController::pruneStaleBackups()
+{
+    if (busy() || m_staleBackups.empty()) {
+        return;
+    }
+    const QString libraryId = EditSessionRegistry::instance()->libraryIdForPath(m_path);
+    if (auto refusal = m_writeHold.acquire({libraryId}, QString())) {
+        if (refusal->showsLockedDialog()) {
+            emit lockRefused(refusal->holder);
+        }
+        return;
+    }
+
+    std::set<std::string> shown;
+    for (const auto &backup : m_staleBackups) {
+        shown.insert(backup.id.toStdString());
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    setScanProgress(0, 0);
+    m_pendingDeleteCancel = application::CancellationToken();
+    m_pruning = true;
+    setDeleting(true);
+    setWriting(true);
+
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Deleting backups from a USB stick"));
+    // The keep set is worked out now, right before the write, not taken
+    // from the listing: a save since then has records Undo needs.
+    m_pruneWatcher.setFuture(QtConcurrent::run(
+        [keepAwake, path = m_path, keep = sessionBackupIds(), shown = std::move(shown),
+         cancel = m_pendingDeleteCancel]() mutable {
+            return runPruneStaleBackupsTask(path, std::move(keep), std::move(shown), cancel);
+        }));
+}
+
+void CleanupController::onPruneFinished()
+{
+    QString thrown;
+    StaleBackupsPruneResult result = takeResult(m_pruneWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
+    m_writeHold.release();
+    m_pruning = false;
+    setDeleting(false);
+    setWriting(false);
+
+    QVariantMap summary{
+        {"written", result.removed},
+        {"total", result.total},
+        {"unit", QStringLiteral("backups")},
+        {"verb", QStringLiteral("deleted")},
+        {"cancelled", result.cancelled},
+        {"error", result.errorMessage},
+    };
+    if (result.failed > 0 && result.errorMessage.isEmpty()) {
+        summary.insert(QStringLiteral("warning"),
+                       QStringLiteral("%1 backup(s) could not be deleted and are still on the stick.")
+                           .arg(result.failed));
+    }
+    emit staleBackupsPruneFinished(summary);
+    refreshStaleBackups();
+    if (m_rescanAfterWrite) {
+        m_rescanAfterWrite = false;
+        rescan(true);
+    }
 }
 
 QString CleanupController::totalPendingBytesHuman() const

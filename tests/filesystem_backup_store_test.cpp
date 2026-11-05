@@ -620,6 +620,38 @@ int main()
         std::cout << "case 17b (pruneCandidates never chooses a user's backup) OK\n";
     }
 
+    // The Delete Orphaned Files page prunes every automatic backup that
+    // Undo Last Save cannot use, and only those: the caller names the ones
+    // it still needs, and a backup the user made is never chosen, even
+    // when it sits between two that are.
+    {
+        fs::path stick = root / "stale";
+        fs::path a = stick / "PIONEER" / "export.pdb";
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+
+        writeFile(a, "one");
+        auto autoOld = store.backup({pathToUtf8(a)}, "sync");
+        writeFile(a, "two");
+        auto mine = store.backup({pathToUtf8(a)}, "before-gig", BackupOrigin::UserRequested);
+        writeFile(a, "three");
+        auto autoNew = store.backup({pathToUtf8(a)}, "sync");
+
+        auto keepNewest = store.staleAutomaticRecords({autoNew.id});
+        assert(keepNewest.size() == 1);
+        assert(keepNewest[0].id == autoOld.id);
+
+        auto keepNothing = store.staleAutomaticRecords({});
+        assert(keepNothing.size() == 2);
+        assert(keepNothing[0].id == autoOld.id);  // oldest first
+        assert(keepNothing[1].id == autoNew.id);
+        for (const auto &r : keepNothing) {
+            assert(r.id != mine.id);
+        }
+        // Choosing removes nothing.
+        assert(store.list().size() == 3);
+        std::cout << "case 17c (staleAutomaticRecords keeps what it is told and every user backup) OK\n";
+    }
+
     // The newest automatic record is what Undo Last Save needs, so the
     // pressure release never takes it however much space is asked for.
     {

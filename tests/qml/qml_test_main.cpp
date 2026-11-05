@@ -78,10 +78,12 @@
 #include <QQuickWindow>
 #include <QtQuickTest/quicktest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <memory>
@@ -2412,6 +2414,65 @@ private:
 };
 #endif
 
+// Real backup records on a stick copy, for the pages that read them: the
+// Delete Orphaned Files page's old backups, Library Statistics' slice.
+// Made by FilesystemBackupStore itself, so they are what a save leaves.
+class BackupFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    // Makes automaticCount automatic records, then userCount user-requested
+    // ones, each a backup of one small file on the stick. Answers
+    // {automatic: [ids], user: [ids]}, each newest first.
+    Q_INVOKABLE QVariantMap plantRecords(const QString &stickRoot, int automaticCount, int userCount)
+    {
+        namespace fs = std::filesystem;
+        using seabass::application::BackupOrigin;
+        const fs::path root = seabass::pathFromUtf8(stickRoot.toStdString());
+        const fs::path file = root / "backup-fixture.dat";
+        {
+            std::ofstream out(file, std::ios::binary);
+            out << std::string(4096, 'b');
+        }
+        seabass::infrastructure::backup::FilesystemBackupStore store(
+            seabass::pathToUtf8(root / "Seabass" / "backups"));
+        QStringList automatic;
+        QStringList user;
+        for (int i = 0; i < automaticCount; ++i) {
+            automatic << QString::fromStdString(store.backup({seabass::pathToUtf8(file)}, "sync").id);
+        }
+        for (int i = 0; i < userCount; ++i) {
+            user << QString::fromStdString(
+                store.backup({seabass::pathToUtf8(file)}, "fixture-mine", BackupOrigin::UserRequested).id);
+        }
+        // Ids sort by when they were made, so newest first is descending.
+        std::sort(automatic.begin(), automatic.end(), std::greater<QString>());
+        std::sort(user.begin(), user.end(), std::greater<QString>());
+        return QVariantMap{{QStringLiteral("automatic"), automatic}, {QStringLiteral("user"), user}};
+    }
+
+    // The note an interrupted save leaves, naming these records.
+    Q_INVOKABLE bool noteInProgress(const QString &stickRoot, const QStringList &ids)
+    {
+        std::vector<std::string> list;
+        for (const QString &id : ids) {
+            list.push_back(id.toStdString());
+        }
+        const auto dir = seabass::pathFromUtf8(stickRoot.toStdString()) / "Seabass" / "backups";
+        return seabass::infrastructure::backup::noteSaveInProgress(seabass::pathToUtf8(dir), list);
+    }
+
+    Q_INVOKABLE bool recordExists(const QString &stickRoot, const QString &id) const
+    {
+        std::error_code ec;
+        return std::filesystem::is_directory(
+            seabass::pathFromUtf8(stickRoot.toStdString()) / "Seabass" / "backups" / seabass::pathFromUtf8(id.toStdString()),
+            ec);
+    }
+};
+
 class Setup : public QObject
 {
     Q_OBJECT
@@ -2793,6 +2854,7 @@ void seedMetadataStoreForTests()
                                                   new MetadataRestoreFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("stickFixture"), new StickFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("backupFixture"), new BackupFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("browseFixture"), new BrowseFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("catalogGate"), new CatalogGateFixture(engine));
