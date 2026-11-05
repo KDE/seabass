@@ -141,6 +141,11 @@ public:
         StagedRole,  // this cue's removal is staged in the edit session
         ReasonRole,      // why this cue is in the list, in the row's own words
         PositionMsRole,  // where the cue this row is about actually sits
+        // Which cue: "Memory cue" or "Hot cue 3". A track with two stray
+        // cues has two rows, alike in every other column; without this
+        // they read as one row listed twice, and the second flipping with
+        // the first (one change per track) read as a bug.
+        CueLabelRole,
     };
 
     explicit JunkCueIssueListModel(QObject *parent = nullptr);

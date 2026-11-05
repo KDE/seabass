@@ -117,6 +117,15 @@ Page {
         const s = total % 60;
         return m + ":" + (s < 10 ? "0" : "") + s;
     }
+    // A cue's place to the millisecond: 0:00.000 and 0:00.229 are the
+    // two rows of one track, and whole seconds would not tell them apart.
+    function formatCuePosition(ms) {
+        const whole = Math.max(0, Math.round(ms));
+        const m = Math.floor(whole / 60000);
+        const s = Math.floor((whole % 60000) / 1000);
+        const frac = whole % 1000;
+        return m + ":" + (s < 10 ? "0" : "") + s + "." + String(frac).padStart(3, "0");
+    }
 
     // Opens on the whole library, every time.
     //
@@ -412,6 +421,8 @@ Page {
                 // a delegate declares required ones, so it would sit
                 // empty and the line would never appear.
                 required property string reason
+                required property real positionMs
+                required property string cueLabel
 
                 readonly property bool isPlaying: root.playbackController !== null
                     && root.playbackController.hasTrack
@@ -592,6 +603,18 @@ Page {
                         Layout.preferredWidth: 60
                     }
 
+                    // Which cue this row is: a track with two stray cues
+                    // has two rows alike in every column before this one,
+                    // and the tick on either stages the track, so both
+                    // flip. Named, they read as the two cues they are.
+                    Label {
+                        objectName: "junkCueWhich"
+                        text: junkDelegate.cueLabel + " at " + root.formatCuePosition(junkDelegate.positionMs)
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: Theme.scaled(150)
+                        font.pointSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
                     // Why this row is here. Two checks feed this list: a
                     // cue at the very start of the track, and one of a
                     // crowd of hot cues in its first two seconds.

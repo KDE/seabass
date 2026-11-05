@@ -287,6 +287,10 @@ QVariant JunkCueIssueListModel::data(const QModelIndex &index, int role) const
         return QString::fromStdString(issue.reason);
     case PositionMsRole:
         return issue.cue.positionMs;
+    case CueLabelRole:
+        return issue.cue.kind == domain::CuePoint::Kind::Hot
+            ? QStringLiteral("Hot cue %1").arg(issue.cue.hotCueNumber)
+            : QStringLiteral("Memory cue");
     default:
         return {};
     }
@@ -302,6 +306,7 @@ QHash<int, QByteArray> JunkCueIssueListModel::roleNames() const
         {StagedRole, "staged"},
         {ReasonRole, "reason"},
         {PositionMsRole, "positionMs"},
+        {CueLabelRole, "cueLabel"},
     };
 }
 

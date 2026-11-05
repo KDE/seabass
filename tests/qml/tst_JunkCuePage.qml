@@ -501,6 +501,29 @@ TestCase {
         compare(controller.stagedJunkCueCount, 0);
     }
 
+    // Every row says which cue it is, to the millisecond: a track with a
+    // memory cue at 0:00 and a hot cue at 0:00.450 has two rows alike in
+    // every other column, and the tick on either stages both.
+    function test_everyRowNamesItsCue() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        const rows = controller.junkCues.count;
+        const byTrack = {};
+        for (let i = 0; i < rows; ++i) {
+            const row = rowItem(page, i);
+            const which = findChild(row, "junkCueWhich").text;
+            verify(/^(Memory cue|Hot cue [1-8]) at \d+:\d\d\.\d{3}$/.test(which), "row " + i + ": " + which);
+            const key = row.format + ":" + row.track.sourceId;
+            byTrack[key] = (byTrack[key] || []).concat([which]);
+        }
+        const twins = Object.keys(byTrack).filter((key) => byTrack[key].length > 1);
+        verify(twins.length > 0, "precondition: the fixture has a track with two stray cues");
+        for (const key of twins) {
+            const labels = byTrack[key];
+            compare(new Set(labels).size, labels.length, key + " rows tell apart: " + labels.join(" / "));
+        }
+    }
+
     // A row's tick and Stage Removing All stage at once: nothing is asked
     // first, the row reads Staged as the tick lands, and unticking takes it
     // back. The rows used to carry a Remove button, which read as all or
