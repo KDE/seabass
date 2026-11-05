@@ -84,6 +84,47 @@ TestCase {
         return page;
     }
 
+    function saveSession(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 300000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the summary's own words, and opens no summary dialog; the
+    // groups are scanned again afterwards. A real save, on a copy of its
+    // own: the shared one is what the other tests scan, and a save would
+    // leave it with nothing to fix.
+    function test_aFinishedSaveIsSaidOverTheList() {
+        const own = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(own.length > 0, "the test's own copy must be made");
+        const page = createTemporaryObject(pageComponent, testCase, {width: 960, height: 660, enginePath: own});
+        verify(page, "page did not instantiate");
+        tryVerify(() => findWhere(page.header, (item) => item.visible && item.text !== undefined
+                                  && /^1 duplicate group/.test(String(item.text))) !== null,
+                  5000, "the scan never reported the fixture's duplicate group");
+        waitForRendering(page);
+        mouseClick(stageButton(page));
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(own));
+        tryVerify(() => session.pendingCount > 0, 5000, "Stage All Fixable staged the group");
+        const summary = saveSession(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.written > 0, JSON.stringify(summary));
+
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000);
+        compare(findChild(toast, "confirmationToastLabel").text,
+                summary.written + (summary.written === 1 ? " group" : " groups") + " copied");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+        const controller = findChild(page, "duplicatesController");
+        tryCompare(controller, "busy", false, 30000);
+    }
+
     // The page says what it is second to: a copy is a copy, and Clean Up
     // Duplicates is the page that removes it. The button goes there.
     function test_thePageSuggestsCleanUpInstead() {

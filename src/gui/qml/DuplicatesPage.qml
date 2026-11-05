@@ -76,6 +76,7 @@ Page {
 
     DuplicatesController {
         id: duplicatesController
+        objectName: "duplicatesController"
     }
 
     // Edit mode for this library: session, floating Save, leave guard.
@@ -84,6 +85,10 @@ Page {
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
+        // A save that landed whole is said with the toast below and the
+        // groups are scanned again, so it opens no summary. Anything
+        // short of whole still gets the dialog.
+        quietCleanSaves: true
         feature: "dup"
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
@@ -95,6 +100,46 @@ Page {
 
     Component.onCompleted: duplicatesController.scan(root.format, root.currentPath())
     onFormatChanged: duplicatesController.scan(root.format, root.currentPath())
+
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the summary's own words ("2 groups copied"), and the
+    // groups are scanned again so the list shows what is left. Above the
+    // scan's scrim: the toast is what the Save click was waiting for.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            Qt.callLater(() => root.afterSave(summary));
+        }
+    }
+    function afterSave(summary) {
+        if (!summary || !(summary.written > 0)) {
+            return;
+        }
+        const whole = !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
+            savedToast.show(summary.written + " " + unit + " " + summary.verb);
+        }
+        duplicatesController.scan(root.format, root.currentPath());
+    }
+    // The summary's unit is plural ("groups", "undo steps"); one of them
+    // reads as one. The same rule OperationSummaryDialog uses.
+    function singular(unit) {
+        if (unit.endsWith("ies")) {
+            return unit.substring(0, unit.length - 3) + "y";
+        }
+        return unit.endsWith("s") ? unit.substring(0, unit.length - 1) : unit;
+    }
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
