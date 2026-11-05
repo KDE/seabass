@@ -392,7 +392,7 @@ Page {
             // the artist, key, BPM and length, the playing row outlined
             // with its waveform behind it. After those, what this page is
             // about: why the row is here, which catalog, and the row's own
-            // Remove, Unstage and Ignore.
+            // Ignore; its tick at the front is the staging.
             delegate: Rectangle {
                 id: junkDelegate
                 objectName: "junkCueRow"
@@ -446,6 +446,32 @@ Page {
                     anchors.leftMargin: Theme.tightSpacing
                     anchors.rightMargin: Theme.tightSpacing
                     spacing: Theme.rowSpacing
+
+                    // Ticked is staged: the tick stages removing every
+                    // stray cue of this track at once, which flips every
+                    // row of it, and unticking takes it back out. So a
+                    // few rows can be picked out of hundreds, as Tracks
+                    // In No Playlist picks its rows; Stage Removing All
+                    // ticks them all. A tick the controller refused (no
+                    // session, the lock gone) falls back to what the
+                    // model says.
+                    SeabassCheckBox {
+                        objectName: "rowStageCheck"
+                        checked: junkDelegate.staged
+                        enabled: !consistencyController.busy && !consistencyController.writing
+                        ToolTip.visible: hovered
+                        ToolTip.text: junkDelegate.staged
+                            ? "Staged for removal, not on the stick yet: press Clean Up. Untick to take it back out."
+                            : "Stage removing every cue this track has sitting at 0:00; Clean Up writes it, backed up first."
+                        onToggled: {
+                            if (checked) {
+                                consistencyController.removeJunkCue(junkDelegate.index);
+                            } else {
+                                consistencyController.unstageJunkCue(junkDelegate.index);
+                            }
+                            checked = Qt.binding(() => junkDelegate.staged);
+                        }
+                    }
 
                     Rectangle {
                         objectName: "rowCell_artwork"
@@ -604,24 +630,6 @@ Page {
                         label: "Staged"
                         badgeColor: Theme.warnText
                         tooltipText: "Not on the stick yet: press Clean Up."
-                    }
-                    // Stages, at once: every stray cue of this track, which
-                    // flips every row of it. Unstage takes it back out.
-                    Button {
-                        objectName: "rowRemoveButton"
-                        text: junkDelegate.staged ? "Unstage" : "Remove"
-                        enabled: !consistencyController.busy && !consistencyController.writing
-                        ToolTip.visible: hovered
-                        ToolTip.text: junkDelegate.staged
-                            ? "Staged for removal, not on the stick yet: press Clean Up. Click to take it back out."
-                            : "Stage removing every cue this track has sitting at 0:00; Clean Up writes it, backed up first."
-                        onClicked: {
-                            if (junkDelegate.staged) {
-                                consistencyController.unstageJunkCue(junkDelegate.index);
-                            } else {
-                                consistencyController.removeJunkCue(junkDelegate.index);
-                            }
-                        }
                     }
                     Button {
                         objectName: "rowIgnoreButton"

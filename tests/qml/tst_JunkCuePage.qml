@@ -501,28 +501,31 @@ TestCase {
         compare(controller.stagedJunkCueCount, 0);
     }
 
-    // Remove and Stage Removing All stage at once: nothing is asked first,
-    // the row reads Staged as the button goes up, and Unstage takes it back.
-    // They used to open a question each, worded as if the write were about
-    // to happen.
-    function test_removeStagesWithoutAsking() {
+    // A row's tick and Stage Removing All stage at once: nothing is asked
+    // first, the row reads Staged as the tick lands, and unticking takes it
+    // back. The rows used to carry a Remove button, which read as all or
+    // nothing next to Stage Removing All; a tick says a few can be picked.
+    function test_aTickStagesWithoutAsking() {
         const page = openScanned();
         const controller = page.consistencyController;
         const row = rowItem(page, 0);
-        const remove = findChild(row, "rowRemoveButton");
-        compare(remove.text, "Remove");
-        mouseClick(remove);
-        compare(row.staged, true, "staged as the button goes up");
-        compare(remove.text, "Unstage");
+        const tick = findChild(row, "rowStageCheck");
+        compare(tick.checked, false);
+        mouseClick(tick);
+        compare(row.staged, true, "staged as the tick lands");
+        compare(tick.checked, true);
         verify(controller.stagedJunkCueCount >= 1);
-        mouseClick(remove);
+        mouseClick(tick);
         compare(row.staged, false, "and taken back out");
+        compare(tick.checked, false);
         compare(controller.stagedJunkCueCount, 0);
 
         mouseClick(findChild(page, "stageAllButton"));
         compare(controller.unstagedJunkCueCount, 0, "every row staged, nothing asked");
+        tryCompare(tick, "checked", true, 5000, "the tick follows Stage Removing All");
         verify(controller.statusMessage.indexOf("Staged removing") === 0, controller.statusMessage);
         unstageEveryRow(controller);
+        tryCompare(tick, "checked", false, 5000, "and follows the unstaging too");
     }
 
     // A Clean Up that wrote everything it staged is said over the list,
