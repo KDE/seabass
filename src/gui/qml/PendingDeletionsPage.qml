@@ -17,16 +17,14 @@ Page {
     required property string stickLabel
     required property string rekordboxPath
     required property string enginePath
-    required property var appSettingsController
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0
-    readonly property string format: {
-        var pref = appSettingsController.preferredFormat;
-        if (pref === "engine" && hasEngine) return "engine";
-        if (pref === "rekordbox" && hasRekordbox) return "rekordbox";
-        return hasEngine ? "engine" : "rekordbox";
-    }
+    // The page works on the stick, not on one of its catalogs: a file is
+    // listed whichever cleanup orphaned it, and the deletion reads every
+    // catalog before it removes anything. The controller still wants a
+    // catalog path to find the stick by; either will do.
+    readonly property string format: hasEngine ? "engine" : "rekordbox"
     function currentPath() {
         return root.format === "engine" ? root.enginePath : root.rekordboxPath;
     }
@@ -39,7 +37,6 @@ Page {
     // the pending-deletions list, so there's no reason to pay for a full
     // whole-library duplicate-group rescan just to get here.
     Component.onCompleted: cleanupController.loadPendingDeletionsOnly(root.format, root.currentPath())
-    onFormatChanged: cleanupController.loadPendingDeletionsOnly(root.format, root.currentPath())
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -67,12 +64,6 @@ Page {
                 backEnabled: !cleanupController.writing
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
-            }
-            Item { Layout.fillWidth: true }
-            FormatToggle {
-                appSettingsController: root.appSettingsController
-                hasRekordbox: root.hasRekordbox
-                hasEngine: root.hasEngine
             }
         }
     }
@@ -226,6 +217,7 @@ Page {
 
         ListView {
             id: pendingListView
+            objectName: "pendingListView"
             // Not draggable when everything already fits.
             interactive: contentHeight > height
             Layout.fillWidth: true
@@ -247,6 +239,7 @@ Page {
                 required property string filePath
                 required property string sizeHuman
                 required property bool included
+                required property string format
 
                 contentItem: RowLayout {
                     spacing: 8
@@ -266,6 +259,14 @@ Page {
                         elide: Text.ElideMiddle
                         color: Theme.textMuted
                         Layout.fillWidth: true
+                    }
+                    // Which catalog's cleanup orphaned it; the deletion
+                    // checks every catalog regardless.
+                    Label {
+                        objectName: "orphanedByLabel"
+                        text: pendingDelegate.format === "engine" ? "Engine cleanup" : "rekordbox cleanup"
+                        color: Theme.textMuted
+                        Layout.preferredWidth: 120
                     }
                     Label {
                         text: pendingDelegate.sizeHuman

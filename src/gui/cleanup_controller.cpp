@@ -1630,13 +1630,17 @@ void CleanupController::refreshPendingDeletions()
     infrastructure::cleanup::PendingDeletionManifest manifest(
         pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot)));
 
-    // rekordbox and Engine each accumulate their own separate pending
-    // entries (see PendingDeletion::format). This page only ever shows
-    // the one currently selected via the format toggle, same as
-    // everything else on it.
+    // Every entry on the stick, whichever catalog's cleanup orphaned the
+    // file (PendingDeletion::format says which, and the page shows it).
+    // The list used to be cut to the format a toggle on the page chose,
+    // a leftover of the panel's time inside Clean Up: the deletion reads
+    // every catalog before it removes anything, so the format changes
+    // nothing about what is safe to delete, and the cut only hid half
+    // the files. A file orphaned under both catalogs is listed once.
     std::vector<infrastructure::cleanup::PendingDeletion> filtered;
+    std::set<std::string> listed;
     for (auto &entry : manifest.list()) {
-        if (entry.format != m_format.toStdString()) {
+        if (!listed.insert(entry.filePath).second) {
             continue;
         }
         // fileSizeBytes is never persisted in the manifest (see its own

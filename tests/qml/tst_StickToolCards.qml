@@ -888,11 +888,11 @@ TestCase {
             {tag: "nothing", files: 0, backups: 0, enabled: false,
              subtitle: "Nothing to delete right now: no orphaned files, no backups from earlier saves"},
             {tag: "files only", files: 2, backups: 0, enabled: true,
-             subtitle: "Free disk space: 4 orphaned file(s) to delete"},
+             subtitle: "Free disk space: 2 orphaned file(s) to delete"},
             {tag: "backups only", files: 0, backups: 3, enabled: true,
              subtitle: "Free disk space: 3 old backup(s) to delete"},
             {tag: "both", files: 1, backups: 3, enabled: true,
-             subtitle: "Free disk space: 2 orphaned file(s) and 3 old backup(s) to delete"},
+             subtitle: "Free disk space: 1 orphaned file(s) and 3 old backup(s) to delete"},
         ];
     }
     function test_orphanedFilesCardCountsOldBackupsToo(data) {
@@ -993,7 +993,7 @@ TestCase {
     }
     function test_orphanedFilesCardOnlyWithSomethingToDelete(data) {
         const cards = makeMaintain({count: 0, bytes: 0, sources: []}, data.perFormat);
-        compare(cards.pendingCount, 2 * data.perFormat, "both catalogs counted");
+        compare(cards.pendingCount, data.perFormat, "the stick's list, counted once");
         const c = card(cards, "Delete Orphaned Files");
         compare(c.enabled, data.enabled);
         verify(c.cardSubtitle.indexOf(data.text) === 0, c.cardSubtitle);

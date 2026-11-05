@@ -41,7 +41,6 @@ TestCase {
             stickLabel: "TESTSTICK"
             rekordboxPath: "/nonexistent/TESTSTICK/PIONEER"
             enginePath: "/nonexistent/TESTSTICK/Engine Library"
-            appSettingsController: realAppSettings
         }
     }
 

@@ -18,6 +18,8 @@
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/work_counters.hpp"
@@ -2462,6 +2464,32 @@ public:
         }
         const auto dir = seabass::pathFromUtf8(stickRoot.toStdString()) / "Seabass" / "backups";
         return seabass::infrastructure::backup::noteSaveInProgress(seabass::pathToUtf8(dir), list);
+    }
+
+    // An entry in the stick's pending-deletions manifest, as a cleanup of
+    // `format` leaves one: a file under stickRoot it orphaned. The file is
+    // made so the page has a size to show.
+    Q_INVOKABLE bool orphanFile(const QString &stickRoot, const QString &format, const QString &relativePath,
+                                const QString &title, const QString &artist)
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = seabass::pathFromUtf8(stickRoot.toStdString());
+        const fs::path file = root / seabass::pathFromUtf8(relativePath.toStdString());
+        std::error_code ec;
+        fs::create_directories(file.parent_path(), ec);
+        {
+            std::ofstream out(file, std::ios::binary);
+            out << std::string(2048, 'o');
+        }
+        seabass::infrastructure::cleanup::PendingDeletionManifest manifest(
+            seabass::pathToUtf8(seabass::infrastructure::paths::stickPendingDeletions(root)));
+        seabass::infrastructure::cleanup::PendingDeletion entry;
+        entry.format = format.toStdString();
+        entry.filePath = seabass::pathToUtf8(file);
+        entry.title = title.toStdString();
+        entry.artist = artist.toStdString();
+        manifest.append(entry);
+        return fs::is_regular_file(file, ec);
     }
 
     Q_INVOKABLE bool recordExists(const QString &stickRoot, const QString &id) const

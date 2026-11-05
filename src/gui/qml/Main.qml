@@ -695,9 +695,7 @@ ApplicationWindow {
 
     Component {
         id: pendingDeletionsPageComponent
-        PendingDeletionsPage {
-            appSettingsController: appSettingsCtrl
-        }
+        PendingDeletionsPage {}
     }
 
     Component {

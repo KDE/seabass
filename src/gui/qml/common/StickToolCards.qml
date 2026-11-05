@@ -289,18 +289,15 @@ Item {
         if (root.recordingsProbe === null) {
             root.recordingsProbe = recordingsProbeComponent.createObject(root);
         }
-        // One instance for both formats: right after loading, every entry
-        // is included, so the included count is that format's total.
-        let pending = 0;
-        if (root.hasRekordbox) {
-            root.pendingProbe.loadPendingDeletionsOnly("rekordbox", root.rekordboxPath);
-            pending += root.pendingProbe.pendingDeletionsIncludedCount;
-        }
+        // The list is the stick's, whichever catalog's cleanup orphaned a
+        // file, so one load through either path counts it all; right after
+        // loading every entry is included, so the included count is the total.
         if (root.hasEngine) {
             root.pendingProbe.loadPendingDeletionsOnly("engine", root.enginePath);
-            pending += root.pendingProbe.pendingDeletionsIncludedCount;
+        } else {
+            root.pendingProbe.loadPendingDeletionsOnly("rekordbox", root.rekordboxPath);
         }
-        root.pendingCount = pending;
+        root.pendingCount = root.pendingProbe.pendingDeletionsIncludedCount;
         root.hasOneLibrary = root.hasRekordbox && root.pendingProbe.hasOneLibrary(root.rekordboxPath);
         root.recordingsSummary = root.recordingsProbe.summarize(root.rekordboxPath, root.enginePath);
     }

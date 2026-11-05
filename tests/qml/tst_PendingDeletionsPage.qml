@@ -18,8 +18,6 @@ TestCase {
     visible: true
     when: windowShown
 
-    AppSettingsController { id: realAppSettings }
-
     readonly property string fixtureRoot: {
         const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
         return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
@@ -31,7 +29,6 @@ TestCase {
             width: 980
             height: 760
             stickLabel: "TESTSTICK"
-            appSettingsController: realAppSettings
         }
     }
 
@@ -104,6 +101,27 @@ TestCase {
         tryCompare(list, "count", 0, 10000);
         tryVerify(() => findChild(page, "staleBackupsEmptyState").visible, 10000);
         verify(!button.enabled);
+    }
+
+    // The list is the stick's: a file orphaned by a rekordbox cleanup and
+    // one by an Engine cleanup are both listed, each saying which, with
+    // no format to choose on the page.
+    function test_d_listsFilesOrphanedByEitherCleanup() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        verify(backupFixture.orphanFile(stick, "rekordbox", "Contents/orphan-rb.mp3", "Left Behind", "RB"));
+        verify(backupFixture.orphanFile(stick, "engine", "Music/orphan-engine.mp3", "Left Behind Too", "EN"));
+        const page = makePage(stick);
+        const list = findChild(page, "pendingListView");
+        tryCompare(list, "count", 2, 10000);
+        const seen = [];
+        for (let r = 0; r < list.count; ++r) {
+            const row = list.itemAtIndex(r);
+            verify(row !== null, "row " + r + " is built");
+            seen.push(findChild(row, "orphanedByLabel").text);
+        }
+        seen.sort();
+        compare(seen, ["Engine cleanup", "rekordbox cleanup"]);
     }
 
     function test_c_nothingStaleNothingToPrune() {

@@ -105,7 +105,7 @@ TestCase {
                 appSettingsController: realAppSettings, backupAdvisor: realAdvisor})},
             {name: "JunkCuePage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "BackupsPage", props: {controller: ({backupDirectory: "/tmp", currentArchivePath: "", openArchivePaths: [], backups: [], totalBytes: 0, listing: false, deleting: false, errorMessage: "", statusMessage: "", refresh: function() {}, deleteBackup: function(p) {}, browsedArchiveFor: function(r) { return ""; }, isOpen: function(p) { return false; }})}},
-            {name: "PendingDeletionsPage", props: stickProps({appSettingsController: realAppSettings})},
+            {name: "PendingDeletionsPage", props: stickProps({})},
             {name: "RecordingsPage", props: stickProps({controller: realRecordings, playbackController: realPlayback})},
             {name: "MetadataBackupPage", props: stickProps({libraryId: "", appSettingsController: realAppSettings})},
             {name: "MetadataRestorePage", props: stickProps({libraryId: ""})},
