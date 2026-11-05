@@ -54,11 +54,11 @@ ApplicationWindow {
     Shortcut { sequence: "Media Next"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.next() }
     Shortcut { sequence: "Media Previous"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.previous() }
 
-    Shortcut {
-        sequence: "Space"
-        enabled: playbackCtrl.hasTrack
-            && !(window.activeFocusItem && window.activeFocusItem.hasOwnProperty("cursorPosition"))
-        onActivated: playbackCtrl.togglePlay()
+    // Space, with the same text-field rule as the hot cue keys below;
+    // it works over a dialog too, see common/PlayPauseShortcut.qml.
+    PlayPauseShortcut {
+        playbackController: playbackCtrl
+        active: !(window.activeFocusItem && window.activeFocusItem.hasOwnProperty("cursorPosition"))
     }
 
     // 1 to 8 jump to that hot cue of the playing track, with the same

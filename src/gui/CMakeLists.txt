@@ -135,6 +135,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/StickRemovedDialog.qml
     qml/common/EditSessionHost.qml
     qml/common/HotCueShortcuts.qml
+    qml/common/PlayPauseShortcut.qml
     qml/Theme.qml
     qml/FormatLabels.qml
     qml/CamelotWheelPosition.qml
