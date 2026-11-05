@@ -590,9 +590,13 @@ TestCase {
         verify(findChild(item, "rowArtwork") !== null, "the cover");
         verify(findChild(item, "rowCell_key") !== null, "the key badge");
         const play = findChild(item, "rowPlayButton");
+        const cover = findChild(item, "rowCell_artwork");
         mouseMove(page, 1, 1);
-        compare(play.visible, false, "hidden until the row is hovered");
+        compare(play.visible, false, "hidden until the cover is hovered");
         mouseMove(item, item.width / 2, item.height / 2);
+        wait(50);
+        compare(play.visible, false, "the pointer on the row, off the cover, shows no key (Browse shows none)");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
         tryCompare(play, "visible", true);
         mouseClick(play);
         tryCompare(realPlayback, "currentSourceId", track.sourceId);

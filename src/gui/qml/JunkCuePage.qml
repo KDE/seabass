@@ -450,8 +450,6 @@ Page {
                             ? root.playbackController.position / root.playbackController.duration : 0
                     }
                 }
-                HoverHandler { id: rowHover }
-
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: Theme.tightSpacing
@@ -495,6 +493,11 @@ Page {
                             anchors.fill: parent
                             source: junkDelegate.track.artworkPath || ""
                         }
+                        // The play key shows over the cover while the
+                        // pointer is on the cover, as Browse shows it; on
+                        // the whole row it covered the art of every row
+                        // the pointer crossed.
+                        HoverHandler { id: artworkHover }
                         // Play the row's track from its cover: shown while
                         // the row is hovered, and while it is the track
                         // playing, as a pause key then. Not for a streaming
@@ -514,7 +517,7 @@ Page {
                             visible: root.playbackController !== null
                                 && (junkDelegate.track.filePath || "").length > 0
                                 && junkDelegate.streamingSource.length === 0
-                                && (rowHover.hovered || coverPlay.hovered || junkDelegate.isPlaying)
+                                && (artworkHover.hovered || coverPlay.hovered || junkDelegate.isPlaying)
                             contentItem: Item {
                                 SeabassIcon {
                                     anchors.centerIn: parent
