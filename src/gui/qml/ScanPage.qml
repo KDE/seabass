@@ -586,27 +586,101 @@ Page {
 
     // The row menu's last entry: every playlist to add the track to, a
     // tick on the ones it is staged into (picking one again takes it back).
+    //
+    // The entries are kept, one per playlist name, and the list is
+    // brought in line with the targets by moving, adding and taking out
+    // entries, never by making it afresh. An Instantiator over the
+    // targets made every entry anew on every change and destroyed the
+    // old ones, and under org.kde.breeze and org.kde.desktop the menu's
+    // own ListView keeps the entries it has scrolled past and does not
+    // hear that they went: the next wheel read a destroyed one (the
+    // 2026-10-17 Browse crash, the shape 31d3c5d6 ended for the Matching
+    // list; tst_ScanPageStorm's Add To round found this one under those
+    // styles, where Basic, the storm lane's style, never holds an entry).
+    // An entry whose playlist is gone from the targets is taken out of
+    // the menu and kept, hidden, for as long as the page lives: a few
+    // items at most, and nothing a list still holds is ever destroyed.
     Menu {
         id: addToMenu
         objectName: "addToMenu"
         title: qsTr("Add to...")
-        Instantiator {
-            model: trackMenu.addTargets
-            delegate: MenuItem {
-                required property string modelData
-                objectName: "addTo_" + modelData
-                text: modelData
+
+        // playlist name -> its MenuItem: in the menu (entries) or taken
+        // out of it and kept hidden (parked), to go back in when its
+        // playlist is a target again.
+        property var entries: ({})
+        property var parked: ({})
+
+        Component {
+            id: addToEntryComponent
+            MenuItem {
+                property string playlist: ""
+                objectName: "addTo_" + playlist
+                text: playlist
                 checkable: true
-                checked: trackMenu.filePath.length > 0 && trackMenu.addedTo(modelData)
+                checked: trackMenu.filePath.length > 0 && trackMenu.addedTo(playlist)
                 onTriggered: {
-                    trackMenu.toggleAdd(modelData);
+                    trackMenu.toggleAdd(playlist);
                     // A click flips `checked` itself; the staging says.
-                    checked = Qt.binding(() => trackMenu.filePath.length > 0 && trackMenu.addedTo(modelData));
+                    checked = Qt.binding(() => trackMenu.filePath.length > 0 && trackMenu.addedTo(playlist));
                 }
             }
-            onObjectAdded: (index, object) => addToMenu.insertItem(index, object)
-            onObjectRemoved: (index, object) => addToMenu.removeItem(object)
         }
+
+        function syncEntries() {
+            const targets = trackMenu.addTargets;
+            const wanted = {};
+            for (const name of targets) {
+                wanted[name] = true;
+            }
+            // Out: the entries whose playlist is no longer a target.
+            // takeItem, never removeItem: removeItem destroys the item,
+            // which is the one thing this must not do.
+            for (const name in addToMenu.entries) {
+                if (wanted[name] === true) {
+                    continue;
+                }
+                const item = addToMenu.entries[name];
+                addToMenu.takeItem(addToMenu.indexOfEntry(item));
+                item.visible = false;
+                addToMenu.parked[name] = item;
+                delete addToMenu.entries[name];
+            }
+            // In and in order: each target's entry at the target's index.
+            for (let i = 0; i < targets.length; ++i) {
+                const name = targets[i];
+                let item = addToMenu.entries[name];
+                if (item === undefined) {
+                    item = addToMenu.parked[name];
+                    if (item !== undefined) {
+                        delete addToMenu.parked[name];
+                        item.visible = true;
+                    } else {
+                        item = addToEntryComponent.createObject(addToMenu, {playlist: name});
+                    }
+                    addToMenu.entries[name] = item;
+                    addToMenu.insertItem(i, item);
+                    continue;
+                }
+                const at = addToMenu.indexOfEntry(item);
+                if (at !== i) {
+                    addToMenu.moveItem(at, i);
+                }
+            }
+        }
+        function indexOfEntry(item) {
+            for (let i = 0; i < addToMenu.count; ++i) {
+                if (addToMenu.itemAt(i) === item) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        Connections {
+            target: trackMenu
+            function onAddTargetsChanged() { addToMenu.syncEntries(); }
+        }
+        Component.onCompleted: addToMenu.syncEntries()
     }
 
     // The playlists a track can be added to: every one but the playlist

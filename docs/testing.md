@@ -567,8 +567,18 @@ ctest -R seabass_qml_storm_tests                       # 3 seeds of 150 steps an
 SEABASS_STORM_FIRST_SEED=17 SEABASS_STORM_SEEDS=1 SEABASS_STORM_VERBOSE=1 \
     ctest -R seabass_qml_storm_tests -V                # replay one seed, step by step
 tools/storm-hunt.sh <build> <out> 1 200 4              # a hunt: 200 seeds in 4 processes
+ctest -R seabass_qml_storm_desktop_style_tests         # the page storm again under org.kde.desktop, no seed walk
 ctest -LE storm                                        # everything else
 ```
+
+The page storm runs a second time under `org.kde.desktop` where that
+style is installed (`seabass_qml_storm_desktop_style_tests`, no seed
+walk). Under Basic a Menu's list never holds an entry it has scrolled
+past; under the KDE styles it does, and the Add To submenu kept
+destroyed entries for weeks while the Basic lane was green
+(2026-11-05). Locally, the real thing is Breeze: run the lane's command
+with `QT_QPA_PLATFORMTHEME=kde` and a copy of your `kdeglobals` in
+`XDG_CONFIG_HOME`.
 
 The lane is opt-in: `SEABASS_STORM_TESTS` is OFF by default, so a bare
 `ctest` on a default configure runs everything but the storm, and on

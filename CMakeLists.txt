@@ -1419,6 +1419,25 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 LABELS "storm"
                 TIMEOUT 1200
                 RESOURCE_LOCK xvfb)
+            # The page storms again under org.kde.desktop, the style the
+            # Linux build ships and the nearest the suite has to the Breeze
+            # of Sebastian's Plasma. Under Basic a Menu's list never holds
+            # an entry it has scrolled past; under the KDE styles it does,
+            # which is how the Add To submenu kept destroyed entries for
+            # weeks while this lane was green (2026-11-05). No seed walk:
+            # SEABASS_STORM_SEEDS=0 leaves tst_Storm with nothing to do, so
+            # this is tst_ScanPageStorm's lists, a few minutes.
+            if(SEABASS_KDE_STYLE_QMLDIR)
+                add_test(NAME seabass_qml_storm_desktop_style_tests
+                    COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                        $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
+                file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-storm-desktop-style")
+                set_tests_properties(seabass_qml_storm_desktop_style_tests PROPERTIES
+                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-storm-desktop-style;SEABASS_IGNORE_REMOVABLE_MEDIA=1;SEABASS_STORM_SEEDS=0"
+                    LABELS "storm"
+                    TIMEOUT 1200
+                    RESOURCE_LOCK xvfb)
+            endif()
         elseif(WIN32)
             # Windows has no xvfb and needs none: the storm runs in a real
             # window on the desktop, as it does on the X server xvfb gives
