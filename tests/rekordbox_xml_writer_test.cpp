@@ -7,6 +7,7 @@
 // resolves to the wrong file, a rating that reads as unrated, a hot cue
 // that lands in the wrong slot.
 #include <cassert>
+#include <clocale>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -226,8 +227,37 @@ void testDeterministicOutput()
 
 }  // namespace
 
+// A cue's seconds carry a decimal point whatever the user's locale
+// says: QCoreApplication adopts the environment's LC_NUMERIC on Unix,
+// and under nl_NL snprintf wrote Start="0,026", which rekordbox does not
+// read. Checked under the first comma locale this machine has; where
+// none is installed the plain run above has already covered the dot.
+void testPositionsIgnoreTheLocale()
+{
+    const char *commaLocales[] = {"nl_NL.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8", "nl_NL", "de_DE"};
+    const char *previous = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string restore = previous ? previous : "C";
+    const char *chosen = nullptr;
+    for (const char *name : commaLocales) {
+        if (std::setlocale(LC_NUMERIC, name)) {
+            chosen = name;
+            break;
+        }
+    }
+    if (!chosen) {
+        std::cout << "rekordbox_xml_writer_test: no comma locale installed, the locale case ran under C\n";
+    }
+    Track t = track("No Limit", "2 Unlimited", "/m/nolimit.mp3");
+    t.cues.push_back(CuePoint{CuePoint::Kind::Hot, 1, 229.0, "#FF0017", "", false, 0.0});
+    const std::string xml = writeRekordboxXml({t}, buildPlaylistTree({t}));
+    std::setlocale(LC_NUMERIC, restore.c_str());
+    assert(contains(xml, "Start=\"0.229\"") && "a decimal point, in every locale");
+    assert(!contains(xml, "0,229"));
+}
+
 int main()
 {
+    testPositionsIgnoreTheLocale();
     testEscaping();
     testLocationEncoding();
     testCueNumberingAndColor();

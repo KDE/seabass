@@ -5,6 +5,7 @@
 #include "infrastructure/rekordbox/rekordbox_xml_writer.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdio>
 #include <string>
@@ -21,11 +22,18 @@ namespace
 // the ratings were lost.
 constexpr int RatingPerStar = 51;
 
+// Always a decimal point. snprintf follows LC_NUMERIC, which
+// QCoreApplication sets from the environment on Unix, and under nl_NL
+// it wrote Start="0,026": a position rekordbox does not read.
+// std::to_chars knows no locale.
 std::string formatDouble(double value, int decimals)
 {
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, value);
-    return buffer;
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, decimals);
+    if (result.ec != std::errc{}) {
+        return "0";
+    }
+    return std::string(buffer, result.ptr);
 }
 
 std::string attribute(const std::string &name, const std::string &value)
