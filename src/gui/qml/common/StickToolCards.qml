@@ -262,6 +262,20 @@ Item {
     Component { id: pendingProbeComponent; CleanupController {} }
     Component { id: recordingsProbeComponent; RecordingsController {} }
     property int pendingCount: 0
+    // The backups from earlier saves the same page prunes: the probe lists
+    // them on a worker after loadPendingDeletionsOnly(), so the count
+    // arrives a moment after the files' one and the card follows it.
+    readonly property int staleBackupCount: root.pendingProbe !== null ? root.pendingProbe.staleBackupCount : 0
+    readonly property string orphanedSummary: {
+        const parts = [];
+        if (root.pendingCount > 0) {
+            parts.push(root.pendingCount + " orphaned file(s)");
+        }
+        if (root.staleBackupCount > 0) {
+            parts.push(root.staleBackupCount + " old backup(s)");
+        }
+        return parts.join(" and ");
+    }
     property var recordingsSummary: ({count: 0, bytes: 0, sources: []})
     readonly property int recordingCount: root.recordingsSummary.count || 0
     property bool hasOneLibrary: false
@@ -813,13 +827,14 @@ Item {
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: root.pendingCount > 0
-                    ? "Free disk space: delete files earlier cleanups' database edits orphaned"
-                    : "Nothing orphaned right now. Every earlier cleanup's files are accounted for"
+                cardSubtitle: root.orphanedSummary.length > 0
+                    ? "Free disk space: " + root.orphanedSummary + " to delete"
+                    : "Nothing to delete right now: no orphaned files, no backups from earlier saves"
                 cardIcon: "edit-delete"
                 visible: root.group === "maintain" && root.showCleanUp
-                enabled: (root.hasRekordbox || root.hasEngine) && root.pendingCount > 0
-                disabledReason: !(root.hasRekordbox || root.hasEngine) ? root.noLibraryReason : "No orphaned files"
+                enabled: (root.hasRekordbox || root.hasEngine) && root.orphanedSummary.length > 0
+                disabledReason: !(root.hasRekordbox || root.hasEngine) ? root.noLibraryReason
+                    : "No orphaned files and no backups from earlier saves"
                 onClicked: root.pendingDeletionsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {

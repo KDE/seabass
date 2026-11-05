@@ -873,8 +873,38 @@ TestCase {
         QtObject {
             property int perFormat: 0
             property int pendingDeletionsIncludedCount: 0
+            // The real probe lists these on a worker after the load, so a
+            // test sets the count after the cards are made, as it arrives.
+            property int staleBackupCount: 0
             function loadPendingDeletionsOnly(format, path) { pendingDeletionsIncludedCount = perFormat; }
             function hasOneLibrary(path) { return false; }
+        }
+    }
+
+    // Delete Orphaned Files is also where backups from earlier saves are
+    // pruned, so the card opens for either, and says which.
+    function test_orphanedFilesCardCountsOldBackupsToo_data() {
+        return [
+            {tag: "nothing", files: 0, backups: 0, enabled: false,
+             subtitle: "Nothing to delete right now: no orphaned files, no backups from earlier saves"},
+            {tag: "files only", files: 2, backups: 0, enabled: true,
+             subtitle: "Free disk space: 4 orphaned file(s) to delete"},
+            {tag: "backups only", files: 0, backups: 3, enabled: true,
+             subtitle: "Free disk space: 3 old backup(s) to delete"},
+            {tag: "both", files: 1, backups: 3, enabled: true,
+             subtitle: "Free disk space: 2 orphaned file(s) and 3 old backup(s) to delete"},
+        ];
+    }
+    function test_orphanedFilesCardCountsOldBackupsToo(data) {
+        const cards = makeMaintain({count: 0, bytes: 0, sources: []}, data.files);
+        const c = card(cards, "Delete Orphaned Files");
+        verify(c !== null && c.visible);
+        // The backups are counted after the files, as the worker answers.
+        cards.pendingProbe.staleBackupCount = data.backups;
+        tryCompare(c, "enabled", data.enabled, 2000);
+        compare(c.cardSubtitle, data.subtitle);
+        if (!data.enabled) {
+            compare(c.disabledReason, "No orphaned files and no backups from earlier saves");
         }
     }
 
@@ -957,7 +987,7 @@ TestCase {
     // something, counted over both catalogs.
     function test_orphanedFilesCardOnlyWithSomethingToDelete_data() {
         return [
-            {tag: "nothing", perFormat: 0, enabled: false, text: "Nothing orphaned right now"},
+            {tag: "nothing", perFormat: 0, enabled: false, text: "Nothing to delete right now"},
             {tag: "some", perFormat: 2, enabled: true, text: "Free disk space"},
         ];
     }
@@ -979,7 +1009,7 @@ TestCase {
         const orphans = card(cards, "Delete Orphaned Files");
         verify(orphans !== null);
         compare(orphans.enabled, false, "nothing orphaned on this stick");
-        compare(orphans.disabledReason, "No orphaned files");
+        compare(orphans.disabledReason, "No orphaned files and no backups from earlier saves");
         verify(orphans.contentItem.opacity < 1, "greyed, not only its icon");
         compare(card(cards, "Clean Up Recordings").disabledReason, "No recordings on this stick");
 
