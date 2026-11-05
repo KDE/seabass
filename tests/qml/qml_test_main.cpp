@@ -2417,7 +2417,7 @@ private:
 #endif
 
 // Real backup records on a stick copy, for the pages that read them: the
-// Delete Orphaned Files page's old backups, Library Statistics' slice.
+// Free Up Space page's old backups, Library Statistics' slice.
 // Made by FilesystemBackupStore itself, so they are what a save leaves.
 class BackupFixture : public QObject
 {

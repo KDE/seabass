@@ -6,7 +6,7 @@ import QtQuick
 import QtTest
 import SeabassGui
 
-// Delete Orphaned Files' old backups, on a real stick copy with real
+// Free Up Space' old backups, on a real stick copy with real
 // records: the page lists the automatic backups nothing in Seabass can
 // restore from, never one Undo still needs or one the user made, and its
 // prune deletes exactly those.

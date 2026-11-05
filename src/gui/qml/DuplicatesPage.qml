@@ -395,7 +395,7 @@ Page {
         // easy to mistake it for: Clean Up Duplicates (same duplicate
         // groups, but it consolidates them onto one copy and drops the
         // rest from the catalog -- the audio itself goes later, under
-        // Delete Orphaned Files, see CleanupPage.qml's own explanation)
+        // Free Up Space, see CleanupPage.qml's own explanation)
         // and Sync Cue Points (same cue copying, but between two catalogs
         // rather than within one).
         Label {

@@ -113,7 +113,7 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
         // loop roll that restore back out: the undo undone over a
         // bookkeeping file, on exactly the stick that is full or failing
         // and where getting the library back mattered most. Nothing is
-        // destroyed by the stale lines either -- Delete Orphaned Files
+        // destroyed by the stale lines either -- Free Up Space
         // re-checks every entry against the catalogs first and leaves a
         // file that a row still names alone.
         if (!infrastructure::cleanup::PendingDeletionManifest(pendingPath).removeForBackups(ids)) {
@@ -129,7 +129,7 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
                     throw SaveTidyUpFailed(
                         "Your library is back. The stick's list of files waiting to be deleted could not be "
                         "updated, so it still names files the undo restored. Nothing is deleted on that list "
-                        "alone, but those tracks stay on the Delete Orphaned Files page for now.");
+                        "alone, but those tracks stay on the Free Up Space page for now.");
                 }
             });
         }

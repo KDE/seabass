@@ -620,7 +620,7 @@ int main()
         std::cout << "case 17b (pruneCandidates never chooses a user's backup) OK\n";
     }
 
-    // The Delete Orphaned Files page prunes every automatic backup that
+    // The Free Up Space page prunes every automatic backup that
     // Undo Last Save cannot use, and only those: the caller names the ones
     // it still needs, and a backup the user made is never chosen, even
     // when it sits between two that are.

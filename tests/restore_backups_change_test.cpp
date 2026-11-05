@@ -150,7 +150,7 @@ int main()
         std::cout << "case 2 (a missing backup stops the whole undo and is named) OK\n";
     }
 
-    // 3. The files a Clean Up save put in Delete Orphaned Files come off the
+    // 3. The files a Clean Up save put in Free Up Space come off the
     //    list with the undo that brings their rows back; an entry another
     //    save made stays.
     {
@@ -174,7 +174,7 @@ int main()
         const auto left = manifest.list();
         assert(left.size() == 1);
         assert(left.front().filePath == ofAnotherSave.filePath);
-        std::cout << "case 3 (undo takes its save's files back off Delete Orphaned Files) OK\n";
+        std::cout << "case 3 (undo takes its save's files back off Free Up Space) OK\n";
     }
 
     // 4. The list cannot be rewritten: the undo still stands, and says so.

@@ -208,7 +208,7 @@ TestCase {
              expected: ["Restore Backup", "Create Backup USB Stick", "Format USB Stick"]},
             {tag: "maintain", group: "maintain", stick: {},
              expected: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
-                 "Delete Orphaned Files", "Library Health"]},
+                 "Free Up Space", "Library Health"]},
         ];
     }
     function test_eachGroupShowsItsCardsInOrder(data) {
@@ -331,7 +331,7 @@ TestCase {
             "sync": ["Sync Cue Points", "Sync after Rekordbox Export", "Restore Metadata"],
             "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
             "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
-                 "Delete Orphaned Files", "Library Health"],
+                 "Free Up Space", "Library Health"],
         };
         const plain = {
             "explore": ["Browse Library", "Compare Playlists", "Library Statistics", "USB Stick Performance"],
@@ -382,7 +382,7 @@ TestCase {
             "sync": ["Sync Cue Points", "Restore Metadata", "Create Engine Library"],
             "backup": [],
             "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
-                 "Delete Orphaned Files"],
+                 "Free Up Space"],
         };
         for (const group in writers) {
             const cards = makeCards(makeStick({readOnly: true, hasEngine: false}), group, {});
@@ -881,23 +881,23 @@ TestCase {
         }
     }
 
-    // Delete Orphaned Files is also where backups from earlier saves are
+    // Free Up Space is also where backups from earlier saves are
     // pruned, so the card opens for either, and says which.
     function test_orphanedFilesCardCountsOldBackupsToo_data() {
         return [
             {tag: "nothing", files: 0, backups: 0, enabled: false,
              subtitle: "Nothing to delete right now: no orphaned files, no backups from earlier saves"},
             {tag: "files only", files: 2, backups: 0, enabled: true,
-             subtitle: "Free disk space: 2 orphaned file(s) to delete"},
+             subtitle: "2 orphaned file(s) to delete"},
             {tag: "backups only", files: 0, backups: 3, enabled: true,
-             subtitle: "Free disk space: 3 old backup(s) to delete"},
+             subtitle: "3 old backup(s) to delete"},
             {tag: "both", files: 1, backups: 3, enabled: true,
-             subtitle: "Free disk space: 1 orphaned file(s) and 3 old backup(s) to delete"},
+             subtitle: "1 orphaned file(s) and 3 old backup(s) to delete"},
         ];
     }
     function test_orphanedFilesCardCountsOldBackupsToo(data) {
         const cards = makeMaintain({count: 0, bytes: 0, sources: []}, data.files);
-        const c = card(cards, "Delete Orphaned Files");
+        const c = card(cards, "Free Up Space");
         verify(c !== null && c.visible);
         // The backups are counted after the files, as the worker answers.
         cards.pendingProbe.staleBackupCount = data.backups;
@@ -983,18 +983,18 @@ TestCase {
         compare(spy.count, 0, "a read-only card does not open the page");
     }
 
-    // Delete Orphaned Files is offered only when earlier cleanups left
+    // Free Up Space is offered only when earlier cleanups left
     // something, counted over both catalogs.
     function test_orphanedFilesCardOnlyWithSomethingToDelete_data() {
         return [
             {tag: "nothing", perFormat: 0, enabled: false, text: "Nothing to delete right now"},
-            {tag: "some", perFormat: 2, enabled: true, text: "Free disk space"},
+            {tag: "some", perFormat: 2, enabled: true, text: "2 orphaned file(s) to delete"},
         ];
     }
     function test_orphanedFilesCardOnlyWithSomethingToDelete(data) {
         const cards = makeMaintain({count: 0, bytes: 0, sources: []}, data.perFormat);
         compare(cards.pendingCount, data.perFormat, "the stick's list, counted once");
-        const c = card(cards, "Delete Orphaned Files");
+        const c = card(cards, "Free Up Space");
         compare(c.enabled, data.enabled);
         verify(c.cardSubtitle.indexOf(data.text) === 0, c.cardSubtitle);
     }
@@ -1006,7 +1006,7 @@ TestCase {
         // A stick with a library and nothing to clean up.
         const cards = makeMaintain({count: 0, bytes: 0, sources: []}, 0);
         compare(card(cards, "Library Health").enabled, true, "a stick with a library");
-        const orphans = card(cards, "Delete Orphaned Files");
+        const orphans = card(cards, "Free Up Space");
         verify(orphans !== null);
         compare(orphans.enabled, false, "nothing orphaned on this stick");
         compare(orphans.disabledReason, "No orphaned files and no backups from earlier saves");

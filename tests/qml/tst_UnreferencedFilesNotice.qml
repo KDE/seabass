@@ -75,7 +75,7 @@ TestCase {
         verify(notice.text.indexOf("DeviceLibrary, Engine, OneLibrary") >= 0);
         verify(notice.text.indexOf("onelibrary") < 0);
         // And says the deletion still happens elsewhere.
-        verify(notice.text.indexOf("Delete Orphaned Files") >= 0);
+        verify(notice.text.indexOf("Free Up Space") >= 0);
     }
 
     // Files found but none identifiable is not the same as none found,

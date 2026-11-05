@@ -820,12 +820,12 @@ Item {
                 Layout.preferredWidth: grid.cellWidth
                 Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
-                cardTitle: "Delete Orphaned Files"
+                cardTitle: "Free Up Space"
                 readOnly: root.lockedByOther || root.stickReadOnly
                 readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
                 onReadOnlyClicked: root.explainWriteBlock()
                 cardSubtitle: root.orphanedSummary.length > 0
-                    ? "Free disk space: " + root.orphanedSummary + " to delete"
+                    ? root.orphanedSummary + " to delete"
                     : "Nothing to delete right now: no orphaned files, no backups from earlier saves"
                 cardIcon: "edit-delete"
                 visible: root.group === "maintain" && root.showCleanUp

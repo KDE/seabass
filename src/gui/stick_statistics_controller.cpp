@@ -225,7 +225,7 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         const std::size_t engineWalkUnits = directoryWalkUnits(enginePath.toStdString());
         // Seabass's own backups (Seabass/backups), named in the treemap
         // rather than left inside Other / Unaccounted: a save's backups can
-        // be a large share of a full stick, and the Delete Orphaned Files
+        // be a large share of a full stick, and the Free Up Space
         // page prunes the old ones.
         const std::string catalogPath = !rekordboxPath.isEmpty() ? rekordboxPath.toStdString() : enginePath.toStdString();
         const std::string backupsDir = catalogPath.empty() ? std::string()

@@ -83,7 +83,7 @@ public:
     // the latest save: the ones an open session holds and the ones an
     // interrupted save's note names. A caller passes those as `keep`, and
     // what comes back is what nothing in Seabass can restore from any
-    // more (the Delete Orphaned Files page's prune).
+    // more (the Free Up Space page's prune).
     std::vector<application::BackupRecord> staleAutomaticRecords(const std::set<std::string> &keep);
 
     // Deletes automatic backups, oldest first, until at least bytesWanted

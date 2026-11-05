@@ -50,7 +50,7 @@ public:
     // full or write-protected stick, a folder that could not be made).
     // A change that cannot record what it orphaned must not report
     // success: the catalog rows would be gone and the file left behind
-    // with nothing naming it, which Delete Orphaned Files reads this
+    // with nothing naming it, which Free Up Space reads this
     // file and only this file to find.
     void append(PendingDeletion entry);
 
@@ -76,7 +76,7 @@ public:
     // Rewrites the manifest, dropping every entry the save behind one of
     // `backupIds` recorded -- for Undo Last Save, which puts those catalog
     // rows back, so their files are no longer orphaned and must not wait
-    // in Delete Orphaned Files. Entries without a backup id (a stray file
+    // in Free Up Space. Entries without a backup id (a stray file
     // no catalog ever named) are kept. A no-op when nothing matches.
     //
     // Returns false, with the previous manifest intact, if the file

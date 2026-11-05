@@ -244,7 +244,7 @@ TestCase {
         const page = makePage(addRecordings);
         const del = findChild(page, "deleteButton");
         // The action sits in the row with Select All, a plain button like
-        // Delete Selected Files on Delete Orphaned Files.
+        // Delete Selected Files on Free Up Space.
         compare(del.text, "Delete Selected Recordings");
         compare(del.highlighted, false);
         compare(del.parent, findChild(page, "selectAllButton").parent);

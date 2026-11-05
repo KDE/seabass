@@ -15,7 +15,7 @@ so nothing irreversible sits one stray click from a read-only view.
 - **Clean Up Duplicates**: removes redundant copies from the libraries and
   keeps the best one. The audio files it orphans are not deleted; they
   are listed for the next tool.
-- **Delete Orphaned Files**: deletes the audio files earlier cleanups took
+- **Free Up Space**: deletes the audio files earlier cleanups took
   out of every library, after checking again that nothing uses them.
 - **Clean Up Stray Cues**: removes cues sitting at 0:00.
 - **Clean Up Recordings**: deletes set recordings the players left on the stick, below.

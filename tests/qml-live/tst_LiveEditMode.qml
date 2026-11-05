@@ -43,7 +43,7 @@ TestCase {
     Component { id: cleanupComponent; CleanupController {} }
     Component { id: addCueComponent; AddCueController {} }
     Component { id: metadataBackupComponent; MetadataBackupController {} }
-    // One row per file listed in Delete Orphaned Files: its path, and a way
+    // One row per file listed in Free Up Space: its path, and a way
     // to tick just that row (test_09 must not select files other saves
     // listed, which the delete would really remove).
     Component {
@@ -419,7 +419,7 @@ TestCase {
     // finder's 11, Windows 8 (round 8, 2026-09-24). The held-back groups
     // are logged by CleanupController as "Clean Up: not offering ...".
     // Counts, not rows: the group is no longer offered, its extra copies'
-    // rows are gone and their files wait in Delete Orphaned Files; undo
+    // rows are gone and their files wait in Free Up Space; undo
     // brings every row back. The files themselves are only deleted there.
     function test_09_cleanupOneGroupSaveUndo() {
         var ctrl = createTemporaryObject(cleanupComponent, testCase);
@@ -462,7 +462,7 @@ TestCase {
                     + ctrl.pendingDeletions.rowCount());
         compare(ctrl.plans.rowCount(), groups - 1);
         verify(tracks.totalTrackCount < rowsBefore, "the extra copies' rows are gone");
-        verify(ctrl.pendingDeletions.rowCount() > pendingBefore, "their files wait in Delete Orphaned Files");
+        verify(ctrl.pendingDeletions.rowCount() > pendingBefore, "their files wait in Free Up Space");
 
         undoAndWait();
         ctrl.scan("rekordbox", rekordboxPath);
@@ -507,7 +507,7 @@ TestCase {
         }
     }
 
-    // ---- 13. Delete Orphaned Files: cancel part-way, then finish ----
+    // ---- 13. Free Up Space: cancel part-way, then finish ----
     // Rig check W8. test_07 only ever cancels, and skips whenever the
     // stick lists nothing -- which, since undo learnt to take a Clean
     // Up's files back off the list, is always. So this plants the state
@@ -885,7 +885,7 @@ TestCase {
         EditSessionRegistry.closeSession(testCase.libraryId);
     }
 
-    // ---- 7. Delete Orphaned Files: cancel before the first file ----
+    // ---- 7. Free Up Space: cancel before the first file ----
     function test_07_pendingDeletionsCancel() {
         // Whether this run had to make its own precondition. A planted
         // Clean Up save removes duplicate rows and merges their cues onto

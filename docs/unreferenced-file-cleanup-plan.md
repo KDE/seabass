@@ -15,7 +15,7 @@ have, because every feature starts from a catalog and works outwards.
 
 They arise the way you would expect: a duplicate cleanup (ours, or the
 DJ software's, or a hand edit) removes the *rows* for a redundant copy
-and never removes the *file*. "Delete Orphaned Files" covers the case
+and never removes the *file*. "Free Up Space" covers the case
 where we did it ourselves and recorded it in
 `.seabass-pending-deletions.jsonl`. It cannot cover a cleanup that
 happened before that manifest existed, on another machine, or in
@@ -418,7 +418,7 @@ toggle rather than in the default path.
    the result with the current format's rows. `UnreferencedFilesNotice`
    says what was found and what it was checked against; the group rows
    mark which copies are files rather than rows, and which are held back
-6. ~~Route confirmed-redundant ones to Delete Orphaned Files~~ **done**
+6. ~~Route confirmed-redundant ones to Free Up Space~~ **done**
    -- a stray file is already orphaned, so saving appends it to
    `.seabass-pending-deletions.jsonl` and touches no catalog at all.
    The deletion itself still happens only there, behind

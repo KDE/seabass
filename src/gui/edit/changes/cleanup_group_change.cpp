@@ -723,7 +723,7 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     auto scheduleFileForDeletion = [&](const domain::Track &doomed) {
         // Two rows naming ONE file: removing one of them frees nothing,
         // because the copy being kept is that same file. Listing it
-        // would put the kept track on the Delete Orphaned Files page and
+        // would put the kept track on the Free Up Space page and
         // leave it there for good -- resolvePendingDeletions() sees a
         // file the library still references, buckets it as still
         // referenced, and never clears an entry it will not act on.

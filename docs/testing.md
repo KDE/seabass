@@ -919,7 +919,7 @@ runner exit 0 without running anything):
   filler file first and deletes it afterwards whatever happened, so no
   second, smaller stick is needed.
 - `tst_LiveEditMode.qml`'s `test_13`, with `SEABASS_RIG_DELETE_ORPHANS`:
-  Delete Orphaned Files, cancelled part-way and then finished. It plants
+  Free Up Space, cancelled part-way and then finished. It plants
   its own list by saving a Clean Up and not undoing it, and deletes audio
   for good, so the runner restores the stick right afterwards.
 

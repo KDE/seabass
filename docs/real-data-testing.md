@@ -435,7 +435,7 @@ Per save of N items, on a set that has all three catalogs.
 | Sync cue points | `SyncPlanChange` | every planned cue lands on the target and reads back equal; a conflict row is untouched on both sides | N / 1 | 2N / 1 | 2N / 1 |
 | Copy cues between duplicates | `CopyCuesChange` | destination has the union; source unchanged | N / 1 | 2N / 1 | 2N / 1 |
 | Clean Up duplicates | `CleanupGroupChange` | survivor has the union of cues and every playlist entry of the removed rows; every removed row is in the manifest and absent from a fresh scan | 1 / 1 | 0 | 1 / 1 |
-| Delete orphaned files | `DeleteOrphanChange` | only files no live row references are gone; manifest cleared for exactly those | 0 | 0 | 1 / 1 |
+| Free up space | `DeleteOrphanChange` | only files no live row references are gone; manifest cleared for exactly those | 0 | 0 | 1 / 1 |
 | Library Health repair | `RepairIssueChange` | the repaired row resolves to an existing file; an ignored issue is byte-identical | 0 | 0 | N / 1 |
 | Local cue restore | `MergeCuesChange` | restored cues equal the backed-up set | N / 1 | 2N / 1 | 2N / 1 |
 | Device settings | `DeviceSettingChange` | the field reads back; every other byte of the file identical | 0 | 0 | 0 |

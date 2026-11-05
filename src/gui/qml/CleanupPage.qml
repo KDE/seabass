@@ -224,7 +224,7 @@ Page {
                                 + "the copies that agree on artist, track title and length, and consolidates their "
                                 + "metadata (cue points, ratings, playlist membership) onto the single copy it "
                                 + "keeps. No audio is deleted here: the files this leaves unneeded are removed "
-                                + "afterwards under \"Delete Orphaned Files\", which is where the space is actually "
+                                + "afterwards under \"Free Up Space\", which is where the space is actually "
                                 + "freed."
                         }
                         // Holds the InfoButton's place while it is up in the crumb row,
@@ -741,10 +741,10 @@ Page {
                                     badgeColor: Theme.textMuted
                                     // What it is, then where it goes. The
                                     // re-check before deleting is a promise
-                                    // the Delete Orphaned Files page makes;
+                                    // the Free Up Space page makes;
                                     // it does not belong on a count badge.
                                     tooltipText: "Audio files on the stick that no catalog lists. Saving puts them "
-                                        + "under \"Delete Orphaned Files\"."
+                                        + "under \"Free Up Space\"."
                                 }
                                 StatusBadge {
                                     visible: delegateRoot.unreferencedHeldBackCount > 0

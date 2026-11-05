@@ -141,7 +141,7 @@ void PendingDeletionManifest::append(PendingDeletion entry)
     // a full stick, a read-only mount, or with a folder that could not
     // be created, the change that called this went on to remove the
     // track's catalog rows and report success, leaving the file orphaned
-    // with nothing recording it, invisible to Delete Orphaned Files,
+    // with nothing recording it, invisible to Free Up Space,
     // which reads this manifest and nothing else. And even when it did
     // arrive, it arrived in the page cache: the catalog edit beside it
     // goes to the medium through writeFileDurablyAtomic(), so a stick

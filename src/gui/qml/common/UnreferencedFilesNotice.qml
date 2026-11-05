@@ -53,7 +53,7 @@ Label {
             + ", that no catalog references, checked against " + root.catalogNames
             + ". They are listed below wherever they match a track you still have, so you can see what "
             + "each one duplicates before anything happens to it. Nothing is deleted here either: they "
-            + "go to \"Delete Orphaned Files\" with the rest.";
+            + "go to \"Free Up Space\" with the rest.";
         // A build with no tag reader finds the files but can identify
         // none of them, which is a different thing from finding nothing
         // and has to say so rather than showing an empty list.
@@ -67,7 +67,7 @@ Label {
         // The list of files a Clean Up already scheduled is what keeps
         // those from being offered again as strays. Unreadable, it is
         // the more specific of the two incompleteness reasons, and the
-        // one the DJ can act on (Delete Orphaned Files shows that list).
+        // one the DJ can act on (Free Up Space shows that list).
         if (info.pendingDeletionsUnreadable)
             s += " The list of files already scheduled for deletion could not be read, "
                 + "so some of these may be waiting for deletion already.";

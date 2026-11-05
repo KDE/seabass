@@ -46,7 +46,7 @@ struct StrayFileScanResult
 
     // Unreferenced files left out because this stick's pending-deletion
     // list already names them: a Clean Up has removed their rows and
-    // scheduled them, and Delete Orphaned Files offers them. Not in
+    // scheduled them, and Free Up Space offers them. Not in
     // `filesFound` or `tracks`.
     std::size_t alreadyListedForDeletion = 0;
 

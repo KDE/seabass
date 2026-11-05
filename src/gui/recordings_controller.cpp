@@ -215,7 +215,7 @@ RecordingsController::~RecordingsController()
     // A listing only reads, and briefly: wait for it. A run is a write:
     // asked to stop after the file in flight and watched from the
     // application, which gives the lock back when it returns (the same
-    // shape as Delete Orphaned Files; see detached_write.hpp).
+    // shape as Free Up Space; see detached_write.hpp).
     awaitQuietly(m_listWatcher);
     if (m_working) {
         m_cancel.cancel();

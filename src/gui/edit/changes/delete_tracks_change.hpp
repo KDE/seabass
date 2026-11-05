@@ -17,7 +17,7 @@ namespace seabass::gui
 // any playlist") the way Clean Up deletes a duplicate: each file's row
 // comes out of every library on the stick that lists it, and the file
 // goes on the stick's pending-deletions list (Seabass/orphaned), naming
-// the backup that still holds the rows, for Delete Orphaned Files to
+// the backup that still holds the rows, for Free Up Space to
 // remove. One change for the whole selection, so each database is read
 // once. Every file is checked again first: one that is in a playlist in
 // any library by then is left alone and counted as skipped.

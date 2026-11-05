@@ -108,7 +108,7 @@ idle ----stage()---- editing ----save()---- writing
 | Any library scan | yes | per track | page pops, nothing cached |
 | Save of staged changes | yes | between changes | summary, rest stays staged |
 | Manage Backups: delete a full backup | no | one step | status line |
-| Delete orphaned files | yes | between files | summary; manifest keeps the rest |
+| Free up space | yes | between files | summary; manifest keeps the rest |
 | Create Engine Library | until "Copying to stick" | between tracks (scratch build) | "Cancelled, nothing was created" |
 | Full stick backup / clone / compact | yes (pre-existing) | per file, keep/discard partial | own result frame |
 | Format USB | no | one call | result |
@@ -270,10 +270,10 @@ offscreen:
   lock
 
 Found and fixed by that run: two confirm dialogs whose body had landed
-inside a `Connections` block (Delete Orphaned Files, Create Engine
+inside a `Connections` block (Free Up Space, Create Engine
 Library), one backup record per file instead of per save (201 stray
 cues made 201 records; now `BackupStore::addToBackup` grows one record
 per label per save), the removed-stick dialog without the stick label.
-Not verified live: Library Health repairs and Delete Orphaned Files
+Not verified live: Library Health repairs and Free Up Space
 (the stick had nothing repairable and no pending deletions), Create
 Engine Library (the stick already has one), the quit flow.

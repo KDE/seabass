@@ -275,7 +275,7 @@ struct PendingDeletionApplyResult
 };
 
 // One automatic backup record nothing in Seabass can restore from any
-// more, as the Delete Orphaned Files page lists it. See
+// more, as the Free Up Space page lists it. See
 // CleanupController::refreshStaleBackups().
 struct StaleBackup
 {
