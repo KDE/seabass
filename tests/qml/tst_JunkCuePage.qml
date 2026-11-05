@@ -524,6 +524,43 @@ TestCase {
         }
     }
 
+    // A track's rows sit together: the first carries the tick, cover and
+    // key, the ones after it are continuation rows with none of their
+    // own, and the first row's tick stages them all.
+    function test_aTracksRowsSitTogetherUnderOneTick() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        const rows = controller.junkCues.count;
+        let firstTwin = -1;
+        const seen = {};
+        for (let i = 0; i < rows; ++i) {
+            const t = junkRow(controller.junkCues, i, testCase.junkTrackRole);
+            const key = junkRow(controller.junkCues, i, testCase.junkFormatRole) + ":" + t.sourceId;
+            if (seen[key] !== undefined) {
+                compare(seen[key], i - 1, key + ": its rows sit together");
+                if (firstTwin < 0) {
+                    firstTwin = i - 1;
+                }
+            }
+            seen[key] = i;
+        }
+        verify(firstTwin >= 0, "precondition: a track with two stray cues");
+        // The first row brought into view and ticked before the second is
+        // looked at: rowItem scrolls the row it is asked for to the top,
+        // which would put the first one out of reach of the click.
+        const first = rowItem(page, firstTwin);
+        compare(first.firstOfTrack, true);
+        mouseClick(findChild(first, "rowStageCheck"));
+        tryCompare(first, "staged", true, 5000, "the first row's tick stages it");
+        const second = rowItem(page, firstTwin + 1);
+        compare(second.firstOfTrack, false);
+        compare(second.staged, true, "the first row's tick stages the track, so its other row too");
+        compare(findChild(second, "rowStageCheck").checked, true);
+        compare(findChild(second, "rowStageCheck").enabled, false, "no tick of its own");
+        compare(findChild(second, "rowCell_artwork").visible, false, "no cover of its own");
+        unstageEveryRow(controller);
+    }
+
     // A row's tick and Stage Removing All stage at once: nothing is asked
     // first, the row reads Staged as the tick lands, and unticking takes it
     // back. The rows used to carry a Remove button, which read as all or

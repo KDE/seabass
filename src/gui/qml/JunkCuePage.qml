@@ -423,6 +423,11 @@ Page {
                 required property string reason
                 required property real positionMs
                 required property string cueLabel
+                // False on a continuation row: one of the track's further
+                // stray cues, listed under the first with no tick, cover
+                // or key of its own, since the first row's tick stages
+                // the track and every row of it.
+                required property bool firstOfTrack
 
                 readonly property bool isPlaying: root.playbackController !== null
                     && root.playbackController.hasTrack
@@ -466,8 +471,11 @@ Page {
                     // model says.
                     SeabassCheckBox {
                         objectName: "rowStageCheck"
+                        // Hidden, not gone: the column stays, so the
+                        // continuation row lines up under the first.
+                        opacity: junkDelegate.firstOfTrack ? 1 : 0
+                        enabled: junkDelegate.firstOfTrack && !consistencyController.busy && !consistencyController.writing
                         checked: junkDelegate.staged
-                        enabled: !consistencyController.busy && !consistencyController.writing
                         ToolTip.visible: hovered
                         ToolTip.text: junkDelegate.staged
                             ? "Staged for removal, not on the stick yet: press Clean Up. Untick to take it back out."
@@ -486,6 +494,7 @@ Page {
                         objectName: "rowCell_artwork"
                         Layout.preferredWidth: Theme.iconSizeNormal
                         Layout.preferredHeight: Theme.iconSizeNormal
+                        visible: junkDelegate.firstOfTrack
                         color: Theme.surface
                         radius: Theme.coverRadius(Math.min(width, height))
                         ArtworkImage {
@@ -548,10 +557,20 @@ Page {
                         }
                     }
 
+                    // A continuation row's cover column, empty, so its
+                    // title sits under the first row's.
+                    Item {
+                        visible: !junkDelegate.firstOfTrack
+                        Layout.preferredWidth: Theme.iconSizeNormal
+                        Layout.preferredHeight: Theme.iconSizeNormal
+                    }
+
                     ColumnLayout {
                         objectName: "rowCell_title"
                         Layout.fillWidth: true
                         spacing: 1
+                        // The same track again, quietly.
+                        opacity: junkDelegate.firstOfTrack ? 1 : 0.45
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 6
@@ -591,50 +610,62 @@ Page {
 
                     KeyBadge {
                         objectName: "rowCell_key"
+                        opacity: junkDelegate.firstOfTrack ? 1 : 0
                         keyName: junkDelegate.track.key || ""
                         notation: root.appSettingsController.keyNotation
                         Layout.preferredWidth: Theme.scaled(50)
                     }
                     Label {
                         objectName: "rowCell_bpm"
+                        opacity: junkDelegate.firstOfTrack ? 1 : 0
                         text: root.formatBpm(junkDelegate.track.bpm || 0)
                         Layout.preferredWidth: 50
                     }
                     Label {
                         objectName: "rowCell_duration"
+                        opacity: junkDelegate.firstOfTrack ? 1 : 0
                         text: root.formatDuration(junkDelegate.track.durationMs || 0)
                         Layout.preferredWidth: 60
                     }
 
-                    // Which cue this row is: a track with two stray cues
-                    // has two rows alike in every column before this one,
-                    // and the tick on either stages the track, so both
-                    // flip. Named, they read as the two cues they are.
-                    Label {
-                        objectName: "junkCueWhich"
-                        text: junkDelegate.cueLabel + " at " + root.formatCuePosition(junkDelegate.positionMs)
-                        elide: Text.ElideRight
-                        Layout.preferredWidth: Theme.scaled(150)
-                        font.pointSize: Theme.fontSmall
-                        color: Theme.textMuted
-                    }
-                    // Why this row is here. Two checks feed this list: a
-                    // cue at the very start of the track, and one of a
-                    // crowd of hot cues in its first two seconds.
-                    // Describing the second as the first would be wrong,
-                    // and every row here is an offer to delete somebody's
-                    // cue.
-                    Label {
-                        objectName: "junkCueReason"
-                        visible: junkDelegate.reason.length > 0
-                        text: junkDelegate.reason
-                        elide: Text.ElideRight
+                    // Which cue this row is, over why it is here. A track
+                    // with two stray cues has two rows alike in every
+                    // column before this one, and the tick on the first
+                    // stages the track, so both flip: named, they read as
+                    // the two cues they are. The reason underneath, since
+                    // two checks feed this list (a cue at the very start,
+                    // and one of a crowd of hot cues in the first two
+                    // seconds) and describing the second as the first
+                    // would be wrong; every row here is an offer to
+                    // delete somebody's cue. One column for the two
+                    // lines: side by side they took the title's width.
+                    ColumnLayout {
+                        // Its two labels fill it, which would make the
+                        // column itself fill the row (a layout fills when
+                        // a child does) and take the title's slack: pinned.
+                        Layout.fillWidth: false
                         Layout.preferredWidth: Theme.scaled(220)
-                        font.pointSize: Theme.fontSmall
-                        color: Theme.textMuted
-                        ToolTip.visible: reasonHover.hovered && truncated
-                        ToolTip.text: junkDelegate.reason
-                        HoverHandler { id: reasonHover }
+                        Layout.maximumWidth: Theme.scaled(220)
+                        spacing: 0
+                        Label {
+                            objectName: "junkCueWhich"
+                            text: junkDelegate.cueLabel + " at " + root.formatCuePosition(junkDelegate.positionMs)
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                            font.pointSize: Theme.fontSmall
+                        }
+                        Label {
+                            objectName: "junkCueReason"
+                            visible: junkDelegate.reason.length > 0
+                            text: junkDelegate.reason
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                            font.pointSize: Theme.fontSmall
+                            color: Theme.textMuted
+                            ToolTip.visible: reasonHover.hovered && truncated
+                            ToolTip.text: junkDelegate.reason
+                            HoverHandler { id: reasonHover }
+                        }
                     }
                     Rectangle {
                         radius: 3

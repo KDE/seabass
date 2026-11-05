@@ -146,6 +146,11 @@ public:
         // they read as one row listed twice, and the second flipping with
         // the first (one change per track) read as a bug.
         CueLabelRole,
+        // True on the first row of a track, false on the rows of the same
+        // track that follow it: the rows of one track sit together, and
+        // the page draws the followers as continuation rows, with no tick
+        // of their own, since the tick on the first stages them all.
+        FirstOfTrackRole,
     };
 
     explicit JunkCueIssueListModel(QObject *parent = nullptr);

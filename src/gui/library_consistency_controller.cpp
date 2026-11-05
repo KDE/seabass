@@ -7,6 +7,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <numeric>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -291,6 +292,9 @@ QVariant JunkCueIssueListModel::data(const QModelIndex &index, int role) const
         return issue.cue.kind == domain::CuePoint::Kind::Hot
             ? QStringLiteral("Hot cue %1").arg(issue.cue.hotCueNumber)
             : QStringLiteral("Memory cue");
+    case FirstOfTrackRole:
+        return index.row() == 0
+            || junkKeyFor(m_issues[static_cast<size_t>(index.row()) - 1].track) != junkKeyFor(issue.track);
     default:
         return {};
     }
@@ -307,6 +311,7 @@ QHash<int, QByteArray> JunkCueIssueListModel::roleNames() const
         {ReasonRole, "reason"},
         {PositionMsRole, "positionMs"},
         {CueLabelRole, "cueLabel"},
+        {FirstOfTrackRole, "firstOfTrack"},
     };
 }
 
@@ -323,6 +328,27 @@ void JunkCueIssueListModel::appendIssues(std::vector<domain::JunkCueIssue> issue
     if (issues.empty()) {
         return;
     }
+    // A track's rows together, in the order the tracks first appear: the
+    // start-cue rule and the clustered-hot-cue rule each add their rows
+    // in their own pass, so a track's rows could sit far apart.
+    std::vector<QString> keys;
+    keys.reserve(issues.size());
+    std::map<QString, size_t> firstSeen;
+    for (const auto &issue : issues) {
+        keys.push_back(junkKeyFor(issue.track));
+        firstSeen.emplace(keys.back(), keys.size() - 1);
+    }
+    std::vector<size_t> order(issues.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::stable_sort(order.begin(), order.end(),
+                     [&](size_t a, size_t b) { return firstSeen[keys[a]] < firstSeen[keys[b]]; });
+    std::vector<domain::JunkCueIssue> grouped;
+    grouped.reserve(issues.size());
+    for (size_t i : order) {
+        grouped.push_back(std::move(issues[i]));
+    }
+    issues = std::move(grouped);
+
     int first = static_cast<int>(m_issues.size());
     int last = first + static_cast<int>(issues.size()) - 1;
     beginInsertRows(QModelIndex(), first, last);
@@ -340,6 +366,10 @@ void JunkCueIssueListModel::removeAt(int index)
     m_issues.erase(m_issues.begin() + index);
     m_staged.erase(m_staged.begin() + index);
     endRemoveRows();
+    // The row that moved up may be its track's first now.
+    if (static_cast<size_t>(index) < m_issues.size()) {
+        emit dataChanged(this->index(index, 0), this->index(index, 0), {FirstOfTrackRole});
+    }
 }
 
 void JunkCueIssueListModel::setStaged(int index, bool staged)
