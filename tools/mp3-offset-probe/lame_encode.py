@@ -63,10 +63,10 @@ def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
     lib.lame_set_bWriteVbrTag(gf, 0 if notag else 1)
     if lib.lame_init_params(gf) < 0:
         sys.exit("lame_init_params failed")
-    # What the frontend calls before the first sample: sets up the
-    # placeholder tag frame (InitVbrTag) that the seek table is kept in.
-    lib.lame_init_bitstream.argtypes = [ctypes.c_void_p]
-    lib.lame_init_bitstream(gf)
+    # No lame_init_bitstream() here: the library writes the placeholder
+    # tag frame (InitVbrTag) itself before the first frame, and a second
+    # call writes a second one, a silent frame the tag's delay does not
+    # count, so every decoder put the audio 1152 samples late.
 
     samples = struct.pack("<%dh" % count, *pcm)
     buf = ctypes.create_string_buffer(count * 2 + 7200)
