@@ -102,6 +102,12 @@ std::vector<std::string> messages(const std::string &text)
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
+        // The log is written in text mode, so on Windows its lines end in
+        // CRLF, and the file is read here as bytes: the '\r' would otherwise
+        // stay on every message and no exact comparison could match.
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
         const size_t gap = line.find("  ");
         if (gap != std::string::npos) {
             out.push_back(line.substr(gap + 2));
