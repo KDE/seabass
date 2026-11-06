@@ -753,6 +753,7 @@ Page {
                     font.pointSize: Theme.fontSmall
                 }
                 Button {
+                    objectName: "undoLastSaveButton"
                     text: "Undo Last Save"
                     visible: syncController.canUndo
                     enabled: !syncController.busy && !syncController.writing

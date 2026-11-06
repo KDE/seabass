@@ -529,7 +529,7 @@ TestCase {
         // the first line still asks.
         compare(findChild(page.header, "overview").visible, false);
         compare(page.controller.proposalEmpty, false);
-        const undo = findChild(page.header, "undoButton");
+        const undo = findChild(page.header, "undoLastSaveButton");
         verify(undo.visible, "Undo is offered");
         verify(undo.enabled);
         const dialog = findChild(page, "summaryDialog");

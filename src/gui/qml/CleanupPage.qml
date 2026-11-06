@@ -486,7 +486,7 @@ Page {
                 }
                 Button {
                     id: undoButton
-                    objectName: "undoButton"
+                    objectName: "undoLastSaveButton"
                     text: "Undo Last Save"
                     visible: cleanupController.canUndo
                     enabled: !cleanupController.busy && !cleanupController.writing

@@ -359,6 +359,7 @@ Page {
                         onClicked: duplicatesController.applyAllUnambiguous()
                     }
                     Button {
+                        objectName: "undoLastSaveButton"
                         text: "Undo Last Save"
                         visible: duplicatesController.canUndo
                         enabled: !duplicatesController.busy && !duplicatesController.writing

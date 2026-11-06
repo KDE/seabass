@@ -478,7 +478,7 @@ Page {
                     Layout.fillWidth: true
                 }
                 Button {
-                    objectName: "undoButton"
+                    objectName: "undoLastSaveButton"
                     text: "Undo Last Save"
                     visible: root.controller.canUndo
                     enabled: root.idle
