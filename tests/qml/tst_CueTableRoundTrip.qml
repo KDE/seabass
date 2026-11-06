@@ -22,7 +22,7 @@ import SeabassGui
 // it and it is compared with the start like the rest.
 //
 // The fixture-sized twin of tst_LiveEditMode's
-// test_11_cueTableRepairAllSaveUndo (rig part W11), which does the same
+// test_13_cueTableRepairAllSaveUndo (rig part W11), which does the same
 // on the rig's stick B. This one runs in CI.
 TestCase {
     id: testCase
