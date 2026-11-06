@@ -182,7 +182,7 @@ unmount_until_gone() {  # device
 }
 
 show_log() {  # log
-    grep -E "^(PASS|FAIL|SKIP|XFAIL|Totals)|^QDEBUG|^   (Actual|Expected|Loc)|^(onelibrary|engine):|rolled back" "$1" \
+    grep -aE "^(PASS|FAIL|SKIP|XFAIL|Totals)|^QDEBUG|^   (Actual|Expected|Loc)|^(onelibrary|engine):|rolled back" "$1" \
         | sed 's/^QDEBUG : [a-zA-Z0-9_]*() qml://' | sed 's/^/    /'
 }
 

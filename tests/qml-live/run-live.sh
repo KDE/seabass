@@ -93,7 +93,7 @@ run() {  # name, extra env assignments...
     local log; log="$(mktemp)"
     echo "=== $name"
     env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$log" \
-        | grep -E "^(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^   (Actual|Expected|Loc)" \
+        | grep -aE "^(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^   (Actual|Expected|Loc)" \
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'
     # The test binary's own status, not the filter's: a pipeline ends with
     # sed, which succeeds whatever the tests did, so a run full of FAILs
