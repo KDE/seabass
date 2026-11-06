@@ -27,6 +27,11 @@ namespace seabass::infrastructure::local
 //    "estimated":"0","mtime":"1710000000","path":"Contents/a/b.mp3",
 //    "samplerate":"44100","size":"22545278","title":"..."}
 //
+// An MP3's entry also carries "mp3leadin" (#50; the format is described
+// in the .cpp). It is a new field rather than a new file version: an
+// entry without it is still good for everything else, and only a caller
+// that wants the lead-in probes that file again.
+//
 // Paths are stored RELATIVE to the stick root, so a cache written on
 // Linux under /media/me/STICK still reads on Windows under H:\ -- the
 // same stick gets mounted at a different place on every machine, and an
@@ -49,6 +54,11 @@ public:
     // Cached metadata for an absolute path under the stick root, or
     // nullopt when absent or stale (size/mtime changed).
     std::optional<application::FileMetadata> lookup(const std::string &absoluteFilePath) const override;
+
+    // The same without the stat that checks the file is unchanged: for a
+    // pass that must not touch every audio file (the catalog cache's
+    // Tracks stage), whose answer a later pass checks.
+    std::optional<application::FileMetadata> lookupByPathOnly(const std::string &absoluteFilePath) const;
 
     // Records metadata. Nothing is written to disk until save().
     void store(const std::string &absoluteFilePath, const application::FileMetadata &metadata) override;

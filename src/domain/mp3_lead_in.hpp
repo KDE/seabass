@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <string_view>
+
 namespace seabass::domain
 {
 
@@ -84,5 +86,9 @@ int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder);
 // the callers use 0 for it: the correction is never worse than not
 // having one.
 double engineToRekordboxOffsetMs(const Mp3LeadIn &leadIn);
+
+// Whether a path names an MP3 by its extension, in any case: the files
+// whose lead-in is worth reading at all.
+bool hasMp3Extension(std::string_view path);
 
 }  // namespace seabass::domain

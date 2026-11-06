@@ -125,6 +125,79 @@ long long intFieldOrZero(const std::map<std::string, std::string> &fields, const
     return parsed ? *parsed : 0;
 }
 
+// The "mp3leadin" field (#50): absent when the entry was written before
+// the probe read lead-ins (or for a file that is not an MP3), "-" when
+// the probe looked and found none it could read, otherwise a version
+// token and the nine fields of domain::Mp3LeadIn separated by spaces:
+//   "1 <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>"
+// A value this build cannot parse reads as absent, so the file is
+// probed again rather than taken to have no lead-in.
+constexpr const char *LeadInNone = "-";
+
+std::string leadInText(const std::optional<domain::Mp3LeadIn> &leadIn)
+{
+    if (!leadIn) {
+        return LeadInNone;
+    }
+    const char tag = leadIn->tag == domain::Mp3LeadIn::Tag::Lame   ? 'L'
+                     : leadIn->tag == domain::Mp3LeadIn::Tag::Lavc ? 'C'
+                     : leadIn->tag == domain::Mp3LeadIn::Tag::Other ? 'O'
+                                                                    : 'N';
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << "1 " << int(leadIn->infoFrame) << ' ' << tag << ' ' << int(leadIn->lameCrcValid) << ' '
+        << leadIn->encoderDelay << ' ' << leadIn->encoderPadding << ' ' << int(leadIn->infoFrameModeMatchesAudio)
+        << ' ' << int(leadIn->vbri) << ' ' << leadIn->sampleRate << ' ' << leadIn->samplesPerFrame;
+    return out.str();
+}
+
+// True when `text` is a lead-in this build reads, with `out` filled.
+bool parseLeadIn(const std::string &text, application::FileMetadata &out)
+{
+    if (text == LeadInNone) {
+        out.mp3LeadInRead = true;
+        out.mp3LeadIn.reset();
+        return true;
+    }
+    std::istringstream in(text);
+    in.imbue(std::locale::classic());
+    int version = 0;
+    int info = 0;
+    char tag = 0;
+    int crc = 0;
+    int modes = 0;
+    int vbri = 0;
+    domain::Mp3LeadIn leadIn;
+    if (!(in >> version >> info >> tag >> crc >> leadIn.encoderDelay >> leadIn.encoderPadding >> modes >> vbri
+          >> leadIn.sampleRate >> leadIn.samplesPerFrame)
+        || version != 1) {
+        return false;
+    }
+    switch (tag) {
+    case 'N':
+        leadIn.tag = domain::Mp3LeadIn::Tag::None;
+        break;
+    case 'L':
+        leadIn.tag = domain::Mp3LeadIn::Tag::Lame;
+        break;
+    case 'C':
+        leadIn.tag = domain::Mp3LeadIn::Tag::Lavc;
+        break;
+    case 'O':
+        leadIn.tag = domain::Mp3LeadIn::Tag::Other;
+        break;
+    default:
+        return false;
+    }
+    leadIn.infoFrame = info != 0;
+    leadIn.lameCrcValid = crc != 0;
+    leadIn.infoFrameModeMatchesAudio = modes != 0;
+    leadIn.vbri = vbri != 0;
+    out.mp3LeadInRead = true;
+    out.mp3LeadIn = leadIn;
+    return true;
+}
+
 }  // namespace
 
 MetadataCache::MetadataCache(std::string stickRoot) : m_stickRoot(normalizeSeparators(std::move(stickRoot)))
@@ -175,6 +248,9 @@ MetadataCache::MetadataCache(std::string stickRoot) : m_stickRoot(normalizeSepar
         // fact that a caller will then delete a file over.
         auto estimated = fields->find("estimated");
         metadata.durationIsEstimated = estimated == fields->end() || estimated->second != "0";
+        if (auto leadIn = fields->find("mp3leadin"); leadIn != fields->end()) {
+            parseLeadIn(leadIn->second, metadata);
+        }
 
         m_entries[normalizeSeparators(path->second)] = Entry{std::move(metadata), *parsedSize, *parsedMtime};
     }
@@ -190,6 +266,15 @@ std::string MetadataCache::relativeKey(const std::string &absoluteFilePath) cons
         return {};
     }
     return path.substr(m_stickRoot.size() + 1);
+}
+
+std::optional<application::FileMetadata> MetadataCache::lookupByPathOnly(const std::string &absoluteFilePath) const
+{
+    const auto it = m_entries.find(relativeKey(absoluteFilePath));
+    if (it == m_entries.end()) {
+        return std::nullopt;
+    }
+    return it->second.metadata;
 }
 
 std::optional<application::FileMetadata> MetadataCache::lookup(const std::string &absoluteFilePath) const
@@ -234,7 +319,7 @@ bool MetadataCache::save()
     }
     std::string out;
     for (const auto &[key, entry] : m_entries) {
-        out += writeFlatObject({{"path", key},
+        std::map<std::string, std::string> fields{{"path", key},
                                 {"title", entry.metadata.title},
                                 {"artist", entry.metadata.artist},
                                 {"album", entry.metadata.album},
@@ -243,7 +328,11 @@ bool MetadataCache::save()
                                 {"bitrate", toText(static_cast<long long>(entry.metadata.bitrate))},
                                 {"samplerate", toText(static_cast<long long>(entry.metadata.sampleRate))},
                                 {"size", toText(entry.sizeBytes)},
-                                {"mtime", toText(entry.mtimeSeconds)}});
+                                {"mtime", toText(entry.mtimeSeconds)}};
+        if (entry.metadata.mp3LeadInRead) {
+            fields["mp3leadin"] = leadInText(entry.metadata.mp3LeadIn);
+        }
+        out += writeFlatObject(fields);
         out += "\n";
     }
     // The cache lives in <stick>/Seabass/caches now, which may not exist

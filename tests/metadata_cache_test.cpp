@@ -10,12 +10,15 @@
 #include <fstream>
 #include <iostream>
 
+#include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
 
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::application::FileMetadata;
+using seabass::domain::Mp3LeadIn;
+using seabass::infrastructure::local::CachedSampleRates;
 using seabass::infrastructure::local::MetadataCache;
 namespace fs = std::filesystem;
 
@@ -57,10 +60,47 @@ FileMetadata sample()
     return m;
 }
 
+Mp3LeadIn lameLeadIn()
+{
+    Mp3LeadIn l;
+    l.infoFrame = true;
+    l.tag = Mp3LeadIn::Tag::Lame;
+    l.lameCrcValid = true;
+    l.encoderDelay = 576;
+    l.encoderPadding = 1404;
+    l.infoFrameModeMatchesAudio = true;
+    l.sampleRate = 44100;
+    l.samplesPerFrame = 1152;
+    return l;
+}
+
+bool sameLeadIn(const Mp3LeadIn &a, const Mp3LeadIn &b)
+{
+    return a.infoFrame == b.infoFrame && a.tag == b.tag && a.lameCrcValid == b.lameCrcValid
+        && a.encoderDelay == b.encoderDelay && a.encoderPadding == b.encoderPadding
+        && a.infoFrameModeMatchesAudio == b.infoFrameModeMatchesAudio && a.vbri == b.vbri
+        && a.sampleRate == b.sampleRate && a.samplesPerFrame == b.samplesPerFrame;
+}
+
+// Answers what it is told and counts the files it was handed.
+class CountingProbe : public seabass::application::TrackMetadataProbe
+{
+public:
+    std::optional<FileMetadata> answer;
+    int calls = 0;
+    std::optional<FileMetadata> read(const std::string &) override
+    {
+        ++calls;
+        return answer;
+    }
+};
+
 }  // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    // The MP3 lead-in fixtures (tests/fixtures/mp3-lead-in), for case 8.
+    const std::string fixtures = argc > 1 ? argv[1] : std::string();
     fs::path root = seabass::testing::scratchRoot() / "seabass_metadata_cache_test";
     fs::remove_all(root);
     fs::create_directories(root);
@@ -159,6 +199,104 @@ int main()
         cache.store(audio, noDuration);
         assert(!cache.dirty());
         std::cout << "case 5 (foreign path and zero duration are not cached) OK\n";
+    }
+
+    // Case 6: an MP3's lead-in (#50) round-trips, and so does "looked,
+    // found none". A line written before the field existed reads as not
+    // looked, so the file is probed again, not taken to have no lead-in.
+    {
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        const std::string other = writeFile(root / "Contents" / "a" / "other.mp3", "another file");
+        FileMetadata withLeadIn = sample();
+        withLeadIn.mp3LeadInRead = true;
+        withLeadIn.mp3LeadIn = lameLeadIn();
+        FileMetadata withNone = sample();
+        withNone.mp3LeadInRead = true;
+
+        MetadataCache cache(seabass::pathToUtf8(root));
+        cache.store(audio, withLeadIn);
+        cache.store(other, withNone);
+        assert(cache.save());
+
+        MetadataCache reloaded(seabass::pathToUtf8(root));
+        auto got = reloaded.lookup(audio);
+        assert(got && got->mp3LeadInRead && got->mp3LeadIn);
+        assert(sameLeadIn(*got->mp3LeadIn, lameLeadIn()));
+        auto none = reloaded.lookup(other);
+        assert(none && none->mp3LeadInRead && !none->mp3LeadIn);
+
+        writeFile(root / "Seabass" / "caches" / "metadata.jsonl",
+                  "{\"duration\":\"120.000000\",\"estimated\":\"0\",\"mtime\":\"" + currentMtimeSeconds(audio)
+                      + "\",\"path\":\"Contents/a/track.mp3\",\"size\":\"" + currentSizeBytes(audio) + "\"}\n"
+                      + "{\"duration\":\"120.000000\",\"mp3leadin\":\"9 garbage\",\"mtime\":\"" + currentMtimeSeconds(other)
+                      + "\",\"path\":\"Contents/a/other.mp3\",\"size\":\"" + currentSizeBytes(other) + "\"}\n");
+        MetadataCache old(seabass::pathToUtf8(root));
+        auto before = old.lookup(audio);
+        assert(before && !before->mp3LeadInRead && !before->mp3LeadIn);
+        auto unknown = old.lookup(other);
+        assert(unknown && !unknown->mp3LeadInRead);
+        std::cout << "case 6 (lead-in round-trips; an entry without one is not looked) OK\n";
+    }
+
+    // Case 7: lookupByPathOnly takes an entry without the stat, so it
+    // still answers for a file that changed; lookup does not.
+    {
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        const std::string changing = writeFile(root / "Contents" / "b" / "changing.mp3", "first");
+        MetadataCache cache(seabass::pathToUtf8(root));
+        cache.store(changing, sample());
+        assert(cache.save());
+        writeFile(root / "Contents" / "b" / "changing.mp3", "second, and longer");
+        MetadataCache reloaded(seabass::pathToUtf8(root));
+        assert(!reloaded.lookup(changing).has_value());
+        assert(reloaded.lookupByPathOnly(changing).has_value());
+        assert(!reloaded.lookupByPathOnly(seabass::pathToUtf8(root / "nowhere.mp3")).has_value());
+        std::cout << "case 7 (lookupByPathOnly skips the stat) OK\n";
+    }
+
+    // Case 8: CachedSampleRates::leadInOf probes once and caches; an entry
+    // without a lead-in is probed again; a probe with nothing to say (no
+    // TagLib) falls back to reading the file's start directly.
+    if (!fixtures.empty()) {
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        const fs::path mp3 = root / "Contents" / "c" / "lame.mp3";
+        fs::create_directories(mp3.parent_path());
+        fs::copy_file(seabass::pathFromUtf8(fixtures) / "lame-cbr-44100.mp3", mp3,
+                      fs::copy_options::overwrite_existing);
+        const std::string file = seabass::pathToUtf8(mp3);
+
+        CountingProbe probe;
+        FileMetadata probed = sample();
+        probed.mp3LeadInRead = true;
+        probed.mp3LeadIn = lameLeadIn();
+        probed.mp3LeadIn->encoderDelay = 1000;  // not the file's: proves the probe's answer is the one used
+        probe.answer = probed;
+        {
+            CachedSampleRates rates(seabass::pathToUtf8(root), probe);
+            auto first = rates.leadInOf(file);
+            assert(first && first->encoderDelay == 1000 && probe.calls == 1);
+            auto second = rates.leadInOf(file);
+            assert(second && second->encoderDelay == 1000 && probe.calls == 1);
+            assert(rates.save());
+        }
+        {
+            // A cache entry the probe stored without looking at the lead-in.
+            fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+            CountingProbe old;
+            old.answer = sample();
+            CachedSampleRates rates(seabass::pathToUtf8(root), old);
+            assert(rates.rateOf(file).has_value() && old.calls == 1);
+            // No lead-in from the probe: read from the file itself.
+            auto direct = rates.leadInOf(file);
+            assert(old.calls == 2);
+            assert(direct && direct->tag == Mp3LeadIn::Tag::Lame && direct->encoderDelay == 576);
+            // And by path, without any probe at all.
+            CountingProbe none;
+            CachedSampleRates byPath(seabass::pathToUtf8(root), none);
+            auto taken = byPath.leadInByPathOf(file);
+            assert(taken && taken->encoderDelay == 576 && none.calls == 0);
+        }
+        std::cout << "case 8 (CachedSampleRates lead-ins: probe once, fall back to the file) OK\n";
     }
 
     fs::remove_all(root);

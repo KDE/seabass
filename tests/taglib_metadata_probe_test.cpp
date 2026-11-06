@@ -50,6 +50,9 @@ int main()
         assert(std::abs(metadata->durationSeconds - expectedSeconds(frames)) < 0.01);
         assert(metadata->bitrate == 128);
         assert(metadata->sampleRate == SampleRate);
+        // An .mp3 has its lead-in read with the rest (#50): a Xing frame here.
+        assert(metadata->mp3LeadInRead);
+        assert(metadata->mp3LeadIn && metadata->mp3LeadIn->infoFrame);
         std::cout << "case 1 (Xing header -> exact duration, not estimated) OK\n";
     }
 
@@ -67,6 +70,8 @@ int main()
         assert(metadata.has_value());
         assert(metadata->durationIsEstimated);
         assert(metadata->durationSeconds > 0.0);
+        assert(metadata->mp3LeadInRead);
+        assert(metadata->mp3LeadIn && !metadata->mp3LeadIn->infoFrame);
         assert(metadata->bitrate == 128);
         std::cout << "case 2 (no Xing header -> duration flagged estimated) OK\n";
     }

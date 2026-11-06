@@ -373,6 +373,15 @@ add_library(storageprobe STATIC
 target_include_directories(storageprobe PUBLIC src)
 target_compile_features(storageprobe PUBLIC cxx_std_17)
 
+# The MP3 lead-in (#50): the model in domain/ and the reader that fills
+# it, with nothing else from this tree, so seabass_taglib's metadata
+# probe can read a lead-in without pulling in the whole core.
+add_library(seabass_mp3_lead_in STATIC
+    src/domain/mp3_lead_in.cpp
+    src/infrastructure/audio/mp3_lead_in_reader.cpp
+)
+target_include_directories(seabass_mp3_lead_in PUBLIC src)
+
 add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
@@ -397,8 +406,6 @@ add_library(seabass_core STATIC
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
-    src/domain/mp3_lead_in.cpp
-    src/infrastructure/audio/mp3_lead_in_reader.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
@@ -532,7 +539,7 @@ add_library(seabass_core STATIC
 # generated/ alongside src/: seabass_version.hpp is written there at
 # configure time, and everything that links the core can ask what it is.
 target_include_directories(seabass_core PUBLIC src "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
+target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in)
 
 # The production sources the tests kept re-compiling, compiled once.
 #
@@ -579,8 +586,6 @@ add_library(seabass_core_testing STATIC
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
-    src/domain/mp3_lead_in.cpp
-    src/infrastructure/audio/mp3_lead_in_reader.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
@@ -637,7 +642,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/work_counters.cpp
 )
 target_include_directories(seabass_core_testing PUBLIC src)
-target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
+target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in)
 
 # COMPILE_LANGUAGE:CXX-gated: this target also compiles sqlite3.c (below,
 # MSVC only) as a plain C file, and both of these are C++-only. The
@@ -846,6 +851,7 @@ if(TAGLIB_FOUND OR TARGET TagLib::tag)
         src/infrastructure/audio/taglib_duration_probe.cpp
         src/infrastructure/audio/embedded_artwork.cpp)
     target_include_directories(seabass_taglib PUBLIC src)
+    target_link_libraries(seabass_taglib PUBLIC seabass_mp3_lead_in)
     if(TARGET PkgConfig::TAGLIB)
         target_link_libraries(seabass_taglib PUBLIC PkgConfig::TAGLIB)
     else()
@@ -1533,7 +1539,8 @@ add_test(NAME silence_cache_test COMMAND silence_cache_test)
 add_executable(metadata_cache_test tests/metadata_cache_test.cpp)
 target_include_directories(metadata_cache_test PRIVATE src)
 target_link_libraries(metadata_cache_test PRIVATE seabass_core)
-add_test(NAME metadata_cache_test COMMAND metadata_cache_test)
+add_test(NAME metadata_cache_test COMMAND metadata_cache_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
 
 add_executable(metadata_store_test tests/metadata_store_test.cpp)
 target_include_directories(metadata_store_test PRIVATE src)
