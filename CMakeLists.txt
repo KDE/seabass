@@ -4043,6 +4043,27 @@ target_link_libraries(pdb_playlist_edit PRIVATE seabass_core rekordbox_format)
 add_executable(mp3_lead_in_dump tools/mp3_lead_in_dump.cpp)
 target_link_libraries(mp3_lead_in_dump PRIVATE seabass_mp3_lead_in)
 
+# #50, the lead-in model against the decoders it describes: decodes each
+# click MP3 with libmpg123 (as rekordbox) and libavformat/libavcodec (as
+# Engine), measures the lag between the two clicks and compares it with
+# engineToRekordboxOffsetMs(). Built only where the four libraries and
+# their headers are; without them the check is not registered at all.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SEABASS_MP3_DECODERS QUIET IMPORTED_TARGET libmpg123 libavformat libavcodec libavutil)
+endif()
+if(SEABASS_MP3_DECODERS_FOUND)
+    message(STATUS "mp3_decoder_offset_check: built (libmpg123, libavformat, libavcodec, libavutil found)")
+    add_executable(mp3_decoder_offset_check tools/mp3_decoder_offset_check.cpp)
+    target_link_libraries(mp3_decoder_offset_check PRIVATE seabass_mp3_lead_in PkgConfig::SEABASS_MP3_DECODERS)
+    file(GLOB SEABASS_MP3_CLICK_FILES ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click/*.mp3)
+    add_test(NAME mp3_decoder_offset_check_test
+        COMMAND mp3_decoder_offset_check ${SEABASS_MP3_CLICK_FILES})
+else()
+    message(STATUS "mp3_decoder_offset_check: NOT built, test mp3_decoder_offset_check_test not registered "
+        "(needs pkg-config modules libmpg123 libavformat libavcodec libavutil)")
+endif()
+
 add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
