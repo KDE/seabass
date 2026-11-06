@@ -101,10 +101,27 @@ TestCase {
         return summary;
     }
 
-    function undoAndWait() {
-        var s = session();
-        var spy = createTemporaryObject(spyComponent, testCase, {target: s, signalName: "saveFinished"});
-        s.undoLastSave();
+    // Undo Last Save the way a person gives it: the page's button, where
+    // the test has a page and the page has one, pressed once it is shown
+    // and usable (the controller ignores a press while it scans). Device
+    // Settings has no such button, nor does Clean Up Stray Cues until #78,
+    // and some tests drive a controller without its page: those undo
+    // through the session. The log says which way it went.
+    function undoAndWait(page) {
+        const s = session();
+        compare(s.canUndo, true, "there is a save to undo");
+        const spy = createTemporaryObject(spyComponent, testCase, {target: s, signalName: "saveFinished"});
+        const button = page ? Live.findByObjectName(page, "undoLastSaveButton") : null;
+        if (button !== null) {
+            tryVerify(function() { return button.visible && button.enabled; }, 300000,
+                      "the page offers Undo Last Save and it can be pressed");
+            console.log("  undo: pressing the page's Undo Last Save");
+            button.clicked();
+        } else {
+            console.log("  undo: through the session ("
+                        + (page ? "the page has no Undo Last Save" : "no page in this test") + ")");
+            s.undoLastSave();
+        }
         tryVerify(function() { return spy.count > 0; }, 300000);
         var summary = spy.signalArguments[0][0];
         console.log("  undo: " + Live.summaryLine(summary));
@@ -181,7 +198,7 @@ TestCase {
         console.log("  on disk after save: " + onDisk);
 
         compare(s.canUndo, true);
-        undoAndWait();
+        undoAndWait(page);
         reread.load(rekordboxPath);
         waitIdle(reread);
         compare(valueOf(reread, target.fileName, target.label), target.value);
@@ -236,7 +253,7 @@ TestCase {
         }
         if (summary.written > 0) {
             compare(s.canUndo, true);
-            undoAndWait();
+            undoAndWait(page);
         }
     }
 
@@ -291,7 +308,7 @@ TestCase {
         compare(ctrl.junkCues.rowCount(), 0);
         console.log("  rescan after save: " + ctrl.junkCues.rowCount() + " stray cues remain");
 
-        undoAndWait();
+        undoAndWait(page);
         ctrl.scan(rekordboxPath, enginePath);
         waitIdle(ctrl, 300000);
         compare(ctrl.junkCues.rowCount(), count);
@@ -395,7 +412,7 @@ TestCase {
         verify(inRekordbox !== null, "rekordbox has the added cue");
         verify(inOneLibrary !== null, "its OneLibrary mirror has it too");
 
-        undoAndWait();
+        undoAndWait(null);
         rekordbox.scan("rekordbox", rekordboxPath);
         waitIdle(rekordbox, 300000);
         oneLibrary.scan("onelibrary", rekordboxPath);
@@ -464,7 +481,7 @@ TestCase {
         verify(tracks.totalTrackCount < rowsBefore, "the extra copies' rows are gone");
         verify(ctrl.pendingDeletions.rowCount() > pendingBefore, "their files wait in Free Up Space");
 
-        undoAndWait();
+        undoAndWait(null);
         ctrl.scan("rekordbox", rekordboxPath);
         waitIdle(ctrl, 300000);
         tracks.scan("rekordbox", rekordboxPath);
@@ -722,7 +739,7 @@ TestCase {
         console.log("  rekordbox rows: " + rowsBefore + " -> " + tracks.totalTrackCount);
         verify(tracks.totalTrackCount < rowsBefore, "the broken copy's row is gone");
 
-        undoAndWait();
+        undoAndWait(page);
         ctrl.scan(rekordboxPath, enginePath);
         waitIdle(ctrl, 300000);
         console.log("  rescan after undo: issues " + ctrl.issues.rowCount() + ", repairable " + ctrl.repairableCount);
@@ -871,7 +888,7 @@ TestCase {
         console.log("  after save: " + restore.proposalCount + " proposals left");
         verify(restore.proposalCount < offered, "what was restored is no longer offered");
 
-        undoAndWait();
+        undoAndWait(null);
         restore.scan(rekordboxPath);
         tryVerify(function() { return !restore.busy; }, 600000);
         console.log("  after undo: " + restore.proposalCount + " proposals");
