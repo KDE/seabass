@@ -415,14 +415,18 @@ int main(int argc, char **argv)
     // half-emptied record behind the refusal.
     const fs::path lockedDir = backups / seabass::pathFromUtf8(c2);
 #if defined(_WIN32)
-    // Each file held open with no sharing: the sharing violation a real
-    // stick gives when an archiver or a preview pane has the zip open,
-    // which is the Windows case of #10.
+    // Each file held open with read sharing only: the sharing violation a
+    // real stick gives when an archiver or a preview pane has the zip
+    // open, which is the Windows case of #10. Reads stay allowed on
+    // purpose: with no sharing at all the listing could not read the
+    // manifest either, left the record out of the plan, and there was
+    // nothing to refuse (total 1, seen on the Windows shakedown). Without
+    // FILE_SHARE_DELETE the delete is still refused.
     const fs::path heldFiles[2] = {lockedDir / ".manifest", lockedDir / "backup.zip"};
     HANDLE held[2] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
     for (int i = 0; i < 2; ++i) {
-        held[i] = CreateFileW(heldFiles[i].c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                              nullptr);
+        held[i] = CreateFileW(heldFiles[i].c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
         if (held[i] == INVALID_HANDLE_VALUE) {
             fail("case 4: could not hold " + seabass::pathToUtf8(heldFiles[i].filename()) + " open");
         }
