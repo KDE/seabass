@@ -398,6 +398,7 @@ add_library(seabass_core STATIC
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
     src/domain/mp3_lead_in.cpp
+    src/infrastructure/audio/mp3_lead_in_reader.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
@@ -579,6 +580,7 @@ add_library(seabass_core_testing STATIC
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
     src/domain/mp3_lead_in.cpp
+    src/infrastructure/audio/mp3_lead_in_reader.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
@@ -2019,6 +2021,17 @@ add_executable(mp3_lead_in_test
 target_link_libraries(mp3_lead_in_test PRIVATE seabass_core_testing)
 target_include_directories(mp3_lead_in_test PRIVATE src)
 add_test(NAME mp3_lead_in_test COMMAND mp3_lead_in_test)
+
+# readMp3LeadIn over the committed MP3s in tests/fixtures/mp3-lead-in
+# (tools/mp3-offset-probe/make-lead-in-fixtures.sh made them): the parsed
+# fields and class per file, and the cap on how much of a file it reads.
+add_executable(mp3_lead_in_reader_test
+    tests/mp3_lead_in_reader_test.cpp
+)
+target_link_libraries(mp3_lead_in_reader_test PRIVATE seabass_core_testing)
+target_include_directories(mp3_lead_in_reader_test PRIVATE src)
+add_test(NAME mp3_lead_in_reader_test COMMAND mp3_lead_in_reader_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
 
 add_executable(engine_cue_translation_test
     tests/engine_cue_translation_test.cpp
