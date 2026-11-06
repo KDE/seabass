@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/hashing/sha1.hpp"
@@ -722,6 +724,7 @@ std::vector<domain::CuePoint> cuesOfRow(const std::vector<std::optional<djintero
 
 LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath)
     : m_engineLibraryPath(std::move(engineLibraryPath))
+    , m_leadInSource([](const std::string &file) { return audio::readMp3LeadIn(file); })
 {
 }
 
@@ -755,7 +758,42 @@ std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Tra
     return rate;
 }
 
+double LibdjinteropEngineReader::shiftFromSource(const domain::Track &track)
+{
+    if (!m_leadInSource || !shiftsCueTimeline(track.filePath, track.streamingSource)) {
+        return 0.0;
+    }
+    try {
+        return engineCueShiftMs(m_leadInSource(track.filePath));
+    } catch (const application::OperationCancelled &) {
+        throw;
+    } catch (const std::exception &e) {
+        m_progress->warn("track id=" + track.sourceId + ": the start of its MP3 file could not be read ("
+                         + e.what() + "); its cues keep Engine's timing");
+        return 0.0;
+    }
+}
+
 void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
+{
+    fillRatesFromSource(tracks);
+    // Every cued MP3 row asked again: the source here may be a better
+    // answer than the one readTracks() had (the catalog cache's Cues
+    // stage checks what its Tracks stage took from the cache unchecked).
+    // A row is moved by the difference, so asking twice never shifts
+    // twice.
+    for (auto &track : tracks) {
+        if (track.cues.empty()) {
+            continue;
+        }
+        m_cancel.throwIfCancelled();
+        const double shift = shiftFromSource(track);
+        shiftCuePositions(track.cues, shift - track.cueTimelineShiftMs);
+        track.cueTimelineShiftMs = shift;
+    }
+}
+
+void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &tracks)
 {
     if (!m_sampleRateSource) {
         return;
@@ -810,6 +848,9 @@ void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
                     continue;
                 }
                 track->cues = cuesOfRow(row->hot_cues(), row->loops(), row->main_cue(), *fileRate);
+                // Read again as Engine stores them: fillCues() puts the
+                // lead-in shift back on.
+                track->cueTimelineShiftMs = 0.0;
             } catch (const application::OperationCancelled &) {
                 throw;
             } catch (const std::exception &) {
@@ -1031,6 +1072,10 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
             if (const auto fileRate = rateFromSource(track)) {
                 track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, *fileRate);
             }
+        }
+        if (!track.cues.empty()) {
+            track.cueTimelineShiftMs = shiftFromSource(track);
+            shiftCuePositions(track.cues, track.cueTimelineShiftMs);
         }
 
         tracks.push_back(std::move(track));

@@ -3483,6 +3483,18 @@ target_include_directories(libdjinterop_engine_loop_cue_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_loop_cue_test COMMAND libdjinterop_engine_loop_cue_test)
 
+# #50 at the Engine boundary: cues on an MP3 stored on Engine's timeline
+# and read on rekordbox's, through a scratch library and the committed
+# lead-in fixtures; a WAV untouched; the setting off as before.
+add_executable(libdjinterop_engine_mp3_lead_in_test
+    tests/libdjinterop_engine_mp3_lead_in_test.cpp
+)
+target_link_libraries(libdjinterop_engine_mp3_lead_in_test PRIVATE seabass_core_testing)
+target_include_directories(libdjinterop_engine_mp3_lead_in_test PRIVATE src)
+target_link_libraries(libdjinterop_engine_mp3_lead_in_test PRIVATE DjInterop SQLite::SQLite3)
+add_test(NAME libdjinterop_engine_mp3_lead_in_test COMMAND libdjinterop_engine_mp3_lead_in_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
+
 add_executable(libdjinterop_engine_cleanup_writer_test
     tests/libdjinterop_engine_cleanup_writer_test.cpp
 )

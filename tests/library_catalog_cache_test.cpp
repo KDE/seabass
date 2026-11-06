@@ -22,6 +22,7 @@
 #include <fstream>
 
 #include "application/use_cases/fill_file_sizes.hpp"
+#include "domain/matching_policy.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "mp3_fixture.hpp"
@@ -930,9 +931,19 @@ void analysisFileFreshnessCases(const std::filesystem::path &fixture)
 // that answer, and every other row reads as the Tracks stage read it.
 // Row 17 (Contents/a074e2.mp3) has one hot cue, pad 1 at sample
 // 435487.5: 9875 ms at 44.1 kHz, 9072.65625 ms at 48 kHz.
+//
+// With the MP3 cue timing correction off (#50): this case is the sample
+// rate path, and with it on the Cues stage also asks the lead-in of every
+// cued MP3 row, analysed or not (38 files here instead of 21), and moves
+// the planted MP3s' cues by their lead-in.
 void engineSampleRateCases(const std::filesystem::path &fixture)
 {
     namespace fs = std::filesystem;
+    seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);
+    struct Restore
+    {
+        ~Restore() { seabass::domain::MatchingPolicy::reset(); }
+    } restore;
     using seabass::domain::Track;
     const fs::path stick = seabass::testing::scratchRoot() / "library_catalog_cache_test_sample_rates";
     fs::remove_all(stick);

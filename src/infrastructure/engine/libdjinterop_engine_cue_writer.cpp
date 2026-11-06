@@ -4,12 +4,16 @@
 
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
 namespace seabass::infrastructure::engine
@@ -60,6 +64,7 @@ djinterop::pad_color padColor(const std::string &color, int slot)
 
 LibdjinteropEngineCueWriter::LibdjinteropEngineCueWriter(std::string engineLibraryPath)
     : m_engineLibraryPath(std::move(engineLibraryPath))
+    , m_leadInSource([](const std::string &file) { return audio::readMp3LeadIn(file); })
 {
 }
 
@@ -152,6 +157,26 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
         }
     }
 
+    // The cues arrive on rekordbox's timeline; an MP3's are moved back
+    // onto Engine's (#50, engine_cue_timeline.hpp), by the shift the
+    // reader adds for the same file. A position the shift puts before the
+    // start is clamped to it.
+    double shiftMs = 0.0;
+    std::string relative;
+    try {
+        relative = track->relative_path();
+    } catch (const std::exception &) {
+        // No path names no file: nothing to shift by.
+    }
+    if (!relative.empty() && m_leadInSource) {
+        const std::string filePath =
+            pathToUtf8((pathFromUtf8(m_engineLibraryPath) / pathFromUtf8(relative)).lexically_normal());
+        if (shiftsCueTimeline(filePath, {})) {
+            shiftMs = engineCueShiftMs(m_leadInSource(filePath));
+        }
+    }
+    const auto toSamples = [&](double rekordboxMs) { return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * sampleRate); };
+
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
     // Engine's hot loops are a separate 8-slot array (loop_at()/loops()),
     // indexed the same 1-8 way as hot_cues() but never the same array --
@@ -183,7 +208,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     std::optional<double> earliestMemoryCueMs;
     for (const auto &cue : cues) {
         if (cue.kind == domain::CuePoint::Kind::Memory) {
-            if (domain::engineCanHoldMemoryCue(cue)
+            // And one the lead-in shift puts at or before Engine's 0 is
+            // as unrepresentable as one at 0:00.
+            if (domain::engineCanHoldMemoryCue(cue) && cue.positionMs - shiftMs > 0.0
                 && (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs)) {
                 earliestMemoryCueMs = cue.positionMs;
             }
@@ -193,9 +220,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
         if (slot < 0 || slot >= HotCueSlotCount) {
             continue;
         }
-        double startOffset = cue.positionMs / 1000.0 * sampleRate;
+        double startOffset = toSamples(cue.positionMs);
         if (cue.isLoop) {
-            double endOffset = cue.loopEndMs / 1000.0 * sampleRate;
+            double endOffset = toSamples(cue.loopEndMs);
             loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, padColor(cue.color, slot + 1)};
         } else {
             slots[slot] = djinterop::hot_cue{cue.comment, startOffset, padColor(cue.color, slot + 1)};
@@ -224,7 +251,7 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     // "no main cue" as sample offset 0 (see the reader: main_cue() maps 0
     // back to nothing), which is what set_main_cue(nullopt) writes.
     track->set_main_cue(earliestMemoryCueMs
-                            ? std::optional<double>(*earliestMemoryCueMs / 1000.0 * sampleRate)
+                            ? std::optional<double>(toSamples(*earliestMemoryCueMs))
                             : std::nullopt);
 }
 

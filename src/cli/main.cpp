@@ -464,6 +464,7 @@ std::vector<Track> scanEnginePath(const std::string &enginePath)
         seabass::infrastructure::paths::stickRootForCatalogPath(enginePath), probe);
     auto reader = std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(enginePath);
     reader->setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+    reader->setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
     std::vector<Track> tracks = scanPath(std::move(reader), enginePath);
     Console::verbose("sample rates probed: " + std::to_string(rates.probes()));
     return tracks;
@@ -1157,6 +1158,7 @@ int runSyncAfterExportCommand(const std::optional<std::string> &rekordboxPathArg
         seabass::infrastructure::engine::LibdjinteropEngineReader engineReader(engineRoot);
         engineReader.setProgressReporter(progress);
         engineReader.setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+        engineReader.setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
         engineTracks = engineReader.readTracks();
         Console::verbose("sample rates probed: " + std::to_string(rates.probes()));
 

@@ -35,6 +35,12 @@ std::atomic<bool> &ignoreCuesAtStartStore()
     return value;
 }
 
+std::atomic<bool> &correctMp3CueTimingStore()
+{
+    static std::atomic<bool> value{MatchingPolicy::DefaultCorrectMp3CueTiming};
+    return value;
+}
+
 }  // namespace
 
 double MatchingPolicy::exactMatchSeconds()
@@ -60,6 +66,16 @@ bool MatchingPolicy::ignoreCuesAtStart()
     return ignoreCuesAtStartStore().load(std::memory_order_relaxed);
 }
 
+bool MatchingPolicy::correctMp3CueTiming()
+{
+    return correctMp3CueTimingStore().load(std::memory_order_relaxed);
+}
+
+void MatchingPolicy::setCorrectMp3CueTiming(bool correct)
+{
+    correctMp3CueTimingStore().store(correct, std::memory_order_relaxed);
+}
+
 void MatchingPolicy::set(double exactMatchSeconds, double compareAudioSeconds, bool ignoreCuesAtStart)
 {
     const double exact = std::clamp(exactMatchSeconds, MinExactMatchSeconds, MaxExactMatchSeconds);
@@ -79,6 +95,7 @@ void MatchingPolicy::set(double exactMatchSeconds, double compareAudioSeconds, b
 void MatchingPolicy::reset()
 {
     set(DefaultExactMatchSeconds, DefaultCompareAudioSeconds, DefaultIgnoreCuesAtStart);
+    setCorrectMp3CueTiming(DefaultCorrectMp3CueTiming);
 }
 
 }  // namespace seabass::domain

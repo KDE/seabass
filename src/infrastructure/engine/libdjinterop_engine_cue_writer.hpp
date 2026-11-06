@@ -5,12 +5,14 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
 
 #include <djinterop/database.hpp>
 
 #include "application/ports/cue_writer.hpp"
+#include "domain/mp3_lead_in.hpp"
 
 namespace seabass::infrastructure::engine
 {
@@ -23,6 +25,15 @@ class LibdjinteropEngineCueWriter : public application::CueWriter
 {
 public:
     explicit LibdjinteropEngineCueWriter(std::string engineLibraryPath);
+
+    // The cues every write is given are on rekordbox's timeline; an MP3's
+    // are moved onto Engine's by the file's lead-in (#50; see
+    // LibdjinteropEngineReader::setLeadInSource(), which adds what this
+    // takes off). By default the writer reads the start of the row's
+    // file itself; a source answers instead, for a test or a caller that
+    // has the answer cached. Nothing when it cannot be read: no shift.
+    using LeadInSource = std::function<std::optional<domain::Mp3LeadIn>(const std::string &filePath)>;
+    void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
 
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
@@ -78,6 +89,7 @@ private:
 
     std::string m_engineLibraryPath;
     std::optional<djinterop::database> m_database;
+    LeadInSource m_leadInSource;
 };
 
 }  // namespace seabass::infrastructure::engine

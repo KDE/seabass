@@ -5,7 +5,9 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 
@@ -83,11 +85,19 @@ djinterop::pad_color parseColor(const std::string &color)
 // cues.size(), since Engine has exactly one memory-style cue slot, so
 // all but the earliest memory cue are unavoidably lost in this
 // direction (see libdjinterop_engine_cue_writer.cpp's own comment).
-int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<domain::CuePoint> &cues)
+//
+// `shiftMs` is the file's lead-in shift (#50, engine_cue_timeline.hpp):
+// the cues arrive on rekordbox's timeline and are written on Engine's,
+// clamped at the start.
+int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<domain::CuePoint> &cues,
+                        double shiftMs)
 {
     if (cues.empty()) {
         return 0;
     }
+    const auto toSamples = [shiftMs](double rekordboxMs) {
+        return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * DefaultSampleRate);
+    };
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
     // Engine keeps hot LOOPS in a separate 8-slot array, and a loop
     // written as a hot cue loses its out point and stops being a loop.
@@ -111,9 +121,9 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
         if (slot < 0 || slot >= HotCueSlotCount) {
             continue;
         }
-        double sampleOffset = cue.positionMs / 1000.0 * DefaultSampleRate;
+        double sampleOffset = toSamples(cue.positionMs);
         if (cue.isLoop) {
-            const double endOffset = cue.loopEndMs / 1000.0 * DefaultSampleRate;
+            const double endOffset = toSamples(cue.loopEndMs);
             loopSlots[static_cast<size_t>(slot)] =
                 djinterop::loop{cue.comment, sampleOffset, endOffset, parseColor(cue.color)};
         } else {
@@ -124,7 +134,7 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
     snapshot.hot_cues = std::move(slots);
     snapshot.loops = std::move(loopSlots);
     if (earliestMemoryCueMs) {
-        snapshot.main_cue = *earliestMemoryCueMs / 1000.0 * DefaultSampleRate;
+        snapshot.main_cue = toSamples(*earliestMemoryCueMs);
     }
     return hotCuesSet + (earliestMemoryCueMs ? 1 : 0);
 }
@@ -724,7 +734,12 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                     snapshot.sample_count = static_cast<unsigned long long>(sampleCount);
                 }
 
-                result.cuesCopied += applyCuesToSnapshot(snapshot, track.cues);
+                // The lead-in shift read from the file this row will name,
+                // the same bytes the Engine reader reads it from later.
+                const double shiftMs = !track.cues.empty() && shiftsCueTimeline(track.filePath, track.streamingSource)
+                    ? engineCueShiftMs(audio::readMp3LeadIn(track.filePath))
+                    : 0.0;
+                result.cuesCopied += applyCuesToSnapshot(snapshot, track.cues, shiftMs);
 
                 djinterop::track created = db.create_track(snapshot);
                 result.tracksCreated++;

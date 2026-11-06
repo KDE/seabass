@@ -79,6 +79,13 @@ int main()
         assert(MatchingPolicy::exactMatchSeconds() == 2.0);
         assert(MatchingPolicy::compareAudioSeconds() == 10.0);
         assert(MatchingPolicy::ignoreCuesAtStart());
+        // The MP3 cue timing correction (#50) is on, and reset() puts it
+        // back on after a case switched it off.
+        assert(MatchingPolicy::correctMp3CueTiming());
+        MatchingPolicy::setCorrectMp3CueTiming(false);
+        assert(!MatchingPolicy::correctMp3CueTiming());
+        MatchingPolicy::reset();
+        assert(MatchingPolicy::correctMp3CueTiming());
         std::cout << "case 1 (the defaults are 2 s, 10 s and on) OK\n";
     }
 
