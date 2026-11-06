@@ -1218,7 +1218,9 @@ check E1-create-engine-library create_engine_library
 
 # ---- edits -----------------------------------------------------------
 check W1-W3-W4-F1-F2-F3-live live_edit_mode
-check W2-W5-W6-edits env RIG_EDITS_PARTS="W2 W5 W6" "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"
+# W11 (the OneLibrary cue-table repair, saved and undone) runs in this
+# bundle too, under its own row: like W6 it repairs stick B and undoes it.
+check W2-W5-W6-edits env RIG_EDITS_PARTS="W2 W5 W6 W11" "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"
 # Sync after Rekordbox Export, planted, synced, undone and put back
 # (tools/rig_engine_update.cpp). Its own check, so RIG_ONLY can name it.
 check W10-engine-update-sync-undo env RIG_EDITS_PARTS=W10 "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"

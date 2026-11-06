@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
@@ -639,6 +640,22 @@ public:
     }
 
     Q_INVOKABLE bool fileExists(const QString &file) const { return QFile::exists(file); }
+
+    // The file's sha256 in hex, or empty when it cannot be read: for a
+    // check that a save and its undo left a catalog byte for byte as it
+    // was (tst_CueTableRoundTrip, tst_LiveEditMode's W11).
+    Q_INVOKABLE QString sha256(const QString &file) const
+    {
+        QFile in(file);
+        if (!in.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        if (!hash.addData(&in)) {
+            return {};
+        }
+        return QString::fromLatin1(hash.result().toHex());
+    }
 
     // writeText() for a file in a stick copy's USBANLZ: those are hard
     // links to the committed fixture (fixture_copy.hpp), and writing one

@@ -22,8 +22,14 @@
 #     the row is back in its playlists, the record is at export.pdb's
 #     sequence; the undo gives back the planted catalogs byte for byte,
 #     and the plant is put back so the stick is as it was
+# W11 OneLibrary cue table (#57) on Library Health's page: Repair All,
+#     save, a rescan finds no drifted row, Undo Last Save from the page,
+#     a rescan finds them all again, and OneLibrary, export.pdb and m.db
+#     are byte for byte as before. Nothing is planted: stick B's
+#     reference has drifted rows of its own, and a stick without any
+#     fails the check
 #
-#   RIG_EDITS_PARTS="W2 W5 W6 W10"   the checks to run (that is the default)
+#   RIG_EDITS_PARTS="W2 W5 W6 W10 W11"   the checks to run (that is the default)
 #   RIG_ENGINE_UPDATE_TRACK=<path>  W10's track, stick-relative; else
 #                                   rig_engine_update --pick chooses one
 #   RIG_SCRATCH_STICK=1             the "stick" is a folder laid out as one
@@ -62,12 +68,13 @@ export QT_FORCE_STDERR_LOGGING=1
 failed=0
 
 # Which checks run: rig-shakedown.sh runs W10 as a check of its own, so
-# RIG_ONLY can name it, and the rest as the W2-W5-W6-edits bundle.
-parts="${RIG_EDITS_PARTS:-W2 W5 W6 W10}"
+# RIG_ONLY can name it, and the rest as the W2-W5-W6-edits bundle (W11
+# included, under its own board row).
+parts="${RIG_EDITS_PARTS:-W2 W5 W6 W10 W11}"
 wants() { [[ " $parts " == *" $1 "* ]]; }
 for part in $parts; do
     case "$part" in
-        W2|W5|W6|W10) ;;
+        W2|W5|W6|W10|W11) ;;
         *) echo "RIG_EDITS_PARTS names '$part', which is no check of this script"
            echo "RIG RESULT: FAIL"
            exit 1 ;;
@@ -86,6 +93,7 @@ wants W2 && rig_parts_declare W2-add-cue
 wants W5 && rig_parts_declare W5-clean-up-group W5-import-prompt-not-armed
 wants W6 && rig_parts_declare W6-library-health-repair W6-import-prompt-not-armed
 wants W10 && rig_parts_declare W10-engine-update-sync-undo
+wants W11 && rig_parts_declare W11-cue-table-repair-undo
 [ -z "$baseline" ] || rig_parts_declare edits-wrote-nothing
 trap rig_parts_finish EXIT
 
@@ -170,6 +178,11 @@ if wants W6; then
     echo "=== putting the planted file back"
     "$build/rig_plant_repairable" "$stick" --restore || failed=1
 fi
+
+# W11: the drift is stick B's own (40 rows on its reference, as
+# stick_damage_audit counts them), so there is nothing to plant; the test
+# fails rather than skips on a stick without any.
+wants W11 && run W11-cue-table-repair-undo LiveEditMode::test_11_cueTableRepairAllSaveUndo
 
 # W10: Sync after Rekordbox Export, headless (tools/rig_engine_update.cpp;
 # docs/sync-after-rekordbox-export-plan.md, "Tests", the rig). Each

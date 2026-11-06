@@ -36,6 +36,7 @@ TestCase {
     Component { id: syncPage; SyncPage { width: 1100; height: 820 } }
     Component { id: junkPage; JunkCuePage { width: 1100; height: 820 } }
     Component { id: healthPage; LibraryConsistencyPage { width: 1100; height: 820 } }
+    Component { id: cueTablePage; CueTablePage { width: 1100; height: 820 } }
     Component { id: pendingPage; PendingDeletionsPage { width: 1100; height: 820 } }
     Component { id: scanController; ScanController {} }
     Component { id: settingsController; SettingsController {} }
@@ -748,6 +749,99 @@ TestCase {
         tracks.scan("rekordbox", rekordboxPath);
         waitIdle(tracks, 300000);
         compare(tracks.totalTrackCount, rowsBefore);
+    }
+
+    // ---- 11. OneLibrary cue table: Repair All, save, rescan, undo (#57) ----
+    // Rig part W11. Needs drift: OneLibrary cue-table rows holding cues
+    // the analysis file does not (stick_damage_audit's "#57" line). The
+    // rig's stick B reference, a WHALESHARK2 restore, has 40, so nothing
+    // is planted, and a stick without any fails: a check that finds
+    // nothing to repair has proved nothing. Through the page: Repair All,
+    // Save, a fresh scan lists none; Undo Last Save, a fresh scan lists
+    // them all again, and the catalogs are byte for byte as they were.
+    readonly property var cueTableCatalogs: ["PIONEER/rekordbox/exportLibrary.db", "PIONEER/rekordbox/exportLibrary.db-wal",
+                                             "PIONEER/rekordbox/export.pdb", "Engine Library/Database2/m.db"]
+
+    // Each file's sha256, "absent" for one that is not there.
+    function catalogBytes(files) {
+        const bytes = {};
+        for (const file of files) {
+            const path = stickRoot + "/" + file;
+            bytes[file] = stickFixture.fileExists(path) ? stickFixture.sha256(path) : "absent";
+        }
+        return bytes;
+    }
+
+    function cueTablesRead(ctrl) {
+        tryVerify(function() { return ctrl.cueTablesChecked && Live.settled(ctrl); }, 600000,
+                  "the cue tables are read");
+        compare(ctrl.cueTablesError, "", "the cue tables could be read");
+    }
+
+    function test_11_cueTableRepairAllSaveUndo() {
+        const before = catalogBytes(cueTableCatalogs);
+        if (before["PIONEER/rekordbox/exportLibrary.db"] === "absent") {
+            fail("no OneLibrary on this stick, so no cue table to repair");
+        }
+        const page = createTemporaryObject(cueTablePage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
+                                                                    enginePath: enginePath});
+        const ctrl = page.consistencyController;
+        verify(ctrl !== null);
+        cueTablesRead(ctrl);
+        const drifted = ctrl.cueTableRowCount;
+        console.log("  cue-table rows the analysis file does not hold: " + drifted + " (" + ctrl.cueTableLeftAloneCount
+                    + " left alone)");
+        if (drifted === 0) {
+            fail("no drifted cue-table rows on this stick: W11 needs stick B at its reference");
+        }
+
+        const repairAll = Live.findByObjectName(page, "repairAllButton");
+        verify(repairAll !== null && repairAll.visible && repairAll.enabled, "Repair All is offered");
+        compare(repairAll.text, "Repair All");
+        repairAll.clicked();
+        compare(ctrl.cueTableStagedCount, drifted, "every listed row staged");
+        const s = session();
+        tryVerify(function() { return s.pendingCount > 0; }, 5000);
+        shot(page, "live-cue-table-staged");
+        const summary = saveAndWait(false);
+        compare(summary.error, "");
+        verify(summary.written > 0, "the repair wrote something");
+        compare(summary.skipped, 0, "no row was left alone at save time");
+        waitIdle(ctrl, 600000);
+
+        // Only a fresh read proves the repair.
+        ctrl.scan(rekordboxPath, enginePath);
+        cueTablesRead(ctrl);
+        console.log("  rescan after repair: " + ctrl.cueTableRowCount + " drifted rows");
+        compare(ctrl.cueTableRowCount, 0);
+        const afterSave = catalogBytes(cueTableCatalogs);
+        verify(afterSave["PIONEER/rekordbox/exportLibrary.db"] !== before["PIONEER/rekordbox/exportLibrary.db"],
+               "the repair wrote OneLibrary");
+        compare(afterSave["PIONEER/rekordbox/export.pdb"], before["PIONEER/rekordbox/export.pdb"],
+                "and not export.pdb");
+
+        undoAndWait(page);
+        ctrl.scan(rekordboxPath, enginePath);
+        cueTablesRead(ctrl);
+        console.log("  rescan after undo: " + ctrl.cueTableRowCount + " drifted rows");
+        compare(ctrl.cueTableRowCount, drifted);
+
+        // Every save ends by bringing Engine's import counter level with
+        // export.pdb, the undo too. On a stick where it already was, as on
+        // the rig's, neither writes m.db; where it was not, the undo leaves
+        // m.db as the save did (tst_CueTableRoundTrip has that case).
+        const engineDb = "Engine Library/Database2/m.db";
+        const expected = Object.assign({}, before);
+        if (afterSave[engineDb] !== before[engineDb]) {
+            console.log("  the save brought Engine's import counter level, so m.db is compared with what it left");
+            expected[engineDb] = afterSave[engineDb];
+        }
+        const after = catalogBytes(cueTableCatalogs);
+        for (const file of cueTableCatalogs) {
+            console.log("  " + file + ": " + (after[file] === expected[file] ? "as it was" : "DIFFERS"));
+        }
+        compare(JSON.stringify(after, null, 1), JSON.stringify(expected, null, 1),
+                "the catalogs are byte for byte as they were");
     }
 
     // ---- 11. For the two-stick checks: add a memory cue and keep it ----
