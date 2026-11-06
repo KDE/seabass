@@ -1,0 +1,288 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// #50 at the Engine boundary: a cue on an MP3 is stored on Engine's
+// timeline and read on rekordbox's. Through a real scratch Engine library
+// and the committed lead-in fixtures (tests/fixtures/mp3-lead-in), with
+// the raw sample offsets checked through libdjinterop itself:
+//
+//   - a cue written at rekordbox time T on a LAME (class D) 44.1 kHz file
+//     is stored at (T - 51.18 ms) * 44.1 samples, and reads back as T;
+//     both ends of a loop and the main cue too;
+//   - Create Engine Library stores the same;
+//   - a WAV is not moved;
+//   - with the setting off, today's behaviour: stored as T, read as T;
+//   - fillCues() moves a row by the difference, never twice.
+//
+// Usage: libdjinterop_engine_mp3_lead_in_test <fixture dir>
+
+#include <cassert>
+#include <cmath>
+#include <filesystem>
+#include <iostream>
+
+#include <djinterop/djinterop.hpp>
+
+#include "application/use_cases/scan_library.hpp"
+#include "domain/matching_policy.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "scratch_path.hpp"
+
+using namespace seabass::infrastructure::engine;
+using seabass::domain::CuePoint;
+using seabass::domain::MatchingPolicy;
+using seabass::domain::Track;
+namespace fs = std::filesystem;
+
+namespace
+{
+
+fs::path g_fixtures;
+
+// LAME's 576-sample delay, the 529 FFmpeg adds, and the Info frame
+// rekordbox plays: 2257 samples at 44.1 kHz.
+constexpr double LameShiftMs = 2257 * 1000.0 / 44100;
+
+bool near(double a, double b, double tolerance = 1e-6)
+{
+    return std::abs(a - b) < tolerance;
+}
+
+// A fresh library holding one track whose file is a copy of `fixture`,
+// named song.<extension of the fixture>; `cues` written by Create Engine
+// Library itself.
+struct Library
+{
+    fs::path root;
+    std::string file;
+};
+
+Library makeLibrary(const std::string &caseName, const std::string &fixture, std::vector<CuePoint> cues = {})
+{
+    Library lib;
+    lib.root = seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test" / seabass::pathFromUtf8(caseName)
+        / "Engine Library";
+    fs::remove_all(lib.root.parent_path());
+    fs::create_directories(lib.root);
+    const fs::path source = g_fixtures / seabass::pathFromUtf8(fixture);
+    const fs::path file = lib.root / seabass::pathFromUtf8("song" + seabass::pathToUtf8(source.extension()));
+    fs::copy_file(source, file);
+    lib.file = seabass::pathToUtf8(file);
+
+    Track t;
+    t.sourceId = "r0";
+    t.title = "Lead In";
+    t.artist = "Artist";
+    t.filePath = lib.file;
+    t.bpm = 120.0;
+    t.durationSeconds = 300.0;
+    t.cues = std::move(cues);
+    auto created =
+        EngineLibraryCreator::create(seabass::pathToUtf8(lib.root), {t}, EngineSchemaGeneration::V2);
+    assert(created.errorMessage.empty() && created.tracksCreated == 1);
+    return lib;
+}
+
+Track readOne(const Library &lib, LibdjinteropEngineReader *withReader = nullptr)
+{
+    LibdjinteropEngineReader own(seabass::pathToUtf8(lib.root));
+    LibdjinteropEngineReader &reader = withReader ? *withReader : own;
+    auto tracks = seabass::application::ScanLibrary(reader).execute();
+    assert(tracks.size() == 1);
+    return tracks.front();
+}
+
+const CuePoint *find(const std::vector<CuePoint> &cues, CuePoint::Kind kind, int pad, bool loop)
+{
+    for (const auto &c : cues) {
+        if (c.kind == kind && c.hotCueNumber == pad && c.isLoop == loop) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+
+// What Engine stores, straight from libdjinterop.
+struct Raw
+{
+    double hotCue = -1;
+    double loopStart = -1;
+    double loopEnd = -1;
+    double mainCue = -1;
+};
+
+Raw raw(const Library &lib, const std::string &id)
+{
+    auto db = djinterop::engine::load_database(seabass::pathToUtf8(lib.root));
+    auto track = db.track_by_id(std::stoll(id));
+    assert(track);
+    Raw r;
+    const auto hot = track->hot_cues();
+    if (hot.size() > 0 && hot[0]) {
+        r.hotCue = hot[0]->sample_offset;
+    }
+    const auto loops = track->loops();
+    if (loops.size() > 1 && loops[1]) {
+        r.loopStart = loops[1]->start_sample_offset;
+        r.loopEnd = loops[1]->end_sample_offset;
+    }
+    if (const auto main = track->main_cue()) {
+        r.mainCue = *main;
+    }
+    return r;
+}
+
+std::vector<CuePoint> theCues()
+{
+    CuePoint hot{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"};
+    CuePoint loop{CuePoint::Kind::Hot, 2, 10000.0, "#00ff00", "loop"};
+    loop.isLoop = true;
+    loop.loopEndMs = 14000.0;
+    CuePoint memory;
+    memory.kind = CuePoint::Kind::Memory;
+    memory.positionMs = 8000.0;
+    return {hot, loop, memory};
+}
+
+void assertReadsBack(const Track &t, double shiftMs)
+{
+    const CuePoint *hot = find(t.cues, CuePoint::Kind::Hot, 1, false);
+    const CuePoint *loop = find(t.cues, CuePoint::Kind::Hot, 2, true);
+    const CuePoint *memory = find(t.cues, CuePoint::Kind::Memory, 0, false);
+    assert(hot && loop && memory);
+    assert(near(hot->positionMs, 5000.0 + shiftMs));
+    assert(near(loop->positionMs, 10000.0 + shiftMs));
+    assert(near(loop->loopEndMs, 14000.0 + shiftMs));
+    assert(near(memory->positionMs, 8000.0 + shiftMs));
+}
+
+void assertStored(const Raw &r, double shiftMs)
+{
+    assert(near(r.hotCue, (5000.0 - shiftMs) * 44.1, 1e-3));
+    assert(near(r.loopStart, (10000.0 - shiftMs) * 44.1, 1e-3));
+    assert(near(r.loopEnd, (14000.0 - shiftMs) * 44.1, 1e-3));
+    assert(near(r.mainCue, (8000.0 - shiftMs) * 44.1, 1e-3));
+}
+
+}  // namespace
+
+int main(int argc, char **argv)
+{
+    assert(argc == 2);
+    g_fixtures = seabass::pathFromUtf8(argv[1]);
+    MatchingPolicy::reset();
+    assert(MatchingPolicy::correctMp3CueTiming());
+
+    // Case 1: the cue writer on a LAME file. 5000 ms on rekordbox's
+    // timeline is 5000 - 51.18 ms on Engine's: 220500 - 2257 samples.
+    {
+        const Library lib = makeLibrary("writer-lame", "lame-cbr-44100.mp3");
+        const Track before = readOne(lib);
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(lib.root));
+        writer.writeHotCues(before.sourceId, theCues());
+
+        const Raw r = raw(lib, before.sourceId);
+        assert(near(r.hotCue, 220500.0 - 2257.0, 1e-3));
+        assertStored(r, LameShiftMs);
+
+        const Track after = readOne(lib);
+        assertReadsBack(after, 0.0);
+        assert(near(after.cueTimelineShiftMs, LameShiftMs));
+        assert(near(after.cueTimelineShiftMs, 51.18, 0.01));
+
+        // Written back as read, nothing moves: read, write, read again.
+        LibdjinteropEngineCueWriter again(seabass::pathToUtf8(lib.root));
+        again.writeHotCues(after.sourceId, after.cues);
+        assertStored(raw(lib, after.sourceId), LameShiftMs);
+        assertReadsBack(readOne(lib), 0.0);
+        std::cout << "case 1 (writer and reader on a LAME MP3) OK\n";
+    }
+
+    // Case 2: Create Engine Library stores the same offsets.
+    {
+        const Library lib = makeLibrary("creator-lame", "lame-cbr-44100.mp3", theCues());
+        const Track t = readOne(lib);
+        assertStored(raw(lib, t.sourceId), LameShiftMs);
+        assertReadsBack(t, 0.0);
+        std::cout << "case 2 (Create Engine Library on a LAME MP3) OK\n";
+    }
+
+    // Case 3: a WAV is never moved.
+    {
+        const Library lib = makeLibrary("writer-wav", "silence.wav");
+        const Track before = readOne(lib);
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(lib.root));
+        writer.writeHotCues(before.sourceId, theCues());
+        assertStored(raw(lib, before.sourceId), 0.0);
+        const Track after = readOne(lib);
+        assertReadsBack(after, 0.0);
+        assert(after.cueTimelineShiftMs == 0.0);
+        std::cout << "case 3 (a WAV is not moved) OK\n";
+    }
+
+    // Case 4: the setting off is today's behaviour: stored as given,
+    // read as stored. The same row read with it on again is moved.
+    {
+        MatchingPolicy::setCorrectMp3CueTiming(false);
+        const Library lib = makeLibrary("setting-off", "lame-cbr-44100.mp3", theCues());
+        const Track t = readOne(lib);
+        assertStored(raw(lib, t.sourceId), 0.0);
+        assertReadsBack(t, 0.0);
+        assert(t.cueTimelineShiftMs == 0.0);
+
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(lib.root));
+        writer.writeHotCues(t.sourceId, theCues());
+        assertStored(raw(lib, t.sourceId), 0.0);
+
+        MatchingPolicy::setCorrectMp3CueTiming(true);
+        assertReadsBack(readOne(lib), LameShiftMs);
+        std::cout << "case 4 (setting off: positions as stored) OK\n";
+    }
+
+    // Case 5: a source that cannot say (a Tracks stage the cache knows
+    // nothing for) gives no shift; fillCues() with a source that can
+    // moves the row by the whole shift, and a second fillCues() by
+    // nothing.
+    {
+        const Library lib = makeLibrary("fill-cues", "lame-cbr-44100.mp3", theCues());
+        LibdjinteropEngineReader blind(seabass::pathToUtf8(lib.root));
+        blind.setLeadInSource([](const std::string &) { return std::optional<seabass::domain::Mp3LeadIn>(); });
+        std::vector<Track> tracks = blind.readTracks();
+        assert(tracks.size() == 1);
+        assertReadsBack(tracks.front(), -LameShiftMs);
+        assert(tracks.front().cueTimelineShiftMs == 0.0);
+
+        LibdjinteropEngineReader seeing(seabass::pathToUtf8(lib.root));
+        int asked = 0;
+        seeing.setLeadInSource([&asked](const std::string &file) {
+            ++asked;
+            return seabass::infrastructure::audio::readMp3LeadIn(file);
+        });
+        seeing.fillCues(tracks);
+        assert(asked == 1);
+        assertReadsBack(tracks.front(), 0.0);
+        assert(near(tracks.front().cueTimelineShiftMs, LameShiftMs));
+        seeing.fillCues(tracks);
+        assertReadsBack(tracks.front(), 0.0);
+        std::cout << "case 5 (fillCues moves by the difference) OK\n";
+    }
+
+    // Case 6: the FFmpeg (Lavc) file: 1105 samples, 25.06 ms.
+    {
+        const Library lib = makeLibrary("lavc", "ffmpeg-lavc-44100.mp3", theCues());
+        const Track t = readOne(lib);
+        assertStored(raw(lib, t.sourceId), 1105 * 1000.0 / 44100);
+        assertReadsBack(t, 0.0);
+        std::cout << "case 6 (an FFmpeg Lavc MP3: 25 ms) OK\n";
+    }
+
+    MatchingPolicy::reset();
+    fs::remove_all(seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test");
+    std::cout << "all libdjinterop_engine_mp3_lead_in_test cases passed\n";
+    return 0;
+}

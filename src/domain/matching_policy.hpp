@@ -74,6 +74,14 @@ public:
     // they start counting as real cues in every comparison.
     static bool ignoreCuesAtStart();
 
+    // Whether Engine cue positions on an MP3 are moved onto rekordbox's
+    // timeline when read and off it when written (#50; see
+    // domain::Mp3LeadIn). On by default. Off is the behaviour before the
+    // correction existed: positions carried across as stored, which puts
+    // a cue up to 51 ms apart between the two.
+    static bool correctMp3CueTiming();
+    static void setCorrectMp3CueTiming(bool correct);
+
     // Set by a composition root. Values are clamped into the ranges
     // Preferences offers, so a hand-edited settings file cannot widen
     // the window past what the UI would allow.
@@ -93,6 +101,7 @@ public:
     static constexpr double DefaultExactMatchSeconds = 2.0;
     static constexpr double DefaultCompareAudioSeconds = 10.0;
     static constexpr bool DefaultIgnoreCuesAtStart = true;
+    static constexpr bool DefaultCorrectMp3CueTiming = true;
 };
 
 }  // namespace seabass::domain

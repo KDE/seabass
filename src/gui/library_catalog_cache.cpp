@@ -192,6 +192,18 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         auto reader = makeReader(format, path);
         reader->setProgressReporter(progress);
         reader->setCancellationToken(cancel);
+        // Engine's cues on an MP3 are moved onto rekordbox's timeline as
+        // they are read (#50), here too, since pages show and write back
+        // what this stage read. The lead-in the stick's metadata cache
+        // holds for the path, taken unchecked like the durations below,
+        // or the file's first kilobytes when it holds none; the Cues
+        // stage checks it.
+        application::NullTrackMetadataProbe noProbe;
+        std::optional<infrastructure::local::CachedSampleRates> leadIns;
+        if (auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineReader *>(reader.get())) {
+            leadIns.emplace(infrastructure::paths::stickRootForCatalogPath(path), noProbe);
+            engine->setLeadInSource([&leadIns](const std::string &file) { return leadIns->leadInByPathOf(file); });
+        }
         tracks = reader->readTracks();
         // Every GUI scan goes through here, so this is the one place the
         // lengths neither catalog recorded get filled in -- duplicate
@@ -238,6 +250,10 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
 #endif
         infrastructure::local::CachedSampleRates rates(infrastructure::paths::stickRootForCatalogPath(path), probe);
         engine->setSampleRateSource([&rates](const std::string &file) { return rates.rateOf(file); });
+        // And every cued MP3's lead-in (#50), from the same cache checked
+        // against the file, probed and cached when it is not there: what
+        // the Tracks stage took unchecked is corrected here.
+        engine->setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
         try {
             engine->fillCues(tracks);
         } catch (...) {

@@ -187,6 +187,13 @@ struct Track
     // track's cue count and kinds, never its positions, and reads the
     // same with or without the file. Every other row leaves this false.
     bool cueRateUnverified = false;
+    // What the Engine reader added to every cue position of this row to
+    // put it on rekordbox's timeline (#50, domain::Mp3LeadIn): 0 for
+    // every other row and with the correction off. The library
+    // fingerprint takes it back off, so a fingerprint reads the same
+    // whether or not the reader could see the audio file, and the same
+    // as before the correction existed.
+    double cueTimelineShiftMs = 0.0;
 
     // Normalized to 0-5 stars (Engine's own 0-100 scale is divided down by
     // readers before this is set), nullopt when unrated rather than 0 --
