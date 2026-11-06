@@ -4064,6 +4064,22 @@ else()
         "(needs pkg-config modules libmpg123 libavformat libavcodec libavutil)")
 endif()
 
+# #50 layer 3: for every MP3 both catalogs on a stick hold, the first beat
+# and hot cues as rekordbox and Engine each analysed them, and the
+# residual left after the lead-in correction. Reads only.
+add_executable(click_positions tools/click_positions.cpp)
+target_include_directories(click_positions PRIVATE src tools)
+target_link_libraries(click_positions PRIVATE seabass_core)
+add_executable(click_positions_test tests/click_positions_test.cpp)
+target_include_directories(click_positions_test PRIVATE src tests)
+target_link_libraries(click_positions_test PRIVATE seabass_core)
+add_test(NAME click_positions_test COMMAND click_positions_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click/click-D-lame-44100.mp3
+    $<TARGET_FILE:click_positions>)
+set_tests_properties(click_positions_test PROPERTIES LABELS "integration"
+    ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
 add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
@@ -4192,7 +4208,7 @@ target_link_libraries(rig_advise PRIVATE seabass_core)
 # rate, through rig_catalog.hpp's EngineReaderAtFileRates, which probes a
 # file with TagLib where the stick's metadata cache does not know it.
 if(TARGET seabass_taglib)
-    foreach(rig_tool rig_read rig_restore rig_backup rig_salvage rig_plant_repairable rig_clone rig_advise)
+    foreach(rig_tool rig_read rig_restore rig_backup rig_salvage rig_plant_repairable rig_clone rig_advise click_positions)
         target_link_libraries(${rig_tool} PRIVATE seabass_taglib)
     endforeach()
 endif()
