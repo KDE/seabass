@@ -42,6 +42,8 @@ class AppSettingsController : public QObject
                    compareAudioSecondsChanged)
     Q_PROPERTY(bool ignoreCuesAtStart READ ignoreCuesAtStart WRITE setIgnoreCuesAtStart NOTIFY
                    ignoreCuesAtStartChanged)
+    Q_PROPERTY(bool correctMp3CueTiming READ correctMp3CueTiming WRITE setCorrectMp3CueTiming NOTIFY
+                   correctMp3CueTimingChanged)
     // Whether this build can decode audio at all. QML gates the
     // "compare audio" row's explanation on it, so a build that cannot
     // do it says so instead of offering a number that does nothing.
@@ -133,6 +135,11 @@ public:
     bool ignoreCuesAtStart() const { return m_ignoreCuesAtStart; }
     void setIgnoreCuesAtStart(bool value);
 
+    // Whether Engine cue positions on an MP3 are moved onto rekordbox's
+    // timeline (#50) -- see domain::MatchingPolicy::correctMp3CueTiming.
+    bool correctMp3CueTiming() const { return m_correctMp3CueTiming; }
+    void setCorrectMp3CueTiming(bool value);
+
     // Whether audio can actually be decoded HERE, now. Not a
     // compile-time #ifdef: a build with QtMultimedia linked in still
     // decodes nothing when the FFmpeg plugin did not load, and in that
@@ -211,6 +218,7 @@ signals:
     void exactMatchSecondsChanged();
     void compareAudioSecondsChanged();
     void ignoreCuesAtStartChanged();
+    void correctMp3CueTimingChanged();
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
     void lastPlaylistNameChanged();
@@ -229,6 +237,7 @@ private:
     int m_exactMatchSeconds = 2;
     int m_compareAudioSeconds = 10;
     bool m_ignoreCuesAtStart = true;
+    bool m_correctMp3CueTiming = true;
 
     // Pushes the trio into domain::MatchingPolicy, which is where every
     // layer below the GUI actually reads them. One function called by
