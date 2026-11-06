@@ -4038,6 +4038,11 @@ add_executable(pdb_playlist_edit tools/pdb_playlist_edit.cpp)
 target_include_directories(pdb_playlist_edit PRIVATE src)
 target_link_libraries(pdb_playlist_edit PRIVATE seabass_core rekordbox_format)
 
+# #50: what readMp3LeadIn() and the lead-in model make of each MP3 given
+# (tests/fixtures/mp3-click, tests/fixtures/mp3-lead-in, or real files).
+add_executable(mp3_lead_in_dump tools/mp3_lead_in_dump.cpp)
+target_link_libraries(mp3_lead_in_dump PRIVATE seabass_mp3_lead_in)
+
 add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)

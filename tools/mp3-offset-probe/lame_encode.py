@@ -14,6 +14,9 @@ the placeholder frame the encoder emitted first.
 
 usage: lame_encode.py OUT RATE CHANNELS MODE KBPS|vN [notag]
   MODE: stereo, joint, mono. vN asks for VBR at quality N.
+
+Other scripts import encode() to put their own samples through the same
+path (make-click-mp3s.py).
 """
 
 import ctypes
@@ -22,11 +25,14 @@ import struct
 import sys
 
 
-def main():
-    out, rate, channels, mode, quality = sys.argv[1:6]
-    notag = len(sys.argv) > 6 and sys.argv[6] == "notag"
-    rate = int(rate)
-    channels = int(channels)
+def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
+    """Write PCM (16-bit ints, one per sample; every channel gets the
+    same) to OUT. Without PCM: one second of silence with a full-scale
+    click at half a second."""
+    if pcm is None:
+        pcm = [0] * rate
+        pcm[rate // 2] = 32000
+    count = len(pcm)
 
     name = ctypes.util.find_library("mp3lame") or "libmp3lame.so.0"
     lib = ctypes.CDLL(name)
@@ -62,16 +68,13 @@ def main():
     lib.lame_init_bitstream.argtypes = [ctypes.c_void_p]
     lib.lame_init_bitstream(gf)
 
-    # One second: silence with a full-scale click at half a second.
-    pcm = [0] * rate
-    pcm[rate // 2] = 32000
-    samples = struct.pack("<%dh" % rate, *pcm)
-    buf = ctypes.create_string_buffer(rate * 2 + 7200)
+    samples = struct.pack("<%dh" % count, *pcm)
+    buf = ctypes.create_string_buffer(count * 2 + 7200)
     if channels == 1:
-        n = lib.lame_encode_buffer(gf, samples, samples, rate, buf, len(buf))
+        n = lib.lame_encode_buffer(gf, samples, samples, count, buf, len(buf))
     else:
-        inter = struct.pack("<%dh" % (2 * rate), *[v for v in pcm for _ in (0, 1)])
-        n = lib.lame_encode_buffer_interleaved(gf, inter, rate, buf, len(buf))
+        inter = struct.pack("<%dh" % (2 * count), *[v for v in pcm for _ in (0, 1)])
+        n = lib.lame_encode_buffer_interleaved(gf, inter, count, buf, len(buf))
     if n < 0:
         sys.exit("encode failed: %d" % n)
     data = bytearray(buf.raw[:n])
@@ -87,6 +90,12 @@ def main():
     lib.lame_close(gf)
     with open(out, "wb") as f:
         f.write(data)
+
+
+def main():
+    out, rate, channels, mode, quality = sys.argv[1:6]
+    notag = len(sys.argv) > 6 and sys.argv[6] == "notag"
+    encode(out, int(rate), int(channels), mode, quality, notag)
 
 
 if __name__ == "__main__":
