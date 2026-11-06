@@ -2743,6 +2743,26 @@ if(TARGET seabass_edit)
     add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
     set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
+    # Free Up Space's old backups through CleanupController: the
+    # staleBackups listing, pruneStaleBackups() on the worker, its cancel
+    # and a record that will not delete, against a stick in scratch.
+    add_executable(cleanup_prune_stale_backups_test
+        src/gui/cleanup_controller.cpp
+        src/gui/stick_catalogs.cpp
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
+        src/gui/write_guard.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/cleanup_prune_stale_backups_test.cpp
+    )
+    target_include_directories(cleanup_prune_stale_backups_test PRIVATE src tests)
+    target_link_libraries(cleanup_prune_stale_backups_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME cleanup_prune_stale_backups_test COMMAND cleanup_prune_stale_backups_test)
+    set_tests_properties(cleanup_prune_stale_backups_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     # Full Stick Backup's Name field through its controller, against real
     # archives in scratch: a new name starts a new backup and moves none,
     # the old name goes back to the old one, another stick's is a collision.
