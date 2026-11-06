@@ -896,9 +896,14 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   track and removes that track's Engine row, syncs through the page's
   controller, asserts the proposal is empty and the row is back in its
   playlists, undoes, compares the catalogs byte for byte and puts the
-  plant back. `RIG_EDITS_PARTS` picks the checks (the round runs W10 as
-  a check of its own); `RIG_SCRATCH_STICK=1 RIG_EDITS_PARTS=W10` runs
-  W10 against a folder laid out as a stick, with no hardware.
+  plant back. W11, the OneLibrary cue-table repair (#57) on Library
+  Health's page: `rig_plant_cue_drift` writes cues into three rows' cue
+  tables that their analysis files do not hold (the references have no
+  such row of their own), Repair All is saved and undone through the
+  page, and the library is put back byte for byte. `RIG_EDITS_PARTS`
+  picks the checks (the round runs W10 as a check of its own);
+  `RIG_SCRATCH_STICK=1` with `RIG_EDITS_PARTS` naming W10, W11 or both
+  runs them against a folder laid out as a stick, with no hardware.
 - `tools/rig-clones.sh`: the two-stick Backup USB Stick checks.
 - `tools/rig-interrupted-save.sh <stick> <device or ""> [shots] [baseline] [digests]`:
   check F6, issue #48. `tst_LiveInterruptedSave` starts a Sync save and

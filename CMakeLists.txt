@@ -4077,6 +4077,13 @@ add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
 target_include_directories(rig_plant_repairable PRIVATE src)
 target_link_libraries(rig_plant_repairable PRIVATE seabass_core)
 
+# Release rig: write OneLibrary cue-table rows the analysis file does not
+# hold (#57) so Library Health's cue-table check has something to repair,
+# and put the library back.
+add_executable(rig_plant_cue_drift tools/rig_plant_cue_drift.cpp)
+target_include_directories(rig_plant_cue_drift PRIVATE src)
+target_link_libraries(rig_plant_cue_drift PRIVATE seabass_core)
+
 # Release rig: every save left an automatic backup on the stick, and each
 # one is restorable.
 add_executable(rig_save_backups tools/rig_save_backups.cpp)

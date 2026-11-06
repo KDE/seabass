@@ -754,11 +754,12 @@ TestCase {
     // ---- 13. OneLibrary cue table: Repair All, save, rescan, undo (#57) ----
     // Rig part W11. Needs drift: OneLibrary cue-table rows holding cues
     // the analysis file does not (stick_damage_audit's "#57" line). The
-    // rig's stick B reference, a WHALESHARK2 restore, has 40, so nothing
-    // is planted, and a stick without any fails: a check that finds
-    // nothing to repair has proved nothing. Through the page: Repair All,
-    // Save, a fresh scan lists none; Undo Last Save, a fresh scan lists
-    // them all again, and the catalogs are byte for byte as they were.
+    // rig's references hold none, so tools/rig-edits.sh plants three
+    // first (tools/rig_plant_cue_drift), and a stick without any fails:
+    // a check that finds nothing to repair has proved nothing. Through
+    // the page: Repair All, Save, a fresh scan lists none; Undo Last
+    // Save, a fresh scan lists them all again, and the catalogs are byte
+    // for byte as they were.
     readonly property var cueTableCatalogs: ["PIONEER/rekordbox/exportLibrary.db", "PIONEER/rekordbox/exportLibrary.db-wal",
                                              "PIONEER/rekordbox/export.pdb", "Engine Library/Database2/m.db"]
 
@@ -792,7 +793,7 @@ TestCase {
         console.log("  cue-table rows the analysis file does not hold: " + drifted + " (" + ctrl.cueTableLeftAloneCount
                     + " left alone)");
         if (drifted === 0) {
-            fail("no drifted cue-table rows on this stick: W11 needs stick B at its reference");
+            fail("no drifted cue-table rows on this stick: W11 plants them first (tools/rig_plant_cue_drift)");
         }
 
         const repairAll = Live.findByObjectName(page, "repairAllButton");

@@ -22,20 +22,23 @@
 #     the row is back in its playlists, the record is at export.pdb's
 #     sequence; the undo gives back the planted catalogs byte for byte,
 #     and the plant is put back so the stick is as it was
-# W11 OneLibrary cue table (#57) on Library Health's page: Repair All,
-#     save, a rescan finds no drifted row, Undo Last Save from the page,
-#     a rescan finds them all again, and OneLibrary, export.pdb and m.db
-#     are byte for byte as before. Nothing is planted: stick B's
-#     reference has drifted rows of its own, and a stick without any
-#     fails the check
+# W11 OneLibrary cue table (#57) on Library Health's page:
+#     tools/rig_plant_cue_drift writes cues into three rows' cue tables
+#     that their analysis files do not hold (the rig's references have
+#     none of their own: every row's table is empty); Repair All, save,
+#     a rescan finds no drifted row, Undo Last Save from the page, a
+#     rescan finds them all again, and OneLibrary, export.pdb and m.db
+#     are byte for byte as before. The library is put back whatever
+#     the test did
 #
 #   RIG_EDITS_PARTS="W2 W5 W6 W10 W11"   the checks to run (that is the default)
 #   RIG_ENGINE_UPDATE_TRACK=<path>  W10's track, stick-relative; else
 #                                   rig_engine_update --pick chooses one
 #   RIG_SCRATCH_STICK=1             the "stick" is a folder laid out as one
 #                                   (refuse_unless_scratch_folder in
-#                                   rig-platform.sh); W10 only, as the QML
-#                                   checks were never proved that way
+#                                   rig-platform.sh); W10 and W11 only, as
+#                                   the other QML checks were never proved
+#                                   that way
 #
 # Every write goes through the app's backup path and is undone. With a
 # baseline file (sha256sum lines, as rig check R6 keeps them) the stick's
@@ -81,10 +84,15 @@ for part in $parts; do
     esac
 done
 
-if [ -n "${RIG_SCRATCH_STICK:-}" ] && [ "$(echo $parts)" != "W10" ]; then
-    echo "RIG_SCRATCH_STICK runs W10 alone: set RIG_EDITS_PARTS=W10"
-    echo "RIG RESULT: FAIL"
-    exit 1
+if [ -n "${RIG_SCRATCH_STICK:-}" ]; then
+    for part in $parts; do
+        case "$part" in
+            W10|W11) ;;
+            *) echo "RIG_SCRATCH_STICK runs W10 and W11 alone: '$part' was never proved on a folder"
+               echo "RIG RESULT: FAIL"
+               exit 1 ;;
+        esac
+    done
 fi
 
 # One board row per test: W5 skipping for want of a duplicate group on the
@@ -179,10 +187,22 @@ if wants W6; then
     "$build/rig_plant_repairable" "$stick" --restore || failed=1
 fi
 
-# W11: the drift is stick B's own (40 rows on its reference, as
-# stick_damage_audit counts them), so there is nothing to plant; the test
-# fails rather than skips on a stick without any.
-wants W11 && run W11-cue-table-repair-undo LiveEditMode::test_13_cueTableRepairAllSaveUndo
+# W11: the rig's references hold no drifted cue-table row (as
+# stick_damage_audit counts them, every OneLibrary row's table is empty),
+# so the drift is planted, and the test fails rather than skips on a
+# stick without any.
+if wants W11; then
+    echo "=== planting OneLibrary cue-table drift"
+    if "$build/rig_plant_cue_drift" "$stick" --plant; then
+        run W11-cue-table-repair-undo LiveEditMode::test_13_cueTableRepairAllSaveUndo
+    else
+        # The setup, not the test, as for W6: its own row says so.
+        rig_part W11-cue-table-repair-undo FAIL
+        failed=1
+    fi
+    echo "=== putting the OneLibrary library back"
+    "$build/rig_plant_cue_drift" "$stick" --restore || failed=1
+fi
 
 # W10: Sync after Rekordbox Export, headless (tools/rig_engine_update.cpp;
 # docs/sync-after-rekordbox-export-plan.md, "Tests", the rig). Each
