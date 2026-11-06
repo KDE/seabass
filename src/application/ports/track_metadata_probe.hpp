@@ -7,6 +7,8 @@
 #include <optional>
 #include <string>
 
+#include "domain/mp3_lead_in.hpp"
+
 namespace seabass::application
 {
 
@@ -38,6 +40,15 @@ struct FileMetadata
     // A container-derived length (MP4, FLAC, Ogg, WAV) is exact and
     // never sets this.
     bool durationIsEstimated = false;
+
+    // The start of an MP3 as rekordbox and Engine count it (#50,
+    // domain::Mp3LeadIn). mp3LeadInRead says the probe looked: true for
+    // an .mp3 file, with mp3LeadIn empty when its frames could not be
+    // followed. False for every other file, and for a cache entry
+    // written before the probe looked, so that entry is probed again
+    // rather than taken to mean "no lead-in".
+    bool mp3LeadInRead = false;
+    std::optional<domain::Mp3LeadIn> mp3LeadIn;
 };
 
 // Port for reading a file's own metadata, for tracks that either aren't
