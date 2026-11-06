@@ -12,6 +12,7 @@
 #include <djinterop/pad_color.hpp>
 
 #include "application/ports/library_reader.hpp"
+#include "domain/mp3_lead_in.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::infrastructure::engine
@@ -35,6 +36,10 @@ public:
     // row (Track::filePath). May throw application::OperationCancelled;
     // any other exception is taken as "cannot say".
     using SampleRateSource = std::function<std::optional<double>(const std::string &filePath)>;
+
+    // The lead-in of an MP3 file (#50, domain::Mp3LeadIn), or nothing
+    // when it cannot be read. Same contract as SampleRateSource.
+    using LeadInSource = std::function<std::optional<domain::Mp3LeadIn>(const std::string &filePath)>;
 
     // engineLibraryPath is the directory containing "Database2/"
     // (i.e. the "Engine Library" folder itself).
@@ -66,11 +71,30 @@ public:
     // which opens no audio file): with a source, it looks up the stored
     // rate of every row that has cues, asks the source for the ones with
     // none, and reads those rows' cues again at the file's rate. Without
-    // a source it does nothing (the LibraryReader default).
+    // a source that part does nothing. It then asks the lead-in source
+    // again for every cued MP3 row (see setLeadInSource()).
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
     void fillCues(std::vector<domain::Track> &tracks) override;
     void setSampleRateSource(SampleRateSource source) { m_sampleRateSource = std::move(source); }
+
+    // Engine positions on an MP3 are moved onto rekordbox's timeline as
+    // they are read (#50; engine_cue_timeline.hpp): every hot cue, both
+    // ends of every loop and the main cue get the file's
+    // engineToRekordboxOffsetMs(), and Track::cueTimelineShiftMs says
+    // how much. Only for a row with cues whose file is an .mp3, and only
+    // while MatchingPolicy::correctMp3CueTiming() is on.
+    //
+    // ALWAYS, whatever the caller: the Engine cue writer takes the shift
+    // off every write, so a reader that skipped it would hand a writer
+    // positions it then moves 51 ms early, once per save. Without a
+    // source of its own the reader reads the file's first kilobytes
+    // itself (infrastructure::audio::readMp3LeadIn); a source is a
+    // cheaper answer to the same question, such as the stick's metadata
+    // cache (CachedSampleRates::leadInOf). readTracks() asks per cued
+    // MP3 row; fillCues() asks again and moves a row whose answer
+    // changed by the difference.
+    void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
     // count(*) of m.db's Track table over a read-only connection: no
     // journal recovery, no libdjinterop. Nothing when m.db is not there
     // or cannot be read.
@@ -86,10 +110,13 @@ public:
 
 private:
     std::optional<double> rateFromSource(const domain::Track &track);
+    double shiftFromSource(const domain::Track &track);
+    void fillRatesFromSource(std::vector<domain::Track> &tracks);
 
     std::string m_engineLibraryPath;
     std::string m_volumeIdentity;
     SampleRateSource m_sampleRateSource;
+    LeadInSource m_leadInSource;
 };
 
 }  // namespace seabass::infrastructure::engine

@@ -349,6 +349,30 @@ int main()
         assert(adviceFor(grown, true).state == StickBackupAdvice::State::Outdated);
     }
 
+    // An Engine MP3's cues moved onto rekordbox's timeline (#50) give
+    // the fingerprint of the catalog as stored: the reader's shift
+    // (Track::cueTimelineShiftMs) is taken back off, so a read that could
+    // see the audio files and one that could not agree, and so does a
+    // backup fingerprinted before the correction existed.
+    {
+        const std::vector<Track> stored = makeLibrary(200, 40);
+        std::vector<Track> shifted = stored;
+        for (Track &track : shifted) {
+            track.cueTimelineShiftMs = 51.18;
+            for (CuePoint &cue : track.cues) {
+                cue.positionMs += track.cueTimelineShiftMs;
+            }
+        }
+        assert(fingerprintLibrary(shifted) == fingerprintLibrary(stored));
+
+        // The shift moved without the field saying so is a different
+        // set of positions: the case above holds because of the field.
+        for (Track &track : shifted) {
+            track.cueTimelineShiftMs = 0.0;
+        }
+        assert(!(fingerprintLibrary(shifted) == fingerprintLibrary(stored)));
+    }
+
     std::cout << "All library_fingerprint tests passed." << std::endl;
     return 0;
 }
