@@ -751,7 +751,7 @@ TestCase {
         compare(tracks.totalTrackCount, rowsBefore);
     }
 
-    // ---- 11. OneLibrary cue table: Repair All, save, rescan, undo (#57) ----
+    // ---- 13. OneLibrary cue table: Repair All, save, rescan, undo (#57) ----
     // Rig part W11. Needs drift: OneLibrary cue-table rows holding cues
     // the analysis file does not (stick_damage_audit's "#57" line). The
     // rig's stick B reference, a WHALESHARK2 restore, has 40, so nothing
@@ -778,7 +778,7 @@ TestCase {
         compare(ctrl.cueTablesError, "", "the cue tables could be read");
     }
 
-    function test_11_cueTableRepairAllSaveUndo() {
+    function test_13_cueTableRepairAllSaveUndo() {
         const before = catalogBytes(cueTableCatalogs);
         if (before["PIONEER/rekordbox/exportLibrary.db"] === "absent") {
             fail("no OneLibrary on this stick, so no cue table to repair");

@@ -182,7 +182,7 @@ fi
 # W11: the drift is stick B's own (40 rows on its reference, as
 # stick_damage_audit counts them), so there is nothing to plant; the test
 # fails rather than skips on a stick without any.
-wants W11 && run W11-cue-table-repair-undo LiveEditMode::test_11_cueTableRepairAllSaveUndo
+wants W11 && run W11-cue-table-repair-undo LiveEditMode::test_13_cueTableRepairAllSaveUndo
 
 # W10: Sync after Rekordbox Export, headless (tools/rig_engine_update.cpp;
 # docs/sync-after-rekordbox-export-plan.md, "Tests", the rig). Each
