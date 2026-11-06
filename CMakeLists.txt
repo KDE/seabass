@@ -397,6 +397,7 @@ add_library(seabass_core STATIC
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
+    src/domain/mp3_lead_in.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
@@ -577,6 +578,7 @@ add_library(seabass_core_testing STATIC
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
+    src/domain/mp3_lead_in.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
@@ -2007,6 +2009,16 @@ add_executable(summarize_engine_update_test
 target_link_libraries(summarize_engine_update_test PRIVATE seabass_core_testing)
 target_include_directories(summarize_engine_update_test PRIVATE src)
 add_test(NAME summarize_engine_update_test COMMAND summarize_engine_update_test)
+
+# The model of how rekordbox and Engine count the start of an MP3 (#50):
+# mp3guessenc's classes and the per-decoder lead-in, from hand-built
+# Mp3LeadIn values.
+add_executable(mp3_lead_in_test
+    tests/mp3_lead_in_test.cpp
+)
+target_link_libraries(mp3_lead_in_test PRIVATE seabass_core_testing)
+target_include_directories(mp3_lead_in_test PRIVATE src)
+add_test(NAME mp3_lead_in_test COMMAND mp3_lead_in_test)
 
 add_executable(engine_cue_translation_test
     tests/engine_cue_translation_test.cpp
