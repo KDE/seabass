@@ -406,6 +406,7 @@ add_library(seabass_core STATIC
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
+    src/infrastructure/audio/playback_timeline.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
@@ -586,6 +587,7 @@ add_library(seabass_core_testing STATIC
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
+    src/infrastructure/audio/playback_timeline.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
     src/domain/engine_cue_translation.cpp
@@ -886,6 +888,18 @@ if(TARGET seabass_audio_qt)
     # No display, no audio device: the probe decodes to buffers and
     # never opens an output.
     set_tests_properties(silence_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# The decoder the player uses, against the click MP3s in
+# tests/fixtures/mp3-click: proves the player's timeline is the one
+# playback_timeline.hpp says it is (#50).
+if(TARGET seabass_audio_qt)
+    add_executable(qt_decoder_timeline_test tests/qt_decoder_timeline_test.cpp)
+    target_include_directories(qt_decoder_timeline_test PRIVATE src)
+    target_link_libraries(qt_decoder_timeline_test PRIVATE seabass_mp3_lead_in Qt6::Core Qt6::Multimedia)
+    add_test(NAME qt_decoder_timeline_test COMMAND qt_decoder_timeline_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
+    set_tests_properties(qt_decoder_timeline_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 if(SEABASS_GUI AND Qt6_FOUND)
@@ -2038,6 +2052,16 @@ add_executable(mp3_lead_in_reader_test
 target_link_libraries(mp3_lead_in_reader_test PRIVATE seabass_core_testing)
 target_include_directories(mp3_lead_in_reader_test PRIVATE src)
 add_test(NAME mp3_lead_in_reader_test COMMAND mp3_lead_in_reader_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
+
+# What the player adds to cues and beat grids to put them on the timeline
+# it plays on (#50), over the same fixtures.
+add_executable(playback_timeline_test
+    tests/playback_timeline_test.cpp
+)
+target_link_libraries(playback_timeline_test PRIVATE seabass_core_testing)
+target_include_directories(playback_timeline_test PRIVATE src)
+add_test(NAME playback_timeline_test COMMAND playback_timeline_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
 
 add_executable(engine_cue_translation_test

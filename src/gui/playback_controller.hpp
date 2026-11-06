@@ -267,7 +267,11 @@ private:
     QString m_artworkPath;
     QString m_fallbackArtworkPath;
     QVariantList m_waveform;
+    // On the playback timeline: the page's list moved by m_cueShiftMs
+    // (infrastructure/audio/playback_timeline.hpp), as are the beat
+    // times below. 0 for anything but an MP3 with a readable lead-in.
     QVariantList m_cues;
+    double m_cueShiftMs = 0.0;
     QPointer<QAbstractItemModel> m_queue;
     bool m_desktopMediaControls = false;
     bool m_libraryBusy = false;

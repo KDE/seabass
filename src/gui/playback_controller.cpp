@@ -5,6 +5,7 @@
 #include "playback_controller.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QAudioBuffer>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
@@ -18,6 +19,7 @@
 #if defined(Q_OS_LINUX)
 #include "mpris_service.hpp"
 #endif
+#include "infrastructure/audio/playback_timeline.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
@@ -35,6 +37,29 @@ namespace
 //
 // `pathIndex` is export.pdb's analysis paths for a rekordbox library,
 // or null to look the one track up in the database itself.
+// The cues as a page hands them, every position moved by `shiftMs` (see
+// infrastructure/audio/playback_timeline.hpp): 0 leaves the list as it
+// came, so takeCues() still sees an unchanged list as unchanged.
+QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
+{
+    if (shiftMs == 0.0) {
+        return cues;
+    }
+    QVariantList shifted;
+    shifted.reserve(cues.size());
+    for (const QVariant &value : cues) {
+        QVariantMap cue = value.toMap();
+        for (const char *key : {"positionMs", "loopEndMs"}) {
+            const auto it = cue.find(QLatin1String(key));
+            if (it != cue.end() && it->canConvert<double>()) {
+                *it = it->toDouble() + shiftMs;
+            }
+        }
+        shifted.append(cue);
+    }
+    return shifted;
+}
+
 domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId,
                                    const infrastructure::rekordbox::AnlzPathIndex *pathIndex = nullptr)
 {
@@ -163,6 +188,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_title = title;
     m_artist = artist;
     m_artworkPath = artworkPath;
+    m_cueShiftMs = 0.0;
     m_cues = cues;
     m_hasTrack = true;
     m_fallbackArtworkPath = fallbackArtworkPath.isEmpty()
@@ -192,11 +218,18 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
         const domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
         m_waveform = toVariantList(analysis.waveform);
+        // An MP3 is played on Engine's timeline; the cues and a rekordbox
+        // grid are not on it (#50).
+        const auto shift = infrastructure::audio::playbackShiftFor(
+            filePath.toStdString(), format == QLatin1String("rekordbox")
+                ? infrastructure::audio::GridTimeline::Rekordbox : infrastructure::audio::GridTimeline::Engine);
+        m_cueShiftMs = shift.cuesMs;
+        m_cues = shiftedCues(cues, m_cueShiftMs);
         const std::vector<domain::Beat> &beats = analysis.beats;
         m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
         m_beatNumbers.reserve(static_cast<qsizetype>(beats.size()));
         for (const domain::Beat &beat : beats) {
-            m_beatTimesMs.append(beat.timeMs);
+            m_beatTimesMs.append(beat.timeMs + shift.beatsMs);
             m_beatNumbers.append(beat.beatInBar);
         }
         m_player.setSource(QUrl::fromLocalFile(filePath));
@@ -227,6 +260,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_artworkPath.clear();
     m_fallbackArtworkPath.clear();
     m_cues.clear();
+    m_cueShiftMs = 0.0;
     m_hasTrack = true;
 
     // Never readAnalysis(): no catalog knows this file.
@@ -249,8 +283,9 @@ bool PlaybackController::takeCues(const QString &format, const QString &libraryP
         sourceId != m_currentSourceId) {
         return false;
     }
-    if (cues != m_cues) {
-        m_cues = cues;
+    const QVariantList shifted = shiftedCues(cues, m_cueShiftMs);
+    if (shifted != m_cues) {
+        m_cues = shifted;
         emit cuesChanged();
     }
     return true;
@@ -504,7 +539,9 @@ bool PlaybackController::jumpToHotCue(int number)
         const QVariantMap cue = value.toMap();
         if (cue.value(QStringLiteral("kind")).toString() == QLatin1String("hot") &&
             cue.value(QStringLiteral("hotCueNumber")).toInt() == number) {
-            seek(static_cast<qint64>(cue.value(QStringLiteral("positionMs")).toDouble()));
+            // The nearest millisecond, not the one below: a rekordbox cue
+            // moved onto the playback timeline rarely lands on a whole one.
+            seek(std::llround(cue.value(QStringLiteral("positionMs")).toDouble()));
             return true;
         }
     }
@@ -530,6 +567,7 @@ void PlaybackController::stop()
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
     m_cues.clear();
+    m_cueShiftMs = 0.0;
     emit trackChanged();
     emit cuesChanged();
     emit queueChanged();
