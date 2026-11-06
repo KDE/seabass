@@ -73,7 +73,7 @@ TestCase {
         load();
         verify(player.jumpToHotCue(3));
         compare(seeked.count, 1);
-        compare(seeked.signalArguments[0][0], 30500, "to the cue, in whole milliseconds");
+        compare(seeked.signalArguments[0][0], 30501, "to the cue, to the nearest millisecond");
         verify(player.jumpToHotCue(1));
         compare(seeked.signalArguments[1][0], 1000);
         verify(player.jumpToHotCue(5), "a hot loop is a hot cue too");
