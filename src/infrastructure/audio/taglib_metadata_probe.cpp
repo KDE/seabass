@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 
+#include "domain/mp3_lead_in.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <filesystem>
@@ -89,6 +91,15 @@ std::optional<application::FileMetadata> TagLibMetadataProbe::read(const std::st
     metadata.bitrate = properties->bitrate();
     metadata.sampleRate = properties->sampleRate();
     metadata.durationIsEstimated = durationIsEstimated(properties);
+
+    // The lead-in (#50) with the rest, so the stick's metadata cache
+    // holds it and a later pass opens the file no more. Its own 16 KB
+    // read after the tag rather than TagLib's: TagLib parses the Xing
+    // header but not the LAME extension after it.
+    if (domain::hasMp3Extension(absoluteFilePath)) {
+        metadata.mp3LeadInRead = true;
+        metadata.mp3LeadIn = readMp3LeadIn(absoluteFilePath);
+    }
 
     return metadata;
 }

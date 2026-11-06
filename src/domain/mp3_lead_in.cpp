@@ -88,4 +88,14 @@ double engineToRekordboxOffsetMs(const Mp3LeadIn &leadIn)
     return difference * 1000.0 / leadIn.sampleRate;
 }
 
+bool hasMp3Extension(std::string_view path)
+{
+    if (path.size() < 4) {
+        return false;
+    }
+    const std::string_view ext = path.substr(path.size() - 4);
+    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    return ext[0] == '.' && lower(ext[1]) == 'm' && lower(ext[2]) == 'p' && ext[3] == '3';
+}
+
 }  // namespace seabass::domain

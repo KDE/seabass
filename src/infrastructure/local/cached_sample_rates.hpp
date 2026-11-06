@@ -10,6 +10,8 @@
 #include <utility>
 
 #include "application/ports/track_metadata_probe.hpp"
+#include "domain/mp3_lead_in.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
 
 namespace seabass::infrastructure::local
@@ -39,9 +41,7 @@ public:
 
     std::optional<double> rateOf(const std::string &absoluteFilePath)
     {
-        if (!m_cache) {
-            m_cache.emplace(m_stickRoot);
-        }
+        loadCache();
         if (const auto cached = m_cache->lookup(absoluteFilePath); cached && cached->sampleRate > 0) {
             return static_cast<double>(cached->sampleRate);
         }
@@ -57,6 +57,40 @@ public:
         return static_cast<double>(read->sampleRate);
     }
 
+    // The lead-in of an MP3 (#50), the same way: from the cache when it
+    // holds the unchanged file with its lead-in read, otherwise from the
+    // probe, which reads it with the rest and has it cached. When the
+    // probe gives nothing (no TagLib in this build, or no playing length
+    // TagLib could find) the file's start is read directly and nothing
+    // is cached: the Engine cue writer reads the same bytes the same way,
+    // so a cue read through here and written back lands where it was.
+    std::optional<domain::Mp3LeadIn> leadInOf(const std::string &absoluteFilePath)
+    {
+        loadCache();
+        if (const auto cached = m_cache->lookup(absoluteFilePath); cached && cached->mp3LeadInRead) {
+            return cached->mp3LeadIn;
+        }
+        ++m_probes;
+        if (const auto read = m_probe.read(absoluteFilePath); read && read->mp3LeadInRead) {
+            m_cache->store(absoluteFilePath, *read);
+            return read->mp3LeadIn;
+        }
+        return audio::readMp3LeadIn(absoluteFilePath);
+    }
+
+    // The same for a pass that must not stat every file: the cached
+    // lead-in taken by path, unchecked, or the file's start read directly
+    // when the cache has none. No probe and nothing stored; a later
+    // leadInOf() pass checks what was taken here.
+    std::optional<domain::Mp3LeadIn> leadInByPathOf(const std::string &absoluteFilePath)
+    {
+        loadCache();
+        if (const auto cached = m_cache->lookupByPathOnly(absoluteFilePath); cached && cached->mp3LeadInRead) {
+            return cached->mp3LeadIn;
+        }
+        return audio::readMp3LeadIn(absoluteFilePath);
+    }
+
     // False when the cache could not be written (a read-only or full
     // stick): that costs a probe next time, never the pass.
     bool save() { return !m_cache || m_cache->save(); }
@@ -65,6 +99,13 @@ public:
     std::size_t probes() const { return m_probes; }
 
 private:
+    void loadCache()
+    {
+        if (!m_cache) {
+            m_cache.emplace(m_stickRoot);
+        }
+    }
+
     std::string m_stickRoot;
     application::TrackMetadataProbe &m_probe;
     std::optional<MetadataCache> m_cache;
