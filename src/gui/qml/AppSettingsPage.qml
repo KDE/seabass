@@ -42,7 +42,7 @@ Page {
     // back the way it was when the page opened (Sebastian, 2026-09-28).
     // The breadcrumb's Back keeps them, as it always did.
     readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "showPlayCount", "exactMatchSeconds",
-        "compareAudioSeconds", "ignoreCuesAtStart", "seabassHomeDirectory", "stickBackupDirectory",
+        "compareAudioSeconds", "ignoreCuesAtStart", "correctMp3CueTiming", "seabassHomeDirectory", "stickBackupDirectory",
         "useSystemTheme", "experimentalFeaturesEnabled"]
     readonly property var updateSettingKeys: ["automatic", "includeTesting"]
     property var openedWith: ({})
@@ -511,6 +511,35 @@ Page {
                             + "on the first bar is never touched either way, and neither is a cue at a "
                             + "position before the start of the track: that one is a \"no cue set\" value "
                             + "with nowhere in the track to point, so it stays noise whatever you choose."
+                    }
+                }
+                RowLayout {
+                    Layout.leftMargin: root.settingIndent
+                    spacing: 8 * Theme.iconScale
+                    SeabassCheckBox {
+                        objectName: "correctMp3CueTimingCheck"
+                        text: "Correct MP3 cue timing between rekordbox and Engine"
+                        checked: root.appSettingsController.correctMp3CueTiming
+                        onToggled: root.appSettingsController.correctMp3CueTiming = checked
+                    }
+                    InfoButton {
+                        explanationTitle: "MP3 cue timing"
+                        summaryText: "rekordbox and Engine DJ start counting an MP3 at slightly different "
+                            + "places, so the same cue is stored up to about 50 milliseconds apart."
+                        explanationText:
+                            "## Why the two differ\n\n"
+                            + "Most MP3 files begin with a header frame and a short stretch of silence the "
+                            + "encoder added. rekordbox plays the header frame as silence and keeps the "
+                            + "encoder's silence; Engine DJ skips both. How far apart that puts a cue depends "
+                            + "on how the file was encoded: nothing, about 25 milliseconds, or about 50.\n\n"
+                            + "## What it does\n\n"
+                            + "With this on, Seabass reads the start of each MP3 and moves Engine's cue "
+                            + "positions onto rekordbox's timing when it reads them, and back when it writes "
+                            + "them, so a cue copied between the two lands on the same sound. Other formats "
+                            + "are never moved.\n\n"
+                            + "## When to turn it off\n\n"
+                            + "If cues copied to Engine land noticeably off the sound they were set on. With "
+                            + "it off, positions are copied exactly as each library stores them."
                     }
                 }
             }

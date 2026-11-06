@@ -45,6 +45,8 @@ AppSettingsController::AppSettingsController(QObject *parent)
                                 .toInt();
     m_ignoreCuesAtStart =
         m_settings.value("music/ignoreCuesAtStart", domain::MatchingPolicy::DefaultIgnoreCuesAtStart).toBool();
+    m_correctMp3CueTiming =
+        m_settings.value("music/correctMp3CueTiming", domain::MatchingPolicy::DefaultCorrectMp3CueTiming).toBool();
     // Before anything can scan. MatchingPolicy clamps, so a hand-edited
     // settings file cannot put a wider window into effect than the page
     // would allow, and the members are read back from it so the page
@@ -149,6 +151,7 @@ int AppSettingsController::compareAudioMaxSeconds() const
 void AppSettingsController::applyMatchingPolicy()
 {
     domain::MatchingPolicy::set(m_exactMatchSeconds, m_compareAudioSeconds, m_ignoreCuesAtStart);
+    domain::MatchingPolicy::setCorrectMp3CueTiming(m_correctMp3CueTiming);
     // Read back, never assumed. set() clamps both numbers (and raises
     // the wider window to the exact one when it was left below it), so
     // storing what was asked for would leave the page showing a value
@@ -157,6 +160,7 @@ void AppSettingsController::applyMatchingPolicy()
     m_exactMatchSeconds = static_cast<int>(domain::MatchingPolicy::exactMatchSeconds());
     m_compareAudioSeconds = static_cast<int>(domain::MatchingPolicy::compareAudioSeconds());
     m_ignoreCuesAtStart = domain::MatchingPolicy::ignoreCuesAtStart();
+    m_correctMp3CueTiming = domain::MatchingPolicy::correctMp3CueTiming();
 }
 
 void AppSettingsController::setExactMatchSeconds(int value)
@@ -194,6 +198,17 @@ void AppSettingsController::setIgnoreCuesAtStart(bool value)
     applyMatchingPolicy();
     m_settings.setValue("music/ignoreCuesAtStart", m_ignoreCuesAtStart);
     emit ignoreCuesAtStartChanged();
+}
+
+void AppSettingsController::setCorrectMp3CueTiming(bool value)
+{
+    if (m_correctMp3CueTiming == value) {
+        return;
+    }
+    m_correctMp3CueTiming = value;
+    applyMatchingPolicy();
+    m_settings.setValue("music/correctMp3CueTiming", m_correctMp3CueTiming);
+    emit correctMp3CueTimingChanged();
 }
 
 void AppSettingsController::setKeyNotation(const QString &value)
