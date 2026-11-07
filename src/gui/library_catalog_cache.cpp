@@ -237,10 +237,17 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
             reader->fillCues(tracks);
             return;
         }
-        // Engine's cues came with the Tracks stage, which opens no audio
-        // file, so a row the player has not analysed yet (no sample rate
-        // recorded) has them at the reader's 44.1 kHz guess. Here its file
-        // says: only for the rows that have cues and no rate, from the
+        // Engine's cues came with the Tracks stage, which asks no audio
+        // file its sample rate, so a row the player has not analysed yet
+        // (no sample rate recorded) has them at the reader's 44.1 kHz
+        // guess. The Tracks stage does open audio files for one thing:
+        // each cued MP3 whose metadata cache entry holds no lead-in has
+        // its first 16 KB read (MaxLeadInBytesRead: an ID3 header and
+        // LeadInWindowBytes), a seek and a small read per file over USB.
+        // That is paid once per stick: this stage stores every lead-in it
+        // reads (CachedSampleRates::leadInOf), and the next Tracks stage
+        // takes it from the cache by path. Here the file is asked its
+        // rate: only for the rows that have cues and no rate, from the
         // stick's metadata cache when it knows the file, probed once
         // otherwise and cached for the next pass. The Full stage needs no
         // source of its own: it always follows this one on the same rows.
