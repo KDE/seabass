@@ -278,6 +278,30 @@ int main(int argc, char **argv)
         assert(real.delivered <= MaxLeadInBytesRead);
     }
 
+    // Whether the file could be read at all (lookForMp3LeadIn): a path
+    // that cannot be opened, and a read that fails partway (a stream
+    // whose buffer throws, as a stick that drops out does), are no
+    // answer; a file read to its end is one, lead-in or not.
+    {
+        using seabass::infrastructure::audio::lookForMp3LeadIn;
+        assert(!lookForMp3LeadIn(g_dir + "/no-such-file.mp3").looked);
+        const auto lame = lookForMp3LeadIn(g_dir + "/lame-cbr-44100.mp3");
+        assert(lame.looked && lame.leadIn);
+        const auto wav = lookForMp3LeadIn(g_dir + "/silence.wav");
+        assert(wav.looked && !wav.leadIn && "read, and not an MP3: an answer");
+
+        struct FailingBuf : std::streambuf
+        {
+            pos_type seekoff(off_type, std::ios_base::seekdir, std::ios_base::openmode) override { return 0; }
+            pos_type seekpos(pos_type, std::ios_base::openmode) override { return 0; }
+            int_type underflow() override { throw std::ios_base::failure("the stick went away"); }
+        } failing;
+        std::istream in(&failing);
+        const auto broken = lookForMp3LeadIn(in);
+        assert(!broken.looked && !broken.leadIn && "a failed read is no answer");
+        std::cout << "case (a file that could not be read is not looked at) OK\n";
+    }
+
     std::cout << "mp3_lead_in_reader_test: all passed\n";
     return 0;
 }

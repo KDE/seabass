@@ -271,11 +271,31 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in)
 
 std::optional<domain::Mp3LeadIn> readMp3LeadIn(const std::string &absoluteFilePath)
 {
+    return lookForMp3LeadIn(absoluteFilePath).leadIn;
+}
+
+Mp3LeadInLook lookForMp3LeadIn(std::istream &in)
+{
+    Mp3LeadInLook look;
+    look.leadIn = readMp3LeadIn(in);
+    // A read that failed (badbit) or a seek that did (failbit without
+    // eofbit), rather than a read that ran out of file (eofbit):
+    // readMp3LeadIn() gives up at the first of these, so the flags are
+    // still set when it returns.
+    look.looked = !in.bad() && !(in.fail() && !in.eof());
+    if (!look.looked) {
+        look.leadIn.reset();
+    }
+    return look;
+}
+
+Mp3LeadInLook lookForMp3LeadIn(const std::string &absoluteFilePath)
+{
     std::ifstream in(pathFromUtf8(absoluteFilePath), std::ios::binary);
     if (!in) {
-        return std::nullopt;
+        return {};
     }
-    return readMp3LeadIn(in);
+    return lookForMp3LeadIn(in);
 }
 
 }  // namespace seabass::infrastructure::audio

@@ -33,6 +33,20 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(const std::string &absoluteFilePa
 // tests that count what was read.
 std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in);
 
+// The same, saying whether the file could be read at all. `looked` is
+// false when it could not be opened or a read failed (a stick hiccup):
+// then there is no answer, and a cache must not store "no lead-in" for
+// it. True whenever the bytes were read, whatever they were: a file that
+// is not MPEG Layer III audio inside is an answer (leadIn empty).
+// readMp3LeadIn() is this one's leadIn.
+struct Mp3LeadInLook
+{
+    std::optional<domain::Mp3LeadIn> leadIn;
+    bool looked = false;
+};
+Mp3LeadInLook lookForMp3LeadIn(const std::string &absoluteFilePath);
+Mp3LeadInLook lookForMp3LeadIn(std::istream &in);
+
 // The version of what readMp3LeadIn returns, stored with every lead-in
 // the metadata cache keeps: an entry an earlier parser wrote is read
 // again. Raise it whenever the parser starts answering differently for
