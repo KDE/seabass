@@ -80,6 +80,9 @@ if [ "$patch" -eq 8 ]; then
     echo "$version is a development version: X.Y.8 is what master carries between trains," >&2
     echo "and it is never released." >&2
     exit 2
+elif [ "$patch" -ge 9 ] && [ "$minor" -eq 9 ]; then
+    # The pre-releases of 1.0.0 are 0.9.9 and up: after 0.9 comes 1.0.
+    train="$((major + 1)).0"
 elif [ "$patch" -ge 9 ]; then
     train="$major.$((minor + 1))"
 else
@@ -187,8 +190,15 @@ if git -C "$root" rev-parse -q --verify "refs/tags/$tag" >/dev/null \
 fi
 
 if ! git -C "$root" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+    if [ "$patch" -ge 9 ]; then
+        first="$major.$minor.9"
+    elif [ "$minor" -eq 0 ]; then
+        first="$((major - 1)).9.9"
+    else
+        first="$major.$((minor - 1)).9"
+    fi
     echo "no $branch: cut the $train train first," >&2
-    echo "  tools/release.sh cut $major.$(( ${train#*.} - 1 )).9 --go" >&2
+    echo "  tools/release.sh cut $first --go" >&2
     exit 1
 fi
 if [ "$current" != "$branch" ]; then
