@@ -12,6 +12,7 @@
 
 #include "application/ports/cue_writer.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/onelibrary_cue_writer_adapter.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
@@ -41,6 +42,8 @@ struct DuplicatesFormatContext
     // Pioneer formats never disagree after a save. Owned by the save
     // (SaveContext::shared), not by this context.
     infrastructure::onelibrary::OneLibraryCueWriter *mirror = nullptr;
+    // engine only: the save's session for m.db, told of every write.
+    FormatWriteSession *engineSession = nullptr;
 };
 
 // oneLibrarySourceIdToPath is only consulted when format == "onelibrary"
@@ -71,8 +74,16 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
         adapter->useSharedWriter(sharedOneLibraryWriter(saveCtx, pioneerRoot));
         ctx->writer = std::move(adapter);
     } else {
-        std::string engineLibraryPath = path.toStdString();
-        ctx->writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
+        // Through the save's shared session for this database, never
+        // straight at the stick's m.db: another change in the save may
+        // have put it behind a scratch copy, and a write made to the real
+        // file then is overwritten when the copy is committed back. Hint
+        // 0, as in MergeCuesChange: a cue copy never asks for a scratch
+        // copy, it only has to land wherever the database is.
+        ctx->engineSession =
+            &sharedFormatWriteSession(saveCtx, "engine", path.toStdString(), 0, "duplicate-cue-consolidation");
+        ctx->writer =
+            std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(ctx->engineSession->writeRoot());
     }
     return ctx;
 }
@@ -150,6 +161,9 @@ ChangeOutcome CopyCuesChange::apply(SaveContext &ctx)
             ctx.backupOnce(file, "duplicate-cue-consolidation");
         }
         format.writer->writeHotCues(target.sourceId, m_op.source.cues);
+        if (format.engineSession) {
+            format.engineSession->noteItemApplied();
+        }
         ctx.log().record("copied " + std::to_string(m_op.source.cues.size()) + " cue(s) from track id="
                          + m_op.source.sourceId + " to track id=" + target.sourceId);
         if (format.mirror && !target.filePath.empty()) {

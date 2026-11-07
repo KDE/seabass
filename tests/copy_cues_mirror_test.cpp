@@ -37,10 +37,13 @@
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
+#include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_cues_change.hpp"
+#include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
@@ -265,6 +268,66 @@ int main()
             std::error_code ec;
             fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::add, ec);
         }
+    }
+
+    // ---- 3. an Engine copy survives a save that has m.db on a scratch copy --
+    // Clean Up, Sync and the repairs put m.db behind a scratch copy for a
+    // large enough save. A copy written straight to the stick's m.db then
+    // was overwritten when the scratch was committed back: reported as
+    // applied, and gone. merge_cues_change_test holds the same for Merge.
+    {
+        const fs::path scratch = seabass::testing::scratchRoot() / "seabass_copy_cues_engine_scratch";
+        std::error_code cleared;
+        fs::remove_all(scratch, cleared);
+        fs::create_directories(scratch);
+        const fs::path engineRoot = scratch / "Engine Library";
+        fs::copy(seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine",
+                 engineRoot, fs::copy_options::recursive);
+
+        DuplicatesCopyOp op;
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engineRoot));
+            const std::vector<Track> tracks = reader.readAll();
+            for (const Track &track : tracks) {
+                if (!hotCues(track.cues).empty()) {
+                    op.source = track;
+                    break;
+                }
+            }
+            for (const Track &track : tracks) {
+                if (track.cues.empty() && track.sourceId != op.source.sourceId) {
+                    op.targets = {track};
+                    break;
+                }
+            }
+        }
+        assert(!op.source.sourceId.empty() && !op.targets.empty());
+
+        auto &noProgress = seabass::application::NullProgressReporter::instance();
+        CancellationToken token;
+        const QString root = seabass::gui::pathToQString(engineRoot);
+        {
+            SaveContext ctx(token, noProgress, {}, {}, root);
+            // Stand-in for a Clean Up or Sync change staged into the same
+            // save, asked for first with a hint that takes a scratch copy.
+            auto &other = sharedFormatWriteSession(ctx, "engine", seabass::pathToUtf8(engineRoot), 5000, "test-other-feature");
+            assert(other.usesScratch());  // otherwise this case proves nothing
+
+            CopyCuesChange change(QStringLiteral("engine"), root, QStringLiteral("group"), op);
+            assert(change.apply(ctx).ok);
+            assert(!ctx.runFinishHooks(true).error);
+        }
+
+        seabass::infrastructure::engine::LibdjinteropEngineReader after(seabass::pathToUtf8(engineRoot));
+        bool found = false;
+        for (const Track &track : after.readAll()) {
+            if (track.sourceId == op.targets.front().sourceId) {
+                found = sameHotCues(track.cues, op.source.cues);
+            }
+        }
+        assert(found && "the copied cues must survive a save that also scratches m.db");
+        std::cout << "case 3 (an Engine copy survives a save that has m.db on a scratch copy) OK\n";
+        fs::remove_all(scratch, cleared);
     }
 
     std::error_code ec;
