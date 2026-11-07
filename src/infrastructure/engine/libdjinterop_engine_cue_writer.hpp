@@ -43,6 +43,14 @@ public:
     // every lead-in reads as nothing and the cues go unshifted.
     void setAudioRoot(std::string audioRoot) { m_audioRoot = std::move(audioRoot); }
 
+    // What a write to this track takes off every position: the shift
+    // the reader adds for its file, by the same source and rule, 0 when
+    // the correction is off or the lead-in cannot be read. For a caller
+    // holding positions on another timeline (Restore Metadata, whose
+    // stored Engine cues carry the shift they were read with) to move
+    // them first. Throws if the track does not exist.
+    double cueTimelineShiftMs(const std::string &trackSourceId);
+
     // Memory cues left out, over every write so far, because the lead-in
     // shift alone put them at or before Engine's 0 (#50): a cue in the
     // first 51 ms of a LAME MP3. Engine reads a main cue at 0 as none, so
@@ -89,6 +97,7 @@ public:
     void setLastPlayedAt(const std::string &trackSourceId, std::chrono::system_clock::time_point when);
 
 private:
+    double shiftMsOf(djinterop::track &track);
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
                    std::optional<double> knownSampleRate);
 

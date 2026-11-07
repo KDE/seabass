@@ -58,6 +58,11 @@ struct MetadataRestoreProposal
     // drops what is already there.
     std::vector<CuePoint> cues;
     bool cuesOffered = false;
+    // The stored side's Track::storedEngineCueShiftMs, with `cues`: they
+    // came from Engine and carry this shift (0: Engine's own positions).
+    // Nothing when they are on rekordbox's timeline. The restore moves
+    // them by the shift the target's reader would add minus this.
+    std::optional<double> cuesEngineShiftMs;
     // The stick already has cues and they are not the stored ones.
     // Whether the offer was made anyway is cuesOffered: the merge rule
     // decides, and a conflict the stored side won is both a conflict and

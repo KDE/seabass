@@ -194,6 +194,15 @@ struct Track
     // whether or not the reader could see the audio file, and the same
     // as before the correction existed.
     double cueTimelineShiftMs = 0.0;
+    // A track read from the metadata store (MetadataStore::readAll):
+    // when its cues were taken in from an Engine catalog, the
+    // cueTimelineShiftMs they were read with, so the Engine position of
+    // a cue is positionMs minus this; 0 for cues the store took in
+    // before it recorded the shift, which are Engine's positions as
+    // stored. Nothing when the cues came from any other catalog, on
+    // rekordbox's timeline already. Unset on every track a catalog
+    // reader returns.
+    std::optional<double> storedEngineCueShiftMs;
 
     // Normalized to 0-5 stars (Engine's own 0-100 scale is divided down by
     // readers before this is set), nullopt when unrated rather than 0 --
