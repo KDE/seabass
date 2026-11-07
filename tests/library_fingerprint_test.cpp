@@ -373,6 +373,25 @@ int main()
         assert(!(fingerprintLibrary(shifted) == fingerprintLibrary(stored)));
     }
 
+    // The shift taken back off lands on the position the catalog
+    // stores, also where that position is a multiple of 25 ms and so a
+    // rounding boundary of the 50 ms grid. (x + s) - s is not always x
+    // in doubles: sample 786000 at 48 kHz is 16375 ms, and with the
+    // 2257-sample shift of a LAME file added and taken off again it is
+    // 16374.999999999998, which rounded one grid step lower than the
+    // raw read did.
+    {
+        std::vector<Track> stored = makeLibrary(1, 50);
+        stored.front().cues.resize(1);
+        stored.front().cues.front().positionMs = 786000.0 / 48000.0 * 1000.0;
+        std::vector<Track> shifted = stored;
+        shifted.front().cueTimelineShiftMs = 2257.0 / 48.0;
+        shifted.front().cues.front().positionMs += shifted.front().cueTimelineShiftMs;
+        assert(shifted.front().cues.front().positionMs - shifted.front().cueTimelineShiftMs != 16375.0
+               && "the case only proves something while the round trip is inexact");
+        assert(fingerprintLibrary(shifted) == fingerprintLibrary(stored));
+    }
+
     std::cout << "All library_fingerprint tests passed." << std::endl;
     return 0;
 }
