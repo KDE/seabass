@@ -19,6 +19,10 @@ audio instant can be found in every decoder's output:
      mode and in a different one (vbri_frame.py)
   D  LAME with a valid tag, at 44.1 kHz, 48 kHz, MPEG-2 22.05 kHz, mono,
      and with CRC-protected frames (the tag still at 4 + side info)
+  D  the 44.1 kHz LAME file and the VBRI file with their tag frame moved
+     or emptied (tag_frame_variants.py): zero bytes in front of it, an
+     ID3 tag and zero bytes, two ID3 tags, the frame and byte counts
+     zeroed
 
 LAME files come from libmp3lame through lame_encode.encode(), the Lavc
 file from the ffmpeg command line over a WAV of the same samples. Every
@@ -37,6 +41,7 @@ import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lame_encode  # noqa: E402
+import tag_frame_variants  # noqa: E402
 import vbri_frame  # noqa: E402
 
 SECONDS = 3
@@ -113,6 +118,16 @@ def main():
     audio = open(p("click-A-notag-44100.mp3"), "rb").read()
     open(p("click-VBRI-44100.mp3"), "wb").write(vbri_frame.with_vbri(audio))
     open(p("click-VBRI-modediffers-44100.mp3"), "wb").write(vbri_frame.with_vbri(audio, mode_differs=True))
+
+    def variant(src, name, kind):
+        data = open(p(src), "rb").read()
+        open(p(name), "wb").write(tag_frame_variants.VARIANTS[kind](data))
+
+    variant("click-D-lame-44100.mp3", "click-D-lame-junk-44100.mp3", "junk")
+    variant("click-D-lame-44100.mp3", "click-D-lame-id3junk-44100.mp3", "id3junk")
+    variant("click-D-lame-44100.mp3", "click-D-lame-id3id3-44100.mp3", "id3id3")
+    variant("click-D-lame-44100.mp3", "click-D-lame-nocounts-44100.mp3", "nocounts")
+    variant("click-VBRI-44100.mp3", "click-VBRI-nocounts-44100.mp3", "nocounts")
 
     with tempfile.TemporaryDirectory() as tmp:
         wav = os.path.join(tmp, "click-44100.wav")

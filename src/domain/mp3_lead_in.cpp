@@ -17,7 +17,9 @@ namespace
 // Sources: rekordbox from rbxport PR 295 (static analysis of rekordbox
 // 7.2.19 plus a 400-file measurement) and Pioneer's 2012 note (24 ms at
 // 48 kHz, 26 ms at 44.1 kHz). Engine from its bundled FFmpeg 4.4.3
-// (libavformat/mp3dec.c, measured on the Mac 2026-11-06).
+// (libavformat/mp3dec.c, measured on the Mac 2026-11-06; where the tag
+// frame is looked for, and the counts it needs, measured with the
+// system FFmpeg 6.1 on the crafted click files, 2026-11-07).
 struct DecoderModel
 {
     // Plays the tag frame as one frame of silence when its channel mode
@@ -29,15 +31,22 @@ struct DecoderModel
     // mode: libmpg123 has no VBRI parser and decodes it like audio;
     // FFmpeg recognises it and skips it (measured on the VBRI click files).
     bool playsVbriFrame;
+    // Reads the tag frame only where it is first after the ID3v2 tags
+    // (Mp3LeadIn::tagFrameFirst); one anywhere else is decoded as one
+    // frame of silence and nothing is trimmed.
+    bool readsTagFrameOnlyFirst;
+    // Plays a tag frame it read that counts neither frames nor bytes
+    // (Mp3LeadIn::tagFrameHasCounts), whatever the trim below says.
+    bool playsTagFrameWithoutCounts;
     // Trims encoderDelay + extraTrimSamples for these tags.
     bool trimsLame;
     bool trimsLavc;
     int extraTrimSamples;
 };
 
-constexpr DecoderModel RekordboxModel{true, false, true, false, false, 0};
+constexpr DecoderModel RekordboxModel{true, false, true, false, false, false, false, 0};
 // 529 = the decoder's own 528-sample delay plus 1 (libavformat).
-constexpr DecoderModel EngineModel{false, false, false, true, true, 529};
+constexpr DecoderModel EngineModel{false, false, false, true, true, true, true, 529};
 
 const DecoderModel &modelOf(Mp3Decoder decoder)
 {
@@ -63,8 +72,16 @@ Mp3Case classify(const Mp3LeadIn &leadIn)
 int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder)
 {
     const DecoderModel &model = modelOf(decoder);
+    const bool tagFrame = leadIn.infoFrame || leadIn.vbri;
+    if (tagFrame && model.readsTagFrameOnlyFirst && !leadIn.tagFrameFirst) {
+        // Never recognised as a tag frame: decoded like audio, and no
+        // delay field read to trim by.
+        return leadIn.samplesPerFrame;
+    }
     int samples = 0;
-    if (leadIn.infoFrame) {
+    if (tagFrame && model.playsTagFrameWithoutCounts && !leadIn.tagFrameHasCounts) {
+        samples += leadIn.samplesPerFrame;
+    } else if (leadIn.infoFrame) {
         const bool plays = leadIn.infoFrameModeMatchesAudio ? model.playsTagFrameWhenModesMatch
                                                             : model.playsTagFrameWhenModesDiffer;
         if (plays) {

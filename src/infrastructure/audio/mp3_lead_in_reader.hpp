@@ -19,7 +19,8 @@ namespace seabass::infrastructure::audio
 // Xing/Info or VBRI frame, its LAME extension (encoder string, delay and
 // padding, CRC) and the channel mode of the frame after it.
 //
-// Reads the 10-byte ID3v2 header, seeks past the tag, and reads at most
+// Reads the 10-byte header of each ID3v2 tag in a row at the start (at
+// most MaxId3TagsFollowed of them), seeks past them, and reads at most
 // LeadInWindowBytes from there: never more than MaxLeadInBytesRead in
 // all, whatever the file. No TagLib, so the cover art in the tag is never
 // read.
@@ -36,9 +37,14 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in);
 // the metadata cache keeps: an entry an earlier parser wrote is read
 // again. Raise it whenever the parser starts answering differently for
 // some file.
-constexpr int Mp3LeadInParserVersion = 2;
+//   2  the CRC-protected tag offset and VBRI
+//   3  where the tag frame sits, and whether it counts frames or bytes
+constexpr int Mp3LeadInParserVersion = 3;
 
 constexpr std::size_t LeadInWindowBytes = 16 * 1024;
-constexpr std::size_t MaxLeadInBytesRead = 10 + LeadInWindowBytes;
+constexpr std::size_t MaxId3TagsFollowed = 8;
+// The headers of the tags, one more 10-byte read that finds no tag, and
+// the window.
+constexpr std::size_t MaxLeadInBytesRead = 10 * (MaxId3TagsFollowed + 1) + LeadInWindowBytes;
 
 }  // namespace seabass::infrastructure::audio

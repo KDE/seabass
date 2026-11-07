@@ -135,6 +135,10 @@ void readTagFrame(const unsigned char *frame, std::size_t size, const FrameHeade
     constexpr std::size_t VbriOffset = 4 + 32;
     if (size >= VbriOffset + 4 && startsWith(frame + VbriOffset, "VBRI")) {
         leadIn.vbri = true;
+        // Version, delay and quality (2 bytes each), then the byte and
+        // frame counts.
+        leadIn.tagFrameHasCounts = size >= VbriOffset + 18
+            && (bigEndian32(frame + VbriOffset + 10) != 0 || bigEndian32(frame + VbriOffset + 14) != 0);
         return;
     }
     std::size_t at = h.xingOffset();
@@ -144,12 +148,17 @@ void readTagFrame(const unsigned char *frame, std::size_t size, const FrameHeade
     leadIn.infoFrame = true;
     const std::uint32_t flags = bigEndian32(frame + at + 4);
     at += 8;
+    std::uint32_t frames = 0;
+    std::uint32_t bytes = 0;
     if (flags & 0x1) {
-        at += 4;  // frame count
+        frames = size >= at + 4 ? bigEndian32(frame + at) : 0;
+        at += 4;
     }
     if (flags & 0x2) {
-        at += 4;  // byte count
+        bytes = size >= at + 4 ? bigEndian32(frame + at) : 0;
+        at += 4;
     }
+    leadIn.tagFrameHasCounts = frames != 0 || bytes != 0;
     if (flags & 0x4) {
         at += 100;  // seek table
     }
@@ -187,12 +196,25 @@ void readTagFrame(const unsigned char *frame, std::size_t size, const FrameHeade
 
 std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in)
 {
-    std::array<unsigned char, 10> id3{};
-    if (readSome(in, id3.data(), id3.size()) != id3.size()) {
-        return std::nullopt;
-    }
+    // Every ID3v2 tag in a row at the start, the way FFmpeg reads them:
+    // the frames start after the last one.
     std::streamoff audioStart = 0;
-    if (startsWith(id3.data(), "ID3")) {
+    for (std::size_t tags = 0;; ++tags) {
+        std::array<unsigned char, 10> id3{};
+        in.clear();
+        in.seekg(audioStart);
+        if (!in || readSome(in, id3.data(), id3.size()) != id3.size()) {
+            return std::nullopt;
+        }
+        if (!startsWith(id3.data(), "ID3")) {
+            if (tags == 0 && isOtherContainer(id3.data())) {
+                return std::nullopt;
+            }
+            break;
+        }
+        if (tags == MaxId3TagsFollowed) {
+            return std::nullopt;
+        }
         // The size is syncsafe (7 bits a byte) and counts the tag after
         // its header, without the footer. The unsynchronisation flag
         // changes how the frames inside are encoded, never this size, so
@@ -203,9 +225,7 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in)
         const std::streamoff size = (std::streamoff(id3[6]) << 21) | (std::streamoff(id3[7]) << 14)
             | (std::streamoff(id3[8]) << 7) | std::streamoff(id3[9]);
         const bool footer = (id3[5] & 0x10) != 0;
-        audioStart = 10 + size + (footer ? 10 : 0);
-    } else if (isOtherContainer(id3.data())) {
-        return std::nullopt;
+        audioStart += 10 + size + (footer ? 10 : 0);
     }
 
     in.clear();
@@ -236,6 +256,9 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in)
         leadIn.sampleRate = first->sampleRate;
         leadIn.samplesPerFrame = first->samplesPerFrame();
         readTagFrame(window.data() + i, got - i, *first, leadIn);
+        // FFmpeg reads the tag frame only right after the ID3v2 tags;
+        // libmpg123 finds it after anything.
+        leadIn.tagFrameFirst = i == 0;
         // The tag frame is not audio, so the first audio frame is the one
         // after it, and that is the channel mode rekordbox compares.
         leadIn.infoFrameModeMatchesAudio = first->channelMode == second->channelMode;

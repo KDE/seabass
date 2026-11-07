@@ -206,6 +206,33 @@ int main(int argc, char **argv)
         assert(near(engineToRekordboxOffsetMs(l), 1105 * 1000.0 / 44100));
     }
 
+    // Where FFmpeg looks for the tag frame (measured with the click
+    // files): only at the first byte after the ID3v2 tags. Anywhere else
+    // it decodes the frame as one of silence and trims nothing, which is
+    // what libmpg123 does with a frame it plays too, so the two agree.
+    for (const char *file : {"lame-junk-44100.mp3", "lame-id3junk-44100.mp3"}) {
+        const Mp3LeadIn l = read(file);
+        assert(l.infoFrame && l.tag == Mp3LeadIn::Tag::Lame && l.lameCrcValid);
+        assert(classify(l) == Mp3Case::D);
+        assert(!l.tagFrameFirst && l.tagFrameHasCounts);
+        assert(engineToRekordboxOffsetMs(l) == 0.0);
+    }
+    // Two ID3 tags back to back: the frame is still first after the
+    // chain, and trimmed like the plain file.
+    assert(read("lame-id3id3-44100.mp3").tagFrameFirst);
+    assert(near(engineToRekordboxOffsetMs(read("lame-id3id3-44100.mp3")), 2257 * 1000.0 / 44100));
+    // Frame and byte counts both 0: FFmpeg plays the frame as silence
+    // and still trims LAME's delay + 529, so 1105 samples apart.
+    assert(read("lame-nocounts-44100.mp3").tagFrameFirst && !read("lame-nocounts-44100.mp3").tagFrameHasCounts);
+    assert(near(engineToRekordboxOffsetMs(read("lame-nocounts-44100.mp3")), 1105 * 1000.0 / 44100));
+    // A VBRI frame without counts: both decoders play it.
+    assert(read("vbri-nocounts-44100.mp3").vbri && !read("vbri-nocounts-44100.mp3").tagFrameHasCounts);
+    assert(engineToRekordboxOffsetMs(read("vbri-nocounts-44100.mp3")) == 0.0);
+    // And every plain file: first, with counts.
+    for (const char *file : {"lame-cbr-44100.mp3", "lame-id3footer-44100.mp3", "ffmpeg-lavc-44100.mp3", "vbri-44100.mp3"}) {
+        assert(read(file).tagFrameFirst && read(file).tagFrameHasCounts);
+    }
+
     // Not an MP3: nothing.
     {
         assert(!readMp3LeadIn(g_dir + "/silence.wav").has_value());

@@ -44,6 +44,17 @@ struct Mp3LeadIn
     bool infoFrameModeMatchesAudio = false;
     // A Fraunhofer VBRI frame leads the stream instead of Xing/Info.
     bool vbri = false;
+    // The tag frame (Xing, Info or VBRI) starts at the first byte after
+    // the ID3v2 tags, or of the file when there are none. FFmpeg looks
+    // for it only there: after junk or padding it decodes the frame as
+    // audio. libmpg123 resyncs over anything. Measured on
+    // tests/fixtures/mp3-click/click-D-lame-junk-44100.mp3 and -id3junk.
+    bool tagFrameFirst = true;
+    // The tag frame counts the stream's frames or bytes: at least one of
+    // the two fields is there and not 0. FFmpeg plays a tag frame that
+    // counts neither as a frame of silence, and still trims (measured on
+    // click-D-lame-nocounts-44100.mp3 and click-VBRI-nocounts-44100.mp3).
+    bool tagFrameHasCounts = true;
     int sampleRate = 0;
     // 1152 for MPEG-1 Layer III, 576 for MPEG-2 and 2.5.
     int samplesPerFrame = 0;
@@ -70,9 +81,13 @@ Mp3Case classify(const Mp3LeadIn &leadIn);
 //       VBRI and decodes it like audio.
 //   EngineFfmpegGapless  Engine DJ 5.1 on the desktop (FFmpeg 4.4.3,
 //       libavformat's mp3 demuxer): the tag frame (Xing, Info or VBRI)
-//       is never played, and for a LAME, Lavc or Lavf tag encoder_delay
+//       is not played, and for a LAME, Lavc or Lavf tag encoder_delay
 //       + 529 samples are trimmed as well (start_skip_samples = delay +
-//       528 + 1). Nothing is trimmed after a VBRI frame.
+//       528 + 1). Nothing is trimmed after a VBRI frame. A tag frame
+//       that is not the first thing after the ID3v2 tags is not read at
+//       all: played as one frame of silence, nothing trimmed. One that
+//       counts neither frames nor bytes is played, and its trim still
+//       applies.
 enum class Mp3Decoder { RekordboxMpg123NoGapless, EngineFfmpegGapless };
 
 // Samples the decoder plays before the first sample of the first AUDIO

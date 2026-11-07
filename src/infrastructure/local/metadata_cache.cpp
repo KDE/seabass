@@ -132,8 +132,9 @@ long long intFieldOrZero(const std::map<std::string, std::string> &fields, const
 // the probe read lead-ins (or for a file that is not an MP3), "-" when
 // the probe looked and found none it could read, otherwise the version
 // of the parser that read it (audio::Mp3LeadInParserVersion) and the
-// nine fields of domain::Mp3LeadIn separated by spaces:
-//   "<version> <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>"
+// eleven fields of domain::Mp3LeadIn separated by spaces:
+//   "<version> <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>
+//    <tagFrameFirst> <tagFrameHasCounts>"
 // A value this build cannot parse, or one another parser version wrote,
 // reads as absent, so the file is probed again rather than taken to have
 // no lead-in, or the lead-in an older parser got wrong.
@@ -152,7 +153,8 @@ std::string leadInText(const std::optional<domain::Mp3LeadIn> &leadIn)
     out.imbue(std::locale::classic());
     out << audio::Mp3LeadInParserVersion << ' ' << int(leadIn->infoFrame) << ' ' << tag << ' ' << int(leadIn->lameCrcValid) << ' '
         << leadIn->encoderDelay << ' ' << leadIn->encoderPadding << ' ' << int(leadIn->infoFrameModeMatchesAudio)
-        << ' ' << int(leadIn->vbri) << ' ' << leadIn->sampleRate << ' ' << leadIn->samplesPerFrame;
+        << ' ' << int(leadIn->vbri) << ' ' << leadIn->sampleRate << ' ' << leadIn->samplesPerFrame << ' '
+        << int(leadIn->tagFrameFirst) << ' ' << int(leadIn->tagFrameHasCounts);
     return out.str();
 }
 
@@ -172,9 +174,11 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
     int crc = 0;
     int modes = 0;
     int vbri = 0;
+    int first = 0;
+    int counts = 0;
     domain::Mp3LeadIn leadIn;
     if (!(in >> version >> info >> tag >> crc >> leadIn.encoderDelay >> leadIn.encoderPadding >> modes >> vbri
-          >> leadIn.sampleRate >> leadIn.samplesPerFrame)
+          >> leadIn.sampleRate >> leadIn.samplesPerFrame >> first >> counts)
         || version != audio::Mp3LeadInParserVersion) {
         return false;
     }
@@ -208,6 +212,8 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
     leadIn.lameCrcValid = crc != 0;
     leadIn.infoFrameModeMatchesAudio = modes != 0;
     leadIn.vbri = vbri != 0;
+    leadIn.tagFrameFirst = first != 0;
+    leadIn.tagFrameHasCounts = counts != 0;
     out.mp3LeadInRead = true;
     out.mp3LeadIn = leadIn;
     return true;
