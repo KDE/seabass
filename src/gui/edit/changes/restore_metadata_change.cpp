@@ -106,7 +106,11 @@ struct RestoreWriterContext
                 }
             }
         } else if (format == "engine") {
-            writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(dbRoot);
+            auto engineWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(dbRoot);
+            // dbRoot may be a scratch copy, which holds the database, not
+            // the audio.
+            engineWriter->setAudioRoot(realRoot);
+            writer = std::move(engineWriter);
         } else {
             // OneLibrary writes go to the REAL root, never to a scratch
             // copy, for the WAL reason spelled out on the mirror above:

@@ -91,6 +91,8 @@ struct JunkCueWriterContext
             // to the stick were overwritten by the scratch's commit.
             engineSession = &sharedFormatWriteSession(ctx, "engine", root, 0, "junk-cue-cleanup");
             engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
+            // The scratch copy holds the database, not the audio.
+            engine->setAudioRoot(engineSession->realRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
             // The save's shared writer, not one of this change's own: a

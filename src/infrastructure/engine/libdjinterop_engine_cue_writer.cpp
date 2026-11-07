@@ -169,8 +169,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
         // No path names no file: nothing to shift by.
     }
     if (!relative.empty() && m_leadInSource) {
+        const std::string &audioRoot = m_audioRoot.empty() ? m_engineLibraryPath : m_audioRoot;
         const std::string filePath =
-            pathToUtf8((pathFromUtf8(m_engineLibraryPath) / pathFromUtf8(relative)).lexically_normal());
+            pathToUtf8((pathFromUtf8(audioRoot) / pathFromUtf8(relative)).lexically_normal());
         if (shiftsCueTimeline(filePath, {})) {
             shiftMs = engineCueShiftMs(m_leadInSource(filePath));
         }

@@ -13,7 +13,9 @@
 //   - Create Engine Library stores the same;
 //   - a WAV is not moved;
 //   - with the setting off, today's behaviour: stored as T, read as T;
-//   - fillCues() moves a row by the difference, never twice.
+//   - fillCues() moves a row by the difference, never twice;
+//   - a writer on a scratch copy of the database (FormatWriteSession's)
+//     reads the lead-in from the real library's audio, not the copy's.
 //
 // Usage: libdjinterop_engine_mp3_lead_in_test <fixture dir>
 
@@ -279,6 +281,26 @@ int main(int argc, char **argv)
         assertStored(raw(lib, t.sourceId), 1105 * 1000.0 / 44100);
         assertReadsBack(t, 0.0);
         std::cout << "case 6 (an FFmpeg Lavc MP3: 25 ms) OK\n";
+    }
+
+    // Case 7: the database behind a scratch copy, as FormatWriteSession
+    // puts it for a large save: the copy holds Database2 and no audio, so
+    // the row's relative path names no file there. The writer is given
+    // the real library as its audio root and still shifts the cues.
+    {
+        const Library lib = makeLibrary("scratch-copy", "lame-cbr-44100.mp3");
+        const Track before = readOne(lib);
+        Library scratch;
+        scratch.root = lib.root.parent_path() / "scratch" / "Engine Library";
+        fs::create_directories(scratch.root);
+        fs::copy(lib.root / "Database2", scratch.root / "Database2", fs::copy_options::recursive);
+        assert(!fs::exists(scratch.root / "song.mp3"));
+
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(scratch.root));
+        writer.setAudioRoot(seabass::pathToUtf8(lib.root));
+        writer.writeHotCues(before.sourceId, theCues());
+        assertStored(raw(scratch, before.sourceId), LameShiftMs);
+        std::cout << "case 7 (scratch copy, lead-in from the real library) OK\n";
     }
 
     MatchingPolicy::reset();

@@ -47,6 +47,8 @@ struct RepairWriterContext
             hasOneLibrary = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root);
         } else if (format == "engine") {
             engineCues = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(session.writeRoot());
+            // The scratch copy holds the database, not the audio.
+            engineCues->setAudioRoot(session.realRoot());
             engineCleanup =
                 std::make_unique<infrastructure::engine::LibdjinteropEngineCleanupWriter>(session.writeRoot());
         } else {

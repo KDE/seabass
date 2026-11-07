@@ -79,7 +79,11 @@ CleanupFormatContext makeContext(const QString &format, const QString &path, Sav
     } else if (format == "engine") {
         std::string engineLibraryPath = path.toStdString();
         std::string effectivePath = writeRoot.value_or(engineLibraryPath);
-        ctx.cueWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(effectivePath);
+        auto cueWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(effectivePath);
+        // effectivePath may be a scratch copy, which holds the database,
+        // not the audio.
+        cueWriter->setAudioRoot(engineLibraryPath);
+        ctx.cueWriter = std::move(cueWriter);
         ctx.cleanupWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCleanupWriter>(effectivePath);
         std::string engineDbFile = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
     } else {

@@ -35,6 +35,14 @@ public:
     using LeadInSource = std::function<std::optional<domain::Mp3LeadIn>(const std::string &filePath)>;
     void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
 
+    // The Engine Library folder the rows' relative paths resolve against
+    // when the writer reads a file's lead-in. The library path by default.
+    // A save that writes through FormatWriteSession's scratch copy opens
+    // the database there, where no audio exists, and passes the real
+    // library folder (FormatWriteSession::realRoot()) here; without it
+    // every lead-in reads as nothing and the cues go unshifted.
+    void setAudioRoot(std::string audioRoot) { m_audioRoot = std::move(audioRoot); }
+
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
     // The same write at a sample rate the caller read from the audio file,
@@ -88,6 +96,7 @@ private:
     djinterop::database &database();
 
     std::string m_engineLibraryPath;
+    std::string m_audioRoot;
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
 };
