@@ -309,6 +309,14 @@ int main()
     //    player reading exportLibrary.db alone would not see. Since a save
     //    goes back whole, a's rows go back too: the database and its log
     //    end byte for byte as they were before the save.
+    //
+    //    Not on Windows: the reader this case holds open across the save
+    //    keeps the database and its -wal from being replaced there, so the
+    //    rollback cannot run and the save says so ("could not put back
+    //    ...exportLibrary.db-wal, so Undo Last Save restores this save's
+    //    backup"). A second program with the catalog open during a save is
+    //    not something Windows lets us support (Sebastian, 2026-11-07).
+#if !defined(_WIN32)
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal_other");
         const fs::path &stick = scratch.path;
@@ -388,6 +396,9 @@ int main()
         assert(cueCount(dbPath, 1) == 0 && "a's rows went back with the save");
         std::cout << "case 5 (a database an earlier change wrote goes back even when the failure is elsewhere) OK\n";
     }
+#else
+    std::cout << "case 5 SKIPPED (Windows cannot replace a database another reader holds open)\n";
+#endif
 
     // 6. The database itself could not be put back. Folding then writes one
     //    generation's log over another's file and mixes them; leaving both
