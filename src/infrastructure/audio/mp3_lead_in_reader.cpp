@@ -37,13 +37,16 @@ struct FrameHeader
         const int coefficient = version == 1 ? 144 : 72;
         return static_cast<std::size_t>(coefficient * bitrateKbps * 1000 / sampleRate + (padding ? 1 : 0));
     }
-    // Where the Xing/Info tag starts: after the header, the 16-bit CRC if
-    // any, and the side information.
+    // Where the Xing/Info tag starts: after the header and the side
+    // information. Not after the 16-bit CRC of a protected frame: LAME
+    // writes the tag at 4 + side info even then, and FFmpeg and libmpg123
+    // look for it there, so a protected LAME file is trimmed like any
+    // other (measured on tests/fixtures/mp3-click/click-D-lame-crc-44100.mp3).
     std::size_t xingOffset() const
     {
         const bool mono = channelMode == 3;
         const std::size_t sideInfo = version == 1 ? (mono ? 17 : 32) : (mono ? 9 : 17);
-        return 4 + (crcProtected ? 2 : 0) + sideInfo;
+        return 4 + sideInfo;
     }
 };
 

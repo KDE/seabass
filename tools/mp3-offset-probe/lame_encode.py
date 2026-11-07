@@ -12,8 +12,9 @@ ctypes and does what the frontend does: write the frames, then put the
 finished Xing/Info + LAME tag frame from lame_get_lametag_frame() over
 the placeholder frame the encoder emitted first.
 
-usage: lame_encode.py OUT RATE CHANNELS MODE KBPS|vN [notag]
-  MODE: stereo, joint, mono. vN asks for VBR at quality N.
+usage: lame_encode.py OUT RATE CHANNELS MODE KBPS|vN [notag|crc]
+  MODE: stereo, joint, mono. vN asks for VBR at quality N. crc sets
+  the frame headers' protection bit.
 
 Other scripts import encode() to put their own samples through the same
 path (make-click-mp3s.py).
@@ -25,10 +26,11 @@ import struct
 import sys
 
 
-def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
+def encode(out, rate, channels, mode, quality, notag=False, pcm=None, crc=False):
     """Write PCM (16-bit ints, one per sample; every channel gets the
     same) to OUT. Without PCM: one second of silence with a full-scale
-    click at half a second."""
+    click at half a second. CRC sets the protection bit in every frame
+    header (the frontend's -p): two bytes of CRC after each header."""
     if pcm is None:
         pcm = [0] * rate
         pcm[rate // 2] = 32000
@@ -41,7 +43,7 @@ def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
     lib.lame_get_lametag_frame.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
     for fn in ("lame_set_in_samplerate", "lame_set_out_samplerate", "lame_set_num_channels",
                "lame_set_mode", "lame_set_brate", "lame_set_VBR", "lame_set_VBR_q",
-               "lame_set_bWriteVbrTag", "lame_init_params", "lame_close"):
+               "lame_set_bWriteVbrTag", "lame_set_error_protection", "lame_init_params", "lame_close"):
         getattr(lib, fn).argtypes = [ctypes.c_void_p] + ([ctypes.c_int] if fn not in ("lame_init_params", "lame_close") else [])
     lib.lame_encode_buffer_interleaved.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int,
                                                    ctypes.c_char_p, ctypes.c_int]
@@ -61,6 +63,7 @@ def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
         lib.lame_set_VBR(gf, 0)
         lib.lame_set_brate(gf, int(quality))
     lib.lame_set_bWriteVbrTag(gf, 0 if notag else 1)
+    lib.lame_set_error_protection(gf, 1 if crc else 0)
     if lib.lame_init_params(gf) < 0:
         sys.exit("lame_init_params failed")
     # No lame_init_bitstream() here: the library writes the placeholder
@@ -94,8 +97,8 @@ def encode(out, rate, channels, mode, quality, notag=False, pcm=None):
 
 def main():
     out, rate, channels, mode, quality = sys.argv[1:6]
-    notag = len(sys.argv) > 6 and sys.argv[6] == "notag"
-    encode(out, int(rate), int(channels), mode, quality, notag)
+    extra = sys.argv[6] if len(sys.argv) > 6 else ""
+    encode(out, int(rate), int(channels), mode, quality, extra == "notag", crc=extra == "crc")
 
 
 if __name__ == "__main__":

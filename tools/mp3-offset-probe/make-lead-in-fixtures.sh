@@ -40,6 +40,10 @@ enc "$out/lame-mpeg2-22050.mp3" 22050 2 joint 64
 enc "$out/lame-cbr-48000.mp3" 48000 2 joint 80
 # Mono: 17 bytes of side information before the tag.
 enc "$out/lame-mono-44100.mp3" 44100 1 mono 64
+# CRC-protected frames (the frontend's -p): LAME still writes the tag at
+# 4 + side-info bytes, not after the two CRC bytes, and so do FFmpeg and
+# libmpg123 look for it there.
+enc "$out/lame-crc-44100.mp3" 44100 2 joint 64 crc
 
 # The CBR file with its LAME tag CRC broken: the CRC sits 34 bytes after
 # the encoder string, at frame offset 190 here (header 4 + side info 32 +
