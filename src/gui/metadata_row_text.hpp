@@ -11,9 +11,9 @@
 #include <QVariantMap>
 
 #include <filesystem>
-#include <system_error>
 #include <vector>
 
+#include "application/use_cases/plan_engine_update.hpp"
 #include "domain/track.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
@@ -183,10 +183,9 @@ inline QString storedTrackFileOnSticks(const QString &relativePath, const QStrin
             if (root.isEmpty()) {
                 continue;
             }
-            const std::filesystem::path file = pathFromQString(root) / relative;
-            std::error_code ec;
-            if (std::filesystem::is_regular_file(file, ec)) {
-                return pathToQString(file);
+            const std::filesystem::path stickRoot = pathFromQString(root);
+            if (application::fileExistsUnder(pathToUtf8(stickRoot))(pathToUtf8(relative))) {
+                return pathToQString(stickRoot / relative);
             }
         }
     }
