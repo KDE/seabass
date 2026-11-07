@@ -101,6 +101,17 @@ private slots:
                  QString());
         QCOMPARE(storedTrackFileOnSticks(QString(), QStringLiteral("HOME"), sticks), QString());
     }
+
+    // The store keeps a bare filename for a track it could not place
+    // under its stick's root. That is a key, not a location: the file at
+    // the stick's root of that name is some other file, and playing it
+    // would put another track under this row's title and cues.
+    void aBareFilenameIsNotALocation()
+    {
+        plant(m_home, QStringLiteral("track.mp3"));
+        const QVariantList sticks{library(QStringLiteral("HOME"), m_home)};
+        QCOMPARE(storedTrackFileOnSticks(QStringLiteral("track.mp3"), QStringLiteral("HOME"), sticks), QString());
+    }
 };
 
 QTEST_GUILESS_MAIN(StoredTrackFileTest)

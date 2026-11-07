@@ -158,10 +158,20 @@ inline QString storedTrackFileOnSticks(const QString &relativePath, const QStrin
     if (relative.has_root_path()) {
         return {};
     }
+    std::size_t components = 0;
     for (const auto &part : relative) {
         if (part == "..") {
             return {};
         }
+        ++components;
+    }
+    // A bare filename is the store's fallback key for a track it could
+    // not place under its stick's root (stickRelativePath), not a
+    // location: a file of that name at a stick's root is some other file.
+    // A track that really lies at a stick's root cannot be played from a
+    // stored row, which is the price.
+    if (components < 2) {
+        return {};
     }
     for (const bool sameLabel : {true, false}) {
         for (const QVariant &entry : libraries) {
