@@ -311,6 +311,11 @@ int main()
         assert(ctx.releaseAutomaticBackupsIfTight(tight) > 0);
         assert(recordIds(stick) == std::vector<std::string>{mine});
         assert(mine != older);
+        // An undo that is gone is said on the stick, one line per record.
+        std::ifstream stickLog(stick / "Seabass" / "seabass.log", std::ios::binary);
+        const std::string logged((std::istreambuf_iterator<char>(stickLog)), std::istreambuf_iterator<char>());
+        assert(logged.find("deleted automatic backup from an earlier save -> " + older) != std::string::npos);
+        assert(logged.find("deleted automatic backup from an earlier save -> " + mine) == std::string::npos);
         std::cout << "case 6 (a tight stick releases an earlier save's record, never this save's) OK\n";
     }
 

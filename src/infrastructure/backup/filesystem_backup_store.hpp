@@ -103,7 +103,11 @@ public:
     // just finished made. A save makes one record per kind of change, so
     // keeping only the newest could delete half of the very undo this
     // exists to protect.
-    std::uint64_t releaseAutomaticBackups(std::uint64_t bytesWanted, const std::set<std::string> &spare = {});
+    //
+    // `released`, when given, receives the id of every record that went,
+    // so the caller can say so on the stick.
+    std::uint64_t releaseAutomaticBackups(std::uint64_t bytesWanted, const std::set<std::string> &spare = {},
+                                          std::vector<std::string> *released = nullptr);
     void setDescription(const std::string &id, const std::string &description) override;
     bool restore(const std::string &id) override;
     // Why the last restore() returned false, for the caller's message: a

@@ -158,7 +158,16 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight(const infrastructure::
         for (const UndoableBackup &backup : m_backups) {
             thisSave.insert(backup.id.toStdString());
         }
-        return archiveStore().releaseAutomaticBackups(headroom - space.freeBytes, thisSave);
+        std::vector<std::string> released;
+        const std::uint64_t freed = archiveStore().releaseAutomaticBackups(headroom - space.freeBytes, thisSave, &released);
+        // A record that goes is an undo that is gone, so the stick says so,
+        // as Free Up Space does for each one it deletes.
+        if (hasStick()) {
+            for (const std::string &id : released) {
+                log().record("save: the stick is short of room, deleted automatic backup from an earlier save -> " + id);
+            }
+        }
+        return freed;
     } catch (const std::exception &e) {
         // Still never fails the save: this is an opportunistic tidy-up on
         // a save that already succeeded, and a warning saying "could not

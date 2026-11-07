@@ -866,7 +866,8 @@ application::PruneResult FilesystemBackupStore::prune(size_t keepCount)
 }
 
 std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytesWanted,
-                                                            const std::set<std::string> &spare)
+                                                            const std::set<std::string> &spare,
+                                                            std::vector<std::string> *released)
 {
     sweepDeadRecords(m_baseDirectory);
     if (bytesWanted == 0) {
@@ -896,6 +897,9 @@ std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytes
         fs::remove_all(pathFromUtf8(automatic[i].path), ec);
         if (!ec) {
             freed += automatic[i].sizeBytes;
+            if (released) {
+                released->push_back(automatic[i].id);
+            }
         }
     }
     return freed;
