@@ -159,8 +159,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
 
     // The cues arrive on rekordbox's timeline; an MP3's are moved back
     // onto Engine's (#50, engine_cue_timeline.hpp), by the shift the
-    // reader adds for the same file. A position the shift puts before the
-    // start is clamped to it.
+    // reader adds for the same file. A hot cue or loop the shift puts
+    // before the start is clamped to it; a memory cue there is left out
+    // (see below), because Engine reads a main cue at 0 as no cue at all.
     double shiftMs = 0.0;
     std::string relative;
     try {
@@ -210,9 +211,18 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     for (const auto &cue : cues) {
         if (cue.kind == domain::CuePoint::Kind::Memory) {
             // And one the lead-in shift puts at or before Engine's 0 is
-            // as unrepresentable as one at 0:00.
-            if (domain::engineCanHoldMemoryCue(cue) && cue.positionMs - shiftMs > 0.0
-                && (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs)) {
+            // as unrepresentable as one at 0:00. Not clamped like a hot
+            // cue: clamped, it would be the "no cue" offset 0. Counted
+            // instead (memoryCuesDroppedByLeadInShift()), since unlike a
+            // cue at 0:00 it is a real cue the user set.
+            if (!domain::engineCanHoldMemoryCue(cue)) {
+                continue;
+            }
+            if (cue.positionMs - shiftMs <= 0.0) {
+                ++m_memoryCuesDroppedByLeadInShift;
+                continue;
+            }
+            if (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs) {
                 earliestMemoryCueMs = cue.positionMs;
             }
             continue;

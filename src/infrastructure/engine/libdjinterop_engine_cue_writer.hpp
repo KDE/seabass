@@ -43,6 +43,13 @@ public:
     // every lead-in reads as nothing and the cues go unshifted.
     void setAudioRoot(std::string audioRoot) { m_audioRoot = std::move(audioRoot); }
 
+    // Memory cues left out, over every write so far, because the lead-in
+    // shift alone put them at or before Engine's 0 (#50): a cue in the
+    // first 51 ms of a LAME MP3. Engine reads a main cue at 0 as none, so
+    // it cannot be kept; a hot cue at the same place is clamped to 0
+    // instead. Counted so a caller can say so rather than lose it quietly.
+    int memoryCuesDroppedByLeadInShift() const { return m_memoryCuesDroppedByLeadInShift; }
+
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
     // The same write at a sample rate the caller read from the audio file,
@@ -97,6 +104,7 @@ private:
 
     std::string m_engineLibraryPath;
     std::string m_audioRoot;
+    int m_memoryCuesDroppedByLeadInShift = 0;
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
 };

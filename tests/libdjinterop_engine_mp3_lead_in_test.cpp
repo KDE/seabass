@@ -303,6 +303,32 @@ int main(int argc, char **argv)
         std::cout << "case 7 (scratch copy, lead-in from the real library) OK\n";
     }
 
+    // Case 8: a cue inside the lead-in, 30 ms into a LAME file whose
+    // shift is 51.18 ms. The hot cue is clamped to Engine's sample 0; the
+    // memory cue cannot be (a main cue at 0 is none to Engine), so it is
+    // left out, and counted, not lost quietly.
+    {
+        const Library lib = makeLibrary("inside-lead-in", "lame-cbr-44100.mp3");
+        const Track before = readOne(lib);
+        CuePoint hot{CuePoint::Kind::Hot, 1, 30.0, "#ff0000", "early"};
+        CuePoint memory;
+        memory.kind = CuePoint::Kind::Memory;
+        memory.positionMs = 30.0;
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(lib.root));
+        writer.writeHotCues(before.sourceId, {hot, memory});
+        const Raw r = raw(lib, before.sourceId);
+        assert(r.hotCue == 0.0);
+        assert(r.mainCue == -1 && "no main cue");
+        assert(writer.memoryCuesDroppedByLeadInShift() == 1);
+
+        // One the shift leaves after 0 is kept and not counted.
+        memory.positionMs = 60.0;
+        writer.writeHotCues(before.sourceId, {hot, memory});
+        assert(near(raw(lib, before.sourceId).mainCue, (60.0 - LameShiftMs) * 44.1, 1e-3));
+        assert(writer.memoryCuesDroppedByLeadInShift() == 1);
+        std::cout << "case 8 (a memory cue inside the lead-in is left out and counted) OK\n";
+    }
+
     MatchingPolicy::reset();
     fs::remove_all(seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test");
     std::cout << "all libdjinterop_engine_mp3_lead_in_test cases passed\n";

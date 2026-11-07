@@ -1653,6 +1653,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         }
 
         size_t engineCuesCopied = 0;
+        int engineMemoryCuesInLeadIn = 0;
         if (!toEngine.empty()) {
             seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(*resolved.enginePath);
             auto record = engineBackupStoreOpt->backup({engineDbFile}, "sync");
@@ -1667,6 +1668,11 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
                                   ") from rekordbox track \"" + plan->match.trackA.title +
                                   "\" (id=" + plan->match.trackA.sourceId +
                                   ") to engine track id=" + plan->match.trackB.sourceId);
+            }
+            engineMemoryCuesInLeadIn = writer.memoryCuesDroppedByLeadInShift();
+            if (engineMemoryCuesInLeadIn > 0) {
+                engineLogOpt->record("sync: left out " + std::to_string(engineMemoryCuesInLeadIn)
+                                     + " memory cue(s) inside an MP3's lead-in (Engine cannot hold them)");
             }
         }
 
@@ -1728,6 +1734,11 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         if (!toEngine.empty()) {
             Console::info("  synced " + std::to_string(toEngine.size()) + " track(s) to Engine: copied " +
                            std::to_string(engineCuesCopied) + " cue(s) total");
+            if (engineMemoryCuesInLeadIn > 0) {
+                Console::warn("  left out " + std::to_string(engineMemoryCuesInLeadIn)
+                              + " memory cue(s) inside an MP3's lead-in: on Engine's timeline they fall at"
+                              + " or before the start, which Engine reads as no cue");
+            }
         }
         if (!toRekordbox.empty()) {
             Console::info("  synced " + std::to_string(toRekordbox.size()) + " track(s) to rekordbox: copied " +
