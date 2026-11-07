@@ -377,8 +377,9 @@ public:
     // read: {format, libraryPath, sourceId} for
     // PlaybackController::waveformFor, or an empty map. Empty on the
     // store's own list always: a metadata backup holds no waveforms, so
-    // only a stick's analysis can supply one. Called by a row when it is
-    // opened, never for the whole list.
+    // only a stick's analysis can supply one. Called once by a row that is
+    // open or hovered, or while the player has a track the row may be,
+    // never for the whole list as it scrolls.
     Q_INVOKABLE QVariantMap waveformSourceAt(int row) const;
     // Where a stored row's audio file is on a plugged-in stick, or empty:
     // see storedTrackFileOnSticks(). Asked by the row under the pointer or

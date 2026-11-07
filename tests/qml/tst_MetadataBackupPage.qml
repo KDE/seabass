@@ -644,6 +644,12 @@ TestCase {
         waitForRendering(page);
         const row = list.itemAtIndex(0);
         const key = findChild(row, "rowPlayButton");
+        // Asked of the controller for the row under the pointer, the open
+        // one, or while the player has a track to match, and not for every
+        // row the list builds as it scrolls.
+        mouseMove(page, 1, 1);
+        tryVerify(() => !row.hovered, 1000);
+        compare(row.playSource.format, undefined, "no source looked up for a row at rest");
         hoverRow(page, row);
         compare(key.visible, true);
         compare(key.enabled, true);
@@ -657,6 +663,13 @@ TestCase {
         compare(loaded.sourceId, source.sourceId);
         compare(loaded.filePath, row.relativePath, "the stick's own path, which the row holds");
         compare(loaded.cues.length, row.cues.length, "the stick's cues");
+        mouseMove(page, 1, 1);
+        tryVerify(() => !row.hovered, 1000);
+        compare(key.visible, true, "the loaded row keeps its key without the pointer");
+        compare(key.text, "Pause");
+        mouseClick(key);
+        compare(player.playing, false, "and it pauses what plays");
+        compare(player.loads.length, 1);
     }
 
     PlaybackController { id: realPlayer }

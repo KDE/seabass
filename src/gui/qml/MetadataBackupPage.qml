@@ -710,22 +710,29 @@ Page {
                 waveformCues: proposalRow.cues
                 waveformDurationMs: proposalRow.durationMs
                 waveformData: proposalRow.expanded
-                    ? proposalRow.stickWaveform(root.playbackController,
-                                                controller.waveformSourceAt(proposalRow.index))
+                    ? proposalRow.stickWaveform(root.playbackController, proposalRow.stickSource)
                     : []
                 waveformMissingText: "No waveform on the stick for this track"
+                // The catalog row behind this one, asked of the controller
+                // once, and only for the row under the pointer, the open
+                // one, or while the player has a track this row might be:
+                // never for every row the list builds as it scrolls.
+                readonly property bool wantsSource: proposalRow.hovered || proposalRow.expanded
+                    || (root.playbackController !== null && root.playbackController.hasTrack)
+                readonly property var stickSource: proposalRow.wantsSource
+                    ? controller.waveformSourceAt(proposalRow.index)
+                    : ({})
                 // Played from the stick, as the catalog row the waveform
                 // comes from, so the player reads its beat grid too. A
                 // track only OneLibrary lists has no such row and plays
                 // as its file.
                 playbackController: root.playbackController
-                playSource: {
-                    const source = controller.waveformSourceAt(proposalRow.index);
-                    return source.format
-                        ? source
+                playSource: !proposalRow.wantsSource
+                    ? ({})
+                    : (proposalRow.stickSource.format
+                        ? proposalRow.stickSource
                         : { format: "onelibrary", libraryPath: controller.sourceLibraryPath,
-                            sourceId: proposalRow.relativePath };
-                }
+                            sourceId: proposalRow.relativePath })
                 playFilePath: proposalRow.relativePath
                 onPlayRequested: root.playbackController.load(
                     proposalRow.playSource.format, proposalRow.playSource.libraryPath,
