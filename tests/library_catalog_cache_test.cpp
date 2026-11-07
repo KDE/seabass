@@ -1138,6 +1138,43 @@ int main(int argc, char **argv)
         std::cout << "case 2b (MP3 cue timing flipped -> Engine re-scan) OK\n";
     }
 
+    // Case 2c: the setting is taken once per call and handed to every
+    // pass (StageNotes::correctMp3CueTiming), the value the entry is
+    // stamped with. Flipped during the Tracks pass, the Cues and Full
+    // passes of the same call still read under the old value, and the
+    // next call, under the new one, reads again.
+    {
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+        struct Restore
+        {
+            ~Restore() { seabass::domain::MatchingPolicy::reset(); }
+        } restore;
+        std::vector<std::pair<Detail, bool>> seen;
+        auto stage = [&](Detail detail, const std::string &, const std::string &,
+                         std::vector<seabass::domain::Track> &tracks, LibraryCatalogCache::StageNotes &notes,
+                         seabass::application::ProgressReporter &, CancellationToken) {
+            seen.emplace_back(detail, notes.correctMp3CueTiming);
+            if (detail == Detail::Tracks) {
+                tracks = oneTrack("1");
+                if (seen.size() == 1) {
+                    seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);  // Preferences, mid pass
+                }
+            }
+        };
+        LibraryCatalogCache cache(stage, fixedMtime());
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Full);
+        assert(seen.size() == 3);
+        for (const auto &[detail, correct] : seen) {
+            assert(correct && "every pass of the call reads under the setting it was stamped with");
+        }
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Full);
+        assert(seen.size() == 6 && "stamped with the old setting, the entry is read again under the new one");
+        for (size_t i = 3; i < seen.size(); ++i) {
+            assert(!seen[i].second);
+        }
+        std::cout << "case 2c (the MP3 cue timing setting is taken once per call, for every pass) OK\n";
+    }
+
     // Case 3: invalidate() forces a re-scan even though mtime hasn't moved.
     {
         std::atomic<int> scanCount{0};
