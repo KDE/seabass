@@ -38,7 +38,9 @@ struct Mp3LeadIn
     int encoderPadding = 0;
     // The Info frame's channel mode is the first audio frame's. LAME
     // writes it so; FFmpeg writes a stereo Info frame over joint-stereo
-    // audio, and rekordbox's frame map then skips the Info frame.
+    // audio, and rekordbox's frame map then skips the Info frame. Only a
+    // Xing/Info frame is decided by this: a VBRI frame plays on rekordbox
+    // whatever its mode.
     bool infoFrameModeMatchesAudio = false;
     // A Fraunhofer VBRI frame leads the stream instead of Xing/Info.
     bool vbri = false;
@@ -61,13 +63,16 @@ Mp3Case classify(const Mp3LeadIn &leadIn);
 
 // The two decoders whose timelines Seabass translates between.
 //   RekordboxMpg123NoGapless  rekordbox 7 and current Pioneer players:
-//       libmpg123 with gapless off. Nothing is trimmed; the leading tag
-//       frame plays as one frame of silence when its channel mode is the
-//       audio's, and is skipped when it is not.
+//       libmpg123 with gapless off. Nothing is trimmed; a leading
+//       Xing/Info frame plays as one frame of silence when its channel
+//       mode is the audio's, and is skipped when it is not. A VBRI frame
+//       always plays as one frame of silence: libmpg123 does not parse
+//       VBRI and decodes it like audio.
 //   EngineFfmpegGapless  Engine DJ 5.1 on the desktop (FFmpeg 4.4.3,
-//       libavformat's mp3 demuxer): the tag frame is never played, and
-//       for a LAME, Lavc or Lavf tag encoder_delay + 529 samples are
-//       trimmed as well (start_skip_samples = delay + 528 + 1).
+//       libavformat's mp3 demuxer): the tag frame (Xing, Info or VBRI)
+//       is never played, and for a LAME, Lavc or Lavf tag encoder_delay
+//       + 529 samples are trimmed as well (start_skip_samples = delay +
+//       528 + 1). Nothing is trimmed after a VBRI frame.
 enum class Mp3Decoder { RekordboxMpg123NoGapless, EngineFfmpegGapless };
 
 // Samples the decoder plays before the first sample of the first AUDIO

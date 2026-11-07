@@ -15,6 +15,8 @@ audio instant can be found in every decoder's output:
      changed: an Info frame whose LAME extension names no encoder
   B  FFmpeg's own Info frame ("Lavc..."), stereo over joint stereo audio
   C  the D file with its LAME tag CRC broken
+  D  a crafted VBRI frame in front of the A file, in the audio's channel
+     mode and in a different one (vbri_frame.py)
   D  LAME with a valid tag, at 44.1 kHz, 48 kHz, MPEG-2 22.05 kHz, mono,
      and with CRC-protected frames (the tag still at 4 + side info)
 
@@ -35,6 +37,7 @@ import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lame_encode  # noqa: E402
+import vbri_frame  # noqa: E402
 
 SECONDS = 3
 FULL_SCALE = 32767
@@ -106,6 +109,10 @@ def main():
 
     patched(p("click-D-lame-44100.mp3"), p("click-B-noencoder-44100.mp3"), zero_encoder_string)
     patched(p("click-D-lame-44100.mp3"), p("click-C-badcrc-44100.mp3"), break_crc)
+
+    audio = open(p("click-A-notag-44100.mp3"), "rb").read()
+    open(p("click-VBRI-44100.mp3"), "wb").write(vbri_frame.with_vbri(audio))
+    open(p("click-VBRI-modediffers-44100.mp3"), "wb").write(vbri_frame.with_vbri(audio, mode_differs=True))
 
     with tempfile.TemporaryDirectory() as tmp:
         wav = os.path.join(tmp, "click-44100.wav")

@@ -25,15 +25,19 @@ struct DecoderModel
     bool playsTagFrameWhenModesMatch;
     // ... and when it is not.
     bool playsTagFrameWhenModesDiffer;
+    // Plays a VBRI frame as one frame of silence, whatever its channel
+    // mode: libmpg123 has no VBRI parser and decodes it like audio;
+    // FFmpeg recognises it and skips it (measured on the VBRI click files).
+    bool playsVbriFrame;
     // Trims encoderDelay + extraTrimSamples for these tags.
     bool trimsLame;
     bool trimsLavc;
     int extraTrimSamples;
 };
 
-constexpr DecoderModel RekordboxModel{true, false, false, false, 0};
+constexpr DecoderModel RekordboxModel{true, false, true, false, false, 0};
 // 529 = the decoder's own 528-sample delay plus 1 (libavformat).
-constexpr DecoderModel EngineModel{false, false, true, true, 529};
+constexpr DecoderModel EngineModel{false, false, false, true, true, 529};
 
 const DecoderModel &modelOf(Mp3Decoder decoder)
 {
@@ -60,12 +64,17 @@ int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder)
 {
     const DecoderModel &model = modelOf(decoder);
     int samples = 0;
-    if (leadIn.infoFrame || leadIn.vbri) {
+    if (leadIn.infoFrame) {
         const bool plays = leadIn.infoFrameModeMatchesAudio ? model.playsTagFrameWhenModesMatch
                                                             : model.playsTagFrameWhenModesDiffer;
         if (plays) {
             samples += leadIn.samplesPerFrame;
         }
+    } else if (leadIn.vbri && model.playsVbriFrame) {
+        // The channel mode does not matter here: the mode comparison is
+        // part of libmpg123's Xing/Info handling, which a VBRI frame never
+        // reaches.
+        samples += leadIn.samplesPerFrame;
     }
     // The delay field lives in the Xing/Info frame's LAME extension, so
     // there is nothing to trim without one.

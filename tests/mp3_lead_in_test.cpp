@@ -124,11 +124,16 @@ int main()
         assert(near(engineToRekordboxOffsetMs(l), 51.18));
     }
 
-    // D: a VBRI frame. Engine skips it like Xing; rekordbox plays it.
-    {
+    // D: a VBRI frame. FFmpeg recognises VBRI, skips the frame and trims
+    // nothing. libmpg123 does not parse VBRI at all: it decodes the frame
+    // as one frame of silence whatever its channel mode, so the mode
+    // comparison that decides a Xing/Info frame does not apply. Measured
+    // on click-VBRI-44100.mp3 and click-VBRI-modediffers-44100.mp3: lead
+    // 2257 (libmpg123) and 1105 (FFmpeg) both ways.
+    for (const bool modesMatch : {true, false}) {
         Mp3LeadIn l = mpeg1();
         l.vbri = true;
-        l.infoFrameModeMatchesAudio = true;
+        l.infoFrameModeMatchesAudio = modesMatch;
         assert(classify(l) == Mp3Case::D);
         assert(samplesBeforeAudio(l, Rb) == 1152);
         assert(samplesBeforeAudio(l, En) == 0);

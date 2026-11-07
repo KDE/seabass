@@ -45,6 +45,12 @@ enc "$out/lame-mono-44100.mp3" 44100 1 mono 64
 # libmpg123 look for it there.
 enc "$out/lame-crc-44100.mp3" 44100 2 joint 64 crc
 
+# A crafted Fraunhofer VBRI frame in front of the file without a tag
+# frame, once in the audio's channel mode and once stereo over the joint
+# stereo audio (vbri_frame.py: no encoder at hand writes VBRI).
+python3 -I "$here/vbri_frame.py" "$out/lame-notag-44100.mp3" "$out/vbri-44100.mp3"
+python3 -I "$here/vbri_frame.py" "$out/lame-notag-44100.mp3" "$out/vbri-modediffers-44100.mp3" modediffers
+
 # The CBR file with its LAME tag CRC broken: the CRC sits 34 bytes after
 # the encoder string, at frame offset 190 here (header 4 + side info 32 +
 # "Info" and flags 8 + frames, bytes, TOC, quality 112 + 34). Its second
