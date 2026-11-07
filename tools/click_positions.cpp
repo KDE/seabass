@@ -195,8 +195,11 @@ int main(int argc, char **argv)
         } catch (const std::exception &) {
         }
         const auto show = [](const std::optional<double> &ms) {
+            if (!ms) {
+                return std::string("none");
+            }
             char text[32];
-            std::snprintf(text, sizeof text, ms ? "%.3f" : "none", ms.value_or(0.0) + 0.0);
+            std::snprintf(text, sizeof text, "%.3f", *ms + 0.0);
             return std::string(text);
         };
         std::printf("  first beat: rekordbox %s, Engine raw %s, corrected %s", show(rbBeat).c_str(),
