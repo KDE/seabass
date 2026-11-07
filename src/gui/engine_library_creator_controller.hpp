@@ -32,6 +32,10 @@ struct EngineLibraryCreationTaskResult
     // The library was made from a rekordbox export but could not be told
     // so (issue #42): a player may offer to import over it on first insert.
     bool importNotRecorded = false;
+    // Cues the MP3 lead-in shift left out (#50,
+    // EngineLibraryCreationResult): said, not lost quietly.
+    int memoryCuesDroppedByLeadInShift = 0;
+    int loopsDroppedByLeadInShift = 0;
 };
 
 // Wraps infrastructure::engine::EngineLibraryCreator for QML. See that

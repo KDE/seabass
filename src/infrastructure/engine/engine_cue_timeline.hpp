@@ -53,4 +53,28 @@ inline void shiftCuePositions(std::vector<domain::CuePoint> &cues, double shiftM
     }
 }
 
+// What a write onto Engine left out because the lead-in shift put it at
+// or before Engine's 0 (the cue writer's and Create Engine Library's
+// counters), in a sentence for a save's outcome; empty when nothing was.
+// "1 memory cue and 2 loops inside the MP3 lead-in were left out: ...".
+inline std::string describeLeadInShiftDrops(int memoryCues, int loops)
+{
+    if (memoryCues <= 0 && loops <= 0) {
+        return {};
+    }
+    const auto count = [](int n, const char *one, const char *many) {
+        return std::to_string(n) + " " + (n == 1 ? one : many);
+    };
+    std::string text;
+    if (memoryCues > 0) {
+        text = count(memoryCues, "memory cue", "memory cues");
+    }
+    if (loops > 0) {
+        text += (text.empty() ? "" : " and ") + count(loops, "loop", "loops");
+    }
+    text += memoryCues + loops == 1 ? " inside the MP3 lead-in was left out" : " inside the MP3 lead-in were left out";
+    return text + ": on Engine's timeline they fall at or before the start of the track, where Engine cannot hold "
+                  "them";
+}
+
 }  // namespace seabass::infrastructure::engine

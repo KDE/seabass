@@ -20,6 +20,7 @@
 #include "application/ports/track_metadata_probe.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -271,7 +272,11 @@ namespace
 // source, so a writer that outlives the save's resources still answers.
 struct SaveLeadIns
 {
-    explicit SaveLeadIns(const std::string &stickRoot) : rates(std::make_shared<Rates>(stickRoot)) {}
+    explicit SaveLeadIns(const std::string &stickRoot)
+        : rates(std::make_shared<Rates>(stickRoot)),
+          drops(std::make_shared<infrastructure::engine::LibdjinteropEngineCueWriter::LeadInShiftDrops>())
+    {
+    }
 
     struct Rates
     {
@@ -284,6 +289,9 @@ struct SaveLeadIns
         infrastructure::local::CachedSampleRates cache;
     };
     std::shared_ptr<Rates> rates;
+    // What every writer of this stick left out of the save for the
+    // lead-in shift (#50), said once the save has landed.
+    std::shared_ptr<infrastructure::engine::LibdjinteropEngineCueWriter::LeadInShiftDrops> drops;
 };
 
 }  // namespace
@@ -307,7 +315,21 @@ void useSaveLeadIns(SaveContext &ctx, infrastructure::engine::LibdjinteropEngine
                 live->rates->cache.save();
             }
         });
+        // A warning on the save, the channel its outcome has for what it
+        // could not do: the cues were the user's and are not on Engine,
+        // and the save otherwise reads as having written them. Only for
+        // changes that landed: a failed save went back whole.
+        ctx.onAfterCommit([drops = leadIns.drops](const SaveContext::AfterCommit &after) {
+            if (after.appliedIds.isEmpty()) {
+                return;
+            }
+            const std::string said = infrastructure::engine::describeLeadInShiftDrops(drops->memoryCues, drops->loops);
+            if (!said.empty()) {
+                throw std::runtime_error(said);
+            }
+        });
     }
+    writer.countLeadInShiftDropsInto(leadIns.drops);
     writer.setLeadInSource([rates = leadIns.rates](const std::string &file) { return rates->cache.leadInOf(file); });
 }
 

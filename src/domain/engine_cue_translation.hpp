@@ -50,9 +50,11 @@ struct EngineCueTranslation
 // left to Engine's default rather than painted black.
 //
 // Positions compare within `toleranceMs` (domain/cue_tolerance.hpp).
+// `shiftMs` is the Engine track's Track::cueTimelineShiftMs: a memory cue
+// it puts at or before Engine's 0 is never the main cue, like one at 0:00.
 EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues,
                                             const std::vector<CuePoint> &existing,
-                                            double toleranceMs = CueFallbackToleranceMs);
+                                            double toleranceMs = CueFallbackToleranceMs, double shiftMs = 0.0);
 
 // Engine's cues read in the terms of a catalog with memory cues, `cues`
 // being that catalog's own. An Engine hot cue or loop on the same pad at

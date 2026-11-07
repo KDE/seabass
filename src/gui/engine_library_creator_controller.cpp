@@ -21,6 +21,7 @@
 #include "application/phased_progress.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
 namespace seabass::gui
@@ -88,6 +89,8 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
         result.tracksTotal = creation.tracksTotal;
         result.cancelled = creation.cancelled;
         result.importNotRecorded = rekordbox.hasRekordboxLibrary && !creation.rekordboxImportRecorded;
+        result.memoryCuesDroppedByLeadInShift = creation.memoryCuesDroppedByLeadInShift;
+        result.loopsDroppedByLeadInShift = creation.loopsDroppedByLeadInShift;
         if (!creation.errorMessage.empty()) {
             result.errorMessage = QString::fromStdString(creation.errorMessage);
         }
@@ -217,7 +220,21 @@ void EngineLibraryCreatorController::onCreateFinished()
                                    "Denon player may offer to import the rekordbox library over it. Library Health "
                                    "can mark it imported.");
         }
+        const std::string leftOut = infrastructure::engine::describeLeadInShiftDrops(
+            result.memoryCuesDroppedByLeadInShift, result.loopsDroppedByLeadInShift);
+        if (!leftOut.empty()) {
+            said += QStringLiteral(" ") + QString::fromStdString(leftOut) + QStringLiteral(".");
+        }
         setStatusMessage(said);
+    }
+    // The summary dialog's line for cues the lead-in shift left out.
+    QString leftOutDetail;
+    if (result.errorMessage.isEmpty() && !result.cancelled) {
+        const std::string leftOut = infrastructure::engine::describeLeadInShiftDrops(
+            result.memoryCuesDroppedByLeadInShift, result.loopsDroppedByLeadInShift);
+        if (!leftOut.empty()) {
+            leftOutDetail = QString::fromStdString(leftOut) + QStringLiteral(".");
+        }
     }
     emit writeFinished(QVariantMap{
         {"written", result.cancelled ? 0 : result.tracksCreated},
@@ -227,7 +244,7 @@ void EngineLibraryCreatorController::onCreateFinished()
         {"cancelled", result.cancelled},
         {"error", result.errorMessage},
         {"detail", result.cancelled ? QStringLiteral("Stopped at your request. Nothing was created on the stick.")
-                                    : QString()},
+                                    : leftOutDetail},
     });
 }
 

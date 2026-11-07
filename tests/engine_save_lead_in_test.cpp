@@ -131,6 +131,27 @@ int main(int argc, char **argv)
     assert(std::abs(added - (1234.0 * 44.1 - 1105.0)) < 1e-3);
     (void)sameId;
     (void)newId;
+    assert(result.warning.isEmpty() && "nothing was left out");
+
+    // A memory cue and a loop inside the lead-in the cache answers
+    // (25.06 ms): the writer leaves both out, and the save says so in its
+    // outcome rather than reporting them written.
+    {
+        SaveContext leftOutCtx(token, noProgress, {}, {}, root);
+        std::vector<std::shared_ptr<PendingChange>> inLeadIn = {
+            std::make_shared<AddCueChange>(QStringLiteral("engine"), root, QString::fromStdString(sourceId), 10.0,
+                                           QStringLiteral("memory"), 0, QString(), QString(), false, 0.0,
+                                           QStringLiteral("Lead In")),
+            std::make_shared<AddCueChange>(QStringLiteral("engine"), root, QString::fromStdString(sourceId), 5.0,
+                                           QStringLiteral("hot"), 3, QStringLiteral("#00FF00"), QString(), true, 20.0,
+                                           QStringLiteral("Lead In"))};
+        const SaveLoopResult leftOut = runSaveLoop(inLeadIn, leftOutCtx);
+        std::cout << "left out: error \"" << leftOut.error.toStdString() << "\", warning \""
+                  << leftOut.warning.toStdString() << "\"\n";
+        assert(leftOut.error.isEmpty() && leftOut.appliedIds.size() == 2);
+        assert(leftOut.warning.contains(QStringLiteral("1 memory cue and 1 loop inside the MP3 lead-in were left out"))
+               && "the dropped cues reach the save's outcome");
+    }
 
     fs::remove_all(stick);
 

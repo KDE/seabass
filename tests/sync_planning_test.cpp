@@ -608,6 +608,44 @@ int main()
         MatchingPolicy::reset();
     }
 
+    // #50: on an MP3 whose Engine cues are shifted by the lead-in, a
+    // memory cue inside the lead-in lands at or before Engine's 0, which
+    // Engine reads as "no main cue", exactly like one at 0:00. 30 ms on a
+    // LAME file whose shift is 51.18 ms: it takes a pad like the 0:00 cue
+    // does, it is never planned as the main cue (the writer would drop it
+    // and the next plan offer it again), and the main cue is the earliest
+    // one past the lead-in.
+    {
+        MatchingPolicy::set(MatchingPolicy::DefaultExactMatchSeconds, MatchingPolicy::DefaultCompareAudioSeconds,
+                            false);
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 30.0, "", ""}});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.cueTimelineShiftMs = 51.18;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        for (const auto &cue : plan.cuesToApply) {
+            assert(cue.kind != CuePoint::Kind::Memory && "a memory cue inside the lead-in is never the main cue");
+        }
+        assert(!engineCanHoldMemoryCue(CuePoint{CuePoint::Kind::Memory, 0, 30.0, "", ""}, 51.18));
+        assert(engineCanHoldMemoryCue(CuePoint{CuePoint::Kind::Memory, 0, 60.0, "", ""}, 51.18));
+
+        Track r2 = r;
+        r2.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 60000.0, "", ""});
+        auto onto = SyncPlanner::plan(SyncMatch{r2, e}, now, now);
+        std::vector<double> mains;
+        for (const auto &cue : onto.cuesToApply) {
+            if (cue.kind == CuePoint::Kind::Memory) {
+                mains.push_back(cue.positionMs);
+            }
+        }
+        assert((mains == std::vector<double>{60000.0}) && "the main cue is the earliest past the lead-in");
+        std::cout << "case (a memory cue inside the MP3 lead-in is never planned as the main cue) OK\n";
+        MatchingPolicy::reset();
+    }
+
     // WHALESHARK2, "Voices In My Head": rekordbox has five hot cues and a
     // memory cue under hot cue 3; Engine has the five pads and that main
     // cue. In sync, not "give the marker pad 6".

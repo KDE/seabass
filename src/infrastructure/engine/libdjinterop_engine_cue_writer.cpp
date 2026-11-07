@@ -240,6 +240,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
             }
             if (cue.positionMs - shiftMs <= 0.0) {
                 ++m_memoryCuesDroppedByLeadInShift;
+                if (m_drops) {
+                    ++m_drops->memoryCues;
+                }
                 continue;
             }
             if (!earliestMemoryCueMs || cue.positionMs < *earliestMemoryCueMs) {
@@ -258,6 +261,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
             // written as given, as before.
             if (endOffset <= startOffset && cue.loopEndMs > cue.positionMs) {
                 ++m_loopsDroppedByLeadInShift;
+                if (m_drops) {
+                    ++m_drops->loops;
+                }
                 continue;
             }
             loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, padColor(cue.color, slot + 1)};

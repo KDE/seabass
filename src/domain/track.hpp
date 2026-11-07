@@ -49,9 +49,14 @@ struct CuePoint
 // cues at its start -- so there is nothing to write and nothing missing.
 // The sync planner and the Engine cue writer share this one rule, so what
 // the planner expects Engine to end up with is what the writer stores.
-inline bool engineCanHoldMemoryCue(const CuePoint &cue)
+//
+// `shiftMs` is the Engine track's Track::cueTimelineShiftMs (#50): a cue
+// on rekordbox's timeline lands at positionMs - shiftMs on Engine's, so
+// one inside an MP3's lead-in lands at or before Engine's 0 and is as
+// unrepresentable as one at 0:00.
+inline bool engineCanHoldMemoryCue(const CuePoint &cue, double shiftMs = 0.0)
 {
-    return cue.kind != CuePoint::Kind::Memory || cue.positionMs > 0.0;
+    return cue.kind != CuePoint::Kind::Memory || cue.positionMs - shiftMs > 0.0;
 }
 
 // One playlist a track belongs to, with its position within that specific
