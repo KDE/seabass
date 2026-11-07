@@ -6,7 +6,9 @@
 
 #include "infrastructure/paths/seabass_paths.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <iterator>
 #include <filesystem>
 #include <system_error>
 #include <fstream>
@@ -174,6 +176,16 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
     if (!(in >> version >> info >> tag >> crc >> leadIn.encoderDelay >> leadIn.encoderPadding >> modes >> vbri
           >> leadIn.sampleRate >> leadIn.samplesPerFrame)
         || version != audio::Mp3LeadInParserVersion) {
+        return false;
+    }
+    // Numbers no MP3 can have: a damaged or hand-edited line, read again
+    // rather than trusted. The delay and padding are 12-bit fields, the
+    // rate one of MPEG's nine, a Layer III frame 576 or 1152 samples.
+    constexpr int MpegRates[] = {8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000};
+    const auto inField = [](int value) { return value >= 0 && value <= 4095; };
+    if (!inField(leadIn.encoderDelay) || !inField(leadIn.encoderPadding)
+        || std::find(std::begin(MpegRates), std::end(MpegRates), leadIn.sampleRate) == std::end(MpegRates)
+        || (leadIn.samplesPerFrame != 576 && leadIn.samplesPerFrame != 1152)) {
         return false;
     }
     switch (tag) {
