@@ -34,6 +34,7 @@ each decoder's output and the lag between decoders measured:
 | click-D-lame-id3junk-44100.mp3 | D    | an empty ID3v2.3 tag, 100 zero bytes, then the D file: the same          |
 | click-D-lame-id3id3-44100.mp3 | D     | two empty ID3v2.3 tags, then the D file: the Info frame still first      |
 | click-D-lame-nocounts-44100.mp3 | D   | the D file with the Info frame's frame and byte counts 0: FFmpeg plays the frame and still trims |
+| click-D-l399-44100.mp3        | D     | the D file with the encoder string "L3.99r": FFmpeg skips the Info frame and trims nothing |
 | click-VBRI-nocounts-44100.mp3 | D     | the VBRI file with its byte and frame counts 0: FFmpeg plays the frame  |
 
 All CBR, 64 kbit/s except 80 at 48 kHz (a 64 kbit/s frame there is too

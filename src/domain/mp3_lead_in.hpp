@@ -21,10 +21,14 @@ struct Mp3LeadIn
     // The encoder string in the LAME extension of a Xing/Info frame.
     //   None   no Xing/Info frame, or one without an encoder string
     //   Lame   "LAME..." (also LAME forks that keep the prefix)
+    //   LameL3 "L3.99...": the short form some LAME 3.99 builds wrote.
+    //          LAME's tag all the same (class C or D), but FFmpeg trims
+    //          only after "LAME", "Lavf" or "Lavc" (a 4-byte compare;
+    //          measured on tests/fixtures/mp3-click/click-D-l399-44100.mp3)
     //   Lavc   FFmpeg's muxer, "Lavc..." or "Lavf...": it writes the
     //          delay/padding fields but no valid LAME CRC
     //   Other  any other non-empty string
-    enum class Tag { None, Lame, Lavc, Other };
+    enum class Tag { None, Lame, LameL3, Lavc, Other };
 
     // A Xing or Info frame leads the stream: a whole frame that carries
     // the tag and plays as silence if a decoder does not recognise it.
@@ -66,7 +70,7 @@ struct Mp3LeadIn
 //   A  no Xing/Info/VBRI frame
 //   B  Xing/Info without a LAME tag: no encoder string, "Lavc"/"Lavf",
 //      or any other non-LAME string
-//   C  LAME tag whose CRC is wrong
+//   C  LAME tag ("LAME" or "L3.99") whose CRC is wrong
 //   D  LAME tag with a correct CRC, or a VBRI frame
 enum class Mp3Case { A, B, C, D };
 
@@ -81,7 +85,8 @@ Mp3Case classify(const Mp3LeadIn &leadIn);
 //       VBRI and decodes it like audio.
 //   EngineFfmpegGapless  Engine DJ 5.1 on the desktop (FFmpeg 4.4.3,
 //       libavformat's mp3 demuxer): the tag frame (Xing, Info or VBRI)
-//       is not played, and for a LAME, Lavc or Lavf tag encoder_delay
+//       is not played, and for a "LAME", "Lavc" or "Lavf" tag (not
+//       "L3.99") encoder_delay
 //       + 529 samples are trimmed as well (start_skip_samples = delay +
 //       528 + 1). Nothing is trimmed after a VBRI frame. A tag frame
 //       that is not the first thing after the ID3v2 tags is not read at

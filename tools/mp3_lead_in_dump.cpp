@@ -31,6 +31,8 @@ const char *tagName(Mp3LeadIn::Tag tag)
         return "none";
     case Mp3LeadIn::Tag::Lame:
         return "LAME";
+    case Mp3LeadIn::Tag::LameL3:
+        return "L3.99";
     case Mp3LeadIn::Tag::Lavc:
         return "Lavc";
     case Mp3LeadIn::Tag::Other:

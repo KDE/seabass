@@ -172,8 +172,10 @@ void readTagFrame(const unsigned char *frame, std::size_t size, const FrameHeade
         return;
     }
     const unsigned char *s = frame + stringAt;
-    if (startsWith(s, "LAME") || startsWith(s, "L3.99")) {
+    if (startsWith(s, "LAME")) {
         leadIn.tag = Mp3LeadIn::Tag::Lame;
+    } else if (startsWith(s, "L3.99")) {
+        leadIn.tag = Mp3LeadIn::Tag::LameL3;
     } else if (startsWith(s, "Lavc") || startsWith(s, "Lavf")) {
         leadIn.tag = Mp3LeadIn::Tag::Lavc;
     } else if (s[0] >= 0x20 && s[0] < 0x7F) {

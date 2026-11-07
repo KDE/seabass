@@ -61,6 +61,7 @@ variant "$out/lame-cbr-44100.mp3" "$out/lame-id3junk-44100.mp3" id3junk
 variant "$out/lame-cbr-44100.mp3" "$out/lame-id3id3-44100.mp3" id3id3
 variant "$out/lame-cbr-44100.mp3" "$out/lame-nocounts-44100.mp3" nocounts
 variant "$out/vbri-44100.mp3" "$out/vbri-nocounts-44100.mp3" nocounts
+variant "$out/lame-cbr-44100.mp3" "$out/lame-l399-44100.mp3" l399
 
 cp "$out/lame-cbr-44100.mp3" "$out/lame-badcrc-44100.mp3"
 byte=$(od -An -tu1 -j191 -N1 "$out/lame-badcrc-44100.mp3" | tr -d ' ')

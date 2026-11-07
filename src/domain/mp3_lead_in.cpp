@@ -38,7 +38,8 @@ struct DecoderModel
     // Plays a tag frame it read that counts neither frames nor bytes
     // (Mp3LeadIn::tagFrameHasCounts), whatever the trim below says.
     bool playsTagFrameWithoutCounts;
-    // Trims encoderDelay + extraTrimSamples for these tags.
+    // Trims encoderDelay + extraTrimSamples for these tags. Never for
+    // LameL3: FFmpeg compares the first four bytes of the encoder string.
     bool trimsLame;
     bool trimsLavc;
     int extraTrimSamples;
@@ -63,7 +64,7 @@ Mp3Case classify(const Mp3LeadIn &leadIn)
     if (!leadIn.infoFrame) {
         return Mp3Case::A;
     }
-    if (leadIn.tag != Mp3LeadIn::Tag::Lame) {
+    if (leadIn.tag != Mp3LeadIn::Tag::Lame && leadIn.tag != Mp3LeadIn::Tag::LameL3) {
         return Mp3Case::B;
     }
     return leadIn.lameCrcValid ? Mp3Case::D : Mp3Case::C;

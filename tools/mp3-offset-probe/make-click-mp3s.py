@@ -23,6 +23,8 @@ audio instant can be found in every decoder's output:
      or emptied (tag_frame_variants.py): zero bytes in front of it, an
      ID3 tag and zero bytes, two ID3 tags, the frame and byte counts
      zeroed
+  D  the LAME file with its encoder string "L3.99r", which FFmpeg does
+     not trim for
 
 LAME files come from libmp3lame through lame_encode.encode(), the Lavc
 file from the ffmpeg command line over a WAV of the same samples. Every
@@ -128,6 +130,7 @@ def main():
     variant("click-D-lame-44100.mp3", "click-D-lame-id3id3-44100.mp3", "id3id3")
     variant("click-D-lame-44100.mp3", "click-D-lame-nocounts-44100.mp3", "nocounts")
     variant("click-VBRI-44100.mp3", "click-VBRI-nocounts-44100.mp3", "nocounts")
+    variant("click-D-lame-44100.mp3", "click-D-l399-44100.mp3", "l399")
 
     with tempfile.TemporaryDirectory() as tmp:
         wav = os.path.join(tmp, "click-44100.wav")
