@@ -97,11 +97,20 @@ std::optional<application::FileMetadata> TagLibMetadataProbe::read(const std::st
     // read after the tag rather than TagLib's: TagLib parses the Xing
     // header but not the LAME extension after it.
     if (domain::hasMp3Extension(absoluteFilePath)) {
-        metadata.mp3LeadInRead = true;
-        metadata.mp3LeadIn = readMp3LeadIn(absoluteFilePath);
+        fillMp3LeadIn(metadata, absoluteFilePath);
     }
 
     return metadata;
+}
+
+void fillMp3LeadIn(application::FileMetadata &metadata, const std::string &absoluteFilePath)
+{
+    // Only an answer is "looked": a file that could not be read now (a
+    // stick hiccup between TagLib's read and this one) would otherwise be
+    // cached as having no lead-in for its size and mtime, for good.
+    const Mp3LeadInLook look = lookForMp3LeadIn(absoluteFilePath);
+    metadata.mp3LeadInRead = look.looked;
+    metadata.mp3LeadIn = look.leadIn;
 }
 
 }  // namespace seabass::infrastructure::audio

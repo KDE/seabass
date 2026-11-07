@@ -128,6 +128,24 @@ int main()
         std::cout << "case 5 (garbage file and missing file -> nullopt) OK\n";
     }
 
+    // Case 6 (#50): the lead-in step stores "looked" only for a file it
+    // could read. A file that is not an MP3 inside is an answer (no
+    // lead-in), cached for its size and mtime; one that could not be
+    // opened, as on a stick hiccup, is no answer, and is read again
+    // next time rather than cached as having none.
+    {
+        writeBytes(root / "text.mp3", std::vector<unsigned char>{'n', 'o', 'p', 'e'});
+        seabass::application::FileMetadata text;
+        seabass::infrastructure::audio::fillMp3LeadIn(text, seabass::pathToUtf8(root / "text.mp3"));
+        assert(text.mp3LeadInRead && !text.mp3LeadIn && "read, and no lead-in: an answer");
+
+        seabass::application::FileMetadata gone;
+        seabass::infrastructure::audio::fillMp3LeadIn(gone, seabass::pathToUtf8(root / "gone.mp3"));
+        assert(!gone.mp3LeadInRead && "could not be opened: not looked");
+        assert(!gone.mp3LeadIn);
+        std::cout << "case 6 (an unreadable file is not stored as looked) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all taglib_metadata_probe_test cases passed\n";
     return 0;

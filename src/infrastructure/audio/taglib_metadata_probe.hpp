@@ -39,4 +39,9 @@ public:
     std::optional<application::FileMetadata> read(const std::string &absoluteFilePath) override;
 };
 
+// The probe's lead-in step (#50), for an .mp3: fills metadata.mp3LeadIn
+// and sets mp3LeadInRead, which the stick's metadata cache stores as
+// "looked" for the file's size and mtime.
+void fillMp3LeadIn(application::FileMetadata &metadata, const std::string &absoluteFilePath);
+
 }  // namespace seabass::infrastructure::audio
