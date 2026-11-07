@@ -1096,6 +1096,48 @@ int main(int argc, char **argv)
         std::cout << "case 2 (changed mtime -> re-scan) OK\n";
     }
 
+    // Case 2b: the MP3 cue timing setting (#50) flipped. An Engine entry
+    // was read under the old value, its cues shifted onto rekordbox's
+    // timeline or not; served under the new one, a save would move every
+    // Engine MP3 cue by the whole offset. So a flip is a miss like a
+    // changed mtime, for Engine; rekordbox's rows do not depend on it.
+    {
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+        struct Restore
+        {
+            ~Restore() { seabass::domain::MatchingPolicy::reset(); }
+        } restore;
+        std::map<std::string, int> scans;
+        auto scanFn = [&](const std::string &format, const std::string &, seabass::application::ProgressReporter &,
+                          CancellationToken) {
+            ++scans[format];
+            return oneTrack("1");
+        };
+        auto mtimeFn = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+        LibraryCatalogCache cache(scanFn, mtimeFn);
+        cache.setCountFnForTesting([](const std::string &, const std::string &) { return std::optional<size_t>(1); });
+
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Cues);
+        cache.tracksFor("rekordbox", "/stick", Detail::Cues);
+        assert(scans["engine"] == 1 && scans["rekordbox"] == 1);
+        assert(cache.plannedUnits("engine", "/stick/Engine Library", Detail::Cues) == 0);
+
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);
+        const auto planned = cache.plannedUnits("engine", "/stick/Engine Library", Detail::Cues);
+        assert(planned.has_value() && *planned > 0 && "a flip plans the Engine read again");
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Tracks);
+        assert(scans["engine"] == 2 && "a flip re-reads the Engine catalog");
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Cues);
+        assert(scans["engine"] == 2 && "once");
+        cache.tracksFor("rekordbox", "/stick", Detail::Cues);
+        assert(scans["rekordbox"] == 1 && "rekordbox is not re-read");
+
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+        cache.tracksFor("engine", "/stick/Engine Library", Detail::Cues);
+        assert(scans["engine"] == 3 && "and flipped back, read again");
+        std::cout << "case 2b (MP3 cue timing flipped -> Engine re-scan) OK\n";
+    }
+
     // Case 3: invalidate() forces a re-scan even though mtime hasn't moved.
     {
         std::atomic<int> scanCount{0};
