@@ -157,6 +157,17 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
 infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,
                                                                            const std::string &engineLibraryPath);
 
+// Gives `writer` the save's lead-in source for the stick that holds the
+// Engine library at `realEngineLibraryPath` (the real folder, never a
+// scratch copy) (#50): one metadata cache per stick and save, checked
+// against each file and probed once when it does not know it, the same
+// CachedSampleRates::leadInOf() the catalog's Cues stage reads cues
+// through. So the writer takes off exactly the shift the reader added,
+// from the same answer, rather than reading the file's start on its own.
+// The cache is written back when the save finishes.
+void useSaveLeadIns(SaveContext &ctx, infrastructure::engine::LibdjinteropEngineCueWriter &writer,
+                    const std::string &realEngineLibraryPath);
+
 // Why a change cannot add or remove rows in the Engine library at
 // `enginePath` (the Engine Library folder), or an empty string when it
 // can. Refused: no path, no library there, and Engine 1.x, whose m.db

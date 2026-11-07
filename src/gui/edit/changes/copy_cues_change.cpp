@@ -82,8 +82,10 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
         // copy, it only has to land wherever the database is.
         ctx->engineSession =
             &sharedFormatWriteSession(saveCtx, "engine", path.toStdString(), 0, "duplicate-cue-consolidation");
-        ctx->writer =
+        auto writer =
             std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(ctx->engineSession->writeRoot());
+        useSaveLeadIns(saveCtx, *writer, ctx->engineSession->realRoot());
+        ctx->writer = std::move(writer);
     }
     return ctx;
 }

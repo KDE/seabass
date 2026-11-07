@@ -329,6 +329,30 @@ int main(int argc, char **argv)
         std::cout << "case 8 (a memory cue inside the lead-in is left out and counted) OK\n";
     }
 
+    // Case 9: the writer's lead-in source is the one answer it uses. A
+    // GUI save hands it the stick's checked metadata cache, the reader's
+    // answer; here a source says the LAME file is an FFmpeg one (1105
+    // samples), and the cues are moved by that, not by the 2257 the
+    // file's own start would give.
+    {
+        const Library lib = makeLibrary("source-honoured", "lame-cbr-44100.mp3");
+        const Track before = readOne(lib);
+        const auto lavc = seabass::infrastructure::audio::readMp3LeadIn(
+            seabass::pathToUtf8(g_fixtures / "ffmpeg-lavc-44100.mp3"));
+        assert(lavc && near(seabass::domain::engineToRekordboxOffsetMs(*lavc), 1105 * 1000.0 / 44100));
+        int asked = 0;
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(lib.root));
+        writer.setLeadInSource([&](const std::string &file) {
+            ++asked;
+            assert(file == lib.file);
+            return lavc;
+        });
+        writer.writeHotCues(before.sourceId, theCues());
+        assert(asked == 1);
+        assertStored(raw(lib, before.sourceId), 1105 * 1000.0 / 44100);
+        std::cout << "case 9 (the writer moves cues by its source's lead-in, not the file's) OK\n";
+    }
+
     MatchingPolicy::reset();
     fs::remove_all(seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test");
     std::cout << "all libdjinterop_engine_mp3_lead_in_test cases passed\n";

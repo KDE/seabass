@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 
 #include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
@@ -354,6 +355,37 @@ int main(int argc, char **argv)
             assert(entry && entry->durationSeconds == 266.376 && entry->mp3LeadInRead && entry->mp3LeadIn);
         }
         std::cout << "case 9 (a lead-in read without the probe is cached on its own) OK\n";
+    }
+
+    // Case 10: the lead-in token carries the version of the parser that
+    // read it (#50). An entry the parser of an earlier build wrote may
+    // say what that parser got wrong, so it reads as not looked and the
+    // file is read again; one this build wrote reads back.
+    {
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        writeFile(root / "Seabass" / "caches" / "metadata.jsonl",
+                  "{\"duration\":\"120.000000\",\"estimated\":\"0\",\"mp3leadin\":\"1 1 L 1 576 1404 1 0 44100 1152\","
+                  "\"mtime\":\"" + currentMtimeSeconds(audio)
+                      + "\",\"path\":\"Contents/a/track.mp3\",\"size\":\"" + currentSizeBytes(audio) + "\"}\n");
+        MetadataCache old(seabass::pathToUtf8(root));
+        auto stale = old.lookup(audio);
+        assert(stale && !stale->mp3LeadInRead && !stale->mp3LeadIn && "a version 1 token is not this parser's");
+        assert(!old.lookupLeadIn(audio).has_value() || !old.lookupLeadIn(audio)->mp3LeadInRead);
+
+        FileMetadata withLeadIn = sample();
+        withLeadIn.mp3LeadInRead = true;
+        withLeadIn.mp3LeadIn = lameLeadIn();
+        old.store(audio, withLeadIn);
+        assert(old.save());
+        std::ifstream written(root / "Seabass" / "caches" / "metadata.jsonl", std::ios::binary);
+        const std::string line((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+        const std::string token =
+            "\"mp3leadin\":\"" + std::to_string(seabass::infrastructure::audio::Mp3LeadInParserVersion) + " ";
+        assert(line.find(token) != std::string::npos && "written with this parser's version");
+        MetadataCache reloaded(seabass::pathToUtf8(root));
+        auto fresh = reloaded.lookup(audio);
+        assert(fresh && fresh->mp3LeadInRead && fresh->mp3LeadIn && sameLeadIn(*fresh->mp3LeadIn, lameLeadIn()));
+        std::cout << "case 10 (a lead-in from another parser version is read again) OK\n";
     }
 
     fs::remove_all(root);
