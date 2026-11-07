@@ -85,6 +85,9 @@ TestCase {
         tryCompare(page.controller, "busy", false, 120000);
         compare(page.controller.errorMessage, "");
         waitForRendering(page);
+        // The header's description takes its height a polish after the
+        // analysis lands; on a slow build that is after the first frame.
+        tryVerify(() => findChild(page.header, "headerDetails").visible, 5000, "the header lays out");
         return page;
     }
 
@@ -164,7 +167,13 @@ TestCase {
         compare(sectionCountText(page, "engineOwnKept"), "1160");
         compare(sectionCountText(page, "engineOnlyPlaylists"), "17");
         compare(findChild(sectionHeader(page, "membership"), "sectionTitle").text, "Playlist membership");
+        // sectionHeader() scrolled the list to each section, which folds
+        // the header (test_scrollingFoldsTheHeader); back at the top it
+        // unfolds. On a fast build the checks below used to run inside the
+        // fold's animation and pass; on a slow one the fold had finished.
+        listOf(page).positionViewAtBeginning();
         const intro = findChild(page.header, "introLabel");
+        tryVerify(() => intro.visible, 2000, "the header unfolds at the top");
         compare(intro.text, "No earlier record of this stick. What rekordbox has and Engine lacks is taken as added "
                 + "in rekordbox and is selected; what Engine has and rekordbox lacks is left for you to decide. "
                 + "Anything you leave undecided counts as Engine's own from now on and is not asked again.");
@@ -435,9 +444,14 @@ TestCase {
         const details = findChild(page.header, "headerDetails");
         verify(details.visible, "the intro shows before any scroll");
         const fullHeader = page.header.height;
-        for (let i = 0; i < 3; ++i) {
+        // A wheel step at a time, each one waited for: a step that comes
+        // while the last is still animating can be lost on a slow build,
+        // and three of them then scroll less than the fold's threshold.
+        for (let i = 0; i < 10 && details.visible; ++i) {
+            const before = list.contentY;
             mouseWheel(list, list.width / 2, list.height / 2, 0, -120);
-            wait(30);
+            tryVerify(() => list.contentY > before, 2000, "a wheel step scrolls the list");
+            tryVerify(() => !list.moving, 2000, "the wheel step settles");
         }
         tryVerify(() => !details.visible, 2000, "scrolling never folded the intro");
         waitForRendering(page);
