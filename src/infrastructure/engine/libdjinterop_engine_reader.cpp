@@ -778,7 +778,7 @@ std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Tra
 
 double LibdjinteropEngineReader::shiftFromSource(const domain::Track &track)
 {
-    if (!m_leadInSource || !shiftsCueTimeline(track.filePath, track.streamingSource)) {
+    if (!m_leadInSource || !shiftsCueTimeline(track.filePath, track.streamingSource, m_correctThisPass)) {
         return 0.0;
     }
     try {
@@ -792,8 +792,14 @@ double LibdjinteropEngineReader::shiftFromSource(const domain::Track &track)
     }
 }
 
+void LibdjinteropEngineReader::takeCorrectionSetting()
+{
+    m_correctThisPass = m_correctHandedIn.value_or(domain::MatchingPolicy::correctMp3CueTiming());
+}
+
 void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
 {
+    takeCorrectionSetting();
     fillRatesFromSource(tracks);
     // Every cued MP3 row asked again: the source here may be a better
     // answer than the one readTracks() had (the catalog cache's Cues
@@ -942,6 +948,7 @@ std::optional<size_t> LibdjinteropEngineReader::countTracks()
 
 std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 {
+    takeCorrectionSetting();
     // Before anything opens a database here, database_exists() included:
     // that one opens m.db read-write, and SQLite rolled a journal a pulled
     // stick left behind back right there, silently, before a copy of it

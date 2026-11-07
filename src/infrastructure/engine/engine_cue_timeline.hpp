@@ -25,10 +25,16 @@ namespace seabass::infrastructure::engine
 
 // Whether a row's cues are moved at all: an MP3 with a file on this
 // computer, and the correction switched on (MatchingPolicy).
+// `correct` is the setting as the caller took it, once for a whole pass
+// (the reader); the other overload asks the policy now.
+inline bool shiftsCueTimeline(const std::string &filePath, const std::string &streamingSource, bool correct)
+{
+    return correct && streamingSource.empty() && !filePath.empty() && domain::hasMp3Extension(filePath);
+}
+
 inline bool shiftsCueTimeline(const std::string &filePath, const std::string &streamingSource)
 {
-    return domain::MatchingPolicy::correctMp3CueTiming() && streamingSource.empty() && !filePath.empty()
-        && domain::hasMp3Extension(filePath);
+    return shiftsCueTimeline(filePath, streamingSource, domain::MatchingPolicy::correctMp3CueTiming());
 }
 
 // The milliseconds to add to an Engine position: 0 for a file whose

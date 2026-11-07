@@ -451,6 +451,78 @@ int main(int argc, char **argv)
         std::cout << "case 12 (a copy of the library, lead-in from the real library's audio) OK\n";
     }
 
+    // Case 13: the correction setting is taken once per pass. Flipped by
+    // Preferences halfway through a read (here: by the lead-in source,
+    // on its first answer), every row is still read under the value the
+    // pass started with, never a mix of shifted and unshifted rows the
+    // catalog cache would stamp with one setting.
+    {
+        const fs::path root = seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test" / "policy-pass"
+            / "Engine Library";
+        fs::remove_all(root.parent_path());
+        fs::create_directories(root);
+        std::vector<Track> rows;
+        for (const std::string name : {"one.mp3", "two.mp3", "three.mp3"}) {
+            fs::copy_file(g_fixtures / "lame-cbr-44100.mp3", root / seabass::pathFromUtf8(name));
+            Track t;
+            t.sourceId = "r" + name;
+            t.title = name;
+            t.artist = "Artist";
+            t.filePath = seabass::pathToUtf8(root / seabass::pathFromUtf8(name));
+            t.bpm = 120.0;
+            t.durationSeconds = 300.0;
+            t.cues = theCues();
+            rows.push_back(t);
+        }
+        const auto created = EngineLibraryCreator::create(seabass::pathToUtf8(root), rows, EngineSchemaGeneration::V2);
+        assert(created.errorMessage.empty() && created.tracksCreated == 3);
+
+        const auto flippingSource = [](bool to) {
+            return [to, flipped = false](const std::string &file) mutable {
+                if (!flipped) {
+                    MatchingPolicy::setCorrectMp3CueTiming(to);
+                    flipped = true;
+                }
+                return seabass::infrastructure::audio::readMp3LeadIn(file);
+            };
+        };
+
+        MatchingPolicy::setCorrectMp3CueTiming(true);
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(root));
+        reader.setLeadInSource(flippingSource(false));
+        auto tracks = seabass::application::ScanLibrary(reader).execute();
+        assert(tracks.size() == 3);
+        for (const Track &t : tracks) {
+            assert(near(t.cueTimelineShiftMs, LameShiftMs) && "every row read under the setting the pass began with");
+            assertReadsBack(t, 0.0);
+        }
+        assert(reader.correctsMp3CueTiming() && "the reader says which setting its last pass used");
+
+        // fillCues() captures too: the setting off when it starts, and
+        // flipped on by its first answer, takes every row back to
+        // Engine's timeline.
+        reader.setLeadInSource(flippingSource(true));
+        MatchingPolicy::setCorrectMp3CueTiming(false);
+        reader.fillCues(tracks);
+        for (const Track &t : tracks) {
+            assert(t.cueTimelineShiftMs == 0.0 && "fillCues() reads under the setting it began with");
+            assertReadsBack(t, -LameShiftMs);
+        }
+        assert(!reader.correctsMp3CueTiming());
+
+        // A caller that took the setting itself (the catalog cache, which
+        // stamps its entry with it) hands it in, and the policy is not
+        // asked at all.
+        MatchingPolicy::setCorrectMp3CueTiming(false);
+        LibdjinteropEngineReader handed(seabass::pathToUtf8(root));
+        handed.setCorrectMp3CueTiming(true);
+        for (const Track &t : seabass::application::ScanLibrary(handed).execute()) {
+            assert(near(t.cueTimelineShiftMs, LameShiftMs) && "the setting handed in, not the policy's");
+        }
+        MatchingPolicy::reset();
+        std::cout << "case 13 (the correction setting is taken once per pass) OK\n";
+    }
+
     MatchingPolicy::reset();
     fs::remove_all(seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test");
     std::cout << "all libdjinterop_engine_mp3_lead_in_test cases passed\n";

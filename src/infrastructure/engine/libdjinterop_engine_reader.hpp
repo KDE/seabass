@@ -96,6 +96,20 @@ public:
     // changed by the difference.
     void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
 
+    // Whether the correction is on is taken once per pass: at the start
+    // of readTracks() and of fillCues(), from MatchingPolicy, and used for
+    // every row of that pass, so a Preferences change halfway through
+    // never leaves some rows shifted and some not. A caller that took the
+    // setting itself (the catalog cache, which stamps its entry with it)
+    // hands it in here, and the policy is not asked. correctsMp3CueTiming()
+    // is the setting the last pass used (or will use, when handed in).
+    void setCorrectMp3CueTiming(bool correct)
+    {
+        m_correctHandedIn = correct;
+        m_correctThisPass = correct;
+    }
+    bool correctsMp3CueTiming() const { return m_correctThisPass; }
+
     // The Engine Library folder the rows' relative paths are resolved
     // against to find their audio, for the lead-in and the sample rate
     // sources; by default the library read, as on a stick. A copy of a
@@ -130,6 +144,10 @@ private:
 
     std::string m_engineLibraryPath;
     std::string m_audioRoot;
+    std::optional<bool> m_correctHandedIn;
+    bool m_correctThisPass = true;
+    // Takes the setting for the pass about to start.
+    void takeCorrectionSetting();
     std::string m_volumeIdentity;
     SampleRateSource m_sampleRateSource;
     LeadInSource m_leadInSource;

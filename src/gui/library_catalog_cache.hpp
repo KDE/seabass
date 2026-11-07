@@ -103,6 +103,14 @@ public:
     {
         // Files whose cached duration the Tracks stage took unverified.
         std::vector<std::string> unverifiedDurationPaths;
+        // Not left by a pass but set by the cache before each one: the MP3
+        // cue timing setting (MatchingPolicy::correctMp3CueTiming()) as
+        // the cache took it once for the call, the one its entry is
+        // stamped with (readSettingsOf()). An Engine pass reads under it
+        // (LibdjinteropEngineReader::setCorrectMp3CueTiming()), so a
+        // Preferences change during the pass never yields rows read under
+        // one setting in an entry stamped with the other.
+        bool correctMp3CueTiming = true;
     };
 
     // One pass of a staged read. For Detail::Tracks, `tracks` arrives
@@ -362,6 +370,7 @@ private:
     // entry read under the other value would hand a save cues off by the
     // whole lead-in. Nothing for the other formats.
     static int readSettingsOf(const std::string &format);
+    static int readSettingsOf(const std::string &format, bool correctMp3CueTiming);
     void invalidateLocked(const std::string &key);
     // Whether `entry` holds cues from analysis files that were not
     // checked within analysisCheckWindow().

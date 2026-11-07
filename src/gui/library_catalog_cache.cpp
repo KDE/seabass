@@ -210,6 +210,7 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         application::NullTrackMetadataProbe noProbe;
         std::optional<infrastructure::local::CachedSampleRates> leadIns;
         if (auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineReader *>(reader.get())) {
+            engine->setCorrectMp3CueTiming(notes.correctMp3CueTiming);
             leadIns.emplace(infrastructure::paths::stickRootForCatalogPath(path), noProbe);
             engine->setLeadInSource([&leadIns](const std::string &file) { return leadIns->leadInByPathOf(file); });
         }
@@ -245,6 +246,7 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
             reader->fillCues(tracks);
             return;
         }
+        engine->setCorrectMp3CueTiming(notes.correctMp3CueTiming);
         // Engine's cues came with the Tracks stage, which asks no audio
         // file its sample rate, so a row the player has not analysed yet
         // (no sample rate recorded) has them at the reader's 44.1 kHz
@@ -367,8 +369,13 @@ std::atomic<LibraryCatalogCache *> s_instanceForTesting{nullptr};
 
 int LibraryCatalogCache::readSettingsOf(const std::string &format)
 {
+    return readSettingsOf(format, domain::MatchingPolicy::correctMp3CueTiming());
+}
+
+int LibraryCatalogCache::readSettingsOf(const std::string &format, bool correctMp3CueTiming)
+{
     if (format == "engine") {
-        return domain::MatchingPolicy::correctMp3CueTiming() ? 1 : 2;
+        return correctMp3CueTiming ? 1 : 2;
     }
     return 0;
 }
@@ -632,8 +639,9 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     const std::string key = keyFor(format, path);
     const auto currentMtime = m_mtimeFn(format, path);
     // Taken once, so every pass this call runs reads under the settings
-    // the entry is stamped with.
-    const int readSettings = readSettingsOf(format);
+    // the entry is stamped with: handed to each pass (StageNotes).
+    const bool correctMp3CueTiming = domain::MatchingPolicy::correctMp3CueTiming();
+    const int readSettings = readSettingsOf(format, correctMp3CueTiming);
 
     std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -798,6 +806,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                 }
                 analysisTakenAt = m_nowFn();
             }
+            notes.correctMp3CueTiming = correctMp3CueTiming;
             if (passProgress) {
                 RecordingReporter recording(progress, *passProgress);
                 m_stageFn(detailOf(next), format, path, work, notes, recording, cancel);
