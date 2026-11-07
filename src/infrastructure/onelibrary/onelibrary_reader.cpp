@@ -17,6 +17,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/sqlite_pending_journal.hpp"
 
 namespace seabass::infrastructure::onelibrary
@@ -296,21 +297,9 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
         track.durationSeconds = static_cast<double>(stmt.columnInt64(4));
         std::string relPath = stmt.columnText(5);
         if (!relPath.empty()) {
-            // relPath is already "/Contents/..." (leading slash) --
-            // fs::path's own "/" operator would treat a leading-slash RHS
-            // as an absolute replacement, not a join, so strip it first.
-            //
-            // make_preferred() matters on Windows specifically: relPath's
-            // *own* forward slashes (e.g. "Contents/Artist/Track.mp3")
-            // are appended as one path component in a single operator/
-            // call, so fs::path preserves them as literal '/' characters
-            // rather than re-splitting them into separate components --
-            // .string() would otherwise return a path mixing Windows'
-            // native backslash (from the stickRoot join) with these
-            // untouched forward slashes. Found via a real Windows test
-            // failure comparing this against a path built the "normal"
-            // way (separate operator/ calls per component, which do get
-            // the native separator throughout).
+            // The join is the rekordbox reader's, so a OneLibrary row and a
+            // DeviceLibrary row for one file are one string
+            // (catalog_root_spelling_test).
             //
             // relPath is a raw OneLibrary column, so it is exactly the
             // kind of foreign data normalizedPathKey() (path_key.cpp) is
@@ -319,7 +308,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // throw for bytes that are not valid UTF-8. One track with an
             // undecodable path must not take down the whole scan.
             try {
-                track.filePath = pathToUtf8((stickRoot / pathFromUtf8(relPath.substr(1))).make_preferred());
+                track.filePath = rekordbox::trackFilePathOnStick(pathToUtf8(stickRoot), relPath);
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": file path unreadable (" + e.what() + ")");
             }
@@ -338,7 +327,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // hardware-written data, and unlike Engine's own art (see
             // libdjinterop_engine_reader.cpp's much longer version of this
             // same fix), no URI-unwrapping needed here at all.
-            // make_preferred(): same mixed-separator fix as filePath
+            // make_preferred(): the mixed-separator fix filePath's join has too
             // above, same reason -- imageRelPath.substr(1)'s own forward
             // slashes are appended as one path component and survive
             // .string() as literal characters on Windows otherwise.

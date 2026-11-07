@@ -1660,6 +1660,16 @@ add_test(NAME progressive_catalog_read_test COMMAND progressive_catalog_read_tes
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(progressive_catalog_read_test PROPERTIES LABELS "integration")
 
+# A stick root spelled "D:/" + "/PIONEER" gives the track paths a clean one
+# does: Sync pairs rows by the exact path, and a doubled separator kept by the
+# rekordbox and OneLibrary join made it match nothing (Windows Round 11).
+add_executable(catalog_root_spelling_test tests/catalog_root_spelling_test.cpp)
+target_include_directories(catalog_root_spelling_test PRIVATE src tests)
+target_link_libraries(catalog_root_spelling_test PRIVATE seabass_core)
+add_test(NAME catalog_root_spelling_test COMMAND catalog_root_spelling_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(catalog_root_spelling_test PROPERTIES LABELS "integration")
+
 # removeEngineTrackRows takes a track out of m.db with every row naming it
 # (PerformanceData, playlist and prepare-list entries, ChangeLog on 2.18),
 # over a copy of the fixture's Engine library and a fresh 2.18 database;

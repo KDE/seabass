@@ -639,10 +639,9 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
                         // concatenation, too: it inserts a separator only
                         // when stickRoot doesn't already end with one, so
                         // this stays correct on whichever of the two shapes
-                        // stickRoot happens to be (this project's own
-                        // pattern in OneLibraryReader::readAll(), which this
-                        // now matches exactly). The join itself lives in
-                        // trackFilePathOnStick(), which deleted rows share.
+                        // stickRoot happens to be. The join itself lives in
+                        // trackFilePathOnStick(), which deleted rows and
+                        // OneLibraryReader::readAll() share.
                         // No stat for the size here: that is a file per
                         // track, and a stage of its own (fillFileSizes).
                         track.filePath = trackFilePathOnStick(stickRoot, trackFilePath);

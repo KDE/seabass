@@ -122,13 +122,17 @@ std::optional<std::string> findAnlzPathForTrackId(const std::string &pioneerRoot
 std::string trackFilePathOnStick(const std::string &stickRoot, std::string storedPath)
 {
     // The stored path carries its own leading separator and stickRoot
-    // usually ends in one: joined by operator/ after stripping ours, so
-    // the result has exactly one, and made native so it compares equal
-    // to OneLibraryReader's spelling of the same file.
+    // usually ends in one: joined by operator/ after stripping ours, and
+    // normalized so it compares equal to the Engine reader's spelling of
+    // the same file: a stick at a drive root handed over as
+    // "D:/" + "/PIONEER" has the parent_path() "D://", and the join kept
+    // both separators -- D:\\Contents\... beside Engine's D:\Contents\...,
+    // which matchTracks() compares exactly, so Sync on that stick matched
+    // nothing (Windows Round 11, catalog_root_spelling_test).
     if (!storedPath.empty() && (storedPath.front() == '/' || storedPath.front() == '\\')) {
         storedPath.erase(0, 1);
     }
-    return pathToUtf8((pathFromUtf8(stickRoot) / pathFromUtf8(storedPath)).make_preferred());
+    return pathToUtf8((pathFromUtf8(stickRoot) / pathFromUtf8(storedPath)).lexically_normal().make_preferred());
 }
 
 std::vector<std::string> deletedTrackFilePaths(const std::string &pioneerRoot)

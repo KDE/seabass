@@ -1,0 +1,136 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// A doubled separator or a "." in the stick root does not change how a track's
+// file is spelled.
+//
+// Sync pairs a rekordbox row with its Engine row by the exact file path the
+// two readers give (domain::matchTracks), so they have to spell one file one
+// way. The Engine reader normalizes its join; the rekordbox and OneLibrary
+// readers joined the stick root (the PIONEER folder's parent_path()) and the
+// stored path and stopped there. For a stick at a drive root given as "D:/" +
+// "/PIONEER", parent_path() keeps "D://", and the join came back as
+// D:\\Contents\... beside Engine's D:\Contents\..., so Sync on that stick
+// matched nothing (Windows Round 11, 2026-11-06: "sync plans: 0 (rekordbox
+// 100, engine 100)" in the live Sync check and in F6, and `seabass-cli sync`
+// against "D://PIONEER" matched 0 tracks where "D:/PIONEER" matched 88).
+//
+// Not covered, and not fixed by this: a trailing separator on the PIONEER
+// folder itself, where parent_path() answers the PIONEER folder.
+
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "domain/track.hpp"
+#include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "scratch_path.hpp"
+
+namespace fs = std::filesystem;
+using seabass::domain::Track;
+using seabass::infrastructure::onelibrary::OneLibraryReader;
+using seabass::infrastructure::rekordbox::KaitaiRekordboxReader;
+using seabass::infrastructure::rekordbox::trackFilePathOnStick;
+
+namespace
+{
+
+[[noreturn]] void fail(const std::string &why)
+{
+    std::cerr << "FAIL: " << why << "\n";
+    std::exit(1);
+}
+
+std::set<std::string> filePaths(const std::vector<Track> &tracks)
+{
+    std::set<std::string> paths;
+    for (const auto &track : tracks) {
+        if (!track.filePath.empty()) {
+            paths.insert(track.filePath);
+        }
+    }
+    return paths;
+}
+
+void requireSame(const std::set<std::string> &clean, const std::set<std::string> &other, const std::string &what)
+{
+    if (clean.empty()) {
+        fail(what + ": the clean root read no file paths at all");
+    }
+    if (clean != other) {
+        for (const auto &path : other) {
+            if (!clean.count(path)) {
+                std::cerr << "  only through the other root: " << path << "\n";
+                break;
+            }
+        }
+        fail(what + ": the spelling of the root changes the file paths");
+    }
+}
+
+}  // namespace
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        std::cerr << "usage: catalog_root_spelling_test <tests/fixtures/anonymized_library>\n";
+        return 2;
+    }
+
+    // 1. The join, with the roots a caller can hand it. A drive root is not
+    //    something the fixture below can be copied to.
+    const std::string stored = "/Contents/a b/x.mp3";
+#ifdef _WIN32
+    const std::string clean = "D:/";
+    const std::string want = "D:\\Contents\\a b\\x.mp3";
+    const std::vector<std::string> roots = {"D:/", "D:\\", "D://", "D:\\\\", "D:/\\", "D:/."};
+#else
+    const std::string clean = "/media/sebas/STICK";
+    const std::string want = "/media/sebas/STICK/Contents/a b/x.mp3";
+    const std::vector<std::string> roots = {"/media/sebas/STICK", "/media/sebas/STICK/", "/media/sebas/STICK//",
+                                            "/media/sebas/./STICK", "/media//sebas/STICK"};
+#endif
+    for (const auto &root : roots) {
+        const std::string got = trackFilePathOnStick(root, stored);
+        if (got != want) {
+            fail("root \"" + root + "\" + \"" + stored + "\" gave \"" + got + "\", want \"" + want + "\"");
+        }
+    }
+    std::cout << "case 1 (a doubled separator or a dot in the stick root leaves one path) OK\n";
+
+    // 2. The spelling the Engine reader gives the same file, so the two can
+    //    be compared by string.
+    const fs::path engineSpelling = (seabass::pathFromUtf8(clean) / seabass::pathFromUtf8(stored.substr(1))).lexically_normal();
+    if (trackFilePathOnStick(clean, stored) != seabass::pathToUtf8(engineSpelling)) {
+        fail("the join and the Engine reader's normalized join spell one file two ways");
+    }
+    std::cout << "case 2 (the join spells a file as the Engine reader does) OK\n";
+
+    // 3. Both readers that use the join, through a root that is not clean.
+    //    "stick/./PIONEER": unlike a doubled separator, parent_path() keeps it.
+    const fs::path fixture = seabass::pathFromUtf8(argv[1]);
+    const fs::path scratch = seabass::testing::scratchRoot() / "catalog_root_spelling";
+    seabass::testing::sandboxSeabassHome(scratch / "home");
+    const fs::path stick = scratch / "stick";
+    fs::remove_all(stick);
+    fs::create_directories(stick);
+    // A copy, never the fixture itself: the OneLibrary open may roll back a
+    // journal.
+    fs::copy(fixture / "rekordbox", stick / "PIONEER", fs::copy_options::recursive);
+    const std::string pioneer = seabass::pathToUtf8(stick / "PIONEER");
+    const std::string pioneerDotted = seabass::pathToUtf8(stick) + "/./PIONEER";
+
+    requireSame(filePaths(KaitaiRekordboxReader(pioneer).readTracks()),
+                filePaths(KaitaiRekordboxReader(pioneerDotted).readTracks()), "rekordbox");
+    requireSame(filePaths(OneLibraryReader(pioneer).readTracks()),
+                filePaths(OneLibraryReader(pioneerDotted).readTracks()), "OneLibrary");
+    std::cout << "case 3 (the rekordbox and OneLibrary readers give the same paths through that root) OK\n";
+    return 0;
+}
