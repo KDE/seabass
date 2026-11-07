@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "gui/metadata_row_text.hpp"
+#include "gui/stick_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
