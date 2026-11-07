@@ -39,7 +39,10 @@ namespace
 // or null to look the one track up in the database itself.
 // The cues as a page hands them, every position moved by `shiftMs` (see
 // infrastructure/audio/playback_timeline.hpp): 0 leaves the list as it
-// came, so takeCues() still sees an unchanged list as unchanged.
+// came, so takeCues() still sees an unchanged list as unchanged. A loop's
+// end moves with it, and only a loop's: another cue's loopEndMs means
+// nothing and is left as it came. Nothing moves before the start of the
+// file: a cue inside an MP3's lead-in plays from 0.
 QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
 {
     if (shiftMs == 0.0) {
@@ -49,11 +52,15 @@ QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
     shifted.reserve(cues.size());
     for (const QVariant &value : cues) {
         QVariantMap cue = value.toMap();
-        for (const char *key : {"positionMs", "loopEndMs"}) {
-            const auto it = cue.find(QLatin1String(key));
+        const auto move = [&](const QString &key) {
+            const auto it = cue.find(key);
             if (it != cue.end() && it->canConvert<double>()) {
-                *it = it->toDouble() + shiftMs;
+                *it = std::max(0.0, it->toDouble() + shiftMs);
             }
+        };
+        move(QStringLiteral("positionMs"));
+        if (cue.value(QStringLiteral("isLoop")).toBool()) {
+            move(QStringLiteral("loopEndMs"));
         }
         shifted.append(cue);
     }
