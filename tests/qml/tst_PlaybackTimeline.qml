@@ -98,6 +98,26 @@ TestCase {
         compare(player.cues[0].positionMs, 5051.179);
     }
 
+    // Only a loop's end moves: a cue that is not a loop keeps whatever
+    // loopEndMs it came with (0, or a leftover). And nothing moves before
+    // the start of the file: a cue inside the lead-in lands at 0.
+    function test_onlyALoopsEndMovesAndNothingGoesBelowZero() {
+        const given = [
+            {kind: "hot", hotCueNumber: 1, positionMs: 5051.179, isLoop: false, loopEndMs: 0},
+            {kind: "memory", hotCueNumber: 0, positionMs: 30, isLoop: false, loopEndMs: 0},
+            {kind: "hot", hotCueNumber: 3, positionMs: 10, isLoop: true, loopEndMs: 40},
+            {kind: "hot", hotCueNumber: 4, positionMs: 20, isLoop: true, loopEndMs: 5000},
+        ];
+        player.load("rekordbox", "/lib", "a", lameFile, "Click", "Artist", "", given);
+        compare(player.cues[0].loopEndMs, 0, "a cue that is not a loop keeps its loopEndMs");
+        compare(player.cues[1].positionMs, 0, "a cue inside the lead-in lands at the start, not before it");
+        compare(player.cues[1].loopEndMs, 0);
+        compare(player.cues[2].positionMs, 0, "a loop inside the lead-in starts at 0");
+        compare(player.cues[2].loopEndMs, 0, "and ends there");
+        compare(player.cues[3].positionMs, 0, "a loop that starts inside the lead-in starts at 0");
+        fuzzyCompare(player.cues[3].loopEndMs, 5000 + lameShiftMs, 0.001, "and keeps its end");
+    }
+
     function test_aMissingFileKeepsTheCuesAsGiven() {
         player.load("rekordbox", "/lib", "a", "/nonexistent/none.mp3", "Gone", "Artist", "", cues);
         compare(player.cues[0].positionMs, 5051.179);
