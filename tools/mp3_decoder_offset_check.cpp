@@ -7,15 +7,23 @@
 //
 //   mp3_decoder_offset_check FILE...
 //
-// Each file is decoded whole twice:
-//   rekordbox  libmpg123 with MPG123_GAPLESS cleared, and with
-//              MPG123_IGNORE_INFOFRAME set when readMp3LeadIn() says the
-//              Info frame's channel mode is the audio's, so the tag frame
-//              decodes as a frame of silence the way rekordbox's frame map
-//              plays it; not set otherwise, so libmpg123 skips that frame.
+// Each file is decoded whole three times:
+//   rekordbox  libmpg123 with MPG123_GAPLESS cleared, twice: once with
+//              MPG123_IGNORE_INFOFRAME set, so a Xing/Info frame decodes
+//              as a frame of silence, and once without, so libmpg123
+//              skips it. Both leads are printed.
 //   Engine     libavformat + libavcodec at their defaults, the skip the
 //              demuxer asks for (AV_PKT_DATA_SKIP_SAMPLES) applied by the
 //              decoder.
+//
+// Which of the two libmpg123 lanes rekordbox is is NOT measured here. The
+// model says rekordbox plays the Info frame as silence when its channel
+// mode is the first audio frame's and skips it otherwise; that is an
+// assumption from rbxport's static analysis of rekordbox 7 (PR 295), and
+// only rekordbox itself can confirm it (the round on neo). This tool
+// takes the lane the model selects for the file, so on files with an
+// Info frame it checks libmpg123's frame arithmetic and FFmpeg's trim,
+// not the Info-frame half of the model.
 // In each, the click is the largest |sample| of the first two seconds,
 // channels averaged. The measured lag (rekordbox index minus Engine index)
 // is compared with engineToRekordboxOffsetMs() at the file's rate; a file
@@ -219,18 +227,25 @@ int main(int argc, char **argv)
         const std::string path = argv[i];
         std::printf("%s\n", path.c_str());
         const auto leadIn = seabass::infrastructure::audio::readMp3LeadIn(path);
+        // The lane the model says rekordbox is: the tag frame played as
+        // silence when its mode is the audio's. Assumed, not measured.
         const bool ignoreInfoFrame = leadIn && leadIn->infoFrame && leadIn->infoFrameModeMatchesAudio;
-        const auto rekordbox = decodeAsRekordbox(path, ignoreInfoFrame);
+        const auto played = decodeAsRekordbox(path, true);
+        const auto skipped = decodeAsRekordbox(path, false);
+        const auto &rekordbox = ignoreInfoFrame ? played : skipped;
         const auto engine = decodeAsEngine(path);
-        if (!rekordbox || !engine || rekordbox->sampleRate <= 0 || rekordbox->sampleRate != engine->sampleRate) {
-            std::printf("  FAIL: could not decode (libmpg123 %s, libavformat %s)\n", rekordbox ? "ok" : "failed",
-                        engine ? "ok" : "failed");
+        if (!played || !skipped || !engine || rekordbox->sampleRate <= 0
+            || rekordbox->sampleRate != engine->sampleRate) {
+            std::printf("  FAIL: could not decode (libmpg123 %s, libavformat %s)\n",
+                        played && skipped ? "ok" : "failed", engine ? "ok" : "failed");
             ++failures;
             continue;
         }
         const int rate = rekordbox->sampleRate;
         const long clickAt = rate * 3L / 2;
-        const long rbIndex = clickIndex(*rekordbox);
+        const long playedIndex = clickIndex(*played);
+        const long skippedIndex = clickIndex(*skipped);
+        const long rbIndex = ignoreInfoFrame ? playedIndex : skippedIndex;
         const long engineIndex = clickIndex(*engine);
         const long lag = rbIndex - engineIndex;
         if (rbIndex < 0 || engineIndex < 0) {
@@ -242,10 +257,17 @@ int main(int argc, char **argv)
         const double predictedMs = leadIn ? seabass::domain::engineToRekordboxOffsetMs(*leadIn) : 0.0;
         const long predicted = std::lround(predictedMs * rate / 1000.0);
         const bool pass = std::labs(lag - predicted) <= ToleranceSamples;
-        std::printf("  rate %d, Info frame decoded as silence by libmpg123: %s\n", rate,
-                    ignoreInfoFrame ? "yes" : "no");
-        std::printf("  rekordbox (libmpg123)   click at %ld  (lead %+ld)\n", rbIndex, rbIndex - clickAt);
-        std::printf("  Engine (libavformat)    click at %ld  (lead %+ld)\n", engineIndex, engineIndex - clickAt);
+        std::printf("  rate %d\n", rate);
+        std::printf("  libmpg123, Info frame as silence  click at %ld  (lead %+ld)%s\n", playedIndex,
+                    playedIndex - clickAt, ignoreInfoFrame ? "  <- rekordbox per the model" : "");
+        std::printf("  libmpg123, Info frame skipped     click at %ld  (lead %+ld)%s\n", skippedIndex,
+                    skippedIndex - clickAt, ignoreInfoFrame ? "" : "  <- rekordbox per the model");
+        if (leadIn && leadIn->infoFrame) {
+            std::printf("  (which lane rekordbox uses is the model's assumption from rbxport's analysis of\n"
+                        "   rekordbox 7; only rekordbox itself measures it)\n");
+        }
+        std::printf("  Engine (libavformat)              click at %ld  (lead %+ld)\n", engineIndex,
+                    engineIndex - clickAt);
         std::printf("  measured lag %ld samples = %.3f ms; model %.3f ms = %ld samples: %s\n", lag,
                     lag * 1000.0 / rate, predictedMs, predicted, pass ? "PASS" : "FAIL");
         if (!pass) {
