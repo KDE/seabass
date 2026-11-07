@@ -156,7 +156,7 @@ kill_test() {  # pid
 # "Totals:" line: a test binary that ran to its end prints one.
 died_of_kill() {  # exit status, log
     if rig_is_windows; then
-        [ "$1" -ne 0 ] && ! grep -q "^Totals:" "$2"
+        [ "$1" -ne 0 ] && ! grep -aqE "^ *Totals:" "$2"
     else
         [ "$1" -eq 137 ]
     fi
@@ -182,7 +182,10 @@ unmount_until_gone() {  # device
 }
 
 show_log() {  # log
-    grep -aE "^(PASS|FAIL|SKIP|XFAIL|Totals)|^QDEBUG|^   (Actual|Expected|Loc)|^(onelibrary|engine):|rolled back" "$1" \
+    # A line can start with a stray space after TagLib's output on Windows,
+    # so the filter allows one; see run-live.sh.
+    grep -aE "^ *(PASS|FAIL|SKIP|XFAIL|Totals|QDEBUG)|^ *   (Actual|Expected|Loc)|^ *(onelibrary|engine):|rolled back" "$1" \
+        | sed -E 's/^ +(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals|onelibrary|engine)/\1/' \
         | sed 's/^QDEBUG : [a-zA-Z0-9_]*() qml://' | sed 's/^/    /'
 }
 
@@ -338,7 +341,7 @@ show_log "$log"
 bad=0
 [ "$rc" -eq 0 ] || bad=1
 # QtTest exits 0 for a skip, and a test that did not run proved nothing.
-if grep -q "^SKIP" "$log"; then
+if grep -aqE "^ *SKIP" "$log"; then
     echo "   SKIPPED, which counts as a failure here"
     bad=1
 fi

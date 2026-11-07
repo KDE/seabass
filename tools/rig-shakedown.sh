@@ -258,9 +258,9 @@ check() {
     local verdict
     "$@" > "$out/$name.log" 2>&1 || rc=1
     unset RIG_PARTS
-    if [ $rc -eq 0 ] && grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
+    if [ $rc -eq 0 ] && grep -aqE "^ *SKIP" "$out/$name.log"; then
         echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
-        grep -E "^SKIP|^ *SKIPPED" "$out/$name.log" | head -5
+        grep -aE "^ *SKIP" "$out/$name.log" | head -5
         rc=1
         verdict=FAIL
     elif [ $rc -eq 0 ]; then
@@ -560,7 +560,7 @@ live_test() {  # <stick> <full test name>...
         [ -f "$stick_log" ] && before=$(wc -l < "$stick_log")
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" 2>&1 | tee "$log"
         [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
-        if grep -q "^SKIP" "$log"; then
+        if grep -aqE "^ *SKIP" "$log"; then
             echo "   SKIPPED, which counts as a failure here"
             failed=1
         fi
