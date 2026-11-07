@@ -89,7 +89,11 @@ int main()
         assert(read->appVersion == written.appVersion);
         assert(read->requests.size() == written.requests.size());
         for (std::size_t i = 0; i < written.requests.size(); ++i) {
-            if (!(read->requests[i] == written.requests[i])) {
+            // A file comes back in the platform's spelling, as case 4 says
+            // and the readers spell a stick's rows.
+            auto expected = written.requests[i];
+            expected.file = QDir::toNativeSeparators(expected.file);
+            if (!(read->requests[i] == expected)) {
                 std::cerr << "request " << i << " came back as " << read->requests[i].kind.toStdString() << " "
                           << read->requests[i].file.toStdString() << "\n";
                 assert(false);
@@ -101,6 +105,9 @@ int main()
         QFile file(path);
         assert(file.open(QIODevice::ReadOnly));
         const QByteArray text = file.readAll();
+        // Closed now, not at the end of the block: on Windows a file still
+        // open here cannot be replaced, and case 5's write of it fails.
+        file.close();
         assert(!text.contains("/media/sebas"));
         assert(text.contains("Contents/a b/1.mp3"));
         std::cout << "case 3 (files are kept relative to the mount point) OK\n";

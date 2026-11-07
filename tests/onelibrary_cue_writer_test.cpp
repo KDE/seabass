@@ -947,7 +947,10 @@ int main()
         assert(value("SELECT count(*) FROM cue WHERE content_id IN (30, 31)") == 0);
 
         // exFAT folds case beyond ASCII too.
-        const std::string olmuhle = pathToUtf8(scratch / "Contents" / "\xC3\xA9MILE" / "\xC3\xB6LM\xC3\x9CHLE.mp3");
+        // Through pathFromUtf8: a narrow literal appended to a path is read
+        // in the ANSI code page on Windows, and asked for "Ã©MILE".
+        const std::string olmuhle =
+            pathToUtf8(scratch / "Contents" / pathFromUtf8("\xC3\xA9MILE") / pathFromUtf8("\xC3\xB6LM\xC3\x9CHLE.mp3"));
         assert(writer.hasTrackAtPath(olmuhle));
         writer.writeCuesForPath(olmuhle, sampleCues());
         assert(value("SELECT count(*) FROM cue WHERE content_id = 40") == cueCount);
