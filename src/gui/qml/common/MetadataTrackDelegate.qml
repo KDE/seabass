@@ -156,6 +156,8 @@ Rectangle {
         && delegate.playbackController.currentFormat === delegate.playSource.format
         && delegate.playbackController.currentSourceId === (delegate.playSource.sourceId || "")
         && delegate.playbackController.currentLibraryPath === (delegate.playSource.libraryPath || "")
+    // This row is the track loaded, and it is playing: the key pauses.
+    readonly property bool playingThis: delegate.isCurrentTrack && delegate.playbackController.playing
 
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with
@@ -271,7 +273,7 @@ Rectangle {
                 ToolTip.visible: coverHover.hovered && playKey.visible && ToolTip.text.length > 0
                 ToolTip.delay: 400
                 ToolTip.text: delegate.isCurrentTrack
-                    ? (delegate.playbackController.playing ? "Pause" : "Play")
+                    ? (delegate.playingThis ? "Pause" : "Play")
                     : (playKey.enabled ? "Play this track, with its cues marked in the player"
                                        : delegate.playUnavailableText)
 
@@ -286,14 +288,14 @@ Rectangle {
                     topPadding: 0
                     bottomPadding: 0
                     display: AbstractButton.IconOnly
-                    text: delegate.isCurrentTrack && delegate.playbackController.playing ? "Pause" : "Play"
+                    text: delegate.playingThis ? "Pause" : "Play"
                     visible: delegate.playbackController !== null && (delegate.playSource.format || "").length > 0
                         && (delegate.hovered || delegate.isCurrentTrack)
                     enabled: delegate.isCurrentTrack || delegate.playFilePath.length > 0
                     contentItem: Item {
                         SeabassIcon {
                             anchors.centerIn: parent
-                            iconName: delegate.isCurrentTrack && delegate.playbackController.playing
+                            iconName: delegate.playingThis
                                 ? "media-playback-pause" : "media-playback-start"
                             size: Theme.iconSizeSmall * 0.6
                             color: "white"
