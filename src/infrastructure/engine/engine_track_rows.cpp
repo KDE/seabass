@@ -642,6 +642,9 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
     if (!translated.cues.empty()) {
         try {
             LibdjinteropEngineCueWriter writer(writeRoot);
+            // writeRoot may be a scratch copy; the file is under the real
+            // library.
+            writer.setAudioRoot(track.realEngineLibraryPath);
             writer.writeHotCuesAtSampleRate(std::to_string(id), translated.cues, track.sampleRateHz);
         } catch (const std::exception &e) {
             return undo("could not write the cues of track id=" + std::to_string(id) + ": " + e.what());

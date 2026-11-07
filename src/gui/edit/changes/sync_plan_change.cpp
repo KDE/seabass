@@ -51,6 +51,8 @@ struct SyncFormatWriter
                                                                                             pathIndex);
         } else if (format == "engine") {
             engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(session.writeRoot());
+            // The scratch copy holds the database, not the audio.
+            engine->setAudioRoot(session.realRoot());
         } else {
             // The save's one writer for this database, not a private
             // instance. This branch and the rekordbox branch's mirror

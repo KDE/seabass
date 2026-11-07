@@ -72,7 +72,10 @@ struct LocalCueWriterContext
             // session takes the backup this used to take itself. Same fix,
             // for the same bug, as RemoveJunkCueChange.
             engineSession = &sharedFormatWriteSession(ctx, "engine", root, 0, "local-restore");
-            writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
+            auto engineWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
+            // The scratch copy holds the database, not the audio.
+            engineWriter->setAudioRoot(engineSession->realRoot());
+            writer = std::move(engineWriter);
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");
             auto adapter = std::make_unique<OneLibraryCueWriterAdapter>(root, std::move(oneLibraryPaths));
