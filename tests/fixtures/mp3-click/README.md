@@ -27,6 +27,7 @@ each decoder's output and the lag between decoders measured:
 | click-D-lame-48000.mp3        | D     | the same at 48 kHz (80 kbit/s)                     |
 | click-D-lame-mpeg2-22050.mp3  | D     | the same as MPEG-2 Layer III at 22.05 kHz          |
 | click-D-lame-mono-44100.mp3   | D     | the same in mono                                   |
+| click-D-lame-crc-44100.mp3    | D     | the 44.1 kHz file with CRC-protected frames; the tag still sits at 4 + side info |
 
 All CBR, 64 kbit/s except 80 at 48 kHz (a 64 kbit/s frame there is too
 short for libmp3lame to write the tag frame).

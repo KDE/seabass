@@ -123,6 +123,18 @@ int main(int argc, char **argv)
         assert(engineToRekordboxOffsetMs(l) == 0.0);
     }
 
+    // CRC-protected frames: LAME writes the tag at 4 + side-info bytes,
+    // not after the header's two CRC bytes, and FFmpeg and libmpg123
+    // look for it there. Class D like the unprotected file.
+    {
+        const Mp3LeadIn l = read("lame-crc-44100.mp3");
+        assert(l.infoFrame && !l.vbri);
+        assert(l.tag == Mp3LeadIn::Tag::Lame && l.lameCrcValid);
+        assert(l.encoderDelay == 576);
+        assert(classify(l) == Mp3Case::D);
+        assert(near(engineToRekordboxOffsetMs(l), 51.18));
+    }
+
     // The CBR file with its tag CRC broken: class C, same offset.
     {
         const Mp3LeadIn l = read("lame-badcrc-44100.mp3");

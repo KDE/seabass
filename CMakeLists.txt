@@ -4107,7 +4107,7 @@ if(SEABASS_MP3_DECODERS_FOUND)
     message(STATUS "mp3_decoder_offset_check: built (libmpg123, libavformat, libavcodec, libavutil found)")
     add_executable(mp3_decoder_offset_check tools/mp3_decoder_offset_check.cpp)
     target_link_libraries(mp3_decoder_offset_check PRIVATE seabass_mp3_lead_in PkgConfig::SEABASS_MP3_DECODERS)
-    file(GLOB SEABASS_MP3_CLICK_FILES ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click/*.mp3)
+    file(GLOB SEABASS_MP3_CLICK_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click/*.mp3)
     add_test(NAME mp3_decoder_offset_check_test
         COMMAND mp3_decoder_offset_check ${SEABASS_MP3_CLICK_FILES})
 else()

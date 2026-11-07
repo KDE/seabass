@@ -15,7 +15,8 @@ audio instant can be found in every decoder's output:
      changed: an Info frame whose LAME extension names no encoder
   B  FFmpeg's own Info frame ("Lavc..."), stereo over joint stereo audio
   C  the D file with its LAME tag CRC broken
-  D  LAME with a valid tag, at 44.1 kHz, 48 kHz, MPEG-2 22.05 kHz, mono
+  D  LAME with a valid tag, at 44.1 kHz, 48 kHz, MPEG-2 22.05 kHz, mono,
+     and with CRC-protected frames (the tag still at 4 + side info)
 
 LAME files come from libmp3lame through lame_encode.encode(), the Lavc
 file from the ffmpeg command line over a WAV of the same samples. Every
@@ -72,8 +73,8 @@ def encoder_string_offset(data):
     return at
 
 
-def lame(out, rate, channels, mode, kbps, notag=False):
-    lame_encode.encode(out, rate, channels, mode, str(kbps), notag, click_pcm(rate))
+def lame(out, rate, channels, mode, kbps, notag=False, crc=False):
+    lame_encode.encode(out, rate, channels, mode, str(kbps), notag, click_pcm(rate), crc=crc)
 
 
 def patched(src, out, patch):
@@ -93,6 +94,7 @@ def main():
     lame(p("click-D-lame-48000.mp3"), 48000, 2, "joint", 80)
     lame(p("click-D-lame-mpeg2-22050.mp3"), 22050, 2, "joint", 64)
     lame(p("click-D-lame-mono-44100.mp3"), 44100, 1, "mono", 64)
+    lame(p("click-D-lame-crc-44100.mp3"), 44100, 2, "joint", 64, crc=True)
 
     def zero_encoder_string(data, at):
         data[at:at + 9] = bytes(9)
