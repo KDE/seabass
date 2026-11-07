@@ -494,7 +494,9 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                        bool autoMode,
                        const std::function<std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>>()>
                            &acquireLocks,
-                       bool listGroups)
+                       bool listGroups,
+                       const std::function<void(const Track &, const std::vector<seabass::domain::CuePoint> &)>
+                           &afterWrite = {})
 {
     auto plans = ConsolidateDuplicateCues().execute(tracks);
     if (plans.empty()) {
@@ -598,6 +600,9 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                 log->record(formatName + ": copied " + std::to_string(plan.source->cues.size()) +
                              " cue(s) from track id=" + plan.source->sourceId + " (\"" + plan.source->title +
                              "\") to track id=" + target.sourceId);
+            }
+            if (afterWrite) {
+                afterWrite(target, plan.source->cues);
             }
             totalCuesCopied += plan.source->cues.size();
             targetsWritten++;
@@ -2196,15 +2201,63 @@ int main(int argc, char **argv)
                 seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(stickRoot)));
             seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(seabass::infrastructure::paths::stickOperationLog(stickRoot)));
             std::string pioneerRoot = target.path;
-            auto filesToBackUpFor = [pioneerRoot](const std::string &trackSourceId) -> std::vector<std::string> {
+            // export.pdb and exportLibrary.db are one library in two formats,
+            // so a cue copied in one belongs in the other, as in sync and in
+            // the app's Copy Cues. One writer for the run, made at the first
+            // write: most scans have nothing to consolidate.
+            using seabass::infrastructure::onelibrary::OneLibraryCueWriter;
+            const bool hasOneLibrary = OneLibraryCueWriter::existsFor(pioneerRoot);
+            std::unique_ptr<OneLibraryCueWriter> oneLibrary;
+            auto oneLibraryWriter = [&]() -> OneLibraryCueWriter & {
+                if (!oneLibrary) {
+                    oneLibrary = std::make_unique<OneLibraryCueWriter>(pioneerRoot);
+                }
+                return *oneLibrary;
+            };
+            auto filesToBackUpFor = [&](const std::string &trackSourceId) -> std::vector<std::string> {
+                std::vector<std::string> files;
                 auto analyzePath = seabass::infrastructure::rekordbox::findAnlzPathForTrackId(
                     pioneerRoot, static_cast<uint32_t>(std::stoul(trackSourceId)));
-                if (!analyzePath) {
-                    return {};
+                if (analyzePath) {
+                    files = seabass::infrastructure::rekordbox::rekordboxCueFilesFor(pioneerRoot, *analyzePath);
                 }
-                return seabass::infrastructure::rekordbox::rekordboxCueFilesFor(pioneerRoot, *analyzePath);
+                if (hasOneLibrary) {
+                    files.push_back(OneLibraryCueWriter::dbPathFor(pioneerRoot));
+                    // And the analysis files its rows name, where a
+                    // OneLibrary cue write lands first (#59).
+                    for (const Track &track : tracks) {
+                        if (track.sourceId == trackSourceId && !track.filePath.empty()) {
+                            for (auto &file : oneLibraryWriter().cueFilesForPath(track.filePath)) {
+                                files.push_back(std::move(file));
+                            }
+                        }
+                    }
+                }
+                // Each file once: a row of both formats names the same
+                // analysis files, and the backup should hold them once.
+                std::set<std::string> seen;
+                files.erase(std::remove_if(files.begin(), files.end(),
+                                           [&seen](const std::string &file) { return !seen.insert(file).second; }),
+                            files.end());
+                return files;
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose);
+            auto mirrorCopy = [&](const Track &copy, const std::vector<seabass::domain::CuePoint> &cues) {
+                if (!hasOneLibrary || copy.filePath.empty()) {
+                    return;
+                }
+                try {
+                    oneLibraryWriter().writeCuesForPath(copy.filePath, cues);
+                    Console::info("  also wrote them to the OneLibrary copy");
+                    log.record("rekordbox: also wrote cues to the OneLibrary copy of track id=" + copy.sourceId);
+                } catch (const std::exception &e) {
+                    // Best-effort, as in sync: the rekordbox write landed,
+                    // and the warning says the copies now differ.
+                    Console::warn(std::string("could not mirror into OneLibrary: ") + e.what());
+                    log.record(std::string("rekordbox: OneLibrary cue mirror failed: ") + e.what());
+                }
+            };
+            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose,
+                             mirrorCopy);
         }
 
         bool multipleEngine = scanTargets.engineTargets.size() > 1;
