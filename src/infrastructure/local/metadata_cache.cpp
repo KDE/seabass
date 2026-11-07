@@ -231,7 +231,7 @@ MetadataCache::MetadataCache(std::string stickRoot) : m_stickRoot(normalizeSepar
         auto parsedDuration = parseDouble(duration->second);
         auto parsedSize = parseLongLong(size->second);
         auto parsedMtime = parseLongLong(mtime->second);
-        if (!parsedDuration || !parsedSize || !parsedMtime || *parsedDuration <= 0.0) {
+        if (!parsedDuration || !parsedSize || !parsedMtime || *parsedDuration < 0.0) {
             continue;
         }
 
@@ -251,6 +251,10 @@ MetadataCache::MetadataCache(std::string stickRoot) : m_stickRoot(normalizeSepar
         if (auto leadIn = fields->find("mp3leadin"); leadIn != fields->end()) {
             parseLeadIn(leadIn->second, metadata);
         }
+        // No duration is only good for an entry that holds a lead-in.
+        if (*parsedDuration == 0.0 && !metadata.mp3LeadInRead) {
+            continue;
+        }
 
         m_entries[normalizeSeparators(path->second)] = Entry{std::move(metadata), *parsedSize, *parsedMtime};
     }
@@ -268,16 +272,8 @@ std::string MetadataCache::relativeKey(const std::string &absoluteFilePath) cons
     return path.substr(m_stickRoot.size() + 1);
 }
 
-std::optional<application::FileMetadata> MetadataCache::lookupByPathOnly(const std::string &absoluteFilePath) const
-{
-    const auto it = m_entries.find(relativeKey(absoluteFilePath));
-    if (it == m_entries.end()) {
-        return std::nullopt;
-    }
-    return it->second.metadata;
-}
-
-std::optional<application::FileMetadata> MetadataCache::lookup(const std::string &absoluteFilePath) const
+std::optional<application::FileMetadata> MetadataCache::lookupLeadIn(const std::string &absoluteFilePath,
+                                                                     bool checkFile) const
 {
     const std::string key = relativeKey(absoluteFilePath);
     if (key.empty()) {
@@ -287,17 +283,37 @@ std::optional<application::FileMetadata> MetadataCache::lookup(const std::string
     if (it == m_entries.end()) {
         return std::nullopt;
     }
-    const FileStat current = statFile(absoluteFilePath);
-    if (!current.ok || current.sizeBytes != it->second.sizeBytes ||
-        current.mtimeSeconds != it->second.mtimeSeconds) {
-        return std::nullopt;  // changed (or gone) since it was read
+    if (checkFile) {
+        const FileStat current = statFile(absoluteFilePath);
+        if (!current.ok || current.sizeBytes != it->second.sizeBytes ||
+            current.mtimeSeconds != it->second.mtimeSeconds) {
+            return std::nullopt;  // changed (or gone) since it was read
+        }
     }
     return it->second.metadata;
 }
 
+std::optional<application::FileMetadata> MetadataCache::lookupByPathOnly(const std::string &absoluteFilePath) const
+{
+    auto found = lookupLeadIn(absoluteFilePath, false);
+    if (found && found->durationSeconds <= 0.0) {
+        return std::nullopt;  // a lead-in alone
+    }
+    return found;
+}
+
+std::optional<application::FileMetadata> MetadataCache::lookup(const std::string &absoluteFilePath) const
+{
+    auto found = lookupLeadIn(absoluteFilePath, true);
+    if (found && found->durationSeconds <= 0.0) {
+        return std::nullopt;  // a lead-in alone
+    }
+    return found;
+}
+
 void MetadataCache::store(const std::string &absoluteFilePath, const application::FileMetadata &metadata)
 {
-    if (metadata.durationSeconds <= 0.0) {
+    if (metadata.durationSeconds <= 0.0 && !metadata.mp3LeadInRead) {
         return;
     }
     const std::string key = relativeKey(absoluteFilePath);
