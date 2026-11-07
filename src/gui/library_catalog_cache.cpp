@@ -338,9 +338,10 @@ size_t unitsOfStage(LibraryCatalogCache::Detail stage, const std::string &format
         return tracks;
     case LibraryCatalogCache::Detail::Cues:
         // "Reading rekordbox cues", "Reading OneLibrary cues": one per
-        // row, the analysis files; Engine holds its cues in m.db and
-        // announces nothing.
-        return format == "rekordbox" || format == "onelibrary" ? tracks : 0;
+        // row, the analysis files; "Reading Engine cues": one per row,
+        // the lead-in of each cued MP3 (#50, LibdjinteropEngineReader::
+        // fillCues()).
+        return format == "rekordbox" || format == "onelibrary" || format == "engine" ? tracks : 0;
     case LibraryCatalogCache::Detail::Full:
         // completeTracks(): "Checking files" per row, and for the two
         // catalogs that name cover files, "Checking cover files" per row.
