@@ -805,16 +805,21 @@ void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
     // answer than the one readTracks() had (the catalog cache's Cues
     // stage checks what its Tracks stage took from the cache unchecked).
     // A row is moved by the difference, so asking twice never shifts
-    // twice.
+    // twice. A tick per row, cued or not, so the stretch is the row count
+    // the catalog cache plans for this stage (unitsOfStage): asking is a
+    // file read per cued MP3, seconds over USB on a cold stick.
+    m_progress->start("Reading Engine cues", tracks.size());
+    size_t processed = 0;
     for (auto &track : tracks) {
-        if (track.cues.empty()) {
-            continue;
-        }
         m_cancel.throwIfCancelled();
-        const double shift = shiftFromSource(track);
-        shiftCuePositions(track.cues, shift - track.cueTimelineShiftMs);
-        track.cueTimelineShiftMs = shift;
+        if (!track.cues.empty()) {
+            const double shift = shiftFromSource(track);
+            shiftCuePositions(track.cues, shift - track.cueTimelineShiftMs);
+            track.cueTimelineShiftMs = shift;
+        }
+        m_progress->tick(++processed);
     }
+    m_progress->finish();
 }
 
 void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &tracks)

@@ -523,6 +523,39 @@ int main(int argc, char **argv)
         std::cout << "case 13 (the correction setting is taken once per pass) OK\n";
     }
 
+    // Case 14: fillCues() asks the lead-in of every cued MP3 row, a file
+    // read each over USB, so it ticks a row at a time, one stretch the
+    // length of the rows (what the catalog cache plans for its Cues
+    // stage), with the correction on or off.
+    {
+        struct Recording : seabass::application::ProgressReporter
+        {
+            std::vector<std::pair<std::string, size_t>> starts;
+            std::vector<size_t> ticks;
+            int finishes = 0;
+            void start(const std::string &label, size_t total) override { starts.emplace_back(label, total); }
+            void tick(size_t current) override { ticks.push_back(current); }
+            void finish() override { ++finishes; }
+            void warn(const std::string &) override {}
+        };
+        const Library lib = makeLibrary("fill-progress", "lame-cbr-44100.mp3", theCues());
+        Track bare = readOne(lib);
+        bare.cues.clear();  // a row with no cues is ticked too
+        for (const bool correct : {true, false}) {
+            MatchingPolicy::setCorrectMp3CueTiming(correct);
+            std::vector<Track> rows = {readOne(lib), bare, readOne(lib)};
+            Recording recording;
+            LibdjinteropEngineReader reader(seabass::pathToUtf8(lib.root));
+            reader.setProgressReporter(recording);
+            reader.fillCues(rows);
+            assert(recording.starts.size() == 1 && recording.starts.front().second == rows.size());
+            assert((recording.ticks == std::vector<size_t>{1, 2, 3}) && "a tick per row");
+            assert(recording.finishes == 1);
+        }
+        MatchingPolicy::reset();
+        std::cout << "case 14 (fillCues() ticks a row at a time) OK\n";
+    }
+
     MatchingPolicy::reset();
     fs::remove_all(seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test");
     std::cout << "all libdjinterop_engine_mp3_lead_in_test cases passed\n";
