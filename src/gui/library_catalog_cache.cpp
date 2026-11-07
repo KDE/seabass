@@ -16,6 +16,7 @@
 #include "application/path_key.hpp"
 #include "application/ports/library_reader.hpp"
 #include "application/use_cases/fill_file_sizes.hpp"
+#include "domain/matching_policy.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
@@ -349,6 +350,14 @@ namespace
 std::atomic<LibraryCatalogCache *> s_instanceForTesting{nullptr};
 }
 
+int LibraryCatalogCache::readSettingsOf(const std::string &format)
+{
+    if (format == "engine") {
+        return domain::MatchingPolicy::correctMp3CueTiming() ? 1 : 2;
+    }
+    return 0;
+}
+
 LibraryCatalogCache &LibraryCatalogCache::instance()
 {
     if (LibraryCatalogCache *stand = s_instanceForTesting.load()) {
@@ -505,10 +514,11 @@ std::optional<size_t> LibraryCatalogCache::plannedUnits(const std::string &forma
     int have = 0;
     std::shared_ptr<const std::vector<std::string>> analysisFiles;
     std::uint64_t analysisState = 0;
+    const int readSettings = readSettingsOf(format);
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_entries.find(key);
-        if (it != m_entries.end() && it->second.mtime == currentMtime) {
+        if (it != m_entries.end() && it->second.mtime == currentMtime && it->second.readSettings == readSettings) {
             // A pass another thread is in is planned like one still to run:
             // tracksFor() waits for it and shows its progress on the
             // caller's bar as it goes (#67), so the bar neither stalls
@@ -606,6 +616,9 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     const int wanted = stageNumber(detail);
     const std::string key = keyFor(format, path);
     const auto currentMtime = m_mtimeFn(format, path);
+    // Taken once, so every pass this call runs reads under the settings
+    // the entry is stamped with.
+    const int readSettings = readSettingsOf(format);
 
     std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -638,7 +651,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
     } mirrored;
     for (;;) {
         Entry &entry = m_entries[key];
-        bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
+        bool fresh = entry.stage > 0 && entry.mtime == currentMtime && entry.readSettings == readSettings;
         bool cuesVouchedFor = true;
         if (fresh && analysisCheckDueLocked(entry)) {
             if (checkedFiles == entry.analysisFiles) {
@@ -673,6 +686,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                 entry.notes = {};
                 entry.stage = 0;
                 entry.mtime = currentMtime;
+                entry.readSettings = readSettings;
                 entry.analysisFiles = nullptr;
                 entry.analysisState = 0;
                 entry.analysisCheckedAt = {};
@@ -793,6 +807,7 @@ LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std
                     entry.notes = notes;
                     entry.stage = next;
                     entry.mtime = currentMtime;
+                    entry.readSettings = readSettings;
                     if (detailOf(next) == Detail::Cues) {
                         entry.analysisFiles = analysisFiles;
                         entry.analysisState = analysisState;

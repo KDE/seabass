@@ -322,6 +322,10 @@ private:
         std::chrono::steady_clock::time_point analysisCheckedAt;
         // 0 = nothing read yet, else 1 + Detail of the last stage read.
         int stage = 0;
+        // The reading settings the tracks were read under (readSettingsOf()):
+        // an entry read under others is stale like one from an older
+        // catalog file.
+        int readSettings = 0;
         // 0 = no pass running, else 1 + Detail of the pass another
         // thread is running for this key right now. Always stage + 1.
         int passInFlight = 0;
@@ -351,6 +355,13 @@ private:
     // after it. Does not wait.
     void stopPrefetching();
     static std::string keyFor(const std::string &format, const std::string &path);
+    // The process-wide settings that change what a pass reads for this
+    // format, as one number: for Engine, MatchingPolicy's MP3 cue timing
+    // correction (#50), which decides whether an MP3 row's cues are moved
+    // onto rekordbox's timeline. Preferences flips it at any time, and an
+    // entry read under the other value would hand a save cues off by the
+    // whole lead-in. Nothing for the other formats.
+    static int readSettingsOf(const std::string &format);
     void invalidateLocked(const std::string &key);
     // Whether `entry` holds cues from analysis files that were not
     // checked within analysisCheckWindow().
