@@ -153,6 +153,14 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
         return std::make_unique<infrastructure::rekordbox::KaitaiRekordboxReader>(path);
     }
     if (format == "engine") {
+        // The audio is resolved beside the library read (the reader's
+        // default audio root). Every path here is a live stick's library
+        // or a browsed backup's extracted copy; a browsed backup has no
+        // audio and no live stick to resolve against, so its MP3s read no
+        // lead-in and their Engine cues are shown on Engine's own
+        // timeline, unshifted (#50). A caller comparing a copy with a live
+        // stick reads it with that stick as the audio root instead
+        // (LibdjinteropEngineReader::setAudioRoot()).
         return std::make_unique<infrastructure::engine::LibdjinteropEngineReader>(path);
     }
     if (format == "onelibrary") {
