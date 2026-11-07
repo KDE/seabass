@@ -175,13 +175,18 @@ LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks, bool cue
             // read that asked the file and one that did not agree. For
             // the same reason an Engine MP3's positions are taken as the
             // catalog stores them, without the lead-in shift the reader
-            // applied (Track::cueTimelineShiftMs).
+            // applied (Track::cueTimelineShiftMs). Snapped to the
+            // microsecond before the 50 ms grid: (x + s) - s is not
+            // always x in doubles, and a stored position on a 25 ms
+            // boundary would otherwise round one step lower than the raw
+            // read did.
             std::vector<long long> positions;
             positions.reserve(track.cues.size());
             for (const CuePoint &cue : track.cues) {
                 positions.push_back(track.cueRateUnverified
                                         ? (cue.kind == CuePoint::Kind::Hot ? cue.hotCueNumber : 0) * 2 + (cue.isLoop ? 1 : 0)
-                                        : std::llround((cue.positionMs - track.cueTimelineShiftMs) / 50.0));
+                                        : std::llround(std::round((cue.positionMs - track.cueTimelineShiftMs) * 1000.0)
+                                                       / 1000.0 / 50.0));
             }
             std::sort(positions.begin(), positions.end());
             std::uint64_t hash = track.cueRateUnverified ? mix(identity, 0x52415445u) : identity;
