@@ -99,8 +99,13 @@ public:
 
 int main(int argc, char **argv)
 {
-    // The MP3 lead-in fixtures (tests/fixtures/mp3-lead-in), for case 8.
-    const std::string fixtures = argc > 1 ? argv[1] : std::string();
+    // The MP3 lead-in fixtures (tests/fixtures/mp3-lead-in), for cases 8
+    // and 9. Required: a missing directory is a failure, not a skip.
+    if (argc < 2 || !fs::is_directory(argv[1])) {
+        std::cerr << "usage: metadata_cache_test FIXTURE_DIR (tests/fixtures/mp3-lead-in)\n";
+        return 2;
+    }
+    const std::string fixtures = argv[1];
     fs::path root = seabass::testing::scratchRoot() / "seabass_metadata_cache_test";
     fs::remove_all(root);
     fs::create_directories(root);
@@ -257,7 +262,7 @@ int main(int argc, char **argv)
     // Case 8: CachedSampleRates::leadInOf probes once and caches; an entry
     // without a lead-in is probed again; a probe with nothing to say (no
     // TagLib) falls back to reading the file's start directly.
-    if (!fixtures.empty()) {
+    {
         fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
         const fs::path mp3 = root / "Contents" / "c" / "lame.mp3";
         fs::create_directories(mp3.parent_path());
@@ -306,7 +311,7 @@ int main(int argc, char **argv)
     // answer to a question about the file's tags or length: lookup()
     // misses, and rateOf() probes. Stored over an entry the probe made
     // earlier, the lead-in joins it and the length stays.
-    if (!fixtures.empty()) {
+    {
         fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
         const fs::path mp3 = root / "Contents" / "d" / "lame.mp3";
         fs::create_directories(mp3.parent_path());
