@@ -32,6 +32,13 @@ namespace seabass::infrastructure::local
 // entry without it is still good for everything else, and only a caller
 // that wants the lead-in probes that file again.
 //
+// An entry may carry the lead-in alone, with a duration of 0: what a
+// pass stores when it read the file's start itself because the probe had
+// nothing to say (a build without TagLib, a file TagLib finds no length
+// in). Such an entry answers only lookupLeadIn(); lookup() and
+// lookupByPathOnly() miss it, so nothing takes it for the file's tags or
+// length. An older Seabass skips the line (it refuses a zero duration).
+//
 // Paths are stored RELATIVE to the stick root, so a cache written on
 // Linux under /media/me/STICK still reads on Windows under H:\ -- the
 // same stick gets mounted at a different place on every machine, and an
@@ -60,7 +67,15 @@ public:
     // Tracks stage), whose answer a later pass checks.
     std::optional<application::FileMetadata> lookupByPathOnly(const std::string &absoluteFilePath) const;
 
-    // Records metadata. Nothing is written to disk until save().
+    // The entry for a caller that wants only the MP3 lead-in: also one
+    // that carries nothing else (see above). Checked against the file
+    // like lookup(), or, with checkFile false, taken by path like
+    // lookupByPathOnly().
+    std::optional<application::FileMetadata> lookupLeadIn(const std::string &absoluteFilePath,
+                                                          bool checkFile = true) const;
+
+    // Records metadata. Nothing is written to disk until save(). Refused
+    // without a duration unless it carries a lead-in (mp3LeadInRead).
     void store(const std::string &absoluteFilePath, const application::FileMetadata &metadata) override;
 
     // True when store() has added or changed anything since load.

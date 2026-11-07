@@ -299,6 +299,58 @@ int main(int argc, char **argv)
         std::cout << "case 8 (CachedSampleRates lead-ins: probe once, fall back to the file) OK\n";
     }
 
+    // Case 9: a probe with nothing to say (a build without TagLib, or a
+    // file TagLib finds no length in). The lead-in read from the file's
+    // start is cached all the same, as an entry with no duration, so the
+    // next Cues pass does not read the file again. Such an entry is no
+    // answer to a question about the file's tags or length: lookup()
+    // misses, and rateOf() probes. Stored over an entry the probe made
+    // earlier, the lead-in joins it and the length stays.
+    if (!fixtures.empty()) {
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        const fs::path mp3 = root / "Contents" / "d" / "lame.mp3";
+        fs::create_directories(mp3.parent_path());
+        fs::copy_file(seabass::pathFromUtf8(fixtures) / "lame-cbr-44100.mp3", mp3,
+                      fs::copy_options::overwrite_existing);
+        const std::string file = seabass::pathToUtf8(mp3);
+        {
+            seabass::application::NullTrackMetadataProbe nothing;
+            CachedSampleRates rates(seabass::pathToUtf8(root), nothing);
+            auto first = rates.leadInOf(file);
+            assert(first && first->encoderDelay == 576 && rates.probes() == 1);
+            auto second = rates.leadInOf(file);
+            assert(second && second->encoderDelay == 576);
+            assert(rates.probes() == 1 && "the second ask is answered from the cache, not the file");
+            assert(rates.save());
+        }
+        {
+            MetadataCache reloaded(seabass::pathToUtf8(root));
+            assert(!reloaded.lookup(file).has_value() && "a lead-in alone is no metadata");
+            assert(!reloaded.lookupByPathOnly(file).has_value());
+            CountingProbe none;
+            CachedSampleRates rates(seabass::pathToUtf8(root), none);
+            auto again = rates.leadInOf(file);
+            assert(again && again->encoderDelay == 576 && none.calls == 0 && "survives a save");
+            auto taken = rates.leadInByPathOf(file);
+            assert(taken && taken->encoderDelay == 576 && none.calls == 0);
+        }
+        {
+            fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+            CountingProbe old;
+            old.answer = sample();
+            CachedSampleRates rates(seabass::pathToUtf8(root), old);
+            assert(rates.rateOf(file).has_value() && old.calls == 1);
+            assert(rates.leadInOf(file).has_value() && old.calls == 2);
+            assert(rates.leadInOf(file).has_value() && old.calls == 2 && "cached with the probe's entry");
+            assert(rates.rateOf(file) == 44100.0 && old.calls == 2 && "and the length and rate stay");
+            assert(rates.save());
+            MetadataCache reloaded(seabass::pathToUtf8(root));
+            const auto entry = reloaded.lookup(file);
+            assert(entry && entry->durationSeconds == 266.376 && entry->mp3LeadInRead && entry->mp3LeadIn);
+        }
+        std::cout << "case 9 (a lead-in read without the probe is cached on its own) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all metadata_cache_test cases passed\n";
     return 0;

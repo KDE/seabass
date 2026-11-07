@@ -60,22 +60,39 @@ public:
     // The lead-in of an MP3 (#50), the same way: from the cache when it
     // holds the unchanged file with its lead-in read, otherwise from the
     // probe, which reads it with the rest and has it cached. When the
-    // probe gives nothing (no TagLib in this build, or no playing length
-    // TagLib could find) the file's start is read directly and nothing
-    // is cached: the Engine cue writer reads the same bytes the same way,
-    // so a cue read through here and written back lands where it was.
+    // probe gives no lead-in (no TagLib in this build, or no playing
+    // length TagLib could find) the file's start is read directly, the
+    // way the Engine cue writer reads it, so a cue read through here and
+    // written back lands where it was; that answer is cached too, with
+    // whatever the probe or the cache already held for the file, or on
+    // its own (MetadataCache: an entry with a lead-in and no length), so
+    // the next pass does not read the file again. A read that finds no
+    // lead-in is not cached: it may be a read that failed.
     std::optional<domain::Mp3LeadIn> leadInOf(const std::string &absoluteFilePath)
     {
         loadCache();
-        if (const auto cached = m_cache->lookup(absoluteFilePath); cached && cached->mp3LeadInRead) {
+        if (const auto cached = m_cache->lookupLeadIn(absoluteFilePath); cached && cached->mp3LeadInRead) {
             return cached->mp3LeadIn;
         }
         ++m_probes;
-        if (const auto read = m_probe.read(absoluteFilePath); read && read->mp3LeadInRead) {
+        const auto read = m_probe.read(absoluteFilePath);
+        if (read && read->mp3LeadInRead) {
             m_cache->store(absoluteFilePath, *read);
             return read->mp3LeadIn;
         }
-        return audio::readMp3LeadIn(absoluteFilePath);
+        const auto direct = audio::readMp3LeadIn(absoluteFilePath);
+        if (direct) {
+            application::FileMetadata entry;
+            if (read && read->durationSeconds > 0.0) {
+                entry = *read;
+            } else if (const auto known = m_cache->lookup(absoluteFilePath)) {
+                entry = *known;
+            }
+            entry.mp3LeadInRead = true;
+            entry.mp3LeadIn = direct;
+            m_cache->store(absoluteFilePath, entry);
+        }
+        return direct;
     }
 
     // The same for a pass that must not stat every file: the cached
@@ -85,7 +102,7 @@ public:
     std::optional<domain::Mp3LeadIn> leadInByPathOf(const std::string &absoluteFilePath)
     {
         loadCache();
-        if (const auto cached = m_cache->lookupByPathOnly(absoluteFilePath); cached && cached->mp3LeadInRead) {
+        if (const auto cached = m_cache->lookupLeadIn(absoluteFilePath, false); cached && cached->mp3LeadInRead) {
             return cached->mp3LeadIn;
         }
         return audio::readMp3LeadIn(absoluteFilePath);
