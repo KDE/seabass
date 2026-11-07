@@ -125,7 +125,15 @@ std::optional<Decoded> decodeAsRekordbox(const std::string &path, bool ignoreInf
 
 void appendMono(const AVFrame *frame, std::vector<float> &mono)
 {
+    // AVFrame::ch_layout came with FFmpeg 5.1 (libavcodec 59.24.100) and
+    // replaced AVFrame::channels, which FFmpeg 7 removed. Both, so the tool
+    // also builds against FFmpeg 4.4: Ubuntu 22.04's, and the 4.4.3 that
+    // Engine DJ bundles, which this tool is meant to be run against.
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 24, 100)
     const int channels = frame->ch_layout.nb_channels;
+#else
+    const int channels = frame->channels;
+#endif
     const auto format = static_cast<AVSampleFormat>(frame->format);
     const bool planar = av_sample_fmt_is_planar(format);
     auto sampleAt = [&](int c, int i) -> float {
@@ -165,7 +173,14 @@ std::optional<Decoded> decodeAsEngine(const std::string &path)
     const AVCodec *decoder = nullptr;
     int stream = -1;
     if (avformat_find_stream_info(format, nullptr) >= 0) {
+#if LIBAVFORMAT_VERSION_MAJOR >= 59
         stream = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0);
+#else
+        // FFmpeg 4.4 hands the decoder back through a non-const pointer.
+        AVCodec *found = nullptr;
+        stream = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, &found, 0);
+        decoder = found;
+#endif
     }
     if (stream >= 0 && decoder) {
         codec = avcodec_alloc_context3(decoder);
