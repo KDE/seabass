@@ -159,9 +159,18 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
 
     // The cues arrive on rekordbox's timeline; an MP3's are moved back
     // onto Engine's (#50, engine_cue_timeline.hpp), by the shift the
-    // reader adds for the same file. A hot cue or loop the shift puts
-    // before the start is clamped to it; a memory cue there is left out
-    // (see below), because Engine reads a main cue at 0 as no cue at all.
+    // reader adds for the same file. What the shift puts before Engine's
+    // 0:
+    //   - a hot cue is clamped to 0;
+    //   - a loop's start is clamped to 0 and its end stays at the same
+    //     audio instant, so the loop keeps its musical end and is that
+    //     much shorter;
+    //   - a loop that ends there too would be [0, 0], no loop at all (the
+    //     waveform draws a loop only when its end is after its start),
+    //     so it is left out and counted (loopsDroppedByLeadInShift());
+    //   - a memory cue is left out and counted (see below), because
+    //     Engine reads a main cue at 0 as no cue at all.
+    // Create Engine Library applies the same rule (applyCuesToSnapshot).
     double shiftMs = 0.0;
     std::string relative;
     try {
@@ -234,6 +243,12 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
         double startOffset = toSamples(cue.positionMs);
         if (cue.isLoop) {
             double endOffset = toSamples(cue.loopEndMs);
+            // Only a loop the shift emptied: one handed in empty is
+            // written as given, as before.
+            if (endOffset <= startOffset && cue.loopEndMs > cue.positionMs) {
+                ++m_loopsDroppedByLeadInShift;
+                continue;
+            }
             loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, padColor(cue.color, slot + 1)};
         } else {
             slots[slot] = djinterop::hot_cue{cue.comment, startOffset, padColor(cue.color, slot + 1)};

@@ -62,6 +62,7 @@ struct Library
 {
     fs::path root;
     std::string file;
+    EngineLibraryCreationResult created;
 };
 
 Library makeLibrary(const std::string &caseName, const std::string &fixture, std::vector<CuePoint> cues = {})
@@ -84,9 +85,8 @@ Library makeLibrary(const std::string &caseName, const std::string &fixture, std
     t.bpm = 120.0;
     t.durationSeconds = 300.0;
     t.cues = std::move(cues);
-    auto created =
-        EngineLibraryCreator::create(seabass::pathToUtf8(lib.root), {t}, EngineSchemaGeneration::V2);
-    assert(created.errorMessage.empty() && created.tracksCreated == 1);
+    lib.created = EngineLibraryCreator::create(seabass::pathToUtf8(lib.root), {t}, EngineSchemaGeneration::V2);
+    assert(lib.created.errorMessage.empty() && lib.created.tracksCreated == 1);
     return lib;
 }
 
@@ -351,6 +351,67 @@ int main(int argc, char **argv)
         assert(asked == 1);
         assertStored(raw(lib, before.sourceId), 1105 * 1000.0 / 44100);
         std::cout << "case 9 (the writer moves cues by its source's lead-in, not the file's) OK\n";
+    }
+
+    // Case 10: Create Engine Library picks the main cue by the writer's
+    // rule: the earliest memory cue Engine can hold, after the shift. A
+    // memory cue 30 ms in (inside the 51.18 ms lead-in) and one at 0:00
+    // are left out, not taken as the earliest and clamped to the "no
+    // cue" offset 0, and they are not counted as copied.
+    {
+        CuePoint hot{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"};
+        CuePoint inside;
+        inside.kind = CuePoint::Kind::Memory;
+        inside.positionMs = 30.0;
+        CuePoint atStart = inside;
+        atStart.positionMs = 0.0;
+        CuePoint later = inside;
+        later.positionMs = 8000.0;
+        const Library lib = makeLibrary("creator-main-cue", "lame-cbr-44100.mp3", {hot, inside, atStart, later});
+        const Raw r = raw(lib, readOne(lib).sourceId);
+        assert(near(r.mainCue, (8000.0 - LameShiftMs) * 44.1, 1e-3) && "the cue Engine can hold");
+        assert(lib.created.cuesCopied == 2 && "the hot cue and the one main cue");
+        assert(lib.created.memoryCuesDroppedByLeadInShift == 1);
+        std::cout << "case 10 (Create Engine Library: the main cue by the writer's rule) OK\n";
+    }
+
+    // Case 11: a loop the shift starts before Engine's 0. Its start is
+    // clamped to 0 and its end stays at the same audio instant, so it
+    // keeps its musical end and is that much shorter. A loop wholly
+    // inside the lead-in would be [0, 0]: no loop at all (the waveform
+    // draws a loop only when its end is after its start), so it is left
+    // out and counted, by the writer and by Create Engine Library.
+    {
+        CuePoint early{CuePoint::Kind::Hot, 2, 30.0, "#00ff00", "early loop"};
+        early.isLoop = true;
+        early.loopEndMs = 5000.0;
+        CuePoint inside{CuePoint::Kind::Hot, 3, 10.0, "#0000ff", "inside"};
+        inside.isLoop = true;
+        inside.loopEndMs = 40.0;
+        auto loopsOf = [](const Library &lib) {
+            auto db = djinterop::engine::load_database(seabass::pathToUtf8(lib.root));
+            return db.tracks().front().loops();
+        };
+        const auto check = [&](const Library &lib) {
+            const auto loops = loopsOf(lib);
+            assert(loops.size() > 2 && loops[1]);
+            assert(loops[1]->start_sample_offset == 0.0);
+            assert(near(loops[1]->end_sample_offset, (5000.0 - LameShiftMs) * 44.1, 1e-3));
+            assert(!loops[2] && "the loop inside the lead-in is left out");
+        };
+
+        const Library written = makeLibrary("writer-loops", "lame-cbr-44100.mp3");
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(written.root));
+        writer.writeHotCues(readOne(written).sourceId, {early, inside});
+        check(written);
+        assert(writer.loopsDroppedByLeadInShift() == 1);
+        assert(writer.memoryCuesDroppedByLeadInShift() == 0);
+
+        const Library created = makeLibrary("creator-loops", "lame-cbr-44100.mp3", {early, inside});
+        check(created);
+        assert(created.created.cuesCopied == 1);
+        assert(created.created.loopsDroppedByLeadInShift == 1);
+        std::cout << "case 11 (a loop the shift starts before 0: clamped, or left out when empty) OK\n";
     }
 
     MatchingPolicy::reset();

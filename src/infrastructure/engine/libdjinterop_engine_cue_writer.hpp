@@ -49,6 +49,10 @@ public:
     // it cannot be kept; a hot cue at the same place is clamped to 0
     // instead. Counted so a caller can say so rather than lose it quietly.
     int memoryCuesDroppedByLeadInShift() const { return m_memoryCuesDroppedByLeadInShift; }
+    // Loops left out for the same reason: wholly inside the lead-in, so
+    // the shift leaves [0, 0]. One that starts inside and ends after it
+    // is kept, its start clamped to 0.
+    int loopsDroppedByLeadInShift() const { return m_loopsDroppedByLeadInShift; }
 
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
@@ -105,6 +109,7 @@ private:
     std::string m_engineLibraryPath;
     std::string m_audioRoot;
     int m_memoryCuesDroppedByLeadInShift = 0;
+    int m_loopsDroppedByLeadInShift = 0;
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
 };

@@ -35,6 +35,12 @@ struct EngineLibraryCreationResult
     int tracksCreated = 0;
     int tracksSkipped = 0;  // e.g. no resolved local file to reference
     int cuesCopied = 0;
+    // Cues not copied because the MP3 lead-in shift (#50) left nothing
+    // Engine can hold: a memory cue at or before Engine's 0, a loop that
+    // ends there. The same rule, and the same counts, as
+    // LibdjinteropEngineCueWriter's.
+    int memoryCuesDroppedByLeadInShift = 0;
+    int loopsDroppedByLeadInShift = 0;
     int playlistsCreated = 0;  // folders included; they are playlists too
     int artworkCopied = 0;     // tracks that ended up with a cover
     int tracksLeftForDeviceAnalysis = 0;  // tracks the player is asked to analyse itself
