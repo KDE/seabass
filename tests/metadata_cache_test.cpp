@@ -388,6 +388,37 @@ int main(int argc, char **argv)
         std::cout << "case 10 (a lead-in from another parser version is read again) OK\n";
     }
 
+    // Case 11: a lead-in whose numbers no MP3 can have reads as not
+    // looked (a hand-edited or damaged line): a delay or padding outside
+    // the 12-bit field, a rate that is not one of the nine MPEG rates, a
+    // frame that is neither 576 nor 1152 samples. The same line with
+    // sound numbers reads back, so the rejections are the numbers.
+    {
+        const std::string v = std::to_string(seabass::infrastructure::audio::Mp3LeadInParserVersion);
+        auto read = [&](const std::string &fields) {
+            writeFile(root / "Seabass" / "caches" / "metadata.jsonl",
+                      "{\"duration\":\"120.000000\",\"estimated\":\"0\",\"mp3leadin\":\"" + v + " " + fields
+                          + "\",\"mtime\":\"" + currentMtimeSeconds(audio) + "\",\"path\":\"Contents/a/track.mp3\","
+                          "\"size\":\"" + currentSizeBytes(audio) + "\"}\n");
+            MetadataCache cache(seabass::pathToUtf8(root));
+            auto got = cache.lookup(audio);
+            assert(got.has_value());
+            return got->mp3LeadInRead;
+        };
+        assert(read("1 L 1 576 1404 1 0 44100 1152"));
+        assert(read("1 L 1 0 4095 1 0 8000 576"));
+        assert(!read("1 L 1 4096 1404 1 0 44100 1152") && "delay beyond 12 bits");
+        assert(!read("1 L 1 -1 1404 1 0 44100 1152") && "negative delay");
+        assert(!read("1 L 1 576 4096 1 0 44100 1152") && "padding beyond 12 bits");
+        assert(!read("1 L 1 576 -5 1 0 44100 1152") && "negative padding");
+        assert(!read("1 L 1 576 1404 1 0 44000 1152") && "not an MPEG rate");
+        assert(!read("1 L 1 576 1404 1 0 0 1152") && "no rate");
+        assert(!read("1 L 1 576 1404 1 0 96000 1152") && "not an MPEG rate");
+        assert(!read("1 L 1 576 1404 1 0 44100 1024") && "not a Layer III frame");
+        assert(!read("1 L 1 576 1404 1 0 44100 0") && "no frame length");
+        std::cout << "case 11 (a lead-in with impossible numbers is read again) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all metadata_cache_test cases passed\n";
     return 0;
