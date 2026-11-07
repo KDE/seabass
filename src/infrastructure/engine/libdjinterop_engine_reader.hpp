@@ -95,6 +95,19 @@ public:
     // MP3 row; fillCues() asks again and moves a row whose answer
     // changed by the difference.
     void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
+
+    // The Engine Library folder the rows' relative paths are resolved
+    // against to find their audio, for the lead-in and the sample rate
+    // sources; by default the library read, as on a stick. A copy of a
+    // library (a stick backup, a scratch copy) has no audio beside it, so
+    // its MP3s would read no lead-in and their cues stay on Engine's
+    // timeline next to the live stick's shifted ones: a caller that reads
+    // a copy to compare with, or restore onto, a live stick passes that
+    // stick's Engine Library folder here, like the cue writer's
+    // setAudioRoot(). Track::filePath still names the library read.
+    // Browsing a backup with no live stick to resolve against keeps the
+    // default, and its Engine cues are shown on Engine's own timeline.
+    void setAudioRoot(std::string audioRoot) { m_audioRoot = std::move(audioRoot); }
     // count(*) of m.db's Track table over a read-only connection: no
     // journal recovery, no libdjinterop. Nothing when m.db is not there
     // or cannot be read.
@@ -111,9 +124,12 @@ public:
 private:
     std::optional<double> rateFromSource(const domain::Track &track);
     double shiftFromSource(const domain::Track &track);
+    // The track's audio file under the audio root (setAudioRoot()).
+    std::string audioFileOf(const domain::Track &track) const;
     void fillRatesFromSource(std::vector<domain::Track> &tracks);
 
     std::string m_engineLibraryPath;
+    std::string m_audioRoot;
     std::string m_volumeIdentity;
     SampleRateSource m_sampleRateSource;
     LeadInSource m_leadInSource;

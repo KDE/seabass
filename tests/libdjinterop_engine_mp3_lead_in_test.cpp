@@ -16,6 +16,8 @@
 //   - fillCues() moves a row by the difference, never twice;
 //   - a writer on a scratch copy of the database (FormatWriteSession's)
 //     reads the lead-in from the real library's audio, not the copy's.
+//   - so does a reader of a copy given the real library as its audio
+//     root (a stick backup read beside the live stick).
 //
 // Usage: libdjinterop_engine_mp3_lead_in_test <fixture dir>
 
@@ -412,6 +414,41 @@ int main(int argc, char **argv)
         assert(created.created.cuesCopied == 1);
         assert(created.created.loopsDroppedByLeadInShift == 1);
         std::cout << "case 11 (a loop the shift starts before 0: clamped, or left out when empty) OK\n";
+    }
+
+    // Case 12: reading a copy of a library (a stick backup, a scratch
+    // copy) finds no audio beside it, so the lead-in reads as nothing and
+    // the cues would come back on Engine's timeline, next to the live
+    // stick's shifted ones. With the real library as its audio root the
+    // reader shifts them as it does on the stick.
+    {
+        const Library lib = makeLibrary("reader-copy", "lame-cbr-44100.mp3", theCues());
+        const fs::path copy = lib.root.parent_path() / "backup" / "Engine Library";
+        fs::create_directories(copy);
+        fs::copy(lib.root / "Database2", copy / "Database2", fs::copy_options::recursive);
+        assert(!fs::exists(copy / "song.mp3"));
+
+        LibdjinteropEngineReader unrooted(seabass::pathToUtf8(copy));
+        const Track alone = seabass::application::ScanLibrary(unrooted).execute().front();
+        assert(alone.cueTimelineShiftMs == 0.0 && "no audio beside the copy: Engine's own timeline");
+
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(copy));
+        reader.setAudioRoot(seabass::pathToUtf8(lib.root));
+        const Track t = seabass::application::ScanLibrary(reader).execute().front();
+        assert(near(t.cueTimelineShiftMs, LameShiftMs) && "the copy's cues are shifted by the real file's lead-in");
+        assertReadsBack(t, 0.0);
+        assert(t.filePath == seabass::pathToUtf8((copy / "song.mp3").lexically_normal())
+               && "the row's path still names the library that was read");
+
+        // fillCues() resolves through the same root.
+        Track filled = alone;
+        LibdjinteropEngineReader again(seabass::pathToUtf8(copy));
+        again.setAudioRoot(seabass::pathToUtf8(lib.root));
+        std::vector<Track> rows = {filled};
+        again.fillCues(rows);
+        assert(near(rows.front().cueTimelineShiftMs, LameShiftMs));
+        assertReadsBack(rows.front(), 0.0);
+        std::cout << "case 12 (a copy of the library, lead-in from the real library's audio) OK\n";
     }
 
     MatchingPolicy::reset();

@@ -733,6 +733,24 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
     return readTracks();
 }
 
+std::string LibdjinteropEngineReader::audioFileOf(const domain::Track &track) const
+{
+    if (m_audioRoot.empty() || track.filePath.empty()) {
+        return track.filePath;
+    }
+    // filePath is the library joined with the row's relative path; the
+    // same relative path under the audio root.
+    std::filesystem::path library = pathFromUtf8(m_engineLibraryPath).lexically_normal();
+    if (!library.has_filename()) {
+        library = library.parent_path();  // "…/Engine Library/"
+    }
+    const std::filesystem::path relative = pathFromUtf8(track.filePath).lexically_relative(library);
+    if (relative.empty()) {
+        return track.filePath;
+    }
+    return pathToUtf8((pathFromUtf8(m_audioRoot) / relative).lexically_normal());
+}
+
 std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Track &track)
 {
     // A streaming row's path names a cache on some other computer, and a
@@ -742,7 +760,7 @@ std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Tra
     }
     std::optional<double> rate;
     try {
-        rate = m_sampleRateSource(track.filePath);
+        rate = m_sampleRateSource(audioFileOf(track));
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {
@@ -764,7 +782,7 @@ double LibdjinteropEngineReader::shiftFromSource(const domain::Track &track)
         return 0.0;
     }
     try {
-        return engineCueShiftMs(m_leadInSource(track.filePath));
+        return engineCueShiftMs(m_leadInSource(audioFileOf(track)));
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {
