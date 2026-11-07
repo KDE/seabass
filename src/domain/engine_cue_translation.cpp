@@ -34,7 +34,7 @@ bool padIsValid(int pad)
 }  // namespace
 
 EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, const std::vector<CuePoint> &existing,
-                                            double toleranceMs)
+                                            double toleranceMs, double shiftMs)
 {
     EngineCueTranslation result;
     bool padTaken[EngineHotCuePads + 1] = {};
@@ -112,7 +112,7 @@ EngineCueTranslation translateCuesForEngine(const std::vector<CuePoint> &cues, c
     }
     const CuePoint *earliest = nullptr;
     for (const CuePoint &cue : memory) {
-        if (cue.isLoop || !engineCanHoldMemoryCue(cue)) {
+        if (cue.isLoop || !engineCanHoldMemoryCue(cue, shiftMs)) {
             continue;
         }
         if (!earliest || cue.positionMs < earliest->positionMs) {

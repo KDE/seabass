@@ -1783,7 +1783,7 @@ private:
         for (const CuePoint &cue : seen.hotCues) {
             eHot[cue.hotCueNumber].push_back(cue);
         }
-        const std::vector<CuePoint> leftOut = translateCuesForEngine(rC, eC, tol).leftOut;
+        const std::vector<CuePoint> leftOut = translateCuesForEngine(rC, eC, tol, e.cueTimelineShiftMs).leftOut;
         // rekordbox's cues at 0:00 on pads where Engine holds a real cue:
         // export noise over Engine's, never a change of rekordbox's
         // (startCuesOverEngine). Engine's cue goes back onto rekordbox.
@@ -2119,7 +2119,7 @@ private:
                 cues.insert(cues.end(), list.begin(), list.end());
             }
             cues.insert(cues.end(), memory.begin(), memory.end());
-            const EngineCueTranslation translation = translateCuesForEngine(cues, eC, tol);
+            const EngineCueTranslation translation = translateCuesForEngine(cues, eC, tol, e.cueTimelineShiftMs);
             if (sameCuesForSync(translation.cues, eC, tol)) {
                 return std::nullopt;
             }

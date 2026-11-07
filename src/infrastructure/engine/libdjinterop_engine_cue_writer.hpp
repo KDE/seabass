@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -61,6 +62,16 @@ public:
     // the shift leaves [0, 0]. One that starts inside and ends after it
     // is kept, its start clamped to 0.
     int loopsDroppedByLeadInShift() const { return m_loopsDroppedByLeadInShift; }
+
+    // Also counts both into `drops`, which outlives this writer: a GUI
+    // save holds one per stick and says what was left out once the save
+    // has landed (useSaveLeadIns), whichever writer did the writing.
+    struct LeadInShiftDrops
+    {
+        int memoryCues = 0;
+        int loops = 0;
+    };
+    void countLeadInShiftDropsInto(std::shared_ptr<LeadInShiftDrops> drops) { m_drops = std::move(drops); }
 
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
@@ -119,6 +130,7 @@ private:
     std::string m_audioRoot;
     int m_memoryCuesDroppedByLeadInShift = 0;
     int m_loopsDroppedByLeadInShift = 0;
+    std::shared_ptr<LeadInShiftDrops> m_drops;
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
 };
