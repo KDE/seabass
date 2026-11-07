@@ -613,7 +613,8 @@ TestCase {
         compare(player.loads.length, 1);
         const loaded = player.loads[0];
         compare(loaded.filePath, stick + "/Contents/seed-0.mp3");
-        compare(loaded.format, "backup");
+        compare(loaded.format, "rekordbox", "the catalog the harness seeded it from");
+        compare(loaded.libraryPath, "", "no catalog row stands behind it");
         compare(loaded.sourceId, "backup:" + row.trackId);
         compare(loaded.title, "Seeded Track 1");
         compare(loaded.cues.length, row.cueCount, "the backup's cues, which are what the row is about");
@@ -623,6 +624,92 @@ TestCase {
         mouseMove(page, 1, 1);
         tryVerify(() => !row.hovered, 1000);
         compare(key.visible, true, "and stays up while it is the track loaded");
+    }
+
+    // A track backed up from an Engine stick plays as an Engine track,
+    // so the player bar shows the Engine transport. The row's own store
+    // id and no library path keep it apart from any catalog row.
+    function test_aStoredEngineRowPlaysAsEngine() {
+        const scratch = stickFixture.scratchDirectory();
+        verify(scratch.length > 0);
+        const stick = scratch + "/ENGINEHOME";
+        verify(stickFixture.makeDirectory(stick + "/Engine Library"));
+        verify(stickFixture.makeDirectory(stick + "/Contents"));
+        verify(stickFixture.touchNew(stick + "/Contents/engine-track.mp3"));
+        verify(stickFixture.storeBackedUpTrack("Engine Stored Track", "engine", "ENGINEHOME", stick,
+                                               "Contents/engine-track.mp3"));
+        try {
+            const sticks = createTemporaryObject(fakeSticksComponent, testCase, {rows: [{
+                label: "ENGINEHOME", hasRekordbox: false, hasEngine: true, libraryId: "enginehome",
+                rekordboxPath: "", enginePath: stick + "/Engine Library",
+            }]});
+            const player = createTemporaryObject(fakePlayerComponent, testCase);
+            const page = makeShowingTheStore({mediaController: {sticks: sticks}, playbackController: player});
+            const list = findChild(page, "storedTrackList");
+            let row = null;
+            for (let i = 0; i < list.count && row === null; ++i) {
+                list.positionViewAtIndex(i, ListView.Contain);
+                const candidate = list.itemAtIndex(i);
+                if (candidate && candidate.title === "Engine Stored Track") {
+                    row = candidate;
+                }
+            }
+            verify(row !== null, "the case stored this track");
+            const key = findChild(row, "rowPlayButton");
+            hoverRow(page, row);
+            compare(key.enabled, true, "ENGINEHOME is plugged in with the file");
+            mouseClick(key);
+            compare(player.loads.length, 1);
+            const loaded = player.loads[0];
+            compare(loaded.format, "engine", "the catalog it was backed up from");
+            compare(loaded.libraryPath, "");
+            compare(loaded.sourceId, "backup:" + row.trackId);
+            compare(loaded.filePath, stick + "/Contents/engine-track.mp3");
+        } finally {
+            stickFixture.removeStoredTracksFrom("ENGINEHOME");
+        }
+    }
+
+    Component {
+        id: realPlayerComponent
+        PlaybackController {}
+    }
+
+    // A stored row hands the player no library path: no catalog stands
+    // behind it, so the player reads no analysis for it. Run from inside
+    // a stick's PIONEER folder, where an empty path read anyway would
+    // find that library's export.pdb and the track's waveform.
+    function test_anEmptyLibraryPathReadsNoAnalysis() {
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        const stick = stickFixture.stickCopy(fixture);
+        verify(stick.length > 0, "the fixture copy must be made");
+        const pioneer = stick + "/PIONEER";
+        const player = createTemporaryObject(realPlayerComponent, testCase);
+        // A track whose waveform the library has, read the proper way.
+        let id = "";
+        for (const candidate of stickFixture.rekordboxTrackIds(pioneer, 50)) {
+            if (player.waveformFor("rekordbox", pioneer, candidate).length > 0) {
+                id = candidate;
+                break;
+            }
+        }
+        verify(id.length > 0, "the fixture has a track with a waveform");
+        const audio = stick + "/audio.mp3";
+        verify(stickFixture.touchNew(audio));
+        const previous = stickFixture.enterDirectory(pioneer);
+        verify(previous.length > 0, "the case must run from inside the library");
+        try {
+            const fresh = createTemporaryObject(realPlayerComponent, testCase);
+            compare(fresh.waveformFor("rekordbox", "", id).length, 0, "an empty library path names no library");
+            fresh.load("rekordbox", "", id, audio, "Stored", "Harness", "", []);
+            compare(fresh.waveform.length, 0, "no waveform read for it");
+            compare(fresh.beatTimesMs.length, 0, "and no beat grid");
+            compare(fresh.errorMessage, "", "and nothing to report");
+            fresh.stop();
+        } finally {
+            stickFixture.enterDirectory(previous);
+        }
     }
 
     // A stick's row plays the stick's file as the catalog row its waveform

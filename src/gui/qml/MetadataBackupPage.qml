@@ -816,6 +816,7 @@ Page {
                 required property int playlistCount
                 required property string updatedAt
                 required property string stickLabel
+                required property string sourceFormat
                 required property bool stagedForDeletion
                 required property real durationMs
 
@@ -860,9 +861,13 @@ Page {
                 // stick that has its file, looked for only for the row
                 // under the pointer or the open one. No catalog row
                 // stands behind it: the player gets the backup's cues and
-                // reads no analysis, and the row's own store id names it.
+                // reads no analysis (no library path), and the row's own
+                // store id names it. The format is the catalog it was
+                // backed up from, so the player bar shows that player's
+                // transport.
                 playbackController: root.playbackController
-                playSource: ({ format: "backup", libraryPath: "", sourceId: "backup:" + trackRow.trackId })
+                playSource: ({ format: trackRow.sourceFormat.length > 0 ? trackRow.sourceFormat : "backup",
+                               libraryPath: "", sourceId: "backup:" + trackRow.trackId })
                 playFilePath: root.playbackController && (trackRow.hovered || trackRow.expanded)
                     ? controller.storedTrackFile(trackRow.relativePath, trackRow.stickLabel, root.stickLibraries)
                     : ""

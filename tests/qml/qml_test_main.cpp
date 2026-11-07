@@ -629,6 +629,68 @@ public:
         return !ec;
     }
 
+    // One track in the run's metadata store, backed up from a stick of
+    // `format` labelled `stickLabel` and mounted at `stickRoot`, its file
+    // at `relativePath` under it, with one hot cue at one second. For a
+    // case about a stored row's origin; take it out again with
+    // removeStoredTracksFrom(stickLabel).
+    Q_INVOKABLE bool storeBackedUpTrack(const QString &title, const QString &format, const QString &stickLabel,
+                                        const QString &stickRoot, const QString &relativePath)
+    {
+        try {
+            seabass::domain::Track track;
+            track.format = format.toStdString();
+            track.sourceId = "stored-" + title.toStdString();
+            track.title = title.toStdString();
+            track.artist = "Harness";
+            track.durationSeconds = 200.0;
+            const std::filesystem::path root = seabass::gui::pathFromQString(stickRoot);
+            track.filePath = seabass::pathToUtf8(root / seabass::gui::pathFromQString(relativePath));
+            seabass::domain::CuePoint cue;
+            cue.kind = seabass::domain::CuePoint::Kind::Hot;
+            cue.hotCueNumber = 0;
+            cue.positionMs = 1000.0;
+            track.cues.push_back(cue);
+            seabass::infrastructure::local::MetadataSource source;
+            source.stickRoot = root;
+            source.libraryId = "harness-" + stickLabel.toStdString();
+            source.stickLabel = stickLabel.toStdString();
+            seabass::infrastructure::local::MetadataStore store;
+            store.store({track}, source, seabass::application::NullProgressReporter::instance(),
+                        seabass::application::CancellationToken::none());
+        } catch (const std::exception &) {
+            return false;
+        }
+        return true;
+    }
+
+    // Takes every row backed up from `stickLabel` out of the run's
+    // metadata store. How many went, or -1.
+    Q_INVOKABLE int removeStoredTracksFrom(const QString &stickLabel)
+    {
+        try {
+            seabass::infrastructure::local::MetadataStore store;
+            std::vector<std::int64_t> ids;
+            for (const auto &[id, source] : store.stickSourcesByTrackId()) {
+                if (source.stickLabel == stickLabel.toStdString()) {
+                    ids.push_back(id);
+                }
+            }
+            return ids.empty() ? 0 : store.removeTracks(ids);
+        } catch (const std::exception &) {
+            return -1;
+        }
+    }
+
+    // Makes `directory` the process's working directory and returns the
+    // one it replaces, for a case about a relative path resolving against
+    // it. The case puts the old one back.
+    Q_INVOKABLE QString enterDirectory(const QString &directory)
+    {
+        const QString previous = QDir::currentPath();
+        return QDir::setCurrent(directory) ? previous : QString();
+    }
+
     Q_INVOKABLE double trackDatabaseParses() const
     {
         return static_cast<double>(seabass::infrastructure::WorkCounters::instance().snapshot().trackDatabaseParses);

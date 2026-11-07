@@ -57,6 +57,7 @@ public:
         PlaylistCountRole,
         ArtworkUrlRole,
         StickLabelRole,
+        SourceFormatRole,  // the catalog it was backed up from: "rekordbox", "engine", ...
         UpdatedAtRole,
         StagedForDeletionRole,
         DurationMsRole,

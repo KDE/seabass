@@ -189,8 +189,13 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
     } else {
-        const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
-        const domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
+        // No library path, no analysis to read: a stored backup row plays
+        // a file no catalog row stands behind, and an empty path would
+        // resolve against the working directory.
+        const auto index = format == QLatin1String("rekordbox") && !libraryPath.isEmpty()
+            ? anlzIndexFor(libraryPath) : nullptr;
+        const domain::TrackAnalysis analysis = libraryPath.isEmpty()
+            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get());
         m_waveform = toVariantList(analysis.waveform);
         const std::vector<domain::Beat> &beats = analysis.beats;
         m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
@@ -259,6 +264,10 @@ bool PlaybackController::takeCues(const QString &format, const QString &libraryP
 QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
                                               const QString &sourceId) const
 {
+    // No library, no analysis: a stored backup row names none (see load()).
+    if (libraryPath.isEmpty()) {
+        return {};
+    }
     const QString key = format + QLatin1Char('\x1f') + libraryPath + QLatin1Char('\x1f') + sourceId;
     if (const QVariantList *cached = m_waveformCache.object(key)) {
         return *cached;

@@ -238,6 +238,7 @@ QHash<int, QByteArray> StoredTrackListModel::roleNames() const
         {RatingRole, "rating"},           {CommentRole, "comment"},
         {CueCountRole, "cueCount"},       {PlaylistCountRole, "playlistCount"},
         {ArtworkUrlRole, "artworkUrl"},   {StickLabelRole, "stickLabel"},
+        {SourceFormatRole, "sourceFormat"},
         {UpdatedAtRole, "updatedAt"},
         {StagedForDeletionRole, "stagedForDeletion"},
         {DurationMsRole, "durationMs"},
@@ -281,6 +282,8 @@ QVariant StoredTrackListModel::data(const QModelIndex &index, int role) const
         return toLocalFileUrl(row.artworkPath);
     case StickLabelRole:
         return QString::fromStdString(row.stickLabel);
+    case SourceFormatRole:
+        return QString::fromStdString(row.sourceFormat);
     case UpdatedAtRole:
         return QString::fromStdString(row.updatedAt);
     case StagedForDeletionRole:
