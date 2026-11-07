@@ -22,6 +22,16 @@ namespace seabass::infrastructure::audio
 // what to add to each before the player, the ring or the play key uses
 // it, so a hot cue jumps to the sound it marks and the ring pulses on
 // the beat and not up to 52 ms early.
+//
+// The player may take every cue list it is handed to be on rekordbox's
+// timeline, whichever library it came from, because the catalog's Tracks
+// and Cues stages both resolve an Engine MP3 row's lead-in, falling back
+// to reading the file itself when the stick's metadata cache has none
+// (LibraryCatalogCache): an Engine row's cues are shifted whenever the
+// player could read the same file to shift them back. The one remaining
+// way for the two to disagree, the Preferences toggle of the correction
+// changing after the rows were read, is closed by the catalog cache
+// treating an Engine entry read under the other setting as stale.
 
 // Which library's analysis the beat grid came from.
 enum class GridTimeline { Rekordbox, Engine };
