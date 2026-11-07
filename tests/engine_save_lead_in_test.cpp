@@ -14,6 +14,11 @@
 // reading the file's start on its own takes 51.18 ms off a cue the
 // reader added 25.06 ms to, and the untouched cue moves 26 ms early.
 //
+// And Restore Metadata (#50): cues the metadata store took in from Engine
+// carry the shift the reader added then (0 for a store written before it
+// recorded one: Engine's own positions). Restored to Engine they land on
+// the sample they were read from, whatever the correction setting is now.
+//
 // Usage: engine_save_lead_in_test FIXTURE_DIR (tests/fixtures/mp3-lead-in)
 
 #include <QString>
@@ -23,6 +28,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
@@ -31,7 +37,9 @@
 #include "application/ports/progress_reporter.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/track.hpp"
+#include "domain/metadata_restore.hpp"
 #include "gui/edit/changes/add_cue_change.hpp"
+#include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
@@ -125,6 +133,106 @@ int main(int argc, char **argv)
     (void)newId;
 
     fs::remove_all(stick);
+
+    // Restore Metadata onto a fresh library with the same file and no
+    // metadata cache: the writer reads the file's own 51.18 ms.
+    const fs::path restoreStick = seabass::testing::scratchRoot() / "seabass_engine_save_lead_in_test_restore";
+    fs::remove_all(restoreStick);
+    const fs::path restoreLibrary = restoreStick / "Engine Library";
+    fs::create_directories(restoreLibrary);
+    const fs::path restoreFile = restoreLibrary / "song.mp3";
+    fs::copy_file(fixtures / "lame-cbr-44100.mp3", restoreFile);
+    Track bare = t;
+    bare.filePath = seabass::pathToUtf8(restoreFile);
+    bare.cues.clear();
+    const auto restoreCreated = seabass::infrastructure::engine::EngineLibraryCreator::create(
+        seabass::pathToUtf8(restoreLibrary), {bare}, seabass::infrastructure::engine::EngineSchemaGeneration::V2);
+    assert(restoreCreated.errorMessage.empty() && restoreCreated.tracksCreated == 1);
+    const std::string restoreId = [&] {
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(restoreLibrary));
+        return std::to_string(db.tracks().front().id());
+    }();
+    const double shiftMs = 2257 * 1000.0 / 44100;
+
+    // Restores hot cue 1 at `positionMs` carrying `storedShift`, and
+    // answers the sample Engine stores it at.
+    auto restore = [&](double positionMs, std::optional<double> storedShift) {
+        seabass::domain::MetadataRestoreProposal proposal;
+        proposal.stickTrack = bare;
+        proposal.stickTrack.sourceId = restoreId;
+        proposal.cuesOffered = true;
+        proposal.cues = {CuePoint{CuePoint::Kind::Hot, 1, positionMs, "#ff0000", "drop"}};
+        proposal.cuesEngineShiftMs = storedShift;
+        seabass::application::CancellationToken restoreToken;
+        const QString restoreRoot = pathToQString(restoreLibrary);
+        SaveContext restoreCtx(restoreToken, noProgress, {}, {}, restoreRoot);
+        std::vector<std::shared_ptr<PendingChange>> restoreChanges = {std::make_shared<RestoreMetadataChange>(
+            QStringLiteral("engine"), restoreRoot, QString::fromStdString(restoreId), proposal)};
+        const SaveLoopResult restored = runSaveLoop(restoreChanges, restoreCtx);
+        if (!restored.error.isEmpty()) {
+            std::cerr << "restore failed: " << restored.error.toStdString() << "\n";
+        }
+        assert(restored.error.isEmpty() && restored.appliedIds.size() == 1);
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(restoreLibrary));
+        const auto hot = db.tracks().front().hot_cues();
+        assert(!hot.empty() && hot[0]);
+        return hot[0]->sample_offset;
+    };
+    const double original = 5000.0 * 44.1;  // the Engine sample the cue was read from
+
+    // A row stored before the store recorded a shift: Engine's own
+    // position. With the correction on, the writer takes 51.18 ms off
+    // whatever it is given, so the restore adds it first.
+    {
+        const double stored = restore(5000.0, 0.0);
+        std::cout << "old-schema row, correction on: " << stored << " (want " << original << ")\n";
+        assert(std::abs(stored - original) < 1e-3);
+    }
+    // A row read with the shift on, restored with the correction off: the
+    // writer takes nothing off, so the restore does.
+    {
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);
+        const double stored = restore(5000.0 + shiftMs, shiftMs);
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+        std::cout << "row stored with " << shiftMs << " ms, correction off: " << stored << " (want " << original
+                  << ")\n";
+        assert(std::abs(stored - original) < 1e-3);
+    }
+    // The same row with the correction on, and cues on rekordbox's
+    // timeline (from a rekordbox stick): both moved by the writer alone.
+    {
+        assert(std::abs(restore(5000.0 + shiftMs, shiftMs) - original) < 1e-3);
+        assert(std::abs(restore(5000.0, std::nullopt) - (original - 2257.0)) < 1e-3);
+    }
+
+    // Restored to rekordbox: the Engine position plus the shift rekordbox
+    // is ahead by today, which for a row stored with the shift on is the
+    // position as stored. What the change writes is what rekordboxWrites()
+    // reports, so that is checked without a rekordbox catalog.
+    {
+        auto pioneerCues = [&](double positionMs, std::optional<double> storedShift) {
+            seabass::domain::MetadataRestoreProposal proposal;
+            proposal.stickTrack = bare;
+            proposal.stickTrack.sourceId = "1";
+            proposal.cuesOffered = true;
+            proposal.cues = {CuePoint{CuePoint::Kind::Hot, 1, positionMs, "#ff0000", "drop"}};
+            proposal.cuesEngineShiftMs = storedShift;
+            RestoreMetadataChange change(QStringLiteral("rekordbox"), QStringLiteral("/nowhere/PIONEER"),
+                                         QStringLiteral("1"), proposal);
+            const auto writes = change.rekordboxWrites();
+            assert(writes.size() == 1 && writes.front().cues && writes.front().cues->size() == 1);
+            return writes.front().cues->front().positionMs;
+        };
+        assert(std::abs(pioneerCues(5000.0, 0.0) - (5000.0 + shiftMs)) < 1e-9 && "Engine's own position, moved");
+        assert(std::abs(pioneerCues(5000.0 + shiftMs, shiftMs) - (5000.0 + shiftMs)) < 1e-9);
+        assert(pioneerCues(5000.0, std::nullopt) == 5000.0 && "rekordbox's timeline already");
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);
+        assert(std::abs(pioneerCues(5000.0 + shiftMs, shiftMs) - 5000.0) < 1e-9 && "the setting off: Engine's");
+        seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+    }
+
+    fs::remove_all(restoreStick);
+    seabass::domain::MatchingPolicy::reset();
     std::cout << "engine_save_lead_in_test passed\n";
     return 0;
 }

@@ -14,6 +14,8 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/onelibrary_cue_writer_adapter.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -30,6 +32,41 @@ namespace
 {
 
 constexpr const char *LogTag = "metadata-restore";
+
+// The proposal's cues on rekordbox's timeline, where every cue writer
+// takes them (#50). Cues the store took in from Engine carry the shift
+// the Engine reader had added then (0 for ones stored before the store
+// recorded it: Engine's own positions); the Engine position is theirs
+// minus that. `targetShiftMs` is the shift the target's own reader adds
+// for this file today, by the same rule and the same setting: what the
+// Engine writer will take off again, or for a rekordbox catalog the
+// distance between the two timelines. Cues from any other catalog are
+// on rekordbox's timeline already and go as they are.
+std::vector<domain::CuePoint> cuesOnTargetTimeline(const domain::MetadataRestoreProposal &proposal,
+                                                   double targetShiftMs)
+{
+    std::vector<domain::CuePoint> cues = proposal.cues;
+    if (proposal.cuesEngineShiftMs) {
+        infrastructure::engine::shiftCuePositions(cues, targetShiftMs - *proposal.cuesEngineShiftMs);
+    }
+    return cues;
+}
+
+// The shift the Engine reader would add for the stick track's file, for
+// a target that is not Engine: read from the file's start, the way the
+// reader reads it when it has no cache.
+double readerShiftFor(const domain::Track &track)
+{
+    if (!infrastructure::engine::shiftsCueTimeline(track.filePath, track.streamingSource)) {
+        return 0.0;
+    }
+    return infrastructure::engine::engineCueShiftMs(infrastructure::audio::readMp3LeadIn(track.filePath));
+}
+
+std::vector<domain::CuePoint> cuesForPioneer(const domain::MetadataRestoreProposal &proposal)
+{
+    return cuesOnTargetTimeline(proposal, proposal.cuesEngineShiftMs ? readerShiftFor(proposal.stickTrack) : 0.0);
+}
 
 // One format's writer for a whole save: the format's cue writer plus,
 // for rekordbox, the best-effort OneLibrary mirror. Created by the first
@@ -418,7 +455,7 @@ std::vector<RekordboxWrite> RestoreMetadataChange::rekordboxWrites() const
     RekordboxWrite write;
     write.filePath = m_proposal.stickTrack.filePath;
     if (m_proposal.cuesOffered) {
-        write.cues = m_proposal.cues;
+        write.cues = cuesForPioneer(m_proposal);
     }
     if (m_proposal.ratingOffered && m_proposal.rating) {
         write.rating = *m_proposal.rating;
@@ -474,7 +511,14 @@ ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
     // exists to protect.
     bool wroteIntoWriteRoot = false;
     if (m_proposal.cuesOffered) {
-        writer.writer->writeHotCues(sourceId, m_proposal.cues);
+        std::vector<domain::CuePoint> cues;
+        if (auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(writer.writer.get())) {
+            cues = cuesOnTargetTimeline(m_proposal,
+                                        m_proposal.cuesEngineShiftMs ? engine->cueTimelineShiftMs(sourceId) : 0.0);
+        } else {
+            cues = cuesForPioneer(m_proposal);
+        }
+        writer.writer->writeHotCues(sourceId, cues);
         // Counted, because FormatWriteSession throws a scratch copy away
         // on a cancel when nothing was applied to it. Engine and
         // OneLibrary cues are written INTO that copy, so leaving them
@@ -488,7 +532,7 @@ ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
                          track.title + "\")");
 
         if (writer.mirror && !track.filePath.empty()) {
-            const QString failed = mirrorCuesOrExplain(*writer.mirror, track.filePath, m_proposal.cues, ctx, LogTag,
+            const QString failed = mirrorCuesOrExplain(*writer.mirror, track.filePath, cues, ctx, LogTag,
                                                        QStringLiteral("restore the cues"));
             if (!failed.isEmpty()) {
                 return ChangeOutcome::failure(failed);

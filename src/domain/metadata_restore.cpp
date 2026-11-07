@@ -84,6 +84,7 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         if (takeIncomingCues(storedCues, stickCues, storedAt, stickModifiedAt, toleranceMs)) {
             proposal.cuesOffered = true;
             proposal.cues = storedCues;
+            proposal.cuesEngineShiftMs = stored->storedEngineCueShiftMs;
         }
 
         // ---- rating ----

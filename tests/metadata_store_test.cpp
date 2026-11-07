@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 
 #if !defined(_WIN32)
@@ -1154,7 +1155,7 @@ int main()
         }
 
         fs::path beside = oldDb;
-        beside += ".before-schema-3";
+        beside += ".before-schema-4";
         fs::create_symlink(oldDb.parent_path() / "no-such-folder" / "somewhere.db", beside);
 
         bool refused = false;
@@ -1235,7 +1236,7 @@ int main()
             sqlite3 *raw = nullptr;
             assert(sqlite3_open(pathToUtf8(newerDb).c_str(), &raw) == SQLITE_OK);
             assert(sqlite3_exec(raw, "CREATE TABLE schema_version (version INTEGER NOT NULL);"
-                                     "INSERT INTO schema_version (version) VALUES (4);"
+                                     "INSERT INTO schema_version (version) VALUES (5);"
                                      "CREATE TABLE future_things (x TEXT);"
                                      "INSERT INTO future_things (x) VALUES ('from a later build');",
                                 nullptr, nullptr, nullptr)
@@ -1251,7 +1252,7 @@ int main()
         int superseded = 0;
         for (const auto &entry : fs::directory_iterator(newerDb.parent_path())) {
             const std::string name = pathToUtf8(entry.path().filename());
-            if (name.rfind("metadata.db.superseded-4-", 0) == 0) {
+            if (name.rfind("metadata.db.superseded-5-", 0) == 0) {
                 ++superseded;
                 std::ifstream aside(entry.path(), std::ios::binary);
                 const std::string asideBytes((std::istreambuf_iterator<char>(aside)),
@@ -1384,7 +1385,7 @@ int main()
         assert(version == 2 && "the version bump was rolled back with the rest");
         assert(cueRows == 2 && "and so was every deletion");
         fs::path beside = oldDb;
-        beside += ".before-schema-3";
+        beside += ".before-schema-4";
         assert(fs::exists(beside));
 
         MetadataStore reopened(oldDb);
@@ -1572,6 +1573,61 @@ int main()
     }
 
     std::cout << "case 33 (a file that is not a database is moved aside, and a clean store opens) OK\n";
+    }
+
+    // ---- case 34: the shift an Engine row's cues were read with (#50) --
+    //
+    // The Engine reader moves an MP3's cues onto rekordbox's timeline by
+    // the file's lead-in shift (Track::cueTimelineShiftMs); a restore has
+    // to take exactly that back off. So a row whose cues came from Engine
+    // records the shift they carry, and one whose cues came from anywhere
+    // else records none. A store written before this (schema 3) held
+    // Engine's positions as Engine stores them: those rows read as shift 0.
+    {
+        const fs::path db = root / "engine-shift" / "metadata.db";
+        Track engine = sampleTrack(stick, "Contents/Shift/Engine.mp3", "Engine Row");
+        engine.format = "engine";
+        engine.cueTimelineShiftMs = 2257.0 * 1000.0 / 44100.0;
+        engine.cues = {hotCue(1, 5000.0 + engine.cueTimelineShiftMs)};
+        Track rekordbox = sampleTrack(stick, "Contents/Shift/Rekordbox.mp3", "Rekordbox Row");
+        rekordbox.cues = {hotCue(1, 7000.0)};
+        auto shiftOf = [](MetadataStore &metadata, const std::string &title) {
+            for (const Track &t : metadata.readAll()) {
+                if (t.title == title) {
+                    return t.storedEngineCueShiftMs;
+                }
+            }
+            assert(false && "row not found");
+            return std::optional<double>();
+        };
+        {
+            MetadataStore metadata(db);
+            store(metadata, {engine, rekordbox}, sourceFor(stick));
+            const auto engineShift = shiftOf(metadata, "Engine Row");
+            assert(engineShift && *engineShift == engine.cueTimelineShiftMs);
+            assert(!shiftOf(metadata, "Rekordbox Row").has_value());
+        }
+        // The same rows as a schema-3 store had them: no column.
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(db).c_str(), &raw) == SQLITE_OK);
+            char *error = nullptr;
+            const int rc = sqlite3_exec(raw,
+                                        "ALTER TABLE tracks DROP COLUMN cue_engine_shift_ms;"
+                                        "UPDATE schema_version SET version = 3;",
+                                        nullptr, nullptr, &error);
+            if (rc != SQLITE_OK) {
+                std::cerr << "could not make the store a schema-3 one: " << (error ? error : "?") << "\n";
+            }
+            sqlite3_free(error);
+            assert(rc == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        MetadataStore reopened(db);
+        const auto oldEngine = shiftOf(reopened, "Engine Row");
+        assert(oldEngine && *oldEngine == 0.0 && "an Engine row from before the column holds raw positions");
+        assert(!shiftOf(reopened, "Rekordbox Row").has_value());
+        std::cout << "case 34 (an Engine row records the shift its cues carry; older ones read as raw) OK\n";
     }
 
     return 0;

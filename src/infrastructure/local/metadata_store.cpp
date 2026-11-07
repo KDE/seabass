@@ -43,7 +43,27 @@ constexpr const char *Context = "metadata store";
 // found once those arrive, instead of being filed a second time as a new
 // track. authored_at, so the merge rule can ask when the DJ last changed
 // a field rather than when a backup run last looked at the row.
-constexpr int SchemaVersion = 3;
+// 3 deleted the phantom memory cues before 0:00.
+// 4 added cue_engine_shift_ms (#50): for a row whose cues came from an
+// Engine catalog, the shift the reader had put on them
+// (Track::cueTimelineShiftMs); NULL for cues from anywhere else. Rows
+// earlier versions took in from Engine are marked 0: Engine's own
+// positions, which is what the reader returned before the shift existed.
+constexpr int SchemaVersion = 4;
+
+// Whether `table` has `column`, so a migration adds it only once: a
+// store whose version was put back by hand (or by a test) may have it.
+bool hasColumn(sqlite3 *db, const char *table, const char *column)
+{
+    const std::string sql = "PRAGMA table_info(" + std::string(table) + ")";
+    Statement info(db, sql.c_str(), Context);
+    while (info.step()) {
+        if (info.columnText(1) == column) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // The shared RAII statement and exec() with this store's error-message
 // context bound in, so call sites stay two arguments.
@@ -508,11 +528,28 @@ void MetadataStore::openAndMigrate()
             // to clean out what predates that filter.
             exec(m_db, "DELETE FROM cues WHERE position_ms < 0 AND is_loop = 0;");
         }
-        exec(m_db, "UPDATE schema_version SET version = 3;");
+        if (existing < 4 && !hasColumn(m_db, "tracks", "cue_engine_shift_ms")) {
+            exec(m_db, "ALTER TABLE tracks ADD COLUMN cue_engine_shift_ms REAL;");
+            // The last stick a row was read from is the best guess for
+            // where its cues came from: source_format moves on every run,
+            // the cues only when they won. A row last read from Engine
+            // whose cues came from a rekordbox stick is read as Engine's
+            // positions, and a restore then moves them by a lead-in shift
+            // that was never on them; nothing in an older store tells
+            // the two apart.
+            exec(m_db, "UPDATE tracks SET cue_engine_shift_ms = 0 WHERE source_format = 'engine';");
+        }
+        exec(m_db, ("UPDATE schema_version SET version = " + std::to_string(SchemaVersion) + ";").c_str());
         exec(m_db, "COMMIT");
         guard.committed = true;
     }
 
+    // cue_engine_shift_ms: where the cues came from an Engine catalog
+    // (#50), the shift the reader had added to them, so the Engine
+    // position is position_ms minus this; NULL for cues on rekordbox's
+    // timeline. See SchemaVersion. (Its comment lives here rather than in
+    // the SQL: SQLite keeps the CREATE text, and a comment after the last
+    // column is in the way of an ALTER TABLE ... DROP COLUMN.)
     exec(m_db, R"sql(
         CREATE TABLE IF NOT EXISTS tracks (
             id INTEGER PRIMARY KEY,
@@ -545,7 +582,8 @@ void MetadataStore::openAndMigrate()
             -- catalog mtime, and using updated_at for it meant a routine
             -- re-run over an untouched stick silently dated the store
             -- later than work done elsewhere in between.
-            authored_at TEXT NOT NULL DEFAULT ''
+            authored_at TEXT NOT NULL DEFAULT '',
+            cue_engine_shift_ms REAL
         );
     )sql");
     exec(m_db, R"sql(
@@ -1106,6 +1144,14 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         }
 
         if (writeCues) {
+            Stmt shift(m_db, "UPDATE tracks SET cue_engine_shift_ms = ? WHERE id = ?");
+            if (track.format == "engine") {
+                shift.bind(1, track.cueTimelineShiftMs);
+            } else {
+                shift.bindNull(1);
+            }
+            shift.bindInt64(2, id);
+            shift.run();
             Stmt clear(m_db, "DELETE FROM cues WHERE track_id = ?");
             clear.bindInt64(1, id);
             clear.run();
@@ -1273,7 +1319,7 @@ std::vector<Track> MetadataStore::readAll()
         Stmt stmt(m_db, R"sql(
             SELECT id, relative_path, filename, title, artist, duration_seconds, bpm,
                    music_key, rating, comment, play_count, authored_at, updated_at,
-                   artwork_sha, artwork_extension
+                   artwork_sha, artwork_extension, cue_engine_shift_ms
             FROM tracks ORDER BY id
         )sql");
         while (stmt.step()) {
@@ -1327,6 +1373,9 @@ std::vector<Track> MetadataStore::readAll()
             const std::string artworkSha = stmt.columnText(13);
             if (!artworkSha.empty()) {
                 track.artworkPath = pathToUtf8(artworkDir() / pathFromUtf8(artworkSha + stmt.columnText(14)));
+            }
+            if (!stmt.columnIsNull(15)) {
+                track.storedEngineCueShiftMs = stmt.columnDouble(15);
             }
             tracks.push_back(std::move(track));
         }

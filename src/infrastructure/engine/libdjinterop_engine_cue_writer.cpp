@@ -127,6 +127,31 @@ void LibdjinteropEngineCueWriter::writeHotCuesAtSampleRate(const std::string &tr
     writeCues(trackSourceId, cues, sampleRateHz);
 }
 
+double LibdjinteropEngineCueWriter::shiftMsOf(djinterop::track &track)
+{
+    std::string relative;
+    try {
+        relative = track.relative_path();
+    } catch (const std::exception &) {
+        // No path names no file: nothing to shift by.
+    }
+    if (relative.empty() || !m_leadInSource) {
+        return 0.0;
+    }
+    const std::string &audioRoot = m_audioRoot.empty() ? m_engineLibraryPath : m_audioRoot;
+    const std::string filePath = pathToUtf8((pathFromUtf8(audioRoot) / pathFromUtf8(relative)).lexically_normal());
+    return shiftsCueTimeline(filePath, {}) ? engineCueShiftMs(m_leadInSource(filePath)) : 0.0;
+}
+
+double LibdjinteropEngineCueWriter::cueTimelineShiftMs(const std::string &trackSourceId)
+{
+    auto track = database().track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    return shiftMsOf(*track);
+}
+
 void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
                                              const std::vector<domain::CuePoint> &cues,
                                              std::optional<double> knownSampleRate)
@@ -171,21 +196,7 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     //   - a memory cue is left out and counted (see below), because
     //     Engine reads a main cue at 0 as no cue at all.
     // Create Engine Library applies the same rule (applyCuesToSnapshot).
-    double shiftMs = 0.0;
-    std::string relative;
-    try {
-        relative = track->relative_path();
-    } catch (const std::exception &) {
-        // No path names no file: nothing to shift by.
-    }
-    if (!relative.empty() && m_leadInSource) {
-        const std::string &audioRoot = m_audioRoot.empty() ? m_engineLibraryPath : m_audioRoot;
-        const std::string filePath =
-            pathToUtf8((pathFromUtf8(audioRoot) / pathFromUtf8(relative)).lexically_normal());
-        if (shiftsCueTimeline(filePath, {})) {
-            shiftMs = engineCueShiftMs(m_leadInSource(filePath));
-        }
-    }
+    const double shiftMs = shiftMsOf(*track);
     const auto toSamples = [&](double rekordboxMs) { return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * sampleRate); };
 
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
