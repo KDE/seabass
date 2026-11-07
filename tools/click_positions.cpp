@@ -151,10 +151,25 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // A click file goes in as an MP3 or, for the analyser-bias baseline,
+    // as a WAV: the WAV has no lead-in, so its offset is 0 and whatever
+    // its residual shows is the analysers' own difference.
+    const auto isProbeFile = [](const std::string &filePath) {
+        const std::string ext = pathToUtf8(pathFromUtf8(filePath).extension());
+        return domain::hasMp3Extension(filePath) || ext == ".wav" || ext == ".WAV";
+    };
     std::map<std::string, const Track *> engineByPath;
+    // Each app may have copied the same file to its own folder (rekordbox
+    // under Contents/, Engine under Engine Library/Music/), so a path that
+    // matches nowhere falls back to the bare file name, when it is unique.
+    std::map<std::string, const Track *> engineByName;
+    std::map<std::string, int> engineNameCount;
     for (const Track &track : engineTracks) {
-        if (track.streamingSource.empty() && domain::hasMp3Extension(track.filePath)) {
+        if (track.streamingSource.empty() && isProbeFile(track.filePath)) {
             engineByPath.emplace(pathKey(track.filePath), &track);
+            const std::string name = pathToUtf8(pathFromUtf8(track.filePath).filename());
+            engineByName[name] = &track;
+            ++engineNameCount[name];
         }
     }
 
@@ -162,22 +177,37 @@ int main(int argc, char **argv)
     std::map<long, int> beatResiduals;
     int files = 0;
     for (const Track &rb : rekordboxTracks) {
-        if (!rb.streamingSource.empty() || !domain::hasMp3Extension(rb.filePath)) {
+        if (!rb.streamingSource.empty() || !isProbeFile(rb.filePath)) {
             continue;
         }
-        const auto match = engineByPath.find(pathKey(rb.filePath));
-        if (match == engineByPath.end()) {
+        const Track *matched = nullptr;
+        bool byName = false;
+        if (const auto match = engineByPath.find(pathKey(rb.filePath)); match != engineByPath.end()) {
+            matched = match->second;
+        } else {
+            const std::string name = pathToUtf8(pathFromUtf8(rb.filePath).filename());
+            const auto count = engineNameCount.find(name);
+            if (count != engineNameCount.end() && count->second == 1) {
+                matched = engineByName.at(name);
+                byName = true;
+            }
+        }
+        if (matched == nullptr) {
             continue;
         }
-        const Track &en = *match->second;
+        const Track &en = *matched;
         ++files;
 
-        std::printf("%s  (rekordbox id %s, Engine id %s)\n", relativeToStick(rb.filePath, root).c_str(),
-                    rb.sourceId.c_str(), en.sourceId.c_str());
-        const auto leadIn = infrastructure::audio::readMp3LeadIn(rb.filePath);
+        std::printf("%s  (rekordbox id %s, Engine id %s%s)\n", relativeToStick(rb.filePath, root).c_str(),
+                    rb.sourceId.c_str(), en.sourceId.c_str(),
+                    byName ? (", matched by file name to " + relativeToStick(en.filePath, root)).c_str() : "");
+        const bool isMp3 = domain::hasMp3Extension(rb.filePath);
+        const auto leadIn = isMp3 ? infrastructure::audio::readMp3LeadIn(rb.filePath) : std::optional<domain::Mp3LeadIn>{};
         const double offsetMs = leadIn ? domain::engineToRekordboxOffsetMs(*leadIn) : 0.0;
         if (leadIn) {
             std::printf("  case %s, predicted offset %.3f ms\n", caseName(domain::classify(*leadIn)), offsetMs);
+        } else if (!isMp3) {
+            std::printf("  WAV baseline, no lead-in, offset 0.000 ms\n");
         } else {
             std::printf("  case unreadable, predicted offset 0.000 ms\n");
         }
@@ -244,7 +274,7 @@ int main(int argc, char **argv)
             std::printf("\n");
         }
     }
-    std::printf("%d MP3 file(s) in both catalogs\n", files);
+    std::printf("%d file(s) in both catalogs\n", files);
     printHistogram("hot cue residuals (corrected Engine minus rekordbox, ms)", cueResiduals);
     printHistogram("first beat residuals (Engine + offset minus rekordbox, ms)", beatResiduals);
     return 0;
