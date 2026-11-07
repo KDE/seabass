@@ -375,4 +375,25 @@ TestCase {
         compare(row.isCurrentTrack, false);
         compare(key.visible, false);
     }
+
+    // A disabled key with nothing to say about it (a streaming track has
+    // no file, and a page may give no reason) pops no empty bubble.
+    function test_aDisabledKeyWithoutAReasonShowsNoTooltip() {
+        const player = createTemporaryObject(fakePlayerComponent, testCase);
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, y: 10, playSource: {format: "backup", libraryPath: "", sourceId: "backup:8"},
+            playbackController: player,
+        });
+        waitForRendering(row);
+        const key = findChild(row, "rowPlayButton");
+        const cover = findChild(row, "rowArtwork").parent;
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryVerify(() => row.hovered, 1000);
+        compare(key.visible, true);
+        compare(key.enabled, false);
+        wait(800);
+        compare(cover.ToolTip.visible, false, "no reason given, no tooltip");
+        row.playUnavailableText = "No audio file on the stick for this track";
+        tryVerify(() => cover.ToolTip.visible, 2000, "a reason is shown");
+    }
 }

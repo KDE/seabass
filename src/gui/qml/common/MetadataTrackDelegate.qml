@@ -266,7 +266,9 @@ Rectangle {
                 // On the tile rather than the key: a disabled key gets no
                 // hover, and that is the one that most needs explaining.
                 HoverHandler { id: coverHover }
-                ToolTip.visible: coverHover.hovered && playKey.visible
+                // And only with something to say: a page may give a
+                // disabled key no reason, and an empty bubble is noise.
+                ToolTip.visible: coverHover.hovered && playKey.visible && ToolTip.text.length > 0
                 ToolTip.delay: 400
                 ToolTip.text: delegate.isCurrentTrack
                     ? (delegate.playbackController.playing ? "Pause" : "Play")

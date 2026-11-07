@@ -734,6 +734,9 @@ Page {
                         : { format: "onelibrary", libraryPath: controller.sourceLibraryPath,
                             sourceId: proposalRow.relativePath })
                 playFilePath: proposalRow.relativePath
+                // A track with no file path (a streaming one) has nothing
+                // on the stick to play.
+                playUnavailableText: "No audio file on the stick for this track"
                 onPlayRequested: root.playbackController.load(
                     proposalRow.playSource.format, proposalRow.playSource.libraryPath,
                     proposalRow.playSource.sourceId, proposalRow.playFilePath, proposalRow.title,
