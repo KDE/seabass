@@ -27,6 +27,8 @@ each decoder's output and the lag between decoders measured:
 | click-D-lame-48000.mp3        | D     | the same at 48 kHz (80 kbit/s)                     |
 | click-D-lame-mpeg2-22050.mp3  | D     | the same as MPEG-2 Layer III at 22.05 kHz          |
 | click-D-lame-mono-44100.mp3   | D     | the same in mono                                   |
+| click-VBRI-44100.mp3          | D     | the A file behind a crafted VBRI frame in the audio's channel mode |
+| click-VBRI-modediffers-44100.mp3 | D  | the same with the VBRI frame stereo over joint stereo audio |
 | click-D-lame-crc-44100.mp3    | D     | the 44.1 kHz file with CRC-protected frames; the tag still sits at 4 + side info |
 
 All CBR, 64 kbit/s except 80 at 48 kHz (a 64 kbit/s frame there is too
@@ -36,7 +38,8 @@ Regenerate with
 
     tools/mp3-offset-probe/make-click-mp3s.py
 
-which needs libmp3lame (through ctypes) and the ffmpeg command line. The
+(the VBRI frames come from vbri_frame.py: no encoder at hand writes
+VBRI), which needs libmp3lame (through ctypes) and the ffmpeg command line. The
 LAME files come out byte for byte the same each run; the Lavc file
 carries the ffmpeg version in its tags.
 

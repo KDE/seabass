@@ -140,6 +140,7 @@ int main(int argc, char **argv)
         "click-A-notag-44100.mp3",      "click-B-noencoder-44100.mp3",  "click-B-lavc-44100.mp3",
         "click-C-badcrc-44100.mp3",     "click-D-lame-44100.mp3",       "click-D-lame-48000.mp3",
         "click-D-lame-mono-44100.mp3",  "click-D-lame-mpeg2-22050.mp3", "click-D-lame-crc-44100.mp3",
+        "click-VBRI-44100.mp3",         "click-VBRI-modediffers-44100.mp3",
     };
 
     int failures = 0;

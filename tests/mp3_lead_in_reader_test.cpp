@@ -135,6 +135,21 @@ int main(int argc, char **argv)
         assert(near(engineToRekordboxOffsetMs(l), 51.18));
     }
 
+    // A crafted VBRI frame in front of the file without a tag frame, in
+    // the audio's channel mode and stereo over the joint-stereo audio.
+    // rekordbox (libmpg123) plays it as one frame of silence either way,
+    // Engine (FFmpeg) skips it and trims nothing: 1152 samples, 26.122 ms.
+    for (const char *file : {"vbri-44100.mp3", "vbri-modediffers-44100.mp3"}) {
+        const Mp3LeadIn l = read(file);
+        assert(l.vbri && !l.infoFrame);
+        assert(l.tag == Mp3LeadIn::Tag::None && l.encoderDelay == 0);
+        assert(l.sampleRate == 44100 && l.samplesPerFrame == 1152);
+        assert(classify(l) == Mp3Case::D);
+        assert(near(engineToRekordboxOffsetMs(l), 26.122));
+    }
+    assert(read("vbri-44100.mp3").infoFrameModeMatchesAudio);
+    assert(!read("vbri-modediffers-44100.mp3").infoFrameModeMatchesAudio);
+
     // The CBR file with its tag CRC broken: class C, same offset.
     {
         const Mp3LeadIn l = read("lame-badcrc-44100.mp3");
