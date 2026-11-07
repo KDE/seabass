@@ -209,6 +209,19 @@ int main()
         assert(samplesBeforeAudio(v, En) == 1152 && engineToRekordboxOffsetMs(v) == 0.0);
     }
 
+    // "L3.99": LAME's tag, class D or C by its CRC, but Engine trims
+    // nothing for it; it does not play the Info frame either.
+    {
+        Mp3LeadIn l = lame(true);
+        l.tag = Mp3LeadIn::Tag::LameL3;
+        assert(classify(l) == Mp3Case::D);
+        l.lameCrcValid = false;
+        assert(classify(l) == Mp3Case::C);
+        assert(samplesBeforeAudio(l, Rb) == 1152);
+        assert(samplesBeforeAudio(l, En) == 0);
+        assert(std::abs(engineToRekordboxOffsetMs(l) - 1152 * 1000.0 / 44100) < 1e-9);
+    }
+
     std::cout << "mp3_lead_in_test: all passed\n";
     return 0;
 }

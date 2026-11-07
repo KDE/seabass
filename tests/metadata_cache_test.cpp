@@ -417,13 +417,15 @@ int main(int argc, char **argv)
         assert(!read("1 L 1 576 1404 1 0 96000 1152 1 1") && "not an MPEG rate");
         assert(!read("1 L 1 576 1404 1 0 44100 1024 1 1") && "not a Layer III frame");
         assert(!read("1 L 1 576 1404 1 0 44100 0 1 1") && "no frame length");
-        // Where the tag frame sits and whether it counts round-trip too.
+        // Where the tag frame sits, whether it counts, and an "L3.99"
+        // tag round-trip too.
         fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
         FileMetadata moved = sample();
         moved.mp3LeadInRead = true;
         moved.mp3LeadIn = lameLeadIn();
         moved.mp3LeadIn->tagFrameFirst = false;
         moved.mp3LeadIn->tagFrameHasCounts = false;
+        moved.mp3LeadIn->tag = Mp3LeadIn::Tag::LameL3;
         {
             MetadataCache cache(seabass::pathToUtf8(root));
             cache.store(audio, moved);

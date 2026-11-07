@@ -133,7 +133,7 @@ long long intFieldOrZero(const std::map<std::string, std::string> &fields, const
 // the probe looked and found none it could read, otherwise the version
 // of the parser that read it (audio::Mp3LeadInParserVersion) and the
 // eleven fields of domain::Mp3LeadIn separated by spaces:
-//   "<version> <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>
+//   "<version> <info> <tag N|L|S|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>
 //    <tagFrameFirst> <tagFrameHasCounts>"
 // A value this build cannot parse, or one another parser version wrote,
 // reads as absent, so the file is probed again rather than taken to have
@@ -146,6 +146,7 @@ std::string leadInText(const std::optional<domain::Mp3LeadIn> &leadIn)
         return LeadInNone;
     }
     const char tag = leadIn->tag == domain::Mp3LeadIn::Tag::Lame   ? 'L'
+                     : leadIn->tag == domain::Mp3LeadIn::Tag::LameL3 ? 'S'
                      : leadIn->tag == domain::Mp3LeadIn::Tag::Lavc ? 'C'
                      : leadIn->tag == domain::Mp3LeadIn::Tag::Other ? 'O'
                                                                     : 'N';
@@ -198,6 +199,9 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
         break;
     case 'L':
         leadIn.tag = domain::Mp3LeadIn::Tag::Lame;
+        break;
+    case 'S':
+        leadIn.tag = domain::Mp3LeadIn::Tag::LameL3;
         break;
     case 'C':
         leadIn.tag = domain::Mp3LeadIn::Tag::Lavc;

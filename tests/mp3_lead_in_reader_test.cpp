@@ -233,6 +233,17 @@ int main(int argc, char **argv)
         assert(read(file).tagFrameFirst && read(file).tagFrameHasCounts);
     }
 
+    // "L3.99r": the tag is LAME's (class D, CRC valid), but FFmpeg
+    // trims only for an encoder string starting "LAME", "Lavf" or
+    // "Lavc" (measured: it skips the Info frame and trims nothing), so
+    // the two decoders are one frame apart, 26.12 ms.
+    {
+        const Mp3LeadIn l = read("lame-l399-44100.mp3");
+        assert(l.infoFrame && l.tag == Mp3LeadIn::Tag::LameL3 && l.lameCrcValid && l.encoderDelay == 576);
+        assert(classify(l) == Mp3Case::D);
+        assert(near(engineToRekordboxOffsetMs(l), 1152 * 1000.0 / 44100));
+    }
+
     // Not an MP3: nothing.
     {
         assert(!readMp3LeadIn(g_dir + "/silence.wav").has_value());

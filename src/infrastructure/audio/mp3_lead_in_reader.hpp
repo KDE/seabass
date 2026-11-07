@@ -39,7 +39,8 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in);
 // some file.
 //   2  the CRC-protected tag offset and VBRI
 //   3  where the tag frame sits, and whether it counts frames or bytes
-constexpr int Mp3LeadInParserVersion = 3;
+//   4  "L3.99" told apart from "LAME"
+constexpr int Mp3LeadInParserVersion = 4;
 
 constexpr std::size_t LeadInWindowBytes = 16 * 1024;
 constexpr std::size_t MaxId3TagsFollowed = 8;
