@@ -83,6 +83,7 @@ CleanupFormatContext makeContext(const QString &format, const QString &path, Sav
         // effectivePath may be a scratch copy, which holds the database,
         // not the audio.
         cueWriter->setAudioRoot(engineLibraryPath);
+        useSaveLeadIns(saveCtx, *cueWriter, engineLibraryPath);
         ctx.cueWriter = std::move(cueWriter);
         ctx.cleanupWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCleanupWriter>(effectivePath);
         std::string engineDbFile = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");

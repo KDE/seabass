@@ -93,6 +93,7 @@ struct JunkCueWriterContext
             engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
             // The scratch copy holds the database, not the audio.
             engine->setAudioRoot(engineSession->realRoot());
+            useSaveLeadIns(ctx, *engine, engineSession->realRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
             // The save's shared writer, not one of this change's own: a

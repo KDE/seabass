@@ -75,6 +75,7 @@ struct LocalCueWriterContext
             auto engineWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
             // The scratch copy holds the database, not the audio.
             engineWriter->setAudioRoot(engineSession->realRoot());
+            useSaveLeadIns(ctx, *engineWriter, engineSession->realRoot());
             writer = std::move(engineWriter);
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");

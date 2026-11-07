@@ -3110,6 +3110,18 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME add_cue_mirror_failure_test COMMAND add_cue_mirror_failure_test)
 
+    # #50: a GUI save's Engine cue writer takes a file's lead-in from the
+    # stick's checked metadata cache, the reader's answer, so a cue the
+    # save did not touch is written back where it was.
+    add_executable(engine_save_lead_in_test tests/engine_save_lead_in_test.cpp)
+    target_include_directories(engine_save_lead_in_test PRIVATE src tests)
+    target_link_libraries(engine_save_lead_in_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop)
+    if(NOT WIN32)
+        target_link_libraries(engine_save_lead_in_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME engine_save_lead_in_test COMMAND engine_save_lead_in_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
+
     add_executable(copy_cues_mirror_test tests/copy_cues_mirror_test.cpp)
     target_include_directories(copy_cues_mirror_test PRIVATE src)
     target_compile_definitions(copy_cues_mirror_test PRIVATE

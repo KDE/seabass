@@ -6,6 +6,10 @@
 
 #include <QStringList>
 
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
+
 #include <algorithm>
 #include <filesystem>
 #include <memory>
@@ -13,8 +17,11 @@
 #include <stdexcept>
 
 #include "application/path_key.hpp"
+#include "application/ports/track_metadata_probe.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
@@ -250,8 +257,58 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
     // derived sibling, and on Windows those spell separators differently.
     const std::string key = "engine-cue-writer:" + application::normalizedPathKey(engineLibraryPath);
     return ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(key, [&]() {
-        return std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
+        auto writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
+        useSaveLeadIns(ctx, *writer, engineLibraryPath);
+        return writer;
     });
+}
+
+namespace
+{
+
+// One stick's lead-ins for a save: the probe the Cues stage uses and the
+// cache in front of it. Held through a shared_ptr by every writer's
+// source, so a writer that outlives the save's resources still answers.
+struct SaveLeadIns
+{
+    explicit SaveLeadIns(const std::string &stickRoot) : rates(std::make_shared<Rates>(stickRoot)) {}
+
+    struct Rates
+    {
+        explicit Rates(const std::string &stickRoot) : cache(stickRoot, probe) {}
+#ifdef SEABASS_HAVE_TAGLIB
+        infrastructure::audio::TagLibMetadataProbe probe;
+#else
+        application::NullTrackMetadataProbe probe;
+#endif
+        infrastructure::local::CachedSampleRates cache;
+    };
+    std::shared_ptr<Rates> rates;
+};
+
+}  // namespace
+
+void useSaveLeadIns(SaveContext &ctx, infrastructure::engine::LibdjinteropEngineCueWriter &writer,
+                    const std::string &realEngineLibraryPath)
+{
+    const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(realEngineLibraryPath);
+    const std::string key = "engine-lead-ins:" + application::normalizedPathKey(stickRoot);
+    bool created = false;
+    // For the whole save: a rolled-back change does not make what the
+    // cache learned about a file untrue.
+    auto &leadIns = ctx.sharedForWholeSave<SaveLeadIns>(key, [&]() {
+        created = true;
+        return std::make_unique<SaveLeadIns>(stickRoot);
+    });
+    if (created) {
+        ctx.onFinish([&ctx, key](bool) {
+            if (auto *live = ctx.sharedForWholeSaveIfPresent<SaveLeadIns>(key)) {
+                // A read-only or full stick costs a probe next time.
+                live->rates->cache.save();
+            }
+        });
+    }
+    writer.setLeadInSource([rates = leadIns.rates](const std::string &file) { return rates->cache.leadInOf(file); });
 }
 
 std::optional<std::int64_t> engineId(const std::string &sourceId)

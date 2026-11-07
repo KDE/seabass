@@ -32,6 +32,12 @@ std::optional<domain::Mp3LeadIn> readMp3LeadIn(const std::string &absoluteFilePa
 // tests that count what was read.
 std::optional<domain::Mp3LeadIn> readMp3LeadIn(std::istream &in);
 
+// The version of what readMp3LeadIn returns, stored with every lead-in
+// the metadata cache keeps: an entry an earlier parser wrote is read
+// again. Raise it whenever the parser starts answering differently for
+// some file.
+constexpr int Mp3LeadInParserVersion = 2;
+
 constexpr std::size_t LeadInWindowBytes = 16 * 1024;
 constexpr std::size_t MaxLeadInBytesRead = 10 + LeadInWindowBytes;
 

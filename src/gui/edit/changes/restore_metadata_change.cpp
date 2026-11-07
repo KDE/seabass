@@ -110,6 +110,7 @@ struct RestoreWriterContext
             // dbRoot may be a scratch copy, which holds the database, not
             // the audio.
             engineWriter->setAudioRoot(realRoot);
+            useSaveLeadIns(ctx, *engineWriter, realRoot);
             writer = std::move(engineWriter);
         } else {
             // OneLibrary writes go to the REAL root, never to a scratch

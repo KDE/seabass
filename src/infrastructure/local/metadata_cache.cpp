@@ -13,6 +13,7 @@
 #include <locale>
 #include <sstream>
 
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/flat_json.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -127,11 +128,13 @@ long long intFieldOrZero(const std::map<std::string, std::string> &fields, const
 
 // The "mp3leadin" field (#50): absent when the entry was written before
 // the probe read lead-ins (or for a file that is not an MP3), "-" when
-// the probe looked and found none it could read, otherwise a version
-// token and the nine fields of domain::Mp3LeadIn separated by spaces:
-//   "1 <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>"
-// A value this build cannot parse reads as absent, so the file is
-// probed again rather than taken to have no lead-in.
+// the probe looked and found none it could read, otherwise the version
+// of the parser that read it (audio::Mp3LeadInParserVersion) and the
+// nine fields of domain::Mp3LeadIn separated by spaces:
+//   "<version> <info> <tag N|L|C|O> <crcValid> <delay> <padding> <modeMatches> <vbri> <rate> <samplesPerFrame>"
+// A value this build cannot parse, or one another parser version wrote,
+// reads as absent, so the file is probed again rather than taken to have
+// no lead-in, or the lead-in an older parser got wrong.
 constexpr const char *LeadInNone = "-";
 
 std::string leadInText(const std::optional<domain::Mp3LeadIn> &leadIn)
@@ -145,7 +148,7 @@ std::string leadInText(const std::optional<domain::Mp3LeadIn> &leadIn)
                                                                     : 'N';
     std::ostringstream out;
     out.imbue(std::locale::classic());
-    out << "1 " << int(leadIn->infoFrame) << ' ' << tag << ' ' << int(leadIn->lameCrcValid) << ' '
+    out << audio::Mp3LeadInParserVersion << ' ' << int(leadIn->infoFrame) << ' ' << tag << ' ' << int(leadIn->lameCrcValid) << ' '
         << leadIn->encoderDelay << ' ' << leadIn->encoderPadding << ' ' << int(leadIn->infoFrameModeMatchesAudio)
         << ' ' << int(leadIn->vbri) << ' ' << leadIn->sampleRate << ' ' << leadIn->samplesPerFrame;
     return out.str();
@@ -170,7 +173,7 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
     domain::Mp3LeadIn leadIn;
     if (!(in >> version >> info >> tag >> crc >> leadIn.encoderDelay >> leadIn.encoderPadding >> modes >> vbri
           >> leadIn.sampleRate >> leadIn.samplesPerFrame)
-        || version != 1) {
+        || version != audio::Mp3LeadInParserVersion) {
         return false;
     }
     switch (tag) {
