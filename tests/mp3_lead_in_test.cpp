@@ -180,6 +180,35 @@ int main()
         assert(engineToRekordboxOffsetMs(l) == 0.0);
     }
 
+    // A tag frame FFmpeg does not find first after the ID3v2 tags: Engine
+    // decodes it as one frame of silence and trims nothing, like
+    // rekordbox, whatever the tag. A VBRI frame the same.
+    {
+        Mp3LeadIn l = lame(true);
+        l.tagFrameFirst = false;
+        assert(classify(l) == Mp3Case::D);
+        assert(samplesBeforeAudio(l, Rb) == 1152);
+        assert(samplesBeforeAudio(l, En) == 1152);
+        assert(engineToRekordboxOffsetMs(l) == 0.0);
+        Mp3LeadIn v = mpeg1();
+        v.vbri = true;
+        v.tagFrameFirst = false;
+        assert(samplesBeforeAudio(v, En) == 1152 && engineToRekordboxOffsetMs(v) == 0.0);
+    }
+    // One that counts neither frames nor bytes: Engine plays it and still
+    // trims, 47 samples before the audio; rekordbox is unchanged. A VBRI
+    // frame without counts plays on both.
+    {
+        Mp3LeadIn l = lame(true);
+        l.tagFrameHasCounts = false;
+        assert(samplesBeforeAudio(l, Rb) == 1152);
+        assert(samplesBeforeAudio(l, En) == 1152 - 576 - 529);
+        Mp3LeadIn v = mpeg1();
+        v.vbri = true;
+        v.tagFrameHasCounts = false;
+        assert(samplesBeforeAudio(v, En) == 1152 && engineToRekordboxOffsetMs(v) == 0.0);
+    }
+
     std::cout << "mp3_lead_in_test: all passed\n";
     return 0;
 }

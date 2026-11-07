@@ -30,6 +30,11 @@ each decoder's output and the lag between decoders measured:
 | click-VBRI-44100.mp3          | D     | the A file behind a crafted VBRI frame in the audio's channel mode |
 | click-VBRI-modediffers-44100.mp3 | D  | the same with the VBRI frame stereo over joint stereo audio |
 | click-D-lame-crc-44100.mp3    | D     | the 44.1 kHz file with CRC-protected frames; the tag still sits at 4 + side info |
+| click-D-lame-junk-44100.mp3   | D     | the D file behind 100 zero bytes: FFmpeg plays the Info frame and trims nothing |
+| click-D-lame-id3junk-44100.mp3 | D    | an empty ID3v2.3 tag, 100 zero bytes, then the D file: the same          |
+| click-D-lame-id3id3-44100.mp3 | D     | two empty ID3v2.3 tags, then the D file: the Info frame still first      |
+| click-D-lame-nocounts-44100.mp3 | D   | the D file with the Info frame's frame and byte counts 0: FFmpeg plays the frame and still trims |
+| click-VBRI-nocounts-44100.mp3 | D     | the VBRI file with its byte and frame counts 0: FFmpeg plays the frame  |
 
 All CBR, 64 kbit/s except 80 at 48 kHz (a 64 kbit/s frame there is too
 short for libmp3lame to write the tag frame).
@@ -39,7 +44,7 @@ Regenerate with
     tools/mp3-offset-probe/make-click-mp3s.py
 
 (the VBRI frames come from vbri_frame.py: no encoder at hand writes
-VBRI), which needs libmp3lame (through ctypes) and the ffmpeg command line. The
+VBRI; the moved and emptied tag frames from tag_frame_variants.py), which needs libmp3lame (through ctypes) and the ffmpeg command line. The
 LAME files come out byte for byte the same each run; the Lavc file
 carries the ffmpeg version in its tags.
 

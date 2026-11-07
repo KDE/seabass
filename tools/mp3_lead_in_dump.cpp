@@ -70,9 +70,10 @@ int main(int argc, char **argv)
             continue;
         }
         std::printf("%s\n", path.c_str());
-        std::printf("  case %c  infoFrame=%d vbri=%d tag=%s crcValid=%d modesMatch=%d\n",
+        std::printf("  case %c  infoFrame=%d vbri=%d tag=%s crcValid=%d modesMatch=%d first=%d counts=%d\n",
                     caseLetter(seabass::domain::classify(*leadIn)), leadIn->infoFrame, leadIn->vbri,
-                    tagName(leadIn->tag), leadIn->lameCrcValid, leadIn->infoFrameModeMatchesAudio);
+                    tagName(leadIn->tag), leadIn->lameCrcValid, leadIn->infoFrameModeMatchesAudio,
+                    leadIn->tagFrameFirst, leadIn->tagFrameHasCounts);
         std::printf("  rate=%d samplesPerFrame=%d delay=%d padding=%d\n", leadIn->sampleRate,
                     leadIn->samplesPerFrame, leadIn->encoderDelay, leadIn->encoderPadding);
         std::printf("  samplesBeforeAudio rekordbox=%d engine=%d  engineToRekordboxOffsetMs=%.3f\n",

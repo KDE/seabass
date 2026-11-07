@@ -80,7 +80,8 @@ bool sameLeadIn(const Mp3LeadIn &a, const Mp3LeadIn &b)
     return a.infoFrame == b.infoFrame && a.tag == b.tag && a.lameCrcValid == b.lameCrcValid
         && a.encoderDelay == b.encoderDelay && a.encoderPadding == b.encoderPadding
         && a.infoFrameModeMatchesAudio == b.infoFrameModeMatchesAudio && a.vbri == b.vbri
-        && a.sampleRate == b.sampleRate && a.samplesPerFrame == b.samplesPerFrame;
+        && a.sampleRate == b.sampleRate && a.samplesPerFrame == b.samplesPerFrame
+        && a.tagFrameFirst == b.tagFrameFirst && a.tagFrameHasCounts == b.tagFrameHasCounts;
 }
 
 // Answers what it is told and counts the files it was handed.
@@ -405,17 +406,32 @@ int main(int argc, char **argv)
             assert(got.has_value());
             return got->mp3LeadInRead;
         };
-        assert(read("1 L 1 576 1404 1 0 44100 1152"));
-        assert(read("1 L 1 0 4095 1 0 8000 576"));
-        assert(!read("1 L 1 4096 1404 1 0 44100 1152") && "delay beyond 12 bits");
-        assert(!read("1 L 1 -1 1404 1 0 44100 1152") && "negative delay");
-        assert(!read("1 L 1 576 4096 1 0 44100 1152") && "padding beyond 12 bits");
-        assert(!read("1 L 1 576 -5 1 0 44100 1152") && "negative padding");
-        assert(!read("1 L 1 576 1404 1 0 44000 1152") && "not an MPEG rate");
-        assert(!read("1 L 1 576 1404 1 0 0 1152") && "no rate");
-        assert(!read("1 L 1 576 1404 1 0 96000 1152") && "not an MPEG rate");
-        assert(!read("1 L 1 576 1404 1 0 44100 1024") && "not a Layer III frame");
-        assert(!read("1 L 1 576 1404 1 0 44100 0") && "no frame length");
+        assert(read("1 L 1 576 1404 1 0 44100 1152 1 1"));
+        assert(read("1 L 1 0 4095 1 0 8000 576 1 1"));
+        assert(!read("1 L 1 4096 1404 1 0 44100 1152 1 1") && "delay beyond 12 bits");
+        assert(!read("1 L 1 -1 1404 1 0 44100 1152 1 1") && "negative delay");
+        assert(!read("1 L 1 576 4096 1 0 44100 1152 1 1") && "padding beyond 12 bits");
+        assert(!read("1 L 1 576 -5 1 0 44100 1152 1 1") && "negative padding");
+        assert(!read("1 L 1 576 1404 1 0 44000 1152 1 1") && "not an MPEG rate");
+        assert(!read("1 L 1 576 1404 1 0 0 1152 1 1") && "no rate");
+        assert(!read("1 L 1 576 1404 1 0 96000 1152 1 1") && "not an MPEG rate");
+        assert(!read("1 L 1 576 1404 1 0 44100 1024 1 1") && "not a Layer III frame");
+        assert(!read("1 L 1 576 1404 1 0 44100 0 1 1") && "no frame length");
+        // Where the tag frame sits and whether it counts round-trip too.
+        fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
+        FileMetadata moved = sample();
+        moved.mp3LeadInRead = true;
+        moved.mp3LeadIn = lameLeadIn();
+        moved.mp3LeadIn->tagFrameFirst = false;
+        moved.mp3LeadIn->tagFrameHasCounts = false;
+        {
+            MetadataCache cache(seabass::pathToUtf8(root));
+            cache.store(audio, moved);
+            assert(cache.save());
+        }
+        MetadataCache reloaded(seabass::pathToUtf8(root));
+        const auto back = reloaded.lookup(audio);
+        assert(back && back->mp3LeadIn && sameLeadIn(*back->mp3LeadIn, *moved.mp3LeadIn));
         std::cout << "case 11 (a lead-in with impossible numbers is read again) OK\n";
     }
 

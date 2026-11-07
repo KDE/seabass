@@ -55,6 +55,13 @@ python3 -I "$here/vbri_frame.py" "$out/lame-notag-44100.mp3" "$out/vbri-modediff
 # the encoder string, at frame offset 190 here (header 4 + side info 32 +
 # "Info" and flags 8 + frames, bytes, TOC, quality 112 + 34). Its second
 # byte is replaced by its complement with dd.
+variant() { python3 -I "$here/tag_frame_variants.py" "$@"; }
+variant "$out/lame-cbr-44100.mp3" "$out/lame-junk-44100.mp3" junk
+variant "$out/lame-cbr-44100.mp3" "$out/lame-id3junk-44100.mp3" id3junk
+variant "$out/lame-cbr-44100.mp3" "$out/lame-id3id3-44100.mp3" id3id3
+variant "$out/lame-cbr-44100.mp3" "$out/lame-nocounts-44100.mp3" nocounts
+variant "$out/vbri-44100.mp3" "$out/vbri-nocounts-44100.mp3" nocounts
+
 cp "$out/lame-cbr-44100.mp3" "$out/lame-badcrc-44100.mp3"
 byte=$(od -An -tu1 -j191 -N1 "$out/lame-badcrc-44100.mp3" | tr -d ' ')
 printf "\\x$(printf '%02x' $((255 - byte)))" \

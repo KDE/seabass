@@ -141,6 +141,8 @@ int main(int argc, char **argv)
         "click-C-badcrc-44100.mp3",     "click-D-lame-44100.mp3",       "click-D-lame-48000.mp3",
         "click-D-lame-mono-44100.mp3",  "click-D-lame-mpeg2-22050.mp3", "click-D-lame-crc-44100.mp3",
         "click-VBRI-44100.mp3",         "click-VBRI-modediffers-44100.mp3",
+        "click-D-lame-junk-44100.mp3",  "click-D-lame-id3junk-44100.mp3", "click-D-lame-id3id3-44100.mp3",
+        "click-D-lame-nocounts-44100.mp3", "click-VBRI-nocounts-44100.mp3",
     };
 
     int failures = 0;
