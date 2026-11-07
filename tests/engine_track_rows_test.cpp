@@ -771,6 +771,33 @@ int main(int argc, char **argv)
             threw = true;
         }
         assert(threw && "the cover out-parameter is required");
+
+        // An MP3 with a LAME tag (#50): its cues are handed in on
+        // rekordbox's timeline and written 51.18 ms earlier, and a memory
+        // cue inside that lead-in cannot be Engine's main cue, so the main
+        // cue is the next one, not nothing.
+        {
+            const fs::path lame = root / "Music" / "Lame.mp3";
+            fs::copy_file(fixture.parent_path() / "mp3-lead-in" / "lame-cbr-44100.mp3", lame);
+            NewEngineTrack tLame = makeTrack(lame, "Lame", 44100.0);
+            domain::CuePoint early{domain::CuePoint::Kind::Memory, 0, 30.0, "", ""};
+            domain::CuePoint later{domain::CuePoint::Kind::Memory, 0, 3000.0, "", ""};
+            tLame.source.cues = {early, later};
+            EngineTrackCover noCover;
+            const std::int64_t idLame = createEngineTrack(libUtf8, tLame, &noCover, &err);
+            if (idLame < 0) {
+                std::cerr << "createEngineTrack (lame): " << err << "\n";
+            }
+            assert(idLame == 1577 && err.empty() && "after the two rows above and the refusals");
+            auto engine = djinterop::engine::load_database(libUtf8);
+            auto t = engine.track_by_id(idLame);
+            assert(t);
+            const double shiftMs = 2257 * 1000.0 / 44100;
+            const double expected = (3000.0 - shiftMs) / 1000.0 * 44100.0;
+            const auto main = t->main_cue();
+            assert(main && std::fabs(*main - expected) < 1e-3
+                   && "the memory cue outside the lead-in is the main cue, moved onto Engine's timeline");
+        }
         std::cout << "case 12 (an existing path, no library, a missing file, no rate: refused, nothing added) OK\n";
 
         // 13. markForDeviceAnalysis refuses an unknown or repeated id, and
