@@ -2752,6 +2752,14 @@ if(TARGET seabass_edit)
     target_link_libraries(stick_list_order_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME stick_list_order_test COMMAND stick_list_order_test)
 
+    add_executable(qt_workarounds_test
+        src/gui/qt_workarounds.cpp
+        tests/qt_workarounds_test.cpp
+    )
+    target_include_directories(qt_workarounds_test PRIVATE src)
+    target_link_libraries(qt_workarounds_test PRIVATE Qt6::Core)
+    add_test(NAME qt_workarounds_test COMMAND qt_workarounds_test)
+
     # The registry every edit page and direct writer goes through: sessions
     # asked for twice, closed last, saving, and pulled; the direct-write
     # hold; another instance's lock. MediaController is linked for its

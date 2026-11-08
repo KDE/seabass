@@ -27,6 +27,7 @@
 #include "infrastructure/work_counters.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "gui/qt_workarounds.hpp"
 #include "gui/app_color_scheme.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/cover_image_provider.hpp"
@@ -3062,6 +3063,9 @@ int main(int argc, char **argv)
     if (argc >= 3 && std::strcmp(argv[1], "--storm-quit") == 0) {
         return runStormQuitLeg(1, argv, argv[2]);
     }
+    // The same collector mode the app runs with (gui/qt_workarounds.hpp):
+    // the suite tests the product as shipped, not a Qt the product avoids.
+    seabass::gui::keepJsCollectorInOneStep();
     QTEST_SET_MAIN_SOURCE_PATH
     Setup setup;
     return quick_test_main_with_setup(argc, argv, "SeabassGuiQmlTests", nullptr, &setup);
