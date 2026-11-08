@@ -44,8 +44,9 @@ EngineSchemaGeneration schemaFromInt(int value)
 {
     switch (value) {
     case 0: return EngineSchemaGeneration::V1;
+    case 1: return EngineSchemaGeneration::V2;
     case 2: return EngineSchemaGeneration::V3;
-    default: return EngineSchemaGeneration::V2;
+    default: return EngineSchemaGeneration::V3;  // the page's default, see EngineLibraryCreatorPage.qml
     }
 }
 
