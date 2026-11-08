@@ -113,11 +113,15 @@ int main(int argc, char **argv)
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     seabass::application::CancellationToken token;
     const QString root = pathToQString(library);
-    SaveContext ctx(token, noProgress, {}, {}, root);
-    std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
-        QStringLiteral("engine"), root, QString::fromStdString(sourceId), 1234.0, QStringLiteral("hot"), 2,
-        QStringLiteral("#00FF00"), QString(), false, 0.0, QStringLiteral("Lead In"))};
-    const SaveLoopResult result = runSaveLoop(changes, ctx);
+    // The save's context ends with the save, as in the app: it keeps the
+    // stick's log open, and Windows will not delete the stick under it.
+    const SaveLoopResult result = [&] {
+        SaveContext ctx(token, noProgress, {}, {}, root);
+        std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
+            QStringLiteral("engine"), root, QString::fromStdString(sourceId), 1234.0, QStringLiteral("hot"), 2,
+            QStringLiteral("#00FF00"), QString(), false, 0.0, QStringLiteral("Lead In"))};
+        return runSaveLoop(changes, ctx);
+    }();
     if (!result.error.isEmpty()) {
         std::cerr << "save failed: " << result.error.toStdString() << "\n";
     }
