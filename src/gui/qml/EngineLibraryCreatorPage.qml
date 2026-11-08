@@ -31,10 +31,14 @@ Page {
     readonly property alias controller: controller
 
     // 0=V1, 1=V2, 2=V3 -- see infrastructure::engine::EngineSchemaGeneration.
-    // Real hardware/firmware compatibility per generation is genuinely
-    // unverified by this project; exposed as a real choice so a mismatch
-    // can be fixed by trying another generation, not a new build.
-    property int schemaGeneration: 1
+    // 3.x is the default: it is what current Engine OS firmware and Engine
+    // DJ 3.0 and later write (schema 3.0.2 on every Denon-written stick
+    // this project has seen, and the one a Prime 4 took from Create Engine
+    // Library on 2026-11-08). 2.x is for a unit not updated since 2023;
+    // 1.x for the MCX8000, which never left Engine Prime 1.6.1, and units
+    // never updated past it. Still a real choice, so a mismatch can be
+    // fixed by trying another generation, not a new build.
+    property int schemaGeneration: 2
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -186,19 +190,19 @@ Page {
                     spacing: 4
                     ButtonGroup { id: schemaGroup }
                     RadioButton {
-                        text: "Engine OS 1.x (older standalone hardware)"
+                        text: "Engine Prime 1.x (MCX8000, units never updated)"
                         ButtonGroup.group: schemaGroup
                         checked: root.schemaGeneration === 0
                         onToggled: if (checked) root.schemaGeneration = 0
                     }
                     RadioButton {
-                        text: "Engine OS 2.x"
+                        text: "Engine OS 2.x (hardware not updated since 2023)"
                         ButtonGroup.group: schemaGroup
                         checked: root.schemaGeneration === 1
                         onToggled: if (checked) root.schemaGeneration = 1
                     }
                     RadioButton {
-                        text: "Engine OS 3.x / newest Engine DJ desktop"
+                        text: "Engine OS 3.x and newer (all current hardware, Engine DJ 3.0 and later)"
                         ButtonGroup.group: schemaGroup
                         checked: root.schemaGeneration === 2
                         onToggled: if (checked) root.schemaGeneration = 2
@@ -208,8 +212,8 @@ Page {
                         wrapMode: Text.WordWrap
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
-                        text: "Not sure which your unit needs? 2.x is a reasonable first try; if the "
-                            + "Denon unit doesn't recognize the result, delete the \"Engine Library\" folder "
+                        text: "Not sure which your unit needs? Any Denon unit updated since 2023 takes 3.x. "
+                            + "If the unit doesn't recognize the result, delete the \"Engine Library\" folder "
                             + "and try a different generation."
                     }
                 }
