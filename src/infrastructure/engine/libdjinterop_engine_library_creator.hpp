@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -96,6 +97,11 @@ struct EngineLibraryCreationResult
 class EngineLibraryCreator
 {
 public:
+    // What an audio file says its sample rate is, in Hz, or nothing when
+    // it cannot say. Given the track's absolute file path. The shape of
+    // LibdjinteropEngineReader::SampleRateSource.
+    using SampleRateSource = std::function<std::optional<double>(const std::string &absoluteFilePath)>;
+
     // directory: where to create the new "Engine Library" folder,
     // typically the stick's own root (sibling to "PIONEER"/"Contents").
     // Refuses (returns a populated errorMessage, creates nothing) if a
@@ -123,6 +129,12 @@ public:
     // at libdjinterop's 0, a player offers on the very first insert to
     // import the rekordbox library over the one just created. Measured:
     // TESTRIG_2's export at 513, a library created from it at 0.
+    //
+    // sampleRateSource: the rate each cue is converted at, for a file
+    // whose rate the creator cannot read itself. Engine stores a cue as a
+    // sample offset at the file's own rate; an MP3's comes from its frame
+    // header, any other file's from here, and 44.1 kHz when neither can
+    // say.
     static EngineLibraryCreationResult create(const std::string &directory,
                                                const std::vector<domain::Track> &tracks,
                                                EngineSchemaGeneration schemaGeneration,
@@ -130,7 +142,8 @@ public:
                                                    application::NullProgressReporter::instance(),
                                                const application::CancellationToken &cancel =
                                                    application::CancellationToken::none(),
-                                               std::optional<std::uint64_t> rekordboxLibrarySequence = std::nullopt);
+                                               std::optional<std::uint64_t> rekordboxLibrarySequence = std::nullopt,
+                                               const SampleRateSource &sampleRateSource = {});
 };
 
 }  // namespace seabass::infrastructure::engine

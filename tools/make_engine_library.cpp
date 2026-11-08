@@ -37,6 +37,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "application/ports/track_metadata_probe.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
@@ -44,6 +45,10 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -328,9 +333,24 @@ int main(int argc, char **argv)
         PrintingReporter reporter;
         application::CancellationToken cancel;
         const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, pathToUtf8(pioneer));
+        // Cues are counted in each file's own samples: an MP3's rate the
+        // creator reads from its header, any other file's is probed here.
+        // Nothing is cached: the stick is only read.
+#ifdef SEABASS_HAVE_TAGLIB
+        infrastructure::audio::TagLibMetadataProbe probe;
+#else
+        application::NullTrackMetadataProbe probe;
+#endif
         const auto result = infrastructure::engine::EngineLibraryCreator::create(
             pathToUtf8(out), tracks, generation, reporter, cancel,
-            rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
+            rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt,
+            [&probe](const std::string &file) -> std::optional<double> {
+                const auto metadata = probe.read(file);
+                if (!metadata || metadata->sampleRate <= 0) {
+                    return std::nullopt;
+                }
+                return metadata->sampleRate;
+            });
         if (!result.errorMessage.empty()) {
             std::cout << "error: " << result.errorMessage << "\n";
             std::cout << "RESULT: FAIL\n";

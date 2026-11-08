@@ -14,6 +14,9 @@
 //   - a WAV is not moved;
 //   - with the setting off, today's behaviour: stored as T, read as T;
 //   - fillCues() moves a row by the difference, never twice;
+//   - Create Engine Library converts at the file's own sample rate: a
+//     48 kHz MP3's from its frame header, any other file's from the
+//     sample-rate source it is given, else 44.1 kHz;
 //   - a writer on a scratch copy of the database (FormatWriteSession's)
 //     reads the lead-in from the real library's audio, not the copy's.
 //   - so does a reader of a copy given the real library as its audio
@@ -67,7 +70,8 @@ struct Library
     EngineLibraryCreationResult created;
 };
 
-Library makeLibrary(const std::string &caseName, const std::string &fixture, std::vector<CuePoint> cues = {})
+Library makeLibrary(const std::string &caseName, const std::string &fixture, std::vector<CuePoint> cues = {},
+                    EngineLibraryCreator::SampleRateSource sampleRateSource = {})
 {
     Library lib;
     lib.root = seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test" / seabass::pathFromUtf8(caseName)
@@ -87,7 +91,10 @@ Library makeLibrary(const std::string &caseName, const std::string &fixture, std
     t.bpm = 120.0;
     t.durationSeconds = 300.0;
     t.cues = std::move(cues);
-    lib.created = EngineLibraryCreator::create(seabass::pathToUtf8(lib.root), {t}, EngineSchemaGeneration::V2);
+    lib.created = EngineLibraryCreator::create(seabass::pathToUtf8(lib.root), {t}, EngineSchemaGeneration::V2,
+                                               seabass::application::NullProgressReporter::instance(),
+                                               seabass::application::CancellationToken::none(), std::nullopt,
+                                               std::move(sampleRateSource));
     assert(lib.created.errorMessage.empty() && lib.created.tracksCreated == 1);
     return lib;
 }
@@ -165,12 +172,13 @@ void assertReadsBack(const Track &t, double shiftMs)
     assert(near(memory->positionMs, 8000.0 + shiftMs));
 }
 
-void assertStored(const Raw &r, double shiftMs)
+// `samplesPerMs`: the file's sample rate in kHz, what Engine counts in.
+void assertStored(const Raw &r, double shiftMs, double samplesPerMs = 44.1)
 {
-    assert(near(r.hotCue, (5000.0 - shiftMs) * 44.1, 1e-3));
-    assert(near(r.loopStart, (10000.0 - shiftMs) * 44.1, 1e-3));
-    assert(near(r.loopEnd, (14000.0 - shiftMs) * 44.1, 1e-3));
-    assert(near(r.mainCue, (8000.0 - shiftMs) * 44.1, 1e-3));
+    assert(near(r.hotCue, (5000.0 - shiftMs) * samplesPerMs, 1e-3));
+    assert(near(r.loopStart, (10000.0 - shiftMs) * samplesPerMs, 1e-3));
+    assert(near(r.loopEnd, (14000.0 - shiftMs) * samplesPerMs, 1e-3));
+    assert(near(r.mainCue, (8000.0 - shiftMs) * samplesPerMs, 1e-3));
 }
 
 }  // namespace
@@ -554,6 +562,60 @@ int main(int argc, char **argv)
         }
         MatchingPolicy::reset();
         std::cout << "case 14 (fillCues() ticks a row at a time) OK\n";
+    }
+
+    // Case 15: Create Engine Library on a 48 kHz MP3. Engine counts a
+    // cue in the file's own samples; converted at 44.1 kHz every cue
+    // landed 8 % early on a Prime 4. The rate comes from the MP3's frame
+    // header, with no sample-rate source given at all. Read back through
+    // a reader that knows the file's rate: without one the reader falls
+    // back to 44.1 kHz too and would agree with a wrong stored value.
+    {
+        const auto leadIn = seabass::infrastructure::audio::readMp3LeadIn(
+            seabass::pathToUtf8(g_fixtures / "lame-cbr-48000.mp3"));
+        assert(leadIn && leadIn->sampleRate == 48000);
+        const double shift48 = seabass::domain::engineToRekordboxOffsetMs(*leadIn);
+        assert(near(shift48, 2257 * 1000.0 / 48000, 0.01));
+
+        const Library lib = makeLibrary("creator-48k", "lame-cbr-48000.mp3", theCues());
+        const Raw r = raw(lib, readOne(lib).sourceId);
+        std::cout << "case 15: hot cue stored at " << r.hotCue << " samples, expected "
+                  << (5000.0 - shift48) * 48.0 << "\n";
+        assertStored(r, shift48, 48.0);
+
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(lib.root));
+        reader.setSampleRateSource([](const std::string &) { return std::optional<double>(48000.0); });
+        assertReadsBack(readOne(lib, &reader), 0.0);
+
+        // The rate matters with the correction off too: stored unshifted,
+        // still at 48 kHz.
+        MatchingPolicy::setCorrectMp3CueTiming(false);
+        const Library off = makeLibrary("creator-48k-off", "lame-cbr-48000.mp3", theCues());
+        assertStored(raw(off, readOne(off).sourceId), 0.0, 48.0);
+        MatchingPolicy::reset();
+        std::cout << "case 15 (Create Engine Library on a 48 kHz MP3: its own rate) OK\n";
+    }
+
+    // Case 16: a file that is not an MP3 takes its rate from the source
+    // Create Engine Library is handed: silence.wav is 8 kHz, so a hot cue
+    // at 50 ms is sample 400, not 2205. A source that cannot say leaves
+    // today's 44.1 kHz.
+    {
+        const CuePoint hot{CuePoint::Kind::Hot, 1, 50.0, "#ff0000", "early"};
+        std::vector<std::string> asked;
+        const Library lib = makeLibrary("creator-wav-8k", "silence.wav", {hot}, [&asked](const std::string &file) {
+            asked.push_back(file);
+            return std::optional<double>(8000.0);
+        });
+        const Raw r = raw(lib, readOne(lib).sourceId);
+        std::cout << "case 16: hot cue stored at " << r.hotCue << " samples, expected 400\n";
+        assert(near(r.hotCue, 400.0, 1e-6));
+        assert(asked.size() == 1 && asked.front() == lib.file);
+
+        const Library blind = makeLibrary("creator-wav-unknown", "silence.wav", {hot},
+                                          [](const std::string &) { return std::optional<double>(); });
+        assert(near(raw(blind, readOne(blind).sourceId).hotCue, 50.0 * 44.1, 1e-6));
+        std::cout << "case 16 (Create Engine Library: a WAV at the source's rate, else 44.1 kHz) OK\n";
     }
 
     MatchingPolicy::reset();

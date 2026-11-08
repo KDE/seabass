@@ -23,6 +23,12 @@
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
+
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 
 namespace seabass::gui
 {
@@ -79,9 +85,30 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
         // the new library so a player does not offer to import it all
         // over again on first insert (issue #42).
         const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, rekordboxPath.toStdString());
-        auto creation = EngineLibraryCreator::create(
-            engineLibraryPath, tracks, schemaFromInt(schemaGeneration), progress, cancel,
-            rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
+        // Engine counts cues in the file's own samples. The creator reads
+        // an MP3's rate from its header; any other file's comes from the
+        // stick's metadata cache, probed once and cached when it is not
+        // there, as the catalog cache's Cues stage does.
+#ifdef SEABASS_HAVE_TAGLIB
+        infrastructure::audio::TagLibMetadataProbe probe;
+#else
+        application::NullTrackMetadataProbe probe;
+#endif
+        infrastructure::local::CachedSampleRates rates(
+            infrastructure::paths::stickRootForCatalogPath(rekordboxPath.toStdString()), probe);
+        infrastructure::engine::EngineLibraryCreationResult creation;
+        try {
+            creation = EngineLibraryCreator::create(
+                engineLibraryPath, tracks, schemaFromInt(schemaGeneration), progress, cancel,
+                rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence)
+                                              : std::nullopt,
+                [&rates](const std::string &file) { return rates.rateOf(file); });
+        } catch (...) {
+            // What was probed before it ended is still true.
+            rates.save();
+            throw;
+        }
+        rates.save();
 
         result.tracksCreated = creation.tracksCreated;
         result.tracksSkipped = creation.tracksSkipped;
