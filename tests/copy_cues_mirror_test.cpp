@@ -36,6 +36,8 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "domain/matching_policy.hpp"
+#include "domain/mp3_lead_in.hpp"
 #include "domain/track.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_cues_change.hpp"
@@ -327,6 +329,105 @@ int main()
         }
         assert(found && "the copied cues must survive a save that also scratches m.db");
         std::cout << "case 3 (an Engine copy survives a save that has m.db on a scratch copy) OK\n";
+        fs::remove_all(scratch, cleared);
+    }
+
+
+    // ---- 4. an Engine copy onto an MP3 lands on Engine's timeline, scratch copy or not --
+    // The writer writes where the save's session puts m.db, which for a
+    // large save is a scratch copy; the audio stays on the stick. A
+    // writer that looks for the target's MP3 under the scratch copy finds
+    // nothing, reads no lead-in, and writes the cue unshifted: 51 ms late
+    // on the player for a LAME file (#50). The other Engine changes point
+    // the writer's audio root at the real library; so must this one.
+    {
+        seabass::domain::MatchingPolicy::reset();
+        assert(seabass::domain::MatchingPolicy::correctMp3CueTiming());
+        const fs::path scratch = seabass::testing::scratchRoot() / "seabass_copy_cues_engine_lead_in";
+        std::error_code cleared;
+        fs::remove_all(scratch, cleared);
+        fs::create_directories(scratch);
+        const fs::path engineRoot = scratch / "Engine Library";
+        fs::copy(seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine",
+                 engineRoot, fs::copy_options::recursive);
+
+        DuplicatesCopyOp op;
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engineRoot));
+            const std::vector<Track> tracks = reader.readAll();
+            for (const Track &track : tracks) {
+                if (!hotCues(track.cues).empty()) {
+                    op.source = track;
+                    break;
+                }
+            }
+            for (const Track &track : tracks) {
+                if (track.cues.empty() && track.sourceId != op.source.sourceId
+                    && seabass::domain::hasMp3Extension(track.filePath)) {
+                    op.targets = {track};
+                    break;
+                }
+            }
+        }
+        assert(!op.source.sourceId.empty() && !op.targets.empty());
+        // The target's file, a LAME MP3 with a 2257-sample lead-in, at the
+        // path its row names on the stick.
+        const fs::path targetFile = seabass::pathFromUtf8(op.targets.front().filePath);
+        assert(targetFile.is_absolute() && "the reader names the file on the stick");
+        fs::create_directories(targetFile.parent_path());
+        fs::copy_file(seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "mp3-lead-in"
+                          / "lame-cbr-44100.mp3",
+                      targetFile, fs::copy_options::overwrite_existing);
+        const double shiftMs = 2257 * 1000.0 / 44100;
+
+        auto &noProgress = seabass::application::NullProgressReporter::instance();
+        CancellationToken token;
+        const QString root = seabass::gui::pathToQString(engineRoot);
+        {
+            SaveContext ctx(token, noProgress, {}, {}, root);
+            auto &other = sharedFormatWriteSession(ctx, "engine", seabass::pathToUtf8(engineRoot), 5000, "test-other-feature");
+            assert(other.usesScratch());  // otherwise this case proves nothing
+            CopyCuesChange change(QStringLiteral("engine"), root, QStringLiteral("group"), op);
+            assert(change.apply(ctx).ok);
+            assert(!ctx.runFinishHooks(true).error);
+        }
+
+        // Raw, as m.db holds it: the source's positions less the lead-in.
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineReader raw(seabass::pathToUtf8(engineRoot));
+            raw.setCorrectMp3CueTiming(false);
+            bool checked = false;
+            for (const Track &track : raw.readAll()) {
+                if (track.sourceId != op.targets.front().sourceId) {
+                    continue;
+                }
+                const auto written = hotCues(track.cues);
+                const auto wanted = hotCues(op.source.cues);
+                assert(written.size() == wanted.size());
+                for (const auto &[slot, position] : wanted) {
+                    const auto found = written.find(slot);
+                    assert(found != written.end());
+                    std::cout << "pad " << slot << ": source " << position << " ms, written " << found->second
+                              << " ms, shift " << (position - found->second) << " ms\n";
+                    assert(std::abs((position - found->second) - shiftMs) < 1.0
+                           && "the copied cue is written on Engine's timeline, the lead-in subtracted");
+                }
+                checked = true;
+            }
+            assert(checked);
+        }
+        // And read back the way Seabass reads it, the copy equals the source.
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineReader after(seabass::pathToUtf8(engineRoot));
+            bool found = false;
+            for (const Track &track : after.readAll()) {
+                if (track.sourceId == op.targets.front().sourceId) {
+                    found = sameHotCues(track.cues, op.source.cues);
+                }
+            }
+            assert(found && "read back on rekordbox's timeline, the copy is the source");
+        }
+        std::cout << "case 4 (an Engine copy onto an MP3 is written on Engine's timeline through a scratch copy) OK\n";
         fs::remove_all(scratch, cleared);
     }
 

@@ -84,6 +84,10 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
             &sharedFormatWriteSession(saveCtx, "engine", path.toStdString(), 0, "duplicate-cue-consolidation");
         auto writer =
             std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(ctx->engineSession->writeRoot());
+        // The scratch copy holds the database, not the audio: the MP3
+        // lead-in that moves a cue onto Engine's timeline is read from the
+        // real library (#50).
+        writer->setAudioRoot(ctx->engineSession->realRoot());
         useSaveLeadIns(saveCtx, *writer, ctx->engineSession->realRoot());
         ctx->writer = std::move(writer);
     }
