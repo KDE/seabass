@@ -86,9 +86,17 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
 
 std::string runTool(const std::string &tool, const fs::path &stick)
 {
-    const std::string command = "'" + tool + "' '" + pathToUtf8(stick) + "' 2>/dev/null";
     std::string output;
+#if defined(_WIN32)
+    // cmd /c strips the first and last quote of a line that starts with
+    // one, so the whole command gets one more pair for it to take
+    // (see backup_archive_crossvalidation_test).
+    const std::string command = "\"\"" + tool + "\" \"" + pathToUtf8(stick) + "\" 2>NUL\"";
+    FILE *pipe = _popen(command.c_str(), "r");
+#else
+    const std::string command = "'" + tool + "' '" + pathToUtf8(stick) + "' 2>/dev/null";
     FILE *pipe = popen(command.c_str(), "r");
+#endif
     if (!pipe) {
         return output;
     }
@@ -96,7 +104,11 @@ std::string runTool(const std::string &tool, const fs::path &stick)
     while (std::fgets(buffer, sizeof buffer, pipe)) {
         output += buffer;
     }
+#if defined(_WIN32)
+    const int status = _pclose(pipe);
+#else
     const int status = pclose(pipe);
+#endif
     check(status == 0, "click_positions exits 0");
     return output;
 }
