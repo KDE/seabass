@@ -48,10 +48,12 @@ appimage="$(cd "$(dirname "$appimage")" && pwd)/$(basename "$appimage")"
 image="${SEABASS_VERIFY_IMAGE:-seabass-appimage-host:26.04}"
 fixture="$root/tests/fixtures/anonymized_library"
 # What seabass-cli digest says about that fixture's OneLibrary. Taken from a
-# trusted build (2026-09-25, release-tooling at 2e1cd81e) reading the same
-# committed file. It changes if the fixture or the digest's definition in
-# application/catalog_digest does, and then this line changes with it.
-expected="${SEABASS_EXPECTED_ONELIBRARY_DIGEST:-d8c5556ad1e4e18bbd08bcb89dc9dbadf112dbfc40aa52e637e2c7423161bd76}"
+# trusted build (2026-11-08, Seabass/1.0 at 1902bb81) reading the same
+# committed file. It changes if the fixture, the digest's definition in
+# application/catalog_digest or what the OneLibrary reader returns does
+# (last: 922da1fd, cues from the analysis file), and then this line
+# changes with it.
+expected="${SEABASS_EXPECTED_ONELIBRARY_DIGEST:-1b0059a8d7d507a6fbbee924b054d1503bea151b3bf8298ba11d378bff94c5dc}"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
     [ "$image" = "seabass-appimage-host:26.04" ] || { echo "no image $image" >&2; exit 2; }
