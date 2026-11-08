@@ -4170,6 +4170,11 @@ target_include_directories(make_engine_library PRIVATE src)
 # own link to the PUBLIC SQLite::SQLite3 alias; elsewhere seabass_core
 # already exposes it PUBLIC, so this is a harmless no-op there.
 target_link_libraries(make_engine_library PRIVATE seabass_core SQLite::SQLite3)
+# The sample rate of a cued file that is not an MP3 (an MP3's comes from
+# its header): read with TagLib when the build has it.
+if(TARGET seabass_taglib)
+    target_link_libraries(make_engine_library PRIVATE seabass_taglib)
+endif()
 
 # Release rig: a full stick backup as the app takes it, then verified, checked
 # for holes, previewed for leftovers and compared with the stick's catalogs.

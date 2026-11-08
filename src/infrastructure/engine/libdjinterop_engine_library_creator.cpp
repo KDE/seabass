@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <cstdint>
 #include <filesystem>
@@ -91,14 +92,18 @@ djinterop::pad_color parseColor(const std::string &color)
 // by LibdjinteropEngineCueWriter's rule: a hot cue clamped at the start,
 // a loop's start clamped and its end kept, a memory cue or a loop the
 // shift leaves nothing of left out and counted in `result`.
+//
+// `sampleRate` is the file's own (resolveSampleRate): Engine stores a cue
+// as a sample offset at the track's real rate, and so do its reader and
+// LibdjinteropEngineCueWriter.
 int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<domain::CuePoint> &cues,
-                        double shiftMs, EngineLibraryCreationResult &result)
+                        double shiftMs, double sampleRate, EngineLibraryCreationResult &result)
 {
     if (cues.empty()) {
         return 0;
     }
-    const auto toSamples = [shiftMs](double rekordboxMs) {
-        return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * DefaultSampleRate);
+    const auto toSamples = [shiftMs, sampleRate](double rekordboxMs) {
+        return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * sampleRate);
     };
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
     // Engine keeps hot LOOPS in a separate 8-slot array, and a loop
@@ -626,6 +631,33 @@ std::string verifyInformationRowAtIdOne(const std::filesystem::path &databaseDir
         + ". Engine expects exactly one, at id 1.";
 }
 
+// The rate a track's cues and stand-in grid are counted in: an MP3's
+// own frame header when its lead-in was read, else what `source` says
+// for the file, else 44.1 kHz. Every cue written at 44.1 kHz on a
+// 48 kHz file landed 8 % early on a Prime 4. A source that throws (other
+// than a cancel) or answers zero or worse cannot say, as for the reader.
+double resolveSampleRate(const std::string &filePath, const std::optional<domain::Mp3LeadIn> &leadIn,
+                         const EngineLibraryCreator::SampleRateSource &source)
+{
+    if (leadIn && leadIn->sampleRate > 0) {
+        return leadIn->sampleRate;
+    }
+    if (source) {
+        std::optional<double> rate;
+        try {
+            rate = source(filePath);
+        } catch (const application::OperationCancelled &) {
+            throw;
+        } catch (const std::exception &) {
+            rate.reset();
+        }
+        if (rate && std::isfinite(*rate) && *rate > 0.0) {
+            return *rate;
+        }
+    }
+    return DefaultSampleRate;
+}
+
 }  // namespace
 
 using infrastructure::ScratchDirGuard;
@@ -635,7 +667,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                                                            EngineSchemaGeneration schemaGeneration,
                                                            application::ProgressReporter &reporter,
                                                            const application::CancellationToken &cancel,
-                                                           std::optional<std::uint64_t> rekordboxLibrarySequence)
+                                                           std::optional<std::uint64_t> rekordboxLibrarySequence,
+                                                           const SampleRateSource &sampleRateSource)
 {
     EngineLibraryCreationResult result;
     result.tracksTotal = static_cast<int>(tracks.size());
@@ -731,6 +764,23 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 // Windows drive). See engineRelativePath for both cases.
                 snapshot.relative_path = engineRelativePath(track.filePath, directory);
 
+                // An MP3 with cues has its start read once: its frame
+                // header gives the rate, with the correction on or off,
+                // and its lead-in the shift, only with it on. A track
+                // without cues is not asked at all: opening its file would
+                // buy a stand-in grid at the right rate that a 2.x or 3.x
+                // library drops again (markTracksForDeviceAnalysis), at the
+                // price of a TagLib read of every file on the stick over
+                // USB. Its grid stays at 44.1 kHz, self-consistent, as it
+                // always was.
+                const bool hasGrid = track.bpm > 0.0 && track.durationSeconds > 0.0;
+                const bool cuedMp3 = !track.cues.empty() && domain::hasMp3Extension(track.filePath);
+                const std::optional<domain::Mp3LeadIn> leadIn =
+                    cuedMp3 ? audio::readMp3LeadIn(track.filePath) : std::nullopt;
+                const double sampleRate = !track.cues.empty()
+                    ? resolveSampleRate(track.filePath, leadIn, sampleRateSource)
+                    : DefaultSampleRate;
+
                 // Simple, approximate two-point beatgrid: assumes the track
                 // starts exactly on a downbeat at sample 0, then a second
                 // marker far enough out to cover the whole track at a
@@ -738,25 +788,25 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 // see this class's own doc comment for why that's out of
                 // scope for now -- but gives Engine something to quantize/
                 // sync against rather than nothing at all.
-                if (track.bpm > 0.0 && track.durationSeconds > 0.0) {
+                if (hasGrid) {
                     double secondsPerBeat = 60.0 / track.bpm;
                     double totalBeats = track.durationSeconds / secondsPerBeat;
-                    int64_t sampleCount = static_cast<int64_t>(track.durationSeconds * DefaultSampleRate);
+                    int64_t sampleCount = static_cast<int64_t>(track.durationSeconds * sampleRate);
                     std::vector<djinterop::beatgrid_marker> grid = {
                         {0, 0.0},
-                        {static_cast<int>(totalBeats), totalBeats * secondsPerBeat * DefaultSampleRate},
+                        {static_cast<int>(totalBeats), totalBeats * secondsPerBeat * sampleRate},
                     };
                     snapshot.beatgrid = djinterop::engine::normalize_beatgrid(grid, sampleCount);
-                    snapshot.sample_rate = DefaultSampleRate;
+                    snapshot.sample_rate = sampleRate;
                     snapshot.sample_count = static_cast<unsigned long long>(sampleCount);
                 }
 
                 // The lead-in shift read from the file this row will name,
                 // the same bytes the Engine reader reads it from later.
                 const double shiftMs = !track.cues.empty() && shiftsCueTimeline(track.filePath, track.streamingSource)
-                    ? engineCueShiftMs(audio::readMp3LeadIn(track.filePath))
+                    ? engineCueShiftMs(leadIn)
                     : 0.0;
-                result.cuesCopied += applyCuesToSnapshot(snapshot, track.cues, shiftMs, result);
+                result.cuesCopied += applyCuesToSnapshot(snapshot, track.cues, shiftMs, sampleRate, result);
 
                 djinterop::track created = db.create_track(snapshot);
                 result.tracksCreated++;
