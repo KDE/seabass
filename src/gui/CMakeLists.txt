@@ -296,6 +296,8 @@ set(SEABASS_GUI_SOURCES
     style_color_scheme.cpp
     controls_style.hpp
     controls_style.cpp
+    qt_workarounds.hpp
+    qt_workarounds.cpp
     interface_font.hpp
     interface_font.cpp
     update_decision.hpp

@@ -14,6 +14,7 @@
 
 #include "gui/async_request.hpp"
 #include "gui/process_end.hpp"
+#include "gui/qt_workarounds.hpp"
 
 #include "gui/app_color_scheme.hpp"
 #include "gui/style_color_scheme.hpp"
@@ -124,6 +125,9 @@ bool exportMaterialPalette()
 
 int main(int argc, char **argv)
 {
+    // Before anything that could make a QML engine: the collector reads
+    // its settings when it is created (gui/qt_workarounds.hpp).
+    seabass::gui::keepJsCollectorInOneStep();
     const bool useSystemTheme = exportMaterialPalette();
     QGuiApplication app(argc, argv);
     app.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/SeabassGui/qml/icons/seabass_icon.png")));
