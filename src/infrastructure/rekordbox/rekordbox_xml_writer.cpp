@@ -5,9 +5,11 @@
 #include "infrastructure/rekordbox/rekordbox_xml_writer.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
 #include <cstdio>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -24,16 +26,16 @@ constexpr int RatingPerStar = 51;
 
 // Always a decimal point. snprintf follows LC_NUMERIC, which
 // QCoreApplication sets from the environment on Unix, and under nl_NL
-// it wrote Start="0,026": a position rekordbox does not read.
-// std::to_chars knows no locale.
+// it wrote Start="0,026": a position rekordbox does not read. A stream
+// imbued with the classic locale knows only the point; std::to_chars
+// for a double would too, but macOS 12's libc++ does not have it and
+// the macOS package is built for macOS 12 (see rekordbox_baseline_file).
 std::string formatDouble(double value, int decimals)
 {
-    char buffer[64];
-    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, decimals);
-    if (result.ec != std::errc{}) {
-        return "0";
-    }
-    return std::string(buffer, result.ptr);
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::fixed << std::setprecision(decimals) << value;
+    return out.str();
 }
 
 std::string attribute(const std::string &name, const std::string &value)
