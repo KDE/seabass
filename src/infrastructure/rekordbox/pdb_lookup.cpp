@@ -130,9 +130,11 @@ std::string trackFilePathOnStick(const std::string &stickRoot, std::string store
     // both separators -- D:\\Contents\... beside Engine's D:\Contents\...,
     // which matchTracks() compares exactly, so Sync on that stick matched
     // nothing (Windows Round 11, catalog_root_spelling_test).
-    if (!storedPath.empty() && (storedPath.front() == '/' || storedPath.front() == '\\')) {
-        storedPath.erase(0, 1);
-    }
+    //
+    // Every leading separator, not one: of "//Contents/x.mp3" one strip
+    // left "/Contents/x.mp3", which operator/ takes as absolute, and on
+    // Linux and macOS the stick root was gone (#89).
+    storedPath.erase(0, storedPath.find_first_not_of("/\\"));
     return pathToUtf8((pathFromUtf8(stickRoot) / pathFromUtf8(storedPath)).lexically_normal().make_preferred());
 }
 

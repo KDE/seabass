@@ -116,6 +116,19 @@ int main(int argc, char **argv)
     }
     std::cout << "case 1 (a doubled separator or a dot in the stick root leaves one path) OK\n";
 
+    // 1b. A stored path with more than one leading separator (#89). Stripping
+    //     one left "/Contents/...", which operator/ takes as absolute: on
+    //     Linux and macOS the stick root was gone. Only damaged data stores
+    //     this, as far as anyone knows.
+    for (const std::string damaged : {"//Contents/a b/x.mp3", "///Contents/a b/x.mp3", "/\\Contents/a b/x.mp3",
+                                      "Contents/a b/x.mp3"}) {
+        const std::string got = trackFilePathOnStick(clean, damaged);
+        if (got != want) {
+            fail("root \"" + clean + "\" + \"" + damaged + "\" gave \"" + got + "\", want \"" + want + "\"");
+        }
+    }
+    std::cout << "case 1b (every leading separator of a stored path is dropped) OK\n";
+
     // 2. The spelling the Engine reader gives the same file, so the two can
     //    be compared by string.
     const fs::path engineSpelling = (seabass::pathFromUtf8(clean) / seabass::pathFromUtf8(stored.substr(1))).lexically_normal();
