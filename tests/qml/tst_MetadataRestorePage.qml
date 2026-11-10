@@ -560,22 +560,32 @@ TestCase {
                 "breadcrumb text and body text must share a left edge");
     }
 
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
+    function fixtureStick() {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        const root = decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        const stick = stickFixture.stickCopy(root);
+        verify(stick.length > 0, "the fixture must copy");
+        return stick;
+    }
+
     // The artwork the store copied, drawn on the rows that are offering
-    // it. Needs a real stick, because a proposal only exists where a
-    // stick track matched a stored one -- and the cover comes from the
-    // stored side, which is the whole point: the stick this page exists
-    // for is the stick that lost its own.
+    // it. A proposal only exists where a stick track matched a stored one
+    // -- and the cover comes from the stored side, which is the whole
+    // point: the stick this page exists for is the stick that lost its
+    // own. The rig's real stick when SEABASS_LIVE_STICK names it
+    // (tools/rig-shakedown.sh, suite(), for a picture of real data); a
+    // copy of the anonymized fixture everywhere else, so the scan over a
+    // stick's catalogs is checked on every run and never skipped.
     //
     // Read-only. Nothing reaches the stick before Restore is pressed,
     // and this never presses it.
     function test_screenshot_theProposalsDrawStoredArtwork() {
-        if (!screenshotDir || !liveStickRoot) {
-            skip("SEABASS_SCREENSHOT_DIR and SEABASS_LIVE_STICK not both set");
-        }
+        const stick = liveStickRoot ? liveStickRoot : fixtureStick();
         var page = make({
             stickLabel: "LIVE",
-            rekordboxPath: liveStickRoot + "/PIONEER",
-            enginePath: liveStickRoot + "/Engine Library",
+            rekordboxPath: stick + "/PIONEER",
+            enginePath: stick + "/Engine Library",
         });
         var list = findChild(page, "proposalList");
         verify(list, "the proposal list must exist");
@@ -598,11 +608,13 @@ TestCase {
         tryVerify(function () { return !page.controller.busy && page.controller.hasScanned; }, 120000,
                   "the scan over this stick must finish");
         compare(page.controller.errorMessage, "", "the scan must not error");
-        console.log("  live stick offered " + list.count + " proposal(s)");
+        console.log("  the stick offered " + list.count + " proposal(s)");
         waitForRendering(page);
-        var image = grabImage(page);
+        const image = grabImage(page);
         verify(image.width > 0 && image.height > 0, "the page grabbed nothing");
-        image.save(screenshotDir + "/MetadataRestorePage-live.png");
+        if (screenshotDir) {
+            image.save(screenshotDir + "/MetadataRestorePage-live.png");
+        }
     }
 
     function test_screenshot() {

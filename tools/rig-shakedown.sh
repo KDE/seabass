@@ -408,7 +408,8 @@ references_unchanged() {
 # passed", S1-corpus is "the long one passed", and neither can be red
 # because of the other.
 suite() {
-    # A stick, so the two screenshot cases that want one stop skipping.
+    # A stick, so the two screenshot cases that want one photograph real
+    # data instead of the anonymized fixture they use without it.
     # They and stick_performance_live_test (which reads the stick's
     # audio, and writes nothing without SEABASS_LIVE_WRITE) are the
     # tests in the non-live suite that read SEABASS_LIVE_STICK; the two
@@ -424,9 +425,9 @@ suite() {
     # expendable. This runs after B3 has put B back to its reference, so
     # what gets read and photographed is the reference library.
     #
-    # ctest alone leaves them skipped, which is how they have always
-    # run: a skip in a release gate proves nothing, and these two are
-    # the only pages whose screenshots show real stick data.
+    # ctest alone runs them on a copy of the fixture, which checks the
+    # scan but shows no real stick: these two are the only pages whose
+    # screenshots show real stick data.
     SEABASS_LIVE_STICK="$B" ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure -E '^corpus_test$'
 }
 
