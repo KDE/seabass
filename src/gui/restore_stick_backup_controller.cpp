@@ -572,6 +572,21 @@ void RestoreStickBackupController::clearResult()
     setStatusMessage({});
 }
 
+namespace
+{
+
+// Written in full and nothing else wrong, only the database check found
+// rows pointing at files that are not on the drive. Mirrors
+// TransferResultFrame.libraryIssueOnly, which decides the report's colours
+// and the overlay's "Ignore" from the result map.
+bool libraryIssueOnly(const RestoreSummary &s)
+{
+    return s.rejected.empty() && s.writeErrors.empty() && s.partial.empty() && s.warnings.empty()
+           && s.missingTrackPaths.has_value() && !s.missingTrackPaths->empty();
+}
+
+}  // namespace
+
 void RestoreStickBackupController::onRestoreFinished()
 {
     QString thrown;
@@ -594,7 +609,11 @@ void RestoreStickBackupController::onRestoreFinished()
         emit actionFeedback(result->refusal, true);
         return;
     }
-    const RestoreSummary &s = result->summary;
+    applySummary(result->summary);
+}
+
+void RestoreStickBackupController::applySummary(const RestoreSummary &s)
+{
     QVariantMap map;
     map["filesWritten"] = static_cast<qlonglong>(s.filesWritten);
     map["filesUnchanged"] = static_cast<qlonglong>(s.filesUnchanged);
@@ -651,6 +670,17 @@ void RestoreStickBackupController::onRestoreFinished()
         emit actionFeedback(m_statusMessage, false);
         break;
     case RestoreSummary::Status::RestoredWithProblems:
+        if (libraryIssueOnly(s)) {
+            // Every file the backup holds is on the drive as it was backed
+            // up; the only finding is the database check's, about rows the
+            // library already had when the backup was taken. That is not a
+            // failed restore, so no "That did not work": the report on the
+            // overlay says what was found and offers the repair.
+            setStatusMessage(QStringLiteral("Restored exactly from backup. The originating library has the "
+                                            "following issue, which we can fix.")
+                             + coversAfter);
+            break;
+        }
         if (!s.partial.empty()) {
             // Named ahead of the general wording: a restore that put back
             // truncated files is a different thing from one that hit a

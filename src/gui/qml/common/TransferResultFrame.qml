@@ -39,6 +39,15 @@ Card {
 
     visible: resultFrame.result.filesWritten !== undefined
     readonly property var problems: (resultFrame.result.rejected || []).concat(resultFrame.result.writeErrors || []).concat(resultFrame.result.warnings || [])
+    // Everything was written and the only finding is the database check's:
+    // rows the library already had when the backup was taken, pointing at
+    // files that are not on the drive. Not a failed restore or clone, so
+    // the report says it in the warning colour, not red, which means the
+    // write itself went wrong. Clone's result has no `partial`.
+    // RestoreStickBackupController decides the same from the summary.
+    readonly property bool libraryIssueOnly: resultFrame.result.filesWritten !== undefined && resultFrame.errorMessage.length === 0
+        && resultFrame.problems.length === 0 && (resultFrame.result.partial || []).length === 0
+        && (resultFrame.result.missingTracks || []).length > 0
     property bool showProblems: false
 
     ColumnLayout {
@@ -64,9 +73,11 @@ Card {
             }
         }
         Label {
+            objectName: "resultStatusLabel"
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            color: resultFrame.errorMessage.length > 0 ? Theme.danger : Theme.good
+            color: resultFrame.errorMessage.length > 0 ? Theme.danger
+                 : resultFrame.libraryIssueOnly ? Theme.conflictText : Theme.good
             text: resultFrame.errorMessage.length > 0 ? resultFrame.errorMessage : resultFrame.statusMessage
         }
         Label {
@@ -83,16 +94,19 @@ Card {
                 + resultFrame.result.directoriesCreated + " folders created · " + resultFrame.result.extrasRemoved + " removed"
         }
         Label {
+            objectName: "databaseCheckLabel"
             visible: resultFrame.result.databaseChecked === true
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            color: (resultFrame.result.missingTracks || []).length === 0 ? Theme.good : Theme.danger
+            color: (resultFrame.result.missingTracks || []).length === 0 ? Theme.good
+                 : resultFrame.libraryIssueOnly ? Theme.conflictText : Theme.danger
             text: (resultFrame.result.missingTracks || []).length === 0
                 ? "Engine database opens and every track it references is present."
                 : "The Engine database opened, but it points at " + resultFrame.result.missingTracks.length
                   + (resultFrame.result.missingTracks.length === 1 ? " file that is" : " files that are") + " not on this drive:"
         }
         Repeater {
+            objectName: "missingTrackList"
             model: (resultFrame.result.missingTracks || []).slice(0, 20)
             // Width-bound and elided in the middle: a path label with no
             // width limit widened the whole report past the overlay, and
@@ -104,7 +118,7 @@ Card {
                 Layout.leftMargin: 16
                 font.family: Theme.dataFamily
                 font.pointSize: Theme.fontSmall
-                color: Theme.danger
+                color: resultFrame.libraryIssueOnly ? Theme.conflictText : Theme.danger
                 elide: Text.ElideMiddle
                 text: modelData
                 ToolTip.visible: truncated && hovered
@@ -120,7 +134,7 @@ Card {
             font.pointSize: Theme.fontSmall
             text: "and " + ((resultFrame.result.missingTracks || []).length - 20) + " more"
         }
-        // Said plainly, because the red list above reads as "the restore
+        // Said plainly, because the list above reads as "the restore
         // broke something": it did not. The rows pointed at those files
         // before the backup was ever taken, the backup carried them as
         // they were, and this restore put them back as they were. The

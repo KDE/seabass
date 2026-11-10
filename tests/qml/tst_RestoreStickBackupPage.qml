@@ -206,7 +206,8 @@ TestCase {
                          "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit.mp3.missing",
                          "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit-1.mp3 ",
                          "/media/sebas/A1/Engine Library/..\\Contents\\AREA ØNE\\Back To The Oldschool\\AREA ØNE - Back To The Oldschool.mp3"]},
-            statusMessage: "Restored 1 files, but with problems."})).save(screenshotDir + "/restore-page-result-missing-tracks.png");
+            statusMessage: "Restored exactly from backup. The originating library has the following issue, which we can fix."
+            })).save(screenshotDir + "/restore-page-result-missing-tracks.png");
     }
 
     // Restoring graduated from experimental on 2026-09-17; the header
@@ -987,6 +988,64 @@ TestCase {
         compare(spy.signalArguments[0][0], "STICK");
         compare(spy.signalArguments[0][1], "/media/STICK/PIONEER");
         compare(spy.signalArguments[0][2], "/media/STICK/Engine Library");
+    }
+
+    // A restore that wrote every file, whose only finding is rows the
+    // backed-up library already had pointing at files that are gone, did
+    // not fail: no "That did not work", and the line says so. With a file
+    // that could not be written it did, and the red popup stays (#81).
+    function test_aLibraryIssueAloneIsNotAFailedRestore_data() {
+        return [
+            {tag: "missing-tracks-only", kind: "missingTracksOnly", popups: 0,
+             status: "Restored exactly from backup. The originating library has the following issue, which we can fix."},
+            {tag: "write-error-too", kind: "writeErrorAndMissingTracks", popups: 1,
+             status: "Restored 15402 files, but with problems."},
+        ];
+    }
+    function test_aLibraryIssueAloneIsNotAFailedRestore(data) {
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.defaultBackupDirectory = "/nonexistent/seabass-restore-test";
+        const spy = createTemporaryObject(spyComponent, testCase, {target: controller, signalName: "actionFeedback"});
+        verify(controllerFixture.finishRestoreWith(controller, data.kind));
+        compare(spy.count, data.popups);
+        if (data.popups > 0) {
+            compare(spy.signalArguments[0][1], true, "a failed write is still said as a failure");
+        }
+        compare(controller.errorMessage, "");
+        compare(controller.statusMessage, data.status);
+        compare(controller.result.missingTracks.length, 1);
+    }
+
+    // The report on the overlay agrees: the line, the database check's
+    // heading and the listed paths in the warning colour, and the way out
+    // beside "Repair in Library Health" reads "Ignore". Red, and "Close",
+    // stay for a restore that did fail to write something.
+    function test_aLibraryIssueAloneIsReportedAsAWarning_data() {
+        return [
+            {tag: "missing-tracks-only", writeErrors: [], colour: Theme.conflictText, statusColour: Theme.conflictText,
+             close: "Ignore"},
+            {tag: "write-error-too", writeErrors: ["Contents/a.mp3: write failed"], colour: Theme.danger,
+             statusColour: Theme.good, close: "Close"},
+        ];
+    }
+    function test_aLibraryIssueAloneIsReportedAsAWarning(data) {
+        const page = makePage([makeDisk({})], {
+            result: {filesWritten: 15402, filesUnchanged: 0, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                     writeErrors: data.writeErrors, warnings: [], partial: [], databaseChecked: true,
+                     missingTracks: ["Engine Library/Music/10_Too Little Too Late.mp3"]},
+            statusMessage: "Restored exactly from backup. The originating library has the following issue, which we can fix.",
+        });
+        const frame = findChild(page, "restoreResultFrame");
+        compare(frame.libraryIssueOnly, data.writeErrors.length === 0);
+        verify(Qt.colorEqual(findChild(page, "resultStatusLabel").color, data.statusColour),
+               "status line " + findChild(page, "resultStatusLabel").color);
+        verify(Qt.colorEqual(findChild(page, "databaseCheckLabel").color, data.colour),
+               "database check heading " + findChild(page, "databaseCheckLabel").color);
+        const paths = findChild(page, "missingTrackList");
+        compare(paths.count, 1);
+        verify(Qt.colorEqual(paths.itemAt(0).color, data.colour), "missing path " + paths.itemAt(0).color);
+        compare(findChild(page, "repairLibraryButton").visible, true);
+        compare(findChild(page, "closeReportButton").text, data.close);
     }
 
     // Nothing missing: no reason to offer a repair for a database that

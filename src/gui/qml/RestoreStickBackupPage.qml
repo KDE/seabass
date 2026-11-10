@@ -867,6 +867,7 @@ Page {
         // for: a stick yanked mid-restore used to produce one error per
         // remaining file, a wall of text with nothing to do about it.
         TransferResultFrame {
+            id: resultFrame
             objectName: "restoreResultFrame"
             Layout.fillWidth: true
             result: root.result
@@ -916,7 +917,11 @@ Page {
             // chosen until the user picks one.
             Button {
                 objectName: "closeReportButton"
-                text: "Close"
+                // The restore wrote everything and only the library it
+                // came from has rows to repair: the report's own "Repair
+                // in Library Health" is the way forward, and this is the
+                // way to leave it be.
+                text: resultFrame.libraryIssueOnly ? "Ignore" : "Close"
                 highlighted: true
                 ToolTip.visible: hovered
                 ToolTip.text: "Clear this report and look for drives again. Files already restored are kept and skipped next time."

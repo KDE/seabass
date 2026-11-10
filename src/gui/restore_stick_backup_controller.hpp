@@ -118,6 +118,11 @@ public:
     // success.
     Q_INVOKABLE void mount(const QString &devicePath);
 
+    // A finished restore's summary into result, the status or error line
+    // and actionFeedback. onRestoreFinished() hands it every summary that
+    // got past the refusals; public so a test can hand it one directly.
+    void applySummary(const application::RestoreSummary &summary);
+
 signals:
     void disksChanged();
     void archivePathChanged();

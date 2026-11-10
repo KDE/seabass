@@ -50,6 +50,7 @@
 #include "gui/engine_library_creator_controller.hpp"
 #include "gui/metadata_backup_controller.hpp"
 #include "gui/metadata_restore_controller.hpp"
+#include "gui/restore_stick_backup_controller.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_restore.hpp"
@@ -1741,6 +1742,30 @@ public:
         }
         return seabass::gui::pathToQString(folder);
     }
+    // Hands a RestoreStickBackupController the summary of a restore that
+    // just finished, without running one: `kind` is "missingTracksOnly"
+    // (everything written, the database check found rows whose file is
+    // not on the drive) or "writeErrorAndMissingTracks" (the same, plus a
+    // file that could not be written). False for anything else.
+    Q_INVOKABLE bool finishRestoreWith(QObject *controller, const QString &kind)
+    {
+        auto *restore = qobject_cast<seabass::gui::RestoreStickBackupController *>(controller);
+        if (restore == nullptr) {
+            return false;
+        }
+        seabass::application::RestoreSummary s;
+        s.status = seabass::application::RestoreSummary::Status::RestoredWithProblems;
+        s.filesWritten = 15402;
+        s.missingTrackPaths = std::vector<std::string>{"Engine Library/Music/10_Too Little Too Late.mp3"};
+        if (kind == QLatin1String("writeErrorAndMissingTracks")) {
+            s.writeErrors.push_back("Contents/a.mp3: write failed");
+        } else if (kind != QLatin1String("missingTracksOnly")) {
+            return false;
+        }
+        restore->applySummary(s);
+        return true;
+    }
+
     Q_INVOKABLE void removeSlowBackupFolder()
     {
         std::error_code ec;
