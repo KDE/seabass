@@ -421,6 +421,16 @@ TestCase {
         session.saveFinished.disconnect(done);
         compare(summary.error, "", JSON.stringify(summary));
         compare(summary.unit, "undo steps", JSON.stringify(summary));
+        // The toast below needs the summary whole (SyncPage.afterSave), and
+        // its tryCompare can only print the two texts. Each condition on its
+        // own, with the summary, so a failure names the one that broke
+        // (#93: "5 cues synced" stayed up once and nothing said why).
+        const said = JSON.stringify(summary);
+        verify(summary.written > 0, "the undo wrote nothing: " + said);
+        verify(!(summary.warning && summary.warning.length > 0), "the undo ended with a warning: " + said);
+        verify(!(summary.skipped > 0), "the undo skipped steps: " + said);
+        compare(summary.written, summary.total, "the undo wrote fewer steps than it had: " + said);
+        verify(summary.cancelled !== true, "the undo was cancelled: " + said);
 
         // The save's own toast can still be up when the undo finishes, so
         // "showing" alone proves nothing: wait for the undo's words.

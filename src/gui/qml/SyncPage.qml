@@ -97,6 +97,13 @@ Page {
             Qt.callLater(() => { if (root) { root.afterSave(summary); } });
         }
     }
+    // A save short of whole gets the summary dialog and no toast. The log
+    // line is for a trace, which has no dialog in it: it says which part of
+    // the summary kept the toast away (#93).
+    LoggingCategory {
+        id: syncLog
+        name: "seabass.gui.sync"
+    }
     function afterSave(summary) {
         if (!summary || !(summary.written > 0)) {
             return;
@@ -104,6 +111,9 @@ Page {
         const whole = !(summary.error && summary.error.length > 0)
             && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
             && !(summary.skipped > 0) && summary.written === summary.total;
+        if (!whole) {
+            console.info(syncLog, "Sync Cue Points: no toast, the save was not whole: " + JSON.stringify(summary));
+        }
         if (whole) {
             // An Undo Last Save comes through here too, and it synced no
             // cues: in this page's words it read "Marked as already
