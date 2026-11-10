@@ -41,6 +41,24 @@ namespace fs = std::filesystem;
 // root is its parent.
 std::string stickRootForCatalogPath(const std::string &catalogPath);
 
+// A stick root in the one spelling a track's path on the stick is built
+// from: lexically normal and without a trailing separator, so
+// "/media//x/./STICK/", "D://" and "D:/." give what "/media/x/STICK" and
+// "D:\" give. A bare root ("/", "D:\") keeps its separator, which is
+// the root itself. Native separators.
+//
+// For a root that is joined with a stored path or compared by prefix
+// against a Track::filePath; stickRootForCatalogPath() keeps whatever
+// spelling its caller handed it, and its callers compare it with each
+// other, not with track paths.
+std::string normalStickRoot(const std::string &stickRoot);
+
+// The stick root of a "PIONEER" or "Engine Library" folder, in
+// normalStickRoot()'s spelling. The folder is normalized first:
+// parent_path() of "D:/PIONEER/" is the PIONEER folder itself, and of
+// "STICK/./PIONEER" is "STICK/.".
+std::string normalStickRootForCatalogPath(const std::string &catalogPath);
+
 // <stick>/Seabass
 fs::path stickDir(const fs::path &stickRoot);
 // <stick>/Seabass/backups -- one directory per backup, each holding a

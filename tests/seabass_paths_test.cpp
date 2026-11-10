@@ -50,6 +50,46 @@ int main()
            == stickBackupsDir(stickRootForCatalogPath(seabass::pathToUtf8(stick / "Engine Library"))));
     std::cout << "case 3 (both catalogs on a stick resolve to one backups dir) OK\n";
 
+    // The stick root a track path is built from has one spelling, however
+    // the root or the catalog folder was handed over (#87, #88, #90).
+    {
+        int bad = 0;
+        const auto expect = [&bad](const std::string &what, const std::string &got, const std::string &want) {
+            if (got != want) {
+                std::cerr << "FAIL: " << what << " gave \"" << got << "\", want \"" << want << "\"\n";
+                ++bad;
+            }
+        };
+#if defined(_WIN32)
+        const std::string want = "D:\\";
+        for (const std::string root : {"D:/", "D:\\", "D://", "D:\\\\", "D:/.", "D:/\\"}) {
+            expect("normalStickRoot(\"" + root + "\")", normalStickRoot(root), want);
+        }
+        for (const std::string catalog : {"D:/PIONEER", "D:/PIONEER/", "D://PIONEER", "D:\\PIONEER\\",
+                                          "D:/./PIONEER", "D:/Engine Library/"}) {
+            expect("normalStickRootForCatalogPath(\"" + catalog + "\")", normalStickRootForCatalogPath(catalog), want);
+        }
+        expect("a folder root", normalStickRoot("E:/sticks//STICK/"), "E:\\sticks\\STICK");
+#else
+        const std::string want = "/media/dj/RV2";
+        for (const std::string root : {"/media/dj/RV2", "/media/dj/RV2/", "/media/dj/RV2//", "/media//dj/RV2",
+                                       "/media/./dj/RV2", "/media/dj/RV2/."}) {
+            expect("normalStickRoot(\"" + root + "\")", normalStickRoot(root), want);
+        }
+        for (const std::string catalog : {"/media/dj/RV2/PIONEER", "/media/dj/RV2/PIONEER/", "/media/dj/RV2//PIONEER",
+                                          "/media/dj/RV2/./PIONEER", "/media/dj/RV2/PIONEER//",
+                                          "/media/dj/RV2/Engine Library/"}) {
+            expect("normalStickRootForCatalogPath(\"" + catalog + "\")", normalStickRootForCatalogPath(catalog), want);
+        }
+        expect("the filesystem root", normalStickRoot("/"), "/");
+        expect("a stick mounted at /", normalStickRootForCatalogPath("/PIONEER/"), "/");
+#endif
+        if (bad) {
+            return 1;
+        }
+        std::cout << "case 3b (a stick root has one spelling, however it was handed over) OK\n";
+    }
+
     // SEABASS_HOME exists so a test run can never write into the real
     // ~/Seabass. Read every call, not cached at load time.
 #if defined(_WIN32)

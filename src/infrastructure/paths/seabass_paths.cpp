@@ -92,6 +92,22 @@ std::string stickRootForCatalogPath(const std::string &catalogPath)
     return pathToUtf8(pathFromUtf8(catalogPath).parent_path());
 }
 
+std::string normalStickRoot(const std::string &stickRoot)
+{
+    fs::path root = pathFromUtf8(stickRoot).lexically_normal();
+    // A trailing separator survives lexically_normal() as an empty last
+    // element. A bare root has no relative part, and its separator stays.
+    if (!root.has_filename() && root.has_relative_path()) {
+        root = root.parent_path();
+    }
+    return pathToUtf8(root);
+}
+
+std::string normalStickRootForCatalogPath(const std::string &catalogPath)
+{
+    return normalStickRoot(pathToUtf8(pathFromUtf8(normalStickRoot(catalogPath)).parent_path()));
+}
+
 fs::path stickDir(const fs::path &stickRoot)
 {
     return stickRoot / StickDirName;
