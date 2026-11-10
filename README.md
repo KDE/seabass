@@ -41,7 +41,8 @@ Two ways to use it:
 See [`docs/write-path-performance.md`](docs/write-path-performance.md) for how write
 performance against real sticks is measured and what the current numbers are.
 
-See [`docs/testing.md`](docs/testing.md) for the test suite (including the committed
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for what to run before you push and
+what CI runs. See [`docs/testing.md`](docs/testing.md) for the test suite (including the committed
 real-library integration fixture) and how to submit your own library to help test
 against hardware Sebas doesn't have.
 
