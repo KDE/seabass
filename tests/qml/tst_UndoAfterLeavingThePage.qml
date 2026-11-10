@@ -58,6 +58,63 @@ TestCase {
         return page;
     }
 
+    // Library Health's hub hands its own controller to each check page.
+    Component {
+        id: hubControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    function freshStick() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const libraryId = EditSessionRegistry.libraryIdForPath(stick + "/PIONEER");
+        verify(libraryId.length > 0);
+        if (EditSessionRegistry.hasSession(libraryId)) {
+            EditSessionRegistry.closeSession(libraryId);
+        }
+        verify(!EditSessionRegistry.hasSession(libraryId), "precondition: no session left over");
+        return stick;
+    }
+
+    function saveAndWait(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    // #78's comment: the cue-table page opened from the hub, on the hub's
+    // controller, saved and showed no Undo Last Save while still open.
+    // Not reproduced here: the page that saved offers it.
+    function test_aCheckPageOnTheHubsControllerOffersItsOwnSave() {
+        const stick = freshStick();
+        const paths = {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"};
+        const hub = createTemporaryObject(hubControllerComponent, testCase);
+        hub.scan(paths.rekordboxPath, paths.enginePath);
+        tryVerify(() => hub.cueTablesChecked && !hub.busy, 300000, "the hub's scan finishes");
+        compare(hub.cueTableRowCount, 1, "precondition: the fixture's drifted row");
+
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           Object.assign({sharedController: hub}, paths));
+        verify(page !== null);
+        verify(page.consistencyController === hub, "precondition: the page runs on the hub's controller");
+        const undo = findChild(page, "undoLastSaveButton");
+        compare(undo.visible, false, "nothing saved yet");
+        hub.repairCueTables([]);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(paths.rekordboxPath));
+        compare(session.pendingCount, 1);
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        verify(session.canUndo, "precondition: the session can undo it");
+        tryVerify(() => !hub.busy && hub.cueTablesChecked, 300000, "the save's rescan finishes");
+        compare(hub.cueTableRowCount, 0, "the repair is on the stick");
+        tryCompare(undo, "visible", true, 5000, "the page that saved offers the undo");
+    }
+
     function test_theUndoOutlivesThePageThatSaved() {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0, "the fixture must copy");

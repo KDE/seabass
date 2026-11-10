@@ -256,6 +256,16 @@ Page {
                     consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
                 }
             }
+            // The session's undo, as on every other page that saves
+            // through it: whatever the last save wrote goes back, and
+            // the rescan that follows lists the cues again.
+            Button {
+                objectName: "undoLastSaveButton"
+                text: "Undo Last Save"
+                visible: consistencyController.canUndo
+                enabled: !consistencyController.busy && !consistencyController.writing
+                onClicked: consistencyController.undoLastOperation()
+            }
         }
     }
 

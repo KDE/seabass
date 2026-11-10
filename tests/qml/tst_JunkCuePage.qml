@@ -149,6 +149,7 @@ TestCase {
         QtObject {
             property bool busy: false
             property bool writing: false
+            property bool canUndo: false
             property bool scanCancellable: true
             property int scanCurrent: 0
             property int scanTotal: 0
@@ -605,6 +606,43 @@ TestCase {
         const dialog = findChild(page, "summaryDialog");
         verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
         compare(controller.junkCues.count, 0, "the written rows are gone from under it");
+    }
+
+    // #78: the page that saved offers the save's undo. One row cleaned
+    // up, the button shows; pressed, the cue is back on the stick and
+    // the rescan lists it again.
+    function test_aCleanUpIsUndoneFromThisPage() {
+        const page = openScanned();
+        const controller = page.consistencyController;
+        const before = controller.junkCues.count;
+        const undo = findChild(page.header, "undoLastSaveButton");
+        verify(undo !== null, "the page has an Undo Last Save button");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(page.rekordboxPath));
+        compare(undo.visible, session.canUndo, "the button is the session's undo");
+
+        mouseClick(findChild(rowItem(page, 0), "rowStageCheck"));
+        verify(controller.stagedJunkCueCount >= 1, "precondition: one row staged");
+        const saved = saveSession(session);
+        compare(saved.error, "", JSON.stringify(saved));
+        verify(saved.written > 0, JSON.stringify(saved));
+        tryVerify(() => !controller.busy, 300000, "the save's rescan finishes");
+        verify(controller.junkCues.count < before, "precondition: the saved row is gone");
+        tryCompare(undo, "visible", true, 5000, "the save is offered for undo here");
+        verify(undo.enabled);
+        // The save's progress is modal, and a style's exit transition keeps
+        // it over the page for a moment: the press goes in once it is gone.
+        tryVerify(() => !findChild(page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
+
+        let undone = null;
+        const done = (result) => { undone = result; };
+        session.saveFinished.connect(done);
+        mouseClick(undo);
+        tryVerify(() => undone !== null, 300000, "the press ran the undo");
+        session.saveFinished.disconnect(done);
+        compare(undone.error, "", JSON.stringify(undone));
+        tryVerify(() => !controller.busy, 300000, "the undo's rescan finishes");
+        compare(controller.junkCues.count, before, "the cue is back");
+        tryCompare(undo, "visible", false, 5000, "and there is nothing left to undo");
     }
 
     // A row is drawn as Browse draws one: the cover, which plays the track

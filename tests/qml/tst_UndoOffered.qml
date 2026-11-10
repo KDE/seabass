@@ -244,10 +244,7 @@ TestCase {
         verifyOfferedThrough(page, fake);
     }
 
-    // #78: Clean Up Stray Cues saves through its own host and has no
-    // Undo Last Save; the undo is only reachable from another page. The
-    // day the button is added this turns into an XPASS: take the
-    // expectFail out then, and the rest of the check runs.
+    // Clean Up Stray Cues saves through its own host (#78).
     function test_cleanUpStrayCuesOffersUndo() {
         // Not a temporary: the page outlives a temporary stand-in by a
         // moment at teardown, and reads it then.
@@ -255,8 +252,6 @@ TestCase {
         const page = createTemporaryObject(junkPageComponent, testCase, {controllerForTesting: fake});
         verify(page !== null);
         verify(page.consistencyController === fake, "precondition: the page reads the stand-in");
-        expectFail("", "#78: Clean Up Stray Cues has no Undo Last Save button");
-        verify(undoControl(page) !== null, "the page has an Undo Last Save control");
         verifyOfferedThrough(page, fake);
     }
 
