@@ -25,6 +25,22 @@ int main()
     fs::create_directories(root);
     std::string lockPath = seabass::pathToUtf8(root / "Seabass" / "backups" / ".write.lock");
 
+    // Windows (#83): a holder with the lock file open and no sharing makes
+    // the open itself fail, with ERROR_SHARING_VIOLATION or
+    // ERROR_LOCK_VIOLATION. That is a busy lock and is said as one; any
+    // other failure to open stays a plain error. The codes are Windows',
+    // checked here on every platform.
+    {
+        assert(windowsLockOpenErrorMeansBusy(32));  // ERROR_SHARING_VIOLATION
+        assert(windowsLockOpenErrorMeansBusy(33));  // ERROR_LOCK_VIOLATION
+        for (const unsigned long other : {0UL, 2UL, 3UL, 5UL, 19UL, 21UL, 112UL}) {
+            // success, file not found, path not found, access denied,
+            // write protected, not ready, disk full
+            assert(!windowsLockOpenErrorMeansBusy(other));
+        }
+        std::cout << "case windows-open-error (a sharing or lock violation on open is busy, nothing else) OK\n";
+    }
+
     // Basic acquire/release: creating and destroying a lock cleanly is
     // not itself an error, and does not leave anything held.
     {

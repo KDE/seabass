@@ -28,6 +28,11 @@ namespace seabass::infrastructure::backup
 
 namespace fs = std::filesystem;
 
+bool windowsLockOpenErrorMeansBusy(unsigned long windowsError)
+{
+    return windowsError == kWindowsErrorSharingViolation || windowsError == kWindowsErrorLockViolation;
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 
 StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(lockFilePath)
@@ -80,6 +85,9 @@ void StickWriteLock::releaseAndRemoveFile()
 
 #elif defined(_WIN32)
 
+static_assert(kWindowsErrorSharingViolation == ERROR_SHARING_VIOLATION);
+static_assert(kWindowsErrorLockViolation == ERROR_LOCK_VIOLATION);
+
 // LockFileEx locks are scoped to the HANDLE (closing it releases the
 // lock), same as flock()'s open-file-description scoping above -- two
 // independent CreateFileW calls on the same path, even from the same
@@ -91,6 +99,11 @@ StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_handle(nullptr)
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
+        // Read before anything else can overwrite it.
+        const DWORD error = ::GetLastError();
+        if (windowsLockOpenErrorMeansBusy(error)) {
+            throw StickBusyError(pathToUtf8(lockFilePath));
+        }
         throw std::runtime_error("Could not open stick lock file: " + pathToUtf8(lockFilePath));
     }
     OVERLAPPED overlapped = {};

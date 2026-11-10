@@ -22,6 +22,18 @@ public:
     }
 };
 
+// Whether opening the lock file failed because another process holds it,
+// from the Windows error code (GetLastError()) of the failed CreateFileW.
+// A holder that opened the file with no sharing makes the open itself
+// fail with ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION, before any
+// LockFileEx could say "busy": that is the same situation as a lock held
+// and is reported as StickBusyError. Any other code is a real failure to
+// open. Pure and on every platform, so it is tested everywhere; only the
+// Windows constructor calls it.
+inline constexpr unsigned long kWindowsErrorSharingViolation = 32;  // ERROR_SHARING_VIOLATION
+inline constexpr unsigned long kWindowsErrorLockViolation = 33;     // ERROR_LOCK_VIOLATION
+bool windowsLockOpenErrorMeansBusy(unsigned long windowsError);
+
 // RAII mutual exclusion over a single stick's files, backed by an
 // OS-level advisory lock (flock()) on a small marker file. Deliberately
 // not a Qt type, so both the CLI and the GUI can take this exact lock
