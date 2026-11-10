@@ -1298,9 +1298,6 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # without this a test could read, or a future one write, the
         # developer's own Seabass settings.
         if(SEABASS_XVFB_RUN)
-            add_test(NAME seabass_qml_tests
-                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
-                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
             # The style is pinned, which it never had to be offscreen:
             # that platform offered no style hint, so every machine got
             # Basic. On a real display the KDE platform theme answers
@@ -1320,8 +1317,6 @@ if(SEABASS_GUI AND Qt6_FOUND)
             message(WARNING "xvfb-run not found: seabass_qml_tests falls back to the offscreen platform, "
                 "where no ShaderEffect draws. The ring, the watermark and anything else shader-drawn "
                 "go untested in this build.")
-            add_test(NAME seabass_qml_tests
-                COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
             # No style named here, on purpose. The harness calls
             # gui::applyDefaultControlsStyle(), which is the same
             # function main.cpp calls, so the suite runs under whatever
@@ -1379,24 +1374,104 @@ if(SEABASS_GUI AND Qt6_FOUND)
             # it: a failing run looks like an empty log and exit code 1.
             list(APPEND _seabass_qml_test_env "QT_FORCE_STDERR_LOGGING=1")
         endif()
-        set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
-        if(WIN32)
-            # About 1,020 cases, and on a Windows Debug build the whole
-            # suite takes ~1,940 s on its own (measured on the shakedown
-            # laptop, 4 cores, 2026-09-29; ~1,170 s at 900 cases the day
-            # before), with no one case to blame: the slowest are the scan
-            # lifetime cases at ~130 s each. Beside other tests on those
-            # four cores it ran past 2,400 s, so ctest counts it as four
-            # and runs it nearly alone, and the bound leaves room to grow.
-            set_tests_properties(seabass_qml_tests PROPERTIES TIMEOUT 3000 PROCESSORS 4)
-        else()
-            # The same growth elsewhere: on the Mac (Round 11, 2026-11-01)
-            # the suite ran past the rig's 900 s under -j6, while one of
-            # its files alone takes a minute. A bound of its own, so the
-            # caller's --timeout cannot cut it short, and counted as four
-            # so it does not share the cores with five siblings.
-            set_tests_properties(seabass_qml_tests PROPERTIES TIMEOUT 2400 PROCESSORS 4)
-        endif()
+
+        # One ctest entry per tst_*.qml file, not one for the directory.
+        #
+        # The suite was a single entry: 1,756 s of linux:build-test's
+        # 3,405 s of tests on the 1.0.1 tag, run on one core while the
+        # others sat idle, under a TIMEOUT that had to grow with every
+        # page (2,400 s, and 3,000 s on Windows, where a Debug build hit
+        # it). A failure said "seabass_qml_tests failed" and nothing about
+        # which of 99 files, and nothing could run beside it. Each file
+        # now runs as its own process, so ctest -j runs them side by side,
+        # a failure names its file, and each file has a bound that fits it.
+        #
+        # QtQuickTest's -input takes a file as well as a directory, on
+        # every platform, and resolves a file's imports from its own
+        # directory, so a file runs alone exactly as it ran beside the
+        # others. The harness (qml_test_main.cpp) makes a fresh settings
+        # directory for every process and every entry gets its own
+        # SEABASS_HOME (see the loop near the end of this file), so files
+        # running at once share no state; the screenshots they save have
+        # names of their own.
+        #
+        # CONFIGURE_DEPENDS: a new tst_*.qml file is picked up by the next
+        # build, without anyone remembering to re-run cmake. Nothing is
+        # compiled for it, as before.
+        #
+        # No RESOURCE_LOCK on the display. Each entry starts its own
+        # `xvfb-run -a`, and two of them can pick the same free display
+        # number; the Xvfb that loses exits with "Server is already
+        # active", and xvfb-run -a then moves on to the next number and
+        # tries again (the retry loop in Debian/Ubuntu's xvfb-run, read in
+        # 2:21.1.12-1ubuntu1.9). The lock this suite took instead made
+        # every QML entry wait for every other one, which is the opposite
+        # of what splitting them is for.
+        #
+        # PROCESSORS 1: a file keeps about one core busy, software GL
+        # included. Measured on a Linux Debug build (2026-11-10), CPU time
+        # over wall time: tst_CueTablePage 47.8 s in 44.0 s, the heaviest;
+        # tst_PlaylistSummary 4.2 s in 99.7 s, which spends its time
+        # waiting; tst_ArtworkImagePixels 0.5 s in 25.9 s.
+        #
+        # TIMEOUT: 600 s for a file. The slowest on a Linux Debug build at
+        # ctest -j3 (2026-11-10) took 108 s (tst_MatchingPage under
+        # org.kde.desktop), then tst_PlaylistSummary at 100 s and
+        # tst_RekordboxExportSyncPage at 93 s; the 202 QML entries took
+        # 1,810 s together. The old figures for the whole suite, for scale:
+        # about 1,020 cases took ~1,940 s on the Windows shakedown laptop's
+        # Debug build (2026-09-29), with the scan lifetime cases at ~130 s
+        # each the slowest; the Mac ran past 900 s under -j6 (Round 11,
+        # 2026-11-01), so a file at five times the Linux figure still fits.
+        # A file that needs more is named with its own bound in
+        # _seabass_qml_slow_files (as tst_Name=seconds), from a measurement,
+        # not a guess; none does today.
+        set(_seabass_qml_file_timeout 600)
+        set(_seabass_qml_slow_files)
+
+        # seabass_add_qml_test_files(<lane> <dir> LABELS ... ENVIRONMENT ...
+        #     [TIMEOUT <s>] [PROCESSORS <n>] [EXCLUDE <tst_name> ...])
+        # registers <lane>.<tst_name> for every <dir>/tst_*.qml, on the
+        # display xvfb-run gives when there is one, and on whatever the
+        # environment names otherwise (offscreen on macOS and Windows).
+        function(seabass_add_qml_test_files lane dir)
+            cmake_parse_arguments(ARG "" "TIMEOUT;PROCESSORS" "LABELS;ENVIRONMENT;EXCLUDE" ${ARGN})
+            file(GLOB _files CONFIGURE_DEPENDS "${dir}/tst_*.qml")
+            if(NOT _files)
+                message(FATAL_ERROR "No tst_*.qml in ${dir}: the ${lane} lane would register nothing.")
+            endif()
+            foreach(_file IN LISTS _files)
+                get_filename_component(_name "${_file}" NAME_WE)
+                if(_name IN_LIST ARG_EXCLUDE)
+                    continue()
+                endif()
+                set(_test "${lane}.${_name}")
+                if(SEABASS_XVFB_RUN)
+                    add_test(NAME ${_test}
+                        COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                            $<TARGET_FILE:seabass_qml_tests> -input "${_file}")
+                else()
+                    add_test(NAME ${_test} COMMAND seabass_qml_tests -input "${_file}")
+                endif()
+                set(_timeout ${ARG_TIMEOUT})
+                foreach(_slow IN LISTS _seabass_qml_slow_files)
+                    if(_slow MATCHES "^${_name}=([0-9]+)$")
+                        set(_timeout ${CMAKE_MATCH_1})
+                    endif()
+                endforeach()
+                set_tests_properties(${_test} PROPERTIES
+                    ENVIRONMENT "${ARG_ENVIRONMENT}"
+                    LABELS "${ARG_LABELS}"
+                    TIMEOUT ${_timeout}
+                    PROCESSORS ${ARG_PROCESSORS})
+            endforeach()
+        endfunction()
+
+        seabass_add_qml_test_files(seabass_qml_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml"
+            LABELS qml
+            ENVIRONMENT ${_seabass_qml_test_env}
+            TIMEOUT ${_seabass_qml_file_timeout}
+            PROCESSORS 1)
 
         # The same suite again, under the style the Linux build actually
         # starts with. The pinned lane above compares pixels like with
@@ -1412,16 +1487,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
         #
         # Registered only where the style is installed, so a container
         # without kf6-qqc2-desktop-style skips the lane rather than
-        # failing it, and it takes the same xvfb lock as the others.
+        # failing it. One entry per file, as above.
         if(SEABASS_XVFB_RUN)
             find_path(SEABASS_KDE_STYLE_QMLDIR "org/kde/desktop/qmldir"
                 HINTS ${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML} /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/qt6/qml
                       /usr/lib/qt6/qml
                 NO_CACHE)
             if(SEABASS_KDE_STYLE_QMLDIR)
-                add_test(NAME seabass_qml_desktop_style_tests
-                    COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
-                        $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
                 # Its own screenshot directory, not the pinned lane's.
                 # The two lanes render the same pages under different
                 # styles and save under the same names, so sharing one
@@ -1433,13 +1505,15 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 # question can be answered was the one lane that saved
                 # no pixels.
                 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style")
-                set_tests_properties(seabass_qml_desktop_style_tests PROPERTIES
+                # Software GL on every frame: 1,425 cases took 913 s on
+                # their own on the rig laptop (2026-11-01), past the rig's
+                # 900 s, which killed Round 11's run near its end; that was
+                # one entry, and is now 99 with the bounds above.
+                seabass_add_qml_test_files(seabass_qml_desktop_style_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml"
+                    LABELS qml
                     ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style;SEABASS_IGNORE_REMOVABLE_MEDIA=1"
-                    RESOURCE_LOCK xvfb
-                    # Software GL on every frame: 1,425 cases took 913 s on
-                    # their own on the rig laptop (2026-11-01), past the
-                    # rig's 900 s, which killed Round 11's run near its end.
-                    TIMEOUT 2400 PROCESSORS 4)
+                    TIMEOUT ${_seabass_qml_file_timeout}
+                    PROCESSORS 1)
             else()
                 message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
                     "Install kf6-qqc2-desktop-style to run the suite under the style the Linux build ships.")
@@ -1456,24 +1530,25 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # runs it with a small default (3 seeds of 150 steps);
         # SEABASS_STORM_SEEDS, SEABASS_STORM_STEPS and
         # SEABASS_STORM_FIRST_SEED in the environment scale it, and
-        # -LE storm leaves it out. The same lane holds
+        # -LE storm leaves it out. One entry per file, as above, labelled
+        # storm and not qml, so that selecting either label selects one
+        # lane. The same lane holds
         # tst_ScanPageStorm.qml, one page's lists wheel-scrolled while
         # their rows change (the Browse crashes of 2026-10-17);
         # SEABASS_PAGE_STORM_SCALE lengthens its walks the same way. The
         # lane takes about eight minutes on Invent's general-runner (half
-        # of it that file), so the limit leaves room for a slow one: at
-        # 600 it timed out there on 2026-10-28.
+        # of it that file), so the limit, kept per file now, leaves room for
+        # a slow one: at 600 it timed out there on 2026-10-28. Per file on a
+        # Linux Debug build (2026-11-10): tst_Storm 165 s, tst_ScanPageStorm
+        # 161 s, and 251 s under org.kde.desktop.
         if(NOT SEABASS_STORM_TESTS)
             message(STATUS "SEABASS_STORM_TESTS is OFF: the storm lane (tests/qml-storm) is not registered.")
         elseif(SEABASS_XVFB_RUN)
-            add_test(NAME seabass_qml_storm_tests
-                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
-                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
-            set_tests_properties(seabass_qml_storm_tests PROPERTIES
-                ENVIRONMENT "${_seabass_qml_test_env}"
-                LABELS "storm"
+            seabass_add_qml_test_files(seabass_qml_storm_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm"
+                LABELS storm
+                ENVIRONMENT ${_seabass_qml_test_env}
                 TIMEOUT 1200
-                RESOURCE_LOCK xvfb)
+                PROCESSORS 1)
             # The page storms again under org.kde.desktop, the style the
             # Linux build ships and the nearest the suite has to the Breeze
             # of Sebastian's Plasma. Under Basic a Menu's list never holds
@@ -1481,17 +1556,18 @@ if(SEABASS_GUI AND Qt6_FOUND)
             # which is how the Add To submenu kept destroyed entries for
             # weeks while this lane was green (2026-11-05). No seed walk:
             # SEABASS_STORM_SEEDS=0 leaves tst_Storm with nothing to do, so
-            # this is tst_ScanPageStorm's lists, a few minutes.
+            # this is tst_ScanPageStorm's lists, a few minutes, and tst_Storm
+            # is not registered here: an entry that walks no seed would
+            # report a pass for a walk nobody took.
             if(SEABASS_KDE_STYLE_QMLDIR)
-                add_test(NAME seabass_qml_storm_desktop_style_tests
-                    COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
-                        $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
                 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-storm-desktop-style")
-                set_tests_properties(seabass_qml_storm_desktop_style_tests PROPERTIES
+                seabass_add_qml_test_files(seabass_qml_storm_desktop_style_tests
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm"
+                    LABELS storm
                     ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-storm-desktop-style;SEABASS_IGNORE_REMOVABLE_MEDIA=1;SEABASS_STORM_SEEDS=0"
-                    LABELS "storm"
                     TIMEOUT 1200
-                    RESOURCE_LOCK xvfb)
+                    PROCESSORS 1
+                    EXCLUDE tst_Storm)
             endif()
         elseif(WIN32)
             # Windows has no xvfb and needs none: the storm runs in a real
@@ -1504,15 +1580,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
             # StormFixture::pull and docs/testing.md).
             set(_seabass_storm_env "${_seabass_qml_test_env}")
             list(REMOVE_ITEM _seabass_storm_env "QT_QPA_PLATFORM=offscreen")
-            add_test(NAME seabass_qml_storm_tests
-                COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
             # A seed takes about 290 s here, walk and quit leg, on the
             # 4-core shakedown laptop's Debug build, so the default three
             # need about 15 minutes where Linux needs 2.5: the ten given
             # there cut the third seed off.
-            set_tests_properties(seabass_qml_storm_tests PROPERTIES
-                ENVIRONMENT "${_seabass_storm_env}"
-                LABELS "storm"
+            seabass_add_qml_test_files(seabass_qml_storm_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm"
+                LABELS storm
+                ENVIRONMENT ${_seabass_storm_env}
                 TIMEOUT 1800
                 PROCESSORS 2)
         endif()
@@ -1521,17 +1595,11 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # above, kept as its own check because these read back real
         # pixels and are the slowest of the lot.
         if(SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND)
-            add_test(NAME seabass_qml_shader_tests
-                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
-                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-shader)
-            set_tests_properties(seabass_qml_shader_tests PROPERTIES ENVIRONMENT
-                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config;SEABASS_IGNORE_REMOVABLE_MEDIA=1")
-            # Both suites start their own `xvfb-run -a`, whose search for
-            # a free display and the lock it then takes are not one
-            # atomic step: run in parallel they can choose the same
-            # number and one dies with "Server is already active". Only
-            # the shader suite used xvfb before this, so the race is new.
-            set_tests_properties(seabass_qml_tests seabass_qml_shader_tests PROPERTIES RESOURCE_LOCK xvfb)
+            seabass_add_qml_test_files(seabass_qml_shader_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-shader"
+                LABELS qml
+                ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config;SEABASS_IGNORE_REMOVABLE_MEDIA=1"
+                TIMEOUT ${_seabass_qml_file_timeout}
+                PROCESSORS 1)
         else()
             # A warning, not a status line: without it nothing at all checks
             # what the shader draws, and that should not scroll past unseen.
@@ -4508,7 +4576,7 @@ foreach(_seabass_test IN LISTS _seabass_all_tests)
     #
     # Skipped where the test already names its own, rather than appending
     # a second value and leaving which one wins to CTest's ordering --
-    # seabass_qml_tests sets XDG_CONFIG_HOME above.
+    # the QML entries set XDG_CONFIG_HOME above.
     if(NOT _seabass_test_env MATCHES "XDG_CONFIG_HOME=")
         list(APPEND _seabass_test_env
             "XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
