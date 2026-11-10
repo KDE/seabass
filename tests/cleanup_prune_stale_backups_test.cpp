@@ -26,11 +26,14 @@
 //   POSIX the record's directory is read-only; on Windows its files are
 //   held open with no sharing, the sharing violation a real stick gives
 //   when an archiver or a preview pane has the zip open.
+// - case 5 (#79): the session is closed, as leaving its page does, and
+//   its last save's records are still neither listed nor deleted.
 //
 // Windows runs cases 1, 2 and 4. Holding the worker between two records
 // without a sleep needs the FIFO, which Windows has no equivalent of.
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QFileSystemWatcher>
 #include <QSignalSpy>
 #include <QStringList>
@@ -477,7 +480,39 @@ int main(int argc, char **argv)
     expectList(controller, {c2}, "case 4, afterwards");
     std::cout << "case 4 (a record the filesystem refuses is counted failed, logged, and stays listed) OK\n";
 
+    // Case 5 (#79): the session goes, as it does when the page that saved
+    // is left, and its last save's records are still not old.
+    // Arrange
     registry->closeSession(libraryId);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    if (registry->hasSession(libraryId)) {
+        fail("case 5: the session outlived its close, so this case proves nothing");
+    }
+    const std::string logBeforeLeaving = read(logPath);
+
+    // Act
+    controller.refreshStaleBackups();
+    waitForListing(controller, listed);
+    expectList(controller, {c2}, "case 5, after the session went");
+    controller.pruneStaleBackups();
+    const QVariantMap afterLeaving = waitForPrune(finished);
+
+    // Assert
+    assert(afterLeaving.value("error").toString().isEmpty());
+    assert(afterLeaving.value("written").toInt() == 1);
+    if (!gone(backups, c2)) {
+        fail("case 5: the earlier record was not deleted");
+    }
+    for (const auto &id : {l1, l2}) {
+        if (!whole(backups, id)) {
+            fail("case 5: " + id + ", the last save's, was deleted once its session went");
+        }
+    }
+    const auto leavingLines = messages(read(logPath).substr(logBeforeLeaving.size()));
+    assert(leavingLines.size() == 1);
+    assert(countOf(leavingLines, DeletedLine + c2) == 1);
+    std::cout << "case 5 (the last save's records are kept once its session has gone) OK\n";
+
     std::cout << "cleanup_prune_stale_backups_test: all passed\n";
     return 0;
 }

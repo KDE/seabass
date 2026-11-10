@@ -79,6 +79,26 @@ public:
                                                              const QString &stickLabel = QString());
     Q_INVOKABLE bool hasSession(const QString &libraryId) const;
 
+    // The last save's undo, kept per library once its session is dropped
+    // (#79): a page left and another opened is a new session, and Undo
+    // Last Save, which the save's records on the stick still allow, must
+    // not go with the old one. In memory only: after a restart nothing
+    // says what changed on the stick since, so nothing is offered.
+    struct KeptSave
+    {
+        std::vector<UndoableBackup> backups;
+        bool interrupted = false;
+        // The stick's backups folder of the session that saved, as
+        // LibraryEditSession::stickBackupDir() names it.
+        QString stickBackupDir;
+    };
+    // Handed to the library's next session, once, when that session is on
+    // the same stick folder; nullopt otherwise.
+    std::optional<KeptSave> takeKeptSave(const QString &libraryId, const QString &backupDir);
+    // Every record Undo Last Save could still restore on this library, a
+    // live session's or a kept one's: what Free Up Space must leave alone.
+    QStringList lastSaveBackupIds(const QString &libraryId) const;
+
     // The library id for any catalog path (PIONEER / Engine Library
     // folder) or stick root, via MediaController's identities -- also for
     // a stick that has since been pulled.
@@ -173,6 +193,7 @@ private:
     std::string m_instanceId;
     std::string m_hostName;
     std::map<QString, LibraryEditSession *> m_sessions;
+    std::map<QString, KeptSave> m_keptSaves;
     std::map<QString, int> m_directWrites;  // libraryId -> nesting count
     QStringList m_lockedByOther;
     QPointer<MediaController> m_mediaController;

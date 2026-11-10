@@ -128,6 +128,9 @@ public:
         }
         return ids;
     }
+    // What Undo Last Save would restore: the registry keeps it when it
+    // drops this session (EditSessionRegistry::closeSession).
+    const std::vector<UndoableBackup> &lastSaveBackups() const { return m_lastBackups; }
     bool interruptedSave() const { return m_interruptedSave; }
     bool stickPresent() const { return m_stickPresent; }
     QString stickIdentityStrength() const { return m_stickIdentityStrength; }
@@ -150,6 +153,10 @@ public:
     // still right when the stick list has no row for the library (or has
     // a stale one); the registry consults it for exactly that reason.
     bool editsBrowsedBackup() const;
+
+    // The stick's backups folder, from the catalog paths once known, else
+    // from the mount point; empty when neither is.
+    std::string stickBackupDir() const;
 
     QString rekordboxPath() const { return m_rekordboxPath; }
     QString enginePath() const { return m_enginePath; }
@@ -232,7 +239,10 @@ private:
     // Offers Undo for a save a pulled stick left unfinished, found by the
     // note the save leaves in the stick's backups folder.
     void adoptInterruptedSave();
-    std::string stickBackupDir() const;
+    // Offers Undo for the last save of an earlier session on this library,
+    // which the registry kept when that session went (#79). Asked first by
+    // adoptInterruptedSave(), with the stick's backups folder.
+    bool adoptKeptSave(const std::string &backupDir);
     QFutureWatcher<SaveLoopResult> m_watcher;
     application::CancellationToken m_writeCancel;
     QString m_writeLabel;

@@ -1662,15 +1662,14 @@ std::set<std::string> CleanupController::sessionBackupIds() const
     std::set<std::string> ids;
     auto *registry = EditSessionRegistry::instance();
     const QString libraryId = registry->libraryIdForPath(m_path);
-    // hasSession() first: sessionFor() makes an idle session when there is
-    // none, and listing backups is no reason to.
-    if (libraryId.isEmpty() || !registry->hasSession(libraryId)) {
+    if (libraryId.isEmpty()) {
         return ids;
     }
-    if (LibraryEditSession *session = registry->sessionFor(libraryId)) {
-        for (const QString &id : session->lastSaveBackupIds()) {
-            ids.insert(id.toStdString());
-        }
+    // The live session's, and the last save's once the page that made it
+    // is gone (#79): Free Up Space used to know only live sessions, and
+    // deleted the newest save's records as soon as its page was left.
+    for (const QString &id : registry->lastSaveBackupIds(libraryId)) {
+        ids.insert(id.toStdString());
     }
     return ids;
 }

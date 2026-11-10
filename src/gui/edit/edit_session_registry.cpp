@@ -193,6 +193,11 @@ void EditSessionRegistry::closeSession(const QString &libraryId)
     // holding the lock stays (the stick-removed flow relies on that).
     if (session->refs() == 0 && !session->dirty() && !session->writing() && !session->lockHeld()
         && session != m_stickRemovedSession) {
+        // Except its undo, which the next session on this library offers.
+        if (session->canUndo()) {
+            m_keptSaves[libraryId] = KeptSave{session->lastSaveBackups(), session->interruptedSave(),
+                                              QString::fromStdString(session->stickBackupDir())};
+        }
         m_sessions.erase(libraryId);
         session->deleteLater();
         emit sessionsChanged();
@@ -211,6 +216,40 @@ LibraryEditSession *EditSessionRegistry::sessionFor(const QString &libraryId, co
 bool EditSessionRegistry::hasSession(const QString &libraryId) const
 {
     return findSession(libraryId) != nullptr;
+}
+
+std::optional<EditSessionRegistry::KeptSave> EditSessionRegistry::takeKeptSave(const QString &libraryId,
+                                                                                const QString &backupDir)
+{
+    auto it = m_keptSaves.find(libraryId);
+    if (it == m_keptSaves.end()) {
+        return std::nullopt;
+    }
+    // Another folder is another copy of the stick under the same id (two
+    // mounts of one image, or the tests' scratch copies): its save is not
+    // this session's to undo. Left kept, for a session that is on it.
+    if (it->second.stickBackupDir != backupDir) {
+        return std::nullopt;
+    }
+    KeptSave kept = std::move(it->second);
+    m_keptSaves.erase(it);
+    return kept;
+}
+
+QStringList EditSessionRegistry::lastSaveBackupIds(const QString &libraryId) const
+{
+    QStringList ids;
+    if (const LibraryEditSession *session = findSession(libraryId)) {
+        ids = session->lastSaveBackupIds();
+    }
+    if (auto it = m_keptSaves.find(libraryId); it != m_keptSaves.end()) {
+        for (const auto &backup : it->second.backups) {
+            if (!ids.contains(backup.id)) {
+                ids << backup.id;
+            }
+        }
+    }
+    return ids;
 }
 
 bool EditSessionRegistry::isReadOnlyLibrary(const QString &libraryId) const

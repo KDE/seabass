@@ -555,7 +555,8 @@ private:
     void onDeletePendingFinished();
     void onPruneFinished();
     // The backup records Undo Last Save could still use that the GUI
-    // thread knows of: the open session's. The interrupted-save note is
+    // thread knows of: the open session's, or the one the registry kept
+    // when that session went. The interrupted-save note is
     // read on the worker, beside the records themselves.
     std::set<std::string> sessionBackupIds() const;
     void attachSession();

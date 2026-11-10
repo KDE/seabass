@@ -87,6 +87,9 @@ void LibraryEditSession::adoptInterruptedSave()
     if (backupDir.empty()) {
         return;
     }
+    if (adoptKeptSave(backupDir)) {
+        return;
+    }
     std::vector<UndoableBackup> found;
     infrastructure::backup::FilesystemBackupStore store(backupDir);
     for (const std::string &id : infrastructure::backup::interruptedSaveRecords(backupDir)) {
@@ -103,6 +106,29 @@ void LibraryEditSession::adoptInterruptedSave()
     m_lastBackups = std::move(found);
     m_interruptedSave = true;
     emit canUndoChanged();
+}
+
+bool LibraryEditSession::adoptKeptSave(const std::string &backupDir)
+{
+    auto kept = m_registry->takeKeptSave(m_libraryId, QString::fromStdString(backupDir));
+    if (!kept) {
+        return false;
+    }
+    // A record deleted since (Manage Backups) is no longer one to offer.
+    std::vector<UndoableBackup> found;
+    for (auto &backup : kept->backups) {
+        infrastructure::backup::FilesystemBackupStore store(backup.backupDir.toStdString());
+        if (store.isRestorable(backup.id.toStdString())) {
+            found.push_back(std::move(backup));
+        }
+    }
+    if (found.empty()) {
+        return false;
+    }
+    m_lastBackups = std::move(found);
+    m_interruptedSave = kept->interrupted;
+    emit canUndoChanged();
+    return true;
 }
 
 LibraryEditSession::~LibraryEditSession()
