@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -59,9 +60,31 @@ std::optional<std::string> titleArtistKey(const Track &track);
 // file's cues onto the other (WHALESHARK2, 2026-10-02).
 enum class MatchScope { AcrossLibraries, OneStick };
 
+// Which spellings of a path open one file on the stick (#86). FAT32 and
+// exFAT ignore letter case, so a catalog may list "Akki (De)/x.mp3" for
+// the file another lists as "AKKI (DE)/x.mp3" (SHAKEDOWN_8's OneLibrary
+// beside its export.pdb and Engine), and the exact path does not pair them.
+// A case-sensitive filesystem can hold both as two files, so a shared key
+// is only where to look: the filesystem says whether it is one file.
+//
+// Both injected, because the domain neither keys paths nor reads disks:
+// pathKey is application::normalizedPathKey, sameFile asks the filesystem
+// and answers false when it cannot tell (a file not there).
+struct StickFiles
+{
+    std::function<std::string(const std::string &)> pathKey;
+    std::function<bool(const std::string &, const std::string &)> sameFile;
+};
+
+// With `files`, a row whose exact path finds no partner is paired with the
+// one row on the other side whose path has the same key, when the key
+// names exactly one row on each side and the filesystem says the two are
+// one file. Anything else under a shared key (two rows on a side, two
+// files) is left as the exact path left it, never picked between.
 std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vector<Track> &a,
                                                                    const std::vector<Track> &b,
-                                                                   MatchScope scope = MatchScope::AcrossLibraries);
+                                                                   MatchScope scope = MatchScope::AcrossLibraries,
+                                                                   const StickFiles *files = nullptr);
 
 // True if two cue sets are the same, ignoring order and allowing a small
 // position tolerance (cross-format conversions round, see

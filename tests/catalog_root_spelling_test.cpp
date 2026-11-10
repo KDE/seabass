@@ -19,13 +19,16 @@
 // A trailing separator on the PIONEER folder itself, where parent_path()
 // answers the PIONEER folder, is case 5 (#87).
 
+#include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "application/use_cases/sync_libraries.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -180,5 +183,54 @@ int main(int argc, char **argv)
                     "rekordbox artwork through \"" + trailing + "\"");
     }
     std::cout << "case 5 (a trailing separator on the PIONEER folder leaves the paths alone) OK\n";
+
+    // 6. Letter case (#86). SHAKEDOWN_8's OneLibrary lists
+    //    "/Contents/Akki (De)/Midnight/" for a folder the stick, export.pdb
+    //    and Engine spell "AKKI (DE)". FAT32 and exFAT are case-insensitive,
+    //    so both spellings open one file; Sync paired rows by the exact
+    //    path, and within one stick a row whose file is present gets no name
+    //    fallback, so the track was silently left out. Which spellings name
+    //    one file is the filesystem's to say: a hard link stands in for
+    //    FAT's answer here, and two files that differ only in case, which a
+    //    case-sensitive filesystem can hold, must stay apart.
+    {
+        const fs::path caseStick = scratch / "case_stick";
+        fs::remove_all(caseStick);
+        const fs::path upper = caseStick / "Contents" / "AKKI (DE)" / "Midnight";
+        const fs::path mixed = caseStick / "Contents" / "Akki (De)" / "Midnight";
+        fs::create_directories(upper);
+        fs::create_directories(mixed);
+        std::ofstream(upper / "01 Midnight.mp3") << "one file";
+        fs::create_hard_link(upper / "01 Midnight.mp3", mixed / "01 Midnight.mp3");
+        std::ofstream(upper / "02 Other.mp3") << "a file";
+        std::ofstream(mixed / "02 Other.mp3") << "another file, the same name in other letters";
+
+        const auto row = [](const std::string &format, const std::string &id, const fs::path &file) {
+            Track t;
+            t.format = format;
+            t.sourceId = id;
+            t.filePath = seabass::pathToUtf8(file);
+            t.filename = seabass::pathToUtf8(file.filename());
+            t.title = "Midnight";
+            t.artist = "Akki (DE)";
+            t.durationSeconds = 300.0;
+            t.fileSizeBytes = fs::file_size(file);
+            t.cues = {seabass::domain::CuePoint{seabass::domain::CuePoint::Kind::Hot, 1, 1000.0, "", ""}};
+            return t;
+        };
+        const auto now = std::chrono::system_clock::now();
+        const auto pairs = [&](const fs::path &a, const fs::path &b) {
+            return seabass::application::SyncLibraries()
+                .execute({row("onelibrary", "ol1", a)}, {row("engine", "e1", b)}, now, now)
+                .size();
+        };
+        if (pairs(mixed / "01 Midnight.mp3", upper / "01 Midnight.mp3") != 1) {
+            fail("one file spelled \"Akki (De)\" and \"AKKI (DE)\" was not paired");
+        }
+        if (pairs(mixed / "02 Other.mp3", upper / "02 Other.mp3") != 0) {
+            fail("two files that differ only in letter case were paired");
+        }
+        std::cout << "case 6 (one file in two letter cases is one track, two files stay two) OK\n";
+    }
     return 0;
 }

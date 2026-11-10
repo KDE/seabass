@@ -65,7 +65,8 @@ std::optional<std::string> titleArtistKey(const Track &track)
 }
 
 std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vector<Track> &a,
-                                                                   const std::vector<Track> &b, MatchScope scope)
+                                                                   const std::vector<Track> &b, MatchScope scope,
+                                                                   const StickFiles *files)
 {
     std::map<std::string, const Track *> bByFilePath;
     std::map<std::string, std::vector<const Track *>> bByTitleArtist;
@@ -92,6 +93,21 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
         }
         bByFilename[normalizeFilename(track.filename)].push_back(&track);
     }
+    // Path keys, counted on both sides: see StickFiles.
+    std::map<std::string, std::vector<const Track *>> bByPathKey;
+    std::map<std::string, int> aCountByPathKey;
+    if (files) {
+        for (const auto &track : a) {
+            if (!track.filePath.empty()) {
+                aCountByPathKey[files->pathKey(track.filePath)]++;
+            }
+        }
+        for (const auto &track : b) {
+            if (!track.filePath.empty()) {
+                bByPathKey[files->pathKey(track.filePath)].push_back(&track);
+            }
+        }
+    }
 
     std::vector<std::pair<const Track *, const Track *>> matches;
     for (const auto &trackA : a) {
@@ -107,6 +123,21 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
             auto pathIt = bByFilePath.find(trackA.filePath);
             if (pathIt != bByFilePath.end()) {
                 matches.emplace_back(&trackA, pathIt->second);
+                continue;
+            }
+        }
+
+        // Another spelling of the same file (#86). Only where the key names
+        // one row on each side: a second row there may be another file on
+        // a case-sensitive filesystem, or a second row for this one, and
+        // picking between them is a guess. An `a` row that shares its key
+        // with another `a` row is left too, so no `b` row is paired twice.
+        if (files && !trackA.filePath.empty()) {
+            const std::string key = files->pathKey(trackA.filePath);
+            const auto keyIt = bByPathKey.find(key);
+            if (keyIt != bByPathKey.end() && keyIt->second.size() == 1 && aCountByPathKey[key] == 1
+                && files->sameFile(trackA.filePath, keyIt->second.front()->filePath)) {
+                matches.emplace_back(&trackA, keyIt->second.front());
                 continue;
             }
         }

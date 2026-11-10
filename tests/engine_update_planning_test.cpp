@@ -395,6 +395,23 @@ int main()
         std::cout << "level OK\n";
     }
 
+    // One file spelled in two letter cases (#86, SHAKEDOWN_8): rekordbox
+    // lists "Akki (De)", the stick and Engine "AKKI (DE)". matchTracks pairs
+    // by the exact path and leaves the two apart, but the planner files
+    // every row under its path key, so they still meet: level, not an add
+    // and a removal.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Contents/Akki (De)/Midnight/01 Midnight.mp3", {{"P", 0}}, 3)};
+        w.engine = {en("e1", "Contents/AKKI (DE)/Midnight/01 Midnight.mp3", {{"P", 0}}, 3)};
+        w.rekordboxPlaylists = {{"P", false, 1}};
+        w.enginePlaylists = {{"P", false, 1}};
+        w.importKey = {{"e1", 14204}};
+        assert(plan(w, baselineOf(w)).empty());
+        assert(plan(w, std::nullopt).empty());
+        std::cout << "one file in two letter cases is level OK\n";
+    }
+
     // B equals E, rekordbox added a track: add, checked.
     {
         World w;

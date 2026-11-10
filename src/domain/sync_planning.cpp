@@ -17,11 +17,12 @@
 namespace seabass::domain
 {
 
-std::vector<SyncMatch> TrackMatcher::match(const std::vector<Track> &tracksA, const std::vector<Track> &tracksB)
+std::vector<SyncMatch> TrackMatcher::match(const std::vector<Track> &tracksA, const std::vector<Track> &tracksB,
+                                           const StickFiles *files)
 {
     std::vector<SyncMatch> matches;
     // Two catalogs of one stick: see MatchScope::OneStick.
-    for (const auto &[trackA, trackB] : matchTracks(tracksA, tracksB, MatchScope::OneStick)) {
+    for (const auto &[trackA, trackB] : matchTracks(tracksA, tracksB, MatchScope::OneStick, files)) {
         matches.push_back({*trackA, *trackB});
     }
     return matches;

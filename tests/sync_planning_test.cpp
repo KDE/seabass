@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <iostream>
 
@@ -697,6 +698,49 @@ int main()
         assert(matchTracks({engineOnly}, {other}).size() == 1 && "across libraries a name still matches");
         assert(matchTracks({engineOnly}, {other}, MatchScope::OneStick).empty());
         std::cout << "case (across libraries the same rows match by name) OK\n";
+    }
+
+    // #86: one file under two letter cases (SHAKEDOWN_8's "Akki (De)" in
+    // OneLibrary, "AKKI (DE)" on the stick and in Engine). The key says
+    // where to look, the filesystem whether it is one file; anything a
+    // shared key cannot settle is left unpaired, never picked.
+    {
+        const auto lower = [](const std::string &path) {
+            std::string key = path;
+            for (char &c : key) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return key;
+        };
+        const auto row = [](const std::string &id, const std::string &path) {
+            Track t = makeTrack(id, path.substr(path.rfind('/') + 1), 300.0, {}, "Midnight", "Akki (DE)");
+            t.filePath = path;
+            t.fileSizeBytes = 8'000'000;  // present: no name fallback
+            return t;
+        };
+        const std::string mixed = "/stick/Contents/Akki (De)/Midnight/01 Midnight.mp3";
+        const std::string upper = "/stick/Contents/AKKI (DE)/Midnight/01 Midnight.mp3";
+        const std::string other = "/stick/Contents/akki (de)/Midnight/01 Midnight.mp3";
+        const StickFiles fat{lower, [](const std::string &, const std::string &) { return true; }};
+        const StickFiles caseSensitive{lower, [](const std::string &, const std::string &) { return false; }};
+
+        assert(TrackMatcher::match({row("ol1", mixed)}, {row("e1", upper)}).empty() && "the exact path alone: apart");
+        assert(TrackMatcher::match({row("ol1", mixed)}, {row("e1", upper)}, &fat).size() == 1
+               && "one file on FAT: paired");
+        assert(TrackMatcher::match({row("ol1", mixed)}, {row("e1", upper)}, &caseSensitive).empty()
+               && "two files on a case-sensitive filesystem: apart");
+
+        // Two Engine rows under the key: which one is a guess.
+        assert(TrackMatcher::match({row("ol1", mixed)}, {row("e1", upper), row("e2", other)}, &fat).empty());
+        // Two rows on the `a` side, one exactly Engine's: that one pairs,
+        // and the other does not take the same Engine row a second time.
+        const auto twoA = std::vector<Track>{row("ol1", mixed), row("ol2", upper)};
+        const auto paired = TrackMatcher::match(twoA, {row("e1", upper)}, &fat);
+        assert(paired.size() == 1 && paired[0].trackA.sourceId == "ol2");
+        // Across libraries nothing changes: the key is for one stick.
+        assert(matchTracks({row("ol1", mixed)}, {row("e1", upper)}, MatchScope::AcrossLibraries).size() == 1
+               && "across libraries the name matched it already");
+        std::cout << "case (one file in two letter cases pairs only where the filesystem says so, #86) OK\n";
     }
 
     // ---- Every conflict says why (2026-10-04) -------------------------

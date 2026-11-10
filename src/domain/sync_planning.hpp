@@ -11,6 +11,7 @@
 #include "domain/cue_tolerance.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/track.hpp"
+#include "domain/track_matching.hpp"
 
 namespace seabass::domain
 {
@@ -176,7 +177,9 @@ std::string catalogDisplayName(const std::string &format);
 class TrackMatcher
 {
 public:
-    static std::vector<SyncMatch> match(const std::vector<Track> &tracksA, const std::vector<Track> &tracksB);
+    // `files`: see StickFiles (track_matching.hpp).
+    static std::vector<SyncMatch> match(const std::vector<Track> &tracksA, const std::vector<Track> &tracksB,
+                                        const StickFiles *files = nullptr);
 };
 
 // Decides what should happen to one matched pair's cues. mtimeA/mtimeB
