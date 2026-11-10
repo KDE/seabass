@@ -44,11 +44,11 @@ Page {
     // The edit-session registry. The app's singleton unless a test hands
     // in a fake, as tst_EditSessionHost does; read when the page is built.
     property alias editSessionRegistry: editHost.registry
-    // A check page that says a finished save itself sets this: a save that
-    // landed whole is then said over the list with the countdown toast, in
-    // the summary's own words ("12 cues removed"), and opens no summary
-    // dialog. Anything short of whole still gets the dialog. Off, the
-    // dialog comes after every save, as it always did.
+    // A save that landed whole is said over the list with the countdown
+    // toast, in the summary's own words ("12 cues removed"), and opens no
+    // summary dialog, on every check page as on the other pages that
+    // stage and save (#82). Anything short of whole still gets the
+    // dialog. A page set to false gets the dialog after every save.
     property alias quietCleanSaves: editHost.quietCleanSaves
 
     // The hub can be torn down before the page, taking its controller with
@@ -104,6 +104,7 @@ Page {
     EditSessionHost {
         id: editHost
         objectName: "healthCheckEditHost"
+        quietCleanSaves: true
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
@@ -141,8 +142,17 @@ Page {
             && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
             && !(summary.skipped > 0) && summary.written === summary.total;
         if (whole) {
-            savedToast.show(summary.written + " " + summary.unit + " " + summary.verb);
+            const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
+            savedToast.show(summary.written + " " + unit + " " + summary.verb);
         }
+    }
+    // The summary's unit is plural ("tracks", "libraries"); one of them
+    // reads as one. The same rule OperationSummaryDialog uses.
+    function singular(unit) {
+        if (unit.endsWith("ies")) {
+            return unit.substring(0, unit.length - 3) + "y";
+        }
+        return unit.endsWith("s") ? unit.substring(0, unit.length - 1) : unit;
     }
 
     header: ToolBar {

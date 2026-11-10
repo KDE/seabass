@@ -1004,4 +1004,55 @@ TestCase {
         compare(t.controller.cueTableRowCount, 0);
         compare(t.controller.cueTableLeftAloneCount, 1, "the row whose file stopped reading is left alone");
     }
+
+    // A page over a scanned copy, as the hub hands it its controller.
+    Component {
+        id: stickPageComponent
+        CueTablePage {
+            width: 980
+            height: 760
+            stickLabel: "TESTSTICK"
+        }
+    }
+    function pageOver(t) {
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: t.pioneer, enginePath: t.stick + "/Engine Library",
+                                            sharedController: t.controller});
+        verify(page !== null);
+        return page;
+    }
+
+    // #82: a save that landed whole is said with the toast, as on every
+    // other page that stages and saves, and opens no summary to close.
+    function test_aCleanSaveIsSaidWithTheToast() {
+        const t = scannedCopy();
+        const page = pageOver(t);
+        compare(t.controller.cueTableRowCount, 1, "precondition: the fixture's drifted row");
+        t.controller.repairCueTables([]);
+        const summary = saveAndWait(t.session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, JSON.stringify(summary));
+        compare(summary.total, 1, JSON.stringify(summary));
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000, "the save is said over the list");
+        compare(findChild(toast, "confirmationToastLabel").text, "1 track repaired");
+        wait(50);
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+    }
+
+    // A save that did not land whole still opens the summary: a row was
+    // skipped, which the toast would not say.
+    function test_aSaveWithASkipStillOpensTheSummary() {
+        const t = scannedCopy((stick) => stickFixture.plantCueTableRow(stick, -1, 3, 200000));
+        verify(t.planted && t.planted.dat, "a second row was planted");
+        const page = pageOver(t);
+        t.controller.repairCueTables([]);
+        verify(stickFixture.replaceFileInCopy(t.planted.dat, "not an analysis file"));
+        const summary = saveAndWait(t.session);
+        compare(summary.skipped, 1, JSON.stringify(summary));
+        tryCompare(findChild(page, "summaryDialog"), "opened", true, 5000, "the skip is news: the summary says it");
+        compare(findChild(page, "savedToast").showing, false, "and no toast calls it done");
+        findChild(findChild(page, "summaryDialog"), "okButton").clicked();
+    }
 }

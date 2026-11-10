@@ -364,6 +364,31 @@ TestCase {
         component.destroy();
     }
 
+    // #82: every Library Health check page says a save that landed whole
+    // with the toast, not the summary dialog (a save short of whole still
+    // opens it; tst_CueTablePage runs both on a real save).
+    function test_everyCheckPageSaysACleanSaveWithTheToast_data() {
+        return [
+            {tag: "CueTablePage", name: "CueTablePage", props: stickProps({})},
+            {tag: "CuesAtZeroPage", name: "CuesAtZeroPage", props: stickProps({playbackController: realPlayback})},
+            {tag: "LibraryConsistencyPage", name: "LibraryConsistencyPage",
+             props: stickProps({playbackController: realPlayback})},
+            {tag: "SampleRatesPage", name: "SampleRatesPage", props: stickProps({})},
+            {tag: "NoPlaylistTracksPage", name: "NoPlaylistTracksPage", props: stickProps({})},
+            {tag: "ImportPromptPage", name: "ImportPromptPage", props: stickProps({})},
+            {tag: "PlaylistSyncPage", name: "PlaylistSyncPage", props: stickProps({})},
+        ];
+    }
+    function test_everyCheckPageSaysACleanSaveWithTheToast(row) {
+        const component = Qt.createComponent(qmlDir + row.name + ".qml");
+        compare(component.status, Component.Ready, row.name + ": " + component.errorString());
+        const page = createTemporaryObject(component, testCase, row.props);
+        verify(page !== null, row.name + " did not instantiate");
+        verify(findChild(page, "healthCheckEditHost") !== null, row.name + " is a HealthCheckPage");
+        compare(findChild(page, "healthCheckEditHost").quietCleanSaves, true, row.name);
+        component.destroy();
+    }
+
     function test_everyPageInstantiates_data() {
         return pageSpecs().map(function(spec) {
             return {tag: spec.name, name: spec.name, props: spec.props};

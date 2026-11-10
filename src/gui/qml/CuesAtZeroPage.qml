@@ -29,7 +29,6 @@ HealthCheckPage {
     // with the toast (HealthCheckPage), as Clean Up Stray Cues says it.
     // Ignore All keeps its question: it is not a staging, and there is no
     // Unstage for it.
-    quietCleanSaves: true
 
     MessageDialog {
         id: confirmIgnoreAllJunkCuesDialog
