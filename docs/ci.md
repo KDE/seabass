@@ -6,36 +6,61 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # CI
 
-`.gitlab-ci.yml` runs on KDE Invent. Four things run there, and they do
-different jobs: the two lanes below, which build and TEST, and KDE's own
-Craft templates, which build and PACKAGE (see "The Craft lanes" at the
-bottom). Neither Craft job runs ctest, so the Linux lane is the only
+`.gitlab-ci.yml` runs on KDE Invent. The Linux jobs build and TEST; KDE's
+Craft templates and `macos:universal` build and PACKAGE (see "The Craft
+lanes" below). No packaging job runs ctest, so the Linux jobs are the only
 thing on Invent that does.
 
-Two lanes, because the platforms have very different constraints:
+## What runs when
 
-| | Linux | Windows |
+| Pipeline | Jobs |
+|---|---|
+| Push to any branch, merge request | `linux:build-test` (configured with `-DSEABASS_QML_TESTS=OFF`; `ctest -j --timeout 300 -LE "qml\|storm\|integration\|timing"`), `reuse`, SAST and secret detection. A push that touches only documentation (the paths outside `.code_paths` in `.gitlab-ci.yml`) is not built. |
+| Nightly schedule, master | `linux:nightly`: full build, every test but the storm (`timing` tests run one at a time after the rest). It ends at once, green, when master is still at the commit of the last nightly that passed. |
+| Weekly schedule | `linux:qt68` (Qt 6.8.3, with `-DSEABASS_STORM_TESTS=ON`, every label), `craft_windows_qt6_x86_64`, `craft_appimage_qt6_x86_64`, `macos:universal`. |
+| Buttons | `linux:qt68` on `Seabass/X.Y` (the release check before a tag), `linux:coverage` on any branch, the package jobs. |
+| Release tag | `tag:tested-commit`, then the packages. No test lane: the job refuses the tag unless a branch pipeline at the same commit passed with `linux:build-test` in it (and, if `linux:qt68` ran there, it passed). |
+
+The numbers behind the split: every build on Invent is cold (there is no
+cache storage, so `cache:` does nothing), about 80 minutes on a loaded
+runner, and a serial ctest took 3405 s on top, 1756 s of it the QML suites
+and 836 s the storm. Before this, every push to master and to `Seabass/X.Y`
+ran two such lanes and every tag ran them again.
+
+No job uses `retry:`. A flaky test is a bug to be fixed, not a job to be
+run twice.
+
+`tools/pre-push-check.sh` is the other half of this: it runs everything
+CI on a push does not, on the contributor's machine (see
+`CONTRIBUTING.md`).
+
+## What needs setting up by hand
+
+None of these can be done from a repo checkout; they are GitLab
+project actions.
+
+### The two schedules
+
+GitLab has no cron syntax inside `.gitlab-ci.yml`; schedules live under
+the project's Build -> Pipeline schedules (Developer role is enough).
+Two, both on target branch `master`:
+
+| Description | Cron (example) | Variable |
 |---|---|---|
-| Runner | KDE Invent shared runners | self-hosted, tag `windows` (see below) |
-| Runs on | every push/MR | nightly schedule + release tags only |
-| Stages | build → test | build → test → package → installer-test |
+| Nightly | `0 2 * * *` | `SEABASS_SCHEDULE` = `nightly` |
+| Weekly | `0 3 * * 6` | `SEABASS_SCHEDULE` = `weekly` |
 
-The Linux lane is the fast gate: build, then `ctest` with the
-`integration` label excluded -- twelve tests as of this writing, worth
-about two minutes of the suite's wall clock (`corpus_test`,
-`anonymization_verifier_test`, `library_backup_roundtrip_test` and the
-rest; `ctest -N -L integration` lists them). Per `docs/testing.md` those
-are meant to run "before merging a larger change or cutting a release,"
-not on every push. The full lane -- both
-platforms, every ctest label, plus building and exercising the actual
-Windows installer -- runs nightly and on release tags.
+A schedule without the variable, or with any value but `weekly`, is
+treated as the nightly. No schedule on `Seabass/X.Y` branches: a release
+branch is checked with the `linux:qt68` button before its tag. A schedule
+on a `Seabass/X.Y` branch would run nothing but the scanners, unless it is
+a weekly, which would also sign its macOS package.
 
-## What still needs manual, one-time setup
+### A self-hosted Windows runner (not set up)
 
-Neither of these can be done from a repo checkout; both are GitLab
-project/account actions.
-
-### 1. A self-hosted Windows runner
+The MSYS2 `windows:*` chain stays switched off until one exists (see
+`SEABASS_WINDOWS_RUNNER` in `.gitlab-ci.yml`); when it runs, it runs on
+the weekly schedule, on tags, and as a button on `Seabass/X.Y`.
 
 KDE Invent's shared runners are Linux-only -- there's no Windows shared
 runner on the community tier. The Windows lane needs a machine with the
@@ -57,48 +82,15 @@ is the expensive, slow-changing part. Register it to run as a Windows
 service so it survives reboots and logoffs. The project runner token
 comes from Invent's project Settings -> CI/CD -> Runners.
 
-### 2. A nightly pipeline schedule
-
-GitLab doesn't support cron syntax inside `.gitlab-ci.yml` -- schedules
-are a project setting: Invent's project -> Build -> Pipeline schedules ->
-New schedule. Target branch `master`, a cron expression such as
-`0 2 * * *`, and no extra variables needed -- `$CI_PIPELINE_SOURCE ==
-"schedule"` is set automatically and is what `.gitlab-ci.yml`'s rules
-key off of.
-
-## Known-unverified part
-
-The Linux job's `apt-get install` package list (Qt6 components, mainly)
-is a best-effort guess, not yet confirmed against a real run -- the work
-this came from was written on a Windows-only toolchain, so there was no
-way to test the Linux lane directly. The first real pipeline run on
-Invent will very likely need a package-list fix or two; that's expected,
-not a sign the overall design is wrong.
-
-The `tags: [linux]` on the job is the same kind of guess, and it fails
-differently: a tag no runner offers leaves the job sitting pending
-rather than failing, so a first pipeline that never starts means the
-tag, not the build. Invent's project -> Settings -> CI/CD -> Runners
-lists what the available runners actually answer to.
-
-Four packages were added to that list when this landed, because the
-build cannot work without them at all: `pkg-config` and `libtag1-dev`
-(CMakeLists reaches TagLib 1.x through `taglib.pc`), `qt6-tools-dev` for
-Qt6::Test/QuickTest, and `qt6-shadertools-dev` plus `xvfb`, without
-which `seabass_qml_shader_tests` does not register -- and does not
-register quietly, which is the failure mode to watch for: a green
-pipeline that never ran the shader tests at all. CMake prints a warning
-in that case; read it on the first run.
-
 ## The Craft lanes
 
-Separate from the two lanes above, `.gitlab-ci.yml` includes KDE's
-`craft-windows-x86-64-qt6` and `craft-macos-arm64-qt6` templates, which
-build the `qt-apps/seabass` blueprint that ships in `craft-blueprint/`
-and produce the installer and the signed .dmg KDE distributes. They
-package; they do not test (craft-ci sets `/.buildTests = False`). The
-Windows Craft job is currently `allow_failure: true` while libvpx is
-broken on MSVC upstream -- `.gitlab-ci.yml` says when to take that off.
+`.gitlab-ci.yml` includes KDE's Craft templates, which build the
+`qt-apps/seabass` blueprint that ships in `craft-blueprint/` and produce
+the Windows installer and the AppImage KDE distributes. They package;
+they do not test (craft-ci sets `/.buildTests = False`). The Craft macOS
+halves are parked; the Mac package is `macos:universal`, built on Qt 6.8
+outside Craft. All of them run on the weekly schedule and on release
+tags, and are buttons everywhere else.
 
 So Windows is built twice, on purpose and by different toolchains:
 Craft/MSVC for what KDE ships, MSYS2/UCRT64 in `windows:*` for what

@@ -184,31 +184,38 @@ reuse:
     entrypoint: [""]
   script:
   - reuse lint
-# ---- Craft packaging lane: nightly and release tags, not every push ----
+# ---- Craft packaging lane: the weekly schedule and release tags ----
 #
 # Measured over 25 master pipelines: craft_macos_qt6_x86_64 155 min,
 # craft_macos_qt6_arm64 144 min, craft_windows_qt6_x86_64 43 min -- 342
 # minutes out of 832, about 41% of all runner time, spent repackaging on
 # every push an application whose packaging changes rarely. The Linux
-# lane tests every push; these three prove the packaging still works,
-# and that is a nightly question rather than a per-commit one.
+# lanes test; these prove the packaging still works, and that is a weekly
+# question rather than a per-commit one. The nightly does not package.
 #
-# THIS DEPENDS ON A NIGHTLY SCHEDULE EXISTING. GitLab has no in-file
-# cron: schedules live under CI/CD -> Schedules, which needs only the
-# Developer role (unlike Settings -> CI/CD, which needs Maintainer).
-# Without a schedule these jobs run on release TAGS ONLY, and a Windows
-# or macOS regression would go unseen until a release -- worse than
-# paying for them per push. If you are reading this because packaging
-# broke and nobody noticed, check CI/CD -> Schedules first.
+# THIS DEPENDS ON A WEEKLY SCHEDULE EXISTING, with SEABASS_SCHEDULE set
+# to "weekly" on it (see "Which pipeline runs what", below). GitLab has
+# no in-file cron: schedules live under Build -> Pipeline schedules, which
+# needs only the Developer role (unlike Settings -> CI/CD, which needs
+# Maintainer). Without it these jobs run on release TAGS ONLY, and a
+# Windows regression would go unseen until a release. If you are reading
+# this because packaging broke and nobody noticed, check the schedules
+# and their variables first.
+#
+# On a tag they are in the `deploy` stage with no `needs:`, so they wait
+# for tag:tested-commit: no package from a commit no branch pipeline
+# passed.
 #
 # The manual branch is the escape hatch: on an ordinary push these
 # appear as buttons, so a commit touching craft-blueprint/ or the build
-# can be packaged on demand without waiting for the night. It carries
+# can be packaged on demand without waiting for the week. It carries
 # allow_failure so a button nobody presses never holds a pipeline open.
 # That is not the same allow_failure that was removed from the
 # automatic branch: an unstarted manual job is not a failure.
 .craft_lane_rules: &craft_lane_rules
-  - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
+  - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly" && $KDECI_SECURE_SERVICES_KEY'
+  - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
   - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
   - when: manual
     allow_failure: true
@@ -256,13 +263,14 @@ craft_macos_qt6_x86_64:
 # One universal .dmg from the two halves above.
 #
 # It runs wherever the halves do, by the same rules: automatic on the
-# nightly schedule, on any branch, and a button on any other push. A tag
+# weekly schedule (the nightly, until 2026-11-10), and a button on any
+# other push. A tag
 # would run it automatically too, but only a pipeline the secure services
 # key reaches, and the key has not reached a tag pipeline so far, so a tag
-# gets the button. The nightly run is the one that matters most: it is
+# gets the button. The scheduled run is the one that matters most: it is
 # where the two Craft roots drifting apart (the install.db check in
 # tools/macos-universal-dmg.sh) shows up as a red job, rather than on the
-# evening of a release. On Seabass/X.Y the nightly also signs and
+# evening of a release. On Seabass/X.Y the schedule also signs and
 # notarises, and there a failure fails the pipeline: that branch is what
 # a release is cut from, so a broken universal package must not leave it
 # green.
@@ -289,23 +297,24 @@ craft_macos_qt6_x86_64:
       artifacts: true
     - job: craft_macos_qt6_x86_64
       artifacts: true
-  # The first two rules are *craft_lane_rules' schedule and manual
-  # branches with signing switched on for Seabass/X.Y; the rest are
-  # *craft_lane_rules itself, written out because a rule list cannot be
-  # extended through an anchor. The schedule rule comes first: a scheduled
-  # pipeline carries CI_COMMIT_BRANCH as well, and would otherwise match
-  # the manual one and wait for a button nobody presses at night.
+  # *craft_lane_rules written out, because a rule list cannot be extended
+  # through an anchor, with signing switched on for Seabass/X.Y. The
+  # schedule rules come first: a scheduled pipeline carries
+  # CI_COMMIT_BRANCH as well, and would otherwise match the manual one and
+  # wait for a button nobody presses at night.
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       allow_failure: false
       variables:
         SEABASS_UNIVERSAL_SIGN: "yes"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly" && $KDECI_SECURE_SERVICES_KEY'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       when: manual
       allow_failure: true
       variables:
         SEABASS_UNIVERSAL_SIGN: "yes"
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
     - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
     - when: manual
       allow_failure: true
@@ -385,14 +394,15 @@ craft_macos_qt6_x86_64:
 # both architectures. The Craft-built halves and their merge are parked
 # above.
 #
-# Signed and notarised on the Seabass/X.Y nightly (and its button), the
-# only refs cleared for macOS signing (see .macos:universal-craft for
-# why); ad hoc everywhere else.
+# Signed and notarised on a Seabass/X.Y branch (its button, or a weekly
+# schedule if one is ever set on that branch), the only refs cleared for
+# macOS signing (see .macos:universal-craft for why); ad hoc everywhere
+# else.
 #
-# Runs by itself only where a package is wanted: the Seabass/X.Y nightly
-# and release tags. Everywhere else, master's nightly included, it is a
-# button: there is one macOS runner, and linux:qt68 already builds and
-# tests every push against the same Qt.
+# Runs by itself only where a package is wanted: the weekly schedule
+# (so a Mac build that broke is seen within the week, not on release day)
+# and release tags. Everywhere else it is a button: there is one macOS
+# runner, and linux:qt68 tests against the same Qt.
 #
 # Nothing outside the system is assumed on the runner: cmake and ninja come
 # from pip, Qt from aqtinstall, into the job's own directory. Qt is cached
@@ -405,12 +415,21 @@ macos:universal:
   stage: deploy
   tags:
     - macOS
-  needs: []
+  # Nothing to wait for on a push, so it starts at once. On a tag it waits
+  # for tag:tested-commit, as the packages in `deploy` do by stage order:
+  # `optional` because that job exists in tag pipelines only, and a
+  # `needs:` naming a job that is not there makes the pipeline invalid.
+  needs:
+    - job: "tag:tested-commit"
+      optional: true
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly" && $CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       allow_failure: false
       variables:
         SEABASS_UNIVERSAL_SIGN: "yes"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       when: manual
       allow_failure: true
@@ -534,21 +553,42 @@ craft_windows_qt6_x86_64:
 # carries qqc2-desktop-style and Breeze (see the blueprint), because an
 # AppImage cannot use the system's Plasma integration and would otherwise
 # look like Qt's plain Basic style. Same rules as the other Craft jobs: a
-# button on a push, automatic on schedules and release tags.
+# button on a push, automatic on the weekly schedule and release tags.
 craft_appimage_qt6_x86_64:
   rules: *craft_lane_rules
 
-# ---- shared rule fragments ----
-# "Full lane": nightly (a GitLab pipeline schedule -- see docs/ci.md for
-# how to create one; there is no in-file cron syntax) and release tags
-# run the whole thing, Windows included. An ordinary push/MR only runs
-# the fast Linux lane below, and skips the slow `integration` ctest label
-# (anonymized_fixture_integration_test, corpus_test) per docs/testing.md's
-# existing "before merging a larger change or cutting a release" norm --
-# nightly/release now actually enforces that instead of relying on habit.
-.full_lane_rules: &full_lane_rules
-  - if: '$CI_PIPELINE_SOURCE == "schedule"'
-  - if: '$CI_COMMIT_TAG'
+# ---- Which pipeline runs what ----
+#
+# docs/ci.md has the table; the rules on each job are the truth. In short:
+#
+#   push, merge request     linux:build-test (no QML, storm, integration or
+#                           timing tests), reuse and the scanners; a push
+#                           that touches only documentation is not built
+#   nightly schedule        linux:nightly on master: everything but the
+#                           storm, skipped when master has not moved since
+#                           the last nightly that passed
+#   weekly schedule         linux:qt68 with the storm, the package lanes
+#   button                  linux:qt68 as the release check on Seabass/X.Y,
+#                           linux:coverage, the packages
+#   release tag             tag:tested-commit, then the packages; no test
+#                           lane, because the commit was tested on its
+#                           branch and tag:tested-commit says so
+#
+# Why not more on every push: every build here is cold (there is no cache
+# storage), about 80 minutes on a loaded runner, and before this split
+# every push to master and to Seabass/X.Y ran two full two-hour lanes and
+# every tag ran them again; linux:coverage hit its three-hour timeout on
+# the 1.0.1 tag. Most of that was the same answer computed twice.
+#
+# Nightly and weekly are told apart by SEABASS_SCHEDULE, a variable set on
+# each schedule in Invent (Build -> Pipeline schedules): "weekly" on the
+# weekly one. Anything else, missing included, is the nightly, so a
+# schedule nobody labelled costs one Linux lane on master, not every lane
+# there is.
+#
+# No job has `retry:`. A test that fails one run in a hundred is a bug in
+# the test or in the product, and an automatic retry turns it into a green
+# job, a doubled bill and a bug nobody looks at.
 
 # The MSYS2 Windows chain (windows:build, :test, :package, :installer-test)
 # needs a self-hosted GitLab Runner tagged `windows`, and none is
@@ -564,12 +604,14 @@ craft_appimage_qt6_x86_64:
 # When a runner tagged `windows` is registered, set
 #   SEABASS_WINDOWS_RUNNER: "yes"
 # in the top-level `variables:` of this file, and the chain comes back:
-# nightly, on tags, and as a button on a Seabass/X.Y branch (built
+# weekly, on tags, and as a button on a Seabass/X.Y branch (built
 # without a tag as channel "dev", like every pre-tag package).
 .windows_lane_manual_rules: &windows_lane_manual_rules
   - if: '$SEABASS_WINDOWS_RUNNER != "yes"'
     when: never
+  - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly"'
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
   - if: '$CI_COMMIT_TAG'
   - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
     when: manual
@@ -578,16 +620,19 @@ craft_appimage_qt6_x86_64:
 .windows_lane_follow_rules: &windows_lane_follow_rules
   - if: '$SEABASS_WINDOWS_RUNNER != "yes"'
     when: never
+  - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly"'
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
   - if: '$CI_COMMIT_TAG'
   - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
 
-# ---- Linux: fast lane, every push/MR; full ctest label set on schedule/tag ----
+# ---- Linux: the only lanes that run ctest ----
 #
-# The one lane that gates ordinary pushes. Neither Craft template above
-# runs the test suite -- the Windows one packages and the macOS one is
-# build-and-package only (craft-ci sets /.buildTests = False) -- so
-# without this, nothing on Invent has ever run ctest at all.
+# Neither Craft template above runs the test suite -- the Windows one
+# packages and the macOS one is build-and-package only (craft-ci sets
+# /.buildTests = False) -- so the Linux jobs below are the only thing on
+# Invent that ever runs ctest. Which of them runs when: see "Which
+# pipeline runs what", above.
 .linux_packages: &linux_packages
   - apt-get update -qq
   # The two -private-dev packages are what make Qt6::QuickLayouts
@@ -703,88 +748,144 @@ craft_appimage_qt6_x86_64:
     fc-list | grep -i symbols | head -3 || echo "  NO Symbols font is visible to fontconfig"
 
 
-# One job, not two. It builds AND tests, and the reason is the 4.3 GB
-# `artifacts: paths: [build]` this used to carry: that artifact existed
-# for exactly one purpose, handing the built tree to a separate
-# linux:test in a fresh container. Uploading a full build directory to
-# do it costs more than rebuilding would, blows past artifact limits,
-# and is charged against the same one-hour budget the compile already
-# could not fit inside. Merged, the tree never has to move at all.
+# What a push has to touch for linux:build-test to run. A push that
+# changes only documentation (*.md, docs/, LICENSES/, artwork/ sources
+# the build does not read) is not built: nothing it changed can change
+# what the suite says. Listed as what DOES count rather than as what does
+# not, because `changes:` has no exclusions -- so a new top-level
+# directory the build reads has to be added here, or pushes that touch
+# only it go untested. The metainfo file is under src/ and is tested
+# (appstream_metainfo_test), so a release's "recorded in the AppStream
+# metadata" commit is built like any other.
 #
-# The cost of merging, stated plainly: a red test leaves no build
-# behind to poke at. That is the right trade here -- the tree is
-# reproducible from the sha, and 4.3 GB is not worth moving to save a
-# rebuild -- but it is a real loss and not an oversight.
-linux:build-test:
+# `changes:` only means something on a push or a merge request. On a
+# schedule, a tag or a pipeline started by hand GitLab treats it as true,
+# so this list never decides those; the rules in front of it do.
+.code_paths: &code_paths
+  - src/**/*
+  - tests/**/*
+  - tools/**/*
+  - scripts/**/*
+  - cmake/**/*
+  - specs/**/*
+  - third_party/**/*
+  - craft-blueprint/**/*
+  - .githooks/**/*
+  - CMakeLists.txt
+  - .craft.ini
+  - .gitlab-ci.yml
+
+# How much machine this container actually has, printed before it is
+# used. `nproc` on a shared runner reports the HOST's cores, not the
+# cgroup's quota, and Ninja's default job count is nproc + 2 -- so a
+# container allowed two cores can end up running eighteen compilers,
+# which is a plausible reading of why the build decelerated from 50
+# objects a minute to 21 as the memory-hungry Qt translation units
+# arrived. Computing the job count from the cgroup quota instead
+# costs nothing and makes the next log say which it was. The same
+# number is ctest's -j.
+.linux_jobs_from_cgroup: &linux_jobs_from_cgroup
+  - |
+    QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
+    set -- $QUOTA
+    if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
+    [ "$JOBS" -lt 1 ] && JOBS=1
+    export JOBS
+    echo "nproc says $(nproc); cgroup cpu.max says '$QUOTA'; building and testing with -j$JOBS"
+    echo "memory: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) cgroup, $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo) host"
+
+# ctest as a NORMAL USER, not as root. CI containers run as root, and
+# root ignores the file permissions several tests take away on purpose:
+# durable_file_write_test drops write on a directory and requires the
+# write to fail, and add_cue_mirror_failure_test and
+# pending_deletion_applier_test do the same. As root those writes
+# SUCCEED and the assertions fail -- and the worse version of this is a
+# test that asserts the other way round and passes without proving
+# anything. Measured in this exact image: three abort as root, all three
+# pass as a user.
+.linux_test_user: &linux_test_user
+  - useradd -m runner
+  - chown -R runner build
+
+# The Ubuntu-Qt jobs share everything up to their script.
+#
+# No `tags:`. A bare `linux` tag matched no runner on Invent, so the
+# first version of this job sat pending until it timed out and failed
+# with stuck_pending_no_matching_runners -- and because it is the first
+# stage and allow_failure is false, it took every other job of every
+# pipeline down with it, including the macOS build that was working.
+# KDE's shared container runners take untagged jobs: `reuse` and
+# `semgrep-sast` are untagged and have always run. Confirmed against
+# pipeline 1352819, where the only difference between the jobs that ran
+# and the one that did not was this line.
+#
+# 26.04 rather than 24.04, and it has to be at least this new: Qt is
+# what decides. src/gui/main.cpp calls QQmlApplicationEngine's
+# loadFromModule, which arrived in Qt 6.5; 24.04 ships 6.4.2, so that
+# image configured cleanly and then failed 1156 objects later with
+# "no member named loadFromModule" -- an error that says nothing about
+# versions. 26.04 LTS ships Qt 6.10.2 with GCC 15.2, which is past the
+# 6.8 this project now requires (see find_package in CMakeLists).
+#
+# p7zip-full does not exist on 26.04; 7zip replaces it and still
+# provides /usr/bin/7z, which is the binary the cross-validation test
+# shells out to.
+#
+# One job builds AND tests, never a build job handing its tree to a test
+# job: that took a 4.3 GB `artifacts: paths: [build]`, which cost more to
+# move than a rebuild, blew past artifact limits and was charged against
+# the same budget the compile could not fit inside. The cost, stated
+# plainly: a red test leaves no build behind to poke at. The tree is
+# reproducible from the sha, so that is the right trade, but it is a
+# real loss and not an oversight.
+#
+# Three hours is a ceiling, not a target. Measured on this runner from
+# pipeline 1354103's own log: objects 1-500 took 10 minutes, 501-1000
+# took 19, 1001-1500 took 23 -- the deceleration is the Qt-heavy GUI
+# translation units arriving at the end -- and the runner varies about
+# threefold between runs from host contention. Every build here is cold
+# (see ccache below), so the lane must fit on that basis.
+#
+# ccache, and why it stays although nothing persists: this GitLab has no
+# cache storage, so `cache:` does NOTHING here ("No URL provided, cache
+# will not be downloaded"; three runs in a row scored exactly the same
+# 452/1307, the intra-run number) and no Linux job declares one any more.
+# What ccache still does is collapse the sources CMakeLists compiles
+# into more than one target within a single run. `content` rather than
+# the default mtime check because the compiler comes from an apt image
+# that is rebuilt upstream without warning.
+.linux_ubuntu:
   stage: build
-  # No `tags:`. A bare `linux` tag matched no runner on Invent, so this
-  # job sat pending until it timed out and failed with
-  # stuck_pending_no_matching_runners -- and because it is the first
-  # stage and allow_failure is false, it took every other job of every
-  # pipeline down with it, including the macOS build that was working.
-  # KDE's shared container runners take untagged jobs: `reuse` and
-  # `semgrep-sast` are untagged and have always run. Confirmed against
-  # pipeline 1352819, where the only difference between the jobs that
-  # ran and the one that did not was this line.
-  #
-  # 26.04 rather than 24.04, and it has to be at least this new: Qt is
-  # what decides. src/gui/main.cpp calls QQmlApplicationEngine's
-  # loadFromModule, which arrived in Qt 6.5; 24.04 ships 6.4.2, so that
-  # image configured cleanly and then failed 1156 objects later with
-  # "no member named loadFromModule" -- an error that says nothing about
-  # versions. 26.04 LTS ships Qt 6.10.2 with GCC 15.2, which is past the
-  # 6.8 this project now requires (see find_package in CMakeLists).
-  #
-  # p7zip-full does not exist on 26.04; 7zip replaces it and still
-  # provides /usr/bin/7z, which is the binary the cross-validation test
-  # shells out to.
   image: ubuntu:26.04
-  # An hour was never enough and never will be. Measured on this
-  # runner from pipeline 1354103's own log: objects 1-500 took 10
-  # minutes, 501-1000 took 19, 1001-1500 took 23, and the job was
-  # killed at 1585 of 1859 -- the deceleration is the Qt-heavy GUI
-  # translation units arriving at the end. Extrapolated, the build
-  # alone wants 75-80 minutes, and the tests come after it.
-  #
-  # This is a ceiling, not a target: with a warm ccache below, a rerun
-  # should finish in a small fraction of it. If the runner refuses this
-  # value the job fails immediately with a message saying so, which is
-  # a far better failure than an hour of compiling thrown away.
   timeout: 3h
   variables:
-    # Inside CI_PROJECT_DIR because that is the only place GitLab's
-    # `cache:` can reach.
     CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
     CCACHE_MAXSIZE: "3G"
-    # `content` rather than ccache's default mtime check: the compiler
-    # here comes from an apt image that is rebuilt upstream without
-    # warning, and an mtime that moved while the compiler did not would
-    # throw away a whole cache for nothing.
     CCACHE_COMPILERCHECK: content
-  cache:
-    # Versioned by hand. Bump the suffix to throw the cache away
-    # deliberately; nothing else should.
-    key: linux-ccache-v1
-    paths:
-      - .ccache
   before_script: *linux_packages
-  # Spelled out rather than reusing &full_lane_rules: a YAML merge key
-  # (<<:) merges a *mapping* into another mapping -- it cannot expand a
-  # multi-item list (what that anchor is) into several rule entries each
-  # gaining their own `variables:` key, so this has to stay explicit.
+
+# ---- linux:build-test: the gate of every push and merge request ----
+#
+# The one lane an ordinary push waits for, cut to what a push needs to
+# know: does it build, and do the C++ tests hold. Measured on 2026-11-09
+# (job 5352080): 3405 s of serial ctest after an ~80 minute cold build,
+# of which the QML suites were 1756 s and the storm 836 s. The QML
+# suites, the storm, the `integration` label and the `timing` label
+# (tests that measure the wall clock, which a loaded shared runner
+# cannot promise) move to the nightly and the weekly; the QML targets
+# are not even built here (-DSEABASS_QML_TESTS=OFF), which is most of
+# the GUI-heavy end of the build.
+#
+# ctest runs -j over the cgroup's cores. --timeout 300 bounds any test
+# that sets no TIMEOUT of its own, so one hung test costs five minutes,
+# not the job's three hours. --no-tests=error because a label filter that
+# matched nothing is a green job that tested nothing.
+linux:build-test:
+  extends: .linux_ubuntu
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      variables:
-        CTEST_LABEL_ARGS: ""
-        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
-    - if: '$CI_COMMIT_TAG'
-      variables:
-        CTEST_LABEL_ARGS: ""
-        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
-    - when: on_success
-      variables:
-        CTEST_LABEL_ARGS: "-LE integration"
-        SEABASS_STORM_CMAKE: ""
+    - if: '$CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - changes: *code_paths
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
     # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
@@ -794,116 +895,111 @@ linux:build-test:
     # SEABASS's tests -- a vendored dependency's suite failing would red
     # the gate for something nothing in this repo controls.
     #
-    # -O1, via CMAKE_CXX_FLAGS_RELEASE. This was reverted two commits ago
-    # on a local measurement of 7.4% (462 s to 428 s at -j4) and is back,
-    # because that inference was wrong even though the number was honest:
-    # at -j4 on a desktop with memory bandwidth to spare -O3 costs little,
-    # while on the runner at -j12 over huge Qt translation units it is
-    # worth about 2x. Object 1000 arrived at 15.9 min with -O1 against
-    # 29.3 without, on the same lane days apart. A local build does not
+    # -O1, via CMAKE_CXX_FLAGS_RELEASE. It was once reverted on a local
+    # measurement of 7.4% (462 s to 428 s at -j4) and came back, because
+    # that inference was wrong even though the number was honest: at -j4
+    # on a desktop with memory bandwidth to spare -O3 costs little, while
+    # on the runner at -j12 over huge Qt translation units it is worth
+    # about 2x. Object 1000 arrived at 15.9 min with -O1 against 29.3
+    # without, on the same lane days apart. A local build does not
     # predict this runner: it is ~30x slower per core-second than the
-    # desktop, with ~3x run-to-run variance.
-    #
-    # The cost is real and accepted: CI no longer proves the -O3 build
-    # compiles. The Craft Windows and macOS lanes still build at their
-    # own optimisation levels, and e2e testing covers the rest.
+    # desktop, with ~3x run-to-run variance. The cost is real and
+    # accepted: CI no longer proves the -O3 build compiles. The Craft
+    # Windows and macOS lanes still build at their own optimisation
+    # levels, and e2e testing covers the rest.
     #
     # Recorded because the measurement trap is the useful part:
     # -DCMAKE_CXX_FLAGS=-O1 does NOTHING against a Release build, since
     # CMake emits CMAKE_CXX_FLAGS before CMAKE_CXX_FLAGS_<CONFIG>, so the
-    # command line reads "-O1 -O3" and GCC takes the last one. The first
-    # attempt at this comparison measured -O3 against itself and would
-    # have "proved" the flag was worthless for the wrong reason. If
-    # anyone tries again, the knob is CMAKE_CXX_FLAGS_RELEASE and the
-    # check is compile_commands.json.
-    # The storm lane (SEABASS_STORM_CMAKE, set by the rules above) is
-    # registered on the nightly and on a tag only: eight minutes of seeded
-    # walks that a push's gate does not need to wait for, and that timed
-    # this job out on 2026-10-28 when every push ran them.
+    # command line reads "-O1 -O3" and GCC takes the last one. If anyone
+    # tries again, the knob is CMAKE_CXX_FLAGS_RELEASE and the check is
+    # compile_commands.json.
+    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DSEABASS_QML_TESTS=OFF
+      -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    - *linux_jobs_from_cgroup
+    - cmake --build build -j"$JOBS"
+    - ccache --show-stats
+    - *linux_test_user
+    - su runner -c "cd build && ctest -j$JOBS --timeout 300 --no-tests=error --output-on-failure -LE 'qml|storm|integration|timing'"
+
+# ---- linux:nightly: everything but the storm, on master, once a night ----
+#
+# The whole suite on Ubuntu's Qt: the QML suites, `integration` and
+# `timing` included, the storm not (that is the weekly's). Only on
+# master: a release branch gets its full run from the linux:qt68 button
+# before its tag, not from a schedule.
+#
+# A night on a commit already tested is skipped before anything is
+# installed or built: tools/ci-pipelines.py asks Invent's public API
+# for the last successful nightly on master and compares its commit with
+# this one. It answers 3 for "nothing new", and before_script and script
+# run in one shell, so the `exit 0` below ends the job green right
+# there. No earlier nightly, or no answer from Invent, means it runs.
+#
+# Two ctest passes. Everything that does not watch the clock runs -j;
+# the `timing` tests then run one at a time, so the clock they read is
+# not shared with the rest of the suite. A failure in the first pass
+# does not stop the second, and either fails the job.
+linux:nightly:
+  extends: .linux_ubuntu
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE != "weekly" && $CI_COMMIT_BRANCH == "master"'
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 ca-certificates
+    - |
+      needed=0
+      python3 tools/ci-pipelines.py nightly-needed || needed=$?
+      if [ "$needed" -eq 3 ]; then exit 0; fi
+    - *linux_packages
+  script:
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
       -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      $SEABASS_STORM_CMAKE
-    # How much machine this container actually has, printed before it is
-    # used. `nproc` on a shared runner reports the HOST's cores, not the
-    # cgroup's quota, and Ninja's default job count is nproc + 2 -- so a
-    # container allowed two cores can end up running eighteen compilers,
-    # which is a plausible reading of why the build decelerated from 50
-    # objects a minute to 21 as the memory-hungry Qt translation units
-    # arrived. Computing the job count from the cgroup quota instead
-    # costs nothing and makes the next log say which it was.
+    - *linux_jobs_from_cgroup
+    # A block scalar: see the colon trap noted in .linux_packages.
     - |
-      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
-      set -- $QUOTA
-      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
-      [ "$JOBS" -lt 1 ] && JOBS=1
-      echo "nproc says $(nproc); cgroup cpu.max says '$QUOTA'; building with -j$JOBS"
-      echo "memory: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) cgroup, $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo) host"
       echo "qt imageformats plugins: $(ls /usr/lib/*/qt6/plugins/imageformats/ 2>/dev/null | tr '\n' ' ')"
-      cmake --build build -j"$JOBS"
-    # Printed, not silent -- and what it printed corrected me. The
-    # cache section reports "No URL provided, cache will not be
-    # downloaded": this GitLab instance has no cache storage configured,
-    # so `cache:` does NOTHING here and ccache never persists between
-    # runs. Three runs in a row scored exactly 452/1307 (34.58%), which
-    # is not a cache being warm, it is the SAME intra-run number every
-    # time.
-    #
-    # It is still worth having, for a reason that has nothing to do with
-    # persistence: CMakeLists lists 301 source files across its
-    # add_executable() blocks and 194 of them are re-compiles of a file
-    # another target already compiles (work_counters.cpp thirty times,
-    # durable_file_write.cpp twenty-two). ccache collapses those within
-    # a single run. What it cannot do here is make the NEXT run cheap,
-    # so every run is a cold build and the lane must fit in its budget
-    # on that basis.
+    - cmake --build build -j"$JOBS"
     - ccache --show-stats
-    # As a NORMAL USER, not as root. CI containers run as root, and
-    # root ignores the file permissions several tests take away on
-    # purpose: durable_file_write_test drops write on a directory and
-    # requires the write to fail, and add_cue_mirror_failure_test and
-    # pending_deletion_applier_test do the same. As root those writes
-    # SUCCEED and the assertions fail -- and the worse version of this
-    # is a test that asserts the other way round and passes without
-    # proving anything. Measured in this exact image: three abort as
-    # root, all three pass as a user.
-    #
-    # .ccache is left owned by root on purpose: chowning it would make
-    # the cache upload rewrite every file for no benefit.
-    - useradd -m runner
-    - chown -R runner build
-    - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
+    - *linux_test_user
+    - |
+      failed=0
+      su runner -c "cd build && ctest -j$JOBS --no-tests=error --output-on-failure -LE 'storm|timing'" || failed=1
+      su runner -c "cd build && ctest --no-tests=error --output-on-failure -L timing -LE storm" || failed=1
+      exit $failed
 
+# ---- linux:qt68: the Mac's Qt, weekly and as a release check ----
+#
 # The suite again, against Qt 6.8.3 -- the Qt Seabass ships on macOS and
 # stays on (Sebastian, 2026-10-08: Qt 6.8 for the foreseeable future, so
-# that Macs that stop at macOS 12 are served too). linux:build-test above
-# uses Ubuntu's Qt, which is newer; this is the lane that notices a newer Qt
-# API, or a behaviour only 6.8 has, before a package does. Qt's own 6.8.3
-# binaries through aqtinstall, everything else from Ubuntu as above, minus
-# Ubuntu's Qt and plus the system libraries Qt's binaries load -- the xcb
-# ones above all: the QML suites run on xcb under xvfb, and Qt's own xcb
-# plugin will not load without libxcb-cursor0 and its siblings, which
-# Ubuntu's Qt packages used to pull in. fontconfig (fc-cache) and
-# libudev-dev (the stick hardware probe) too: the same packages brought
-# them to linux:build-test.
+# that Macs that stop at macOS 12 are served too). The Ubuntu jobs above
+# use Ubuntu's Qt, which is newer; this is the lane that notices a newer
+# Qt API, or a behaviour only 6.8 has, before a package does. Qt's own
+# 6.8.3 binaries through aqtinstall, everything else from Ubuntu as
+# above, minus Ubuntu's Qt and plus the system libraries Qt's binaries
+# load -- the xcb ones above all: the QML suites run on xcb under xvfb,
+# and Qt's own xcb plugin will not load without libxcb-cursor0 and its
+# siblings, which Ubuntu's Qt packages used to pull in. fontconfig
+# (fc-cache) and libudev-dev (the stick hardware probe) too: the same
+# packages brought them to the Ubuntu jobs.
+#
+# The fullest run there is: every label, the storm registered
+# (-DSEABASS_STORM_TESTS=ON). Automatic on the weekly schedule; on a
+# Seabass/X.Y branch it is the button to press before a tag -- the
+# "release check" -- and tag:tested-commit refuses a tag whose pipeline
+# ran it and saw it fail. allow_failure only keeps a button nobody pressed
+# from holding the pipeline open.
 linux:qt68:
-  stage: build
-  image: ubuntu:26.04
-  timeout: 3h
+  extends: .linux_ubuntu
   variables:
-    CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
-    CCACHE_MAXSIZE: "3G"
-    CCACHE_COMPILERCHECK: content
     SEABASS_QT_VERSION: "6.8.3"
-  cache:
-    - key: linux-qt68-ccache-v1
-      paths:
-        - .ccache
-    - key: linux-qt68-qt-6.8.3
-      paths:
-        - qt68/
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends
@@ -919,45 +1015,37 @@ linux:qt68:
         ccache
         fonts-noto-core
     - fc-cache -f
-    - |
-      if [ ! -x "qt68/$SEABASS_QT_VERSION/gcc_64/bin/qmake" ]; then
-        python3 -m venv /tmp/aqt-venv
-        /tmp/aqt-venv/bin/python -m pip install --quiet aqtinstall
-        /tmp/aqt-venv/bin/aqt install-qt linux desktop "$SEABASS_QT_VERSION" linux_gcc_64 -O qt68 -m qtmultimedia qtshadertools
-      fi
+    - python3 -m venv /tmp/aqt-venv
+    - /tmp/aqt-venv/bin/python -m pip install --quiet aqtinstall
+    - /tmp/aqt-venv/bin/aqt install-qt linux desktop "$SEABASS_QT_VERSION" linux_gcc_64 -O qt68 -m qtmultimedia qtshadertools
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      variables:
-        CTEST_LABEL_ARGS: ""
-        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
-    - if: '$CI_COMMIT_TAG'
-      variables:
-        CTEST_LABEL_ARGS: ""
-        SEABASS_STORM_CMAKE: "-DSEABASS_STORM_TESTS=ON"
-    - when: on_success
-      variables:
-        CTEST_LABEL_ARGS: "-LE integration"
-        SEABASS_STORM_CMAKE: ""
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SEABASS_SCHEDULE == "weekly"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
+      when: manual
+      allow_failure: true
   script:
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64"
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DSEABASS_STORM_TESTS=ON
       -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      $SEABASS_STORM_CMAKE
     # Not Ubuntu's: configure must have found the Qt asked for.
     - grep -q "Qt6Core_DIR:PATH=$CI_PROJECT_DIR/qt68/$SEABASS_QT_VERSION/gcc_64" build/CMakeCache.txt
-    - |
-      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
-      set -- $QUOTA
-      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
-      [ "$JOBS" -lt 1 ] && JOBS=1
-      cmake --build build -j"$JOBS"
+    - *linux_jobs_from_cgroup
+    - cmake --build build -j"$JOBS"
     - ccache --show-stats
-    - useradd -m runner
-    - chown -R runner build
-    - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
+    - *linux_test_user
+    # Two passes, as in linux:nightly: -j for everything that does not
+    # read the clock, then the `timing` tests one at a time.
+    - |
+      failed=0
+      su runner -c "cd build && ctest -j$JOBS --no-tests=error --output-on-failure -LE timing" || failed=1
+      su runner -c "cd build && ctest --no-tests=error --output-on-failure -L timing" || failed=1
+      exit $failed
 
 # ---- Linux: the package, on a release tag only ----
 #
@@ -980,8 +1068,9 @@ linux:qt68:
 # Its own build, because --coverage changes every object: -O0 so a line
 # counts where it is written, and a ccache key of its own so it never
 # hands instrumented objects to linux:build-test or takes plain ones from
-# it. Too slow for every push, like the rest of the full lane: nightly
-# and tags run it, anything else gets a button.
+# it. A button only, on any branch pipeline: it ran on tags and schedules
+# until the 1.0.1 tag, where it hit its three-hour timeout, and a figure
+# nobody reads every night is not worth a lane every night.
 #
 # A red test does not stop the report. Correctness is linux:build-test's
 # verdict; this job's is how much of the code the suite reaches, and a
@@ -999,14 +1088,10 @@ linux:coverage:
     CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
     CCACHE_MAXSIZE: "3G"
     CCACHE_COMPILERCHECK: content
-  cache:
-    key: linux-coverage-ccache-v1
-    paths:
-      - .ccache
   before_script: *linux_packages
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_TAG'
+      when: never
     - when: manual
       allow_failure: true
   script:
@@ -1019,18 +1104,13 @@ linux:coverage:
       -DCMAKE_SHARED_LINKER_FLAGS="--coverage"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-    - |
-      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
-      set -- $QUOTA
-      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
-      [ "$JOBS" -lt 1 ] && JOBS=1
-      echo "building with -j$JOBS"
-      cmake --build build-cov -j"$JOBS"
+    - *linux_jobs_from_cgroup
+    - cmake --build build-cov -j"$JOBS"
     - ccache --show-stats
     - useradd -m runner
     - chown -R runner build-cov
     - |
-      if su runner -c "cd build-cov && ctest --output-on-failure"; then
+      if su runner -c "cd build-cov && ctest -j$JOBS --output-on-failure"; then
         echo "ctest: every test passed"
       else
         echo "ctest: some tests failed (linux:build-test is the verdict on that); the coverage below is of what ran"
@@ -1067,6 +1147,32 @@ linux:coverage:
         coverage_format: cobertura
         path: build-cov/coverage.xml
 
+# ---- tag:tested-commit: a release is cut from a tested commit ----
+#
+# A tag pipeline runs no test lane: the commit was tested on its branch,
+# and running the same two hours again on the tag found nothing new and
+# cost a retry each time a flake hit it (#93 did, on the 1.0.1 tag). This
+# job is what makes "tested on its branch" a fact rather than a habit: it
+# asks Invent's public API for a branch pipeline at this exact commit that
+# passed with linux:build-test in it, waits while one is still running
+# (a tag is often pushed with its branch), and fails otherwise -- also if
+# that pipeline's linux:qt68 release check ran and failed. It is in `.pre`,
+# so every package job waits for it, by stage order or by `needs:`.
+#
+# Failed here? Run the branch's pipeline (or press its linux:qt68), wait
+# for it to pass, then retry this job; the packages follow.
+tag:tested-commit:
+  stage: .pre
+  image: python:3-alpine
+  # Mostly waiting for a branch pipeline still running at the same commit.
+  timeout: 3h
+  # A newer push to the branch must not cancel the gate of a release.
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - python3 tools/ci-pipelines.py tag-tested
+
 linux:package:
   stage: package
   # Not interruptible: this runs on release tags only and publishes. See
@@ -1079,10 +1185,13 @@ linux:package:
   # invalid and nothing runs at all. Stage order is the stronger gate
   # anyway: `package` comes after `build` and `test`, so this waits for
   # every one of them, whatever they are named and however they are
-  # split. A package is not built from a tree whose tests have not
-  # passed.
+  # split. On a tag there is no test lane in the pipeline at all; there
+  # the gate is tag:tested-commit in `.pre`, which every later stage waits
+  # for. A package is not built from a tree whose tests have not passed.
   rules:
     - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     # A button on a train's branch, for a package before the tag: built
     # without one it is channel "dev", never published.
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
