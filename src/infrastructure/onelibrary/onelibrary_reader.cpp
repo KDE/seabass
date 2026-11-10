@@ -150,7 +150,8 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
         throw std::runtime_error("no OneLibrary (exportLibrary.db) present for this stick");
     }
     std::string dbPath = OneLibraryCueWriter::dbPathFor(m_pioneerRoot);
-    fs::path stickRoot = pathFromUtf8(m_pioneerRoot).parent_path();
+    // The rekordbox reader's root, so the two spell one file alike (#87).
+    const std::string stickRoot = paths::normalStickRootForCatalogPath(m_pioneerRoot);
 
     SqlCipherLibrary lib;
     // A stick pulled mid-save leaves OneLibrary with a pending journal,
@@ -308,7 +309,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // throw for bytes that are not valid UTF-8. One track with an
             // undecodable path must not take down the whole scan.
             try {
-                track.filePath = rekordbox::trackFilePathOnStick(pathToUtf8(stickRoot), relPath);
+                track.filePath = rekordbox::trackFilePathOnStick(stickRoot, relPath);
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": file path unreadable (" + e.what() + ")");
             }
@@ -339,7 +340,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // the file is still there is for the consumer that draws or
             // audits it to find out, not a stat per track in every read.
             try {
-                track.artworkPath = rekordbox::trackFilePathOnStick(pathToUtf8(stickRoot), imageRelPath);
+                track.artworkPath = rekordbox::trackFilePathOnStick(stickRoot, imageRelPath);
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": artwork path unreadable (" + e.what() + ")");
             }

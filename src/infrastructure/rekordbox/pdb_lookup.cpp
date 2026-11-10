@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
@@ -144,7 +145,8 @@ std::vector<std::string> deletedTrackFilePaths(const std::string &pioneerRoot)
     }
     kaitai::kstream ks(&ifs);
     Pdb pdb(false, &ks);
-    const std::string stickRoot = pathToUtf8(pathFromUtf8(pioneerRoot).parent_path());
+    // The readers' root, so a deleted row and a live one compare (#87).
+    const std::string stickRoot = paths::normalStickRootForCatalogPath(pioneerRoot);
 
     std::set<std::string> live;
     std::set<std::string> deleted;

@@ -16,8 +16,8 @@
 // 100, engine 100)" in the live Sync check and in F6, and `seabass-cli sync`
 // against "D://PIONEER" matched 0 tracks where "D:/PIONEER" matched 88).
 //
-// Not covered, and not fixed by this: a trailing separator on the PIONEER
-// folder itself, where parent_path() answers the PIONEER folder.
+// A trailing separator on the PIONEER folder itself, where parent_path()
+// answers the PIONEER folder, is case 5 (#87).
 
 #include <cstdlib>
 #include <filesystem>
@@ -152,5 +152,20 @@ int main(int argc, char **argv)
     requireSame(artworkPaths(OneLibraryReader(pioneer).readTracks()),
                 artworkPaths(OneLibraryReader(pioneerDotted).readTracks()), "OneLibrary artwork");
     std::cout << "case 4 (artwork paths are spelled one way through that root) OK\n";
+
+    // 5. A trailing separator on the PIONEER folder (#87), as a tab-completed
+    //    `seabass-cli sync --rekordbox /media/x/STICK/PIONEER/` hands it:
+    //    parent_path() of that is the PIONEER folder itself, and every row
+    //    named a file under STICK/PIONEER/Contents.
+    for (const std::string &trailing : {pioneer + "/", pioneer + "//", pioneerDotted + "/"}) {
+        requireSame(filePaths(KaitaiRekordboxReader(pioneer).readTracks()),
+                    filePaths(KaitaiRekordboxReader(trailing).readTracks()), "rekordbox through \"" + trailing + "\"");
+        requireSame(filePaths(OneLibraryReader(pioneer).readTracks()),
+                    filePaths(OneLibraryReader(trailing).readTracks()), "OneLibrary through \"" + trailing + "\"");
+        requireSame(artworkPaths(KaitaiRekordboxReader(pioneer).readTracks()),
+                    artworkPaths(KaitaiRekordboxReader(trailing).readTracks()),
+                    "rekordbox artwork through \"" + trailing + "\"");
+    }
+    std::cout << "case 5 (a trailing separator on the PIONEER folder leaves the paths alone) OK\n";
     return 0;
 }

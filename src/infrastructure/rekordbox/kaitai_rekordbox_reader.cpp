@@ -21,6 +21,7 @@
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
 #include "infrastructure/rekordbox/cue_list_check.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::rekordbox
@@ -401,8 +402,10 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
     Pdb pdb(false, &ks);
 
     // file_path (e.g. "/Contents/Artist/Album/01_track.mp3") is relative to
-    // the stick root, i.e. the PIONEER folder's parent.
-    std::string stickRoot = pathToUtf8(pathFromUtf8(m_pioneerRoot).parent_path());
+    // the stick root, i.e. the PIONEER folder's parent. Normalized before
+    // the parent is taken: of "STICK/PIONEER/", parent_path() is the
+    // PIONEER folder itself (#87).
+    const std::string stickRoot = paths::normalStickRootForCatalogPath(m_pioneerRoot);
 
     // Artist names live in their own normalized table; track rows only
     // carry an artist_id foreign key into it.
