@@ -608,8 +608,18 @@ Page {
         // playlist name -> its MenuItem: in the menu (entries) or taken
         // out of it and kept hidden (parked), to go back in when its
         // playlist is a target again.
-        property var entries: ({})
-        property var parked: ({})
+        //
+        // Maps, not plain objects: every close of the row menu moves every
+        // name from one to the other and every open moves it back, and a
+        // plain object given and stripped of the same names over and over
+        // runs into a Qt 6.11.1 bug (QTBUG-147153, fixed in 6.11.2): at
+        // the 255th such change the object's class is rebuilt, and a name
+        // added again is written at its old slot, past the object's end,
+        // over whatever the JS heap holds there. The 2026-11-10 crash in
+        // tst_ScanPageStorm's Add To round was the collector later freeing
+        // a pointer that write had put in a neighbouring object.
+        property var entries: new Map()
+        property var parked: new Map()
 
         Component {
             id: addToEntryComponent
@@ -629,36 +639,32 @@ Page {
 
         function syncEntries() {
             const targets = trackMenu.addTargets;
-            const wanted = {};
-            for (const name of targets) {
-                wanted[name] = true;
-            }
+            const wanted = new Set(targets);
             // Out: the entries whose playlist is no longer a target.
             // takeItem, never removeItem: removeItem destroys the item,
             // which is the one thing this must not do.
-            for (const name in addToMenu.entries) {
-                if (wanted[name] === true) {
+            for (const [name, item] of Array.from(addToMenu.entries)) {
+                if (wanted.has(name)) {
                     continue;
                 }
-                const item = addToMenu.entries[name];
                 addToMenu.takeItem(addToMenu.indexOfEntry(item));
                 item.visible = false;
-                addToMenu.parked[name] = item;
-                delete addToMenu.entries[name];
+                addToMenu.parked.set(name, item);
+                addToMenu.entries.delete(name);
             }
             // In and in order: each target's entry at the target's index.
             for (let i = 0; i < targets.length; ++i) {
                 const name = targets[i];
-                let item = addToMenu.entries[name];
+                let item = addToMenu.entries.get(name);
                 if (item === undefined) {
-                    item = addToMenu.parked[name];
+                    item = addToMenu.parked.get(name);
                     if (item !== undefined) {
-                        delete addToMenu.parked[name];
+                        addToMenu.parked.delete(name);
                         item.visible = true;
                     } else {
                         item = addToEntryComponent.createObject(addToMenu, {playlist: name});
                     }
-                    addToMenu.entries[name] = item;
+                    addToMenu.entries.set(name, item);
                     addToMenu.insertItem(i, item);
                     continue;
                 }
