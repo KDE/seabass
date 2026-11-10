@@ -1197,9 +1197,10 @@ linux:package:
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
       when: manual
       allow_failure: true
-  # Measured, not guessed: this build is SEABASS_TESTS=OFF, which is 505
-  # ninja edges against the test lane's 1859 -- roughly three quarters of
-  # that lane is the suite, which a package does not contain. But the
+  # Measured, not guessed: this build is SEABASS_TESTS=OFF and asks for
+  # seabass and seabass-cli only, which is 704 ninja edges against the test
+  # lane's 2429 (Release, 2026-11-10) -- roughly seven tenths of that lane
+  # is the suite, which a package does not contain. But the
   # runner varies about threefold between runs from host contention (the
   # same object took 15.9 and 29.3 minutes on consecutive runs), so a
   # number that fits comfortably today can fail tomorrow on identical
