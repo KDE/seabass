@@ -771,19 +771,28 @@ TestCase {
         image.save(screenshotDir + "/MetadataBackupPage.png");
     }
 
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
+    function fixtureStick() {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        const root = decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        const stick = stickFixture.stickCopy(root);
+        verify(stick.length > 0, "the fixture must copy");
+        return stick;
+    }
+
     // The other population, which no amount of reading the source will
-    // show you: a real stick planned against the real store. Needs a
-    // stick (or a stick-shaped fixture directory) in SEABASS_LIVE_STICK,
-    // because planning is the one thing on this page that cannot be
-    // faked -- it reads catalogs.
+    // show you: a stick planned against the store. Planning is the one
+    // thing on this page that cannot be faked (it reads catalogs), so the
+    // page gets a stick: the rig's real one when SEABASS_LIVE_STICK names
+    // it (tools/rig-shakedown.sh, suite(), for a picture of real data),
+    // and a copy of the anonymized fixture everywhere else, so the scan
+    // and the list are checked on every run and never skipped.
     function test_screenshot_theStickList() {
-        if (!screenshotDir || !liveStickRoot) {
-            skip("SEABASS_SCREENSHOT_DIR and SEABASS_LIVE_STICK not both set");
-        }
+        const stick = liveStickRoot ? liveStickRoot : fixtureStick();
         var page = make({
             stickLabel: "FIXTURE",
-            rekordboxPath: liveStickRoot + "/PIONEER",
-            enginePath: liveStickRoot + "/Engine Library",
+            rekordboxPath: stick + "/PIONEER",
+            enginePath: stick + "/Engine Library",
         });
         var picker = findChild(page, "sourcePicker");
         verify(picker, "the source picker must exist");
@@ -807,8 +816,9 @@ TestCase {
         tryVerify(function () { return !findChild(page, "sourceSummary").text.startsWith("Reading"); },
                   120000, "the scan must finish");
         waitForRendering(page);
-        var image = grabImage(page);
-        image.save(screenshotDir + "/MetadataBackupPage-stick.png");
+        if (screenshotDir) {
+            grabImage(page).save(screenshotDir + "/MetadataBackupPage-stick.png");
+        }
     }
 
     // The states a default screenshot cannot show, and the ones most
