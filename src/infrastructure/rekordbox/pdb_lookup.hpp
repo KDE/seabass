@@ -55,6 +55,7 @@ void forEachDataPage(rekordbox_pdb_t::table_t &table, Visitor visitDataPage)
 // definition, because deleted rows are compared against live ones and
 // OneLibrary's by string: a second spelling of the same join is how a
 // cross-catalog match once found nothing on Windows (see the reader).
+// Artwork paths, stick-relative the same way, take it too (#88).
 std::string trackFilePathOnStick(const std::string &stickRoot, std::string storedPath);
 
 // The files export.pdb has a DELETED track row for and no live one: rows

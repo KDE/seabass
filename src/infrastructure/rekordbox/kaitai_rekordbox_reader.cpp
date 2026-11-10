@@ -648,12 +648,10 @@ std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::Progr
                     }
                     auto artworkIt = artworkPathById.find(rowTrack->artwork_id());
                     if (artworkIt != artworkPathById.end() && !artworkIt->second.empty()) {
-                        std::string artworkRelativePath = artworkIt->second;
-                        if (artworkRelativePath.front() == '/' || artworkRelativePath.front() == '\\') {
-                            artworkRelativePath.erase(0, 1);
-                        }
-                        track.artworkPath = pathToUtf8(
-                            (pathFromUtf8(stickRoot) / pathFromUtf8(artworkRelativePath)).make_preferred());
+                        // The track's own join: artwork is compared by
+                        // string too, and a join of its own kept a "." or a
+                        // doubled separator filePath lost (#88).
+                        track.artworkPath = trackFilePathOnStick(stickRoot, artworkIt->second);
                     }
                     track.durationSeconds = rowTrack->duration();
                     track.catalogFileBytes = rowTrack->file_size();

@@ -327,10 +327,10 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // hardware-written data, and unlike Engine's own art (see
             // libdjinterop_engine_reader.cpp's much longer version of this
             // same fix), no URI-unwrapping needed here at all.
-            // make_preferred(): the mixed-separator fix filePath's join has too
-            // above, same reason -- imageRelPath.substr(1)'s own forward
-            // slashes are appended as one path component and survive
-            // .string() as literal characters on Windows otherwise.
+            // filePath's join, so the two are spelled alike however the
+            // stick root was: a join of its own kept a "." or a doubled
+            // separator from the root (#88), and before that mixed
+            // separators on Windows.
             //
             // Same undecodable-bytes risk as filePath above, and the same
             // fix: one bad artwork path must not lose the whole track.
@@ -339,7 +339,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
             // the file is still there is for the consumer that draws or
             // audits it to find out, not a stat per track in every read.
             try {
-                track.artworkPath = pathToUtf8((stickRoot / pathFromUtf8(imageRelPath.substr(1))).make_preferred());
+                track.artworkPath = rekordbox::trackFilePathOnStick(pathToUtf8(stickRoot), imageRelPath);
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": artwork path unreadable (" + e.what() + ")");
             }

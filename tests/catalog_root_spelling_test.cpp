@@ -59,6 +59,17 @@ std::set<std::string> filePaths(const std::vector<Track> &tracks)
     return paths;
 }
 
+std::set<std::string> artworkPaths(const std::vector<Track> &tracks)
+{
+    std::set<std::string> paths;
+    for (const auto &track : tracks) {
+        if (!track.artworkPath.empty()) {
+            paths.insert(track.artworkPath);
+        }
+    }
+    return paths;
+}
+
 void requireSame(const std::set<std::string> &clean, const std::set<std::string> &other, const std::string &what)
 {
     if (clean.empty()) {
@@ -132,5 +143,14 @@ int main(int argc, char **argv)
     requireSame(filePaths(OneLibraryReader(pioneer).readTracks()),
                 filePaths(OneLibraryReader(pioneerDotted).readTracks()), "OneLibrary");
     std::cout << "case 3 (the rekordbox and OneLibrary readers give the same paths through that root) OK\n";
+
+    // 4. Artwork paths too, through the same root (#88): they are compared
+    //    by string as well (scan_controller.cpp, the path-keyed dedup in
+    //    engine_artwork.cpp), and kept the "." where filePath lost it.
+    requireSame(artworkPaths(KaitaiRekordboxReader(pioneer).readTracks()),
+                artworkPaths(KaitaiRekordboxReader(pioneerDotted).readTracks()), "rekordbox artwork");
+    requireSame(artworkPaths(OneLibraryReader(pioneer).readTracks()),
+                artworkPaths(OneLibraryReader(pioneerDotted).readTracks()), "OneLibrary artwork");
+    std::cout << "case 4 (artwork paths are spelled one way through that root) OK\n";
     return 0;
 }
