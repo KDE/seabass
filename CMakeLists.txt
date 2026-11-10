@@ -690,6 +690,12 @@ set(SEABASS_TESTING_LIBRARY_OPTIONS
     "$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>>"
     "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<COMPILE_LANGUAGE:CXX>>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
 target_compile_options(seabass_core_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
+# Defined whatever SEABASS_TESTS says, because the MSVC and link settings
+# below are shared with seabass_core, but built only when a test needs it:
+# a package build (-DSEABASS_TESTS=OFF) compiled all of it for nothing.
+if(NOT SEABASS_TESTS)
+    set_target_properties(seabass_core_testing PROPERTIES EXCLUDE_FROM_ALL ON)
+endif()
 
 if(MSVC)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
@@ -912,10 +918,15 @@ if(TARGET Qt6::Multimedia)
     target_link_libraries(seabass-cli PRIVATE seabass_audio_qt)
 endif()
 
+# The two tests of the Qt audio probes sit here, beside the library they
+# test, rather than in the suite at the end of the file, so they say
+# SEABASS_TESTS themselves: without it a package build (-DSEABASS_TESTS=OFF)
+# compiled and linked both, and registered them with ctest.
+#
 # The real decoder against generated audio. Only where the probe itself
 # was built; it refuses to answer without a QCoreApplication, which this
 # test is the only place outside the app to create.
-if(TARGET seabass_audio_qt)
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     add_executable(silence_probe_test tests/silence_probe_test.cpp)
     target_include_directories(silence_probe_test PRIVATE src)
     target_link_libraries(silence_probe_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
@@ -928,7 +939,7 @@ endif()
 # The decoder the player uses, against the click MP3s in
 # tests/fixtures/mp3-click: proves the player's timeline is the one
 # playback_timeline.hpp says it is (#50).
-if(TARGET seabass_audio_qt)
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     add_executable(qt_decoder_timeline_test tests/qt_decoder_timeline_test.cpp)
     target_include_directories(qt_decoder_timeline_test PRIVATE src)
     target_link_libraries(qt_decoder_timeline_test PRIVATE seabass_mp3_lead_in Qt6::Core Qt6::Multimedia)
