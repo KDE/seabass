@@ -160,8 +160,35 @@ Page {
         if (modelRow < 0 || modelRow >= rowsModel.items.count) {
             return -1;
         }
-        const item = rowsModel.items.get(modelRow);
+        // The last read's item when it is still this row's (an item's
+        // itemsIndex follows the model), so a test asking row by row does
+        // not read every row each time.
+        const held = root.heldRowItems;
+        const item = modelRow < held.length && held[modelRow].itemsIndex === modelRow ? held[modelRow]
+                                                                                       : root.rowItems()[modelRow];
         return item.inShown ? item.shownIndex : -1;
+    }
+    // Every row's item in rowsModel, in model order: what it is in
+    // (inShown) and where (shownIndex). Read all at once, and only here.
+    //
+    // DelegateModelGroup.get() is unsafe (Qt 6.11.1 measured; 6.12 and
+    // dev have the same code): it looks the row's item up, then allocates the script object that will
+    // hold it, and a collection run inside that allocation can free the
+    // item when the only objects still holding it are earlier get()
+    // results nobody uses any more. The new object then holds a freed
+    // item, and the heap is corrupted when it is collected in turn. The
+    // folding tests read every row dozens of times and crashed one run in
+    // ten that way (2026-11-10). So the previous read's objects are kept
+    // until this one has every row: no row's item is ever held only by
+    // dead objects while get() runs.
+    property var heldRowItems: []
+    function rowItems() {
+        const items = [];
+        for (let i = 0; i < rowsModel.items.count; ++i) {
+            items.push(rowsModel.items.get(i));
+        }
+        root.heldRowItems = items;
+        return items;
     }
     // The view's rows, for tests: which are shown.
     readonly property alias rowsModel: rowsModel
