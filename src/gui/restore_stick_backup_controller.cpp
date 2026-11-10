@@ -290,7 +290,7 @@ void RestoreStickBackupController::onMountFinished()
     m_mounting = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(thrown);
-        emit actionFeedback(thrown, true);
+        emit actionFeedback(thrown, true, QString());
     }
     emit busyChanged();
     if (!result) {
@@ -298,7 +298,7 @@ void RestoreStickBackupController::onMountFinished()
     }
     if (!result->error.isEmpty()) {
         setErrorMessage(QStringLiteral("Couldn't mount %1: %2").arg(result->devicePath, result->error.trimmed()));
-        emit actionFeedback(m_errorMessage, true);
+        emit actionFeedback(m_errorMessage, true, QString());
         return;
     }
     refresh();
@@ -445,7 +445,8 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     m_targetChangeConfirmed = false;
 
     if (busy() || m_archivePath.isEmpty() || targetRoot.isEmpty()) {
-        emit actionFeedback(QStringLiteral("Still busy. Try again once the current operation finishes."), true);
+        emit actionFeedback(QStringLiteral("Still busy. Try again once the current operation finishes."), true,
+                            QString());
         return;
     }
     // The drive about to be written has to be the drive the user saw the
@@ -598,7 +599,7 @@ void RestoreStickBackupController::onRestoreFinished()
     m_restoring = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(thrown);
-        emit actionFeedback(thrown, true);
+        emit actionFeedback(thrown, true, QString());
     }
     emit busyChanged();
     if (!result) {
@@ -606,7 +607,7 @@ void RestoreStickBackupController::onRestoreFinished()
     }
     if (!result->refusal.isEmpty()) {
         setErrorMessage(result->refusal);
-        emit actionFeedback(result->refusal, true);
+        emit actionFeedback(result->refusal, true, QString());
         return;
     }
     applySummary(result->summary);
@@ -667,7 +668,7 @@ void RestoreStickBackupController::applySummary(const RestoreSummary &s)
                                     .arg(s.filesUnchanged)
                                     .arg(s.filesHeldBack))
                          + coversAfter);
-        emit actionFeedback(m_statusMessage, false);
+        emit actionFeedback(m_statusMessage, false, QString());
         break;
     case RestoreSummary::Status::RestoredWithProblems:
         if (libraryIssueOnly(s)) {
@@ -694,14 +695,18 @@ void RestoreStickBackupController::applySummary(const RestoreSummary &s)
         } else {
             setStatusMessage(QStringLiteral("Restored %1 files, but with problems.").arg(s.filesWritten) + coversAfter);
         }
-        emit actionFeedback(m_statusMessage, true);
+        emit actionFeedback(m_statusMessage, true, QString());
         break;
     case RestoreSummary::Status::Cancelled:
         setStatusMessage(QString::fromStdString(s.message));
         break;
     case RestoreSummary::Status::Failed:
         setErrorMessage(QString::fromStdString(s.message));
-        emit actionFeedback(m_errorMessage, true);
+        // A pulled stick is something that happened to the restore, not
+        // something it did wrong, and the message says how to go on: the
+        // popup names it rather than calling it "That did not work".
+        emit actionFeedback(m_errorMessage, true,
+                            s.driveRemoved ? QStringLiteral("The drive was removed") : QString());
         break;
     }
 

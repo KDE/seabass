@@ -17,6 +17,11 @@ import SeabassGui
 //
 //   messagePopup.show("Backup restored.", false);
 //   messagePopup.show("Could not read the archive.", true);
+//   messagePopup.show(message, true, "The drive was removed");
+//
+// The title is the caller's when it knows the situation (a pulled stick
+// is something that happened, not something that went wrong); otherwise
+// the generic one for the severity.
 MessageDialog {
     id: popup
 
@@ -24,10 +29,10 @@ MessageDialog {
     showReject: false
     acceptText: "OK"
 
-    function show(message, isError) {
+    function show(message, isError, title) {
         popup.headline = message;
         popup.severity = isError ? SeabassDialog.Error : SeabassDialog.Info;
-        popup.title = isError ? "That did not work" : "Done";
+        popup.title = (title !== undefined && title.length > 0) ? title : (isError ? "That did not work" : "Done");
         popup.open();
     }
 }

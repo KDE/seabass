@@ -169,6 +169,10 @@ struct RestoreSummary
     };
     Status status = Status::Failed;
     std::string message;
+    // Failed because the target went away part way (a stick pulled
+    // mid-restore): a known situation with its own way forward, which
+    // the message says, rather than a failure of the restore itself.
+    bool driveRemoved = false;
     std::size_t filesWritten = 0;
     std::size_t filesUnchanged = 0;
     // Files this restore deliberately did not write because their

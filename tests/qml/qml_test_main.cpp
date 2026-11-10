@@ -1745,8 +1745,9 @@ public:
     // Hands a RestoreStickBackupController the summary of a restore that
     // just finished, without running one: `kind` is "missingTracksOnly"
     // (everything written, the database check found rows whose file is
-    // not on the drive) or "writeErrorAndMissingTracks" (the same, plus a
-    // file that could not be written). False for anything else.
+    // not on the drive), "writeErrorAndMissingTracks" (the same, plus a
+    // file that could not be written) or "driveRemoved" (the stick pulled
+    // after 12 files). False for anything else.
     Q_INVOKABLE bool finishRestoreWith(QObject *controller, const QString &kind)
     {
         auto *restore = qobject_cast<seabass::gui::RestoreStickBackupController *>(controller);
@@ -1759,6 +1760,14 @@ public:
         s.missingTrackPaths = std::vector<std::string>{"Engine Library/Music/10_Too Little Too Late.mp3"};
         if (kind == QLatin1String("writeErrorAndMissingTracks")) {
             s.writeErrors.push_back("Contents/a.mp3: write failed");
+        } else if (kind == QLatin1String("driveRemoved")) {
+            s.status = seabass::application::RestoreSummary::Status::Failed;
+            s.driveRemoved = true;
+            s.filesWritten = 12;
+            s.missingTrackPaths.reset();
+            s.writeErrors.push_back("Contents/a.mp3: write failed");
+            s.message = "the drive disappeared after 12 files were restored; the files already restored are "
+                        "complete. Reconnect it and restore again to continue where this left off.";
         } else if (kind != QLatin1String("missingTracksOnly")) {
             return false;
         }

@@ -391,6 +391,31 @@ int main()
         std::cout << "case 8 (cancelled restore: completed files intact, no temp files) OK\n";
     }
 
+    // ---- The drive pulled part way ----
+    // Stands in for a yanked stick: the target root stops being a
+    // directory, so the next write fails with nowhere to go. The restore
+    // stops there and says the drive went, and marks it so the GUI can
+    // name the situation instead of a generic failure (#84).
+    {
+        Fixture f("drive-removed");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        bool pulled = false;
+        f.restore.onProgress = [&](const RestoreProgress &p) {
+            if (!pulled && p.phase == RestoreProgress::Phase::Writing && p.filesDone == 2) {
+                pulled = true;
+                fs::remove_all(f.target);
+                std::ofstream(f.target) << "not a drive";
+            }
+        };
+        RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        assert(pulled);
+        assert(summary.status == RestoreSummary::Status::Failed);
+        assert(summary.driveRemoved);
+        assert(summary.message.find("the drive disappeared after 2 files") == 0);
+        fs::remove(f.target);
+        std::cout << "case drive-removed (a target gone mid-restore stops and is marked driveRemoved) OK\n";
+    }
+
     // ---- A compacted archive restores identically ----
     {
         Fixture f("compacted");

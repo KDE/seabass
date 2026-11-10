@@ -52,6 +52,7 @@ TestCase {
             property string currentFile: ""
             property string errorMessage: ""
             property string statusMessage: ""
+            signal actionFeedback(string message, bool isError, string title)
             property var knownBackups: []
             property bool listingBackups: false
             property var analyzeCalls: []
@@ -1014,6 +1015,44 @@ TestCase {
         compare(controller.errorMessage, "");
         compare(controller.statusMessage, data.status);
         compare(controller.result.missingTracks.length, 1);
+    }
+
+    // A stick pulled mid-restore is a known situation, not a failure of
+    // the app: the controller names it for the popup's title, and keeps
+    // the message saying how to go on (#84).
+    function test_aPulledStickIsNamedInThePopupTitle() {
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.defaultBackupDirectory = "/nonexistent/seabass-restore-test";
+        const spy = createTemporaryObject(spyComponent, testCase, {target: controller, signalName: "actionFeedback"});
+        verify(controllerFixture.finishRestoreWith(controller, "driveRemoved"));
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][1], true);
+        compare(spy.signalArguments[0][2], "The drive was removed");
+        verify(spy.signalArguments[0][0].indexOf("the drive disappeared after 12 files were restored") === 0);
+        // Any other failure keeps the generic title.
+        verify(controllerFixture.finishRestoreWith(controller, "writeErrorAndMissingTracks"));
+        compare(spy.count, 2);
+        compare(spy.signalArguments[1][2], "");
+    }
+
+    // The page puts the controller's title on the popup, and falls back to
+    // the generic one when there is none.
+    function test_thePopupTakesTheTitleTheControllerGives_data() {
+        return [
+            {tag: "drive-removed", title: "The drive was removed", shown: "The drive was removed"},
+            {tag: "generic", title: "", shown: "That did not work"},
+        ];
+    }
+    function test_thePopupTakesTheTitleTheControllerGives(data) {
+        const controller = createTemporaryObject(liveDisksControllerComponent, testCase, {disks: [makeDisk({})]});
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           {controller: controller, appSettingsController: fakeAppSettings()});
+        const popup = findChild(page, "messagePopup");
+        controller.actionFeedback("the drive disappeared after 12 files were restored", true, data.title);
+        tryVerify(() => popup.opened, 2000);
+        compare(popup.title, data.shown);
+        compare(popup.headline, "the drive disappeared after 12 files were restored");
+        popup.close();
     }
 
     // The report on the overlay agrees: the line, the database check's

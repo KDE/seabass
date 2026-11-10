@@ -139,7 +139,9 @@ signals:
     void resultChanged();
     void errorMessageChanged();
     void statusMessageChanged();
-    void actionFeedback(const QString &message, bool isError);
+    // `title` names a known situation for the popup ("The drive was
+    // removed"); empty for the generic one.
+    void actionFeedback(const QString &message, bool isError, const QString &title);
     // restore() found a different drive at targetRoot than the one
     // analyze() previewed -- swapped between preview and confirm. Nothing
     // was written. restoreAnyway() proceeds.

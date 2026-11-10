@@ -273,8 +273,8 @@ Page {
         function onLockRefused(holder, libraryId) {
             lockedDialog.openFor(libraryId, holder);
         }
-        function onActionFeedback(message, isError) {
-            messagePopup.show(message, isError);
+        function onActionFeedback(message, isError, title) {
+            messagePopup.show(message, isError, title);
         }
         function onTargetChangedSinceAnalysis(targetRoot, exact) {
             targetChangedDialog.targetRoot = targetRoot;

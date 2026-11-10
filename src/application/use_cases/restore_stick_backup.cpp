@@ -917,6 +917,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                 reporter.finish();
                 flushDirectories();
                 summary.status = RestoreSummary::Status::Failed;
+                summary.driveRemoved = true;
                 summary.message = "the drive disappeared after " + std::to_string(summary.filesWritten)
                                   + " files were restored; the files already restored are complete. Reconnect it and "
                                     "restore again to continue where this left off.";
