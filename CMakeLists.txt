@@ -1428,6 +1428,22 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # not a guess; none does today.
         set(_seabass_qml_file_timeout 600)
         set(_seabass_qml_slow_files)
+        # The files with a wall-clock bound in them get the label `timing`
+        # as well as `qml` (see the label's own comment near the end of this
+        # file): leaving a page within 1 s or 2.5 s while a read cannot stop
+        # (the *Requests files), a list open in < 3 s, a summary within the
+        # second, a stopped scan under its bound (tst_ScanLifetime), a
+        # controller torn down in under half the listing's time.
+        set(_seabass_qml_timing_files
+            tst_BackupAdvisorRequests
+            tst_MetadataBackupRequests
+            tst_MetadataRestorePage
+            tst_MetadataRestoreRequests
+            tst_PlaylistSummary
+            tst_RestoreStickBackupPage
+            tst_ScanLifetime
+            tst_StickPerformanceRequests
+            tst_WriteAndPreviewRequests)
 
         # seabass_add_qml_test_files(<lane> <dir> LABELS ... ENVIRONMENT ...
         #     [TIMEOUT <s>] [PROCESSORS <n>] [EXCLUDE <tst_name> ...])
@@ -1453,6 +1469,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 else()
                     add_test(NAME ${_test} COMMAND seabass_qml_tests -input "${_file}")
                 endif()
+                set(_labels ${ARG_LABELS})
+                if(_name IN_LIST _seabass_qml_timing_files)
+                    list(APPEND _labels timing)
+                endif()
                 set(_timeout ${ARG_TIMEOUT})
                 foreach(_slow IN LISTS _seabass_qml_slow_files)
                     if(_slow MATCHES "^${_name}=([0-9]+)$")
@@ -1461,7 +1481,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 endforeach()
                 set_tests_properties(${_test} PROPERTIES
                     ENVIRONMENT "${ARG_ENVIRONMENT}"
-                    LABELS "${ARG_LABELS}"
+                    LABELS "${_labels}"
                     TIMEOUT ${_timeout}
                     PROCESSORS ${ARG_PROCESSORS})
             endforeach()
@@ -4503,6 +4523,46 @@ if(_seabass_test_path_dirs)
     # entries and CMake list items share the same separator character.
     string(REPLACE ";" "\\;" _seabass_test_path_prepend "${_seabass_test_path_prepend};$ENV{PATH}")
 endif()
+
+# The label `timing`: a test whose verdict rests on the wall clock, so a
+# runner busy with something else can fail it while the code is right.
+# Not a quarantine: these run in every bare ctest, and each still checks
+# what it checks. The label lets a lane that cannot promise an idle
+# machine (a push pipeline on a shared runner) leave them to one that can,
+# with -LE timing. A bound of ten seconds or more that only stops a hung
+# test is not a timing check and is not labelled; neither is a sleep that
+# only widens a race window, where a slow runner makes the case pass
+# without testing anything rather than fail.
+#
+#   async_request_test             going away waits < 1.5 s for a stuck
+#                                  worker and < 500 ms with none; a 200 ms
+#                                  capture must still be alive when the
+#                                  request ends; results within 2 s
+#   backup_advisor_controller_test forget() frees the advisor in < 5 s
+#   backup_database_capture_test   a >= 1 GiB database refused in < 2 s
+#   beat_grid_test                 a minute of beats worked out in < 200 ms
+#   prefetch_at_exit_test          a cancelled pass ends inside the 3 s
+#                                  endProcess() gives reads
+#   library_edit_lock_store_test   a child process's lock seen within 2 s
+#   rekordbox_process_detector_test a spawned "Engine DJ" seen, and gone,
+#                                  within 2 s each
+#   windows_removable_media_monitor_test  stop() returns in < 500 ms
+#
+# The QML files that time something are labelled where they are
+# registered (_seabass_qml_timing_files).
+foreach(_seabass_test IN ITEMS
+        async_request_test
+        backup_advisor_controller_test
+        backup_database_capture_test
+        beat_grid_test
+        prefetch_at_exit_test
+        library_edit_lock_store_test
+        rekordbox_process_detector_test
+        windows_removable_media_monitor_test)
+    if(TEST ${_seabass_test})
+        set_property(TEST ${_seabass_test} APPEND PROPERTY LABELS timing)
+    endif()
+endforeach()
 
 # No test may write into the user's real ~/Seabass.
 #
