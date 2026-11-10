@@ -1431,6 +1431,9 @@ void CleanupController::attachSession()
             disconnect(m_session, nullptr, this, nullptr);
         }
         m_session = session;
+        // The session may have a save to undo already, one kept from a page
+        // since left (#79): its own canUndoChanged went before this listened.
+        emit canUndoChanged();
         if (m_session) {
             connect(m_session, &LibraryEditSession::stateChanged, this, &CleanupController::writingChanged);
             connect(m_session, &LibraryEditSession::canUndoChanged, this, &CleanupController::canUndoChanged);

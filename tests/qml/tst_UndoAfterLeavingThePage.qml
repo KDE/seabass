@@ -7,21 +7,19 @@ import QtQuick.Controls
 import QtTest
 import SeabassGui
 
-// #79: Undo Last Save is gone once the page that saved is left.
+// #79: Undo Last Save outlives the page that saved.
 //
 // A save on Library Health's cue-table page (the anonymized fixture's one
 // drifted row, repaired), then the page is left and opened again on the
-// same library. The undo should still be offered: the save's backups are
-// on the stick and nothing has changed since. It is not, because
-// EditSessionRegistry::closeSession drops the idle session, and the
-// backups of its last save with it, when the page goes. An expected
-// failure until #79 is fixed; it turns into an XPASS then.
+// same library. The undo is still offered: the save's backups are on the
+// stick and nothing has changed since. EditSessionRegistry::closeSession
+// drops the idle session when the page goes, and used to drop the last
+// save's backups with it; it keeps them for the library's next session
+// now, and Free Up Space counts them as still needed meanwhile.
 //
-// Keeping the session is not all the fix needs. With closeSession made to
-// keep it, the session still offered the undo, and so did the new page's
-// controller, but the button stayed hidden: the controller does not say
-// canUndo changed when it attaches to a session that can already undo.
-// Both changes together turned this into the XPASS.
+// Keeping them is not all it takes: the new page's controller attaches to
+// a session that can already undo, and has to say so (canUndoChanged on
+// attach), or the button stays hidden.
 TestCase {
     id: testCase
     name: "UndoAfterLeavingThePage"
@@ -146,9 +144,18 @@ TestCase {
         tryCompare(findChild(first, "undoLastSaveButton"), "visible", true, 5000,
                    "precondition: the page offers it");
 
+        // Free Up Space's old backups while the page is open: not the
+        // records the undo needs.
+        const listedWithThePage = staleBackupCount(stick);
+
         // Leave, as Back does: the page and its edit host go.
         first.destroy();
         wait(0);
+        verify(!EditSessionRegistry.hasSession(libraryId), "precondition: the session went with the page");
+
+        // Nor once it is gone: they used to be listed then, and deleted.
+        compare(staleBackupCount(stick), listedWithThePage,
+                "Free Up Space still leaves the last save's records alone");
 
         const again = openScanned(stick);
         compare(again.consistencyController.cueTableRowCount, 0, "the repair is on the stick");
@@ -156,7 +163,33 @@ TestCase {
         verify(reopened !== null);
         const undo = findChild(again, "undoLastSaveButton");
         verify(undo !== null);
-        expectFail("", "#79: leaving the page drops the session, and the last save's backups with it");
-        verify(reopened.canUndo && undo.visible, "the save is still offered for undo on the page opened again");
+        verify(reopened.canUndo, "the save is still the session's to undo");
+        tryCompare(undo, "visible", true, 5000, "and is offered on the page opened again");
+
+        let undone = null;
+        const undoDone = (result) => { undone = result; };
+        reopened.saveFinished.connect(undoDone);
+        undo.clicked();
+        tryVerify(() => undone !== null, 120000, "the press ran the undo");
+        reopened.saveFinished.disconnect(undoDone);
+        compare(undone.error, "", JSON.stringify(undone));
+        tryVerify(() => !again.consistencyController.busy && again.consistencyController.cueTablesChecked, 300000,
+                  "the undo's rescan finishes");
+        compare(again.consistencyController.cueTableRowCount, 1, "the drifted row is back");
+        tryCompare(undo, "visible", false, 5000, "and nothing is left to undo");
+    }
+
+    Component {
+        id: cleanupControllerComponent
+        CleanupController {}
+    }
+    // How many backups Free Up Space offers to delete as old on this stick.
+    function staleBackupCount(stick) {
+        const cleanup = createTemporaryObject(cleanupControllerComponent, testCase);
+        cleanup.loadPendingDeletionsOnly("engine", stick + "/Engine Library");
+        tryVerify(() => !cleanup.listingStaleBackups, 30000, "the listing lands");
+        const count = cleanup.staleBackupCount;
+        cleanup.destroy();
+        return count;
     }
 }

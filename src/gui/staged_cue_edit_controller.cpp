@@ -76,6 +76,9 @@ void StagedCueEditController::attachSessionForPath(const QString &path)
         disconnect(m_session, nullptr, this, nullptr);
     }
     m_session = session;
+    // The session may have a save to undo already, one kept from a page
+    // since left (#79): its own canUndoChanged went before this listened.
+    emit canUndoChanged();
     if (!m_session) {
         return;
     }
