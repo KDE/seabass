@@ -16,12 +16,12 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "gui/async_request.hpp"
+#include "gui/edit/library_edit_session.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
 {
 
-class LibraryEditSession;
 class PendingChange;
 class StagedPlanModel;
 

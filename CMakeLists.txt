@@ -558,11 +558,19 @@ target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB 
 #
 # Only sources seabass_core ALREADY builds are in here, so this target
 # needs no include dirs or dependencies beyond the ones mirrored below.
-# Three others are duplicated across tests and deliberately left alone:
-# src/gui/media_controller.cpp needs Qt, and the onelibrary readers need
-# SQLCipher. Putting those here would hand Qt and SQLCipher to every
-# Qt-free test, and staying Qt-free is a property this project keeps on
-# purpose (see seabass_core's own comment and corpus_test).
+# A source belongs here once two or more test targets need it; one used by
+# a single test stays in that test's own list, since moving it would cost
+# the same one compile and add a dependency. The archive stack, the
+# analysis-file readers and the OneLibrary sources joined on 2026-11-10,
+# when a Debug build still compiled zip64_reader.cpp and zip_format.cpp 26
+# times each: 251 compiles of these sources went away. The OneLibrary ones
+# were left out at first on the belief that they "need SQLCipher"; they
+# load it at run time (sqlcipher_dyn.hpp), so what they need is the
+# dynamic loader, linked below as seabass_core links it, and nothing of
+# Qt. GUI sources are not in here: staying Qt-free is a property this
+# target keeps on purpose (see seabass_core's own comment and
+# corpus_test); the Qt ones the tests share have libraries of their own
+# further down (seabass_gui_*_testing).
 #
 # STATIC rather than OBJECT: an OBJECT library puts every object into
 # every consumer, while a static archive lets the linker take only what
@@ -643,6 +651,26 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/stick_backup/restore_path_sanitizer.cpp
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/work_counters.cpp
+    src/infrastructure/engine/engine_analysis_state.cpp
+    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
+    src/infrastructure/onelibrary/onelibrary_key.cpp
+    src/infrastructure/onelibrary/onelibrary_reader.cpp
+    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
+    src/infrastructure/rekordbox/anlz_byte_source.cpp
+    src/infrastructure/rekordbox/anlz_source_for_root.cpp
+    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
+    src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/stick_backup/archive_journal.cpp
+    src/infrastructure/stick_backup/archive_recovery.cpp
+    src/infrastructure/stick_backup/archive_updater.cpp
+    src/infrastructure/stick_backup/library_catalog_mtime.cpp
+    src/infrastructure/stick_backup/sqlite_db_set.cpp
+    src/infrastructure/stick_backup/stat_diff.cpp
+    src/infrastructure/stick_backup/zip64_reader.cpp
+    src/infrastructure/stick_backup/zip64_writer.cpp
+    src/infrastructure/stick_backup/zip_format.cpp
+    src/infrastructure/zip_archive_reader.cpp
+    src/infrastructure/zip_archive_writer.cpp
 )
 target_include_directories(seabass_core_testing PUBLIC src)
 target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in)
@@ -654,9 +682,10 @@ target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLI
 # frontend refuses that STL header outright ("STL1003: Unexpected
 # compiler, expected C++ compiler"), which looks nothing like what
 # these two options are for and cost a rebuild to trace.
-target_compile_options(seabass_core_testing PRIVATE
+set(SEABASS_TESTING_LIBRARY_OPTIONS
     "$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>>"
     "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<COMPILE_LANGUAGE:CXX>>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
+target_compile_options(seabass_core_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
 
 if(MSVC)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
@@ -756,6 +785,7 @@ target_sources(seabass_core PRIVATE
 )
 if(NOT WIN32)
     target_link_libraries(seabass_core PUBLIC ${CMAKE_DL_LIBS})
+    target_link_libraries(seabass_core_testing PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
 # --- seabass-cli: the terminal composition root ---
@@ -1865,12 +1895,8 @@ add_test(NAME filesystem_health_test COMMAND filesystem_health_test)
 
 # Engine rows that do not say their sample rate, and the files that do.
 # The import prompt a Denon player raises, and the counter behind it.
-add_executable(engine_import_state_test
-    src/infrastructure/engine/engine_analysis_state.cpp
-    src/infrastructure/engine/engine_import_state.cpp
-    src/infrastructure/paths/seabass_paths.cpp
-    tests/engine_import_state_test.cpp
-)
+add_executable(engine_import_state_test tests/engine_import_state_test.cpp)
+target_link_libraries(engine_import_state_test PRIVATE seabass_core_testing)
 target_include_directories(engine_import_state_test PRIVATE src tests)
 target_link_libraries(engine_import_state_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME engine_import_state_test COMMAND engine_import_state_test)
@@ -1889,10 +1915,8 @@ add_test(NAME waveform_readers_test COMMAND waveform_readers_test)
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
 # makes the count mean anything.
-add_executable(engine_analysis_state_test
-    src/infrastructure/engine/engine_analysis_state.cpp
-    tests/engine_analysis_state_test.cpp
-)
+add_executable(engine_analysis_state_test tests/engine_analysis_state_test.cpp)
+target_link_libraries(engine_analysis_state_test PRIVATE seabass_core_testing)
 target_include_directories(engine_analysis_state_test PRIVATE src tests)
 target_link_libraries(engine_analysis_state_test PRIVATE SQLite::SQLite3)
 add_test(NAME engine_analysis_state_test COMMAND engine_analysis_state_test
@@ -1900,29 +1924,24 @@ add_test(NAME engine_analysis_state_test COMMAND engine_analysis_state_test
 
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp
-    src/application/ports/progress_reporter.cpp
     tests/engine_sample_rates_test.cpp
 )
+target_link_libraries(engine_sample_rates_test PRIVATE seabass_core_testing)
 target_include_directories(engine_sample_rates_test PRIVATE src tests)
 target_link_libraries(engine_sample_rates_test PRIVATE DjInterop SQLite::SQLite3 ZLIB::ZLIB)
 add_test(NAME engine_sample_rates_test COMMAND engine_sample_rates_test)
 
-add_executable(engine_artwork_test
-    tests/engine_artwork_test.cpp
-    src/infrastructure/engine/engine_artwork.cpp
-    # The repaired image is written durably, like every other write onto a
-    # stick, so this test needs the writer and its long-path helper.
-)
+# The repaired image is written durably, like every other write onto a
+# stick, so this test needs the writer and its long-path helper: both come
+# from seabass_core_testing.
+add_executable(engine_artwork_test tests/engine_artwork_test.cpp)
 target_link_libraries(engine_artwork_test PRIVATE seabass_core_testing)
 target_include_directories(engine_artwork_test PRIVATE src tests)
 target_compile_definitions(engine_artwork_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(engine_artwork_test PRIVATE SQLite::SQLite3 Threads::Threads)
 add_test(NAME engine_artwork_test COMMAND engine_artwork_test)
 
-add_executable(engine_artwork_relabel_test
-    tests/engine_artwork_relabel_test.cpp
-    src/infrastructure/engine/engine_artwork.cpp
-)
+add_executable(engine_artwork_relabel_test tests/engine_artwork_relabel_test.cpp)
 target_link_libraries(engine_artwork_relabel_test PRIVATE seabass_core_testing)
 target_include_directories(engine_artwork_relabel_test PRIVATE src tests)
 target_compile_definitions(engine_artwork_relabel_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -2092,7 +2111,8 @@ target_link_libraries(playlist_sync_test PRIVATE seabass_core_testing)
 target_include_directories(playlist_sync_test PRIVATE src)
 add_test(NAME playlist_sync_test COMMAND playlist_sync_test)
 
-add_executable(phased_progress_test tests/phased_progress_test.cpp src/application/phased_progress.cpp src/application/ports/progress_reporter.cpp)
+add_executable(phased_progress_test tests/phased_progress_test.cpp)
+target_link_libraries(phased_progress_test PRIVATE seabass_core_testing)
 target_include_directories(phased_progress_test PRIVATE src)
 add_test(NAME phased_progress_test COMMAND phased_progress_test)
 
@@ -2127,10 +2147,8 @@ add_test(NAME playlist_diff_test COMMAND playlist_diff_test)
 
 # The rekordbox baseline of Sync after Rekordbox Export: the B of its
 # three-way merge, built from what the readers give. Pure domain.
-add_executable(rekordbox_baseline_test
-    src/domain/rekordbox_baseline.cpp
-    tests/rekordbox_baseline_test.cpp
-)
+add_executable(rekordbox_baseline_test tests/rekordbox_baseline_test.cpp)
+target_link_libraries(rekordbox_baseline_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_baseline_test PRIVATE src)
 add_test(NAME rekordbox_baseline_test COMMAND rekordbox_baseline_test)
 
@@ -2175,16 +2193,28 @@ endif()
 add_test(NAME library_catalog_cache_test COMMAND library_catalog_cache_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
+# The catalog cache as six tests compiled it each for themselves: assert()
+# live, and WITHOUT SEABASS_HAVE_TAGLIB, so its Cues stage takes rates from
+# the null probe. That last part is why this is not seabass_edit's copy,
+# which is built with TagLib when the build has it, and why the tests that
+# want the TagLib probe (library_catalog_cache_test, and
+# library_fingerprint_reader_test below) keep compiling their own. Qt-free,
+# like the cache itself, so it is here rather than with the Qt test
+# libraries.
+add_library(seabass_catalog_cache_testing STATIC src/gui/library_catalog_cache.cpp)
+target_include_directories(seabass_catalog_cache_testing PUBLIC src)
+target_link_libraries(seabass_catalog_cache_testing PUBLIC seabass_core Threads::Threads)
+target_compile_options(seabass_catalog_cache_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
+
 # catalogPathForFormat() answers in the forward-slash form a QString path
-# has. Compiles stick_catalogs.cpp and the catalog cache it reads through,
-# as library_catalog_cache_test does.
+# has. Compiles stick_catalogs.cpp, and links the catalog cache it reads
+# through.
 add_executable(stick_catalogs_test
     src/gui/stick_catalogs.cpp
-    src/gui/library_catalog_cache.cpp
     tests/stick_catalogs_test.cpp
 )
 target_include_directories(stick_catalogs_test PRIVATE src)
-target_link_libraries(stick_catalogs_test PRIVATE seabass_core Threads::Threads)
+target_link_libraries(stick_catalogs_test PRIVATE seabass_catalog_cache_testing seabass_core Threads::Threads)
 add_test(NAME stick_catalogs_test COMMAND stick_catalogs_test)
 
 # The fingerprint reader's cue decisions: the advisor's second-step rule,
@@ -2238,21 +2268,12 @@ add_executable(track_queries_test
 target_include_directories(track_queries_test PRIVATE src)
 add_test(NAME track_queries_test COMMAND track_queries_test)
 
-add_executable(cue_color_normalization_test
-    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
-    src/infrastructure/rekordbox/anlz_byte_source.cpp
-    # KaitaiRekordboxReader resolves its analysis-file source from the
-    # library root itself, so that a stick backup browsed in place is read
-    # correctly by every existing caller without one of them changing (see
-    # anlzSourceForPioneerRoot). The cost is here: the pdb reader now pulls
-    # in the archive stack, so a test that lists its own sources has to
-    # list those too.
-    src/infrastructure/rekordbox/anlz_source_for_root.cpp
-    src/infrastructure/stick_backup/archive_anlz_source.cpp
-    src/infrastructure/stick_backup/zip64_reader.cpp
-    src/infrastructure/stick_backup/zip_format.cpp
-    tests/cue_color_normalization_test.cpp
-)
+# KaitaiRekordboxReader resolves its analysis-file source from the library
+# root itself, so that a stick backup browsed in place is read correctly by
+# every existing caller without one of them changing (see
+# anlzSourceForPioneerRoot). The cost: the pdb reader pulls in the archive
+# stack, which seabass_core_testing carries.
+add_executable(cue_color_normalization_test tests/cue_color_normalization_test.cpp)
 target_link_libraries(cue_color_normalization_test PRIVATE seabass_core_testing)
 target_include_directories(cue_color_normalization_test PRIVATE src)
 target_link_libraries(cue_color_normalization_test PRIVATE DjInterop rekordbox_format kaitai_cpp_stl_runtime
@@ -2297,17 +2318,9 @@ add_test(NAME legacy_memory_list_audit_test COMMAND legacy_memory_list_audit_tes
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
 # Also reads the planted files the way the readers' cue pass does
-# (readAnalysisFileCues), whose count the stick summary shows, so it lists
-# the reader's sources as cue_color_normalization_test does.
-add_executable(cue_list_health_test
-    tests/cue_list_health_test.cpp
-    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
-    src/infrastructure/rekordbox/anlz_byte_source.cpp
-    src/infrastructure/rekordbox/anlz_source_for_root.cpp
-    src/infrastructure/stick_backup/archive_anlz_source.cpp
-    src/infrastructure/stick_backup/zip64_reader.cpp
-    src/infrastructure/stick_backup/zip_format.cpp
-)
+# (readAnalysisFileCues), whose count the stick summary shows, so it links
+# the reader as cue_color_normalization_test does.
+add_executable(cue_list_health_test tests/cue_list_health_test.cpp)
 target_link_libraries(cue_list_health_test PRIVATE seabass_core_testing kaitai_cpp_stl_runtime SQLite::SQLite3)
 target_include_directories(cue_list_health_test PRIVATE src tests)
 add_test(NAME cue_list_health_test COMMAND cue_list_health_test
@@ -2316,10 +2329,7 @@ add_test(NAME cue_list_health_test COMMAND cue_list_health_test
 # Reads the raw bytes of all three cue lists after a write, so a writer
 # that keeps only one of them up to date fails here. See the file's own
 # comment: this is the test issue #33 did not have.
-add_executable(rekordbox_cue_lists_agree_test
-    src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
-    tests/rekordbox_cue_lists_agree_test.cpp
-)
+add_executable(rekordbox_cue_lists_agree_test tests/rekordbox_cue_lists_agree_test.cpp)
 target_link_libraries(rekordbox_cue_lists_agree_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_cue_lists_agree_test PRIVATE src tests)
 target_link_libraries(rekordbox_cue_lists_agree_test PRIVATE rekordbox_format kaitai_cpp_stl_runtime)
@@ -2404,18 +2414,6 @@ add_executable(bulk_write_strategy_test
 target_include_directories(bulk_write_strategy_test PRIVATE src)
 add_test(NAME bulk_write_strategy_test COMMAND bulk_write_strategy_test)
 
-# Defined here rather than beside the archive tests further down: the
-# backup store itself now writes archives, and its test is the first
-# target that needs these.
-set(SEABASS_STICK_BACKUP_FORMAT_SOURCES
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/stick_backup/posix_archive_file.cpp
-    src/infrastructure/stick_backup/zip_format.cpp
-    src/infrastructure/stick_backup/zip64_writer.cpp
-    src/infrastructure/stick_backup/zip64_reader.cpp
-    src/infrastructure/stick_backup/backup_manifest.cpp
-)
-
 add_executable(stick_space_test
     src/infrastructure/backup/stick_space.cpp
     tests/stick_space_test.cpp
@@ -2423,10 +2421,7 @@ add_executable(stick_space_test
 target_include_directories(stick_space_test PRIVATE src)
 add_test(NAME stick_space_test COMMAND stick_space_test)
 
-add_executable(filesystem_backup_store_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/filesystem_backup_store_test.cpp
-)
+add_executable(filesystem_backup_store_test tests/filesystem_backup_store_test.cpp)
 target_link_libraries(filesystem_backup_store_test PRIVATE seabass_core_testing)
 target_include_directories(filesystem_backup_store_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_test PRIVATE ZLIB::ZLIB)
@@ -2434,10 +2429,7 @@ add_test(NAME filesystem_backup_store_test COMMAND filesystem_backup_store_test)
 
 # The store's refusals: a record whose manifest is missing or damaged, an
 # archive gone or replaced by a directory, writes the filesystem refuses.
-add_executable(filesystem_backup_store_error_paths_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/filesystem_backup_store_error_paths_test.cpp
-)
+add_executable(filesystem_backup_store_error_paths_test tests/filesystem_backup_store_error_paths_test.cpp)
 target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE seabass_core_testing)
 target_include_directories(filesystem_backup_store_error_paths_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE ZLIB::ZLIB)
@@ -2656,13 +2648,68 @@ if(TARGET seabass_edit)
     target_link_libraries(edit_session_save_loop_test PRIVATE seabass_edit SQLite::SQLite3)
     add_test(NAME edit_session_save_loop_test COMMAND edit_session_save_loop_test)
 
-    # Links media_controller.cpp directly, the way every other GUI-class
-    # test here does: the GUI is one executable target, not a library, so
-    # there is nothing to link against but the sources actually needed.
-    # The stick list's order and its update semantics: a row the user is
-    # looking at must not move because its own state changed, and an
-    # arriving stick must be an insert the view can animate rather than a
-    # reset it can only redraw.
+    # The GUI sources several tests below need, compiled once each rather
+    # than once per test. The GUI is one executable target, not a library,
+    # so a test lists the GUI sources it needs; before these existed,
+    # stick_events.cpp was compiled 15 times over, media_controller.cpp and
+    # library_access.cpp 9 times each, the edit session's four sources 4 to
+    # 6 times, each with its own moc run.
+    #
+    # Three libraries rather than one, because of moc: AUTOMOC puts every
+    # moc'd class of a target into one object (mocs_compilation.cpp), so a
+    # test that needs StickEvents' meta-object pulls in MediaController's
+    # too, and with it every symbol MediaController's slots call. One
+    # library would make async_request_test link the whole media stack,
+    # and the core-only tests link seabass_edit. Each library here holds
+    # one layer and links the one beneath it:
+    #
+    #   seabass_gui_stick_events_testing   StickEvents; Qt Core only
+    #   seabass_gui_media_testing          MediaController, LibraryAccess
+    #   seabass_gui_edit_session_testing   the edit session, its registry,
+    #                                      the write guard, the direct-write
+    #                                      hold; needs seabass_edit
+    #
+    # seabass_gui_media_testing does NOT link a catalog cache, on purpose:
+    # the tests that link seabass_edit get the cache from it, built with
+    # TagLib as they always had it, and the core-only ones link
+    # seabass_catalog_cache_testing, built without, as they always had it.
+    # Linking one here would hand every test the same one, and a test whose
+    # Cues stage silently changed probe is a test that changed.
+    #
+    # assert() live, as in seabass_core_testing: these were compiled with
+    # -UNDEBUG inside each test, and a Release CI build must keep that.
+    # No defines beyond what the tests had: the stick-events and media
+    # sources read none of SEABASS_HAVE_*, and the edit session gets
+    # seabass_edit's, which every test that compiled it linked.
+    add_library(seabass_gui_stick_events_testing STATIC src/gui/stick_events.cpp)
+    target_include_directories(seabass_gui_stick_events_testing PUBLIC src)
+    target_link_libraries(seabass_gui_stick_events_testing PUBLIC Qt6::Core)
+    target_compile_options(seabass_gui_stick_events_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
+
+    add_library(seabass_gui_media_testing STATIC
+        src/gui/media_controller.cpp
+        src/gui/library_access.cpp
+    )
+    target_include_directories(seabass_gui_media_testing PUBLIC src)
+    target_link_libraries(seabass_gui_media_testing PUBLIC
+        seabass_gui_stick_events_testing seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    target_compile_options(seabass_gui_media_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
+
+    # qt_progress_reporter.hpp is listed for its moc, which
+    # library_edit_session.cpp needs; a test linking this must not list it
+    # as well, or the two meta-objects collide at link time.
+    add_library(seabass_gui_edit_session_testing STATIC
+        src/gui/edit/edit_session_registry.cpp
+        src/gui/edit/library_edit_session.cpp
+        src/gui/edit/direct_write_hold.cpp
+        src/gui/write_guard.cpp
+        src/gui/qt_progress_reporter.hpp
+    )
+    target_include_directories(seabass_gui_edit_session_testing PUBLIC src)
+    target_link_libraries(seabass_gui_edit_session_testing PUBLIC
+        seabass_gui_media_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml)
+    target_compile_options(seabass_gui_edit_session_testing PRIVATE ${SEABASS_TESTING_LIBRARY_OPTIONS})
+
     # Needs Qt6::Gui, not just Core: the font database is a GUI thing, and
     # so is the offscreen platform plugin this runs under deliberately.
     add_executable(interface_font_test
@@ -2741,15 +2788,13 @@ if(TARGET seabass_edit)
     target_include_directories(cover_cache_timing PRIVATE src)
     target_link_libraries(cover_cache_timing PRIVATE seabass_core Qt6::Core Qt6::Gui)
 
-    add_executable(stick_list_order_test
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/library_catalog_cache.cpp
-        tests/stick_list_order_test.cpp
-    )
+    # The stick list's order and its update semantics: a row the user is
+    # looking at must not move because its own state changed, and an
+    # arriving stick must be an insert the view can animate rather than a
+    # reset it can only redraw.
+    add_executable(stick_list_order_test tests/stick_list_order_test.cpp)
     target_include_directories(stick_list_order_test PRIVATE src)
-    target_link_libraries(stick_list_order_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(stick_list_order_test PRIVATE seabass_gui_media_testing seabass_catalog_cache_testing seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME stick_list_order_test COMMAND stick_list_order_test)
 
     add_executable(qt_workarounds_test
@@ -2764,18 +2809,9 @@ if(TARGET seabass_edit)
     # asked for twice, closed last, saving, and pulled; the direct-write
     # hold; another instance's lock. MediaController is linked for its
     # stickRemoved/stickReturned signals, never for a real stick.
-    add_executable(edit_session_registry_test
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
-        src/gui/qt_progress_reporter.hpp
-        tests/edit_session_registry_test.cpp
-    )
+    add_executable(edit_session_registry_test tests/edit_session_registry_test.cpp)
     target_include_directories(edit_session_registry_test PRIVATE src)
-    target_link_libraries(edit_session_registry_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(edit_session_registry_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME edit_session_registry_test COMMAND edit_session_registry_test)
     set_tests_properties(edit_session_registry_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
@@ -2792,12 +2828,11 @@ if(TARGET seabass_edit)
     add_executable(backup_advisor_controller_test
         src/gui/backup_advisor_controller.cpp
         src/gui/library_fingerprint_reader.cpp
-        src/gui/library_catalog_cache.cpp
-        src/gui/stick_events.cpp
         tests/backup_advisor_controller_test.cpp
     )
     target_include_directories(backup_advisor_controller_test PRIVATE src tests)
-    target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    target_link_libraries(backup_advisor_controller_test PRIVATE seabass_gui_stick_events_testing
+        seabass_catalog_cache_testing seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
@@ -2805,19 +2840,11 @@ if(TARGET seabass_edit)
     # real delete run on the worker, against a planted stick.
     add_executable(recordings_controller_test
         src/gui/recordings_controller.cpp
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/edit/direct_write_hold.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
         src/gui/sleep_inhibitor.cpp
-        src/gui/qt_progress_reporter.hpp
         tests/recordings_controller_test.cpp
     )
     target_include_directories(recordings_controller_test PRIVATE src tests)
-    target_link_libraries(recordings_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(recordings_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
     set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
@@ -2827,18 +2854,10 @@ if(TARGET seabass_edit)
     add_executable(cleanup_prune_stale_backups_test
         src/gui/cleanup_controller.cpp
         src/gui/stick_catalogs.cpp
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/edit/direct_write_hold.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
-        src/gui/qt_progress_reporter.hpp
         tests/cleanup_prune_stale_backups_test.cpp
     )
     target_include_directories(cleanup_prune_stale_backups_test PRIVATE src tests)
-    target_link_libraries(cleanup_prune_stale_backups_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(cleanup_prune_stale_backups_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME cleanup_prune_stale_backups_test COMMAND cleanup_prune_stale_backups_test)
     set_tests_properties(cleanup_prune_stale_backups_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
@@ -2849,19 +2868,11 @@ if(TARGET seabass_edit)
         src/gui/stick_backup_controller.cpp
         src/gui/backup_changelog_text.cpp
         src/gui/library_fingerprint_reader.cpp
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/edit/direct_write_hold.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
         src/gui/sleep_inhibitor.cpp
-        src/gui/qt_progress_reporter.hpp
         tests/stick_backup_name_test.cpp
     )
     target_include_directories(stick_backup_name_test PRIVATE src tests)
-    target_link_libraries(stick_backup_name_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Gui)
+    target_link_libraries(stick_backup_name_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Gui)
     add_test(NAME stick_backup_name_test COMMAND stick_backup_name_test)
     set_tests_properties(stick_backup_name_test PROPERTIES
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
@@ -2887,11 +2898,10 @@ if(TARGET seabass_edit)
 
     add_executable(playlist_diff_controller_test
         src/gui/playlist_diff_controller.cpp
-        src/gui/stick_events.cpp
         tests/playlist_diff_controller_test.cpp
     )
     target_include_directories(playlist_diff_controller_test PRIVATE src tests)
-    target_link_libraries(playlist_diff_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(playlist_diff_controller_test PRIVATE seabass_gui_stick_events_testing seabass_edit Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME playlist_diff_controller_test COMMAND playlist_diff_controller_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(playlist_diff_controller_test PROPERTIES LABELS "integration"
@@ -2911,18 +2921,10 @@ if(TARGET seabass_edit)
         src/gui/staged_cue_edit_controller.cpp
         src/gui/sync_plan_list_model.hpp
         src/gui/sync_plan_list_model.cpp
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/edit/direct_write_hold.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
-        src/gui/qt_progress_reporter.hpp
         tests/rekordbox_export_sync_controller_test.cpp
     )
     target_include_directories(rekordbox_export_sync_controller_test PRIVATE src tests)
-    target_link_libraries(rekordbox_export_sync_controller_test PRIVATE seabass_edit Qt6::Core Qt6::Gui
+    target_link_libraries(rekordbox_export_sync_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Gui
         Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME rekordbox_export_sync_controller_test COMMAND rekordbox_export_sync_controller_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
@@ -2931,53 +2933,37 @@ if(TARGET seabass_edit)
 
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.
-    add_executable(prefetch_at_exit_test
-        src/gui/library_catalog_cache.cpp
-        src/gui/stick_events.cpp
-        tests/prefetch_at_exit_test.cpp
-    )
+    add_executable(prefetch_at_exit_test tests/prefetch_at_exit_test.cpp)
     target_include_directories(prefetch_at_exit_test PRIVATE src)
-    target_link_libraries(prefetch_at_exit_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    target_link_libraries(prefetch_at_exit_test PRIVATE seabass_gui_stick_events_testing seabass_catalog_cache_testing
+        seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME prefetch_at_exit_test COMMAND prefetch_at_exit_test)
 
     # docs/async-requests.md's seven rules, against gui::AsyncRequest.
-    add_executable(async_request_test
-        src/gui/stick_events.cpp
-        tests/async_request_test.cpp
-    )
+    add_executable(async_request_test tests/async_request_test.cpp)
     target_include_directories(async_request_test PRIVATE src)
-    target_link_libraries(async_request_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    target_link_libraries(async_request_test PRIVATE seabass_gui_stick_events_testing seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME async_request_test COMMAND async_request_test)
 
     # A GUI-thread QObject a worker drops last is destroyed on the GUI thread.
     add_executable(main_thread_shared_test
-        src/gui/stick_events.cpp
         src/gui/qt_progress_reporter.hpp
         tests/main_thread_shared_test.cpp
     )
     target_include_directories(main_thread_shared_test PRIVATE src)
-    target_link_libraries(main_thread_shared_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    target_link_libraries(main_thread_shared_test PRIVATE seabass_gui_stick_events_testing seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME main_thread_shared_test COMMAND main_thread_shared_test)
 
     # The end of the process with a read still stuck: no static destructor
     # runs beneath it.
-    add_executable(async_request_exit_test
-        src/gui/stick_events.cpp
-        tests/async_request_exit_test.cpp
-    )
+    add_executable(async_request_exit_test tests/async_request_exit_test.cpp)
     target_include_directories(async_request_exit_test PRIVATE src)
-    target_link_libraries(async_request_exit_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    target_link_libraries(async_request_exit_test PRIVATE seabass_gui_stick_events_testing seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME async_request_exit_test COMMAND async_request_exit_test)
 
-    add_executable(open_folder_test
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/library_catalog_cache.cpp
-        tests/open_folder_test.cpp
-    )
+    add_executable(open_folder_test tests/open_folder_test.cpp)
     target_include_directories(open_folder_test PRIVATE src)
-    target_link_libraries(open_folder_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    target_link_libraries(open_folder_test PRIVATE seabass_gui_media_testing seabass_catalog_cache_testing seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME open_folder_test COMMAND open_folder_test)
 
     # The stick card badge of Sync after Rekordbox Export: the model's
@@ -2985,15 +2971,10 @@ if(TARGET seabass_edit)
     # on a copy of the anonymized fixture opened as a folder. data() reads
     # no catalog (the cache's passes are counted), a current baseline is
     # answered without one, and the role follows refreshSyncNeeded().
-    add_executable(engine_update_role_test
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/library_catalog_cache.cpp
-        tests/engine_update_role_test.cpp
-    )
+    add_executable(engine_update_role_test tests/engine_update_role_test.cpp)
     target_include_directories(engine_update_role_test PRIVATE src tests)
-    target_link_libraries(engine_update_role_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    target_link_libraries(engine_update_role_test PRIVATE seabass_gui_media_testing seabass_catalog_cache_testing
+        seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME engine_update_role_test COMMAND engine_update_role_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(engine_update_role_test PROPERTIES LABELS "integration"
@@ -3005,10 +2986,10 @@ if(TARGET seabass_edit)
     add_test(NAME stick_backup_paths_test COMMAND stick_backup_paths_test)
 
     add_executable(backup_changelog_text_test
-        ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
         src/gui/backup_changelog_text.cpp
         tests/backup_changelog_text_test.cpp
     )
+    target_link_libraries(backup_changelog_text_test PRIVATE seabass_core_testing)
     target_include_directories(backup_changelog_text_test PRIVATE src)
     target_link_libraries(backup_changelog_text_test PRIVATE Qt6::Core ZLIB::ZLIB)
     add_test(NAME backup_changelog_text_test COMMAND backup_changelog_text_test)
@@ -3181,18 +3162,9 @@ if(TARGET seabass_edit)
     # copy of the anonymized fixture, with Undo. OwnedChange first: the
     # session refuses the bare pair of another page's changes and takes
     # them wrapped.
-    add_executable(owned_change_test
-        src/gui/edit/edit_session_registry.cpp
-        src/gui/edit/library_edit_session.cpp
-        src/gui/media_controller.cpp
-        src/gui/library_access.cpp
-        src/gui/stick_events.cpp
-        src/gui/write_guard.cpp
-        src/gui/qt_progress_reporter.hpp
-        tests/owned_change_test.cpp
-    )
+    add_executable(owned_change_test tests/owned_change_test.cpp)
     target_include_directories(owned_change_test PRIVATE src tests)
-    target_link_libraries(owned_change_test PRIVATE seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test
+    target_link_libraries(owned_change_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test
         ZLIB::ZLIB DjInterop SQLite::SQLite3)
     add_test(NAME owned_change_test COMMAND owned_change_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(owned_change_test PROPERTIES LABELS "integration"
@@ -3547,10 +3519,7 @@ target_include_directories(libdjinterop_engine_cleanup_writer_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_cleanup_writer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cleanup_writer_test COMMAND libdjinterop_engine_cleanup_writer_test)
 
-add_executable(duplicate_cleanup_interruption_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/duplicate_cleanup_interruption_test.cpp
-)
+add_executable(duplicate_cleanup_interruption_test tests/duplicate_cleanup_interruption_test.cpp)
 target_link_libraries(duplicate_cleanup_interruption_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cleanup_interruption_test PRIVATE src)
 target_link_libraries(duplicate_cleanup_interruption_test PRIVATE DjInterop ZLIB::ZLIB SQLite::SQLite3)
@@ -3618,24 +3587,19 @@ target_link_libraries(clean_up_recordings_test PRIVATE seabass_core_testing)
 target_include_directories(clean_up_recordings_test PRIVATE src)
 add_test(NAME clean_up_recordings_test COMMAND clean_up_recordings_test)
 
-add_executable(zip_archive_writer_test
-    src/infrastructure/zip_archive_writer.cpp
-    # The reader too: case 5 is about what it does with an archive whose
-    # offsets are damaged, which is the other half of this format.
-    src/infrastructure/zip_archive_reader.cpp
-    tests/zip_archive_writer_test.cpp
-)
+# The reader too (from seabass_core_testing): case 5 is about what it does
+# with an archive whose offsets are damaged, which is the other half of
+# this format.
+add_executable(zip_archive_writer_test tests/zip_archive_writer_test.cpp)
+target_link_libraries(zip_archive_writer_test PRIVATE seabass_core_testing)
 target_include_directories(zip_archive_writer_test PRIVATE src)
 target_link_libraries(zip_archive_writer_test PRIVATE ZLIB::ZLIB)
 add_test(NAME zip_archive_writer_test COMMAND zip_archive_writer_test)
 
 # The reader's refusals, one malformed field at a time, and its
 # path-traversal guard.
-add_executable(zip_archive_reader_refusals_test
-    src/infrastructure/zip_archive_writer.cpp
-    src/infrastructure/zip_archive_reader.cpp
-    tests/zip_archive_reader_refusals_test.cpp
-)
+add_executable(zip_archive_reader_refusals_test tests/zip_archive_reader_refusals_test.cpp)
+target_link_libraries(zip_archive_reader_refusals_test PRIVATE seabass_core_testing)
 target_include_directories(zip_archive_reader_refusals_test PRIVATE src)
 target_link_libraries(zip_archive_reader_refusals_test PRIVATE ZLIB::ZLIB)
 add_test(NAME zip_archive_reader_refusals_test COMMAND zip_archive_reader_refusals_test)
@@ -3680,34 +3644,26 @@ target_include_directories(archive_file_test PRIVATE src)
 add_test(NAME archive_file_test COMMAND archive_file_test)
 
 
-add_executable(backup_manifest_name_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/backup_manifest_name_test.cpp
-)
+add_executable(backup_manifest_name_test tests/backup_manifest_name_test.cpp)
+target_link_libraries(backup_manifest_name_test PRIVATE seabass_core_testing)
 target_include_directories(backup_manifest_name_test PRIVATE src)
 target_link_libraries(backup_manifest_name_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_manifest_name_test COMMAND backup_manifest_name_test)
 
-add_executable(backup_archive_roundtrip_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/backup_archive_roundtrip_test.cpp
-)
+add_executable(backup_archive_roundtrip_test tests/backup_archive_roundtrip_test.cpp)
+target_link_libraries(backup_archive_roundtrip_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_roundtrip_test PRIVATE src)
 target_link_libraries(backup_archive_roundtrip_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_roundtrip_test COMMAND backup_archive_roundtrip_test)
 
-add_executable(backup_archive_deflate_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/backup_archive_deflate_test.cpp
-)
+add_executable(backup_archive_deflate_test tests/backup_archive_deflate_test.cpp)
+target_link_libraries(backup_archive_deflate_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_deflate_test PRIVATE src)
 target_link_libraries(backup_archive_deflate_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_deflate_test COMMAND backup_archive_deflate_test)
 
-add_executable(backup_archive_crossvalidation_test
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    tests/backup_archive_crossvalidation_test.cpp
-)
+add_executable(backup_archive_crossvalidation_test tests/backup_archive_crossvalidation_test.cpp)
+target_link_libraries(backup_archive_crossvalidation_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_crossvalidation_test PRIVATE src)
 target_link_libraries(backup_archive_crossvalidation_test PRIVATE ZLIB::ZLIB)
 # Baked in as well as passed through the environment. The environment only
@@ -3754,44 +3710,19 @@ set_tests_properties(backup_archive_crossvalidation_test PROPERTIES
     ENVIRONMENT "SEABASS_PYTHON3=${Python3_EXECUTABLE};SEABASS_UNZIP=${UNZIP_EXECUTABLE};SEABASS_SEVENZIP=${SEVENZIP_EXECUTABLE}"
 )
 
-set(SEABASS_STICK_BACKUP_UPDATE_SOURCES
-    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
-    src/infrastructure/stick_backup/archive_journal.cpp
-    src/infrastructure/stick_backup/archive_updater.cpp
-    src/infrastructure/stick_backup/archive_recovery.cpp
-)
-
-add_executable(backup_archive_incremental_update_test
-    ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
-    tests/backup_archive_incremental_update_test.cpp
-)
+add_executable(backup_archive_incremental_update_test tests/backup_archive_incremental_update_test.cpp)
+target_link_libraries(backup_archive_incremental_update_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_incremental_update_test PRIVATE src)
 target_link_libraries(backup_archive_incremental_update_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_incremental_update_test COMMAND backup_archive_incremental_update_test)
 
-add_executable(backup_archive_truncation_fuzz_test
-    ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
-    tests/backup_archive_truncation_fuzz_test.cpp
-)
+add_executable(backup_archive_truncation_fuzz_test tests/backup_archive_truncation_fuzz_test.cpp)
+target_link_libraries(backup_archive_truncation_fuzz_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_truncation_fuzz_test PRIVATE src)
 target_link_libraries(backup_archive_truncation_fuzz_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_truncation_fuzz_test COMMAND backup_archive_truncation_fuzz_test)
 
-set(SEABASS_STICK_BACKUP_STICK_SOURCES
-    ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/fs_remove.cpp
-    src/infrastructure/stick_backup/stick_tree_walker.cpp
-    src/infrastructure/stick_backup/stat_diff.cpp
-    src/infrastructure/stick_backup/sqlite_db_set.cpp
-    src/infrastructure/stick_backup/library_catalog_mtime.cpp
-    src/infrastructure/backup/stick_write_lock.cpp
-)
-
-add_executable(library_catalog_mtime_test
-    src/infrastructure/stick_backup/library_catalog_mtime.cpp
-    tests/library_catalog_mtime_test.cpp
-)
+add_executable(library_catalog_mtime_test tests/library_catalog_mtime_test.cpp)
 target_link_libraries(library_catalog_mtime_test PRIVATE seabass_core_testing)
 target_include_directories(library_catalog_mtime_test PRIVATE src)
 add_test(NAME library_catalog_mtime_test COMMAND library_catalog_mtime_test)
@@ -3803,10 +3734,7 @@ target_link_libraries(long_paths_test PRIVATE seabass_core_testing)
 target_include_directories(long_paths_test PRIVATE src)
 add_test(NAME long_paths_test COMMAND long_paths_test)
 
-add_executable(stat_diff_test
-    src/infrastructure/stick_backup/stat_diff.cpp
-    tests/stat_diff_test.cpp
-)
+add_executable(stat_diff_test tests/stat_diff_test.cpp)
 target_link_libraries(stat_diff_test PRIVATE seabass_core_testing)
 target_include_directories(stat_diff_test PRIVATE src)
 add_test(NAME stat_diff_test COMMAND stat_diff_test)
@@ -3818,10 +3746,7 @@ target_link_libraries(file_entry_source_test PRIVATE seabass_core_testing)
 target_include_directories(file_entry_source_test PRIVATE src)
 add_test(NAME file_entry_source_test COMMAND file_entry_source_test)
 
-add_executable(backup_database_capture_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/backup_database_capture_test.cpp
-)
+add_executable(backup_database_capture_test tests/backup_database_capture_test.cpp)
 target_link_libraries(backup_database_capture_test PRIVATE seabass_core_testing)
 target_include_directories(backup_database_capture_test PRIVATE src)
 target_link_libraries(backup_database_capture_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
@@ -3873,10 +3798,7 @@ add_test(NAME backup_fingerprint_describes_archive_test COMMAND backup_fingerpri
 # backup's correctness has to hold.
 set_tests_properties(backup_fingerprint_describes_archive_test PROPERTIES LABELS "integration")
 
-add_executable(backup_stick_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/backup_stick_test.cpp
-)
+add_executable(backup_stick_test tests/backup_stick_test.cpp)
 target_link_libraries(backup_stick_test PRIVATE seabass_core_testing)
 target_include_directories(backup_stick_test PRIVATE src)
 target_link_libraries(backup_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
@@ -3884,53 +3806,37 @@ add_test(NAME backup_stick_test COMMAND backup_stick_test)
 
 # BackupStick's refusals: unreadable, manifest-less or damaged archives, a
 # held lock, a write that fails half-way (and the lock free after it).
-add_executable(backup_stick_error_paths_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/backup_stick_error_paths_test.cpp
-)
+add_executable(backup_stick_error_paths_test tests/backup_stick_error_paths_test.cpp)
 target_link_libraries(backup_stick_error_paths_test PRIVATE seabass_core_testing)
 target_include_directories(backup_stick_error_paths_test PRIVATE src)
 target_link_libraries(backup_stick_error_paths_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_stick_error_paths_test COMMAND backup_stick_error_paths_test)
 
-add_executable(backup_archive_concurrent_reader_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/backup_archive_concurrent_reader_test.cpp
-)
+add_executable(backup_archive_concurrent_reader_test tests/backup_archive_concurrent_reader_test.cpp)
 target_link_libraries(backup_archive_concurrent_reader_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_concurrent_reader_test PRIVATE src)
 target_link_libraries(backup_archive_concurrent_reader_test PRIVATE ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
 add_test(NAME backup_archive_concurrent_reader_test COMMAND backup_archive_concurrent_reader_test)
 
-add_executable(backup_archive_compaction_test
-    ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
-    tests/backup_archive_compaction_test.cpp
-)
+add_executable(backup_archive_compaction_test tests/backup_archive_compaction_test.cpp)
 target_link_libraries(backup_archive_compaction_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_compaction_test PRIVATE src)
 target_link_libraries(backup_archive_compaction_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_compaction_test COMMAND backup_archive_compaction_test)
 
-add_executable(backup_restore_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/backup_restore_test.cpp
-)
+add_executable(backup_restore_test tests/backup_restore_test.cpp)
 target_link_libraries(backup_restore_test PRIVATE seabass_core_testing)
 target_include_directories(backup_restore_test PRIVATE src)
 target_link_libraries(backup_restore_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_restore_test COMMAND backup_restore_test)
 
-add_executable(archive_write_lock_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    tests/archive_write_lock_test.cpp
-)
+add_executable(archive_write_lock_test tests/archive_write_lock_test.cpp)
 target_link_libraries(archive_write_lock_test PRIVATE seabass_core_testing)
 target_include_directories(archive_write_lock_test PRIVATE src)
 target_link_libraries(archive_write_lock_test PRIVATE ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
 add_test(NAME archive_write_lock_test COMMAND archive_write_lock_test)
 
 add_executable(clone_stick_test
-    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     src/application/use_cases/clone_stick.cpp
     tests/clone_stick_test.cpp
 )
@@ -3949,31 +3855,11 @@ target_link_libraries(pending_deletion_resolver_test PRIVATE seabass_core_testin
 target_include_directories(pending_deletion_resolver_test PRIVATE src)
 add_test(NAME pending_deletion_resolver_test COMMAND pending_deletion_resolver_test)
 
-# OneLibrary's cues live in the analysis files its rows name (#59), read
-# and written by the DeviceLibrary code, so a test that lists its own
-# OneLibrary sources lists that code too.
-set(SEABASS_ONELIBRARY_ANLZ_SOURCES
-    src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
-    src/infrastructure/rekordbox/anlz_byte_source.cpp
-    src/infrastructure/rekordbox/anlz_source_for_root.cpp
-    src/infrastructure/stick_backup/archive_anlz_source.cpp
-    src/infrastructure/stick_backup/zip64_reader.cpp
-    src/infrastructure/stick_backup/zip_format.cpp
-    src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
-)
-
 # Cross-platform now, talks to libsqlcipher via runtime LoadLibrary/
 # dlopen, same as seabass_core's own onelibrary sources above. Needs
 # libsqlcipher's runtime library actually present on whichever machine
 # runs this test (see the target_sources block above for package names).
-add_executable(onelibrary_cue_writer_test
-    src/infrastructure/onelibrary/onelibrary_key.cpp
-    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
-    src/infrastructure/onelibrary/onelibrary_reader.cpp
-    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
-    tests/onelibrary_cue_writer_test.cpp
-)
+add_executable(onelibrary_cue_writer_test tests/onelibrary_cue_writer_test.cpp)
 target_link_libraries(onelibrary_cue_writer_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_cue_writer_test PRIVATE src)
 target_link_libraries(onelibrary_cue_writer_test PRIVATE ZLIB::ZLIB)
@@ -3982,14 +3868,7 @@ if(NOT WIN32)
 endif()
 add_test(NAME onelibrary_cue_writer_test COMMAND onelibrary_cue_writer_test)
 
-add_executable(onelibrary_playlist_tree_test
-    src/infrastructure/onelibrary/onelibrary_key.cpp
-    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
-    src/infrastructure/onelibrary/onelibrary_reader.cpp
-    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
-    tests/onelibrary_playlist_tree_test.cpp
-)
+add_executable(onelibrary_playlist_tree_test tests/onelibrary_playlist_tree_test.cpp)
 target_link_libraries(onelibrary_playlist_tree_test PRIVATE seabass_core_testing ZLIB::ZLIB)
 target_include_directories(onelibrary_playlist_tree_test PRIVATE src tests)
 if(NOT WIN32)
@@ -3997,14 +3876,7 @@ if(NOT WIN32)
 endif()
 add_test(NAME onelibrary_playlist_tree_test COMMAND onelibrary_playlist_tree_test ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
 
-add_executable(onelibrary_cue_writer_adapter_test
-    src/infrastructure/onelibrary/onelibrary_key.cpp
-    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
-    src/infrastructure/onelibrary/onelibrary_reader.cpp
-    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
-    tests/onelibrary_cue_writer_adapter_test.cpp
-)
+add_executable(onelibrary_cue_writer_adapter_test tests/onelibrary_cue_writer_adapter_test.cpp)
 target_link_libraries(onelibrary_cue_writer_adapter_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_cue_writer_adapter_test PRIVATE src)
 target_link_libraries(onelibrary_cue_writer_adapter_test PRIVATE ZLIB::ZLIB)
@@ -4015,14 +3887,7 @@ add_test(NAME onelibrary_cue_writer_adapter_test COMMAND onelibrary_cue_writer_a
 
 # Covers OneLibraryReader::readAll(), the read side (content/artist/key/
 # image/playlist/cue joins), independent of the write-path fixture above.
-add_executable(onelibrary_reader_test
-    src/infrastructure/onelibrary/onelibrary_key.cpp
-    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
-    src/infrastructure/onelibrary/onelibrary_reader.cpp
-    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
-    tests/onelibrary_reader_test.cpp
-)
+add_executable(onelibrary_reader_test tests/onelibrary_reader_test.cpp)
 target_link_libraries(onelibrary_reader_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_reader_test PRIVATE src)
 target_link_libraries(onelibrary_reader_test PRIVATE ZLIB::ZLIB)
@@ -4033,14 +3898,7 @@ add_test(NAME onelibrary_reader_test COMMAND onelibrary_reader_test)
 
 # Issue #59: OneLibrary's cues are its analysis files', read, written and
 # paired for Sync as such, on a copy of the anonymized fixture.
-add_executable(onelibrary_anlz_cues_test
-    src/infrastructure/onelibrary/onelibrary_key.cpp
-    src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
-    src/infrastructure/onelibrary/onelibrary_reader.cpp
-    ${SEABASS_ONELIBRARY_ANLZ_SOURCES}
-    tests/onelibrary_anlz_cues_test.cpp
-)
+add_executable(onelibrary_anlz_cues_test tests/onelibrary_anlz_cues_test.cpp)
 target_link_libraries(onelibrary_anlz_cues_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_anlz_cues_test PRIVATE src tests)
 target_link_libraries(onelibrary_anlz_cues_test PRIVATE ZLIB::ZLIB)
