@@ -260,6 +260,41 @@ int main()
         std::cout << "case 10 (a trailing separator does not move the cache) OK\n";
     }
 
+    // Case 11: a stick root not in normal form (#90). The readers' paths
+    // are normalized and relativeKey() compares by prefix, so a cache built
+    // on "/media//x/STICK" or "STICK/." remembered nothing and decoded every
+    // file on every scan.
+    {
+        const fs::path root11 = root / "case11";
+        const std::string track = writeFile(root11 / "Contents" / "track.mp3", "case 11");
+        const std::string base = seabass::pathToUtf8(root);
+        for (const std::string &spelling : {base + "//case11", base + "/./case11", base + "/case11/.", base + "/case11//"}) {
+            fs::remove_all(root11 / "Seabass");
+            {
+                auto inner = std::make_unique<CountingProbe>();
+                CountingProbe *counter = inner.get();
+                CachedAudioContentProbe probe(spelling, std::move(inner));
+                assert(probe.measure(track).has_value());
+                assert(probe.measure(track).has_value());
+                if (counter->calls != 1) {
+                    std::cerr << "FAIL: a cache on \"" << spelling << "\" decoded " << counter->calls
+                              << " times, want once\n";
+                    return 1;
+                }
+                assert(probe.save());
+            }
+            auto inner = std::make_unique<CountingProbe>();
+            CountingProbe *counter = inner.get();
+            CachedAudioContentProbe clean(seabass::pathToUtf8(root11), std::move(inner));
+            assert(clean.measure(track).has_value());
+            if (counter->calls != 0) {
+                std::cerr << "FAIL: a cache saved on \"" << spelling << "\" is not the clean root's\n";
+                return 1;
+            }
+        }
+        std::cout << "case 11 (a stick root not in normal form still finds its entries) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "All silence_cache tests passed.\n";
     return 0;

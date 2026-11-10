@@ -304,6 +304,34 @@ int main()
         std::cout << "case 9 (a changed file that no longer gives a length is forgotten, not kept stale) OK\n";
     }
 
+    // Case 10: a stick root not in normal form (#90). The readers' paths
+    // are normalized and relativeKey() compares by prefix, so a cache built
+    // on "/media//x/STICK" or "STICK/." stored nothing and found nothing,
+    // and every scan probed every file again.
+    {
+        const fs::path root10 = root / "case10";
+        const std::string track = writeFile(root10 / "Contents" / "track.mp3", "case 10");
+        const std::string base = seabass::pathToUtf8(root);
+        for (const std::string &spelling : {base + "//case10", base + "/./case10", base + "/case10/.", base + "/case10//"}) {
+            fs::remove_all(root10 / "Seabass");
+            {
+                DurationCache cache(spelling);
+                cache.store(track, 123.0);
+                if (!cache.lookup(track)) {
+                    std::cerr << "FAIL: a cache on \"" << spelling << "\" does not find what it stored\n";
+                    return 1;
+                }
+                assert(cache.save());
+            }
+            DurationCache clean(seabass::pathToUtf8(root10));
+            if (!clean.lookup(track)) {
+                std::cerr << "FAIL: a cache saved on \"" << spelling << "\" is not the clean root's\n";
+                return 1;
+            }
+        }
+        std::cout << "case 10 (a stick root not in normal form still finds its entries) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all cases passed\n";
     return 0;

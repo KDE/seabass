@@ -225,7 +225,11 @@ bool parseLeadIn(const std::string &text, application::FileMetadata &out)
 
 }  // namespace
 
-MetadataCache::MetadataCache(std::string stickRoot) : m_stickRoot(normalizeSeparators(std::move(stickRoot)))
+// The root in normalStickRoot()'s spelling first: relativeKey() compares
+// it by prefix with the readers' normalized track paths, and a root such
+// as "/media//x/STICK" or "STICK/." missed every one of them (#90).
+MetadataCache::MetadataCache(std::string stickRoot)
+    : m_stickRoot(normalizeSeparators(paths::normalStickRoot(stickRoot)))
 {
     while (!m_stickRoot.empty() && m_stickRoot.back() == '/') {
         m_stickRoot.pop_back();

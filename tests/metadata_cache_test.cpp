@@ -437,6 +437,33 @@ int main(int argc, char **argv)
         std::cout << "case 11 (a lead-in with impossible numbers is read again) OK\n";
     }
 
+    // Case 12: a stick root not in normal form (#90). The readers' paths
+    // are normalized and relativeKey() compares by prefix, so a cache built
+    // on "/media//x/STICK" or "STICK/." stored nothing and found nothing.
+    {
+        const fs::path root12 = root / "case12";
+        const std::string track = writeFile(root12 / "Contents" / "track.mp3", "case 12");
+        const std::string base = seabass::pathToUtf8(root);
+        for (const std::string &spelling : {base + "//case12", base + "/./case12", base + "/case12/.", base + "/case12//"}) {
+            fs::remove_all(root12 / "Seabass");
+            {
+                MetadataCache cache(spelling);
+                cache.store(track, sample());
+                if (!cache.lookup(track)) {
+                    std::cerr << "FAIL: a cache on \"" << spelling << "\" does not find what it stored\n";
+                    return 1;
+                }
+                assert(cache.save());
+            }
+            MetadataCache clean(seabass::pathToUtf8(root12));
+            if (!clean.lookup(track)) {
+                std::cerr << "FAIL: a cache saved on \"" << spelling << "\" is not the clean root's\n";
+                return 1;
+            }
+        }
+        std::cout << "case 12 (a stick root not in normal form still finds its entries) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all metadata_cache_test cases passed\n";
     return 0;

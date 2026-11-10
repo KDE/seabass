@@ -107,9 +107,12 @@ FileStat statFile(const std::string &path)
 
 }  // namespace
 
+// The root in normalStickRoot()'s spelling first: relativeKey() compares
+// it by prefix with the readers' normalized track paths, and a root such
+// as "/media//x/STICK" or "STICK/." missed every one of them (#90).
 CachedAudioContentProbe::CachedAudioContentProbe(std::string stickRoot,
                                                    std::unique_ptr<domain::AudioContentProbe> inner)
-    : m_stickRoot(normalizeSeparators(std::move(stickRoot))), m_inner(std::move(inner))
+    : m_stickRoot(normalizeSeparators(paths::normalStickRoot(stickRoot))), m_inner(std::move(inner))
 {
     // The cache path is built from what the caller gave us, BEFORE the
     // trailing separator is stripped. Stripping first turns a stick
