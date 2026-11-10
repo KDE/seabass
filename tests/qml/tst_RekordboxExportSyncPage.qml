@@ -657,10 +657,12 @@ TestCase {
     // Rows of each section the view shows (rowsModel's "shown" group),
     // and whether every one of them is drawn: by section name.
     function shownBySection(page) {
-        const items = page.rowsModel.items;
+        // Through the page's rowItems(), never rowsModel.items.get():
+        // see there.
+        const items = page.rowItems();
         const out = {};
-        for (let i = 0; i < items.count; ++i) {
-            const item = items.get(i);
+        for (let i = 0; i < items.length; ++i) {
+            const item = items[i];
             // The model's own role: an item's model object is stale for a
             // row without a delegate.
             const name = rowData(page, i, "section");
