@@ -78,13 +78,17 @@ struct Latch
     }
 };
 
-// Runs the event loop until `done` or two seconds pass.
+// Runs the event loop until `done`. The thirty seconds are a hang guard,
+// not a deadline any rule is measured against: every caller waits for
+// something that must happen, so a passing run returns as soon as it
+// does, and a loaded runner (a CI lane sharing its cores with three
+// others) only makes it return later, never fail.
 template <typename Done>
 bool pumpUntil(Done done)
 {
     QElapsedTimer timer;
     timer.start();
-    while (!done() && timer.elapsed() < 2000) {
+    while (!done() && timer.elapsed() < 30000) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
     }
     return done();
@@ -429,16 +433,28 @@ void noThreadEndsTheRequestInError()
 // "All done" means the workers' captures are gone too: a capture's
 // destructor may still be running (a reporter, a reader's handle) when
 // the work returns, and the end of the process must wait for it.
+//
+// The destructor is held at a latch the test opens, not slowed by a
+// sleep. It used to sleep 200 ms and the check below it asked that the
+// main thread had seen the request end inside those 200 ms, which a
+// loaded runner does not promise: the pump came round late, the sleep
+// had already ended, and the case failed with nothing wrong. Held, the
+// capture is alive for exactly as long as the test says, and asking
+// waitForAll() while it is held proves the wait rather than timing it.
 void allDoneMeansCapturesAreGone()
 {
+    auto &workers = seabass::gui::AsyncWorkers::instance();
+    check(workers.waitForAll(std::chrono::seconds(30)), "all done: precondition, no worker is left from an earlier rule");
+    auto latch = std::make_shared<Latch>();
     auto destroyed = std::make_shared<std::atomic<bool>>(false);
-    struct SlowToGo
+    struct HeldOnTheWayOut
     {
+        std::shared_ptr<Latch> latch;
         std::shared_ptr<std::atomic<bool>> flag;
-        ~SlowToGo()
+        ~HeldOnTheWayOut()
         {
             if (flag) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                latch->wait(CancellationToken{}, false);
                 flag->store(true);
             }
         }
@@ -446,14 +462,19 @@ void allDoneMeansCapturesAreGone()
     {
         QObject owner;
         AsyncRequest<int> request(&owner, nullptr);
-        auto capture = std::make_shared<SlowToGo>();
+        auto capture = std::make_shared<HeldOnTheWayOut>();
+        capture->latch = latch;
         capture->flag = destroyed;
         request.start("a", {}, [capture](CancellationToken) { return 1; }, {});
         capture.reset();
-        pumpUntil([&] { return !request.busy(); });
+        check(pumpUntil([&] { return !request.busy(); }), "all done: the request ends while its capture is still alive");
     }
-    check(!destroyed->load(), "all done: the capture is still alive until the worker lets go of it");
-    const bool allDone = seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(10));
+    check(pumpUntil([&] { return latch->arrived.load() == 1; }), "all done: the worker lets go of the capture");
+    check(!destroyed->load(), "all done: the capture is still alive until the latch opens");
+    check(!workers.waitForAll(std::chrono::milliseconds(100)),
+          "all done: said while a worker's capture was still being destroyed");
+    latch->release();
+    const bool allDone = workers.waitForAll(std::chrono::seconds(30));
     check(allDone && destroyed->load(), "all done: the work's captures were destroyed before it said so");
 }
 
