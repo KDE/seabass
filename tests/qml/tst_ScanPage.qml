@@ -939,6 +939,40 @@ TestCase {
         cleanupExperimental();
     }
 
+    // Every close of the row menu takes every Add to entry out of the
+    // submenu and the next open puts each back, by its playlist's name:
+    // hundreds of times in a session. Kept in a plain object's names,
+    // that wrote past the object's end on Qt 6.11.1 (QTBUG-147153) once
+    // its class had seen 255 such changes, and the collector crashed on
+    // what it overwrote (tst_ScanPageStorm's Add To round, 2026-11-10).
+    function test_theAddToEntriesSurviveTheRowMenuOpenedAndClosedOften() {
+        const page = makeEditingPage(true);
+        const names = [];
+        for (let i = 0; i < 40; ++i) {
+            names.push("Set " + (i < 10 ? "0" : "") + i);
+        }
+        page.playlistEditController.newPlaylists = names;
+        const menu = findChild(page, "trackMenu");
+        const addTo = findChild(page, "addToMenu");
+        const row = createTemporaryObject(fakeRowComponent, testCase);
+        for (let cycle = 0; cycle < 150; ++cycle) {
+            menu.row = row;  // what opening the menu on a row sets
+            compare(addTo.count, names.length, "open " + cycle);
+            menu.row = null;  // what closing it does
+            compare(addTo.count, 0, "closed " + cycle);
+            gc();
+        }
+        page.openTrackMenu(row, page);
+        tryCompare(menu, "opened", true);
+        compare(addTo.count, names.length);
+        for (let i = 0; i < names.length; ++i) {
+            compare(addTo.itemAt(i).text, names[i]);
+        }
+        menu.close();
+        tryCompare(menu, "visible", false);
+        cleanupExperimental();
+    }
+
     function test_addToListsTheNewPlaylistsFirst() {
         const page = makePage();
         compare(JSON.stringify(page.addTargetsFor(["Chill", "Peak", "Warm"], ["Fresh"], ["Peak"], "Peak")),

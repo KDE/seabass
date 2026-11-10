@@ -120,11 +120,16 @@ FocusScope {
     // is mounted and its mount point after, and each row remembers every
     // key it has had (ownKeys), so a stick that leaves is forgotten under
     // all of them: plugged in again, under either, it arrives again.
+    //
+    // A Set, not a plain object's names: a name deleted and given again,
+    // over and over as sticks come and go, runs into a Qt 6.11.1 bug
+    // (QTBUG-147153) that writes past the object's end once its class has
+    // seen 255 such changes.
     property bool ready: false
-    property var seenKeys: ({})
+    property var seenKeys: new Set()
     function noteKey(key, entry) {
-        const isNew = root.ready && key.length > 0 && root.seenKeys[key] !== true;
-        root.seenKeys[key] = true;
+        const isNew = root.ready && key.length > 0 && !root.seenKeys.has(key);
+        root.seenKeys.add(key);
         if (key.length > 0 && entry.ownKeys.indexOf(key) < 0) {
             entry.ownKeys.push(key);
         }
@@ -252,7 +257,7 @@ FocusScope {
                     return;
                 }
                 for (let i = 0; i < item.ownKeys.length; ++i) {
-                    delete root.seenKeys[item.ownKeys[i]];
+                    root.seenKeys.delete(item.ownKeys[i]);
                 }
                 root.noteMovement();
                 ghostComponent.createObject(ghostLayer, {
