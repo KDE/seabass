@@ -286,6 +286,16 @@ void runReleaseCase()
     assert(after >= 1 && "the newest automatic record is never released: it is the undo");
     assert(stickLog(stickRoot).find("could not be released") == std::string::npos
            && "and it must not have failed on a lock its own caller holds");
+    // A release that worked says so once, with how much and why: the
+    // count, the bytes and the headroom it was under.
+    const std::string summary = "save: released " + std::to_string(before - after) + " automatic backup"
+                                + (before - after == 1 ? "" : "s") + " (" + std::to_string(released)
+                                + " bytes): the stick had 1024 bytes free, under its headroom of "
+                                + std::to_string(tight.headroomBytes()) + " bytes";
+    if (stickLog(stickRoot).find(summary) == std::string::npos) {
+        std::cerr << "no line \"" << summary << "\" in the stick's log:\n" << stickLog(stickRoot);
+    }
+    assert(stickLog(stickRoot).find(summary) != std::string::npos && "a release that worked is logged with why");
 
     std::error_code ec;
     fs::remove_all(stickRoot, ec);

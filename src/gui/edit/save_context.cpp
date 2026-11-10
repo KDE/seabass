@@ -166,6 +166,16 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight(const infrastructure::
             for (const std::string &id : released) {
                 log().record("save: the stick is short of room, deleted automatic backup from an earlier save -> " + id);
             }
+            // And once for the whole release, with why: how far under its
+            // headroom the stick was and what came back. Without it a
+            // release left only the per-record lines, which say what went
+            // but not how much or for what threshold.
+            if (!released.empty()) {
+                log().record("save: released " + std::to_string(released.size()) + " automatic backup"
+                             + (released.size() == 1 ? "" : "s") + " (" + std::to_string(freed)
+                             + " bytes): the stick had " + std::to_string(space.freeBytes)
+                             + " bytes free, under its headroom of " + std::to_string(headroom) + " bytes");
+            }
         }
         return freed;
     } catch (const std::exception &e) {
