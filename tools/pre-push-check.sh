@@ -75,7 +75,10 @@ fi
 # The desktop-style QML lane is registered only where org.kde.desktop is
 # installed, and a lane that is not registered is a lane that did not run.
 if [ "$(uname -s)" = "Linux" ] && [ -z "$filter" ]; then
-    if ! (cd "$build_dir" && ctest -N) | grep -q "desktop_style"; then
+    # grep reads to the end (no -q): with -q it stops at the first match,
+    # ctest dies of SIGPIPE, and pipefail turns a registered lane into
+    # "not registered".
+    if ! (cd "$build_dir" && ctest -N) | grep "desktop_style" >/dev/null; then
         echo "The desktop-style QML lane is not registered in $build_dir: install kf6-qqc2-desktop-style" >&2
         echo "(the style the Linux build ships with) and run this again." >&2
         exit 1
