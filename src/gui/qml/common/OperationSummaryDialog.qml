@@ -16,7 +16,9 @@ import SeabassGui
 // summary: {written, total, unit, cancelled, error, rolledBack} plus an optional
 // verb ("written" by default; "deleted" for a prune), an optional
 // detail line that replaces the default cancel explanation, and an
-// optional skipped count (part of total, not of written).
+// optional skipped count (part of total, not of written). An optional
+// headline and guidance lead the dialog when the page has something to
+// say about what the user can do now; the count then follows as detail.
 SeabassDialog {
     id: dialog
     property var summary: ({})
@@ -37,6 +39,8 @@ SeabassDialog {
     // warning nobody renders is worse than the error it replaced.
     readonly property string warning: dialog.summary.warning !== undefined ? dialog.summary.warning : ""
     readonly property string detail: dialog.summary.detail !== undefined ? dialog.summary.detail : ""
+    readonly property string headline: dialog.summary.headline !== undefined ? dialog.summary.headline : ""
+    readonly property string guidance: dialog.summary.guidance !== undefined ? dialog.summary.guidance : ""
     // Reached by the save and gone by then: a track deleted, or an image
     // that stopped reading, since the page scanned. Counted in total and
     // not in written, so the count sentence already shows a shortfall;
@@ -121,13 +125,34 @@ SeabassDialog {
         Layout.fillWidth: true
         spacing: 8
         Label {
-            objectName: "countLabel"
+            objectName: "headlineLabel"
+            visible: text.length > 0
             color: Theme.text
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             font.family: Theme.titleFamily
             font.weight: Theme.cardTitleWeight
             font.pointSize: Theme.fontMedium
+            text: dialog.headline
+        }
+        Label {
+            id: guidanceLabel
+            objectName: "guidanceLabel"
+            visible: text.length > 0
+            color: Theme.text
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: dialog.guidance
+        }
+        // The headline when there is none of its own; under one, the
+        // count is detail and set as body text.
+        Label {
+            objectName: "countLabel"
+            color: dialog.headline.length > 0 ? Theme.textMuted : Theme.text
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            font: dialog.headline.length > 0 ? guidanceLabel.font
+                : Qt.font({family: Theme.titleFamily, weight: Theme.cardTitleWeight, pointSize: Theme.fontMedium})
             text: dialog.countSentence
         }
         // Selectable, because when this carries an error it is the text

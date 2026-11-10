@@ -527,6 +527,19 @@ public:
         return m_roots.last();
     }
 
+    // stickCopy without its Engine Library: a stick with only a rekordbox
+    // export, which is what Create Engine Library starts from.
+    Q_INVOKABLE QString rekordboxOnlyStickCopy(const QString &fixtureRoot)
+    {
+        const QString stick = stickCopy(fixtureRoot);
+        if (stick.isEmpty()) {
+            return {};
+        }
+        std::error_code ec;
+        std::filesystem::remove_all(seabass::gui::pathFromQString(stick) / "Engine Library", ec);
+        return ec ? QString() : stick;
+    }
+
     // An empty directory of the test's own, removed with the fixture, for
     // a test that lays out a stick by hand (makeDirectory, touchNew).
     Q_INVOKABLE QString scratchDirectory()

@@ -237,7 +237,8 @@ void EngineLibraryCreatorController::onCreateFinished()
     } else if (result.cancelled) {
         setStatusMessage(QStringLiteral("Cancelled, nothing was created."));
     } else {
-        QString said = QString("Created %1 track(s) (%2 skipped, no local file), copied %3 cue(s).")
+        QString said = QString("Engine library created. Created %1 track(s) (%2 skipped, no local file), copied %3 "
+                               "cue(s).")
                            .arg(result.tracksCreated)
                            .arg(result.tracksSkipped)
                            .arg(result.cuesCopied);
@@ -255,16 +256,30 @@ void EngineLibraryCreatorController::onCreateFinished()
         }
         setStatusMessage(said);
     }
-    // The summary dialog's line for cues the lead-in shift left out.
-    QString leftOutDetail;
-    if (result.errorMessage.isEmpty() && !result.cancelled) {
+    // The summary dialog's lines under the counts: the import marker that
+    // could not be recorded, and cues the lead-in shift left out.
+    const bool created = result.errorMessage.isEmpty() && !result.cancelled;
+    QStringList detailLines;
+    if (created) {
+        if (result.importNotRecorded) {
+            detailLines << QStringLiteral("The new library could not record that it came from this rekordbox export, "
+                                          "so a Denon player may offer to import the rekordbox library over it. "
+                                          "Library Health can mark it imported.");
+        }
         const std::string leftOut = infrastructure::engine::describeLeadInShiftDrops(
             result.memoryCuesDroppedByLeadInShift, result.loopsDroppedByLeadInShift);
         if (!leftOut.empty()) {
-            leftOutDetail = QString::fromStdString(leftOut) + QStringLiteral(".");
+            detailLines << QString::fromStdString(leftOut) + QStringLiteral(".");
         }
     }
+    const QString leftOutDetail = detailLines.join(QLatin1Char(' '));
     emit writeFinished(QVariantMap{
+        // What the user can do now, ahead of the counts (#91).
+        {"headline", created ? QStringLiteral("Engine library created.") : QString()},
+        {"guidance", created ? QStringLiteral("Denon players can use this stick as it is, no export from Engine DJ "
+                                              "needed. After you change cues or playlists in rekordbox, run Sync "
+                                              "after Rekordbox Export to carry them over.")
+                             : QString()},
         {"written", result.cancelled ? 0 : result.tracksCreated},
         {"total", result.tracksTotal},
         {"unit", QStringLiteral("tracks")},
