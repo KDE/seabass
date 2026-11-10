@@ -211,9 +211,13 @@ endif()
 # be installed on the machine. The storm lane is the other stated choice:
 # minutes of seeded walks that belong to a nightly or a hunt, not to every
 # ctest, so it is registered only when asked for (docs/testing.md "The
-# storm").
+# storm"). SEABASS_QML_TESTS=OFF is a third: the C++ tests without the
+# QML suite, for a pipeline whose QML lane runs elsewhere. The suite's
+# harness, seabass_qml_tests, compiles the whole GUI a second time with
+# its QML module, so a build that will not run it should not pay for it.
 option(SEABASS_GUI "Build the Qt GUI (requires Qt6)" ON)
 option(SEABASS_TESTS "Build and run the test suite" ON)
+option(SEABASS_QML_TESTS "Build seabass_qml_tests and register the QML suite (tests/qml, qml-shader, qml-storm); needs SEABASS_TESTS and SEABASS_GUI" ON)
 option(SEABASS_STORM_TESTS "Also register the storm lane (tests/qml-storm) with ctest; minutes long, for nightlies and hunts" OFF)
 
 # System zlib, used to compress local cue-backup snapshots and full
@@ -1086,17 +1090,20 @@ if(SEABASS_GUI AND Qt6_FOUND)
     #
     # Qt6Test_FOUND/Qt6QuickTest_FOUND are set by the OPTIONAL_COMPONENTS
     # find_package call above whether or not they were found.
-    if(SEABASS_TESTS AND NOT (Qt6Test_FOUND AND Qt6QuickTest_FOUND))
+    # QuickTest only for the QML suite; Test for the C++ tests that link
+    # it as well, so SEABASS_QML_TESTS=OFF still needs that one.
+    if(SEABASS_TESTS AND NOT (Qt6Test_FOUND AND (Qt6QuickTest_FOUND OR NOT SEABASS_QML_TESTS)))
         message(FATAL_ERROR
             "Qt6 Test/QuickTest not found, so seabass_qml_tests cannot be built and "
             "its QML tests would not run.\n"
             "  Debian/Ubuntu: apt install qt6-declarative-dev libqt6quicktest6-dev\n"
             "  Fedora:        dnf install qt6-qtdeclarative-devel\n"
             "  MSYS2/UCRT64:  pacman -S mingw-w64-ucrt-x86_64-qt6-declarative\n"
-            "To build without any tests at all, configure with "
+            "To build without the QML suite, configure with -DSEABASS_QML_TESTS=OFF "
+            "(the C++ tests still need Qt6 Test); without any tests at all, with "
             "-DSEABASS_TESTS=OFF.")
     endif()
-    if(SEABASS_TESTS)
+    if(SEABASS_TESTS AND SEABASS_QML_TESTS)
         # A separate, test-only "SeabassGui" module registration (URI, and
         # the exact QML files under test, listed again here) rather than
         # reusing seabass's own qt_add_qml_module() call: that one is
@@ -1273,15 +1280,15 @@ if(SEABASS_GUI AND Qt6_FOUND)
         if(UNIX AND NOT APPLE)
             if(NOT SEABASS_XVFB_RUN)
                 message(FATAL_ERROR
-                    "xvfb-run not found, and SEABASS_TESTS=ON. The QML tests run on a real display so that "
+                    "xvfb-run not found, and SEABASS_QML_TESTS=ON. The QML tests run on a real display so that "
                     "shader-drawn items are actually drawn. Install it (Debian/Ubuntu: xvfb), or configure "
-                    "with -DSEABASS_TESTS=OFF if you do not want the tests at all.")
+                    "with -DSEABASS_QML_TESTS=OFF if you do not want the QML tests.")
             endif()
             if(NOT Qt6ShaderTools_FOUND)
                 message(FATAL_ERROR
-                    "Qt6 ShaderTools not found, and SEABASS_TESTS=ON. Without it TrackRing's shader is not "
+                    "Qt6 ShaderTools not found, and SEABASS_QML_TESTS=ON. Without it TrackRing's shader is not "
                     "compiled into the test binary and everything drawn with it silently disappears. "
-                    "Install it (Debian/Ubuntu: qt6-shadertools-dev), or configure with -DSEABASS_TESTS=OFF.")
+                    "Install it (Debian/Ubuntu: qt6-shadertools-dev), or configure with -DSEABASS_QML_TESTS=OFF.")
             endif()
         endif()
 
@@ -1627,7 +1634,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 "What TrackRing's shader draws is untested in this build.")
         endif()
     else()
-        message(STATUS "SEABASS_TESTS=OFF: seabass_qml_tests not built")
+        message(STATUS "SEABASS_TESTS or SEABASS_QML_TESTS is OFF: seabass_qml_tests is not built "
+            "and no QML lane is registered.")
     endif()
 elseif(SEABASS_GUI)
     message(FATAL_ERROR
