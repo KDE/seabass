@@ -4554,9 +4554,7 @@ endif()
 # without testing anything rather than fail.
 #
 #   async_request_test             going away waits < 1.5 s for a stuck
-#                                  worker and < 500 ms with none; a 200 ms
-#                                  capture must still be alive when the
-#                                  request ends; results within 2 s
+#                                  worker and < 500 ms with none
 #   backup_advisor_controller_test forget() frees the advisor in < 5 s
 #   backup_database_capture_test   a >= 1 GiB database refused in < 2 s
 #   beat_grid_test                 a minute of beats worked out in < 200 ms

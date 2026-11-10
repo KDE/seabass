@@ -96,7 +96,9 @@ Most of the suite is unit tests against small, synthetic, hand-built fixtures (a
 
 ## The suite only sees what its platform can draw
 
-The QML suite runs on a real display. `seabass_qml_tests` is registered
+The QML suite runs on a real display, one ctest entry per `tst_*.qml`
+file (`seabass_qml_tests.tst_AboutPage` and so on, label `qml`;
+`-DSEABASS_QML_TESTS=OFF` builds and registers none of it). Each is registered
 under `xvfb-run`, with `QT_QPA_PLATFORM=xcb`, `QSG_RHI_BACKEND=opengl`
 and `LIBGL_ALWAYS_SOFTWARE=1`, and on Linux a missing `xvfb-run` or
 Qt6 ShaderTools stops the configure rather than quietly narrowing the
@@ -248,9 +250,9 @@ something that varies by **machine or by configure**:
 
 | Test | Gate |
 |---|---|
-| `seabass_qml_desktop_style_tests` | `SEABASS_KDE_STYLE_QMLDIR` (kf6-qqc2-desktop-style) |
-| `seabass_qml_shader_tests` | `SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND` |
-| `seabass_qml_tests` | `SEABASS_XVFB_RUN` (falls back to an offscreen registration) |
+| `seabass_qml_desktop_style_tests.<file>` | `SEABASS_KDE_STYLE_QMLDIR` (kf6-qqc2-desktop-style) |
+| `seabass_qml_shader_tests.<file>` | `SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND` |
+| `seabass_qml_tests.<file>` | `SEABASS_XVFB_RUN` (falls back to an offscreen registration) |
 | `silence_probe_test` | `TARGET seabass_audio_qt` |
 | `taglib_metadata_probe_test` | `TARGET seabass_taglib` |
 | `taglib_duration_probe_test` | `TARGET seabass_taglib` |
