@@ -59,6 +59,10 @@ Page {
         // saying so is worth more than consistency with pages whose
         // save is reversible in one step.
         saveLabel: "Clean Up"
+        // A save that landed whole is said with the toast below, so it
+        // opens no summary to close (#80). Anything short of whole still
+        // gets the dialog.
+        quietCleanSaves: true
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
             ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
@@ -481,8 +485,18 @@ Page {
                     text: "Stage Selected for Deletion"
                     enabled: !cleanupController.busy && !cleanupController.writing && cleanupController.includedCount > 0
                     ToolTip.visible: hovered
-                    ToolTip.text: "Stage cleaning up every checked group; Save writes them"
-                    onClicked: confirmCleanupDialog.open()
+                    ToolTip.text: "Stage cleaning up every checked group; Clean Up writes them"
+                    // Staging asks nothing (#80): nothing is written until
+                    // Clean Up, and a staged group is taken back with
+                    // Escape. The one question left is which groups, when
+                    // the search hides some of the selected ones.
+                    onClicked: {
+                        if (confirmCleanupDialog.searchHidesSome) {
+                            confirmCleanupDialog.open();
+                        } else {
+                            cleanupController.apply(false);
+                        }
+                    }
                 }
                 Button {
                     id: undoButton
@@ -516,51 +530,67 @@ Page {
         onAccepted: cleanupController.setAllIncluded(true)
     }
 
+    // Asked only when the search hides some of the selected groups: the
+    // hidden ones were ticked at some point, but not looked at just now,
+    // so staging takes the shown ones unless asked for all of them.
     MessageDialog {
         id: confirmCleanupDialog
         objectName: "confirmCleanupDialog"
         severity: SeabassDialog.Question
-        // Selected groups the search is hiding. Staging from a narrowed list
-        // takes only what it shows unless asked for everything selected: the
-        // hidden ones were ticked at some point, but not looked at just now.
         readonly property int shownSelected: cleanupController.includedVisibleCount
         readonly property int hiddenSelected: cleanupController.includedCount - shownSelected
         readonly property bool searchHidesSome: searchField.text.length > 0 && hiddenSelected > 0
         function tracks(n) { return n + (n === 1 ? " Track" : " Tracks"); }
-        title: "Stage cleaning up "
-            + (searchHidesSome ? shownSelected : cleanupController.includedCount) + " duplicate track(s)?"
-        acceptText: searchHidesSome ? "Stage " + tracks(shownSelected) + " Matching the Search"
-                                    : "Stage " + tracks(cleanupController.includedCount)
-        acceptEnabled: !searchHidesSome || shownSelected > 0
-        alternateText: searchHidesSome ? "Stage All " + tracks(cleanupController.includedCount) + " Selected" : ""
+        title: "Stage only what the search shows?"
+        headline: "Your search (\"" + searchField.text + "\") hides " + confirmCleanupDialog.hiddenSelected
+            + " of the " + cleanupController.includedCount + " selected tracks. Only the "
+            + confirmCleanupDialog.shownSelected + " it shows are staged unless you stage all selected; "
+            + "the hidden ones stay selected either way."
+        detailText: "Nothing is written until you press Clean Up."
+        acceptText: "Stage " + tracks(shownSelected) + " Matching the Search"
+        acceptEnabled: shownSelected > 0
+        alternateText: "Stage All " + tracks(cleanupController.includedCount) + " Selected"
         onAlternateRequested: cleanupController.apply(false)
-        headline: "For each selected group, every copy except the one kept will be removed from the "
-            + "library: its hot/memory cues are merged onto the surviving copy first (nothing is lost), "
-            + "and any playlist it belonged to is updated to reference the surviving copy instead."
-        detailText: "This does NOT delete the removed copies' audio files. Their library entries are "
-            + "removed and they're recorded for you to review and delete separately."
-        onAccepted: cleanupController.apply(searchHidesSome)
+        onAccepted: cleanupController.apply(true)
+    }
 
-        Label {
-            objectName: "hiddenSelectionWarning"
-            Layout.fillWidth: true
-            visible: confirmCleanupDialog.searchHidesSome
-            wrapMode: Text.WordWrap
-            color: Theme.warnText
-            text: "Your search (\"" + searchField.text + "\") hides " + confirmCleanupDialog.hiddenSelected
-                + " of the " + cleanupController.includedCount + " selected tracks. Only the "
-                + confirmCleanupDialog.shownSelected + " it shows are staged unless you stage all selected; "
-                + "the hidden ones stay selected either way."
+    // A save that landed whole, said over the list for a moment in the
+    // summary's own words ("3 groups cleaned up").
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            // The page may be gone by the time this runs (a save finishing
+            // as the user leaves), and root is null then.
+            Qt.callLater(() => { if (root) { root.sayWholeSave(summary); } });
         }
-
-        Label {
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.textMuted
-            font.pointSize: Theme.fontSmall
-            text: "Nothing is written until you press Save. Everything touched is backed up first and "
-                + "can be undone."
+    }
+    function sayWholeSave(summary) {
+        if (!summary || !(summary.written > 0)) {
+            return;
         }
+        const whole = !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
+            savedToast.show(summary.written + " " + unit + " " + summary.verb);
+        }
+    }
+    // The summary's unit is plural ("groups", "undo steps"); one of them
+    // reads as one. The same rule OperationSummaryDialog uses.
+    function singular(unit) {
+        if (unit.endsWith("ies")) {
+            return unit.substring(0, unit.length - 3) + "y";
+        }
+        return unit.endsWith("s") ? unit.substring(0, unit.length - 1) : unit;
     }
 
     ColumnLayout {

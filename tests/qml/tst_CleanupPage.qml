@@ -103,6 +103,8 @@ TestCase {
 
     function cleanup() {
         SystemFontMetrics.generalPointSizeOverride = 0;
+        // Whatever a test staged and did not save is not the next one's.
+        EditSessionRegistry.discardAll();
     }
 
     function test_breadcrumbStaysInsideThePage(row) {
@@ -486,4 +488,66 @@ TestCase {
         compare(crumb.title, "Clean Up Duplicates");
         saveCrumbShot(page, "cleanup-" + data.tag);
     }
+    // #80: staging is the reversible step, so it asks nothing; a save that
+    // landed whole is a toast, not a summary to close.
+    function stagedPage() {
+        const page = scrollablePage();
+        const stage = findByObjectName(page, "stageButton");
+        tryVerify(() => stage.enabled, 10000, "precondition: groups are selected and the scan is done");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(page.enginePath));
+        verify(session !== null);
+        compare(session.pendingCount, 0, "precondition: nothing staged");
+        mouseClick(stage);
+        return {page: page, session: session};
+    }
+
+    function test_stagingAsksNothing() {
+        const t = stagedPage();
+        tryVerify(() => t.session.pendingCount > 0, 5000, "the press staged the selected groups");
+        const dialog = findChild(t.page, "confirmCleanupDialog");
+        verify(dialog !== null, "precondition: the page's question is found");
+        verify(!dialog.opened && !dialog.visible, "and asked nothing first");
+    }
+
+    // The one question left: a search hides some of the selected groups,
+    // and staging takes only the shown ones unless asked for all.
+    function test_aSearchHidingSelectedGroupsStillAsks() {
+        const page = scrollablePage();
+        const stage = findByObjectName(page, "stageButton");
+        tryVerify(() => stage.enabled, 10000, "precondition: groups are selected and the scan is done");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(page.enginePath));
+        findByObjectName(page, "searchField").text = "Song 12";
+        const dialog = findChild(page, "confirmCleanupDialog");
+        tryVerify(() => dialog.searchHidesSome, 5000, "precondition: the search hides selected groups");
+        mouseClick(stage);
+        tryCompare(dialog, "opened", true, 5000, "asked which groups");
+        compare(session.pendingCount, 0, "nothing staged before the answer");
+        verify(dialog.headline.indexOf("hides " + dialog.hiddenSelected + " of the ") > 0, dialog.headline);
+        const shown = dialog.shownSelected;
+        verify(shown > 0);
+        dialog.accept();
+        tryCompare(session, "pendingCount", shown, 5000, "only the groups the search shows");
+    }
+
+    function test_aCleanSaveIsSaidWithTheToast() {
+        const t = stagedPage();
+        tryVerify(() => t.session.pendingCount > 0, 5000, "precondition: staged");
+        let summary = null;
+        const done = (result) => { summary = result; };
+        t.session.saveFinished.connect(done);
+        t.session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        t.session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.written > 0 && summary.written === summary.total, JSON.stringify(summary));
+        const toast = findChild(t.page, "savedToast");
+        verify(toast !== null, "the page has a toast");
+        tryCompare(toast, "showing", true, 5000, "the save is said over the list");
+        compare(findChild(toast, "confirmationToastLabel").text,
+                summary.written + (summary.written === 1 ? " group " : " groups ") + "cleaned up");
+        wait(50);
+        const dialog = findChild(t.page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary to close over a save that landed whole");
+    }
+
 }
