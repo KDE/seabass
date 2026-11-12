@@ -175,17 +175,20 @@ include:
 # and go after that.
 #
 #   suse_tumbleweed_qt612   openSUSE Tumbleweed, Qt 6.12
-#   kubuntu_2604_qt610      Kubuntu 26.04, Qt 6.10
 #   windows_qt612           MSVC 2022, Qt 6.12
 #   reuse                   REUSE compliance
 #
-# All three build jobs run ci-utilities' run-ci-build.py, which reads
+# Not linux-qt6-lts.yml (Kubuntu 26.04, Qt 6.10): its image has no
+# SQLCipher runtime, so every OneLibrary test aborts there (24 of them,
+# pipeline 1418408), and it is a second twenty-minute build of every
+# push for a Qt that nothing ships.
+#
+# Both build jobs run ci-utilities' run-ci-build.py, which reads
 # .kde-ci.yml in this repository: the CMake options, ccache, how ctest
 # is run, and where a failing test fails the job.
 - project: sysadmin/ci-utilities
   file:
   - /gitlab-templates/linux-qt6.yml
-  - /gitlab-templates/linux-qt6-lts.yml
   - /gitlab-templates/windows-qt6.yml
   - /gitlab-templates/reuse-lint.yml
 variables:
@@ -203,7 +206,7 @@ secret_detection:
 # The standard build jobs need no submodule setting, and must not get
 # one. GIT_SUBMODULE_STRATEGY makes the runner run `git submodule update`
 # before anything of ours, and this repository has no .gitmodules for it
-# to read (Invent rejects a push that contains one): all three jobs died
+# to read (Invent rejects a push that contains one): the build jobs died
 # in their checkout with "No url found for submodule path" (pipeline
 # 1418348). CMakeLists.txt writes .gitmodules from
 # cmake/dependency-submodules.txt and fetches both submodules when it

@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Read by KDE's standard build jobs (sysadmin/ci-utilities,
-# run-ci-build.py), which .gitlab-ci.yml includes as linux-qt6.yml,
-# linux-qt6-lts.yml and windows-qt6.yml. Every option and its default is
+# run-ci-build.py), which .gitlab-ci.yml includes as linux-qt6.yml and
+# windows-qt6.yml. Every option and its default is
 # in ci-utilities' config/global.yml.
 #
 # No Dependencies: Seabass builds against Qt and system libraries the CI
@@ -28,6 +28,12 @@ Options:
   # the backup archive is then checked against Python's zipfile, and
   # against unzip and 7z on the images that have them. See CMakeLists.txt.
   cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF'
+
+  # sleep_inhibitor_test asks logind for a real inhibitor. The CI VMs have
+  # a logind, and it refuses one to a session with nobody to authenticate
+  # ("requires interactive authentication"), so the test cannot pass
+  # there. It runs everywhere else, tools/pre-push-check.sh included.
+  ctest-arguments: '-E "^sleep_inhibitor_test$"'
 
   # ctest -j over the machine's cores. The default is one test at a time.
   tests-run-in-parallel: True
