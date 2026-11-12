@@ -89,7 +89,10 @@ TestCase {
                 + "After you change cues or playlists in rekordbox, run Sync after Rekordbox Export to carry them over.");
         verify(/^\d+( of \d+)? tracks? created\.$/.test(findChild(dialog, "countLabel").text),
                "the counts stay, underneath: " + findChild(dialog, "countLabel").text);
-        verify(page.controller.statusMessage.indexOf("Engine library created. Created ") === 0,
+        // The dialog already said "Engine library created."; the status
+        // line under the page keeps the counts, once, in plain plurals.
+        verify(/^\d+ tracks? and \d+ cues? copied(; \d+ tracks? skipped \(no local file\))?\.$/
+                   .test(page.controller.statusMessage),
                "status line: " + page.controller.statusMessage);
         dialog.close();
     }

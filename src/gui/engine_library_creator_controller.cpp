@@ -237,11 +237,16 @@ void EngineLibraryCreatorController::onCreateFinished()
     } else if (result.cancelled) {
         setStatusMessage(QStringLiteral("Cancelled, nothing was created."));
     } else {
-        QString said = QString("Engine library created. Created %1 track(s) (%2 skipped, no local file), copied %3 "
-                               "cue(s).")
-                           .arg(result.tracksCreated)
-                           .arg(result.tracksSkipped)
-                           .arg(result.cuesCopied);
+        const auto count = [](int n, const char *one, const char *many) {
+            return QString::number(n) + QLatin1Char(' ') + QLatin1String(n == 1 ? one : many);
+        };
+        QString said = count(result.tracksCreated, "track", "tracks") + QStringLiteral(" and ")
+                       + count(result.cuesCopied, "cue", "cues") + QStringLiteral(" copied");
+        if (result.tracksSkipped > 0) {
+            said += QStringLiteral("; ") + count(result.tracksSkipped, "track", "tracks")
+                    + QStringLiteral(" skipped (no local file)");
+        }
+        said += QLatin1Char('.');
         if (result.importNotRecorded) {
             // Said here rather than nowhere: the first sign of it would
             // otherwise be a player offering to overwrite this library.
