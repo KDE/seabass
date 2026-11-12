@@ -1105,7 +1105,12 @@ TestCase {
         // be, and the stick row and the heading are there as ever.
         for (const group of page.groupKeys) {
             page.selectGroup(group);
-            waitForRendering(page);
+            // Until the cards are laid out, not until a frame is swapped
+            // (waitForRendering): on the threaded render loop the next
+            // frame to arrive can be one that was synchronised before the
+            // group changed, and the cards just shown are then still as
+            // wide as their own text.
+            verify(waitForPolish(page.Window.window), group + ": the cards are laid out");
             for (let i = 0; i < grid.children.length; ++i) {
                 const card = grid.children[i];
                 if (!card.visible || card.cardTitle === undefined) {
