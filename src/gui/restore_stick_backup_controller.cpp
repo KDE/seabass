@@ -677,8 +677,8 @@ void RestoreStickBackupController::applySummary(const RestoreSummary &s)
             // library already had when the backup was taken. That is not a
             // failed restore, so no "That did not work": the report on the
             // overlay says what was found and offers the repair.
-            setStatusMessage(QStringLiteral("Restored exactly from backup. The originating library has the "
-                                            "following issue, which we can fix.")
+            setStatusMessage(QStringLiteral("Restored exactly from backup. The library already had the issue below "
+                                            "when it was backed up; Library Health can repair it.")
                              + coversAfter);
             break;
         }

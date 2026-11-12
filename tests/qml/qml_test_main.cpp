@@ -1779,8 +1779,8 @@ public:
             s.filesWritten = 12;
             s.missingTrackPaths.reset();
             s.writeErrors.push_back("Contents/a.mp3: write failed");
-            s.message = "the drive disappeared after 12 files were restored; the files already restored are "
-                        "complete. Reconnect it and restore again to continue where this left off.";
+            s.message = "12 files were restored before the drive went; those are complete. Reconnect it and "
+                        "restore again to continue where this left off.";
         } else if (kind != QLatin1String("missingTracksOnly")) {
             return false;
         }

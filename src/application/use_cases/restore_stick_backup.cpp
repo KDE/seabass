@@ -918,9 +918,13 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                 flushDirectories();
                 summary.status = RestoreSummary::Status::Failed;
                 summary.driveRemoved = true;
-                summary.message = "the drive disappeared after " + std::to_string(summary.filesWritten)
-                                  + " files were restored; the files already restored are complete. Reconnect it and "
-                                    "restore again to continue where this left off.";
+                // Read under the popup's title "The drive was removed", and
+                // on its own as the page's status line, so it names the drive.
+                summary.message = std::to_string(summary.filesWritten)
+                                  + (summary.filesWritten == 1 ? " file was" : " files were")
+                                  + " restored before the drive went; "
+                                  + (summary.filesWritten == 1 ? "that one is" : "those are")
+                                  + " complete. Reconnect it and restore again to continue where this left off.";
                 return summary;
             }
         } else {

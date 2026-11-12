@@ -48,6 +48,8 @@ Card {
     readonly property bool libraryIssueOnly: resultFrame.result.filesWritten !== undefined && resultFrame.errorMessage.length === 0
         && resultFrame.problems.length === 0 && (resultFrame.result.partial || []).length === 0
         && (resultFrame.result.missingTracks || []).length > 0
+    readonly property bool writeFailed: (resultFrame.result.rejected || []).length > 0
+        || (resultFrame.result.writeErrors || []).length > 0
     property bool showProblems: false
 
     ColumnLayout {
@@ -76,8 +78,14 @@ Card {
             objectName: "resultStatusLabel"
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            color: resultFrame.errorMessage.length > 0 ? Theme.danger
-                 : resultFrame.libraryIssueOnly ? Theme.conflictText : Theme.good
+            // Red when something was not written: a file rejected or a
+            // write that failed is a restore that did not do its job, and
+            // the line said so in green before (#81). Anything else short
+            // of clean (a partial read off a damaged stick, a warning, the
+            // library's own issue) is said in the warning colour.
+            color: resultFrame.errorMessage.length > 0 || resultFrame.writeFailed ? Theme.danger
+                 : resultFrame.libraryIssueOnly || resultFrame.problems.length > 0
+                   || (resultFrame.result.partial || []).length > 0 ? Theme.conflictText : Theme.good
             text: resultFrame.errorMessage.length > 0 ? resultFrame.errorMessage : resultFrame.statusMessage
         }
         Label {

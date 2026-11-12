@@ -411,7 +411,7 @@ int main()
         assert(pulled);
         assert(summary.status == RestoreSummary::Status::Failed);
         assert(summary.driveRemoved);
-        assert(summary.message.find("the drive disappeared after 2 files") == 0);
+        assert(summary.message.find("2 files were restored before the drive went; those are complete.") == 0);
         fs::remove(f.target);
         std::cout << "case drive-removed (a target gone mid-restore stops and is marked driveRemoved) OK\n";
     }

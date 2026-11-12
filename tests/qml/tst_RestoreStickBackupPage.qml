@@ -207,7 +207,7 @@ TestCase {
                          "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit.mp3.missing",
                          "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit-1.mp3 ",
                          "/media/sebas/A1/Engine Library/..\\Contents\\AREA ØNE\\Back To The Oldschool\\AREA ØNE - Back To The Oldschool.mp3"]},
-            statusMessage: "Restored exactly from backup. The originating library has the following issue, which we can fix."
+            statusMessage: "Restored exactly from backup. The library already had the issue below when it was backed up; Library Health can repair it."
             })).save(screenshotDir + "/restore-page-result-missing-tracks.png");
     }
 
@@ -958,7 +958,7 @@ TestCase {
         var page = makePage([makeDisk({})], {
             result: {filesWritten: 12, filesUnchanged: 0, directoriesCreated: 1, extrasRemoved: 0, rejected: [],
                      writeErrors: errors, warnings: [], missingTracks: [], databaseChecked: false},
-            errorMessage: "the drive disappeared after 12 files were restored",
+            errorMessage: "12 files were restored before the drive went",
         });
         compare(findChild(page, "problemCountLabel").text, "500 problems");
         compare(findChild(page, "problemList").count, 0);
@@ -998,7 +998,7 @@ TestCase {
     function test_aLibraryIssueAloneIsNotAFailedRestore_data() {
         return [
             {tag: "missing-tracks-only", kind: "missingTracksOnly", popups: 0,
-             status: "Restored exactly from backup. The originating library has the following issue, which we can fix."},
+             status: "Restored exactly from backup. The library already had the issue below when it was backed up; Library Health can repair it."},
             {tag: "write-error-too", kind: "writeErrorAndMissingTracks", popups: 1,
              status: "Restored 15402 files, but with problems."},
         ];
@@ -1028,7 +1028,7 @@ TestCase {
         compare(spy.count, 1);
         compare(spy.signalArguments[0][1], true);
         compare(spy.signalArguments[0][2], "The drive was removed");
-        verify(spy.signalArguments[0][0].indexOf("the drive disappeared after 12 files were restored") === 0);
+        verify(spy.signalArguments[0][0].indexOf("12 files were restored before the drive went") === 0);
         // Any other failure keeps the generic title.
         verify(controllerFixture.finishRestoreWith(controller, "writeErrorAndMissingTracks"));
         compare(spy.count, 2);
@@ -1048,10 +1048,10 @@ TestCase {
         const page = createTemporaryObject(pageComponent, testCase,
                                            {controller: controller, appSettingsController: fakeAppSettings()});
         const popup = findChild(page, "messagePopup");
-        controller.actionFeedback("the drive disappeared after 12 files were restored", true, data.title);
+        controller.actionFeedback("12 files were restored before the drive went", true, data.title);
         tryVerify(() => popup.opened, 2000);
         compare(popup.title, data.shown);
-        compare(popup.headline, "the drive disappeared after 12 files were restored");
+        compare(popup.headline, "12 files were restored before the drive went");
         popup.close();
     }
 
@@ -1061,21 +1061,26 @@ TestCase {
     // stay for a restore that did fail to write something.
     function test_aLibraryIssueAloneIsReportedAsAWarning_data() {
         return [
-            {tag: "missing-tracks-only", writeErrors: [], colour: Theme.conflictText, statusColour: Theme.conflictText,
-             close: "Ignore"},
-            {tag: "write-error-too", writeErrors: ["Contents/a.mp3: write failed"], colour: Theme.danger,
-             statusColour: Theme.good, close: "Close"},
+            {tag: "missing-tracks-only", writeErrors: [], rejected: [], warnings: [], colour: Theme.conflictText,
+             statusColour: Theme.conflictText, close: "Ignore"},
+            {tag: "write-error-too", writeErrors: ["Contents/a.mp3: write failed"], rejected: [], warnings: [],
+             colour: Theme.danger, statusColour: Theme.danger, close: "Close"},
+            {tag: "checksum-rejected-too", writeErrors: [], rejected: ["Contents/b.mp3: checksum mismatch"],
+             warnings: [], colour: Theme.danger, statusColour: Theme.danger, close: "Close"},
+            {tag: "warning-too", writeErrors: [], rejected: [], warnings: ["a database set was held back"],
+             colour: Theme.danger, statusColour: Theme.conflictText, close: "Close"},
         ];
     }
     function test_aLibraryIssueAloneIsReportedAsAWarning(data) {
         const page = makePage([makeDisk({})], {
-            result: {filesWritten: 15402, filesUnchanged: 0, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
-                     writeErrors: data.writeErrors, warnings: [], partial: [], databaseChecked: true,
+            result: {filesWritten: 15402, filesUnchanged: 0, directoriesCreated: 0, extrasRemoved: 0,
+                     rejected: data.rejected, writeErrors: data.writeErrors, warnings: data.warnings, partial: [],
+                     databaseChecked: true,
                      missingTracks: ["Engine Library/Music/10_Too Little Too Late.mp3"]},
-            statusMessage: "Restored exactly from backup. The originating library has the following issue, which we can fix.",
+            statusMessage: "Restored exactly from backup. The library already had the issue below when it was backed up; Library Health can repair it.",
         });
         const frame = findChild(page, "restoreResultFrame");
-        compare(frame.libraryIssueOnly, data.writeErrors.length === 0);
+        compare(frame.libraryIssueOnly, data.tag === "missing-tracks-only");
         verify(Qt.colorEqual(findChild(page, "resultStatusLabel").color, data.statusColour),
                "status line " + findChild(page, "resultStatusLabel").color);
         verify(Qt.colorEqual(findChild(page, "databaseCheckLabel").color, data.colour),
