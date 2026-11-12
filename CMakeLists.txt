@@ -1446,6 +1446,14 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # every QML entry wait for every other one, which is the opposite
         # of what splitting them is for.
         #
+        # That retry is not in every xvfb-run. On openSUSE Tumbleweed the
+        # first twelve entries of a `ctest -j 12` all took :99, and the
+        # eleven that lost failed in three seconds with "could not connect
+        # to display :99" (KDE CI, pipeline 1418408: 27 entries in all).
+        # So each entry also gets a number of its own to start from, with
+        # -n: 200, 201, and so on. -a still looks further from there when
+        # the number is taken, by a second ctest on the same machine, say.
+        #
         # PROCESSORS 1: a file keeps about one core busy, software GL
         # included. Measured on a Linux Debug build (2026-11-10), CPU time
         # over wall time: tst_CueTablePage 47.8 s in 44.0 s, the heaviest;
@@ -1501,9 +1509,17 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 endif()
                 set(_test "${lane}.${_name}")
                 if(SEABASS_XVFB_RUN)
+                    # A display number of its own to start looking from
+                    # (see "No RESOURCE_LOCK on the display", above).
+                    get_property(_display GLOBAL PROPERTY SEABASS_QML_NEXT_DISPLAY)
+                    if(NOT _display)
+                        set(_display 200)
+                    endif()
                     add_test(NAME ${_test}
-                        COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                        COMMAND ${SEABASS_XVFB_RUN} -a -n ${_display} -s "-screen 0 1280x1024x24"
                             $<TARGET_FILE:seabass_qml_tests> -input "${_file}")
+                    math(EXPR _display "${_display} + 1")
+                    set_property(GLOBAL PROPERTY SEABASS_QML_NEXT_DISPLAY ${_display})
                 else()
                     add_test(NAME ${_test} COMMAND seabass_qml_tests -input "${_file}")
                 endif()
