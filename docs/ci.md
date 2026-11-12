@@ -11,11 +11,36 @@ Craft templates and `macos:universal` build and PACKAGE (see "The Craft
 lanes" below). No packaging job runs ctest, so the Linux jobs are the only
 thing on Invent that does.
 
+## KDE's standard jobs
+
+KDE's sysadmins ask projects to build with the job templates in
+`sysadmin/ci-utilities` and nothing else (2026-11-12). A job that is not
+one of those templates is a custom job, and a custom job runs in a Docker
+slot, which has far less behind it than the VM runners the templates use.
+
+Four are included, and run on every push, merge request and tag:
+
+| Job | What |
+|---|---|
+| `suse_tumbleweed_qt612` | Build and test, openSUSE Tumbleweed, Qt 6.12 |
+| `kubuntu_2604_qt610` | Build and test, Kubuntu 26.04, Qt 6.10 |
+| `windows_qt612` | Build and test, MSVC 2022, Qt 6.12 |
+| `reuse` | REUSE compliance |
+
+The three build jobs are configured by `.kde-ci.yml`, not by
+`.gitlab-ci.yml`: a Release build with ccache, `ctest -j` over the whole
+suite as registered by default (so without the storm), and a failing
+test fails the job on Linux. On Windows a failing test is reported and
+the job stays green, until the suite has passed there once.
+
+The custom Linux lanes in the table below are still there. They go once
+the standard jobs have run green beside them.
+
 ## What runs when
 
 | Pipeline | Jobs |
 |---|---|
-| Push to any branch, merge request | `linux:build-test` (configured with `-DSEABASS_QML_TESTS=OFF`; `ctest -j --timeout 300 -LE "qml\|storm\|integration\|timing"`), `reuse`, SAST and secret detection. A push that touches only documentation (the paths outside `.code_paths` in `.gitlab-ci.yml`) is not built. |
+| Push to any branch, merge request | `linux:build-test` (configured with `-DSEABASS_QML_TESTS=OFF`; `ctest -j --timeout 300 -LE "qml\|storm\|integration\|timing"`), SAST and secret detection. A push that touches only documentation (the paths outside `.code_paths` in `.gitlab-ci.yml`) is not built. |
 | Nightly schedule, master | `linux:nightly`: full build, every test but the storm (`timing` tests run one at a time after the rest). It ends at once, green, when master is still at the commit of the last nightly that passed. |
 | Weekly schedule | `linux:qt68` (Qt 6.8.3, with `-DSEABASS_STORM_TESTS=ON`, every label), `craft_windows_qt6_x86_64`, `craft_appimage_qt6_x86_64`, `macos:universal`. |
 | Buttons | `linux:qt68` on `Seabass/X.Y` (the release check before a tag), `linux:coverage` on any branch, the package jobs. |

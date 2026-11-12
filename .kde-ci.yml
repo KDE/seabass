@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Read by KDE's standard build jobs (sysadmin/ci-utilities,
+# run-ci-build.py), which .gitlab-ci.yml includes as linux-qt6.yml,
+# linux-qt6-lts.yml and windows-qt6.yml. Every option and its default is
+# in ci-utilities' config/global.yml.
+#
+# No Dependencies: Seabass builds against Qt and system libraries the CI
+# images already carry (SQLCipher, TagLib, SQLite, zlib), and against no
+# other KDE project.
+
+Options:
+  # An application, so the build that is tested is the one that ships.
+  # The default is Debug. Assertions stay on either way: CMakeLists.txt
+  # puts -UNDEBUG on every test target.
+  release-build: True
+
+  # The runner keeps a compiler cache between jobs; it is off by default.
+  use-ccache: True
+
+  # libdjinterop's own suite wants Boost.Filesystem and is not ours to
+  # keep green: the same switch the Craft blueprint passes.
+  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF'
+
+  # ctest -j over the machine's cores. The default is one test at a time.
+  tests-run-in-parallel: True
+
+  # For a test that sets no TIMEOUT of its own. The default is 60.
+  per-test-timeout: 300
+
+  # Without this a failing suite leaves the job green. Windows is not
+  # listed yet: the suite has never run on MSVC, and it joins this list
+  # once it has passed there.
+  require-passing-tests-on: ['Linux']
