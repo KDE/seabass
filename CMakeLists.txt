@@ -231,19 +231,39 @@ find_package(ZLIB REQUIRED)
 # the ZIP specification, and it can only do that against implementations
 # that share no code with ours. Absent, it used to exit 77 and count as a
 # pass -- a green line that had validated nothing.
+#
+# SEABASS_REQUIRE_ZIP_TOOLS=OFF is for a machine whose packages are not
+# ours to choose, which is KDE's CI images: of unzip and 7z, the
+# openSUSE one has no 7z, the Kubuntu one has neither and the Windows one
+# has no unzip (pipeline 1418373). Python's zipfile stays required there,
+# so the archive is never graded by our own reader alone; the unzip and
+# 7z cases run where the tool is and say so where it is not, and this
+# file prints which at configure time. Everywhere else the default
+# stands, and tools/pre-push-check.sh runs all three.
+option(SEABASS_REQUIRE_ZIP_TOOLS "Refuse to configure the tests without unzip and 7z (python3 is required either way)" ON)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_program(UNZIP_EXECUTABLE unzip)
 find_program(SEVENZIP_EXECUTABLE NAMES 7z 7zz 7za)
 if(SEABASS_TESTS)
     set(_seabass_missing_zip_tools "")
+    set(_seabass_absent_zip_tools "")
     if(NOT Python3_Interpreter_FOUND)
         list(APPEND _seabass_missing_zip_tools "python3 (Debian/Ubuntu: python3)")
     endif()
     if(NOT UNZIP_EXECUTABLE)
-        list(APPEND _seabass_missing_zip_tools "unzip (Debian/Ubuntu: unzip)")
+        list(APPEND _seabass_absent_zip_tools "unzip (Debian/Ubuntu: unzip)")
     endif()
     if(NOT SEVENZIP_EXECUTABLE)
-        list(APPEND _seabass_missing_zip_tools "7z (Debian/Ubuntu: p7zip-full)")
+        list(APPEND _seabass_absent_zip_tools "7z (Debian/Ubuntu: p7zip-full)")
+    endif()
+    if(SEABASS_REQUIRE_ZIP_TOOLS)
+        list(APPEND _seabass_missing_zip_tools ${_seabass_absent_zip_tools})
+    elseif(_seabass_absent_zip_tools)
+        list(JOIN _seabass_absent_zip_tools ", " _seabass_absent_zip_tools_text)
+        message(WARNING
+            "backup_archive_crossvalidation_test will check our archives against "
+            "Python's zipfile but NOT against: ${_seabass_absent_zip_tools_text}. "
+            "SEABASS_REQUIRE_ZIP_TOOLS is OFF, so this is allowed.")
     endif()
     if(_seabass_missing_zip_tools)
         list(JOIN _seabass_missing_zip_tools "\n    " _seabass_missing_zip_tools_text)
@@ -3810,9 +3830,9 @@ target_include_directories(seabass_paths_test PRIVATE src)
 add_test(NAME seabass_paths_test COMMAND seabass_paths_test)
 
 add_test(NAME backup_archive_crossvalidation_test COMMAND backup_archive_crossvalidation_test)
-# No SKIP_RETURN_CODE: the three tools are required at configure time
-# above, so there is no longer a legitimate reason for this test to do
-# anything but run.
+# No SKIP_RETURN_CODE: python3 is required at configure time above (and
+# unzip and 7z with it, unless SEABASS_REQUIRE_ZIP_TOOLS is OFF), so
+# there is no legitimate reason for this test to do anything but run.
 set_tests_properties(backup_archive_crossvalidation_test PROPERTIES
     ENVIRONMENT "SEABASS_PYTHON3=${Python3_EXECUTABLE};SEABASS_UNZIP=${UNZIP_EXECUTABLE};SEABASS_SEVENZIP=${SEVENZIP_EXECUTABLE}"
 )

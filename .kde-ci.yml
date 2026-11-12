@@ -22,7 +22,12 @@ Options:
 
   # libdjinterop's own suite wants Boost.Filesystem and is not ours to
   # keep green: the same switch the Craft blueprint passes.
-  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF'
+  #
+  # SEABASS_REQUIRE_ZIP_TOOLS=OFF because the CI images do not all carry
+  # unzip and 7z, which the tests otherwise refuse to configure without:
+  # the backup archive is then checked against Python's zipfile, and
+  # against unzip and 7z on the images that have them. See CMakeLists.txt.
+  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF'
 
   # ctest -j over the machine's cores. The default is one test at a time.
   tests-run-in-parallel: True
