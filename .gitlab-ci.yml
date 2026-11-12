@@ -200,18 +200,14 @@ secret_detection:
 # job of KDE's reuse-lint.yml, included above. It is in the `validate`
 # stage, the first one, so it waits for no build.
 
-# The standard build jobs take the runner's own checkout, which leaves
-# submodules out unless asked, and Seabass does not configure without
-# third_party/libdjinterop and the Kaitai runtime. (The Craft jobs clone
-# for themselves, submodules included.) Set on these three jobs rather
-# than for the pipeline, so no other job's checkout changes.
-.with_submodules: &with_submodules
-  variables:
-    GIT_SUBMODULE_STRATEGY: recursive
-
-suse_tumbleweed_qt612: *with_submodules
-kubuntu_2604_qt610: *with_submodules
-windows_qt612: *with_submodules
+# The standard build jobs need no submodule setting, and must not get
+# one. GIT_SUBMODULE_STRATEGY makes the runner run `git submodule update`
+# before anything of ours, and this repository has no .gitmodules for it
+# to read (Invent rejects a push that contains one): all three jobs died
+# in their checkout with "No url found for submodule path" (pipeline
+# 1418348). CMakeLists.txt writes .gitmodules from
+# cmake/dependency-submodules.txt and fetches both submodules when it
+# configures, which is how every other lane gets them.
 
 # ---- Craft packaging lane: the weekly schedule and release tags ----
 #
