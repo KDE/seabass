@@ -20,6 +20,19 @@ struct BpmBucket
     int count = 0;
 };
 
+// One cell of the tempo-by-key heatmap: the tracks whose BPM falls in
+// [rangeStart, rangeStart + kBpmKeyCellWidth) and whose key sits at this
+// Camelot position. camelotNumber 0 is the row of tracks whose key is
+// missing or does not parse.
+inline constexpr int kBpmKeyCellWidth = 5;
+struct BpmKeyCell
+{
+    int rangeStart = 0;
+    int camelotNumber = 0;  // 1..12, 0 = no key
+    bool isMinor = false;
+    int count = 0;
+};
+
 // One bar of the cues-per-track histogram: the tracks carrying between
 // minCues and maxCues cue points, both inclusive. maxCues == -1 is open
 // ended ("9 or more").
@@ -75,6 +88,7 @@ struct LibraryStatistics
     std::map<std::string, int> tracksPerFileFormat;       // lowercase extension (no dot) -> count
     std::map<std::string, int> streamingTracksByService;  // e.g. "TIDAL" -> count
     std::vector<BpmBucket> bpmDistribution;               // sorted by rangeStart, tracks with bpm <= 0 excluded
+    std::vector<BpmKeyCell> bpmKeyCells;  // non-empty cells only, sorted by rangeStart then key; tempos outside 30..300 excluded
     CueCoverage cueCoverage;                              // local tracks only, see CueCoverage
 };
 

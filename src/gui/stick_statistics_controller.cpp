@@ -77,6 +77,14 @@ QVariantMap toVariant(const domain::LibraryStatistics &stats)
     }
     m["bpmDistribution"] = bpmList;
 
+    QVariantList bpmKeyList;
+    for (const auto &cell : stats.bpmKeyCells) {
+        bpmKeyList << QVariantMap{{"rangeStart", cell.rangeStart}, {"camelotNumber", cell.camelotNumber},
+                                  {"isMinor", cell.isMinor}, {"count", cell.count}};
+    }
+    m["bpmKeyCells"] = bpmKeyList;
+    m["bpmKeyCellWidth"] = domain::kBpmKeyCellWidth;
+
     // Local tracks only (streaming ones excluded), so withCues +
     // withoutCues is trackCount - streamingTrackCount, not trackCount.
     QVariantMap coverage;

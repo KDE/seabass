@@ -4,9 +4,13 @@
 
 #include "domain/library_statistics.hpp"
 
+#include "domain/camelot_key.hpp"
+#include "domain/cue_tolerance.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <tuple>
 
 namespace seabass::domain
 {
@@ -69,6 +73,7 @@ LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track
 
     std::set<std::string> playlistNames;
     std::map<int, int> bpmBucketCounts;
+    std::map<std::tuple<int, int, bool>, int> bpmKeyCounts;
 
     for (const auto &track : tracks) {
         for (const auto &pl : track.playlists) {
@@ -103,6 +108,14 @@ LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track
             int bucketStart = (static_cast<int>(track.bpm) / 10) * 10;
             bpmBucketCounts[bucketStart]++;
         }
+        // The heatmap's columns run from the slowest tempo to the fastest,
+        // so one misread tempo (thousands of BPM, or infinite) would
+        // stretch the grid to it; a tempo no music has is left out.
+        if (isKnownTempo(track.bpm)) {
+            const auto key = CamelotKey::parse(track.key);
+            const int cellStart = (static_cast<int>(track.bpm) / kBpmKeyCellWidth) * kBpmKeyCellWidth;
+            bpmKeyCounts[{cellStart, key ? key->number : 0, key ? key->isMinor : false}]++;
+        }
     }
 
     stats.playlistCount = static_cast<int>(playlistNames.size());
@@ -111,6 +124,10 @@ LibraryStatistics LibraryStatisticsCalculator::calculate(const std::vector<Track
     stats.bpmDistribution.reserve(bpmBucketCounts.size());
     for (const auto &[start, count] : bpmBucketCounts) {
         stats.bpmDistribution.push_back({start, count});
+    }
+    stats.bpmKeyCells.reserve(bpmKeyCounts.size());
+    for (const auto &[cell, count] : bpmKeyCounts) {
+        stats.bpmKeyCells.push_back({std::get<0>(cell), std::get<1>(cell), std::get<2>(cell), count});
     }
 
     return stats;

@@ -170,6 +170,7 @@ set(SEABASS_GUI_QML_FILES
     qml/FormatToggle.qml
     qml/LibrarySourceToggle.qml
     qml/KeyBadge.qml
+    qml/BpmKeyHeatmap.qml
     qml/CamelotWheelPopup.qml
     qml/CamelotWheelHost.qml
     qml/AboutPage.qml

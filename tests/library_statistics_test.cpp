@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -243,6 +244,58 @@ int main()
         auto stats = LibraryStatisticsCalculator::calculate({a, b});
         assert(stats.playlistCount == 2);
         std::cout << "case 7 (distinct playlist count) OK\n";
+    }
+
+    // Case 8: the tempo-by-key heatmap's cells. 5-BPM columns, keys at
+    // their Camelot position whatever notation the catalog stores, an
+    // unparseable or missing key in row 0, bpm <= 0 left out, and so is
+    // a tempo no music has (a misread: it would stretch the grid to it).
+    {
+        Track am1 = makeTrack("a", "a.mp3");
+        am1.bpm = 124.9;
+        am1.key = "Am";  // 8A
+        Track am2 = makeTrack("b", "b.mp3");
+        am2.bpm = 120.0;
+        am2.key = "8A";
+        Track am3 = makeTrack("c", "c.mp3");
+        am3.bpm = 125.0;  // the next column
+        am3.key = "Am";
+        Track cMajor = makeTrack("d", "d.mp3");
+        cMajor.bpm = 122.0;
+        cMajor.key = "C";  // 8B
+        Track noKey = makeTrack("e", "e.mp3");
+        noKey.bpm = 174.0;
+        Track junkKey = makeTrack("f", "f.mp3");
+        junkKey.bpm = 171.0;
+        junkKey.key = "?";
+        Track noBpm = makeTrack("g", "g.mp3");
+        noBpm.key = "Am";
+        Track misreadFast = makeTrack("h", "h.mp3");
+        misreadFast.bpm = 5000.0;
+        misreadFast.key = "Am";
+        Track misreadSlow = makeTrack("i", "i.mp3");
+        misreadSlow.bpm = 4.0;
+        Track misreadInfinite = makeTrack("j", "j.mp3");
+        misreadInfinite.bpm = std::numeric_limits<double>::infinity();
+        auto stats = LibraryStatisticsCalculator::calculate(
+            {am1, am2, am3, cMajor, noKey, junkKey, noBpm, misreadFast, misreadSlow, misreadInfinite});
+        auto count = [&](int start, int number, bool minor) {
+            for (const auto &cell : stats.bpmKeyCells) {
+                if (cell.rangeStart == start && cell.camelotNumber == number && cell.isMinor == minor) {
+                    return cell.count;
+                }
+            }
+            return 0;
+        };
+        assert(count(120, 8, true) == 2);
+        assert(count(125, 8, true) == 1);
+        assert(count(120, 8, false) == 1);
+        assert(count(170, 0, false) == 2);
+        assert(stats.bpmKeyCells.size() == 4);
+        for (size_t i = 1; i < stats.bpmKeyCells.size(); ++i) {
+            assert(stats.bpmKeyCells[i - 1].rangeStart <= stats.bpmKeyCells[i].rangeStart);
+        }
+        std::cout << "case 8 (BPM by key cells) OK\n";
     }
 
     testCueCoverage();

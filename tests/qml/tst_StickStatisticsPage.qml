@@ -79,6 +79,11 @@ TestCase {
             hotCueCount: 4800, memoryCueCount: 1320, ratedTrackCount: 300, commentedTrackCount: 120,
             streamingTrackCount: 0, tracksPerKey: {"8A": 200, "5A": 150}, tracksPerFileFormat: {"mp3": 900, "flac": 340},
             streamingTracksByService: {}, bpmDistribution: [{rangeStart: 120, count: 800}, {rangeStart: 130, count: 440}],
+            bpmKeyCellWidth: 5,
+            bpmKeyCells: [{rangeStart: 120, camelotNumber: 8, isMinor: true, count: 300},
+                          {rangeStart: 125, camelotNumber: 8, isMinor: true, count: 3},
+                          {rangeStart: 125, camelotNumber: 5, isMinor: false, count: 40},
+                          {rangeStart: 140, camelotNumber: 0, isMinor: false, count: 12}],
             cueCoverage: coverage,
         };
         const page = createTemporaryObject(pageComponent, host, {
@@ -225,6 +230,93 @@ TestCase {
         for (let i = 1; i < rows.length; ++i) {
             verify(Qt.colorEqual(bar(rows[i]).color, Theme.accent), "bucket " + labels[i] + " is the with-cues colour");
         }
+    }
+
+    // Tempo by key: every key row and the no-key row, one column per
+    // 5 BPM from the slowest to the fastest step, the gap at 130-139
+    // included; the busiest cell the ramp's dark end, an empty one the
+    // plain ground, a light cell still not the ground.
+    function checkHeatmap() {
+        const page = makePage(testCase.rekordboxCoverage);
+        const heatmap = findOne(page, "bpmKeyHeatmap");
+        verify(heatmap.visible);
+        compare(heatmap.rows.length, 25);
+        compare(heatmap.columns.join(" "), "120 125 130 135 140");
+        const cells = findAll(heatmap, "bpmKeyCell");
+        compare(cells.length, 25 * 5);
+        const at = (start, number, minor) => cells.find(c => c.modelData === start
+            && c.parent.modelData.number === number && c.parent.modelData.isMinor === minor);
+        compare(at(120, 8, true).count, 300);
+        verify(Qt.colorEqual(at(120, 8, true).color, heatmap.rampHigh), "the busiest cell is the darkest step");
+        verify(Qt.colorEqual(at(130, 8, true).color, Theme.groupBackground), "an empty cell is the plain ground");
+        verify(!Qt.colorEqual(at(125, 8, true).color, Theme.groupBackground), "three tracks still show");
+        compare(at(140, 0, false).count, 12, "tracks without a key have their row");
+        // Darker with the count, on either ground.
+        const lum = c => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+        const few = lum(at(125, 8, true).color);
+        const some = lum(at(125, 5, false).color);
+        const most = lum(at(120, 8, true).color);
+        if (Theme.isLightBackground) {
+            verify(few > some && some > most, "light ground: more tracks, darker cell " + [few, some, most]);
+        } else {
+            verify(few < some && some < most, "dark ground: more tracks, brighter accent " + [few, some, most]);
+        }
+        // The tooltip names the cell under the pointer. The heatmap is
+        // below the fold: scrolled into view first, or the pointer never
+        // reaches it.
+        const plot = findOne(heatmap, "bpmKeyPlot");
+        let flick = plot.parent;
+        while (flick && flick.contentY === undefined) flick = flick.parent;
+        verify(flick, "the page scrolls");
+        flick.contentY = Math.max(0, plot.mapToItem(flick.contentItem, 0, 0).y - 100);
+        waitForRendering(page);
+        const cell = at(120, 8, true);
+        const p = cell.mapToItem(plot, cell.width / 2, cell.height / 2);
+        mouseMove(plot, p.x, p.y);
+        const hover = findOne(heatmap, "bpmKeyHover");
+        tryVerify(() => hover.onCell, 2000);
+        compare(hover.ToolTip.text, "120-124 BPM, 8A (A minor): 300 tracks");
+        // A spread like a real house-and-techno library's, for the
+        // screenshot: the checks above read the fixture's.
+        if (screenshotDir) {
+            const cells = page.controller.rekordboxStats.bpmKeyCells.slice();
+            for (let n = 1; n <= 12; n++) {
+                for (let s = 115; s <= 135; s += 5) {
+                    if (s === 120 || s === 125) continue;
+                    cells.push({rangeStart: s, camelotNumber: n, isMinor: n % 2 === 0,
+                                count: Math.max(1, Math.round(60 * Math.exp(-Math.abs(s - 125) / 6) / (1 + Math.abs(n - 8))))});
+                }
+            }
+            cells.push({rangeStart: 170, camelotNumber: 4, isMinor: true, count: 18});
+            cells.push({rangeStart: 90, camelotNumber: 11, isMinor: false, count: 2});
+            const stats = Object.assign({}, page.controller.rekordboxStats, {bpmKeyCells: cells});
+            page.controller.rekordboxStats = stats;
+            waitForRendering(page);
+            saveHeatmapShot(page);
+        }
+    }
+
+    function saveHeatmapShot(page) {
+        const heatmap = findOne(page, "bpmKeyHeatmap");
+        const plot = findOne(heatmap, "bpmKeyPlot");
+        let flick = plot.parent;
+        while (flick && flick.contentY === undefined) flick = flick.parent;
+        flick.contentY = Math.max(0, plot.mapToItem(flick.contentItem, 0, 0).y - 100);
+        const hover = findOne(heatmap, "bpmKeyHover");
+        mouseMove(hover, (plot.cellWidth + heatmap.gap) * 7 + 3, (heatmap.cellHeight + heatmap.gap) * 14 + 3);
+        tryVerify(() => hover.onCell, 2000);
+        wait(300);
+        grabImage(page).save(screenshotDir + "/StickStatistics-bpm-by-key-"
+                             + (Theme.isLightBackground ? "light" : "kelp") + ".png");
+    }
+
+    function test_bpmByKeyHeatmapKelp() {
+        checkHeatmap();
+    }
+
+    function test_bpmByKeyHeatmapLightSystemTheme() {
+        chooseLightSystemTheme();
+        checkHeatmap();
     }
 
     function checkPieInTheme(themeName) {

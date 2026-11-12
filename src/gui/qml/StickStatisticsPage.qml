@@ -453,13 +453,13 @@ Page {
                             // instead of plain text -- the same component
                             // Browse Library uses, per BRAINSTORM.md's own
                             // "re-use the design from the library view"
-                            // ask. Every other DistributionSection (file
-                            // formats, BPM) keeps plain text.
+                            // ask. Every other DistributionSection keeps
+                            // plain text.
                             property bool isKeySection: false
                             // Computed from entries rather than assumed
-                            // to be entries[0] -- BPM deliberately sorts
-                            // by rangeStart (ascending), not by count, so
-                            // the tallest bar isn't necessarily first.
+                            // to be entries[0]: Cues per track keeps its
+                            // buckets in order, so the tallest bar isn't
+                            // necessarily first.
                             readonly property real maxCount: {
                                 var m = 0;
                                 for (var i = 0; i < entries.length; i++) {
@@ -561,24 +561,20 @@ Page {
                             }
                         }
 
-                        DistributionSection {
+                        // Tempo against key, not tempo alone: where the
+                        // tracks cluster for harmonic mixing.
+                        Subtitle {
+                            text: "BPM by key"
+                            Layout.topMargin: 8
+                            visible: bpmKeyHeatmap.visible
+                        }
+                        BpmKeyHeatmap {
+                            id: bpmKeyHeatmap
+                            objectName: "bpmKeyHeatmap"
                             Layout.fillWidth: true
-                            title: "BPM distribution"
-                            entries: {
-                                // Sorted by BPM (ascending), not by count
-                                // like the sections above -- a BPM
-                                // distribution reads as an actual shape
-                                // (where the DJ's tracks cluster) only
-                                // when the buckets stay in tempo order.
-                                var stats = root.statsForSource(root.currentSource);
-                                var buckets = stats.bpmDistribution || [];
-                                var sortedBuckets = buckets.slice().sort((a, b) => a.rangeStart - b.rangeStart);
-                                var list = [];
-                                for (var i = 0; i < sortedBuckets.length; i++) {
-                                    list.push({label: sortedBuckets[i].rangeStart + "-" + (sortedBuckets[i].rangeStart + 9), count: sortedBuckets[i].count});
-                                }
-                                return list;
-                            }
+                            cells: root.statsForSource(root.currentSource).bpmKeyCells || []
+                            stepWidth: root.statsForSource(root.currentSource).bpmKeyCellWidth || 5
+                            notation: root.appSettingsController.keyNotation
                         }
                     }
                 }

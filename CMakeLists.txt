@@ -2188,6 +2188,7 @@ add_test(NAME matching_policy_test COMMAND matching_policy_test)
 
 add_executable(library_statistics_test
     src/domain/library_statistics.cpp
+    src/domain/camelot_key.cpp
     tests/library_statistics_test.cpp
 )
 target_include_directories(library_statistics_test PRIVATE src)
