@@ -162,6 +162,19 @@ if(MSVC)
     # makes the link order-dependent, and some targets then fail with
     # "multiple definition of `sqlite3_finalize'".
     set(SYSTEM_SQLITE OFF CACHE BOOL "" FORCE)
+    # And every target here and below reads that amalgamation's sqlite3.h,
+    # whatever else is on its include path. A target that links ZLIB::ZLIB
+    # (or anything else from a prefix that also holds an SQLite built as a
+    # DLL: Craft's, vcpkg's) has that prefix's include directory on its
+    # path, and where it came before the amalgamation's, <sqlite3.h> was
+    # the DLL's header and every sqlite3_* call became a reference to
+    # __imp_sqlite3_*. Nothing defines those, and a reference to them
+    # does not pull sqlite3.c's object out of a static library either:
+    # engine_sample_rates_test failed to link that way on KDE's MSVC CI
+    # image, with 634 unresolved __imp_sqlite3_* lines (pipeline
+    # 1418408). BEFORE, and not SYSTEM, so it precedes every imported
+    # target's include directory.
+    include_directories(BEFORE third_party/libdjinterop/ext/sqlite-amalgamation)
 endif()
 add_subdirectory(third_party/libdjinterop)
 

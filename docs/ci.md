@@ -18,19 +18,21 @@ KDE's sysadmins ask projects to build with the job templates in
 one of those templates is a custom job, and a custom job runs in a Docker
 slot, which has far less behind it than the VM runners the templates use.
 
-Four are included, and run on every push, merge request and tag:
+Three are included, and run on every push, merge request and tag:
 
 | Job | What |
 |---|---|
 | `suse_tumbleweed_qt612` | Build and test, openSUSE Tumbleweed, Qt 6.12 |
-| `kubuntu_2604_qt610` | Build and test, Kubuntu 26.04, Qt 6.10 |
 | `windows_qt612` | Build and test, MSVC 2022, Qt 6.12 |
 | `reuse` | REUSE compliance |
 
-The three build jobs are configured by `.kde-ci.yml`, not by
+The two build jobs are configured by `.kde-ci.yml`, not by
 `.gitlab-ci.yml`: a Release build with ccache, `ctest -j` over the whole
 suite as registered by default (so without the storm), and a failing
-test fails the job on Linux. On Windows a failing test is reported and
+test fails the job on Linux. Two things are left out there, each with
+its reason beside it in `.kde-ci.yml`: `sleep_inhibitor_test`, which the
+CI machines' logind refuses, and the `unzip` and `7z` cases of the backup
+archive cross-validation on an image without those tools. On Windows a failing test is reported and
 the job stays green, until the suite has passed there once.
 
 The custom Linux lanes in the table below are still there. They go once
