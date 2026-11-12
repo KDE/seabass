@@ -44,6 +44,9 @@ default:
   interruptible: true
 
 stages:
+# `validate` is where KDE's reuse-lint.yml puts its job. A job naming a
+# stage that is not in this list makes the whole pipeline invalid.
+- validate
 - build
 - test
 - package
@@ -161,6 +164,30 @@ include:
   file: /gitlab-templates/craft-macos-x86-64-qt6.yml
 - project: sysadmin/ci-utilities
   file: /gitlab-templates/craft-appimage-qt6.yml
+
+# ---- KDE's standard build and test jobs ----
+#
+# What KDE's sysadmins ask every project to use (2026-11-12): a job that
+# is not a template from sysadmin/ci-utilities is a custom one, and a
+# custom job runs in a Docker slot, which has far less behind it than the
+# VM runners these templates ask for. The Linux lanes further down are
+# such custom jobs. They stay until these have run green beside them,
+# and go after that.
+#
+#   suse_tumbleweed_qt612   openSUSE Tumbleweed, Qt 6.12
+#   kubuntu_2604_qt610      Kubuntu 26.04, Qt 6.10
+#   windows_qt612           MSVC 2022, Qt 6.12
+#   reuse                   REUSE compliance
+#
+# All three build jobs run ci-utilities' run-ci-build.py, which reads
+# .kde-ci.yml in this repository: the CMake options, ccache, how ctest
+# is run, and where a failing test fails the job.
+- project: sysadmin/ci-utilities
+  file:
+  - /gitlab-templates/linux-qt6.yml
+  - /gitlab-templates/linux-qt6-lts.yml
+  - /gitlab-templates/windows-qt6.yml
+  - /gitlab-templates/reuse-lint.yml
 variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
@@ -169,21 +196,23 @@ secret_detection:
   # gated behind a build.
   needs: []
 
-# REUSE 3.0 compliance, as the KDE licensing policy requires: every file
-# carries copyright and an SPDX licence identifier, and every licence used
-# has its text in LICENSES/. Runs on the official FSFE image so the check
-# is the same one reuse.software publishes.
-reuse:
-  stage: test
-  # See the note above sast. A licence check that only runs when the
-  # code compiles is a licence check that stops running exactly when
-  # someone is busy and likely to paste a file in without a header.
-  needs: []
-  image:
-    name: fsfe/reuse:latest
-    entrypoint: [""]
-  script:
-  - reuse lint
+# REUSE compliance, as the KDE licensing policy requires, is the `reuse`
+# job of KDE's reuse-lint.yml, included above. It is in the `validate`
+# stage, the first one, so it waits for no build.
+
+# The standard build jobs take the runner's own checkout, which leaves
+# submodules out unless asked, and Seabass does not configure without
+# third_party/libdjinterop and the Kaitai runtime. (The Craft jobs clone
+# for themselves, submodules included.) Set on these three jobs rather
+# than for the pipeline, so no other job's checkout changes.
+.with_submodules: &with_submodules
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+
+suse_tumbleweed_qt612: *with_submodules
+kubuntu_2604_qt610: *with_submodules
+windows_qt612: *with_submodules
+
 # ---- Craft packaging lane: the weekly schedule and release tags ----
 #
 # Measured over 25 master pipelines: craft_macos_qt6_x86_64 155 min,
