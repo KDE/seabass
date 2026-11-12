@@ -299,11 +299,11 @@ int main()
     if (broken) {
         return 1;
     }
-    // Unreachable from a Seabass build: python3, unzip and 7z are all
-    // required at configure time (see the SEABASS_TESTS block in
-    // CMakeLists.txt), so a binary that exists was configured with all
-    // three, and a configured tool that has since gone is caught by
-    // refuseIfConfiguredButMissing() above.
+    // Unreachable from a Seabass build: python3 is required at configure
+    // time (see the SEABASS_TESTS block in CMakeLists.txt; unzip and 7z
+    // are too, unless SEABASS_REQUIRE_ZIP_TOOLS is OFF), so a binary that
+    // exists was configured with it, and a configured tool that has since
+    // gone is caught by refuseIfConfiguredButMissing() above.
     //
     // It stays as a failure rather than a skip because this test is the
     // only thing stopping our ZIP writer and our ZIP reader agreeing with
