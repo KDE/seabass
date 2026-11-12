@@ -523,8 +523,11 @@ TestCase {
         tryCompare(dialog, "opened", true, 5000, "asked which groups");
         compare(session.pendingCount, 0, "nothing staged before the answer");
         verify(dialog.headline.indexOf("hides " + dialog.hiddenSelected + " of the ") > 0, dialog.headline);
+        // The page selects groups, and the question counts what it selects.
+        verify(dialog.headline.indexOf(" selected groups.") > 0, dialog.headline);
         const shown = dialog.shownSelected;
         verify(shown > 0);
+        compare(dialog.acceptText, "Stage " + shown + (shown === 1 ? " Group" : " Groups") + " Matching the Search");
         dialog.accept();
         tryCompare(session, "pendingCount", shown, 5000, "only the groups the search shows");
     }

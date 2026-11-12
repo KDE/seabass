@@ -540,16 +540,16 @@ Page {
         readonly property int shownSelected: cleanupController.includedVisibleCount
         readonly property int hiddenSelected: cleanupController.includedCount - shownSelected
         readonly property bool searchHidesSome: searchField.text.length > 0 && hiddenSelected > 0
-        function tracks(n) { return n + (n === 1 ? " Track" : " Tracks"); }
+        function groups(n) { return n + (n === 1 ? " Group" : " Groups"); }
         title: "Stage only what the search shows?"
         headline: "Your search (\"" + searchField.text + "\") hides " + confirmCleanupDialog.hiddenSelected
-            + " of the " + cleanupController.includedCount + " selected tracks. Only the "
+            + " of the " + cleanupController.includedCount + " selected groups. Only the "
             + confirmCleanupDialog.shownSelected + " it shows are staged unless you stage all selected; "
             + "the hidden ones stay selected either way."
         detailText: "Nothing is written until you press Clean Up."
-        acceptText: "Stage " + tracks(shownSelected) + " Matching the Search"
+        acceptText: "Stage " + groups(shownSelected) + " Matching the Search"
         acceptEnabled: shownSelected > 0
-        alternateText: "Stage All " + tracks(cleanupController.includedCount) + " Selected"
+        alternateText: "Stage All " + groups(cleanupController.includedCount) + " Selected"
         onAlternateRequested: cleanupController.apply(false)
         onAccepted: cleanupController.apply(true)
     }
