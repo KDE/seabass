@@ -3150,6 +3150,26 @@ if(TARGET seabass_edit)
     set_tests_properties(rekordbox_export_sync_controller_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # The #73 hardware round of 2026-11-13 replayed on what the stick
+    # TESTSHARK held at each step (tests/fixtures/testshark_t73): the audio
+    # heads and the chain checker. One ctest per case.
+    add_executable(testshark_t73_test
+        tests/engine_chain_check.hpp
+        tests/testshark_t73_test.cpp
+    )
+    target_include_directories(testshark_t73_test PRIVATE src tests)
+    target_link_libraries(testshark_t73_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Gui
+        Qt6::Concurrent Qt6::Qml Qt6::Test)
+    if(TARGET seabass_taglib)
+        target_link_libraries(testshark_t73_test PRIVATE seabass_taglib)
+    endif()
+    foreach(_t73_case fixture)
+        add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73 ${_t73_case})
+        set_tests_properties(testshark_t73_${_t73_case}_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.
     add_executable(prefetch_at_exit_test tests/prefetch_at_exit_test.cpp)
