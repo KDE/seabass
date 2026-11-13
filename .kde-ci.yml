@@ -27,7 +27,13 @@ Options:
   # unzip and 7z, which the tests otherwise refuse to configure without:
   # the backup archive is then checked against Python's zipfile, and
   # against unzip and 7z on the images that have them. See CMakeLists.txt.
-  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF'
+  #
+  # SEABASS_REQUIRE_FAT_TOOLS=OFF for the same reason: the openSUSE image
+  # has no dosfstools. damage_filesystem_test then damages the FAT32
+  # volume committed with it and compares every byte; making a volume
+  # with mkfs.fat and having fsck.fat repair it run where those are, which
+  # is the Ubuntu jobs in .gitlab-ci.yml and tools/pre-push-check.sh.
+  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF -DSEABASS_REQUIRE_FAT_TOOLS=OFF'
 
   # sleep_inhibitor_test asks logind for a real inhibitor. The CI VMs have
   # a logind, and it refuses one to a session with nobody to authenticate
