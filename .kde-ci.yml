@@ -28,12 +28,11 @@ Options:
   # the backup archive is then checked against Python's zipfile, and
   # against unzip and 7z on the images that have them. See CMakeLists.txt.
   #
-  # SEABASS_REQUIRE_FAT_TOOLS=OFF for the same reason: the openSUSE image
-  # has no dosfstools. damage_filesystem_test then damages the FAT32
-  # volume committed with it and compares every byte; making a volume
-  # with mkfs.fat and having fsck.fat repair it run where those are, which
-  # is the Ubuntu jobs in .gitlab-ci.yml and tools/pre-push-check.sh.
-  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF -DSEABASS_REQUIRE_FAT_TOOLS=OFF'
+  # SEABASS_REQUIRE_FAT_TOOLS stays at its default, ON: the openSUSE image
+  # has mkfs.fat and fsck.fat, in /usr/sbin, which is off the job's PATH
+  # and where CMake looks all the same (pipeline 1419949). Should an image
+  # lose them the configure says so, and that is the moment to decide.
+  cmake-options: '-DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_REQUIRE_ZIP_TOOLS=OFF'
 
   # sleep_inhibitor_test asks logind for a real inhibitor. The CI VMs have
   # a logind, and it refuses one to a session with nobody to authenticate

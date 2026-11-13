@@ -299,15 +299,16 @@ endif()
 # (pipeline 1419600).
 #
 # Required on Linux, where the command exists and the repair it serves is
-# run. SEABASS_REQUIRE_FAT_TOOLS=OFF is for KDE's CI image again, whose
-# packages are not ours to choose; elsewhere the default is OFF because
-# the command is Linux only. mcopy (mtools) is used when it is here, to
-# put files into the fresh volume, and never required: the committed
-# volume has files in it.
+# run. SEABASS_REQUIRE_FAT_TOOLS=OFF is for a machine without dosfstools
+# whose packages are not ours to choose; no CI job needs it today. On
+# other systems the default is OFF because the command is Linux only.
+# mcopy (mtools) is used when it is here, to put files into the fresh
+# volume, and never required: the committed volume has files in it.
 #
 # Found here rather than by the test because distributions keep them in
-# /usr/sbin, which is not on every user's PATH (it is not on the CI
-# image's); find_program looks there regardless.
+# /usr/sbin, which is not on every user's PATH; find_program looks there
+# regardless. That was the whole of the skip on KDE's openSUSE image: it
+# has both tools and runs its jobs without /usr/sbin on PATH.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(_seabass_require_fat_tools_default ON)
 else()

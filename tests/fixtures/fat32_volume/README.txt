@@ -4,9 +4,11 @@ files in the root and one in a directory. Made by mkfs.fat (dosfstools
 2026-11-13, by generate.sh in this directory, and gzipped, since nearly
 all of it is zeroes.
 
-It is here so the test can hold the damage command to its promise on a
-machine that has no mkfs.fat, which is KDE's CI image: the test used to
-skip there. A volume made by code in this repository would not do; the
+It is here so the test always has a volume to hold the damage command
+to its promise on, and so no reason to skip: it used to skip wherever
+mkfs.fat was not on PATH, which was both Linux jobs on CI (one image
+without dosfstools, one with it in /usr/sbin and that off PATH). A
+volume made by code in this repository would not do; the
 point is that the offsets come out right on a filesystem somebody else
 laid out. Where mkfs.fat is installed the test makes a fresh volume as
 well.
