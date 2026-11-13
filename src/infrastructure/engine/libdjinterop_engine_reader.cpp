@@ -276,7 +276,10 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 {
     std::unordered_map<int64_t, std::string> result;
     const std::filesystem::path root = pathFromUtf8(engineLibraryPath);
-    const std::filesystem::path stickRoot = root.parent_path();
+    // Not root.parent_path(): for "STICK/Engine Library/" that is the
+    // Engine Library folder itself, and "STICK/./Engine Library" keeps the
+    // ".", so one cover would be spelled two ways.
+    const std::filesystem::path stickRoot = pathFromUtf8(paths::normalStickRootForCatalogPath(engineLibraryPath));
     std::string dbPath = pathToUtf8(root / "Database2" / "m.db");
 
     sqlite3 *db = nullptr;

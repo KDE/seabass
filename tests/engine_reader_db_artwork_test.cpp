@@ -569,6 +569,38 @@ int main()
         std::cout << "case 19 (a row that could not be read is not remembered as no picture) OK\n";
     }
 
+    // 20. A cover the player imported from rekordbox ("image://fileart/
+    //     .../PIONEER/Artwork/...") is named, in the first stage of the read,
+    //     under the stick root whatever
+    //     the spelling of the Engine Library folder. The stick root was the
+    //     folder's raw parent_path(): for "Engine Library/" that is the
+    //     Engine Library folder itself, and for "STICK/./Engine Library" it
+    //     keeps the ".", so the same cover was two strings (#88's family).
+    {
+        const fs::path stick = library.parent_path();
+        const std::string want = seabass::pathToUtf8(
+            (stick / "PIONEER" / "Artwork" / "00004" / "a78_m.jpg").make_preferred());
+        const std::string clean = seabass::pathToUtf8(library);
+        for (const std::string &spelling :
+             {clean, clean + "/", clean + "//", seabass::pathToUtf8(stick) + "/./Engine Library"}) {
+            // readTracks() alone: the path the catalog names. fillArtwork()
+            // then prefers the player's own copy under Engine Library/Artwork.
+            QuietReporter reporter;
+            seabass::infrastructure::engine::LibdjinteropEngineReader reader(spelling);
+            reader.setProgressReporter(reporter);
+            std::map<std::string, std::string> read;
+            for (const auto &track : reader.readTracks()) {
+                read[track.sourceId] = track.artworkPath;
+            }
+            if (!read.count("100") || read.at("100") != want) {
+                std::cerr << "FAIL: through \"" << spelling << "\" track 100's cover is \""
+                          << (read.count("100") ? read.at("100") : std::string("(no row)")) << "\", want \"" << want << "\"\n";
+                return 1;
+            }
+        }
+        std::cout << "case 20 (an imported cover is under the stick root through any spelling of the folder) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
