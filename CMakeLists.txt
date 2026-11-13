@@ -4762,8 +4762,21 @@ if(_seabass_test_tmpdir_default)
     set_tests_properties(seabass_test_tmpdir PROPERTIES FIXTURES_SETUP seabass_test_tmpdir)
 endif()
 
+# Each test's SEABASS_HOME (below) starts empty on every run. It lives in
+# the build tree, so whatever a run left in it was there for the next:
+# tst_MetadataBackupPage seeds its stored tracks only into an empty store
+# (tests/qml/qml_test_main.cpp, seedMetadataStoreForTests) and failed on
+# the Windows rig against one an older run had filled with rows of its
+# own. One setup fixture for all of them, which ctest also runs for a
+# filtered -R run.
+add_test(NAME seabass_test_home_reset
+         COMMAND ${CMAKE_COMMAND} -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/test-home")
+set_tests_properties(seabass_test_home_reset PROPERTIES FIXTURES_SETUP seabass_test_home)
+
 get_property(_seabass_all_tests DIRECTORY PROPERTY TESTS)
+list(REMOVE_ITEM _seabass_all_tests seabass_test_home_reset)
 foreach(_seabass_test IN LISTS _seabass_all_tests)
+    set_property(TEST ${_seabass_test} APPEND PROPERTY FIXTURES_REQUIRED seabass_test_home)
     get_test_property(${_seabass_test} ENVIRONMENT _seabass_test_env)
     if(_seabass_test_env STREQUAL "NOTFOUND")
         set(_seabass_test_env "")
