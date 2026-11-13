@@ -175,7 +175,7 @@ include:
 # and go after that.
 #
 #   suse_tumbleweed_qt612   openSUSE Tumbleweed, Qt 6.12
-#   windows_qt612           MSVC 2022, Qt 6.12
+#   windows_qt612           MSVC 2022, Qt 6.12 (builds, runs no tests)
 #   reuse                   REUSE compliance
 #
 # Not linux-qt6-lts.yml (Kubuntu 26.04, Qt 6.10): its image has no
@@ -185,7 +185,7 @@ include:
 #
 # Both build jobs run ci-utilities' run-ci-build.py, which reads
 # .kde-ci.yml in this repository: the CMake options, ccache, how ctest
-# is run, and where a failing test fails the job.
+# is run, where the tests run and where a failing test fails the job.
 - project: sysadmin/ci-utilities
   file:
   - /gitlab-templates/linux-qt6.yml
