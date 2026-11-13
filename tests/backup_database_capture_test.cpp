@@ -84,29 +84,26 @@ struct Harness
 // cases that capture a set while it is being written, and the pace that
 // holds the capture to it.
 //
-// The two are tied together because left to run free they race, and the
-// cases expect one outcome. The writer deletes its rollback journal at
-// every commit, thousands of times a second. captureDbSet lists the
-// set's members and measures them before its first attempt, and a
-// journal deleted between those two steps is a member that cannot be
-// measured: a ReadError, where the cases expect Unstable and Salvaged.
-// One capture in twenty came back that way with the writer already
-// running (71 of 1500, measured). A writer that is slow to start is the
-// opposite race: a pass it never touched is a clean capture.
+// The two are tied together so that those cases have one outcome however
+// the threads are scheduled: the writer starts at the capture's first
+// chunk, and from then on every chunk waits for a commit, so each pass
+// over the set has the writer inside it. Left to run free, a writer that
+// is slow to start leaves a pass it never touched, which is a clean
+// capture, and one already running made one capture in twenty a
+// ReadError (71 of 1500, measured) until captureDbSet took a journal
+// deleted under it for the writer: case 4c.
 //
-// So the writer waits for the capture's first chunk, which is read after
-// the members were measured, and from then on every chunk waits for a
-// commit: each pass over the set has the writer inside it, however the
-// two threads are scheduled.
+// `alreadyWriting` is the writer left to run free from the start, for
+// that case.
 struct BusyWriter
 {
-    std::atomic<bool> started{false};
+    std::atomic<bool> started;
     std::atomic<bool> stopped{false};
     std::atomic<std::uint64_t> commits{0};
     std::thread thread;  // last: it reads the three above
 
-    explicit BusyWriter(const fs::path &db)
-        : thread([this, db] {
+    explicit BusyWriter(const fs::path &db, bool alreadyWriting = false)
+        : started(alreadyWriting), thread([this, db] {
               sqlite3 *handle = openDb(db);
               execSql(handle, "PRAGMA synchronous=OFF");
               while (!started.load() && !stopped.load()) {
@@ -352,6 +349,44 @@ int main()
         // retrying, so the earlier passes are discarded as before. With
         // two retries that is three passes, and only the third is kept.
         std::cout << "case 4b (a salvage run keeps the database set it could not read cleanly) OK\n";
+    }
+
+    // ---- A writer already at work when the capture starts ----
+    //
+    // The set is listed and its members are measured before the first
+    // attempt. A rollback journal that was listed and that a commit has
+    // deleted before it is measured is the writer, the one an attempt
+    // that tears is read again for, and not a database that could not
+    // be read. So is one that goes while it is being read. As a
+    // ReadError either left the database out of the backup with nothing
+    // tried again, and a salvage run kept none of it.
+    //
+    // The race cannot be arranged, only run into, so the case captures
+    // often enough to meet it. Before the journal was allowed to be
+    // gone, 12 to 22 of these 400 captures were read errors in every
+    // run, and 3 to 9 with only the measuring put right.
+    {
+        const fs::path db = root / "Engine Library" / "Database2" / "written.db";
+        createDatabase(db, 40);
+        BusyWriter writer(db, /*alreadyWriting=*/true);
+        int unreadable = 0;
+        std::string lastDetail;
+        for (int i = 0; i < 400; ++i) {
+            Harness h;
+            const DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/written.db", *h.updater, 0, {},
+                                                      /*salvage=*/i % 2 == 1);
+            if (capture.status == DbSetCapture::Status::ReadError) {
+                ++unreadable;
+                lastDetail = capture.detail;
+            }
+        }
+        writer.stop();
+        if (unreadable != 0) {
+            std::cerr << unreadable << " of 400 captures of a set being written came back as read errors, the last: "
+                      << lastDetail << "\n";
+        }
+        assert(unreadable == 0);
+        std::cout << "case 4c (a journal deleted between the listing and the measuring is the writer, not a read error) OK\n";
     }
 
     // ---- A member the stick stops giving part-way ----
