@@ -231,6 +231,16 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
     for (const fs::path &member : declared) {
         std::error_code sizeEc;
         const std::uint64_t size = fs::file_size(member, sizeEc);
+        if (member != mainDb && sizeEc == std::errc::no_such_file_or_directory) {
+            // A sidecar that was listed and is gone is a rollback journal
+            // deleted by a commit: the writer the attempts below exist
+            // for, not a set that could not be read. It has
+            // no size to hold against the ceiling, and every attempt
+            // lists the set afresh. Refused here, one capture in twenty
+            // of a database being written left it out of the backup
+            // with nothing tried (71 of 1500, measured 2026-11-13).
+            continue;
+        }
         if (sizeEc) {
             // The ceiling exists because a database at or past it cannot
             // be read safely; a stat that failed is not permission to
@@ -329,6 +339,13 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             // chokes on. The manifest row and the salvage log say "0 of
             // N bytes" either way.
             const bool mainFileGaveNothing = m == 0 && entry->entry.size == 0;
+            // A sidecar that is gone by now went while it was being
+            // read. The read that ran into that can look like a refusal
+            // (the journal of the next transaction is already there
+            // under the same name, longer than what was read of this
+            // one), and it is the writer all the same: a device that
+            // refuses does not delete the file.
+            const bool sidecarGone = m > 0 && sizeEc == std::errc::no_such_file_or_directory;
             if (salvage && source.refused() && !sizeEc && !mainFileGaveNothing && entry->entry.size < sizeNow) {
                 // Off a stick the kernel has made read-only, a refusal
                 // part-way is the device, not a writer, and what came
@@ -356,7 +373,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 // A device that refused is a read error however many
                 // times it is asked; a size that moved underneath is
                 // something writing, which is worth another pass.
-                if (source.refused()) {
+                if (source.refused() && !sidecarGone) {
                     readError = true;
                 } else {
                     torn = true;

@@ -70,7 +70,10 @@ struct DbSetCapture
         Captured,
         TooLarge,   // a member is >= MaxCapturableDbBytes; nothing was read
         Unstable,   // still changing after every retry; nothing is listed
-        ReadError,  // a member vanished or could not be read
+        // The main file vanished or a member could not be read. Not a
+        // -wal or -journal that vanished: that is a commit, and the set
+        // is read again.
+        ReadError,
         // Salvage runs only. The set could not be read consistently and
         // the last attempt was KEPT rather than thrown away: the entries
         // are listed and the caller should store them, knowing they may
