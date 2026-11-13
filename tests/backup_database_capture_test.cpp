@@ -6,8 +6,10 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -77,6 +79,77 @@ struct Harness
         updater->begin();
     }
 };
+
+// A thread that commits to a database for as long as it lives, for the
+// cases that capture a set while it is being written, and the pace that
+// holds the capture to it.
+//
+// The two are tied together because left to run free they race, and the
+// cases expect one outcome. The writer deletes its rollback journal at
+// every commit, thousands of times a second. captureDbSet lists the
+// set's members and measures them before its first attempt, and a
+// journal deleted between those two steps is a member that cannot be
+// measured: a ReadError, where the cases expect Unstable and Salvaged.
+// One capture in twenty came back that way with the writer already
+// running (71 of 1500, measured). A writer that is slow to start is the
+// opposite race: a pass it never touched is a clean capture.
+//
+// So the writer waits for the capture's first chunk, which is read after
+// the members were measured, and from then on every chunk waits for a
+// commit: each pass over the set has the writer inside it, however the
+// two threads are scheduled.
+struct BusyWriter
+{
+    std::atomic<bool> started{false};
+    std::atomic<bool> stopped{false};
+    std::atomic<std::uint64_t> commits{0};
+    std::thread thread;  // last: it reads the three above
+
+    explicit BusyWriter(const fs::path &db)
+        : thread([this, db] {
+              sqlite3 *handle = openDb(db);
+              execSql(handle, "PRAGMA synchronous=OFF");
+              while (!started.load() && !stopped.load()) {
+                  std::this_thread::yield();
+              }
+              while (!stopped.load()) {
+                  execSql(handle, "UPDATE t SET v = v + 1 WHERE id = 1");
+                  ++commits;
+              }
+              sqlite3_close(handle);
+          })
+    {
+    }
+
+    // captureDbSet's progress callback.
+    std::function<void(std::uint64_t)> pace()
+    {
+        return [this](std::uint64_t) {
+            started.store(true);
+            const std::uint64_t seen = commits.load();
+            while (commits.load() == seen) {
+                std::this_thread::yield();
+            }
+        };
+    }
+
+    void stop()
+    {
+        stopped.store(true);
+        thread.join();
+    }
+};
+
+// For an assert on a capture's status: says which status came instead,
+// and why. The assert alone names only the one that was expected.
+bool cameBack(const DbSetCapture &capture, DbSetCapture::Status expected)
+{
+    if (capture.status != expected) {
+        std::cerr << "the capture came back with status " << static_cast<int>(capture.status) << ", expected "
+                  << static_cast<int>(expected) << ": " << capture.detail << "\n";
+    }
+    return capture.status == expected;
+}
 
 }  // namespace
 
@@ -169,20 +242,11 @@ int main()
     {
         fs::path busyDb = root / "Engine Library" / "Database2" / "busy.db";
         createDatabase(busyDb, 1500);  // ~12 MiB: a read takes long enough to be interrupted
-        std::atomic<bool> stop{false};
-        std::thread writer([&] {
-            sqlite3 *db = openDb(busyDb);
-            execSql(db, "PRAGMA synchronous=OFF");
-            while (!stop.load()) {
-                execSql(db, "UPDATE t SET v = v + 1 WHERE id = 1");
-            }
-            sqlite3_close(db);
-        });
+        BusyWriter writer(busyDb);
         Harness h;
-        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/busy.db", *h.updater, 2);
-        stop.store(true);
-        writer.join();
-        assert(capture.status == DbSetCapture::Status::Unstable);
+        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/busy.db", *h.updater, 2, writer.pace());
+        writer.stop();
+        assert(cameBack(capture, DbSetCapture::Status::Unstable));
         assert(capture.entries.empty());
         assert(h.updater->newEntryCount() == 0);  // every torn attempt was forgotten
         assert(h.archive.size() > 0);              // ...but its bytes are dead space, as designed
@@ -269,22 +333,13 @@ int main()
     {
         fs::path busyDb = root / "Engine Library" / "Database2" / "salvage.db";
         createDatabase(busyDb, 1500);
-        std::atomic<bool> stop{false};
-        std::thread writer([&] {
-            sqlite3 *db = openDb(busyDb);
-            execSql(db, "PRAGMA synchronous=OFF");
-            while (!stop.load()) {
-                execSql(db, "UPDATE t SET v = v + 1 WHERE id = 1");
-            }
-            sqlite3_close(db);
-        });
+        BusyWriter writer(busyDb);
         Harness h;
-        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/salvage.db", *h.updater, 2, {},
+        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/salvage.db", *h.updater, 2, writer.pace(),
                                             /*salvage=*/true);
-        stop.store(true);
-        writer.join();
+        writer.stop();
 
-        assert(capture.status == DbSetCapture::Status::Salvaged);
+        assert(cameBack(capture, DbSetCapture::Status::Salvaged));
         assert(!capture.entries.empty() && "the attempt is kept, not thrown away");
         assert(capture.entries.size() == capture.memberRelativePaths.size());
         assert(capture.entries.size() == capture.memberMtimes.size());
