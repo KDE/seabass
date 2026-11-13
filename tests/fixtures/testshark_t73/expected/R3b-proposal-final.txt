@@ -1,0 +1,70 @@
+
+sync after rekordbox export
+  rekordbox tracks:  11
+  engine tracks:     12
+  rekordbox playlists and folders: 4
+  engine playlists and folders:    3
+  rekordbox export now: 128
+
+Compared with how this stick looked when Seabass last saved it, export 40.
+
+Playlists to create, rename, delete (5)
+  [x] create folder "T73 Folder"
+      why: rekordbox created this folder after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] create playlist "T73 Renamed"
+      why: rekordbox created this playlist after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] create playlist "T73 Folder/T73 New"
+      why: rekordbox created this playlist after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] delete playlist "T73 Delete Me" (2 member(s))
+      why: rekordbox deleted this playlist after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] delete playlist "T73 Rename Me" (4 member(s))
+      why: rekordbox deleted this playlist after Seabass last recorded the stick (export 128, recorded at 40)
+
+Tracks to add to Engine (3)
+  [x] add Contents/Seabass Test/T73/T73-N1-click-48k-120bpm.flac  T73 N1 Click 48k 120 (Seabass Test)
+      why: rekordbox added this track after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] add Contents/Seabass Test/T73/T73-N3-click-44k-128bpm.flac  T73 N3 Click 44k 128 (Seabass Test)
+      why: rekordbox added this track after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] add Contents/UnknownArtist/UnknownAlbum/T73-N2-click-48k-125bpm.aiff  T73-N2-click-48k-125bpm ()
+      why: rekordbox added this track after Seabass last recorded the stick (export 128, recorded at 40)
+
+Tracks to remove from Engine (4)
+  [x] remove Contents/Seabass Test/T73 Base/T73-B05-click-44k-110bpm.flac  T73 B05 Click 110 (Seabass Test), in 1 playlist(s)
+      why: rekordbox removed this track after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] remove Contents/Seabass Test/T73 Base/T73-B09-click-44k-118bpm.mp3  T73 B09 Click 118 (Seabass Test), in 1 playlist(s)
+      why: rekordbox removed this track after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] remove Contents/Seabass Test/T73 Base/T73-B10-click-44k-120bpm.flac  T73 B10 Click 120 (Seabass Test), in 1 playlist(s)
+      why: rekordbox removed this track after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] remove Contents/UnknownArtist/UnknownAlbum/T73-B06-click-48k-112bpm.aiff  T73-B06-click-48k-112bpm (), in 1 playlist(s)
+      why: rekordbox removed this track after Seabass last recorded the stick (export 128, recorded at 40)
+
+Playlist membership (10)
+  [x] take out of "T73 Order" #1: Contents/Seabass Test/T73 Base/T73-B08-click-44k-116bpm.flac  T73 B08 Click 116 (Seabass Test)
+      why: rekordbox moved this track within "T73 Order" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Order" #4: Contents/Seabass Test/T73 Base/T73-B08-click-44k-116bpm.flac  T73 B08 Click 116 (Seabass Test), after contents/seabass test/t73 base/t73-b12-click-44k-124bpm.flac
+      why: rekordbox moved this track within "T73 Order" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Folder/T73 New" #1: Contents/Seabass Test/T73/T73-N1-click-48k-120bpm.flac  T73 N1 Click 48k 120 (Seabass Test), first
+      why: rekordbox added this track to "T73 Folder/T73 New" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Folder/T73 New" #2: Contents/UnknownArtist/UnknownAlbum/T73-N2-click-48k-125bpm.aiff  T73-N2-click-48k-125bpm (), after contents/seabass test/t73/t73-n1-click-48k-120bpm.flac
+      why: rekordbox added this track to "T73 Folder/T73 New" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Folder/T73 New" #3: Contents/Seabass Test/T73/T73-N3-click-44k-128bpm.flac  T73 N3 Click 44k 128 (Seabass Test), after contents/unknownartist/unknownalbum/t73-n2-click-48k-125bpm.aiff
+      why: rekordbox added this track to "T73 Folder/T73 New" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Renamed" #1: Contents/Seabass Test/T73 Base/T73-B01-click-44k-102bpm.flac  T73 B01 Click 102 (Seabass Test), first
+      why: rekordbox added this track to "T73 Renamed" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Renamed" #2: Contents/Seabass Test/T73 Base/T73-B02-click-44k-104bpm.flac  T73 B02 Click 104 (Seabass Test), after contents/seabass test/t73 base/t73-b01-click-44k-102bpm.flac
+      why: rekordbox added this track to "T73 Renamed" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Renamed" #3: Contents/Seabass Test/T73 Base/T73-B03-click-44k-106bpm.flac  T73 B03 Click 106 (Seabass Test), after contents/seabass test/t73 base/t73-b02-click-44k-104bpm.flac
+      why: rekordbox added this track to "T73 Renamed" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Renamed" #4: Contents/Seabass Test/T73 Base/T73-B04-click-44k-108bpm.mp3  T73 B04 Click 108 (Seabass Test), after contents/seabass test/t73 base/t73-b03-click-44k-106bpm.flac
+      why: rekordbox added this track to "T73 Renamed" after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] put into "T73 Renamed" #5: Contents/Seabass Test/T73 Base/T73-B12-click-44k-124bpm.flac  T73 B12 Click 124 (Seabass Test), after contents/seabass test/t73 base/t73-b04-click-44k-108bpm.mp3
+      why: rekordbox added this track to "T73 Renamed" after Seabass last recorded the stick (export 128, recorded at 40)
+
+Ratings and comments to Engine (2)
+  [x] rating on Engine of Contents/Seabass Test/T73 Base/T73-B01-click-44k-102bpm.flac  T73 B01 Click 102 (Seabass Test): 4
+      why: rekordbox changed the rating from no rating to 4 stars after Seabass last recorded the stick (export 128, recorded at 40)
+  [x] comment on Engine of Contents/Seabass Test/T73 Base/T73-B01-click-44k-102bpm.flac  T73 B01 Click 102 (Seabass Test): "T73 comment"
+      why: rekordbox changed the comment after Seabass last recorded the stick (export 128, recorded at 40)
+
+total: 24 change(s), 24 checked; 0 conflict(s); 0 of Engine's own kept; 0 not added
+read-only: nothing was written.
