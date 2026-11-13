@@ -23,17 +23,22 @@ Three are included, and run on every push, merge request and tag:
 | Job | What |
 |---|---|
 | `suse_tumbleweed_qt612` | Build and test, openSUSE Tumbleweed, Qt 6.12 |
-| `windows_qt612` | Build and test, MSVC 2022, Qt 6.12 |
+| `windows_qt612` | Build only, MSVC 2022, Qt 6.12 |
 | `reuse` | REUSE compliance |
 
 The two build jobs are configured by `.kde-ci.yml`, not by
-`.gitlab-ci.yml`: a Release build with ccache, `ctest -j` over the whole
-suite as registered by default (so without the storm), and a failing
-test fails the job on Linux. Two things are left out there, each with
+`.gitlab-ci.yml`: a Release build with ccache and, on Linux, `ctest -j`
+over the whole suite as registered by default (so without the storm),
+where a failing test fails the job. Two things are left out there, each with
 its reason beside it in `.kde-ci.yml`: `sleep_inhibitor_test`, which the
 CI machines' logind refuses, and the `unzip` and `7z` cases of the backup
-archive cross-validation on an image without those tools. On Windows a failing test is reported and
-the job stays green, until the suite has passed there once.
+archive cross-validation on an image without those tools.
+
+The Windows job builds and runs no tests (`run-tests-on` in
+`.kde-ci.yml`). The suite ran there once and did not finish inside the
+job's hour: the same tests took nine times the test time they take on
+Linux, the file-heavy ones a hundred times or more. The numbers are
+beside the option; the cause is not measured yet.
 
 The custom Linux lanes in the table below are still there. They go once
 the standard jobs have run green beside them.

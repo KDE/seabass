@@ -41,7 +41,20 @@ Options:
   # For a test that sets no TIMEOUT of its own. The default is 60.
   per-test-timeout: 300
 
-  # Without this a failing suite leaves the job green. Windows is not
-  # listed yet: the suite has never run on MSVC, and it joins this list
-  # once it has passed there.
+  # The tests run on Linux. The Windows job builds and stops there (the
+  # default is to test on Windows as well).
+  #
+  # The suite does not fit in that job's hour. The one run it had
+  # (pipeline 1418451) was killed at the hour with tests still running,
+  # after a 27 minute build. The 368 tests that had reported by then took
+  # 23636 s of test time between them, against 2608 s for the same tests
+  # on Linux; the ones that mostly read and write small files took a
+  # hundred times as long or more (owned_change_test 2 s and 165 s), and
+  # 33 ran into the 300 s limit while still printing passing cases. What
+  # makes that machine so slow at it has not been measured. One test
+  # failed outright: qt_decoder_timeline_test, "Failed to initialize
+  # Windows Media Foundation".
+  run-tests-on: ['Linux']
+
+  # Without this a failing suite leaves the job green.
   require-passing-tests-on: ['Linux']
