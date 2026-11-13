@@ -464,6 +464,36 @@ int main(int argc, char **argv)
         std::cout << "case 12 (a stick root not in normal form still finds its entries) OK\n";
     }
 
+    // Case 13: a stick at the root of a drive keeps its cache on that
+    // drive's root. The trailing separator used to be stripped before the
+    // cache path was built: "D:\" became "D:", and "D:" / "Seabass" is
+    // drive-RELATIVE on Windows ("D:Seabass\...", wherever the process's
+    // current directory on D: is); "/" became "", and the cache went to
+    // the working directory. Both spellings are a root with nothing after
+    // it, so "/" shows the fault on every platform: a cache planted under
+    // the working directory must not be the one a cache on "/" reads.
+    {
+        const fs::path planted = root / "case13-root";
+        const fs::path work = root / "case13-cwd";
+        const std::string track = writeFile(planted / "Contents" / "track.mp3", "case 13");
+        {
+            MetadataCache cache(seabass::pathToUtf8(planted));
+            cache.store(track, sample());
+            assert(cache.save());
+        }
+        fs::create_directories(work);
+        fs::copy(planted / "Seabass", work / "Seabass", fs::copy_options::recursive);
+        const fs::path before = fs::current_path();
+        fs::current_path(work);
+        const size_t read = MetadataCache("/").size();
+        fs::current_path(before);
+        if (read != 0) {
+            std::cerr << "FAIL: a cache on \"/\" read " << read << " entries from the working directory's Seabass/caches/metadata.jsonl\n";
+            return 1;
+        }
+        std::cout << "case 13 (a stick at a drive root keeps its cache on that root) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all metadata_cache_test cases passed\n";
     return 0;

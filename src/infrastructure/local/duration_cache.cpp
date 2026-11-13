@@ -129,10 +129,16 @@ FileStat statFile(const std::string &utf8Path)
 DurationCache::DurationCache(std::string stickRoot)
     : m_stickRoot(normalizeSeparators(paths::normalStickRoot(stickRoot)))
 {
+    // The cache path from the root as normalStickRoot() gives it, BEFORE
+    // the separator is stripped, as CachedAudioContentProbe does: a stick
+    // at a drive root is "D:/" there, and stripped it is "D:", which joins
+    // to the drive-relative "D:Seabass/..." on Windows; "/" would become
+    // "" and put the cache in the working directory.
+    m_cachePath = paths::stickDurationCache(pathFromUtf8(m_stickRoot));
+    // Stripped only for relativeKey()'s prefix arithmetic.
     while (!m_stickRoot.empty() && m_stickRoot.back() == '/') {
         m_stickRoot.pop_back();
     }
-    m_cachePath = paths::stickDurationCache(pathFromUtf8(m_stickRoot));
 
     std::ifstream in(m_cachePath, std::ios::binary);
     if (!in) {
