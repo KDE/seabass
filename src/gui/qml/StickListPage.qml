@@ -754,6 +754,7 @@ Page {
 
                         StickToolCards {
                             id: toolCards
+                            objectName: "stickToolCards"
                             Layout.fillWidth: true
                             row: root.selectedRow
                             group: root.selectedGroup
@@ -761,6 +762,7 @@ Page {
                             appSettingsController: root.appSettingsController
                             backupAdvisor: root.backupAdvisor
                             editRegistry: root.editRegistry
+                            fullBackupCount: homeBackups.fullBackupCount
                             columns: root.cardColumns
                             onBrowseRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.browseRequested(stickLabel, rekordboxPath, enginePath)

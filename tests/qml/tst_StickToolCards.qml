@@ -752,6 +752,45 @@ TestCase {
         compare(card(unmounted, "Restore Backup").enabled, true);
     }
 
+    // #95: with no full stick backup on this computer and none matched to
+    // this stick, Restore Backup has nothing to put back. It is grey and
+    // says why instead of opening a page that finds nothing; one backup
+    // anywhere, or one the advisor matched, makes it live again.
+    function test_restoreBackupIsGreyWithNothingToRestore_data() {
+        return [
+            {tag: "empty stick, no backups", stick: "empty", count: 0, advice: {}, enabled: false,
+             subtitle: "No full stick backups on this computer yet"},
+            {tag: "library, no backups", stick: "main", count: 0, advice: {}, enabled: false,
+             subtitle: "Put a full stick backup from this computer onto this stick"},
+            {tag: "empty stick, backups of other sticks", stick: "empty", count: 2, advice: {}, enabled: true,
+             subtitle: "No known stick backups yet. Browse for a backup file to restore"},
+            {tag: "count not known yet", stick: "empty", count: -1, advice: {}, enabled: true,
+             subtitle: "No known stick backups yet. Browse for a backup file to restore"},
+            {tag: "advisor matched one", stick: "empty", count: 0,
+             advice: {state: "restore", backupPath: "/b/OLD.zip", backupLabel: "OLD"}, enabled: true,
+             subtitle: "Restore OLD's library onto this stick"},
+            {tag: "this stick's own backup", stick: "main", count: 0,
+             advice: {state: "current", backupPath: "/b/MAIN.zip", backupLabel: "MAIN", matchedBy: "fingerprint"}, enabled: true,
+             subtitle: "Put this stick's full backup back onto it, or another one"},
+        ];
+    }
+    function test_restoreBackupIsGreyWithNothingToRestore(data) {
+        const stick = data.stick === "empty" ? emptyStick() : makeStick({});
+        const advice = {};
+        advice[stick.mountPoint] = makeAdvice(data.advice);
+        const cards = makeCards(stick, "backup", advice, {fullBackupCount: data.count});
+        const restore = card(cards, "Restore Backup");
+        compare(restore.visible, true);
+        compare(restore.enabled, data.enabled);
+        compare(restore.cardSubtitle, data.subtitle);
+        if (!data.enabled) {
+            compare(restore.disabledReason, "No full stick backups on this computer");
+            const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "restoreStickBackupRequested"});
+            mouseClick(restore);
+            compare(spy.count, 0, "a grey card opens nothing");
+        }
+    }
+
     // A library opened from an ordinary folder offers the library cards,
     // but not the actions that need a real drive behind them.
     function test_folderLibraryHasNoDeviceOnlyActions() {

@@ -255,6 +255,14 @@ Item {
     // devicePath to restore a whole stick through.
     readonly property bool showRestoreBackup: (!root.hasKnownLibrary && !root.isFolder)
         || (root.writable && root.devicePath.length > 0)
+    // How many full stick backups this computer holds (the page's
+    // HomeBackupsController); -1 while not known, which greys nothing.
+    property int fullBackupCount: -1
+    // Something Restore Backup could put back: a backup on this computer,
+    // or one the advisor matched to this stick. With neither, the card is
+    // grey and says so, rather than opening a page that finds nothing.
+    readonly property bool restoreHasSource: root.fullBackupCount !== 0
+        || root.adviceState === "restore" || root.currentArchivePath.length > 0
     readonly property bool showCleanUp: root.writable
 
     // What two of Maintain's cards say before they are opened: whether
@@ -665,11 +673,14 @@ Item {
                         : "Put a full stick backup from this computer onto this stick")
                     : (root.adviceState === "restore"
                         ? "Restore " + root.advice.backupLabel + "'s library onto this stick"
-                        : "No known stick backups yet. Browse for a backup file to restore")
+                        : (root.restoreHasSource
+                            ? "No known stick backups yet. Browse for a backup file to restore"
+                            : "No full stick backups on this computer yet"))
                 cardIcon: "document-revert"
                 visible: root.group === "backup" && root.showRestoreBackup
-                enabled: root.hasKnownLibrary || !root.thisRowBusy
-                disabledReason: "Wait until the stick has finished mounting or ejecting"
+                enabled: root.restoreHasSource && (root.hasKnownLibrary || !root.thisRowBusy)
+                disabledReason: !root.restoreHasSource ? "No full stick backups on this computer"
+                    : "Wait until the stick has finished mounting or ejecting"
                 onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
                     root.hasKnownLibrary ? root.currentArchivePath
                                          : (root.adviceState === "restore" ? root.advice.backupPath : ""),

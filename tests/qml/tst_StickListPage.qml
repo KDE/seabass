@@ -103,7 +103,10 @@ TestCase {
     // What StickListPage reads and calls on the real AppSettingsController.
     function fakeAppSettings() {
         return {
-            experimentalFeaturesEnabled: true, stickBackupDirectory: "/tmp", homeGroup: "explore",
+            // A directory that cannot exist, so the page counts no full
+            // backups whatever this machine holds; a test that needs some
+            // says so (fullBackupCount on the tool cards).
+            experimentalFeaturesEnabled: true, stickBackupDirectory: "/nonexistent/seabass-test-backups", homeGroup: "explore",
             toLocalFileUrl: function(p) { return "file://" + p; },
             localPathFromUrl: function(u) { return u.replace(/^file:\/\//, ""); },
         };
@@ -793,10 +796,17 @@ TestCase {
         verify(card !== null);
         compare(card.visible, true);
         compare(card.cardSubtitle.toLowerCase().indexOf("one of your"), -1);
-        compare(card.cardSubtitle, "No known stick backups yet. Browse for a backup file to restore");
+        // The page's own count reaches the card: none here (#95).
+        compare(page.homeBackupsFullCount, 0);
+        compare(card.enabled, false);
+        compare(card.cardSubtitle, "No full stick backups on this computer yet");
 
+        // With backups of other sticks on the computer it browses for one.
+        findByName(page, "stickToolCards").fullBackupCount = 3;
+        compare(card.enabled, true);
+        compare(card.cardSubtitle, "No known stick backups yet. Browse for a backup file to restore");
         var restore = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
-        card.clicked();
+        mouseClick(card);
         compare(restore.count, 1);
         compare(restore.signalArguments[0][0], "/media/BLANK");
         // No specific match: the restore page opens to browse, not to a
