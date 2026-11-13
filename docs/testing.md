@@ -69,6 +69,7 @@ rather than quietly subtracting a target or turning a test into a skip:
 | Qt6 | configure fails; `-DSEABASS_GUI=OFF` to build CLI + C++ tests only |
 | Qt6 Test/QuickTest | configure fails; `-DSEABASS_TESTS=OFF` to build without any tests |
 | python3 / unzip / 7z | configure fails; they are what `backup_archive_crossvalidation_test` checks our ZIP writer against |
+| mkfs.fat / fsck.fat (dosfstools), on Linux | configure fails; `damage_filesystem_test` makes a FAT32 volume with one and has the other confirm the damage can be repaired. The volume committed under `tests/fixtures/fat32_volume` is damaged and compared either way |
 | Boost.Filesystem | configure fails; libdjinterop's own suite needs it. `-DSEABASS_LIBDJINTEROP_TESTS=OFF` to build without those fourteen |
 
 libdjinterop is built from a pinned checkout under `third_party/`, not

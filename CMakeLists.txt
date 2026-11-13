@@ -288,6 +288,67 @@ if(SEABASS_TESTS)
     endif()
 endif()
 
+# mkfs.fat and fsck.fat for damage_filesystem_test, which holds the hidden
+# damage-filesystem command to "eight bytes and no others". The test
+# always runs against a FAT32 volume committed under tests/fixtures, so it
+# has nothing to skip on; with these it also damages a volume this
+# machine's own mkfs.fat lays out, and has fsck.fat confirm both that the
+# damage is seen and that it can be repaired, which is the reason for
+# choosing this damage. It used to look the tools up on PATH when it ran
+# and exit 77 without them, and both CI Linux jobs recorded it "Skipped"
+# (pipeline 1419600).
+#
+# Required on Linux, where the command exists and the repair it serves is
+# run. SEABASS_REQUIRE_FAT_TOOLS=OFF is for KDE's CI image again, whose
+# packages are not ours to choose; elsewhere the default is OFF because
+# the command is Linux only. mcopy (mtools) is used when it is here, to
+# put files into the fresh volume, and never required: the committed
+# volume has files in it.
+#
+# Found here rather than by the test because distributions keep them in
+# /usr/sbin, which is not on every user's PATH (it is not on the CI
+# image's); find_program looks there regardless.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_seabass_require_fat_tools_default ON)
+else()
+    set(_seabass_require_fat_tools_default OFF)
+endif()
+option(SEABASS_REQUIRE_FAT_TOOLS "Refuse to configure the tests without mkfs.fat and fsck.fat"
+    ${_seabass_require_fat_tools_default})
+find_program(MKFS_FAT_EXECUTABLE NAMES mkfs.fat mkfs.vfat)
+find_program(FSCK_FAT_EXECUTABLE NAMES fsck.fat fsck.vfat)
+find_program(MCOPY_EXECUTABLE mcopy)
+if(SEABASS_TESTS AND NOT WIN32)
+    set(_seabass_absent_fat_tools "")
+    if(NOT MKFS_FAT_EXECUTABLE)
+        list(APPEND _seabass_absent_fat_tools "mkfs.fat")
+    endif()
+    if(NOT FSCK_FAT_EXECUTABLE)
+        list(APPEND _seabass_absent_fat_tools "fsck.fat")
+    endif()
+    if(_seabass_absent_fat_tools)
+        list(JOIN _seabass_absent_fat_tools ", " _seabass_absent_fat_tools_text)
+        if(SEABASS_REQUIRE_FAT_TOOLS)
+            message(FATAL_ERROR
+                "damage_filesystem_test needs mkfs.fat and fsck.fat (Debian/Ubuntu "
+                "and openSUSE: dosfstools) to damage a FAT32 volume made on this "
+                "machine and have fsck confirm it can be repaired, and these are "
+                "missing: ${_seabass_absent_fat_tools_text}\n"
+                "To build without any tests at all, configure with -DSEABASS_TESTS=OFF.")
+        else()
+            message(WARNING
+                "damage_filesystem_test will damage the committed FAT32 volume "
+                "and compare every byte, but NOT make a volume with this "
+                "machine's mkfs.fat or have fsck.fat confirm the repair where "
+                "the tool is missing. Missing: ${_seabass_absent_fat_tools_text}. "
+                "SEABASS_REQUIRE_FAT_TOOLS is OFF, so this is allowed.")
+        endif()
+    endif()
+    if(MKFS_FAT_EXECUTABLE AND NOT MCOPY_EXECUTABLE)
+        message(STATUS "damage_filesystem_test: no mcopy (mtools), so the volume it makes here stays empty")
+    endif()
+endif()
+
 # Only needed by stick_write_lock_test, which spawns a real std::thread to
 # prove StickWriteLock actually excludes a concurrent locker.
 find_package(Threads REQUIRED)
@@ -3433,18 +3494,39 @@ if(TARGET seabass_edit)
     if(NOT WIN32)
         target_link_libraries(damage_filesystem_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
-    # Needs mkfs.fat to build a real FAT32 volume. Without it the cases
-    # that matter cannot run, and the test says so rather than passing.
+    # The committed FAT32 volume is under the source tree, and the tools
+    # are the ones found above (see SEABASS_REQUIRE_FAT_TOOLS), as absolute
+    # paths and empty where there is none. Baked in rather than looked up
+    # on PATH when the test runs: that lookup is what used to turn into an
+    # exit 77 on a machine with /usr/sbin off PATH.
+    set(_seabass_mkfs_fat "")
+    set(_seabass_fsck_fat "")
+    set(_seabass_mcopy "")
+    if(MKFS_FAT_EXECUTABLE)
+        set(_seabass_mkfs_fat "${MKFS_FAT_EXECUTABLE}")
+    endif()
+    if(FSCK_FAT_EXECUTABLE)
+        set(_seabass_fsck_fat "${FSCK_FAT_EXECUTABLE}")
+    endif()
+    if(MCOPY_EXECUTABLE)
+        set(_seabass_mcopy "${MCOPY_EXECUTABLE}")
+    endif()
+    target_compile_definitions(damage_filesystem_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        SEABASS_CONFIGURED_MKFS_FAT="${_seabass_mkfs_fat}"
+        SEABASS_CONFIGURED_FSCK_FAT="${_seabass_fsck_fat}"
+        SEABASS_CONFIGURED_MCOPY="${_seabass_mcopy}"
+    )
+    # Not on Windows at all: it runs mkfs.fat, fsck.fat and mcopy through
+    # a POSIX shell, which std::system() there does not have, and the
+    # command is itself Linux-only (see its own "On macOS and Windows"
+    # message, and the rig's H1, left out on Windows for the same reason).
+    # Built everywhere, registered where it can run.
     #
-    # Not on Windows at all: it builds the image through a POSIX shell (dd,
-    # mkfs.fat, `command -v`), which std::system() there does not have, so
-    # every Windows round recorded it as a skip -- a red that says nothing
-    # about the command, which is itself Linux-only (see its own "On macOS
-    # and Windows" message, and the rig's H1, left out on Windows for the
-    # same reason). Built everywhere, registered where it can run.
+    # No SKIP_RETURN_CODE: the committed volume is always there, so there
+    # is no legitimate reason for this test to do anything but run.
     if(NOT WIN32)
         add_test(NAME damage_filesystem_test COMMAND damage_filesystem_test)
-        set_tests_properties(damage_filesystem_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     # Taking the right to look away is what makes exists() fail: search
     # permission off a directory on POSIX, deny ACEs on Windows (see the

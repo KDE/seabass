@@ -689,6 +689,12 @@ craft_appimage_qt6_x86_64:
   # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
   # would silence it and empty this lane of its purpose.
   #
+  # dosfstools and mtools are TEST dependencies as well:
+  # damage_filesystem_test makes a FAT32 volume with mkfs.fat, puts files
+  # in it with mcopy and has fsck.fat confirm the damage can be repaired.
+  # Without mkfs.fat the test used to skip here (pipeline 1419600); now
+  # the configure refuses.
+  #
   # fonts-noto-core ships NotoSansSymbols2-Regular.ttf, which is the
   # family Theme.symbolFamily falls back to when the BUNDLED subset fails
   # to load. The container has fontconfig and DejaVu (pulled in by Qt),
@@ -760,6 +766,7 @@ craft_appimage_qt6_x86_64:
       qt6-svg-plugins
       qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
       xvfb unzip 7zip libxkbcommon-dev
+      dosfstools mtools
       qt6-base-private-dev qt6-declarative-private-dev
       ccache
       fonts-noto-core
@@ -1040,6 +1047,7 @@ linux:qt68:
         libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
         libxcb-randr0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xinput0 libxcb-xkb1
         xvfb unzip 7zip
+        dosfstools mtools
         ccache
         fonts-noto-core
     - fc-cache -f

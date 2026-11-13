@@ -29,10 +29,13 @@ Three are included, and run on every push, merge request and tag:
 The two build jobs are configured by `.kde-ci.yml`, not by
 `.gitlab-ci.yml`: a Release build with ccache and, on Linux, `ctest -j`
 over the whole suite as registered by default (so without the storm),
-where a failing test fails the job. Two things are left out there, each with
+where a failing test fails the job. Three things are left out there, each with
 its reason beside it in `.kde-ci.yml`: `sleep_inhibitor_test`, which the
-CI machines' logind refuses, and the `unzip` and `7z` cases of the backup
-archive cross-validation on an image without those tools.
+CI machines' logind refuses, the `unzip` and `7z` cases of the backup
+archive cross-validation on an image without those tools, and the
+`mkfs.fat` and `fsck.fat` cases of `damage_filesystem_test` on an image
+without dosfstools (the test still runs there, against the FAT32 volume
+committed with it).
 
 The Windows job builds and runs no tests (`run-tests-on` in
 `.kde-ci.yml`). The suite ran there once and did not finish inside the
