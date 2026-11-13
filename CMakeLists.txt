@@ -3152,8 +3152,17 @@ if(TARGET seabass_edit)
 
     # The #73 hardware round of 2026-11-13 replayed on what the stick
     # TESTSHARK held at each step (tests/fixtures/testshark_t73): the audio
-    # heads and the chain checker. One ctest per case.
+    # heads and the chain checker, the 24-row proposal, save, undo and save
+    # again, and the players' writes after them. One ctest per case.
     add_executable(testshark_t73_test
+        src/gui/rekordbox_export_sync_controller.hpp
+        src/gui/rekordbox_export_sync_controller.cpp
+        src/gui/rekordbox_export_sync_list_model.hpp
+        src/gui/rekordbox_export_sync_list_model.cpp
+        src/gui/staged_cue_edit_controller.hpp
+        src/gui/staged_cue_edit_controller.cpp
+        src/gui/sync_plan_list_model.hpp
+        src/gui/sync_plan_list_model.cpp
         tests/engine_chain_check.hpp
         tests/testshark_t73_test.cpp
     )
@@ -3163,7 +3172,7 @@ if(TARGET seabass_edit)
     if(TARGET seabass_taglib)
         target_link_libraries(testshark_t73_test PRIVATE seabass_taglib)
     endif()
-    foreach(_t73_case fixture)
+    foreach(_t73_case fixture proposal save replay)
         add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73 ${_t73_case})
         set_tests_properties(testshark_t73_${_t73_case}_test PROPERTIES LABELS "integration"
