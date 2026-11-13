@@ -564,11 +564,33 @@ QtObject {
     //
     // The rail column's width (HomeRail's implicitWidth).
     readonly property real homeRailWidth: scaled(200)
+    // The widest title a home card carries, and how wide that is in the
+    // font the card draws it in (ActionCard's large title).
+    //
+    // Measured, not written down, because the font is not ours to know:
+    // titleFamily is not bundled, so where Manrope is not installed a
+    // title is drawn in the system's own sans, and the same words at the
+    // same size are 235 px in Noto Sans SemiBold and 275 px in DejaVu
+    // Sans Bold.
+    // tst_StickListPage holds every card's title against this one, so a
+    // longer title added later fails there.
+    readonly property string homeCardWidestTitle: "Sync after Rekordbox Export"
+    readonly property real homeCardTitleSize: cardTitleSize * 1.1
+    readonly property TextMetrics homeCardTitleMetrics: TextMetrics {
+        text: root.homeCardWidestTitle
+        font.family: root.titleFamily
+        font.weight: root.cardTitleWeight
+        font.pointSize: root.homeCardTitleSize
+    }
     // The narrowest a home card may be: its padding, icon and gap (66 px
-    // at 10 pt), the widest standard title on one line ("Create Backup
-    // USB Stick", 202 px at 10 pt), the right padding, and room enough
-    // that the long subtitles take two lines rather than three or four.
-    readonly property real homeCardMinWidth: scaled(300)
+    // at 10 pt), the widest standard title on one line and the right
+    // padding. Never under 300 px at 10 pt, so that the long subtitles
+    // take two lines rather than three or four. The two widths below are
+    // built on this one, so the forms change where the cards have room,
+    // whatever the font.
+    readonly property real homeCardMinWidth: Math.max(scaled(300),
+        snap(cardPadding + iconSizeNormal + rowSpacing
+             + Math.ceil(homeCardTitleMetrics.advanceWidth) + cardPadding))
     // From this width up, the medium form: the page margins, the rail
     // column, the gap beside it, the pane's room for a card's focus frame
     // on either side (focusRoom, StickListPage's homePane) and one card

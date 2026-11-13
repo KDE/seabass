@@ -120,7 +120,7 @@ Button {
                     text: card.cardTitle
                     font.family: Theme.titleFamily
                     font.weight: Theme.cardTitleWeight
-                    font.pointSize: card.large ? Theme.cardTitleSize * 1.1 : Theme.cardTitleSize
+                    font.pointSize: card.large ? Theme.homeCardTitleSize : Theme.cardTitleSize
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }

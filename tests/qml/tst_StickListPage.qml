@@ -1137,6 +1137,49 @@ TestCase {
         }
     }
 
+    // Every large card under an item, shown or not.
+    function largeCardsUnder(item, out) {
+        if (!item) {
+            return out;
+        }
+        if (item.cardTitle !== undefined && item.large === true) {
+            out.push(item);
+            return out;
+        }
+        for (let i = 0; i < item.children.length; ++i) {
+            largeCardsUnder(item.children[i], out);
+        }
+        return out;
+    }
+
+    // The narrowest home card has room for every standard title on one
+    // line, the titles this stick does not show among them: the test
+    // above only sees the cards of the stick it was given, and a stick
+    // with both libraries, or with none, shows others. Theme sizes the
+    // narrowest card by the title it names as the widest, so a longer
+    // title added to any card fails here until Theme names that one.
+    function test_everyTitleFitsTheNarrowestCard() {
+        const page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})},
+                              {width: Math.ceil(Theme.homeWideWidth) + 10});
+        const cards = largeCardsUnder(page, []);
+        const titles = cards.map((card) => card.cardTitle);
+        for (const expected of ["Sync after Rekordbox Export", "Create Backup USB Stick",
+                                "Cues on Duplicate Copies", "Browse a Full Stick Backup"]) {
+            verify(titles.indexOf(expected) >= 0, expected + " is among the cards looked at: " + titles.join(", "));
+        }
+        for (const card of cards) {
+            if (card.experimental) {
+                continue;
+            }
+            const label = findChild(card, "cardTitleLabel");
+            verify(label !== null, card.cardTitle + " has a title label");
+            const room = Theme.homeCardMinWidth - card.textInset - card.rightPadding;
+            verify(label.implicitWidth > 0, card.cardTitle + " has a measured width");
+            verify(label.implicitWidth <= room + 0.5,
+                   card.cardTitle + " is " + label.implicitWidth + " wide, the narrowest card leaves " + room);
+        }
+    }
+
     // The order of a stick's cards in each group, left to right and
     // down. Browse Library leads Explore; Sync Cue Points, what most people
     // open Seabass for, leads Sync. Read off the grid as laid out, not off
