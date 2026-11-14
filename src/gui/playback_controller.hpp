@@ -4,10 +4,8 @@
 
 #pragma once
 
-#include <QAudioOutput>
 #include <QCache>
 #include <QAbstractItemModel>
-#include <QMediaPlayer>
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
@@ -28,6 +26,8 @@ class AnlzPathIndex;
 
 class QAudioBuffer;
 class QAudioBufferOutput;
+class QAudioOutput;
+class QMediaPlayer;
 
 namespace seabass::gui
 {
@@ -122,9 +122,9 @@ public:
     QVariantList cues() const { return m_cues; }
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
     QList<int> beatNumbers() const { return m_beatNumbers; }
-    qint64 duration() const { return m_player.duration(); }
-    qint64 position() const { return m_player.position(); }
-    bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
+    qint64 duration() const;
+    qint64 position() const;
+    bool playing() const;
     bool liveLevels() const { return m_buffersArrive; }
     bool libraryBusy() const { return m_libraryBusy; }
     void setLibraryBusy(bool busy);
@@ -136,7 +136,7 @@ public:
     int beatCount() const { return m_beatCount; }
     // Linear gain, 0.0 (silent) to 1.0 (unattenuated) -- matches
     // QAudioOutput::volume()'s own scale directly, no remapping.
-    qreal volume() const { return m_audioOutput.volume(); }
+    qreal volume() const { return m_volume; }
     void setVolume(qreal volume);
     QString errorMessage() const { return m_errorMessage; }
 
@@ -250,10 +250,21 @@ private:
     void loadQueueRow(int row);
     QVariant queueValue(int row, const QByteArray &role) const;
 
-    QMediaPlayer m_player;
-    QAudioOutput m_audioOutput;
+    // The player, made the first time a track is loaded (gh#96). Making
+    // a QMediaPlayer loads Qt's media backend, and on Windows that is the
+    // FFmpeg plugin with 19 DLLs and 69 MB behind it, every one of which
+    // Defender scans the first time it is loaded after an install. Made
+    // with the controller, that came before the first window. Until there
+    // is a player nothing is loaded, so nothing plays: duration, position
+    // and playing read 0, 0 and false, and the transport does nothing.
+    QMediaPlayer *player();
+    QMediaPlayer *m_player = nullptr;
+    QAudioOutput *m_audioOutput = nullptr;
+    // Kept here, so it can be set (MPRIS, a test) before there is an
+    // output to hand it to. 1.0 is QAudioOutput's own default.
+    qreal m_volume = 1.0;
     // Owned through QObject parentage; null where Qt cannot deliver the
-    // decoded audio (before 6.8).
+    // decoded audio (before 6.8) and until there is a player.
     QAudioBufferOutput *m_bufferOutput = nullptr;
     domain::AudioLevelMeter m_meter;
     domain::AudioLevels m_levels;

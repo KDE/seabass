@@ -10,6 +10,8 @@
 #include <QAudioBuffer>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 #include <QAudioBufferOutput>
+#include <QAudioOutput>
+#include <QMediaPlayer>
 #endif
 #include <QFile>
 #include <QUrl>
@@ -113,22 +115,30 @@ QVariantList readWaveform(const QString &format, const QString &libraryPath, con
 
 }  // namespace
 
-PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
-{
-    m_player.setAudioOutput(&m_audioOutput);
+PlaybackController::PlaybackController(QObject *parent) : QObject(parent) {}
 
-    connect(&m_player, &QMediaPlayer::durationChanged, this, &PlaybackController::durationChanged);
-    connect(&m_player, &QMediaPlayer::positionChanged, this, &PlaybackController::positionChanged);
-    connect(&m_player, &QMediaPlayer::playbackStateChanged, this, &PlaybackController::playingChanged);
+QMediaPlayer *PlaybackController::player()
+{
+    if (m_player) {
+        return m_player;
+    }
+    m_player = new QMediaPlayer(this);
+    m_audioOutput = new QAudioOutput(this);
+    m_audioOutput->setVolume(static_cast<float>(m_volume));
+    m_player->setAudioOutput(m_audioOutput);
+
+    connect(m_player, &QMediaPlayer::durationChanged, this, &PlaybackController::durationChanged);
+    connect(m_player, &QMediaPlayer::positionChanged, this, &PlaybackController::positionChanged);
+    connect(m_player, &QMediaPlayer::playbackStateChanged, this, &PlaybackController::playingChanged);
     // Paused or stopped, no more audio arrives to bring the levels down:
     // without this a display would freeze on the last kick.
-    connect(&m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
+    connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
         if (state != QMediaPlayer::PlayingState) {
             clearLevels();
         }
     });
     // On to the next track by itself when one ends.
-    connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
         if (status != QMediaPlayer::EndOfMedia) {
             return;
         }
@@ -146,31 +156,54 @@ PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
     // tools/macos-monterey-dmg.sh) made Play do nothing. 6.11 plays them
     // as they are. One seek to where the player already is, once the file
     // has loaded, is the same seek a click in the waveform made by hand.
-    connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
         // Not only while playing: when a file finishes loading the player
         // has not reported play() back yet, and a seek in place changes
         // nothing for a paused one.
         if (status == QMediaPlayer::LoadedMedia) {
-            m_player.setPosition(m_player.position());
+            m_player->setPosition(m_player->position());
         }
     });
 #endif
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     m_bufferOutput = new QAudioBufferOutput(this);
-    m_player.setAudioBufferOutput(m_bufferOutput);
+    m_player->setAudioBufferOutput(m_bufferOutput);
     // Queued onto this thread by the context object: the player hands
     // buffers over from its own.
     connect(m_bufferOutput, &QAudioBufferOutput::audioBufferReceived, this, &PlaybackController::meterBuffer);
 #endif
-    connect(&m_audioOutput, &QAudioOutput::volumeChanged, this, &PlaybackController::volumeChanged);
-    connect(&m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &message) {
+    connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &message) {
         setErrorMessage(message);
     });
+    return m_player;
+}
+
+qint64 PlaybackController::duration() const
+{
+    return m_player ? m_player->duration() : 0;
+}
+
+qint64 PlaybackController::position() const
+{
+    return m_player ? m_player->position() : 0;
+}
+
+bool PlaybackController::playing() const
+{
+    return m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
 }
 
 void PlaybackController::setVolume(qreal volume)
 {
-    m_audioOutput.setVolume(static_cast<float>(qBound(0.0, volume, 1.0)));
+    const qreal bounded = qBound(0.0, volume, 1.0);
+    if (bounded == m_volume) {
+        return;
+    }
+    m_volume = bounded;
+    if (m_audioOutput) {
+        m_audioOutput->setVolume(static_cast<float>(m_volume));
+    }
+    emit volumeChanged();
 }
 
 void PlaybackController::load(const QString &format, const QString &libraryPath, const QString &sourceId,
@@ -178,7 +211,9 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
                                const QString &artworkPath, const QVariantList &cues,
                                const QString &fallbackArtworkPath)
 {
-    m_player.stop();
+    if (m_player) {
+        m_player->stop();
+    }
     setErrorMessage({});
     // The queue belongs to one library; a track from another ends it.
     if (m_queue && (format != m_queueFormat || libraryPath != m_queueLibraryPath)) {
@@ -244,8 +279,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             m_beatTimesMs.append(beat.timeMs + shift.beatsMs);
             m_beatNumbers.append(beat.beatInBar);
         }
-        m_player.setSource(QUrl::fromLocalFile(filePath));
-        m_player.play();
+        player()->setSource(QUrl::fromLocalFile(filePath));
+        m_player->play();
     }
 
     emit trackChanged();
@@ -256,7 +291,9 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
 void PlaybackController::loadFile(const QString &format, const QString &libraryPath, const QString &filePath,
                                   const QString &title, const QString &artist)
 {
-    m_player.stop();
+    if (m_player) {
+        m_player->stop();
+    }
     setErrorMessage({});
     dropQueue();
     m_advanceWhenLibraryFree = false;
@@ -279,8 +316,8 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
     } else {
-        m_player.setSource(QUrl::fromLocalFile(filePath));
-        m_player.play();
+        player()->setSource(QUrl::fromLocalFile(filePath));
+        m_player->play();
     }
 
     emit trackChanged();
@@ -401,7 +438,7 @@ void PlaybackController::setLibraryBusy(bool busy)
     emit libraryBusyChanged();
     if (!busy && m_advanceWhenLibraryFree) {
         m_advanceWhenLibraryFree = false;
-        if (m_player.mediaStatus() == QMediaPlayer::EndOfMedia) {
+        if (m_player && m_player->mediaStatus() == QMediaPlayer::EndOfMedia) {
             next();
         }
     }
@@ -487,7 +524,7 @@ void PlaybackController::skipBeats(int beats)
     }
     const std::vector<double> grid(m_beatTimesMs.cbegin(), m_beatTimesMs.cend());
     seek(static_cast<qint64>(domain::positionAfterSkippingBeats(
-        grid, static_cast<double>(m_player.position()), beats, static_cast<double>(m_player.duration()))));
+        grid, static_cast<double>(position()), beats, static_cast<double>(duration()))));
 }
 
 void PlaybackController::setDesktopMediaControls(bool enabled)
@@ -516,33 +553,35 @@ void PlaybackController::setDesktopMediaControls(bool enabled)
 
 void PlaybackController::play()
 {
-    if (m_hasTrack) {
-        m_player.play();
+    if (m_hasTrack && m_player) {
+        m_player->play();
     }
 }
 
 void PlaybackController::pause()
 {
-    if (m_hasTrack) {
-        m_player.pause();
+    if (m_hasTrack && m_player) {
+        m_player->pause();
     }
 }
 
 void PlaybackController::togglePlay()
 {
-    if (!m_hasTrack) {
+    if (!m_hasTrack || !m_player) {
         return;
     }
     if (playing()) {
-        m_player.pause();
+        m_player->pause();
     } else {
-        m_player.play();
+        m_player->play();
     }
 }
 
 void PlaybackController::seek(qint64 positionMs)
 {
-    m_player.setPosition(positionMs);
+    if (m_player) {
+        m_player->setPosition(positionMs);
+    }
     emit seeked(positionMs);
 }
 
@@ -566,16 +605,18 @@ bool PlaybackController::jumpToHotCue(int number)
 
 void PlaybackController::stop()
 {
-    m_player.stop();
-    // Clearing the source, not just stopping playback, is what actually
-    // releases the underlying file handle -- QMediaPlayer's backend (on
-    // Linux, GStreamer/FFmpeg) keeps a track's file open as long as a
-    // source is loaded, playing or not. Without this, ejecting a stick
-    // right after playing a track from it consistently failed with
-    // "target is busy": stop() left hasTrack false (so the UI correctly
-    // showed no track loaded) while the real file descriptor stayed open
-    // underneath, which the UI had no way to reveal.
-    m_player.setSource(QUrl());
+    if (m_player) {
+        m_player->stop();
+        // Clearing the source, not just stopping playback, is what actually
+        // releases the underlying file handle -- QMediaPlayer's backend (on
+        // Linux, GStreamer/FFmpeg) keeps a track's file open as long as a
+        // source is loaded, playing or not. Without this, ejecting a stick
+        // right after playing a track from it consistently failed with
+        // "target is busy": stop() left hasTrack false (so the UI correctly
+        // showed no track loaded) while the real file descriptor stayed open
+        // underneath, which the UI had no way to reveal.
+        m_player->setSource(QUrl());
+    }
     m_hasTrack = false;
     m_currentFormat.clear();
     m_currentSourceId.clear();

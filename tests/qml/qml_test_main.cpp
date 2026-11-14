@@ -738,6 +738,24 @@ public:
 
     Q_INVOKABLE bool fileExists(const QString &file) const { return QFile::exists(file); }
 
+    // How many of the object's own children inherit `className`: for a
+    // test that a controller has not made something it makes on demand
+    // (tst_PlaybackLazyPlayer: no QMediaPlayer before a track, gh#96).
+    Q_INVOKABLE int childrenInheriting(QObject *object, const QString &className) const
+    {
+        if (object == nullptr) {
+            return -1;
+        }
+        const QByteArray name = className.toLatin1();
+        int count = 0;
+        for (const QObject *child : object->children()) {
+            if (child->inherits(name.constData())) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     // The file's sha256 in hex, or empty when it cannot be read: for a
     // check that a save and its undo left a catalog byte for byte as it
     // was (tst_CueTableRoundTrip, tst_LiveEditMode's W11).
