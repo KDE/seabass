@@ -43,8 +43,20 @@ Options:
   # ctest -j over the machine's cores. The default is one test at a time.
   tests-run-in-parallel: True
 
-  # For a test that sets no TIMEOUT of its own. The default is 60.
-  per-test-timeout: 300
+  # For a test that sets no TIMEOUT of its own. The default is 60, the
+  # most that is taken is 1000.
+  #
+  # 900, because the tests that write a whole library run as long as the
+  # runner's disk takes to sync, and the runner is a VM that shares its
+  # host's disk with other jobs. With a second Seabass pipeline on the
+  # same host (node4-vmrunner, pipelines 1421380 and 1421389, pushed four
+  # minutes apart) the integration tests took 1186 s between them where
+  # they take 364 s alone: rekordbox_cue_writer_every_track_test and
+  # library_backup_roundtrip_test ran into 300 s while still working
+  # (48 s and 51 s alone), backup_fingerprint_describes_archive_test
+  # passed at 286 s. A test that hangs costs fifteen minutes here
+  # instead of five.
+  per-test-timeout: 900
 
   # The tests run on Linux. The Windows job builds and stops there (the
   # default is to test on Windows as well).
