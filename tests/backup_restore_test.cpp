@@ -1327,5 +1327,57 @@ int main()
         std::cout << "case label-proof (another label: covers stored, the rest renamed, no room refused) OK\n";
     }
 
+    // ---- Links to a third name, a stick without a label, a folder, the backup's own stick ----
+    //
+    // The backup was taken off STICK, whose library still names ELSEWHERE,
+    // the stick it came from, in every link.
+    {
+        // Onto C: the links name neither the backup's stick nor C, and
+        // are made label-proof like the backup's own.
+        Fixture f("labelproof-third");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.stick, "ELSEWHERE", 3, 2);
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        RestoreOptions options = f.restore;
+        options.targetLabel = "C";
+        RestoreSummary summary = RestoreStickBackup::execute(options);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(summary.coversCopied == 2 && summary.coverLinksRenamed == 1 && summary.coverLinksLeft == 0);
+        assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[0])));
+        assert(coverOf(f.target, tracks[2]).hash == "image://fileart//media/C/PIONEER/Artwork/00001/cover2.jpg");
+
+        // Onto a stick with no label: copied, the imageless one left and said.
+        Fixture g("labelproof-nolabel");
+        const std::vector<std::int64_t> unnamed = plantPlayerCoverLinks(g.stick, "ELSEWHERE", 3, 2);
+        assert(BackupStick::execute(g.backup).status == BackupOutcomeStatus::Complete);
+        options = g.restore;
+        options.targetLabel.clear();
+        options.targetIsStick = true;
+        summary = RestoreStickBackup::execute(options);
+        assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+        assert(summary.coversCopied == 2 && summary.coverLinksRenamed == 0 && summary.coverLinksLeft == 1);
+        assert(coverLinksSentence(summary) == "2 covers copied into the Engine library, 1 left naming another drive.");
+        assert(isStoredCoverFile(g.target, coverOf(g.target, unnamed[0])));
+        assert(coverOf(g.target, unnamed[2]).hash
+               == "image://fileart//media/ELSEWHERE/PIONEER/Artwork/00001/cover2.jpg");
+
+        // Into a folder (no label, not a stick), and back onto the
+        // backup's own stick: the library exactly as backed up, the
+        // links to the third name too.
+        for (const bool ownStick : {false, true}) {
+            Fixture h(ownStick ? "labelproof-own" : "labelproof-folder");
+            const std::vector<std::int64_t> kept = plantPlayerCoverLinks(h.stick, "ELSEWHERE", 2, 2);
+            assert(BackupStick::execute(h.backup).status == BackupOutcomeStatus::Complete);
+            options = h.restore;
+            options.targetLabel = ownStick ? h.backup.stickLabel : std::string();
+            options.targetIsStick = ownStick;
+            summary = RestoreStickBackup::execute(options);
+            assert(summary.status == RestoreSummary::Status::Restored);
+            assert(coverLinksSentence(summary).empty());
+            assert(coverOf(h.target, kept[0]).hash
+                   == "image://fileart//media/ELSEWHERE/PIONEER/Artwork/00001/cover0.jpg");
+        }
+        std::cout << "case label-proof-other-names (a third name, no label, a folder, the backup's own stick) OK\n";
+    }
+
     return 0;
 }

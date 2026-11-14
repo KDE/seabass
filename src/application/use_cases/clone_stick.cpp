@@ -58,6 +58,8 @@ RestoreOptions restoreOptionsFor(const CloneStickOptions &options)
     restore.cancel = options.cancel;
     restore.libraryCheck = options.libraryCheck;
     restore.targetLabel = options.targetLabel;
+    // A clone's target is always a stick, labelled or not.
+    restore.targetIsStick = true;
     restore.freeSpaceMarginBytes = options.freeSpaceMarginBytes;
     if (options.onProgress) {
         restore.onProgress = [&options](const RestoreProgress &progress) {

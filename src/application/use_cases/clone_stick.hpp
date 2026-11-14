@@ -52,6 +52,8 @@ struct CloneStickOptions
     RestoredLibraryCheck libraryCheck;
     // The target stick's label; see RestoreOptions::targetLabel. The
     // source's is backup.stickLabel, which the archive's manifest carries.
+    // Empty is a stick without a label, not a folder: a clone always
+    // writes a stick (RestoreOptions::targetIsStick).
     std::string targetLabel;
     std::uint64_t freeSpaceMarginBytes = 64u << 20;
 };

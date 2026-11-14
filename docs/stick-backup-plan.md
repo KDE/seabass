@@ -513,6 +513,31 @@ copied image files are named by their content and are reused. The
 database keeps the backup's mtime afterwards, as every restored file
 does, so the stick list does not call the target the newer library.
 
+Widened 2026-11-14 (#101), two cases the above left alone:
+
+- **Links to a third name.** A library carried from stick to stick can
+  name a stick that is neither the backup's nor the target's: TESTSHARK
+  held 1469 links to WHALESHARK2, the stick its library was first
+  imported on. The step now takes every link whose label is not the
+  target's (`relabelImportedArtworkLinksOfOtherSticks` for the rename),
+  not only the ones to the manifest's `stickLabel`. On a copy of
+  TESTSHARK's library in a folder named NEWSTICK: 1467 covers copied, and
+  the cover audit went from 1469 covers a player cannot show to 2.
+- **A stick without a label.** `RestoreOptions::targetIsStick` says the
+  target is a stick even when `targetLabel` is empty (the restore page
+  sets it for a drive from its list, a clone always). The covers are
+  copied all the same; nothing can be renamed, since there is no name to
+  rename to and what Engine OS mounts such a stick as is not known here.
+  A link that could not be copied stays as it was, is counted
+  (`RestoreSummary::coverLinksLeft`: "3 covers copied into the Engine
+  library, 1 left naming another drive.") and is a warning, as is the
+  no-room case.
+
+Unchanged: the step runs only when the two labels differ. A restore onto
+the backup's own stick, and one into a folder, write the library exactly
+as backed up, links to a third name included; Library Health's cover
+check reports those.
+
 Known gap, not new: an overlay restore leaves a target-only `m.db-journal`
 beside a database set it rewrites. A label-proof step interrupted inside
 its transaction leaves exactly that; rolled back onto the same backup

@@ -514,6 +514,8 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
         const QVariantMap map = disk.toMap();
         if (!targetRoot.isEmpty() && map["mountPoint"].toString() == targetRoot) {
             options.targetLabel = map["label"].toString().toStdString();
+            // A drive from the list, whether or not it has a label.
+            options.targetIsStick = true;
             break;
         }
     }

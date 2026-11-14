@@ -412,7 +412,24 @@ struct LinkRow
     std::string hash;
 };
 
-bool linksTo(sqlite3 *handle, const std::string &label, std::vector<LinkRow> &rows, std::string *error)
+// Which of a library's player links are meant: the ones naming one stick,
+// or every one that names any other.
+enum class Links { To, NotTo };
+
+// Whether `hash` is a player's link ("image://fileart//media/<label>/...")
+// that `which` and `label` pick out. NotTo an empty label is every link:
+// a stick without a name is named by none of them.
+bool isLinkPicked(std::string_view hash, Links which, const std::string &label)
+{
+    const auto at = mountedLabelIn(hash);
+    if (!at) {
+        return false;
+    }
+    const bool names = !label.empty() && sameStickLabel(hash.substr(at->first, at->second), label);
+    return which == Links::To ? names : !names;
+}
+
+bool linksTo(sqlite3 *handle, Links which, const std::string &label, std::vector<LinkRow> &rows, std::string *error)
 {
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(handle, "SELECT id, hash FROM AlbumArt WHERE hash IS NOT NULL;", -1, &stmt, nullptr)
@@ -432,7 +449,7 @@ bool linksTo(sqlite3 *handle, const std::string &label, std::vector<LinkRow> &ro
             continue;
         }
         std::string hash(static_cast<const char *>(bytes), static_cast<size_t>(size));
-        if (!importedPathIsThisStickOnAPlayer(hash, label)) {
+        if (!isLinkPicked(hash, which, label)) {
             continue;
         }
         rows.push_back({sqlite3_column_int64(stmt, 0), type == SQLITE_TEXT, std::move(hash)});
@@ -452,6 +469,12 @@ std::string stickLabelForArtwork(const std::string &stickRoot)
     return volumeLabelOf(stickRoot);
 }
 
+namespace
+{
+int relabelLinks(const std::string &databaseFile, Links which, const std::string &label, const std::string &newLabel,
+                 std::string *error);
+}
+
 int relabelImportedArtworkLinks(const std::string &databaseFile, const std::string &oldLabel,
                                 const std::string &newLabel, std::string *error)
 {
@@ -460,6 +483,24 @@ int relabelImportedArtworkLinks(const std::string &databaseFile, const std::stri
                  + "\" to \"" + newLabel + "\"";
         return -1;
     }
+    return relabelLinks(databaseFile, Links::To, oldLabel, newLabel, error);
+}
+
+int relabelImportedArtworkLinksOfOtherSticks(const std::string &databaseFile, const std::string &newLabel,
+                                             std::string *error)
+{
+    if (!isMountableLabel(newLabel)) {
+        *error = "a cover link can only be renamed to a stick's name, not to \"" + newLabel + "\"";
+        return -1;
+    }
+    return relabelLinks(databaseFile, Links::NotTo, newLabel, newLabel, error);
+}
+
+namespace
+{
+int relabelLinks(const std::string &databaseFile, Links which, const std::string &label, const std::string &newLabel,
+                 std::string *error)
+{
     sqlite3 *handle = openExisting(databaseFile, SQLITE_OPEN_READWRITE, error);
     if (handle == nullptr) {
         return -1;
@@ -476,7 +517,7 @@ int relabelImportedArtworkLinks(const std::string &databaseFile, const std::stri
         return fail("could not begin renaming the cover links");
     }
     std::vector<LinkRow> rows;
-    if (!linksTo(handle, oldLabel, rows, error)) {
+    if (!linksTo(handle, which, label, rows, error)) {
         sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(handle);
         return -1;
@@ -520,6 +561,7 @@ int relabelImportedArtworkLinks(const std::string &databaseFile, const std::stri
     sqlite3_close(handle);
     return renamed;
 }
+}  // namespace
 
 int countImportedArtworkLinks(const std::string &databaseFile, const std::string &label, std::string *error)
 {
@@ -528,7 +570,7 @@ int countImportedArtworkLinks(const std::string &databaseFile, const std::string
         return -1;
     }
     std::vector<LinkRow> rows;
-    const bool read = linksTo(handle, label, rows, error);
+    const bool read = linksTo(handle, Links::To, label, rows, error);
     sqlite3_close(handle);
     return read ? static_cast<int>(rows.size()) : -1;
 }
@@ -1335,9 +1377,9 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
 namespace
 {
 
-// The tracks pointing at a link to `label`, with the link.
-bool tracksOnLinksTo(sqlite3 *handle, const std::string &label, std::vector<std::pair<std::int64_t, std::string>> &out,
-                     std::string *error)
+// The tracks pointing at a link to any stick but `label`, with the link.
+bool tracksOnLinksOfOtherSticks(sqlite3 *handle, const std::string &label,
+                                std::vector<std::pair<std::int64_t, std::string>> &out, std::string *error)
 {
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(handle,
@@ -1357,7 +1399,7 @@ bool tracksOnLinksTo(sqlite3 *handle, const std::string &label, std::vector<std:
             continue;
         }
         std::string hash(static_cast<const char *>(bytes), static_cast<size_t>(size));
-        if (importedPathIsThisStickOnAPlayer(hash, label)) {
+        if (isLinkPicked(hash, Links::NotTo, label)) {
             out.emplace_back(sqlite3_column_int64(stmt, 0), std::move(hash));
         }
     }
@@ -1371,9 +1413,8 @@ bool tracksOnLinksTo(sqlite3 *handle, const std::string &label, std::vector<std:
 
 }  // namespace
 
-LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPath, const std::string &oldLabel,
-                                             const std::string &newLabel, std::uint64_t freeBytes,
-                                             std::uint64_t marginBytes)
+LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPath, const std::string &newLabel,
+                                             std::uint64_t freeBytes, std::uint64_t marginBytes)
 {
     LabelProofArtwork result;
     const std::string db = pathToUtf8(databaseFile(engineLibraryPath));
@@ -1385,7 +1426,7 @@ LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPat
         if (handle == nullptr) {
             return result;
         }
-        const bool read = tracksOnLinksTo(handle, oldLabel, linked, &result.error);
+        const bool read = tracksOnLinksOfOtherSticks(handle, newLabel, linked, &result.error);
         sqlite3_close(handle);
         if (!read) {
             return result;
@@ -1398,7 +1439,7 @@ LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPat
 
     // Only the link rows, each with its image on this stick: the repair
     // decides per track from the database as it is, and is handed nothing
-    // that is not a link to the old label.
+    // that is not a link to another stick's name.
     std::vector<ArtworkEntry> entries;
     std::set<std::string> images;
     for (const auto &[trackId, reference] : linked) {
@@ -1410,7 +1451,7 @@ LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPat
         std::error_code ec;
         if (entry.imageOnStick.empty() || !fs::is_regular_file(pathFromUtf8(entry.imageOnStick), ec)
             || !isImageARepairCanName(pathFromUtf8(entry.imageOnStick))) {
-            continue;  // renamed below, the one thing left that a player can follow
+            continue;  // renamed below, when this stick has a name to rename it to
         }
         if (images.insert(entry.imageOnStick).second) {
             result.bytesNeeded += fs::file_size(pathFromUtf8(entry.imageOnStick), ec);
@@ -1431,23 +1472,29 @@ LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPat
         result.copied = repair.repaired;
     }
 
-    // Whatever still points at a link to the old label, counted before
-    // the rename that follows it.
+    // Whatever still points at a link to another stick's name, counted
+    // before the rename that follows it.
     std::vector<std::pair<std::int64_t, std::string>> left;
     {
         sqlite3 *handle = openExisting(db, SQLITE_OPEN_READONLY, &result.error);
         if (handle == nullptr) {
             return result;
         }
-        const bool read = tracksOnLinksTo(handle, oldLabel, left, &result.error);
+        const bool read = tracksOnLinksOfOtherSticks(handle, newLabel, left, &result.error);
         sqlite3_close(handle);
         if (!read) {
             return result;
         }
     }
+    if (newLabel.empty()) {
+        // A stick without a name: there is nothing to rename a link to,
+        // and what a player mounts such a stick as is not known here.
+        result.left = static_cast<int>(left.size());
+        return result;
+    }
     // Every link row, also the ones no track points at any more: a
-    // library that names the old stick nowhere.
-    if (relabelImportedArtworkLinks(db, oldLabel, newLabel, &result.error) < 0) {
+    // library that names no other stick anywhere.
+    if (relabelImportedArtworkLinksOfOtherSticks(db, newLabel, &result.error) < 0) {
         return result;
     }
     result.renamed = static_cast<int>(left.size());

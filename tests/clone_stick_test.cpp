@@ -47,6 +47,11 @@ struct Fixture
         options.backup.stickIdentifier = "uuid-source";
         options.backup.stickLabel = "SOURCE";
         options.targetRoot = target;
+        // A target with the source's own label, so the cases that are not
+        // about covers get the library exactly as it is: the fixture's
+        // m.db is a single table, not an Engine library a cover could be
+        // looked up in. The cover cases set the label they are about.
+        options.targetLabel = "SOURCE";
     }
     ~Fixture()
     {
@@ -264,6 +269,61 @@ int main()
         assert(coverLinksSentence(outcome.restore).empty());
         assert(snapshot(f.target) == snapshot(f.source) && "byte for byte the source");
         std::cout << "case 8 (same label: the library is copied as it is) OK\n";
+    }
+
+    // ---- The source's links name a third stick: they are made label-proof all the same ----
+    //
+    // A library that came to SOURCE from a stick called ELSEWHERE still
+    // names ELSEWHERE in every link. Cloned onto C they named neither
+    // stick and were left alone, so the clone showed no cover.
+    {
+        Fixture f("thirdlabel");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.source, "ELSEWHERE", 4, 3);
+        f.options.targetLabel = "C";
+        const CloneStickOutcome outcome = CloneStick::execute(f.options);
+        assert(outcome.status == CloneStickOutcome::Status::Cloned);
+        assert(outcome.restore.coversCopied == 3);
+        assert(outcome.restore.coverLinksRenamed == 1);
+        assert(outcome.restore.coverLinksLeft == 0);
+        assert(coverLinksSentence(outcome.restore) == "3 covers copied into the Engine library, 1 renamed to C.");
+        for (int i = 0; i < 3; ++i) {
+            assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[i])) && "a stored cover, file present");
+        }
+        assert(coverOf(f.target, tracks[3]).hash == "image://fileart//media/C/PIONEER/Artwork/00001/cover3.jpg");
+        assert(coverOf(f.source, tracks[0]).hash
+               == "image://fileart//media/ELSEWHERE/PIONEER/Artwork/00001/cover0.jpg");
+        std::cout << "case 9 (links to a third stick's name: stored covers, the imageless one renamed) OK\n";
+    }
+
+    // ---- Onto a stick without a label: the covers are copied, nothing can be renamed ----
+    //
+    // Nothing was done at all for a target without a label, so every
+    // link went on naming the source. The images that are on the stick
+    // are copied into the Engine library as for any other target; the
+    // link without an image has no name to be renamed to, stays as it
+    // was, and the clone says so.
+    {
+        Fixture f("nolabel");
+        const std::vector<std::int64_t> tracks = plantPlayerCoverLinks(f.source, "SOURCE", 4, 3);
+        f.options.targetLabel.clear();
+        const CloneStickOutcome outcome = CloneStick::execute(f.options);
+        assert(outcome.restore.coversCopied == 3);
+        assert(outcome.restore.coverLinksRenamed == 0);
+        assert(outcome.restore.coverLinksLeft == 1);
+        assert(outcome.restore.coverLinksLabel.empty());
+        assert(coverLinksSentence(outcome.restore)
+               == "3 covers copied into the Engine library, 1 left naming another drive.");
+        for (int i = 0; i < 3; ++i) {
+            assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[i])) && "a stored cover, file present");
+        }
+        assert(coverOf(f.target, tracks[3]).hash == "image://fileart//media/SOURCE/PIONEER/Artwork/00001/cover3.jpg");
+        bool said = false;
+        for (const std::string &warning : outcome.restore.warnings) {
+            said = said || warning.find("no name") != std::string::npos;
+        }
+        assert(said && "the clone says a cover is left that a player will not show");
+        assert(outcome.restore.status == seabass::application::RestoreSummary::Status::RestoredWithProblems);
+        std::cout << "case 10 (a stick without a label: covers stored, the imageless link left and said) OK\n";
     }
 
     assert(toString(CloneStickOutcome::Status::Cloned) == "cloned");

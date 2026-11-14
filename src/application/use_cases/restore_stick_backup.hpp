@@ -72,10 +72,17 @@ struct RestoreOptions
     // links to that path, so on a stick with another label they lead
     // nowhere. When this is not the label the backup was taken under
     // (compared without case), the restored Engine library is made
-    // label-proof as the last thing written: see
-    // makeArtworkLinksLabelProof() in engine_artwork.hpp. Empty: not
-    // known (a folder, not a stick), and nothing is done.
+    // label-proof as the last thing written: every link to a name that
+    // is not this one, whether the backup's or one the library carried
+    // from a stick before it. See makeArtworkLinksLabelProof() in
+    // engine_artwork.hpp. Empty with targetIsStick unset: not known (a
+    // folder, not a stick), and nothing is done.
     std::string targetLabel;
+    // The target is a stick, whether or not it has a label. A stick
+    // without one still gets its covers copied into the Engine library;
+    // the links that cannot be copied have no name to be renamed to and
+    // are reported.
+    bool targetIsStick = false;
     std::size_t chunkSize = 1u << 20;
     std::uint64_t freeSpaceMarginBytes = 64u << 20;
     // Stands in for asking the target's volume how much room it has.
@@ -197,12 +204,16 @@ struct RestoreSummary
     // Empty for every backup taken off a healthy stick.
     std::vector<PartiallyRestored> partial;
     // Restored onto a stick called something else (RestoreOptions::
-    // targetLabel): of the tracks whose cover was a player's link to the
-    // backup's label, how many now keep it in the Engine library, and how
-    // many are still links, renamed to coverLinksLabel because their image
-    // could not be copied. coverLinksLabel is empty when nothing was done.
+    // targetLabel): of the tracks whose cover was a player's link to
+    // another stick's name, how many now keep it in the Engine library,
+    // and how many are still links, renamed to coverLinksLabel because
+    // their image could not be copied. On a stick without a label nothing
+    // can be renamed: coverLinksLabel stays empty and coverLinksLeft
+    // counts the links that still name another stick. All zero and empty
+    // when nothing was done.
     int coversCopied = 0;
     int coverLinksRenamed = 0;
+    int coverLinksLeft = 0;
     std::string coverLinksLabel;
 };
 
