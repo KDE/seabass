@@ -63,8 +63,15 @@ TestCase {
         compare(page.mediaController.calls.length, 0, "a cancelled run changed nothing to re-detect");
     }
 
+    // tests/qml/ -> tests/fixtures/one_stick_two_catalogs: a hundred
+    // tracks. A create syncs the disk some thirteen times for every track
+    // (15,514 fdatasync calls for the 1,161 tracks of anonymized_library,
+    // counted with strace on 2026-11-14), so with that fixture this file
+    // took 56 s on CI when it passed and the 60 s below ran out when the
+    // disk was busy: three pipelines in a row. The words on the dialog
+    // are the same for a hundred tracks.
     function fixture() {
-        return decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+        return decodeURIComponent(Qt.resolvedUrl("../fixtures/one_stick_two_catalogs").toString()
             .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
     }
 
