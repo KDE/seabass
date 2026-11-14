@@ -389,6 +389,60 @@ int main()
         std::cout << "case 4c (a journal deleted between the listing and the measuring is the writer, not a read error) OK\n";
     }
 
+    // ---- A short read of a set that has moved since ----
+    //
+    // A read that comes back short is called a refusal when the file
+    // still claims more bytes than it gave, which is how a failing
+    // stick is told from the end of a file. A journal that a writer is
+    // filling, deleting and starting again claims more just as readily.
+    // The set tells the two apart: a device that refuses changes
+    // nothing, and a writer moves the fingerprint. As a ReadError the
+    // database was left out of the backup with nothing tried again.
+    //
+    // The case above runs into it about one run in thirty (4 of 120
+    // runs, measured 2026-11-14: "read 4616 of 8720 bytes", "read 4612
+    // of 4612", "read 8192 of 4620"). Here it is arranged: the journal
+    // grows at the moment its read is cut short.
+    {
+        const std::string name = "Engine Library/Database2/moved.db";
+        const fs::path db = root / "Engine Library" / "Database2" / "moved.db";
+        createDatabase(db, 40);
+        const fs::path journal = fs::path(db).concat("-journal");
+        {
+            std::ofstream out(journal, std::ios::binary);
+            out << std::string(20'000, 'j');
+        }
+        int grown = 0;
+        const auto growsAndStops = [&](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == name + "-journal") {
+                std::ofstream out(journal, std::ios::binary | std::ios::app);
+                out << std::string(512, 'j');
+                ++grown;
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+        Harness h;
+        const DbSetCapture moved = captureDbSet(root, name, *h.updater, 1, {}, /*salvage=*/false, growsAndStops);
+        assert(cameBack(moved, DbSetCapture::Status::Unstable));
+        assert(grown == 2 && "and it was read again, which is what the attempts are for");
+        assert(moved.entries.empty() && h.updater->newEntryCount() == 0);
+
+        // The same short read with the set at rest is still the stick.
+        const auto stops = [&](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == name + "-journal") {
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+        Harness still;
+        const DbSetCapture refused = captureDbSet(root, name, *still.updater, 1, {}, /*salvage=*/false, stops);
+        assert(cameBack(refused, DbSetCapture::Status::ReadError));
+        assert(refused.entries.empty() && still.updater->newEntryCount() == 0);
+        fs::remove(journal);
+        std::cout << "case 4e (a short read of a set that moved is the writer, not a read error) OK\n";
+    }
+
     // ---- A member the stick stops giving part-way ----
     //
     // Measured on a real damaged stick (issue #36, A1, FAT chains cut):

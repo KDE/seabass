@@ -373,7 +373,23 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 // A device that refused is a read error however many
                 // times it is asked; a size that moved underneath is
                 // something writing, which is worth another pass.
-                if (source.refused() && !sidecarGone) {
+                //
+                // A refusal is told from an ending by asking the file
+                // how long it is after a short read, and a journal that
+                // a writer is filling, deleting and starting again says
+                // "longer" as readily as a device that stopped does. The
+                // set tells them apart: a device that refuses changes
+                // nothing, and a writer cannot regrow or replace a
+                // journal without moving its size or the main file's
+                // change counter. So a refusal with the fingerprint
+                // moved since this attempt began is the writer. Called a
+                // read error, the database was left out of the backup
+                // with nothing tried again: one run in thirty of
+                // backup_database_capture_test's 400 captures of a set
+                // being written (4 of 120 runs, measured 2026-11-14).
+                const std::optional<DbSetFingerprint> now = fingerprintDbSet(mainDb);
+                const bool setMoved = before && now && !(*before == *now);
+                if (source.refused() && !sidecarGone && !setMoved) {
                     readError = true;
                 } else {
                     torn = true;
