@@ -465,8 +465,12 @@ void allDoneMeansCapturesAreGone()
         auto capture = std::make_shared<HeldOnTheWayOut>();
         capture->latch = latch;
         capture->flag = destroyed;
-        request.start("a", {}, [capture](CancellationToken) { return 1; }, {});
-        capture.reset();
+        // Moved in, so the worker holds the only reference from the start.
+        // A copy kept here and dropped after start() raced the worker: a
+        // worker that had already run and let go left this thread holding
+        // the last one, the destructor ran here, and it waited for good at
+        // a latch only this thread opens.
+        request.start("a", {}, [capture = std::move(capture)](CancellationToken) { return 1; }, {});
         check(pumpUntil([&] { return !request.busy(); }), "all done: the request ends while its capture is still alive");
     }
     check(pumpUntil([&] { return latch->arrived.load() == 1; }), "all done: the worker lets go of the capture");
