@@ -2838,6 +2838,14 @@ add_executable(sqlite_pending_journal_test tests/sqlite_pending_journal_test.cpp
 target_include_directories(sqlite_pending_journal_test PRIVATE src)
 target_link_libraries(sqlite_pending_journal_test PRIVATE SQLite::SQLite3)
 add_test(NAME sqlite_pending_journal_test COMMAND sqlite_pending_journal_test)
+# The test makes 10,932 fdatasync calls (strace, 2026-11-14), so it takes
+# as long as the disk it runs on takes to sync: 7 s on an NVMe disk, 21 s
+# on the Ubuntu CI job, and 99 to 191 s on KDE's openSUSE job, which runs
+# twelve tests at once. That job gives a test 300 s (per-test-timeout in
+# .kde-ci.yml) and one run in four went past it (pipeline 1420674). A
+# limit of its own, which ctest's --timeout does not override, so that a
+# slow disk is a slow test and not a failed one.
+set_tests_properties(sqlite_pending_journal_test PROPERTIES TIMEOUT 900)
 
 # Forks a child process on POSIX to prove the pid-liveness staleness rule
 # against a real second process, not just an injected fake.
