@@ -410,6 +410,14 @@ TestCase {
         const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
         tryCompare(session, "pendingCount", 1, 5000);
         compare(saveSession(session).error, "");
+        // The page reads the catalogs again after a save, but one turn of
+        // the event loop later (SyncPage.onSaveFinished), so "not busy"
+        // right after the save can be the moment before that read starts.
+        // The undo then ran beside it, and on Windows could not replace the
+        // Engine database the read had open: "could not write ... m.db".
+        // The save's toast goes up in the same call that starts the read.
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 5000);
         tryCompare(controller, "busy", false, 300000);
         verify(session.canUndo, "precondition: the save can be undone");
 
@@ -434,7 +442,6 @@ TestCase {
 
         // The save's own toast can still be up when the undo finishes, so
         // "showing" alone proves nothing: wait for the undo's words.
-        const toast = findChild(page, "savedToast");
         tryCompare(findChild(toast, "confirmationToastLabel"), "text", summary.written + " undo steps written", 5000);
         verify(toast.showing, "the undo's toast is up");
         const dialog = findChild(page, "summaryDialog");
