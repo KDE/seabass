@@ -137,6 +137,47 @@ bool absenceIsCertain(const std::error_code &ec)
     return !ec || ec == std::errc::no_such_file_or_directory;
 }
 
+namespace
+{
+
+// Asks about a -wal or -journal, and asks again while the answer is
+// "access denied". On Windows a file deleted while somebody still has it
+// open stays in the directory until the last handle closes, and until
+// then every stat and open of it is refused with access denied rather
+// than "not there". A rollback journal is deleted by every commit, so a
+// set being written answers that way for a moment, over and over, and
+// the moment ends in one of the two answers the callers know: gone, or
+// the next transaction's journal. Asked once, it read as a set that
+// could not be read: 9 to 20 of 400 captures of a database being written
+// (backup_database_capture_test case 4c on Windows, 2026-11-18).
+// A sidecar that is refused for longer than this is refused for real,
+// and the answer stays the error it was. 63 ms in all.
+template <typename Ask>
+auto askSidecar(std::error_code &ec, Ask ask)
+{
+    auto answer = ask(ec);
+    for (const int waitMs : {1, 2, 4, 8, 16, 32}) {
+        if (ec != std::errc::permission_denied) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+        answer = ask(ec);
+    }
+    return answer;
+}
+
+bool sidecarIsThere(const fs::path &sidecar, std::error_code &ec)
+{
+    return askSidecar(ec, [&sidecar](std::error_code &asked) { return fs::is_regular_file(sidecar, asked); });
+}
+
+std::uintmax_t sidecarSize(const fs::path &sidecar, std::error_code &ec)
+{
+    return askSidecar(ec, [&sidecar](std::error_code &asked) { return fs::file_size(sidecar, asked); });
+}
+
+}  // namespace
+
 std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
 {
     if (presenceKnown != nullptr) {
@@ -147,7 +188,7 @@ std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
         fs::path sidecar = mainDb;
         sidecar += suffix;
         std::error_code ec;
-        const bool there = fs::is_regular_file(sidecar, ec);
+        const bool there = sidecarIsThere(sidecar, ec);
         if (!absenceIsCertain(ec) && presenceKnown != nullptr) {
             *presenceKnown = false;
         }
@@ -179,7 +220,7 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
     // returning one that says hasWal=false is how the second pass comes
     // to agree with the first about a set neither of them saw whole.
     std::error_code sidecarEc;
-    const bool walThere = fs::is_regular_file(wal, sidecarEc);
+    const bool walThere = sidecarIsThere(wal, sidecarEc);
     if (!absenceIsCertain(sidecarEc)) {
         return std::nullopt;
     }
@@ -194,7 +235,7 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
     }
     fs::path journal = mainDb;
     journal += "-journal";
-    const bool journalThere = fs::is_regular_file(journal, sidecarEc);
+    const bool journalThere = sidecarIsThere(journal, sidecarEc);
     if (!absenceIsCertain(sidecarEc)) {
         return std::nullopt;
     }
@@ -230,7 +271,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
     }
     for (const fs::path &member : declared) {
         std::error_code sizeEc;
-        const std::uint64_t size = fs::file_size(member, sizeEc);
+        const std::uint64_t size = member == mainDb ? fs::file_size(member, sizeEc) : sidecarSize(member, sizeEc);
         if (member != mainDb && sizeEc == std::errc::no_such_file_or_directory) {
             // A sidecar that was listed and is gone is a rollback journal
             // deleted by a commit: the writer the attempts below exist
@@ -320,7 +361,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             // the check that does not depend on the two passes failing
             // differently.
             std::error_code sizeEc;
-            const std::uintmax_t sizeNow = fs::file_size(member, sizeEc);
+            const std::uintmax_t sizeNow = m == 0 ? fs::file_size(member, sizeEc) : sidecarSize(member, sizeEc);
             // Zero bytes of the MAIN file is not a part of a database.
             // A device that refuses at the very first page gives
             // refused() and an entry of 0, the same shape as one that
