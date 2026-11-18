@@ -528,6 +528,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/stick_performance_history.cpp
     src/infrastructure/bulk_write_strategy.cpp
     src/infrastructure/durable_file_write.cpp
+    src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
     src/infrastructure/rekordbox/anlz_source_for_root.cpp
     src/infrastructure/local/browsed_backup_root.cpp
@@ -717,6 +718,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/cleanup/pending_deletion_manifest.cpp
     src/infrastructure/cleanup/stick_containment.cpp
     src/infrastructure/durable_file_write.cpp
+    src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/engine_playlists.cpp
@@ -2619,6 +2621,13 @@ add_executable(durable_file_write_test
 target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing)
 target_include_directories(durable_file_write_test PRIVATE src)
 add_test(NAME durable_file_write_test COMMAND durable_file_write_test)
+
+add_executable(shared_read_stream_test
+    tests/shared_read_stream_test.cpp
+)
+target_link_libraries(shared_read_stream_test PRIVATE seabass_core_testing)
+target_include_directories(shared_read_stream_test PRIVATE src)
+add_test(NAME shared_read_stream_test COMMAND shared_read_stream_test)
 
 add_executable(scratch_dir_guard_test
     tests/scratch_dir_guard_test.cpp

@@ -12,6 +12,7 @@
 #include <span>
 #include <system_error>
 
+#include "infrastructure/paths/shared_read_stream.hpp"
 #include "infrastructure/stick_backup/archive_updater.hpp"
 
 namespace seabass::infrastructure::stick_backup
@@ -29,11 +30,14 @@ namespace seabass::infrastructure::stick_backup
 // could not tell a refusal from an ending was the one reading it.
 //
 // So: one class, in a header both can reach. A hardening applied here
-// is applied to every reader of a stick.
+// is applied to every reader of a stick. One of them: the file is opened
+// so that it can still be deleted and renamed while it is read (see
+// SharedReadStream), because on Windows a plain ifstream made a writer
+// committing at that moment fail.
 class FileEntrySource : public EntrySource
 {
 public:
-    explicit FileEntrySource(const std::filesystem::path &path) : m_path(path), m_in(path, std::ios::binary) {}
+    explicit FileEntrySource(const std::filesystem::path &path) : m_path(path), m_in(path) {}
 
     // Whether the file opened at all.
     bool ok() const { return static_cast<bool>(m_in); }
@@ -103,19 +107,30 @@ private:
     // otherwise).
     bool claimsMoreThan(std::uint64_t offset) const
     {
+#if defined(_WIN32)
+        // The open file is asked, not the path: a journal deleted while
+        // it is read is "delete pending" by its path on Windows, and
+        // every question about the path is refused until this stream
+        // lets go -- which read as a device refusing. The open file
+        // still says how long it is, deleted or not.
+        if (const auto size = m_in.sizeNow()) {
+            return *size > offset;
+        }
+        return true;
+#else
         std::error_code ec;
         const std::uintmax_t size = std::filesystem::file_size(m_path, ec);
         if (ec) {
             return ec != std::errc::no_such_file_or_directory;
         }
         return size > offset;
+#endif
     }
 
     bool openCareful()
     {
         m_careful.emplace();
-        m_careful->rdbuf()->pubsetbuf(nullptr, 0);
-        m_careful->open(m_path, std::ios::binary);
+        m_careful->open(m_path, /*unbuffered=*/true);
         m_careful->seekg(static_cast<std::streamoff>(m_offset));
         return static_cast<bool>(*m_careful);
     }
@@ -140,8 +155,8 @@ private:
     }
 
     std::filesystem::path m_path;
-    std::ifstream m_in;
-    std::optional<std::ifstream> m_careful;
+    SharedReadStream m_in;
+    std::optional<SharedReadStream> m_careful;
     std::uint64_t m_offset = 0;
     bool m_readFailed = false;
 };

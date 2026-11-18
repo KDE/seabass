@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/shared_read_stream.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
@@ -32,7 +33,7 @@ std::uint32_t bigEndian32(const unsigned char *p)
 
 bool readPrefix(const fs::path &path, unsigned char *out, std::size_t length)
 {
-    std::ifstream in(path, std::ios::binary);
+    SharedReadStream in(path);
     if (!in) {
         return false;
     }
@@ -86,7 +87,7 @@ private:
 // A1's m.db read 131072 of 274432 bytes and the archive held 0.
 std::optional<hashing::Sha256Digest> hashFile(const fs::path &path)
 {
-    std::ifstream in(path, std::ios::binary);
+    SharedReadStream in(path);
     if (!in) {
         return std::nullopt;
     }
