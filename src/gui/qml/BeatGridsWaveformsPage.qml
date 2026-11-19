@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Beat Grids & Waveforms (Sync): rekordbox's beat grids and waveforms
 // copied into the stick's Engine library, for the playlists and tracks the
@@ -97,15 +98,16 @@ Page {
         // A cancelled read takes the user back to where they came from.
         function onLoadCancelled() { root.StackView.view.pop(); }
     }
-    // An Undo Last Save says so: the summary's own words read "1 undo steps
-    // written".
+    // An Undo Last Save says what every page says after one (#98): the
+    // session marks the summary (undo: true), and the words are
+    // SaveSummary's.
     Connections {
         target: editHost.session
         ignoreUnknownSignals: true
         function onSaveFinished(summary) {
-            if (summary && summary.unit === "undo steps" && !(summary.error && summary.error.length > 0)
+            if (SaveSummary.isUndo(summary) && !(summary.error && summary.error.length > 0)
                     && summary.written > 0) {
-                savedToast.show("Last save undone");
+                savedToast.show(SaveSummary.undoneText());
             }
         }
     }

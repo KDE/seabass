@@ -497,8 +497,9 @@ TestCase {
         tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
         const undone = finished(session, () => mouseClick(undo), "the undo");
         compare(undone.error, "", JSON.stringify(undone));
-        // Said in words, not as the summary's "1 undo steps written".
-        tryVerify(() => toast.showing && toast.text === "Last save undone", 5000, toast.text);
+        // Said as every page says it (#98), not as the summary's "1 undo
+        // steps written".
+        tryVerify(() => toast.showing && toast.text === "Changes undone.", 5000, toast.text);
         compare(stickFixture.sha256(db), before, "m.db is as it was");
         const restored = stickFixture.engineAnalysisRows(stick);
         compare(restored.analysed, 5);
