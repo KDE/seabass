@@ -4,9 +4,12 @@
 
 #include "gui/edit/changes/moved_file_changes.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -307,62 +310,125 @@ ChangeOutcome RelinkMovedFileChange::apply(SaveContext &ctx)
     const std::string label = RelinkLabel;
     const std::string &oldPath = m_finding.expectedPath;
     const std::string &newPath = m_file.filePath;
+    const fs::path file = pathFromUtf8(newPath);
     std::error_code ec;
-    if (!fs::is_regular_file(pathFromUtf8(newPath), ec)) {
+    if (!fs::is_regular_file(file, ec)) {
         ctx.log().record(label + ": " + newPath + " is no longer there; nothing pointed at it");
         return ChangeOutcome::skip();
     }
-    int pointed = 0;
+    // The file the scan matched, as repair A checks it: the size is what
+    // made the match, and a catalog pointed at another file is a track
+    // that plays the wrong audio.
+    const std::uintmax_t size = fs::file_size(file, ec);
+    if (ec) {
+        return ChangeOutcome::failure(QStringLiteral("Could not tell whether %1 has changed since the scan (%2), so "
+                                                     "no library is pointed at it.")
+                                          .arg(QString::fromStdString(newPath), QString::fromStdString(ec.message())));
+    }
+    if (m_file.fileSizeBytes > 0 && size != m_file.fileSizeBytes) {
+        return ChangeOutcome::failure(QStringLiteral("%1 has changed since the scan (%2 bytes, the scan saw %3), "
+                                                     "so no library is pointed at it. Run the check again.")
+                                          .arg(QString::fromStdString(newPath))
+                                          .arg(static_cast<qulonglong>(size))
+                                          .arg(static_cast<qulonglong>(m_file.fileSizeBytes)));
+    }
+
+    // Each catalog's rows by the spelling of THOSE rows: the finding groups
+    // rows by normalizedPathKey, so its own expectedPath is only the first
+    // row's spelling, and export.pdb and Engine look a path up byte for
+    // byte. How many rows each spelling has, to find every one of them.
+    std::map<std::string, std::map<std::string, size_t>> spellings;  // format -> spelling -> rows
+    std::set<std::string> oldPaths{oldPath};
+    for (const auto &row : m_finding.rows) {
+        ++spellings[row.format][row.filePath];
+        oldPaths.insert(row.filePath);
+    }
+    // And the file is still missing where they point: one back there
+    // again resolves them already, and pointing them away from it would
+    // break a track that works.
+    for (const std::string &old : oldPaths) {
+        const bool there = fs::exists(pathFromUtf8(old), ec);
+        if (there || ec) {
+            return ChangeOutcome::failure(QStringLiteral("%1 is there again, so the library is not pointed away from "
+                                                         "it. Run the check again.")
+                                              .arg(QString::fromStdString(old)));
+        }
+    }
+
+    // A row the scan listed and the write does not find fails the change,
+    // and the save puts back whatever it had written. Carrying on would
+    // point some catalogs at the file and leave the others at the old
+    // path: the catalogs disagree, and the file, named by a row now, is no
+    // longer unreferenced, so the next scan cannot offer it again.
+    const auto vanished = [&](const QString &catalog, const std::string &spelling, size_t found, size_t listed) {
+        return ChangeOutcome::failure(
+            QStringLiteral("%1 no longer has every row the check found for %2 (%3 of %4), so no library is "
+                           "pointed at %5: they would disagree. Run the check again.")
+                .arg(catalog, QString::fromStdString(spelling))
+                .arg(static_cast<qulonglong>(found))
+                .arg(static_cast<qulonglong>(listed))
+                .arg(QString::fromStdString(newPath)));
+    };
+    size_t pointed = 0;
     try {
-        if (has("rekordbox")) {
+        if (const auto rows = spellings.find("rekordbox"); rows != spellings.end()) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, label);
             infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(session.writeRoot()));
-            // By the path, not the id from the scan: a re-export renumbers.
-            const std::vector<uint32_t> ids = pdb.trackIdsWithFilePath(rekordboxPathOnStick(pioneer, oldPath));
             const std::string stored = rekordboxPathOnStick(pioneer, newPath);
             const std::string name = basenameOf(newPath);
-            bool changed = false;
-            for (const uint32_t id : ids) {
-                std::string refusal;
-                if (pdb.setTrackFilePath(id, name, stored, &refusal)) {
-                    changed = true;
+            for (const auto &[spelling, listed] : rows->second) {
+                // By the path, not the id from the scan: a re-export renumbers.
+                const std::vector<uint32_t> ids = pdb.trackIdsWithFilePath(rekordboxPathOnStick(pioneer, spelling));
+                if (ids.size() < listed) {
+                    return vanished(QStringLiteral("export.pdb"), spelling, ids.size(), listed);
+                }
+                for (const uint32_t id : ids) {
+                    std::string refusal;
+                    if (!pdb.setTrackFilePath(id, name, stored, &refusal)) {
+                        if (refusal.empty()) {
+                            return vanished(QStringLiteral("export.pdb"), spelling, 0, listed);
+                        }
+                        return ChangeOutcome::failure(
+                            QStringLiteral("export.pdb cannot be pointed at %1: %2. Moving the file back instead "
+                                           "works for every catalog.")
+                                .arg(QString::fromStdString(newPath), QString::fromStdString(refusal)));
+                    }
                     ++pointed;
-                    continue;
-                }
-                if (!refusal.empty()) {
-                    return ChangeOutcome::failure(
-                        QStringLiteral("export.pdb cannot be pointed at %1: %2. Moving the file back instead works "
-                                       "for every catalog.")
-                            .arg(QString::fromStdString(newPath), QString::fromStdString(refusal)));
                 }
             }
-            if (changed) {
-                if (!pdb.commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                }
-                session.noteItemApplied();
-            } else {
-                ctx.log().record(label + ": no rekordbox row names " + oldPath + " any more");
+            if (!pdb.commit()) {
+                return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
             }
+            session.noteItemApplied();
         }
-        if (has("onelibrary")) {
+        if (const auto rows = spellings.find("onelibrary"); rows != spellings.end()) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), label);
-            try {
-                pointed += sharedOneLibraryWriter(ctx, pioneer).setTrackPath(oldPath, newPath);
-            } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
-                ctx.log().record(label + ": no OneLibrary row names " + oldPath + " any more");
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            for (const auto &[spelling, listed] : rows->second) {
+                size_t found = 0;
+                try {
+                    found = static_cast<size_t>(writer.setTrackPath(spelling, newPath));
+                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                    found = 0;
+                }
+                if (found < listed) {
+                    return vanished(QStringLiteral("OneLibrary"), spelling, found, listed);
+                }
+                pointed += found;
             }
         }
-        if (has("engine")) {
+        if (const auto rows = spellings.find("engine"); rows != spellings.end()) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", engine, 1, label);
-            const int rows =
-                infrastructure::engine::setEngineTrackPath(session.writeRoot(), session.realRoot(), oldPath, newPath);
-            if (rows > 0) {
-                session.noteItemApplied();
-                pointed += rows;
-            } else {
-                ctx.log().record(label + ": no Engine row names " + oldPath + " any more");
+            for (const auto &[spelling, listed] : rows->second) {
+                const auto found = static_cast<size_t>(std::max(
+                    0, infrastructure::engine::setEngineTrackPath(session.writeRoot(), session.realRoot(), spelling,
+                                                                  newPath)));
+                if (found < listed) {
+                    return vanished(QStringLiteral("Engine"), spelling, found, listed);
+                }
+                pointed += found;
             }
+            session.noteItemApplied();
         }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
