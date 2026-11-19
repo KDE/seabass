@@ -347,6 +347,10 @@ private:
     std::map<std::uint32_t, PlaylistStatus> status;
     std::vector<std::pair<std::string, std::string>> renamesInOrder;
     std::set<std::string> claimedEnginePaths;
+    // rekordbox playlist ids the record knows as another playlist that
+    // this one is not shown to be (sameListByMembers): the record's
+    // playlist of the id is planned as deleted, rekordbox's as created.
+    std::set<std::uint32_t> idsReused;
     // Cue items left out of their rows because the user declined them.
     std::set<std::string> cueSuppressed;
 
@@ -583,6 +587,36 @@ private:
                 out.engineOwnKept.push_back(std::move(kept));
             }
         }
+    }
+
+    // Whether the record's playlist `b` and rekordbox's `r`, which share an
+    // id under two paths, are plausibly one list renamed or moved (#99).
+    // rekordbox gives a deleted playlist's id to the next one it makes, so
+    // the id alone says nothing; the members decide: the record's members
+    // of `b` against rekordbox's of `r` now. At least half of the smaller
+    // list's tracks in the other is a rename. No track in common is two
+    // playlists. Anything between, or a list with no tracks to compare,
+    // cannot be judged; the planner has no way to ask about it with the
+    // members that go with each answer (a playlist-level conflict's
+    // members are not offered, so the record would advance them
+    // unanswered), so it is planned as two playlists too, which leaves
+    // Engine right whatever the truth: rekordbox's list under its name,
+    // the old one gone. Folders hold no members and keep pairing by id.
+    static bool sameListByMembers(const BaselinePlaylist &b, const BaselinePlaylist &r)
+    {
+        if (b.folder || r.folder) {
+            return true;
+        }
+        const std::set<std::string> before(b.members.begin(), b.members.end());
+        const std::set<std::string> after(r.members.begin(), r.members.end());
+        if (before.empty() || after.empty()) {
+            return false;
+        }
+        std::size_t common = 0;
+        for (const auto &key : after) {
+            common += before.count(key);
+        }
+        return 2 * common >= std::min(before.size(), after.size());
     }
 
     static std::string playlistState(const BaselinePlaylist *r)
@@ -878,6 +912,12 @@ private:
                 status[r.id] = st;
                 continue;
             }
+            // An id rekordbox gave to another playlist (#99): not this
+            // record's playlist, which the deletes below take.
+            if (b && b->path != r.path && !sameListByMembers(*b, r)) {
+                idsReused.insert(r.id);
+                b = nullptr;
+            }
             if (b && b->path != r.path && countAt(b->path) > 1) {
                 claimedEnginePaths.insert(b->path);
                 ambiguous(r.id, b->path, state);
@@ -1012,7 +1052,8 @@ private:
         if (base) {
             std::vector<const BaselinePlaylist *> gone;
             for (const auto &b : base->playlists) {
-                if (!rekordboxIds.count(b.id) && !rekordboxPaths.count(b.path) && countAt(b.path) > 0) {
+                if ((!rekordboxIds.count(b.id) || idsReused.count(b.id)) && !rekordboxPaths.count(b.path)
+                    && countAt(b.path) > 0) {
                     gone.push_back(&b);
                 }
             }
@@ -1021,7 +1062,9 @@ private:
             });
             for (const BaselinePlaylist *b : gone) {
                 const std::string key = playlistItemKey(b->id);
-                const std::string state = playlistState(nullptr);
+                // An id rekordbox reuses is one item with the create of its
+                // new playlist, at rekordbox's state of it.
+                const std::string state = playlistState(idsReused.count(b->id) ? now.findPlaylist(b->id) : nullptr);
                 claimedEnginePaths.insert(b->path);
                 if (countAt(b->path) > 1) {
                     ambiguous(b->id, b->path, state);
@@ -1102,7 +1145,7 @@ private:
                     em = firstOccurrences(it->second);
                 }
             }
-            const BaselinePlaylist *bp = base ? base->findPlaylist(r.id) : nullptr;
+            const BaselinePlaylist *bp = base && !idsReused.count(r.id) ? base->findPlaylist(r.id) : nullptr;
             const std::set<std::string> rSet(rm.begin(), rm.end());
             const std::set<std::string> eSet(em.begin(), em.end());
             std::set<std::string> bSet;

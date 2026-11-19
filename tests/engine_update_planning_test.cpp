@@ -534,6 +534,167 @@ int main()
         std::cout << "playlist renamed by id OK\n";
     }
 
+    // #99, as the TESTSHARK round found it: the record holds rekordbox
+    // playlist 2 as "T73 Delete Me" with A and B. The DJ deleted it in
+    // rekordbox and exported a new, unrelated "T73 New" with C and D, and
+    // rekordbox gave the new one id 2. Not a rename: the old playlist is
+    // deleted and the new one created, as two unrelated rows would be, and
+    // with its members unticked Engine's "T73 New" holds none of the old
+    // playlist's tracks.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"T73 Delete Me", 0}}), rb("2", "Music/B.mp3", {{"T73 Delete Me", 1}}),
+                       rb("3", "Music/C.mp3"), rb("4", "Music/D.mp3")};
+        w.engine = {en("e1", "Music/A.mp3", {{"T73 Delete Me", 0}}), en("e2", "Music/B.mp3", {{"T73 Delete Me", 1}}),
+                    en("e3", "Music/C.mp3"), en("e4", "Music/D.mp3")};
+        w.rekordboxPlaylists = {{"T73 Delete Me", false, 2}};
+        w.enginePlaylists = {{"T73 Delete Me", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3"), rb("2", "Music/B.mp3"), rb("3", "Music/C.mp3", {{"T73 New", 0}}),
+                       rb("4", "Music/D.mp3", {{"T73 New", 1}})};
+        w.rekordboxPlaylists = {{"T73 New", false, 2}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.empty() && "an id rekordbox gave to another playlist is not a rename");
+        assert(p.playlistsToDelete.size() == 1);
+        const auto &del = p.playlistsToDelete[0];
+        assert(del.path == "T73 Delete Me" && del.pdbId == 2 && !del.folder && del.engineMembers == 2);
+        assert(del.header.key == "playlist:2" && del.header.checkedByDefault && !del.header.conflict);
+        assert(del.header.reason == EngineUpdateReason::RekordboxRemoved);
+        assert(del.header.reasonText == "rekordbox deleted this playlist" + Since);
+        assert(p.playlistsToCreate.size() == 1);
+        const auto &create = p.playlistsToCreate[0];
+        assert(create.path == "T73 New" && create.pdbId == 2 && !create.folder);
+        assert(create.header.key == "playlist:2" && create.header.checkedByDefault);
+        assert(create.header.reason == EngineUpdateReason::RekordboxAdded);
+        assert(create.header.reasonText == "rekordbox created this playlist" + Since);
+        // One item: rekordbox's state of playlist 2 is the new playlist, on
+        // both rows, so declining one declines the pair.
+        assert(del.header.rekordboxState == create.header.rekordboxState);
+        // The new playlist's members, added; nothing taken out of a list.
+        assert(p.membership.size() == 2);
+        for (const auto &m : p.membership) {
+            assert(m.kind == MembershipEdit::Kind::Add && m.playlistPath == "T73 New");
+            assert(m.header.reason == EngineUpdateReason::RekordboxAdded);
+            assert(m.header.dependsOn == Deps{"playlist:2"});
+        }
+        assert(p.conflicts.empty() && p.engineOwnKept.empty());
+
+        World after = w;
+        apply(after, p);
+        assert(engineOrder(after, "T73 New") == (Deps{"music/c.mp3", "music/d.mp3"}));
+        assert(std::none_of(after.enginePlaylists.begin(), after.enginePlaylists.end(),
+                            [](const EnginePlaylistInfo &pl) { return pl.path == "T73 Delete Me"; }));
+        assert(plan(after, base).empty());
+        assert(plan(after, baselineOf(after)).empty());
+
+        // The members unticked: a new, empty "T73 New", none of A and B in it.
+        EngineUpdateProposal playlistsOnly = p;
+        playlistsOnly.membership.clear();
+        World bare = w;
+        apply(bare, playlistsOnly);
+        assert(engineOrder(bare, "T73 New").empty());
+        assert(std::count_if(bare.enginePlaylists.begin(), bare.enginePlaylists.end(),
+                             [](const EnginePlaylistInfo &pl) { return pl.path == "T73 New"; })
+               == 1);
+        assert(std::none_of(bare.enginePlaylists.begin(), bare.enginePlaylists.end(),
+                            [](const EnginePlaylistInfo &pl) { return pl.path == "T73 Delete Me"; }));
+        std::cout << "a reused playlist id with no member in common is a delete and a create (#99) OK\n";
+    }
+
+    // #99: by id and by its members the same list. At least half of the
+    // smaller list's tracks in the other is a rename, as before: here two
+    // of rekordbox's three are in the record's four.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Old", 0}}), rb("2", "Music/B.mp3", {{"Old", 1}}),
+                       rb("3", "Music/C.mp3", {{"Old", 2}}), rb("4", "Music/D.mp3", {{"Old", 3}}),
+                       rb("5", "Music/E.mp3")};
+        w.engine = {en("e1", "Music/A.mp3", {{"Old", 0}}), en("e2", "Music/B.mp3", {{"Old", 1}}),
+                    en("e3", "Music/C.mp3", {{"Old", 2}}), en("e4", "Music/D.mp3", {{"Old", 3}}),
+                    en("e5", "Music/E.mp3")};
+        w.rekordboxPlaylists = {{"Old", false, 7}};
+        w.enginePlaylists = {{"Old", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"New", 0}}), rb("2", "Music/B.mp3", {{"New", 1}}),
+                       rb("3", "Music/C.mp3"), rb("4", "Music/D.mp3"), rb("5", "Music/E.mp3", {{"New", 2}})};
+        w.rekordboxPlaylists = {{"New", false, 7}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.size() == 1);
+        assert(p.playlistsToRename[0].fromPath == "Old" && p.playlistsToRename[0].toPath == "New");
+        assert(p.playlistsToRename[0].header.reason == EngineUpdateReason::RekordboxRenamed);
+        assert(p.playlistsToCreate.empty() && p.playlistsToDelete.empty() && p.conflicts.empty());
+        World after = w;
+        apply(after, p);
+        assert(engineOrder(after, "New") == (Deps{"music/a.mp3", "music/b.mp3", "music/e.mp3"}));
+        assert(plan(after, base).empty());
+        std::cout << "a playlist renamed by id, half its tracks or more kept, is still a rename (#99) OK\n";
+    }
+
+    // #99: an id match with too little in common to say, or a list with
+    // nothing to compare, cannot be called a rename. A conflict cannot
+    // carry this decision with its members (see the planner), so it is
+    // planned as a delete and a create, which leaves Engine right whatever
+    // the lists were.
+    {
+        struct Case
+        {
+            const char *what;
+            std::vector<std::string> before;  // the record's members of id 9
+            std::vector<std::string> now;     // rekordbox's members of id 9 now
+        };
+        const std::vector<Case> cases = {
+            {"one of three in common", {"A", "B", "C", "D", "E"}, {"A", "F", "G"}},
+            {"the recorded list empty", {}, {"A", "B"}},
+            {"rekordbox's list empty", {"A", "B"}, {}},
+        };
+        for (const auto &c : cases) {
+            World w;
+            int id = 0;
+            for (const char *name : {"A", "B", "C", "D", "E", "F", "G"}) {
+                const std::string relative = std::string("Music/") + name + ".mp3";
+                const std::string number = std::to_string(++id);
+                w.rekordbox.push_back(rb(number, relative));
+                w.engine.push_back(en("e" + number, relative));
+            }
+            const auto place = [](std::vector<Track> &tracks, const std::string &list,
+                                  const std::vector<std::string> &names) {
+                for (std::size_t i = 0; i < names.size(); ++i) {
+                    byKey(tracks, "music/" + lowerKey(names[i]) + ".mp3")
+                        ->playlists.push_back({list, static_cast<int>(i)});
+                }
+            };
+            place(w.rekordbox, "Before", c.before);
+            place(w.engine, "Before", c.before);
+            w.rekordboxPlaylists = {{"Before", false, 9}};
+            w.enginePlaylists = {{"Before", false, 1}};
+            const auto base = baselineOf(w);
+            for (auto &t : w.rekordbox) {
+                t.playlists.clear();
+            }
+            place(w.rekordbox, "After", c.now);
+            w.rekordboxPlaylists = {{"After", false, 9}};
+            const auto p = plan(w, base);
+            if (!p.playlistsToRename.empty()) {
+                std::cerr << "FAIL (" << c.what << "): planned as a rename\n";
+            }
+            assert(p.playlistsToRename.empty());
+            assert(p.playlistsToDelete.size() == 1 && p.playlistsToDelete[0].path == "Before");
+            assert(p.playlistsToCreate.size() == 1 && p.playlistsToCreate[0].path == "After");
+            assert(p.conflicts.empty());
+            World after = w;
+            apply(after, p);
+            std::vector<std::string> want;
+            for (const auto &name : c.now) {
+                want.push_back("music/" + lowerKey(name) + ".mp3");
+            }
+            assert(engineOrder(after, "After") == want);
+            assert(std::none_of(after.enginePlaylists.begin(), after.enginePlaylists.end(),
+                                [](const EnginePlaylistInfo &pl) { return pl.path == "Before"; }));
+            assert(plan(after, baselineOf(after)).empty());
+        }
+        std::cout << "a reused id that cannot be judged a rename is a delete and a create (#99) OK\n";
+    }
+
     // No baseline: an Engine-only playlist beside a new rekordbox one,
     // holding the same tracks, may be it renamed. One conflict: rename
     // it, or keep it and create rekordbox's beside it.
