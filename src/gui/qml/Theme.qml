@@ -114,6 +114,17 @@ QtObject {
     // it gets one mark, ice on the dark ground and slate on the light.
     readonly property color memoryCue: isLightBackground ? "#3b4a5a" : "#e4eef7"
     readonly property color memoryCueInk: isLightBackground ? "#ffffff" : "#000000"
+    // The beat grid on a waveform (#40): one ink, ice on the dark ground
+    // and slate on the light like the memory cue, laid on at two
+    // strengths. A downbeat is brighter and reaches further in from the
+    // top and bottom edges than an ordinary beat; both stop short of the
+    // middle, where the waveform is, and every cue is drawn over them.
+    // Lengths are fractions of the waveform's height.
+    readonly property color beatTick: isLightBackground ? "#1b2530" : "#ffffff"
+    readonly property real beatTickOpacity: 0.35
+    readonly property real downbeatTickOpacity: 0.85
+    readonly property real beatTickLength: 0.15
+    readonly property real downbeatTickLength: 0.3
 
     function mix(a, b, t) {
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0);

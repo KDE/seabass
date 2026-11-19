@@ -32,7 +32,8 @@ TestCase {
         var panel = createTemporaryObject(panelComponent, testCase, {
             addCueController: {statusMessage: "", errorMessage: "", busy: false, calls: [],
                                addCue: function() { this.calls.push("addCue"); }},
-            playbackController: {waveformFor: function(format, path, id) { return []; }},
+            playbackController: {waveformFor: function(format, path, id) { return []; },
+                                 beatGridFor: function(format, path, id) { return []; }},
             format: "engine",
             libraryPath: "/media/MAIN/Engine Library",
         });
@@ -223,7 +224,7 @@ TestCase {
     }
 
     function makeLoadedPlayer(format, sourceId, libraryPath) {
-        return {waveformFor: function() { return []; }, hasTrack: true, currentFormat: format,
+        return {waveformFor: function() { return []; }, beatGridFor: function() { return []; }, hasTrack: true, currentFormat: format,
                 currentLibraryPath: libraryPath || "/media/MAIN/Engine Library",
                 currentSourceId: sourceId, playing: true, position: 93000, duration: 372000,
                 seek: function() {}, togglePlay: function() {}};
@@ -237,7 +238,8 @@ TestCase {
             {tag: "the same id in the other format", player: makeLoadedPlayer("rekordbox", "42"), expected: false},
             // Nor is an id a track's name across two sticks of one format.
             {tag: "the same id on another stick", player: makeLoadedPlayer("engine", "42", "/media/OTHER/Engine Library"), expected: false},
-            {tag: "nothing loaded", player: {waveformFor: function() { return []; }}, expected: false},
+            {tag: "nothing loaded", player: {waveformFor: function() { return []; }, beatGridFor: function() { return []; }},
+             expected: false},
         ];
     }
     function test_thePanelKnowsWhenItsTrackIsTheLoadedOne(data) {

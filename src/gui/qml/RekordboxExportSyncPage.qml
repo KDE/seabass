@@ -1393,6 +1393,11 @@ Page {
                                                     ? root.playbackController.waveformFor(strip.modelData.side,
                                                         root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
                                                     : []
+                                                // The same cached read as the waveform's.
+                                                beatData: root.playbackController
+                                                    ? root.playbackController.beatGridFor(strip.modelData.side,
+                                                        root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
+                                                    : []
                                                 format: strip.modelData.side
                                                 cueData: strip.modelData.cues
                                                 trackDurationMs: strip.modelData.durationMs

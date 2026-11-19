@@ -193,10 +193,14 @@ Page {
         }
 
         WaveformView {
+            objectName: "trackDetailWaveform"
             Layout.fillWidth: true
             Layout.preferredHeight: 120
             waveformData: root.track
                 ? root.playbackController.waveformFor(root.format, root.libraryPath, root.track.sourceId) : []
+            // The same read as the waveform's (one cache entry).
+            beatData: root.track
+                ? root.playbackController.beatGridFor(root.format, root.libraryPath, root.track.sourceId) : []
             format: root.format
             cueData: root.track ? root.track.cues : []
             trackDurationMs: root.track ? root.track.durationSeconds * 1000 : 0

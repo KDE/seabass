@@ -5,15 +5,31 @@
 import QtQuick
 import QtQuick.Controls
 import SeabassGui
+import "common/BeatGridTicks.js" as BeatGridTicks
 
-// Draws a waveform (as normalized 0..1 amplitude bars) with cue markers
-// overlaid at their real position. Used both by the live PlayerBar (with
-// playhead progress and click-to-seek) and by static per-track previews
-// like the Duplicates page, where progress/seeking aren't relevant.
+// Draws a waveform (as normalized 0..1 amplitude bars) with the track's
+// beat grid and cue markers overlaid at their real position. Used both by
+// the live PlayerBar (with playhead progress and click-to-seek) and by
+// static per-track previews like the Duplicates page, where
+// progress/seeking aren't relevant.
+//
+// Three layers, bottom to top: the bars (this Canvas itself), the beat
+// grid (beatGridLayer), and the cues, the loop being dragged out and the
+// playhead (overlayLayer). The bars and the overlay repaint as the
+// playhead moves; the grid only when its beats, the length or the size
+// change, never per frame of playback.
 Canvas {
     id: root
     property var waveformData: []
     property var cueData: []
+    // The track's beat grid as the library holds it (#40): one
+    // {timeMs, downbeat} per beat, in order -- PlaybackController's
+    // beatGrid for the loaded track, beatGridFor() for any other. Empty
+    // (the default) draws no grid: a track without one, and a track whose
+    // grid would be placed by a sample rate the library does not record,
+    // which the controller hands over as no grid. Seabass draws a grid
+    // here and never makes one up.
+    property var beatData: []
     property real trackDurationMs: 0
     // -1 disables the played/unplayed color split (a static preview).
     property real progress: -1
@@ -79,6 +95,14 @@ Canvas {
     // is nothing to scale the cues by either. Those rows draw the flat
     // line, the same as a row without a waveform, and the cues on it.
     readonly property bool drawsBars: root.hasWaveform && !root.lengthUnknown
+    // Which beats get a tick at this width, and where: see
+    // BeatGridTicks.js for the density rule. Against the track's real
+    // length only, never the cues' own span: a grid on a line with no
+    // length would be placed against nothing. Re-evaluated on every
+    // change of the beats, the length or the width.
+    readonly property var beatGridLayout: BeatGridTicks.layout(
+        root.beatData, root.trackDurationMs, root.width)
+    readonly property var beatTicks: root.beatGridLayout.ticks
 
     signal seekRequested(real ratio)
     // Fires on every plain click alongside seekRequested -- callers that
@@ -91,14 +115,25 @@ Canvas {
     // cueMouseArea's own comment for the threshold.
     signal loopRangeSelected(real startMs, real endMs)
 
+    // The bars: the played/unplayed split follows the playhead, and
+    // whether bars are drawn at all follows the length.
     onWaveformDataChanged: requestPaint()
-    onCueDataChanged: requestPaint()
-    onProgressChanged: requestPaint()
-    onTrackDurationMsChanged: requestPaint()
-    onCueSpanMsChanged: requestPaint()
+    onProgressChanged: {
+        requestPaint();
+        overlayLayer.requestPaint();
+    }
+    onTrackDurationMsChanged: {
+        requestPaint();
+        overlayLayer.requestPaint();
+    }
+    onCueSpanMsChanged: {
+        requestPaint();
+        overlayLayer.requestPaint();
+    }
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
-    onHighlightCuePositionMsChanged: requestPaint()
+    onCueDataChanged: overlayLayer.requestPaint()
+    onHighlightCuePositionMsChanged: overlayLayer.requestPaint()
 
     // Hit-tests cueData against a canvas-space x coordinate for the hover
     // tooltip -- a loop's whole span is a hit target (matching the wash's
@@ -167,138 +202,200 @@ Canvas {
                 ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 1), barH);
             }
         }
+    }
 
-        const span = root.cueSpanMs;
-        if (cueData && span > 0) {
-            for (let j = 0; j < cueData.length; j++) {
-                const cue = cueData[j];
-                const x = (cue.positionMs / span) * w;
-                // A memory cue is drawn in the one memory-cue colour, never
-                // its own: see Theme.memoryCue.
-                const isMemory = cue.kind !== "hot";
-                const color = isMemory ? String(Theme.memoryCue)
-                    : (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#") ? cue.color : "#ffcc00";
-                const isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
-                const xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
-
-                // See highlightCuePositionMs's own doc comment. A small
-                // tolerance (not exact equality) since the caller passes
-                // whatever position it already resolved as "the" cue,
-                // and float ms comparisons shouldn't hinge on exact
-                // equality.
-                var dimmed = root.highlightCuePositionMs >= 0
-                    && Math.abs(cue.positionMs - root.highlightCuePositionMs) > 10;
-                ctx.save();
-                if (dimmed) {
-                    ctx.globalAlpha = 0.25;
+    // The beat grid (#40), a layer of its own so that it is drawn only
+    // when the beats, the length or the size change: ticks from the top
+    // and the bottom edge, leaving the middle of the waveform clear.
+    // Downbeats reach further in and are brighter than ordinary beats.
+    // Above the bars, below the cues.
+    Canvas {
+        id: beatGridLayer
+        objectName: "beatGridLayer"
+        anchors.fill: parent
+        readonly property var ticks: root.beatTicks
+        // A change of colour scheme is a change of data for this layer.
+        readonly property color tickColor: Theme.beatTick
+        onTicksChanged: requestPaint()
+        onTickColorChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d");
+            ctx.reset();
+            const ticks = beatGridLayer.ticks;
+            const w = width;
+            const h = height;
+            if (!ticks || ticks.length === 0 || w <= 0) {
+                return;
+            }
+            // Ordinary beats first, so a downbeat is never drawn under one.
+            for (let pass = 0; pass < 2; ++pass) {
+                const downbeats = pass === 1;
+                ctx.fillStyle = String(beatGridLayer.tickColor);
+                ctx.globalAlpha = downbeats ? Theme.downbeatTickOpacity : Theme.beatTickOpacity;
+                const length = Math.max(2, Math.round(h * (downbeats ? Theme.downbeatTickLength : Theme.beatTickLength)));
+                for (let i = 0; i < ticks.length; ++i) {
+                    if (ticks[i].downbeat !== downbeats) {
+                        continue;
+                    }
+                    // Whole pixels, so a tick is one sharp line and not two
+                    // half-lit ones.
+                    const x = Math.min(w - 1, Math.max(0, Math.round(ticks[i].x)));
+                    ctx.fillRect(x, 0, 1, length);
+                    ctx.fillRect(x, h - length, 1, length);
                 }
-
-                if (isLoop) {
-                    // Translucent wash across the loop span, plus a
-                    // thicker solid bar underneath -- the wash alone
-                    // reads too much like "a selection"; the bar is what
-                    // actually reads as "this repeats" at a glance,
-                    // without covering any more of the waveform than the
-                    // wash already does.
-                    ctx.save();
-                    ctx.fillStyle = color;
-                    // Multiplied, not overwritten, by the outer dimming
-                    // alpha above -- ctx.globalAlpha here would otherwise
-                    // flatten a dimmed loop's wash back to the same 0.22
-                    // every loop already uses, undoing the dim.
-                    ctx.globalAlpha = dimmed ? 0.22 * 0.25 : 0.22;
-                    ctx.fillRect(x, h * 0.55, xEnd - x, h * 0.45);
-                    ctx.restore();
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x, h - 6, xEnd - x, 6);
-                }
-
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, h);
-                if (isLoop) {
-                    ctx.moveTo(xEnd, 0);
-                    ctx.lineTo(xEnd, h);
-                }
-                ctx.stroke();
-                if (cue.kind === "hot") {
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x, 0, 10, 10);
-                    ctx.fillStyle = "#000";
-                    ctx.font = "8px sans-serif";
-                    ctx.fillText(String(cue.hotCueNumber), x + 2, 8);
-                } else {
-                    // The same flag, "M", at the foot of the line: a memory
-                    // cue often sits exactly under a hot cue (the pad was
-                    // made from the marker), and two flags at the top would
-                    // hide one another.
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x, h - 10, 10, 10);
-                    ctx.fillStyle = String(Theme.memoryCueInk);
-                    ctx.font = "8px sans-serif";
-                    ctx.fillText("M", x + 2, h - 2);
-                }
-                ctx.restore();
             }
         }
+    }
 
-        // Live preview of a loop being dragged out -- see
-        // cueMouseArea's own comment for the tap/drag threshold.
-        if (root.cueEditable && cueMouseArea.dragging) {
-            var dragA = Math.min(cueMouseArea.pressX, cueMouseArea.dragX);
-            var dragB = Math.max(cueMouseArea.pressX, cueMouseArea.dragX);
-            ctx.save();
-            ctx.fillStyle = String(Theme.accent);
-            ctx.globalAlpha = 0.18;
-            ctx.fillRect(dragA, 0, dragB - dragA, h);
-            ctx.restore();
-            ctx.strokeStyle = String(Theme.accent);
-            ctx.lineWidth = 2;
-            ctx.setLineDash([4, 3]);
-            ctx.beginPath();
-            ctx.moveTo(dragA, 0); ctx.lineTo(dragA, h);
-            ctx.moveTo(dragB, 0); ctx.lineTo(dragB, h);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
+    // Cues, the loop being dragged out and the playhead: on top of the
+    // bars and the grid.
+    Canvas {
+        id: overlayLayer
+        objectName: "waveformOverlay"
+        anchors.fill: parent
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d");
+            ctx.reset();
+            const w = width;
+            const h = height;
+            const cues = root.cueData;
 
-        // Playhead -- previously only implied by the played/unplayed
-        // color split above, which reads as "which bars are done" rather
-        // than "exactly where is 'now'", especially at the 0.35 opacity
-        // this view runs at as the library row backdrop. A white halo
-        // under an accent-colored core line keeps it legible against
-        // whatever mixed bar colors happen to sit behind it; the
-        // downward-pointing triangle at the top gives it a distinct
-        // silhouette even where the halo/line alone would blend in.
-        if (root.progress >= 0 && w > 0) {
-            var px = root.progress * w;
-            ctx.save();
-            ctx.shadowColor = "rgba(255,255,255,0.85)";
-            ctx.shadowBlur = 6;
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, h);
-            ctx.stroke();
-            ctx.restore();
+            const span = root.cueSpanMs;
+            if (cues && span > 0) {
+                for (let j = 0; j < cues.length; j++) {
+                    const cue = cues[j];
+                    const x = (cue.positionMs / span) * w;
+                    // A memory cue is drawn in the one memory-cue colour, never
+                    // its own: see Theme.memoryCue.
+                    const isMemory = cue.kind !== "hot";
+                    const color = isMemory ? String(Theme.memoryCue)
+                        : (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#") ? cue.color : "#ffcc00";
+                    const isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
+                    const xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
 
-            ctx.strokeStyle = String(Theme.accent);
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, h);
-            ctx.stroke();
+                    // See highlightCuePositionMs's own doc comment. A small
+                    // tolerance (not exact equality) since the caller passes
+                    // whatever position it already resolved as "the" cue,
+                    // and float ms comparisons shouldn't hinge on exact
+                    // equality.
+                    const dimmed = root.highlightCuePositionMs >= 0
+                        && Math.abs(cue.positionMs - root.highlightCuePositionMs) > 10;
+                    ctx.save();
+                    if (dimmed) {
+                        ctx.globalAlpha = 0.25;
+                    }
 
-            ctx.fillStyle = String(Theme.accent);
-            ctx.beginPath();
-            ctx.moveTo(px - 5, 0);
-            ctx.lineTo(px + 5, 0);
-            ctx.lineTo(px, 7);
-            ctx.closePath();
-            ctx.fill();
+                    if (isLoop) {
+                        // Translucent wash across the loop span, plus a
+                        // thicker solid bar underneath -- the wash alone
+                        // reads too much like "a selection"; the bar is what
+                        // actually reads as "this repeats" at a glance,
+                        // without covering any more of the waveform than the
+                        // wash already does.
+                        ctx.save();
+                        ctx.fillStyle = color;
+                        // Multiplied, not overwritten, by the outer dimming
+                        // alpha above -- ctx.globalAlpha here would otherwise
+                        // flatten a dimmed loop's wash back to the same 0.22
+                        // every loop already uses, undoing the dim.
+                        ctx.globalAlpha = dimmed ? 0.22 * 0.25 : 0.22;
+                        ctx.fillRect(x, h * 0.55, xEnd - x, h * 0.45);
+                        ctx.restore();
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x, h - 6, xEnd - x, 6);
+                    }
+
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, h);
+                    if (isLoop) {
+                        ctx.moveTo(xEnd, 0);
+                        ctx.lineTo(xEnd, h);
+                    }
+                    ctx.stroke();
+                    if (cue.kind === "hot") {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x, 0, 10, 10);
+                        ctx.fillStyle = "#000";
+                        ctx.font = "8px sans-serif";
+                        ctx.fillText(String(cue.hotCueNumber), x + 2, 8);
+                    } else {
+                        // The same flag, "M", at the foot of the line: a memory
+                        // cue often sits exactly under a hot cue (the pad was
+                        // made from the marker), and two flags at the top would
+                        // hide one another.
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x, h - 10, 10, 10);
+                        ctx.fillStyle = String(Theme.memoryCueInk);
+                        ctx.font = "8px sans-serif";
+                        ctx.fillText("M", x + 2, h - 2);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            // Live preview of a loop being dragged out -- see
+            // cueMouseArea's own comment for the tap/drag threshold.
+            if (root.cueEditable && cueMouseArea.dragging) {
+                const dragA = Math.min(cueMouseArea.pressX, cueMouseArea.dragX);
+                const dragB = Math.max(cueMouseArea.pressX, cueMouseArea.dragX);
+                ctx.save();
+                ctx.fillStyle = String(Theme.accent);
+                ctx.globalAlpha = 0.18;
+                ctx.fillRect(dragA, 0, dragB - dragA, h);
+                ctx.restore();
+                ctx.strokeStyle = String(Theme.accent);
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath();
+                ctx.moveTo(dragA, 0); ctx.lineTo(dragA, h);
+                ctx.moveTo(dragB, 0); ctx.lineTo(dragB, h);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Playhead -- previously only implied by the played/unplayed
+            // color split above, which reads as "which bars are done" rather
+            // than "exactly where is 'now'", especially at the 0.35 opacity
+            // this view runs at as the library row backdrop. A white halo
+            // under an accent-colored core line keeps it legible against
+            // whatever mixed bar colors happen to sit behind it; the
+            // downward-pointing triangle at the top gives it a distinct
+            // silhouette even where the halo/line alone would blend in.
+            if (root.progress >= 0 && w > 0) {
+                const px = root.progress * w;
+                ctx.save();
+                ctx.shadowColor = "rgba(255,255,255,0.85)";
+                ctx.shadowBlur = 6;
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(px, 0);
+                ctx.lineTo(px, h);
+                ctx.stroke();
+                ctx.restore();
+
+                ctx.strokeStyle = String(Theme.accent);
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(px, 0);
+                ctx.lineTo(px, h);
+                ctx.stroke();
+
+                ctx.fillStyle = String(Theme.accent);
+                ctx.beginPath();
+                ctx.moveTo(px - 5, 0);
+                ctx.lineTo(px + 5, 0);
+                ctx.lineTo(px, 7);
+                ctx.closePath();
+                ctx.fill();
+            }
         }
     }
 
@@ -347,7 +444,7 @@ Canvas {
         onPositionChanged: (mouse) => {
             if (pressX >= 0) {
                 dragX = mouse.x;
-                root.requestPaint();
+                overlayLayer.requestPaint();
             } else {
                 root.hoveredCueText = root.cueTextAt(mouse.x);
             }
@@ -370,7 +467,7 @@ Canvas {
             }
             pressX = -1;
             dragX = -1;
-            root.requestPaint();
+            overlayLayer.requestPaint();
         }
         onExited: root.hoveredCueText = ""
     }

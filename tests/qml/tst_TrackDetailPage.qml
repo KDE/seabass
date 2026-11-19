@@ -86,6 +86,7 @@ TestCase {
 
     property var fakePlaybackController: ({
         waveformFor: function(format, path, sourceId) { return []; },
+        beatGridFor: function(format, path, sourceId) { return []; },
         load: function() {},
     })
     property var fakeAppSettingsController: ({keyNotation: "camelot"})

@@ -121,6 +121,9 @@ Pane {
         panel.pendingLoopEndMs = -1;
         waveformView.waveformData = playbackController.waveformFor(
             panel.format, panel.libraryPath, delegate.sourceId);
+        // The same read as the waveform's (one cache entry).
+        waveformView.beatData = playbackController.beatGridFor(
+            panel.format, panel.libraryPath, delegate.sourceId);
         waveformView.format = panel.format;
         // Last, once every field above is set.
         panel.refreshArtistTracks();

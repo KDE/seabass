@@ -465,6 +465,7 @@ Page {
                         waveformData: root.playbackController.waveform
                         format: root.playbackController.currentFormat
                         cueData: root.playbackController.cues
+                        beatData: root.playbackController.beatGrid
                         trackDurationMs: root.playbackController.duration
                         progress: root.playbackController.duration > 0
                             ? root.playbackController.position / root.playbackController.duration : 0

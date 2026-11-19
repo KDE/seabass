@@ -164,6 +164,11 @@ Card {
             waveformData: root.playbackController
                 ? root.playbackController.waveformFor(root.track.side, root.playbackPath, root.track.sourceId)
                 : []
+            // Out of the same cached read as the waveform above: no
+            // second file read or query for a row.
+            beatData: root.playbackController
+                ? root.playbackController.beatGridFor(root.track.side, root.playbackPath, root.track.sourceId)
+                : []
             format: root.track.side
             cueData: root.track.cues
             trackDurationMs: root.track.durationMs

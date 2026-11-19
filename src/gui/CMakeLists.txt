@@ -87,6 +87,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/HomeIcon.qml
     qml/common/HomeModel.js
     qml/common/SaveSummary.js
+    qml/common/BeatGridTicks.js
     qml/common/HomeRail.qml
     qml/common/HeartIcon.qml
     qml/common/SeabassIcon.qml

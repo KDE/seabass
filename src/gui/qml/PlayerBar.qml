@@ -232,10 +232,13 @@ Frame {
             }
 
             WaveformView {
+                objectName: "playerWaveform"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 48
                 waveformData: root.controller.waveform
                 cueData: root.controller.cues
+                // Read with the waveform when the track was loaded.
+                beatData: root.controller.beatGrid ?? []
                 trackDurationMs: root.controller.duration
                 progress: trackDurationMs > 0 ? root.controller.position / trackDurationMs : 0
                 onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)
