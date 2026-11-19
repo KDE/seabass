@@ -353,13 +353,21 @@ What it reuses, and what it must not:
   first". A rekordbox file missing on disk: no add, said so; never
   transliterate a path (`docs/write-path-rules.md`).
 - Playlists: diff by pdb id between B and R for create, delete and
-  rename. rekordbox gives a deleted playlist's id to the next playlist
-  it makes (#99), so a playlist under a recorded id and a new path is a
-  rename only when at least half of the smaller list's tracks (B's
-  members against R's) are in the other; otherwise, and whenever either
-  list is empty, B's playlist is deleted and R's created, one item under
-  the id. Folders still pair by id. Without a baseline a rename is
-  guessed only when parent and members agree closely, and the guess is a conflict. An Engine path
+  rename. rekordbox gives a deleted playlist's id to the next item it
+  makes (#99), so an id under a new path is planned as B's item deleted
+  and R's created, one item under the id, only when that is certain and
+  safe: two playlists that both hold tracks and share none, or a
+  playlist and a folder; the delete a plain row (Engine has exactly one
+  item at the old path, of the same kind, a playlist there holding
+  exactly B's tracks, a folder nothing at all); the create at a path
+  whose parent Engine already has, every track of a new playlist with a
+  row. The old playlist's tracks are rows of their own (taken out before
+  the delete), so a record that keeps the pair keeps them. Everywhere
+  else the id pairs as before: a rename (also where the lists share some
+  tracks, or one is empty, or the delete would be a conflict), or the
+  conflict that raises. Two folders pair by id. Without a baseline a rename is
+  guessed only when parent and members agree closely, and the guess is
+  a conflict. An Engine path
   that resolves to more than one playlist
   (`enginePlaylistCountAtPath() != 1`, `engine_playlists.hpp`) is a
   conflict, the rule Browse already enforces. **Decision (review of
