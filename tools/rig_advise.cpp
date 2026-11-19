@@ -64,6 +64,7 @@ struct Facts
     bool hasLibrary = false;
     std::optional<domain::LibraryFingerprint> fingerprint;
     std::map<std::string, std::string> databaseFingerprints;
+    infrastructure::stick_backup::RestoredDatabases restoredDatabases;
     std::int64_t catalogModifiedAtUnix = 0;
     std::uint64_t usedBytes = 0;
     std::uint64_t freeBytes = 0;
@@ -97,21 +98,11 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
         facts.catalogModifiedAtUnix = sb::libraryCatalogModifiedAt(root);
     }
     // The same databases the backups captured, plus the stick's own Engine
-    // database -- exactly the set BackupAdvisorController fingerprints.
-    std::set<std::string> databasePaths;
-    for (const auto &backup : backups) {
-        for (const auto &[path, hex] : backup.databaseFingerprints) {
-            databasePaths.insert(path);
-        }
-    }
-    if (facts.hasLibrary) {
-        databasePaths.insert(pathToGenericUtf8(infrastructure::engine::engineMainDatabasePath(fs::path())));
-    }
-    for (const std::string &path : databasePaths) {
-        if (const auto fingerprint = sb::fingerprintDbSet(root / pathFromUtf8(path))) {
-            facts.databaseFingerprints[path] = fingerprint->toHex();
-        }
-    }
+    // database, and the record of what a restore wrote there: the app's
+    // own reader, as BackupAdvisorController uses it.
+    application::StickDatabaseState databases = application::readStickDatabaseState(root, backups, facts.hasLibrary);
+    facts.databaseFingerprints = std::move(databases.fingerprints);
+    facts.restoredDatabases = std::move(databases.restoredDatabases);
     return facts;
 }
 
@@ -188,6 +179,7 @@ int main(int argc, char **argv)
             input.stickLabel = facts.label;
             input.liveFingerprint = facts.fingerprint;
             input.liveDatabaseFingerprints = facts.databaseFingerprints;
+            input.restoredDatabases = facts.restoredDatabases;
             input.catalogModifiedAtUnix = facts.catalogModifiedAtUnix;
             input.usedBytes = facts.usedBytes;
             input.freeBytes = facts.freeBytes;
@@ -202,6 +194,7 @@ int main(int argc, char **argv)
                 peer.stickIdentifier = other.identifier;
                 peer.fingerprint = other.fingerprint;
                 peer.databaseFingerprints = other.databaseFingerprints;
+                peer.restoredDatabases = other.restoredDatabases;
                 peer.catalogModifiedAtUnix = other.catalogModifiedAtUnix;
                 peer.usedBytes = other.usedBytes;
                 input.peers.push_back(std::move(peer));

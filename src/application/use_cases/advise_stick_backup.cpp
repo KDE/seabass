@@ -5,6 +5,12 @@
 #include "application/use_cases/advise_stick_backup.hpp"
 
 #include <algorithm>
+#include <set>
+
+#include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/stick_backup/sqlite_db_set.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace seabass::application
 {
@@ -13,6 +19,7 @@ using domain::FingerprintSimilarity;
 using domain::LibraryFingerprint;
 using PeerStick = StickBackupAdviceInput::PeerStick;
 using SourceRef = StickBackupAdvice::SourceRef;
+using infrastructure::stick_backup::RestoredDatabases;
 
 namespace
 {
@@ -121,15 +128,22 @@ const StickBackupDescription *firstByLabel(const StickBackupAdviceInput &input,
 // fingerprint captured at all (rekordbox-only stick), the content
 // fingerprint is the only signal there is. Shared between "is the backup
 // current for this stick" and "is it current for that peer".
+//
+// A database a restore of this backup wrote and then changed (the covers
+// a clone onto another label copies into the Engine library) is the
+// backup's as long as its fingerprint is still the one the restore
+// recorded; written by anything since, it is not.
 bool backupMatchesCopy(const std::map<std::string, std::string> &databaseFingerprints,
-                       const std::optional<LibraryFingerprint> &fingerprint, const StickBackupDescription &backup)
+                       const RestoredDatabases &restoredDatabases, const std::optional<LibraryFingerprint> &fingerprint,
+                       const StickBackupDescription &backup)
 {
     bool databasesChecked = false;
     if (!backup.databaseFingerprints.empty()) {
         databasesChecked = true;
         for (const auto &[path, hex] : backup.databaseFingerprints) {
             const auto live = databaseFingerprints.find(path);
-            if (live == databaseFingerprints.end() || live->second != hex) {
+            if (live == databaseFingerprints.end()
+                || !infrastructure::stick_backup::holdsBackupDatabase(restoredDatabases, path, hex, live->second)) {
                 return false;
             }
         }
@@ -146,7 +160,7 @@ bool backupMatchesCopy(const std::map<std::string, std::string> &databaseFingerp
 
 bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescription &backup)
 {
-    return backupMatchesCopy(input.liveDatabaseFingerprints, input.liveFingerprint, backup);
+    return backupMatchesCopy(input.liveDatabaseFingerprints, input.restoredDatabases, input.liveFingerprint, backup);
 }
 
 // Two sticks hold the same copy when their database sets carry the same
@@ -157,12 +171,38 @@ bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescr
 // enough by themselves to prove nothing changed. Without any database
 // fingerprint on either side (rekordbox only), the content fingerprint
 // is the only signal there is.
+//
+// One side may be a clone of the other whose Engine database a restore
+// changed after writing it (its covers made label-proof): the same
+// database when that side's record says its fingerprint is what the
+// restore made of the other side's.
+bool sameDatabases(const std::map<std::string, std::string> &a, const RestoredDatabases &aRestored,
+                   const std::map<std::string, std::string> &b, const RestoredDatabases &bRestored)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (const auto &[path, hex] : a) {
+        const auto other = b.find(path);
+        if (other == b.end()) {
+            return false;
+        }
+        if (!infrastructure::stick_backup::holdsBackupDatabase(aRestored, path, other->second, hex)
+            && !infrastructure::stick_backup::holdsBackupDatabase(bRestored, path, hex, other->second)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool peerInSync(const StickBackupAdviceInput &input, const PeerStick &peer)
 {
     if (input.liveDatabaseFingerprints.empty() != peer.databaseFingerprints.empty()) {
         return false;
     }
-    if (!input.liveDatabaseFingerprints.empty() && input.liveDatabaseFingerprints != peer.databaseFingerprints) {
+    if (!input.liveDatabaseFingerprints.empty()
+        && !sameDatabases(input.liveDatabaseFingerprints, input.restoredDatabases, peer.databaseFingerprints,
+                          peer.restoredDatabases)) {
         return false;
     }
     return input.liveFingerprint && peer.fingerprint
@@ -345,7 +385,8 @@ void adviseUpdate(const StickBackupAdviceInput &input, const StickBackupDescript
         // Diverged: the disk backup is the common ancestor, and both
         // copies moved away from it.
         if (matched != nullptr && !backupIsCurrent(input, *matched)
-            && !backupMatchesCopy(newestPeer->databaseFingerprints, newestPeer->fingerprint, *matched)
+            && !backupMatchesCopy(newestPeer->databaseFingerprints, newestPeer->restoredDatabases,
+                                  newestPeer->fingerprint, *matched)
             && newerThan(input.catalogModifiedAtUnix, matched->createdAtUnix)
             && newerThan(newestPeer->catalogModifiedAtUnix, matched->createdAtUnix)) {
             advice.diverged = true;
@@ -375,6 +416,29 @@ StickBackupAdvice adviseStickBackup(const StickBackupAdviceInput &input)
         adviseClone(input, advice);
     }
     return advice;
+}
+
+StickDatabaseState readStickDatabaseState(const std::filesystem::path &stickRoot,
+                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary)
+{
+    namespace sb = infrastructure::stick_backup;
+    StickDatabaseState state;
+    std::set<std::string> paths;
+    for (const StickBackupDescription &backup : backups) {
+        for (const auto &[path, hex] : backup.databaseFingerprints) {
+            paths.insert(path);
+        }
+    }
+    if (hasLibrary) {
+        paths.insert(sb::archiveNameOf(infrastructure::engine::engineMainDatabasePath(std::filesystem::path())));
+    }
+    for (const std::string &path : paths) {
+        if (const auto fingerprint = sb::fingerprintDbSet(stickRoot / pathFromUtf8(path))) {
+            state.fingerprints[path] = fingerprint->toHex();
+        }
+    }
+    state.restoredDatabases = sb::readRestoredDatabases(stickRoot);
+    return state;
 }
 
 std::string_view toString(StickBackupAdvice::State state)

@@ -1312,6 +1312,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     }
                     result.filesWritten.push_back(destinationUtf8);
                 }
+                result.artworkFiles.push_back(pathToUtf8(destination));
 
                 sqlite3_stmt *find = nullptr;
                 if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE hash = ?;", -1, &find, nullptr)
@@ -1470,6 +1471,7 @@ LabelProofArtwork makeArtworkLinksLabelProof(const std::string &engineLibraryPat
             return result;
         }
         result.copied = repair.repaired;
+        result.artworkFiles = repair.artworkFiles;
     }
 
     // Whatever still points at a link to another stick's name, counted

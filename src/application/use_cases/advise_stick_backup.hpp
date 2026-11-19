@@ -13,6 +13,7 @@
 
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "domain/library_fingerprint.hpp"
+#include "infrastructure/stick_backup/restored_databases.hpp"
 
 namespace seabass::application
 {
@@ -31,6 +32,7 @@ struct StickBackupAdviceInput
         std::string stickIdentifier;
         std::optional<domain::LibraryFingerprint> fingerprint;
         std::map<std::string, std::string> databaseFingerprints;  // same keys as liveDatabaseFingerprints
+        infrastructure::stick_backup::RestoredDatabases restoredDatabases;  // as for the stick itself
         std::int64_t catalogModifiedAtUnix = 0;  // 0: unknown
         std::uint64_t usedBytes = 0;             // 0: unknown
     };
@@ -43,6 +45,11 @@ struct StickBackupAdviceInput
     // Archive-relative main-database path -> the DbSetFingerprint hex the
     // stick has right now (absent when that database is not on the stick).
     std::map<std::string, std::string> liveDatabaseFingerprints;
+    // What the last restore or clone onto this stick wrote, where that is
+    // not the backup's database byte for byte (a clone onto a stick with
+    // another label copies the covers into the Engine library after it).
+    // A database whose fingerprint is the one recorded holds the backup's.
+    infrastructure::stick_backup::RestoredDatabases restoredDatabases;
     // When the catalog was last written: the newest mtime among the
     // library databases (export.pdb, m.db and its WAL, hm.db). The only
     // signal that orders two copies of the same library; fingerprints
@@ -129,6 +136,21 @@ struct StickBackupAdvice
 };
 
 StickBackupAdvice adviseStickBackup(const StickBackupAdviceInput &input);
+
+// The stick's side of the exact "changed since" test, read off the stick
+// at `stickRoot`: the DbSetFingerprint of every database `backups`
+// captured, plus the stick's own Engine database when it has a library
+// (so two sticks compare with each other when no backup captured
+// either), and the record of what the last restore wrote there. What the
+// stick list and the rig tools fill StickBackupAdviceInput's
+// liveDatabaseFingerprints and restoredDatabases (and a peer's) with.
+struct StickDatabaseState
+{
+    std::map<std::string, std::string> fingerprints;
+    infrastructure::stick_backup::RestoredDatabases restoredDatabases;
+};
+StickDatabaseState readStickDatabaseState(const std::filesystem::path &stickRoot,
+                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary);
 
 std::string_view toString(StickBackupAdvice::State state);
 std::string_view toString(StickBackupAdvice::MatchedBy matchedBy);

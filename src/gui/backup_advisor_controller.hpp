@@ -149,6 +149,7 @@ private:
         std::string stickLabel;
         std::optional<domain::LibraryFingerprint> fingerprint;
         std::map<std::string, std::string> databaseFingerprints;
+        infrastructure::stick_backup::RestoredDatabases restoredDatabases;
         std::int64_t catalogModifiedAtUnix = 0;
         std::uint64_t usedBytes = 0;
         std::uint64_t freeBytes = 0;

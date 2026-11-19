@@ -301,6 +301,10 @@ struct LabelProofArtwork
     // on a stick without a name, left).
     std::uint64_t bytesNeeded = 0;
     bool noRoom = false;
+    // The files under the library's Artwork/ the copied covers are kept
+    // in (ArtworkRepair::artworkFiles): part of the library from now on,
+    // though no backup of the source holds them.
+    std::vector<std::string> artworkFiles;
     // Set when the database could not be read or written. A failed copy
     // is rolled back whole; a failed rename after a copy that landed
     // leaves the copied covers in place.
@@ -335,6 +339,9 @@ struct ArtworkRepair
     int repaired = 0;
     // Files written under Artwork/, so a failed save can take them back out.
     std::vector<std::string> filesWritten;
+    // Every file under Artwork/ a repaired row now names, whether this
+    // repair wrote it or found it already there. Absolute, UTF-8.
+    std::vector<std::string> artworkFiles;
     // Entries whose image was copied in but whose Track row was no longer
     // there to point at it (deleted between the audit and the save). Kept
     // apart from `repaired` so a caller can say which happened rather than

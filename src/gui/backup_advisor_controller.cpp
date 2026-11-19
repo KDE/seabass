@@ -273,21 +273,12 @@ void BackupAdvisorController::startNext()
         // The exact "changed since" test: the same databases the backups
         // captured, fingerprinted as they are on the stick right now --
         // plus the stick's own Engine database, so two sticks can be
-        // compared with each other even when no backup captured either.
-        std::set<std::string> databasePaths;
-        for (const StickBackupDescription &backup : result->backups) {
-            for (const auto &[path, hex] : backup.databaseFingerprints) {
-                databasePaths.insert(path);
-            }
-        }
-        if (facts.hasLibrary) {
-            databasePaths.insert(stick_backup::archiveNameOf(infrastructure::engine::engineMainDatabasePath(fs::path())));
-        }
-        for (const std::string &path : databasePaths) {
-            if (const auto fingerprint = stick_backup::fingerprintDbSet(root / pathFromUtf8(path))) {
-                facts.databaseFingerprints[path] = fingerprint->toHex();
-            }
-        }
+        // compared with each other even when no backup captured either --
+        // and the record of what a restore or clone last wrote there.
+        application::StickDatabaseState databases =
+            application::readStickDatabaseState(root, result->backups, facts.hasLibrary);
+        facts.databaseFingerprints = std::move(databases.fingerprints);
+        facts.restoredDatabases = std::move(databases.restoredDatabases);
         return result;
     }, stepEnding());
     // After the step has started: announced before it, a reader
@@ -403,6 +394,7 @@ void BackupAdvisorController::recomputeAdvice()
         input.stickLabel = facts.stickLabel;
         input.liveFingerprint = facts.fingerprint;
         input.liveDatabaseFingerprints = facts.databaseFingerprints;
+        input.restoredDatabases = facts.restoredDatabases;
         input.catalogModifiedAtUnix = facts.catalogModifiedAtUnix;
         input.usedBytes = facts.usedBytes;
         input.freeBytes = facts.freeBytes;
@@ -426,6 +418,7 @@ void BackupAdvisorController::recomputeAdvice()
             peer.stickIdentifier = other.value().stickIdentifier;
             peer.fingerprint = other.value().fingerprint;
             peer.databaseFingerprints = other.value().databaseFingerprints;
+            peer.restoredDatabases = other.value().restoredDatabases;
             peer.catalogModifiedAtUnix = other.value().catalogModifiedAtUnix;
             peer.usedBytes = other.value().usedBytes;
             input.peers.push_back(std::move(peer));

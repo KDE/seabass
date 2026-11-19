@@ -33,7 +33,8 @@ struct TreeWalk
 
 // Names that are never part of a stick's library and are often not even
 // readable: OS metadata directories at the root, SQLite's regenerable
-// -shm files anywhere, and Seabass's own write lock.
+// -shm files anywhere, Seabass's own write lock, and its record of what
+// the last restore wrote onto this stick (restored_databases.hpp).
 bool isExcludedFromBackup(std::string_view relativePath, bool isDirectory);
 
 // One stat-only pass over the stick: what is there, how big, when last

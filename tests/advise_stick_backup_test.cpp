@@ -323,9 +323,48 @@ int main()
         input.peers[0].databaseFingerprints = input.liveDatabaseFingerprints;  // in sync despite the mtime
         assert(adviseStickBackup(input).updateSource.kind == Kind::None);
 
+        // A clone of the peer whose database a restore changed after
+        // writing it (covers made label-proof): in sync while this stick's
+        // record says its database is what the restore made of the peer's,
+        // and not once either side has been written since.
         input.peers[0].databaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-peer"}};
+        input.restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-peer", "db-mine", {}}}};
+        assert(adviseStickBackup(input).updateSource.kind == Kind::None);
+        input.restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-older", "db-mine", {}}}};
+        assert(adviseStickBackup(input).updateSource.kind == Kind::Stick);
+        input.restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-peer", "db-mine-before", {}}}};
+        assert(adviseStickBackup(input).updateSource.kind == Kind::Stick);
+        // The record on the peer's side reads the same way round.
+        input.restoredDatabases.clear();
+        input.peers[0].restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-mine", "db-peer", {}}}};
+        assert(adviseStickBackup(input).updateSource.kind == Kind::None);
+        input.peers[0].restoredDatabases.clear();
+
         input.catalogModifiedAtUnix = 0;  // unknown: no ordering, no offer
         assert(adviseStickBackup(input).updateSource.kind == Kind::None);
+    }
+
+    // A stick a clone wrote, whose database the clone changed after
+    // writing it: current against the backup while the database is still
+    // what the clone left, and outdated (exactly as without a record) once
+    // anything has written it since. A record about another state of the
+    // backup vouches for nothing.
+    {
+        StickBackupAdviceInput input;
+        input.hasLibrary = true;
+        input.liveFingerprint = fingerprintLibrary(libraryB);
+        input.liveDatabaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-clone"}};
+        input.catalogModifiedAtUnix = 1000;
+        input.backups = {makeBackup("/b/B.zip", "uuid-source", "SOURCE", 1000, libraryB)};
+        assert(adviseStickBackup(input).state == StickBackupAdvice::State::Outdated);
+        input.restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-/b/B.zip", "db-clone", {}}}};
+        assert(adviseStickBackup(input).state == StickBackupAdvice::State::Current);
+        input.liveDatabaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-written-since"}};
+        assert(adviseStickBackup(input).state == StickBackupAdvice::State::Outdated);
+        input.liveDatabaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-clone"}};
+        input.restoredDatabases = {{"PIONEER/rekordbox/export.pdb", {"db-/b/A.zip", "db-clone", {}}}};
+        assert(adviseStickBackup(input).state == StickBackupAdvice::State::Outdated);
+        std::cout << "a clone's record: current while the database is what the clone left" << std::endl;
     }
 
     // A stick with both an Engine and a rekordbox catalog: a rekordbox-only

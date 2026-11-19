@@ -16,6 +16,7 @@
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/stick_backup/restored_databases.hpp"
 
 namespace seabass::infrastructure::stick_backup
 {
@@ -65,7 +66,10 @@ bool isExcludedFromBackup(std::string_view relativePath, bool isDirectory)
             return true;
         }
     }
-    if (relativePath == WriteLockPath || relativePath == BrowsedBackupMarker) {
+    // The record of what the last restore wrote onto this stick is about
+    // this stick alone: carried in a backup onto another, it would vouch
+    // for a database it never saw.
+    if (relativePath == WriteLockPath || relativePath == BrowsedBackupMarker || relativePath == RestoredDatabasesPath) {
         return true;
     }
     return !isDirectory && engine::isSqliteShmFile(lastComponent(relativePath));

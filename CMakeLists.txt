@@ -614,6 +614,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     src/infrastructure/stick_backup/sqlite_db_set.cpp
+    src/infrastructure/stick_backup/restored_databases.cpp
     src/infrastructure/stick_backup/library_catalog_mtime.cpp
     src/infrastructure/stick_backup/archive_compactor.cpp
     src/infrastructure/stick_backup/restore_path_sanitizer.cpp
@@ -781,6 +782,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/stick_backup/archive_updater.cpp
     src/infrastructure/stick_backup/library_catalog_mtime.cpp
     src/infrastructure/stick_backup/sqlite_db_set.cpp
+    src/infrastructure/stick_backup/restored_databases.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     src/infrastructure/stick_backup/zip64_reader.cpp
     src/infrastructure/stick_backup/zip64_writer.cpp
@@ -4569,6 +4571,12 @@ target_link_libraries(clone_stick_test PRIVATE seabass_core_testing)
 target_include_directories(clone_stick_test PRIVATE src)
 target_link_libraries(clone_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME clone_stick_test COMMAND clone_stick_test)
+
+add_executable(clone_target_state_test tests/clone_target_state_test.cpp)
+target_link_libraries(clone_target_state_test PRIVATE seabass_core)
+target_include_directories(clone_target_state_test PRIVATE src)
+target_link_libraries(clone_target_state_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
+add_test(NAME clone_target_state_test COMMAND clone_target_state_test)
 
 add_executable(pending_deletion_resolver_test
     src/application/use_cases/find_unreferenced_files.cpp

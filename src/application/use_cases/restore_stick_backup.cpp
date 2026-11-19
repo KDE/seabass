@@ -34,6 +34,7 @@
 #include "infrastructure/stick_backup/archive_updater.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/restore_path_sanitizer.hpp"
+#include "infrastructure/stick_backup/restored_databases.hpp"
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 #include "infrastructure/stick_backup/stat_diff.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
@@ -278,11 +279,38 @@ struct RestorePlan
     // The files among them, by size: the candidates an extra could be the same
     // file as (see extraIsBackupFile).
     std::multimap<std::uint64_t, fs::path> backupFilesBySize;
+    // Database sets (archive path of the main file) the target holds as an
+    // earlier restore of this very backup left them: the backup's database
+    // with the covers made label-proof after it (restored_databases.hpp).
+    // Not written again, and none of their members is an extra.
+    std::set<std::string> setsAsRestored;
+    // The files the record says that restore put beside them (the covers
+    // it copied into the Engine library), as normalizedPathKey()s, and the
+    // folders they are in: none of them is an extra either.
+    std::set<std::string> filesAsRestored;
+    std::set<std::string> foldersAsRestored;
 };
 
-RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifest, const fs::path &targetRoot)
+// Whether this restore makes the Engine library's player links
+// label-proof after writing it (see the end of execute()): onto a stick,
+// labelled or not, whose label is not the backup's.
+bool makesCoversLabelProof(const RestoreOptions &options, const BackupManifest &manifest)
+{
+    const bool targetIsStick = options.targetIsStick || !options.targetLabel.empty();
+    return targetIsStick && !infrastructure::engine::sameStickLabel(options.targetLabel, manifest.stickLabel);
+}
+
+// `coversLabelProof`: makesCoversLabelProof() for this restore. Only then
+// is a database the record says an earlier restore of this backup made
+// label-proof what this one would write; onto the backup's own stick, or
+// into a folder, the backup's database is written as it is.
+RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifest, const fs::path &targetRoot,
+                        bool coversLabelProof)
 {
     RestorePlan plan;
+    const infrastructure::stick_backup::RestoredDatabases restored =
+        coversLabelProof ? infrastructure::stick_backup::readRestoredDatabases(targetRoot)
+                         : infrastructure::stick_backup::RestoredDatabases{};
     std::vector<PlannedEntry> databaseFiles;
     std::map<std::string, const ManifestRow *> rowsByPath;
     for (const ManifestRow &row : manifest.rows) {
@@ -332,11 +360,31 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
             // commit later (SQLite reuses pages; FAT keeps 2 s mtimes): a
             // set whose main file the manifest fingerprinted is unchanged
             // only when the target's fingerprint is the same.
-            if (planned.unchanged && planned.setMainPath == entry.name) {
+            if (planned.setMainPath == entry.name) {
                 auto row = rowsByPath.find(entry.name);
                 if (row != rowsByPath.end() && !row->second->extra.empty()) {
                     const std::optional<DbSetFingerprint> live = fingerprintDbSet(target);
-                    planned.unchanged = live && live->toHex() == row->second->extra;
+                    if (planned.unchanged) {
+                        planned.unchanged = live && live->toHex() == row->second->extra;
+                    }
+                    // Not the backup's bytes, and not their size either, but
+                    // exactly what a restore of this database left here: the
+                    // record names this backup's fingerprint and the one the
+                    // target still has. Anything written since moves the
+                    // fingerprint, and the set is written again as before.
+                    const auto recorded = restored.find(entry.name);
+                    if (!planned.unchanged && live && recorded != restored.end()
+                        && recorded->second.archiveFingerprint == row->second->extra
+                        && recorded->second.writtenFingerprint == live->toHex()) {
+                        plan.setsAsRestored.insert(entry.name);
+                        for (const std::string &file : recorded->second.files) {
+                            plan.filesAsRestored.insert(normalizedPathKey(file));
+                            for (std::size_t slash = file.rfind('/'); slash != std::string::npos && slash > 0;
+                                 slash = file.rfind('/', slash - 1)) {
+                                plan.foldersAsRestored.insert(normalizedPathKey(file.substr(0, slash)));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -346,8 +394,10 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
     // changed (or a main file whose fingerprint moved) takes its
     // siblings with it.
     std::set<std::string> setsToWrite;
-    for (const PlannedEntry &member : databaseFiles) {
-        if (!member.unchanged) {
+    for (PlannedEntry &member : databaseFiles) {
+        if (plan.setsAsRestored.count(member.setMainPath) != 0) {
+            member.unchanged = true;
+        } else if (!member.unchanged) {
             setsToWrite.insert(member.setMainPath);
         }
     }
@@ -396,6 +446,11 @@ std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const Restor
         (plan.backupDirectories.count(path) != 0 ? directoryKeys : fileKeys).emplace(normalizedPathKey(path), path);
     }
     const std::string lockPath = "Seabass/backups/.write.lock";
+    const std::string recordPath(infrastructure::stick_backup::RestoredDatabasesPath);
+    std::set<std::string> asRestoredKeys;
+    for (const std::string &main : plan.setsAsRestored) {
+        asRestoredKeys.insert(normalizedPathKey(main));
+    }
     std::vector<std::string> extras;
     TreeWalk walk = walkStickTree(targetRoot, CancellationToken::none());
     for (const TreeEntry &entry : walk.entries) {
@@ -415,8 +470,24 @@ std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const Restor
                 continue;
             }
         }
-        if (entry.isDirectory && lockPath.compare(0, path.size() + 1, path + "/") == 0) {
+        if (entry.isDirectory
+            && (lockPath.compare(0, path.size() + 1, path + "/") == 0
+                || recordPath.compare(0, path.size() + 1, path + "/") == 0
+                || plan.foldersAsRestored.count(normalizedPathKey(path)) != 0)) {
             continue;
+        }
+        if (!entry.isDirectory && plan.filesAsRestored.count(normalizedPathKey(path)) != 0) {
+            continue;
+        }
+        // A -wal or -journal beside a database the target holds as a
+        // restore of this backup left it is part of that database.
+        if (!entry.isDirectory && !asRestoredKeys.empty()) {
+            const std::size_t slash = path.rfind('/');
+            const std::string dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+            const auto main = engine::dbSetMainFile(seabass::pathFromUtf8(path.substr(dir.size())));
+            if (main && asRestoredKeys.count(normalizedPathKey(dir + pathToGenericUtf8(*main))) != 0) {
+                continue;
+            }
         }
         extras.push_back(path);
     }
@@ -633,7 +704,8 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
     preview.unreadableEntries = opened.unreadableEntries;
     preview.rollsBackUnfinishedUpdate = opened.rollsBackUnfinishedUpdate;
 
-    RestorePlan plan = planRestore(*opened.reader, *opened.manifest, options.targetRoot);
+    RestorePlan plan =
+        planRestore(*opened.reader, *opened.manifest, options.targetRoot, makesCoversLabelProof(options, *opened.manifest));
     preview.entries = plan.directories.size() + plan.files.size();
     preview.bytes = plan.totalBytes;
     preview.filesUnchanged = plan.unchanged;
@@ -709,7 +781,8 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         }
     };
     report(RestoreProgress::Phase::Analyzing);
-    RestorePlan plan = planRestore(*opened.reader, *opened.manifest, options.targetRoot);
+    RestorePlan plan =
+        planRestore(*opened.reader, *opened.manifest, options.targetRoot, makesCoversLabelProof(options, *opened.manifest));
     summary.rejected = plan.rejected;
     summary.filesUnchanged = plan.unchanged;
     std::vector<std::string> extras = options.exact ? extrasOnTarget(options.targetRoot, plan) : std::vector<std::string>{};
@@ -827,6 +900,10 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // it: one written, one that failed, and one deliberately left alone
     // are each a file the restore is past. Counting only the written ones
     // left the bar short of its total on any run with a problem in it.
+    // Database sets this run did not put on the target whole: a member
+    // held back, only partly restored, or not written. What is there is
+    // not known to be the backup's, so it is never recorded as such.
+    std::set<std::string> setsNotPlaced;
     std::size_t filesPassed = progress.filesAlreadyPresent;
     std::uint64_t bytesPassed = progress.bytesAlreadyPresent;
     auto passFile = [&](const PlannedEntry &file) {
@@ -888,6 +965,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             // number the page reads aloud as "already up to date" is
             // only ever about files that really are.
             ++summary.filesHeldBack;
+            setsNotPlaced.insert(file.setMainPath);
             passFile(file);
             continue;
         }
@@ -896,6 +974,9 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             const std::uint64_t onTarget = fs::file_size(longPathSafe(destination), existsEc);
             const bool wholeCopyIsThere = !existsEc && onTarget >= row->salvagedFromSize;
             summary.partial.push_back({file.name, row->size, row->salvagedFromSize, !wholeCopyIsThere});
+            if (file.databaseMember) {
+                setsNotPlaced.insert(file.setMainPath);
+            }
             if (wholeCopyIsThere) {
                 // Counted as unchanged rather than written: nothing was
                 // put on the target for this entry, and the file that is
@@ -914,6 +995,9 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             &placedIn);
         if (!error.empty()) {
             summary.writeErrors.push_back(error);
+            if (file.databaseMember) {
+                setsNotPlaced.insert(file.setMainPath);
+            }
             progress.bytesDone = bytesBefore;
             // A yanked stick would otherwise produce one error per
             // remaining file: stop at the first error whose target is gone.
@@ -984,17 +1068,24 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // as one. Run whether or not this run wrote the database: a target
     // that already holds the backup's library unchanged (an earlier
     // restore, or one interrupted before getting here) still has the
-    // other names' links in it. A target where it already ran no longer
-    // matches the backup's database, so the set is written again and
-    // this runs again on it.
+    // other names' links in it. A target where it already ran holds the
+    // backup's database as this left it, which the record written below
+    // says: the set is not written again, and this finds nothing to do.
     //
     // A restore onto a stick with the backup's own label leaves every
     // link as the backup has it, the ones to a third name too: that is
     // the stick getting back what it had.
     const fs::path targetDatabase = engine::engineMainDatabasePath(options.targetRoot);
-    const bool targetIsStick = options.targetIsStick || !options.targetLabel.empty();
-    if (targetIsStick && !infrastructure::engine::sameStickLabel(options.targetLabel, opened.manifest->stickLabel)
-        && fs::is_regular_file(longPathSafe(targetDatabase), ec)) {
+    const PlannedEntry *engineMain = nullptr;
+    for (const PlannedEntry &file : plan.files) {
+        if ((options.targetRoot / file.relative).lexically_normal() == targetDatabase.lexically_normal()) {
+            engineMain = &file;
+            break;
+        }
+    }
+    std::vector<std::string> coverFiles;  // stick-relative, what the covers copied below are kept in
+    bool coverStepFailed = false;
+    if (makesCoversLabelProof(options, *opened.manifest) && fs::is_regular_file(longPathSafe(targetDatabase), ec)) {
         // Still writing, as far as the steps a page shows go: a write,
         // and one that only some restores make.
         report(RestoreProgress::Phase::Writing);
@@ -1002,6 +1093,9 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             seabass::pathToUtf8(targetDatabase.parent_path().parent_path()), options.targetLabel,
             freeBytesAtTarget(), options.freeSpaceMarginBytes);
         if (!proof.error.empty()) {
+            // Not recorded below: the next run writes the database again
+            // and tries again, rather than taking this for its result.
+            coverStepFailed = true;
             summary.warnings.push_back("the Engine library's covers still depend on another drive's name: "
                                        + proof.error);
         } else if (proof.linkedTracks > 0) {
@@ -1010,13 +1104,14 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             // later catalog the newer library, and a few rewritten cover
             // rows must not make the target look newer than its source
             // and offer to copy it back over it.
-            for (const PlannedEntry &file : plan.files) {
-                if ((options.targetRoot / file.relative).lexically_normal() == targetDatabase.lexically_normal()) {
-                    fs::last_write_time(longPathSafe(targetDatabase),
-                                        fromUnixSeconds(opened.reader->entries()[file.index].mtimeUnix), ec);
-                    ec.clear();
-                    break;
-                }
+            if (engineMain != nullptr) {
+                fs::last_write_time(longPathSafe(targetDatabase),
+                                    fromUnixSeconds(opened.reader->entries()[engineMain->index].mtimeUnix), ec);
+                ec.clear();
+            }
+            for (const std::string &file : proof.artworkFiles) {
+                coverFiles.push_back(
+                    seabass::pathToGenericUtf8(seabass::pathFromUtf8(file).lexically_relative(options.targetRoot)));
             }
             summary.coversCopied = proof.copied;
             summary.coverLinksRenamed = proof.renamed;
@@ -1042,6 +1137,58 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         }
     }
     ec.clear();
+
+    // What this restore left of the backup's Engine database, for the
+    // next look at this stick (restored_databases.hpp): when it is no
+    // longer the backup's byte for byte, which fingerprint it has now.
+    // Without this a clone read as behind its own backup a second after
+    // it finished, and every run wrote the database again.
+    {
+        const infrastructure::stick_backup::RestoredDatabases before =
+            infrastructure::stick_backup::readRestoredDatabases(options.targetRoot);
+        infrastructure::stick_backup::RestoredDatabases record;
+        if (engineMain != nullptr && setsNotPlaced.count(engineMain->setMainPath) == 0 && !coverStepFailed) {
+            const auto row = rowsByPath.find(engineMain->name);
+            const std::optional<DbSetFingerprint> live = fingerprintDbSet(targetDatabase);
+            if (row != rowsByPath.end() && !row->second->extra.empty() && live && live->toHex() != row->second->extra) {
+                infrastructure::stick_backup::RestoredDatabase &restored = record[engineMain->name];
+                restored.archiveFingerprint = row->second->extra;
+                restored.writtenFingerprint = live->toHex();
+                // The covers an earlier run copied, when this run found the
+                // database as that run left it and so copied none itself.
+                const auto earlier = before.find(engineMain->name);
+                if (plan.setsAsRestored.count(engineMain->name) != 0 && earlier != before.end()) {
+                    for (const std::string &file : earlier->second.files) {
+                        std::error_code exists;
+                        if (fs::is_regular_file(longPathSafe(options.targetRoot / seabass::pathFromUtf8(file)), exists)) {
+                            restored.files.push_back(file);
+                        }
+                    }
+                }
+                restored.files.insert(restored.files.end(), coverFiles.begin(), coverFiles.end());
+                std::sort(restored.files.begin(), restored.files.end());
+                restored.files.erase(std::unique(restored.files.begin(), restored.files.end()), restored.files.end());
+            }
+        }
+        if (record != before && !infrastructure::stick_backup::writeRestoredDatabases(options.targetRoot, record)) {
+            summary.warnings.push_back(
+                "could not note on this drive what the restore wrote into its Engine library, so it may read as "
+                "behind its backup and be offered the same update again");
+        }
+        // A record taken away leaves no empty folder of its own behind:
+        // the backup does not hold it, so it would be an extra the next
+        // exact restore removes.
+        if (record.empty() && !before.empty()) {
+            const fs::path folder = (options.targetRoot
+                                     / seabass::pathFromUtf8(std::string(infrastructure::stick_backup::RestoredDatabasesPath)))
+                                        .parent_path();
+            const std::string folderName = pathToGenericUtf8(folder.lexically_relative(options.targetRoot));
+            if (plan.backupDirectories.count(folderName) == 0 && fs::is_empty(longPathSafe(folder), ec)) {
+                fs::remove(longPathSafe(folder), ec);
+            }
+            ec.clear();
+        }
+    }
 
     if (options.libraryCheck) {
         report(RestoreProgress::Phase::Checking);

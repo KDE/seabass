@@ -247,11 +247,13 @@ int main()
         // The source and its backup are what they were.
         assert(coverOf(f.source, tracks[0]).hash == "image://fileart//media/SOURCE/PIONEER/Artwork/00001/cover0.jpg");
 
-        // Run again: the target's library differs from the archive's, so
-        // it is written again and made label-proof again, to the same end.
+        // Run again: the target holds what the first run left, which the
+        // run recorded, so nothing is written and there is nothing left
+        // to make label-proof (clone_target_state_test has the rest).
         outcome = CloneStick::execute(f.options);
         assert(outcome.status == CloneStickOutcome::Status::Cloned);
-        assert(outcome.restore.coversCopied == 3 && outcome.restore.coverLinksRenamed == 1);
+        assert(outcome.restore.filesWritten == 0);
+        assert(outcome.restore.coversCopied == 0 && outcome.restore.coverLinksRenamed == 0);
         for (int i = 0; i < 3; ++i) {
             assert(isStoredCoverFile(f.target, coverOf(f.target, tracks[i])));
         }
