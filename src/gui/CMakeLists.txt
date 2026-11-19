@@ -117,6 +117,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/ExperimentalBadge.qml
     qml/common/TransferProgressFrame.qml
     qml/common/TypedConfirmDialog.qml
+    qml/common/FixedDriveCheck.qml
     qml/common/TransferResultFrame.qml
     qml/common/TransferOverlay.qml
     qml/common/PageScrollView.qml

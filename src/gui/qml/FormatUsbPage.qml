@@ -194,6 +194,8 @@ Page {
         // being reused.
         readonly property string confirmTarget: volumeLabelField.text.length > 0
             ? volumeLabelField.text : "(untitled)"
+        // Not reported as removable media: see FixedDriveCheck.
+        readonly property bool needsDriveCheck: root.selectedDisk !== null && root.selectedDisk.reportedFixed === true
 
         footer: DialogButtonBox {
             Button {
@@ -201,10 +203,14 @@ Page {
                 text: "Format Drive"
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
                 enabled: confirmField.text === confirmDialog.confirmTarget
+                    && (!confirmDialog.needsDriveCheck || fixedDriveCheck.checked)
             }
             Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
         }
         onOpened: confirmField.text = ""
+        // Before it shows, not once its entrance has finished: the box
+        // must never be seen, or pressed, still ticked from the last time.
+        onAboutToShow: fixedDriveCheck.checked = false
         onAccepted: controller.format(root.selectedDisk.wholeDiskPath, root.selectedFilesystem, volumeLabelField.text)
 
         ColumnLayout {
@@ -317,6 +323,14 @@ Page {
                 }
                 Label { text: "New label"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                 Label { font.family: Theme.dataFamily; text: confirmDialog.confirmTarget }
+            }
+
+            FixedDriveCheck {
+                id: fixedDriveCheck
+                objectName: "driveCheck"
+                visible: confirmDialog.needsDriveCheck
+                Layout.fillWidth: true
+                driveName: root.selectedDisk ? root.selectedDisk.label : ""
             }
 
             Label {

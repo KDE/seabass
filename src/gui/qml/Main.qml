@@ -606,6 +606,7 @@ ApplicationWindow {
                 targetMountPoint: targetMountPoint,
                 targetLabel: targetLabel,
                 targetHasLibrary: targetHasLibrary,
+                targetReportedFixed: mediaCtrl.reportedFixedForMountPoint(targetMountPoint),
             })
         }
     }

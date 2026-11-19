@@ -31,6 +31,9 @@ Page {
     // tracks removed on the source disappear here too; a fresh backup
     // stick keeps whatever unrelated files it had.
     property bool targetHasLibrary: false
+    // The target is not reported as removable media (see FixedDriveCheck):
+    // the user confirms it is a stick, and types its name, first.
+    property bool targetReportedFixed: false
 
     readonly property var preview: controller.preview || ({})
     readonly property var result: controller.result || ({})
@@ -39,6 +42,7 @@ Page {
     readonly property string targetName: root.targetLabel.length > 0 ? root.targetLabel : "(untitled)"
     readonly property bool isUpdate: root.targetHoldsLibrary
     readonly property bool needsTypedConfirmation: root.targetHoldsLibrary || exactCheckBox.checked || (root.preview.restoreExtras || 0) > 0
+        || root.targetReportedFixed
     readonly property bool canStart: root.preview.ready === true && root.controller.busy !== true && root.blockedBy.length === 0
         && root.preview.enoughTargetSpace !== false && root.preview.enoughBackupSpace !== false
 
@@ -120,11 +124,14 @@ Page {
         title: (root.isUpdate ? "Update " : "Write onto ") + root.targetName + "?"
         confirmTarget: root.targetName
         needsTypedConfirmation: root.needsTypedConfirmation
+        needsDriveCheck: root.targetReportedFixed
+        driveName: root.targetName
         acceptText: root.isUpdate ? "Update Stick" : "Create Backup Stick"
         acceptObjectName: "cloneAcceptButton"
         warningTitle: exactCheckBox.checked
             ? "This overwrites files on " + root.targetName + " and removes everything " + root.sourceLabel + " doesn't have."
-            : "This overwrites files on a drive that already holds a DJ library."
+            : (root.targetHoldsLibrary ? "This overwrites files on a drive that already holds a DJ library."
+                                       : "This overwrites files on " + root.targetName + ".")
         warningText: (root.preview.restoreKnown === true
                 ? (root.preview.restoreFilesToWrite || 0) + " file(s) will be written"
                 : "Everything " + root.sourceLabel + " holds will be written")

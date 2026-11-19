@@ -49,6 +49,9 @@ QVariantMap diskToVariant(const DetectedStick &disk)
     map["capacityBytes"] = static_cast<qlonglong>(disk.capacityBytes);
     map["mounted"] = disk.mounted;
     map["hasNoFilesystem"] = disk.hasNoFilesystem;
+    // Not reported as removable media: the page asks the user to confirm
+    // it is a drive they use as a stick before formatting it.
+    map["reportedFixed"] = disk.reportedFixed;
     map["hasDjLibrary"] = disk.rekordboxPath.has_value() || disk.enginePath.has_value();
     // The library another instance may be editing right now (see
     // format()); empty for an unlabelled or blank drive.
@@ -185,6 +188,12 @@ void FormatUsbController::refresh()
     m_identities.clear();
     bool chosenStillThere = false;
     for (const auto &disk : locator->detect()) {
+        // Formatting works on a whole disk. A drive listed without one (an
+        // external drive off the USB bus, taken for its library; a card in
+        // a built-in reader) is not offered: the format could only fail.
+        if (disk.wholeDiskPath.empty()) {
+            continue;
+        }
         const QString path = QString::fromStdString(disk.wholeDiskPath);
         // First entry wins: one disk is listed once per partition, and
         // they share a wholeDiskPath. Which of them the identity comes

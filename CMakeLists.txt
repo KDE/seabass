@@ -851,6 +851,9 @@ if(WIN32)
         src/infrastructure/media/windows_usb_formatter.cpp
         src/infrastructure/process/run_command_windows.cpp
     )
+    # SetupAPI and the configuration manager: ejecting a USB drive that
+    # calls itself a fixed disk (WindowsRemovableMediaMounter::unmount).
+    target_link_libraries(seabass_core PUBLIC setupapi cfgmgr32)
 elseif(APPLE)
     target_sources(seabass_core PRIVATE
         src/infrastructure/media/diskutil_media_mounter.cpp
@@ -2350,6 +2353,12 @@ add_executable(hidden_engine_cues_test tests/hidden_engine_cues_test.cpp)
 target_link_libraries(hidden_engine_cues_test PRIVATE seabass_core_testing)
 target_include_directories(hidden_engine_cues_test PRIVATE src)
 add_test(NAME hidden_engine_cues_test COMMAND hidden_engine_cues_test)
+
+# Which Windows drive letter is a stick: plain facts in, so on every
+# platform.
+add_executable(windows_drive_acceptance_test tests/windows_drive_acceptance_test.cpp)
+target_include_directories(windows_drive_acceptance_test PRIVATE src)
+add_test(NAME windows_drive_acceptance_test COMMAND windows_drive_acceptance_test)
 
 add_executable(format_usb_stick_test
     tests/format_usb_stick_test.cpp
@@ -3951,6 +3960,12 @@ if(WIN32)
     )
     target_include_directories(windows_removable_media_monitor_test PRIVATE src)
     add_test(NAME windows_removable_media_monitor_test COMMAND windows_removable_media_monitor_test)
+
+    # Against this machine's own drives: never the system drive, and quick.
+    add_executable(windows_removable_media_locator_test tests/windows_removable_media_locator_test.cpp)
+    target_link_libraries(windows_removable_media_locator_test PRIVATE seabass_core)
+    target_include_directories(windows_removable_media_locator_test PRIVATE src)
+    add_test(NAME windows_removable_media_locator_test COMMAND windows_removable_media_locator_test)
 endif()
 
 add_executable(archive_file_test

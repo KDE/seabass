@@ -75,8 +75,12 @@ Page {
         ? root.disks[root.selectedIndex] : null
     property bool exact: false
     readonly property bool archiveReady: root.info.label !== undefined && (!root.info.error || root.info.error.length === 0)
+    // A drive not reported as removable media is asked about first (see
+    // FixedDriveCheck), and its name is always typed: it may hold more
+    // than a DJ library, and nothing tells which.
+    readonly property bool driveReportedFixed: root.selectedDisk !== null && root.selectedDisk.reportedFixed === true
     readonly property bool needsTypedConfirmation: root.selectedDisk !== null
-        && (root.selectedDisk.hasDjLibrary === true || root.exact || root.preview.extras > 0)
+        && (root.selectedDisk.hasDjLibrary === true || root.exact || root.preview.extras > 0 || root.driveReportedFixed)
     readonly property bool canRestore: root.archiveReady && root.selectedDisk !== null && root.selectedDisk.usable === true
         && root.preview.filesToWrite !== undefined && root.preview.enoughFreeSpace !== false && root.controller.busy !== true
 
@@ -364,10 +368,14 @@ Page {
         title: "Restore onto " + (root.selectedDisk ? root.selectedDisk.label : "") + "?"
         confirmTarget: root.selectedDisk ? (root.selectedDisk.label.length > 0 ? root.selectedDisk.label : "(untitled)") : ""
         needsTypedConfirmation: root.needsTypedConfirmation
+        needsDriveCheck: root.driveReportedFixed
+        driveName: confirmDialog.confirmTarget
         acceptText: "Restore Drive"
         acceptObjectName: "restoreAcceptButton"
         warningTitle: root.exact ? "This overwrites files and removes everything the backup doesn't contain."
-                                 : "This overwrites files on a drive that already holds a DJ library."
+                                 : (root.selectedDisk !== null && root.selectedDisk.hasDjLibrary === true
+                                    ? "This overwrites files on a drive that already holds a DJ library."
+                                    : "This overwrites files on the drive.")
         // An emergency copy leads the warning: what is about to be
         // written came off a filesystem the kernel had already given up
         // on, so "restore" here means "salvage", not "put it back".

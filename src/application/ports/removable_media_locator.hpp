@@ -48,6 +48,15 @@ struct DetectedStick
     // until Seabass is allowed onto removable volumes): its path below
     // stays empty, as for no library, and this says why.
     bool libraryAccessDenied = false;
+    // The system does not call this drive removable media: Windows
+    // reports it as a fixed disk. Many external USB SSDs and hard drives
+    // do (Kingston's among them), and so does a fixed drive that is listed
+    // only because it holds a DJ library. Seabass is then not sure it is
+    // a stick and not a disk the user keeps other things on, so every
+    // operation that erases or overwrites the drive (format, restore,
+    // clone onto it) asks the user to confirm that first, on top of its
+    // usual confirmation.
+    bool reportedFixed = false;
     std::optional<std::string> rekordboxPath;  // the "PIONEER" folder, if export.pdb was found under it
     std::optional<std::string> enginePath;     // the "Engine Library" folder, if Database2/m.db was found under it
 

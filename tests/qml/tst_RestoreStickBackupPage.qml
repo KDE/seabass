@@ -430,6 +430,40 @@ TestCase {
         compare(accept.enabled, true);
     }
 
+    // A drive the computer calls a fixed disk: even with nothing on it
+    // that Seabass knows, its name is typed and the user ticks that it is
+    // a stick, every time the dialog opens.
+    function test_fixedDriveNeedsTheDriveCheckAndTheName() {
+        var page = makePage([makeDisk({reportedFixed: true})]);
+        var dialog = findChild(page, "confirmDialog");
+        var accept = findChild(page, "restoreAcceptButton");
+        var field = findChild(page, "confirmField");
+        var box = findChild(findChild(page, "driveCheck"), "fixedDriveCheckBox");
+        verify(box !== null);
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        compare(field.visible, true);
+        compare(findChild(page, "driveCheck").visible, true);
+        field.text = "STICK";
+        compare(accept.enabled, false, "the name alone does not restore onto a fixed disk");
+        box.checked = true;
+        compare(accept.enabled, true);
+        dialog.close();
+        tryVerify(function() { return !dialog.visible; });
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        compare(box.checked, false);
+    }
+
+    function test_removableBlankDriveHasNoDriveCheck() {
+        var page = makePage([makeDisk({})]);
+        var dialog = findChild(page, "confirmDialog");
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        compare(findChild(page, "driveCheck").visible, false);
+        compare(findChild(page, "restoreAcceptButton").enabled, true);
+    }
+
     function test_exactRestorePassesTheFlagAndRequiresTyping() {
         var page = makePage([makeDisk({})]);
         var exact = findChild(page, "exactCheckBox");

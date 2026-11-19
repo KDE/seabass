@@ -333,7 +333,7 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
                 && have.mounted == stick.mounted && have.isSdCard == stick.isSdCard
                 && have.isFolder == stick.isFolder && have.isBrowsedBackup == stick.isBrowsedBackup
                 && have.rekordboxPath == stick.rekordboxPath && have.enginePath == stick.enginePath
-                && have.libraryAccessDenied == stick.libraryAccessDenied
+                && have.libraryAccessDenied == stick.libraryAccessDenied && have.reportedFixed == stick.reportedFixed
                 && have.capacityBytes == stick.capacityBytes
                 && have.hasNoFilesystem == stick.hasNoFilesystem && have.rootEntries == stick.rootEntries
                 && have.identity.libraryId() == stick.identity.libraryId();
@@ -908,6 +908,22 @@ QString MediaController::libraryIdForMountPoint(const QString &mountPoint) const
 {
     auto identity = lastKnownIdentity(mountPoint.toStdString());
     return identity ? QString::fromStdString(identity->libraryId()) : QString();
+}
+
+bool MediaController::reportedFixedForMountPoint(const QString &mountPoint) const
+{
+    if (mountPoint.isEmpty()) {
+        return false;
+    }
+    // Compared as paths: a page's mount point is forward-slash, the
+    // stick's native, and on Windows the two are different strings.
+    const auto wanted = pathFromUtf8(mountPoint.toStdString()).lexically_normal();
+    for (const auto &stick : m_model.sticks()) {
+        if (!stick.mountPoint.empty() && pathFromUtf8(stick.mountPoint).lexically_normal() == wanted) {
+            return stick.reportedFixed;
+        }
+    }
+    return false;
 }
 
 bool MediaController::pathIsPresent(const QString &path) const

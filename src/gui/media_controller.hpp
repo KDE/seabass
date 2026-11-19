@@ -330,6 +330,12 @@ public:
     // when the mount point was never seen.
     Q_INVOKABLE QString libraryIdForMountPoint(const QString &mountPoint) const;
 
+    // Whether the stick mounted at mountPoint is one the system does not
+    // call removable media (DetectedStick::reportedFixed): a page that
+    // would overwrite it asks the user to confirm it is a stick first.
+    // False when nothing is mounted there.
+    Q_INVOKABLE bool reportedFixedForMountPoint(const QString &mountPoint) const;
+
     // The library id openFolder() gives a directory: derived from the
     // canonical path, because a folder has no serial or filesystem UUID
     // of its own and the path is the only thing that stays the same

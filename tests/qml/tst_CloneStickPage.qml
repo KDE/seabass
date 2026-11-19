@@ -162,6 +162,25 @@ TestCase {
         compare(page.controller.calls.indexOf("start:true") >= 0, true);
     }
 
+    // A target the computer calls a fixed disk: a fresh one too needs its
+    // name typed and the box ticked that it is a stick.
+    function test_fixedTargetNeedsTheDriveCheckAndTheName() {
+        var page = makePage(undefined, {targetReportedFixed: true});
+        findChild(page, "openConfirmButton").clicked();
+        var dialog = findChild(page, "confirmDialog");
+        tryCompare(dialog, "visible", true);
+        var accept = findChild(page, "cloneAcceptButton");
+        var box = findChild(findChild(page, "driveCheck"), "fixedDriveCheckBox");
+        verify(box !== null);
+        compare(findChild(page, "driveCheck").visible, true);
+        findChild(page, "confirmField").text = "SPARE";
+        compare(accept.enabled, false, "the name alone does not write onto a fixed disk");
+        box.checked = true;
+        compare(accept.enabled, true);
+        accept.clicked();
+        compare(page.controller.calls.indexOf("start:false") >= 0, true);
+    }
+
     function test_uncheckingExactOnAnUpdateStillRequiresTyping() {
         var page = makePage({preview: makePreview({targetHasEngineLibrary: true})}, {targetHasLibrary: true});
         findChild(page, "exactCheckBox").checked = false;

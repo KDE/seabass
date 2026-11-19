@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "infrastructure/media/stick_root_scan.hpp"
+#include "infrastructure/media/windows_drive_acceptance.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::media
@@ -79,6 +80,9 @@ struct UsbDiskInfo
     std::uint64_t sizeBytes = 0;
     std::string friendlyName;
     bool blank = false;  // PartitionStyle == "RAW" -- no partition table at all
+    // What the device says of itself (STORAGE_DEVICE_DESCRIPTOR::
+    // RemovableMedia): a stick says yes, an external SSD or hard drive no.
+    bool removableMedia = false;
 };
 
 // A descriptor string at `offset` in an IOCTL_STORAGE_QUERY_PROPERTY
@@ -160,9 +164,64 @@ std::map<int, UsbDiskInfo> queryUsbDisks()
         const std::string product = descriptorString(buffer, descriptor->ProductIdOffset, bytesReturned);
         info.friendlyName = vendor.empty() ? product : product.empty() ? vendor : vendor + " " + product;
         info.blank = styled && partition.PartitionStyle == PARTITION_STYLE_RAW;
+        info.removableMedia = descriptor->RemovableMedia != FALSE;
         disks[number] = std::move(info);
     }
     return disks;
+}
+
+// The bus of the disk a drive letter lives on and whether it can be
+// unplugged, for a disk that is not on the USB bus: what
+// acceptWindowsDrive() decides an external drive by. Two device
+// questions through the volume's handle, opened with no access, and no
+// read of the filesystem, so a sleeping hard disk is not woken: an
+// internal disk is turned down on this and then never looked into
+// (detect() runs on the UI thread). Left as it was when the device does
+// not answer, which is "no".
+void describeNonUsbDisk(char letter, WindowsLetteredDrive &drive)
+{
+    const std::string path = "\\\\.\\" + std::string(1, letter) + ":";
+    HANDLE handle = ::CreateFileW(pathFromUtf8(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    STORAGE_HOTPLUG_INFO hotplug = {};
+    DWORD bytesReturned = 0;
+    const BOOL hotplugKnown = ::DeviceIoControl(handle, IOCTL_STORAGE_GET_HOTPLUG_INFO, nullptr, 0, &hotplug,
+                                                sizeof(hotplug), &bytesReturned, nullptr);
+    STORAGE_PROPERTY_QUERY query = {};
+    query.PropertyId = StorageDeviceProperty;
+    query.QueryType = PropertyStandardQuery;
+    std::vector<char> buffer(4096, '\0');
+    const BOOL described = ::DeviceIoControl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query),
+                                             buffer.data(), static_cast<DWORD>(buffer.size() - 1), &bytesReturned,
+                                             nullptr);
+    ::CloseHandle(handle);
+    if (!hotplugKnown || !described || bytesReturned < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
+        return;
+    }
+    drive.hotpluggable = hotplug.DeviceHotplug || hotplug.MediaRemovable;
+    const auto bus = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR *>(buffer.data())->BusType;
+    if (bus == BusTypeUsb) {
+        // A USB disk queryUsbDisks() left out (a bridge that does not
+        // answer its media check): still a USB drive.
+        drive.bus = WindowsDiskBus::Usb;
+    } else if (bus == BusType1394 || bus == BusTypeSd || bus == BusTypeMmc || bus == BusTypeNvme) {
+        drive.bus = WindowsDiskBus::ExternalOnly;
+    }
+}
+
+// The letter Windows itself runs from, upper case, or 0 when it cannot be
+// told. Never listed: whatever is on it, it is not a stick.
+char systemDriveLetter()
+{
+    wchar_t directory[MAX_PATH + 1] = {};
+    const UINT length = ::GetWindowsDirectoryW(directory, MAX_PATH + 1);
+    if (length == 0 || length > MAX_PATH || directory[1] != L':') {
+        return 0;
+    }
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(directory[0])));
 }
 
 std::string physicalDrivePath(int number)
@@ -225,13 +284,48 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
     // heavier device-enumeration API, which isn't needed here since
     // Windows already hands every removable volume a drive letter.
     DWORD driveMask = ::GetLogicalDrives();
+    // The disk Windows runs from is never listed, under any of its
+    // letters or as a bare disk: on a machine booted from a USB drive it
+    // is a USB disk like any other, and would be offered for formatting.
+    const char systemLetter = systemDriveLetter();
+    const std::optional<int> systemDisk =
+        systemLetter != 0 ? physicalDiskNumberForDriveLetter(systemLetter) : std::nullopt;
+    if (systemDisk) {
+        usbDisks.erase(*systemDisk);
+    }
     for (int i = 0; i < 26; ++i) {
         if (!(driveMask & (1u << i))) {
             continue;
         }
-        const std::string rootPath = driveLetterToPath(static_cast<char>('A' + i));
+        const char letter = static_cast<char>('A' + i);
+        const std::string rootPath = driveLetterToPath(letter);
         const std::filesystem::path rootDirectory = pathFromUtf8(rootPath);
-        if (::GetDriveTypeW(rootDirectory.c_str()) != DRIVE_REMOVABLE) {
+        const UINT driveType = ::GetDriveTypeW(rootDirectory.c_str());
+        if (driveType != DRIVE_REMOVABLE && driveType != DRIVE_FIXED) {
+            continue;
+        }
+        // A drive Windows calls fixed: many external USB SSDs and hard
+        // drives say that of themselves (Kingston's XS series among them),
+        // and were listed only as a disk "not mounted" that could not be
+        // mounted, while Windows had long given it a letter. Taken when
+        // it is on the USB bus, as on Linux and macOS, or, on any other
+        // bus, when it can be unplugged and holds a DJ library: that is a
+        // drive someone brought to play from. Never the drive Windows runs
+        // from, and never an internal disk. Marked reportedFixed either
+        // way, so whatever would erase it asks first. The rule itself is
+        // acceptWindowsDrive(); here its facts are gathered.
+        const bool fixed = driveType == DRIVE_FIXED;
+        const std::optional<int> diskNumber = physicalDiskNumberForDriveLetter(letter);
+        WindowsLetteredDrive facts;
+        facts.kind = fixed ? WindowsDriveKind::Fixed : WindowsDriveKind::Removable;
+        facts.onSystemDisk = letter == systemLetter || (diskNumber && systemDisk && *diskNumber == *systemDisk);
+        if (diskNumber && usbDisks.count(*diskNumber) > 0) {
+            facts.bus = WindowsDiskBus::Usb;
+        } else if (fixed && !facts.onSystemDisk) {
+            describeNonUsbDisk(letter, facts);
+        }
+        const WindowsDriveAcceptance acceptance = acceptWindowsDrive(facts);
+        if (acceptance == WindowsDriveAcceptance::No) {
             continue;
         }
 
@@ -283,7 +377,8 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
             stick.label = rootPath;
         }
 
-        if (auto diskNumber = physicalDiskNumberForDriveLetter(static_cast<char>('A' + i))) {
+        stick.reportedFixed = windowsDriveReportedFixed(facts);
+        if (diskNumber) {
             if (auto it = usbDisks.find(*diskNumber); it != usbDisks.end()) {
                 stick.wholeDiskPath = physicalDrivePath(*diskNumber);
                 stick.capacityBytes = it->second.sizeBytes;
@@ -296,6 +391,11 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         stick.identity.capacityBytes = stick.capacityBytes;
 
         scanMountedRoot(rootPath, stick);
+        // Off the USB bus, the library is the only reason to list it.
+        if (acceptance == WindowsDriveAcceptance::OnlyWithLibrary && !stick.rekordboxPath && !stick.enginePath
+            && !stick.libraryAccessDenied) {
+            continue;
+        }
         sticks.push_back(std::move(stick));
     }
 
@@ -314,6 +414,10 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         stick.wholeDiskPath = physicalDrivePath(number);
         stick.capacityBytes = info.sizeBytes;
         stick.hasNoFilesystem = info.blank;
+        // No letter to ask Windows about, so the device's own word: an
+        // external hard drive holding only another system's partitions
+        // lands here, and is the likeliest disk with other data on it.
+        stick.reportedFixed = !info.removableMedia;
         stick.label = info.friendlyName.empty() ? stick.wholeDiskPath : info.friendlyName;
         stick.mounted = false;
         stick.identity.hardwareSerial = storageSerialNumber(stick.wholeDiskPath);

@@ -55,6 +55,9 @@ QVariantMap diskToVariant(const DetectedStick &disk)
     map["capacityBytes"] = static_cast<qlonglong>(disk.capacityBytes);
     map["mounted"] = disk.mounted;
     map["hasNoFilesystem"] = disk.hasNoFilesystem;
+    // Not reported as removable media: the page asks the user to confirm
+    // it is a drive they use as a stick before restoring onto it.
+    map["reportedFixed"] = disk.reportedFixed;
     map["hasDjLibrary"] = disk.rekordboxPath.has_value() || disk.enginePath.has_value();
     // Exposed so the result page can route "referenced tracks are
     // missing" straight to Library Health for this same stick, rather

@@ -22,6 +22,11 @@ SeabassDialog {
     property bool showWarning: dialog.needsTypedConfirmation
     property string warningTitle: ""
     property string warningText: ""
+    // The drive is not reported as removable media (see
+    // DetectedStick::reportedFixed): before anything else, the user ticks
+    // that it is a drive they use as a stick. Empty driveName: no check.
+    property bool needsDriveCheck: false
+    property string driveName: ""
     default property alias summary: summaryColumn.data
 
     severity: SeabassDialog.Warning
@@ -34,11 +39,15 @@ SeabassDialog {
             objectName: dialog.acceptObjectName
             text: dialog.acceptText
             DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            enabled: !dialog.needsTypedConfirmation || confirmField.text === dialog.confirmTarget
+            enabled: (!dialog.needsTypedConfirmation || confirmField.text === dialog.confirmTarget)
+                && (!dialog.needsDriveCheck || driveCheck.checked)
         }
         Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
     }
     onOpened: confirmField.text = ""
+    // Before it shows, not once its entrance has finished: the box must
+    // never be seen, or pressed, still ticked from the last time.
+    onAboutToShow: driveCheck.checked = false
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -81,6 +90,13 @@ SeabassDialog {
             id: summaryColumn
             Layout.fillWidth: true
             spacing: 4
+        }
+        FixedDriveCheck {
+            id: driveCheck
+            objectName: "driveCheck"
+            visible: dialog.needsDriveCheck
+            Layout.fillWidth: true
+            driveName: dialog.driveName
         }
         Label {
             visible: dialog.needsTypedConfirmation

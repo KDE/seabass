@@ -310,6 +310,52 @@ TestCase {
         compare(acceptButton.enabled, true);
     }
 
+    // A drive the computer calls a fixed disk (many external USB SSDs do)
+    // is asked about on top of the typed name: the user ticks that it is a
+    // stick, and the right name alone does not format it.
+    function test_fixedDriveNeedsTheDriveCheckToo() {
+        var disk = makeDisk({label: "KINGSTON", hasNoFilesystem: false, reportedFixed: true});
+        var page = createTemporaryObject(pageComponent, testCase, {controller: makeFakeController([disk])});
+        verify(page !== null);
+        page.applySelection(0);
+        var confirmDialog = findChild(page, "confirmDialog");
+        var confirmField = findChild(page, "confirmField");
+        var acceptButton = findChild(page, "formatAcceptButton");
+        var driveCheck = findChild(page, "driveCheck");
+        var box = findChild(driveCheck, "fixedDriveCheckBox");
+        verify(box !== null);
+
+        confirmDialog.open();
+        tryVerify(function() { return confirmDialog.visible; });
+        verify(driveCheck.visible);
+        confirmField.text = "KINGSTON";
+        compare(acceptButton.enabled, false, "the name alone does not format a fixed disk");
+        box.checked = true;
+        compare(acceptButton.enabled, true);
+
+        // Asked again every time the dialog opens.
+        confirmDialog.close();
+        tryVerify(function() { return !confirmDialog.visible; });
+        confirmDialog.open();
+        tryVerify(function() { return confirmDialog.visible; });
+        compare(box.checked, false);
+        confirmField.text = "KINGSTON";
+        compare(acceptButton.enabled, false);
+    }
+
+    // A drive reported removable is not asked about.
+    function test_removableDriveHasNoDriveCheck() {
+        var disk = makeDisk({label: "TESTSTICK", hasNoFilesystem: false, reportedFixed: false});
+        var page = createTemporaryObject(pageComponent, testCase, {controller: makeFakeController([disk])});
+        page.applySelection(0);
+        var confirmDialog = findChild(page, "confirmDialog");
+        confirmDialog.open();
+        tryVerify(function() { return confirmDialog.visible; });
+        compare(findChild(page, "driveCheck").visible, false);
+        findChild(page, "confirmField").text = "TESTSTICK";
+        compare(findChild(page, "formatAcceptButton").enabled, true);
+    }
+
     // Going through the confirm flow calls the controller's format() with
     // exactly the expected (wholeDiskPath, filesystem, label) args --
     // proves the wiring without ever touching a real device. Uses
