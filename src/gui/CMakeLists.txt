@@ -155,6 +155,7 @@ set(SEABASS_GUI_QML_FILES
     qml/CuesAtZeroPage.qml
     qml/ImportPromptPage.qml
     qml/SampleRatesPage.qml
+    qml/BeatGridsPage.qml
     qml/PlaylistSyncPage.qml
     qml/NoPlaylistTracksPage.qml
     qml/CueTablePage.qml
@@ -225,6 +226,8 @@ set(SEABASS_GUI_SOURCES
     playlist_edit_controller.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
+    beat_grids_controller.hpp
+    beat_grids_controller.cpp
     stick_statistics_controller.hpp
     stick_statistics_controller.cpp
     playlist_diff_controller.hpp

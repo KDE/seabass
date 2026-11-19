@@ -548,6 +548,10 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
         BeatDataBlob blob = *existing;
         blob.is_beatgrid_set = 1;
         blob.adjusted_beat_grid = grid;
+        if (options.previewOnly) {
+            result.gridFingerprint = gridFingerprint(blob);
+            return result;
+        }
         if (m_beforeBeatGridWrite) {
             m_beforeBeatGridWrite();
         }
@@ -593,6 +597,10 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     blob.default_beat_grid = grid;
     blob.adjusted_beat_grid = grid;
     blob.extra_data = std::vector<std::byte>(9, std::byte{0});
+    if (options.previewOnly) {
+        result.gridFingerprint = gridFingerprint(blob);
+        return result;
+    }
     if (m_beforeBeatGridWrite) {
         m_beforeBeatGridWrite();
     }

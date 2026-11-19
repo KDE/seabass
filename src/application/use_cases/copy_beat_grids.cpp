@@ -6,6 +6,7 @@
 
 #include <exception>
 #include <stdexcept>
+#include <vector>
 
 #include "application/path_key.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
@@ -58,6 +59,20 @@ BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
     return plan;
 }
 
+int keepBeatGridItemsMatching(BeatGridCopyPlan &plan, const std::string &needle)
+{
+    if (needle.empty()) {
+        return 0;
+    }
+    const std::string folded = foldedText(needle);
+    const auto before = plan.items.size();
+    // "artist - title" holds the title, so one search covers both.
+    std::erase_if(plan.items, [&folded](const BeatGridCopyItem &item) {
+        return foldedText(item.artist + " - " + item.title).find(folded) == std::string::npos;
+    });
+    return static_cast<int>(before - plan.items.size());
+}
+
 BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSource &source, BeatGridWriter &writer,
                                  const std::map<std::string, std::string> &ledger, const BeatGridCopyOptions &options,
                                  const BeatGridFileFactsSource &fileFacts, const CancellationToken &cancel,
@@ -65,7 +80,8 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
 {
     using Outcome = BeatGridWriteResult::Outcome;
     BeatGridCopyResult result;
-    progress.start("Copying beat grids", plan.items.size());
+    // A preview copies nothing, and its bar must not say it does.
+    progress.start(options.previewOnly ? "Checking beat grids" : "Copying beat grids", plan.items.size());
     std::size_t done = 0;
     for (const BeatGridCopyItem &item : plan.items) {
         // Between rows, never inside one: the row in flight finishes.
@@ -79,6 +95,7 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
             BeatGridWriteOptions write;
             write.unanalysed = options.unanalysed;
             write.overwriteEngineEdits = options.overwriteEngineEdits;
+            write.previewOnly = options.previewOnly;
             if (!item.ledgerKey.empty()) {
                 if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
                     write.ownGridFingerprint = own->second;
@@ -97,7 +114,12 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
             }
             switch (written.outcome) {
             case Outcome::Written:
-                ++result.written;
+                if (options.previewOnly) {
+                    ++result.wouldWrite;
+                    result.wouldWriteItems.push_back(item);
+                } else {
+                    ++result.written;
+                }
                 result.barBreaks += written.barBreaks;
                 break;
             case Outcome::AlreadySame:
@@ -122,7 +144,8 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
                 ++result.unsupportedLibrary;
                 break;
             }
-            if (written.outcome == Outcome::Written || written.outcome == Outcome::AlreadySame) {
+            if (!options.previewOnly
+                && (written.outcome == Outcome::Written || written.outcome == Outcome::AlreadySame)) {
                 // A fingerprint is what the writer promises for these two;
                 // without one there is nothing to recognise the grid by.
                 if (item.ledgerKey.empty() || written.gridFingerprint.empty()) {

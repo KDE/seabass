@@ -65,10 +65,22 @@ BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
                                   const std::vector<domain::Track> &engine, const std::string &stickRoot,
                                   const domain::StickFiles *files = nullptr);
 
+// Keeps the plan's items whose title, or "artist - title", contains
+// `needle`, case ignored (foldedText on both sides), and returns how many
+// it took out. An empty needle keeps every item. For trying one named
+// track's grid on the player before the whole stick's.
+int keepBeatGridItemsMatching(BeatGridCopyPlan &plan, const std::string &needle);
+
 struct BeatGridCopyOptions
 {
     UnanalysedRowGrid unanalysed = UnanalysedRowGrid::Skip;
     bool overwriteEngineEdits = false;
+    // Asks the writer for a preview of every row (BeatGridWriteOptions::
+    // previewOnly): the same checks, nothing written. A row the real run
+    // would write is counted in wouldWrite, never in written, and listed
+    // in wouldWriteItems; ledgerEntries and notRecorded stay empty, since
+    // no grid was left anywhere to be recognised by later.
+    bool previewOnly = false;
 };
 
 // The audio file's rate and length, for a row the player has not
@@ -89,7 +101,13 @@ struct BeatGridCopyResult
 {
     // One bucket per outcome; every item is in exactly one, so these add
     // up to the plan's items (total()).
+    //
+    // written is work done: rows whose grid is now rekordbox's. A preview
+    // (BeatGridCopyOptions::previewOnly) never counts there; the rows it
+    // would write are wouldWrite, a bucket of their own, so nothing that
+    // shows a preview's numbers can show them as done.
     int written = 0;
+    int wouldWrite = 0;
     int alreadySame = 0;
     int noRekordboxGrid = 0;
     int notAnalysed = 0;
@@ -102,7 +120,7 @@ struct BeatGridCopyResult
     int notReached = 0;
 
     // Bars whose count rekordbox breaks and Engine cannot, over the rows
-    // written.
+    // written (or, in a preview, the rows that would be).
     int barBreaks = 0;
     bool cancelled = false;
     std::vector<BeatGridCopyFailure> failures;
@@ -115,9 +133,12 @@ struct BeatGridCopyResult
     // an edit on the player.
     int notRecorded = 0;
 
+    // A preview only: the items counted in wouldWrite, in plan order.
+    std::vector<BeatGridCopyItem> wouldWriteItems;
+
     int total() const
     {
-        return written + alreadySame + noRekordboxGrid + notAnalysed + lockedOnEngine + editedOnEngine + noSampleRate
+        return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + lockedOnEngine + editedOnEngine + noSampleRate
             + unsupportedLibrary + failed + notReached;
     }
 };
@@ -135,7 +156,8 @@ using BeatGridFileFactsSource = std::function<BeatGridFileFacts(const BeatGridCo
 // DJ's edit on the player. An exception from the source or the writer
 // counts that item as failed, with its message, and the run goes on.
 // Cancelled between items, never inside one: the rest are notReached.
-// `progress` sees one phase, "Copying beat grids", one tick per item.
+// `progress` sees one phase, "Copying beat grids" ("Checking beat grids"
+// for a preview), one tick per item.
 BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSource &source, BeatGridWriter &writer,
                                  const std::map<std::string, std::string> &ledger, const BeatGridCopyOptions &options,
                                  const BeatGridFileFactsSource &fileFacts = {},

@@ -1154,6 +1154,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/artwork_rescue_sources.cpp
         src/gui/edit/changes/fill_sample_rate_change.hpp
         src/gui/edit/changes/fill_sample_rate_change.cpp
+        src/gui/edit/changes/copy_beat_grid_change.hpp
+        src/gui/edit/changes/copy_beat_grid_change.cpp
         src/gui/edit/changes/mark_rekordbox_imported_change.hpp
         src/gui/edit/changes/mark_rekordbox_imported_change.cpp
         src/gui/edit/changes/repair_issue_change.hpp
@@ -2872,40 +2874,96 @@ seabass_cli_test(cli_sync_after_export_one_catalog EXIT 2 ARGS sync-after-export
 # filename (the fixture has no audio). 188 of the pairs are rows the
 # player analysed, each with a rekordbox grid in its analysis file: those
 # are written; the other 973 are rows the player has not analysed, left
-# alone by default. The dry run and the declined prompt (stdin is empty,
-# so the question is answered no) change no file of their copy. The real run backs Engine up and records the 188 grids in
-# the ledger; run again on the same copy, every grid is already there and
-# no file changes, a backup included.
+# alone by default. Every run checks each row first and prints what it
+# would write, the dry run stopping there. The dry run and the declined
+# prompt (stdin is empty, so the question is answered no) change no file
+# of their copy, nor create one (stdin is not a terminal, so the declined
+# run never prints the question): UNCHANGED_TREE watches the whole copy,
+# stick root and Seabass folder included. A plain scan of the fixture
+# creates nothing either (no audio, so no length to cache), so this is
+# also "nothing beyond what scanning creates". The real run backs Engine
+# up and records the 188 grids in the ledger; run again on the same copy,
+# the check finds every grid already there and the run stops before the
+# question, the stick lock, a backup or the ledger.
 set(_cli_bg_dry "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_dry_run")
 seabass_cli_test(cli_copy_beatgrids_dry_run EXIT 0
     COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_dry} UNCHANGED_TREE ${_cli_bg_dry}
     ARGS copy-beatgrids --dry-run --rekordbox ${_cli_bg_dry}/rekordbox --engine ${_cli_bg_dry}/engine
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469 \\(95 streaming, left out\\)\\n"
            "matched tracks:    1161\\n" "rekordbox only:    0\\n"
-           "Would copy rekordbox's beat grid to 1161 Engine track\\(s\\)"
+           "\\ncopy-beatgrids preview\\n  would be written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
            "--dry-run: no changes made."
-    FORBID "backed up" "copy-beatgrids summary" "Copy beat grids to the")
+    FORBID "backed up" "copy-beatgrids summary" "Copy rekordbox's beat grid to the" "\\n  written:" "left out by")
 set(_cli_bg_declined "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_declined")
 seabass_cli_test(cli_copy_beatgrids_declined EXIT 0
     COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_declined} UNCHANGED_TREE ${_cli_bg_declined}
     ARGS copy-beatgrids --rekordbox ${_cli_bg_declined}/rekordbox --engine ${_cli_bg_declined}/engine
-    EXPECT "Would copy rekordbox's beat grid to 1161 Engine track\\(s\\)" "skipped: no changes made."
+    EXPECT "\\n  would be written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
+           "skipped: no changes made."
     FORBID "backed up" "copy-beatgrids summary")
 set(_cli_bg_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids")
 seabass_cli_test(cli_copy_beatgrids_run EXIT 0
     COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_copy}
     ARGS copy-beatgrids --auto --rekordbox ${_cli_bg_copy}/rekordbox --engine ${_cli_bg_copy}/engine
     EXPECT "matched tracks:    1161\\n"
+           "\\n  would be written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
            "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
-           "\\n  written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
+           "\\ncopy-beatgrids summary\\n  written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
     FORBID "already the same" "failed" "edited on Engine" "locked on Engine"
     EXISTS "${_cli_bg_copy}/Seabass/beat-grids.tsv" "${_cli_bg_copy}/Seabass/backups/*-copy-beatgrids/*")
 set_tests_properties(cli_copy_beatgrids_run PROPERTIES FIXTURES_SETUP cli_copy_beatgrids_copy)
 seabass_cli_test(cli_copy_beatgrids_again EXIT 0 UNCHANGED_TREE ${_cli_bg_copy}
     ARGS copy-beatgrids --auto --rekordbox ${_cli_bg_copy}/rekordbox --engine ${_cli_bg_copy}/engine
-    EXPECT "\\n  written: +0\\n  already the same: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
-    FORBID "backed up" "failed")
+    EXPECT "\\n  would be written: +0\\n  already the same: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
+           "nothing would be written: no changes made."
+    FORBID "backed up" "failed" "copy-beatgrids summary")
 set_tests_properties(cli_copy_beatgrids_again PROPERTIES FIXTURES_REQUIRED cli_copy_beatgrids_copy)
+
+# --track: one named track's grid, for trying it on a player first. The
+# filter "artist 228 - " (lowercase: case is ignored) matches one matched
+# track, one the player analysed: the check and the run name one grid and
+# the 1160 others as left out. engine_beat_data_diff then compares every
+# row's beatData with the fixture's, byte for byte: exactly one row
+# differs (Engine id 25), the rest are identical, and the ledger has one
+# entry. A filter that matches nothing stops before the check, says so,
+# exits 0 and leaves the whole copy as it was.
+add_executable(engine_beat_data_diff tests/engine_beat_data_diff.cpp)
+target_link_libraries(engine_beat_data_diff PRIVATE seabass_core_testing SQLite::SQLite3)
+target_include_directories(engine_beat_data_diff PRIVATE src)
+set(_cli_bg_track "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_track")
+seabass_cli_test(cli_copy_beatgrids_track EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_track}
+    ARGS copy-beatgrids --auto --track "artist 228 - " --rekordbox ${_cli_bg_track}/rekordbox
+         --engine ${_cli_bg_track}/engine
+    EXPECT "--track \"artist 228 - \": 1 matched track\\(s\\) kept, 1160 left out\\n"
+           "\\n  would be written: +1\\n  total: +1\\n  left out by --track: +1160\\n"
+           "\\ncopy-beatgrids summary\\n  written: +1\\n  total: +1\\n  left out by --track: +1160\\n"
+    FORBID "failed" "not analysed by the player")
+set_tests_properties(cli_copy_beatgrids_track PROPERTIES FIXTURES_SETUP cli_copy_beatgrids_track_copy)
+add_test(NAME cli_copy_beatgrids_track_rows
+    COMMAND engine_beat_data_diff ${_cli_engine}/Database2/m.db ${_cli_bg_track}/engine/Database2/m.db ${_cli_bg_track})
+set_tests_properties(cli_copy_beatgrids_track_rows PROPERTIES FIXTURES_REQUIRED cli_copy_beatgrids_track_copy
+    PASS_REGULAR_EXPRESSION "^rows: 1566/1566\nbeat data changed: 1\nchanged: 25\nledger entries: 1\n$")
+set(_cli_bg_none "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_track_none")
+seabass_cli_test(cli_copy_beatgrids_track_none EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_none} UNCHANGED_TREE ${_cli_bg_none}
+    ARGS copy-beatgrids --auto --track "no such track" --rekordbox ${_cli_bg_none}/rekordbox
+         --engine ${_cli_bg_none}/engine
+    EXPECT "--track \"no such track\": 0 matched track\\(s\\) kept, 1161 left out\\n"
+           "nothing to copy: no matched track has \"no such track\" in its title or its \"artist - title\"."
+    FORBID "copy-beatgrids preview" "copy-beatgrids summary" "backed up")
+# A real run the check finds nothing to write for ("artist 001 - " is one
+# track the player has not analysed) stops after the check, --auto or
+# not: no question, no stick lock (Seabass/backups/.write.lock), backup,
+# ledger or log line, which UNCHANGED_TREE over the fresh copy holds it to.
+set(_cli_bg_nothing "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_nothing")
+seabass_cli_test(cli_copy_beatgrids_nothing EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_nothing} UNCHANGED_TREE ${_cli_bg_nothing}
+    ARGS copy-beatgrids --auto --track "artist 001 - " --rekordbox ${_cli_bg_nothing}/rekordbox
+         --engine ${_cli_bg_nothing}/engine
+    EXPECT "\\n  would be written: +0\\n  not analysed by the player yet: +1\\n  total: +1\\n"
+           "nothing would be written: no changes made."
+    FORBID "copy-beatgrids summary" "backed up")
 seabass_cli_test(cli_copy_beatgrids_bad_unanalysed EXIT 1 ARGS copy-beatgrids --unanalysed maybe
     EXPECT "--unanalysed takes skip, fill or fill-lock, got \"maybe\"")
 

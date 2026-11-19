@@ -116,6 +116,7 @@ void printUsage()
     Console::info("  seabass-cli sync-after-export [--rekordbox [PATH]] [--engine [PATH]]");
     Console::info("  seabass-cli copy-beatgrids --rekordbox [PATH] --engine [PATH] [--dry-run] [--auto]");
     Console::info("                 [--unanalysed skip|fill|fill-lock] [--overwrite-engine-edits]");
+    Console::info("                 [--track NAME]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
@@ -151,8 +152,9 @@ void printUsage()
     Console::info("           has not analysed yet, and grids locked or moved on the player, are");
     Console::info("           left alone. A grid Seabass copied before is recognised by the record");
     Console::info("           it keeps on the stick (Seabass/beat-grids.tsv), so a grid corrected in");
-    Console::info("           rekordbox can be copied again. Prints the plan, then asks before");
-    Console::info("           writing (unless --auto or --dry-run), and backs up Engine first.");
+    Console::info("           rekordbox can be copied again. Checks every track first and prints");
+    Console::info("           how many grids would be written, then asks before writing (unless");
+    Console::info("           --auto; --dry-run stops after the check), and backs up Engine first.");
     Console::info("           Exits 1 if a track could not be written.");
     Console::info("  backups  Lists the backups seabass-cli has made on a stick (see \"Backups\"");
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
@@ -197,7 +199,9 @@ void printUsage()
     Console::info("                      fuzzy-matches NAME (typo-tolerant, case-insensitive).");
     Console::info("                      Shows every match, including ones with no cues yet,");
     Console::info("                      unlike the default report, which only samples tracks");
-    Console::info("                      that already have cues.");
+    Console::info("                      that already have cues. copy-beatgrids: copy only to");
+    Console::info("                      the tracks whose title, or \"artist - title\", contains");
+    Console::info("                      NAME (case-insensitive, not fuzzy).");
     Console::info("  --needs-cues [N]    List cue-less tracks worth setting cues on, most");
     Console::info("                      \"worth it\" first: highest rekordbox play count, or");
     Console::info("                      most recently played on Engine (Engine has no play");
@@ -1799,7 +1803,8 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 // and is not taken for an edit on the player.
 int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
                             const std::optional<std::string> &enginePathArg, bool autoMode, bool dryRun, bool force,
-                            seabass::application::UnanalysedRowGrid unanalysed, bool overwriteEngineEdits)
+                            seabass::application::UnanalysedRowGrid unanalysed, bool overwriteEngineEdits,
+                            const std::optional<std::string> &trackFilter)
 {
     namespace app = seabass::application;
     namespace paths = seabass::infrastructure::paths;
@@ -1838,19 +1843,25 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     const auto streamingCount = static_cast<std::size_t>(std::distance(streaming, engineTracks.end()));
     engineTracks.erase(streaming, engineTracks.end());
 
-    const app::BeatGridCopyPlan plan =
+    app::BeatGridCopyPlan plan =
         app::planBeatGridCopy(rekordboxTracks, engineTracks, stickRoot, &app::SyncLibraries::stickFiles());
+    const std::size_t matched = plan.items.size();
+    const int filteredOut = trackFilter ? app::keepBeatGridItemsMatching(plan, *trackFilter) : 0;
 
     Console::info("");
     Console::heading("copy-beatgrids analysis");
     Console::info("  rekordbox tracks:  " + std::to_string(rekordboxTracks.size()));
     Console::info("  engine tracks:     " + std::to_string(engineTracks.size())
                   + (streamingCount > 0 ? " (" + std::to_string(streamingCount) + " streaming, left out)" : ""));
-    Console::info("  matched tracks:    " + std::to_string(plan.items.size()));
+    Console::info("  matched tracks:    " + std::to_string(matched));
     Console::info("  rekordbox only:    " + std::to_string(plan.rekordboxOnly));
     if (plan.ambiguous > 0) {
         Console::info("  left out:          " + std::to_string(plan.ambiguous)
                       + " (more than one rekordbox track for one Engine track or file)");
+    }
+    if (trackFilter) {
+        Console::info("  --track \"" + *trackFilter + "\": " + std::to_string(plan.items.size()) + " matched track(s) kept, "
+                      + std::to_string(filteredOut) + " left out");
     }
 
     std::string ledgerError;
@@ -1861,13 +1872,17 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         Console::warn("every grid Seabass wrote before is taken for one set on the player, and left alone.");
     }
 
-    if (plan.items.empty()) {
+    if (matched == 0) {
         Console::info("  nothing to copy: no rekordbox track has an Engine track to copy its beat grid to.");
         return 0;
     }
+    if (plan.items.empty()) {
+        Console::info("  nothing to copy: no matched track has \"" + *trackFilter
+                      + "\" in its title or its \"artist - title\".");
+        return 0;
+    }
     Console::info("");
-    Console::info("Would copy rekordbox's beat grid to " + std::to_string(plan.items.size())
-                  + " Engine track(s), into the grid the player plays by; Engine's own analysis is kept.");
+    Console::info("Copies rekordbox's beat grid into the grid the player plays by; Engine's own analysis is kept.");
     Console::info(std::string("  tracks the player has not analysed: ")
                   + (unanalysed == app::UnanalysedRowGrid::Skip
                          ? "left alone"
@@ -1876,14 +1891,107 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     Console::info(std::string("  grids locked or moved on the player: ")
                   + (overwriteEngineEdits ? "written over" : "left alone"));
 
+    // What the check and the copy both read: rekordbox's grid for a row,
+    // and the file's rate and length for a row the player has not
+    // analysed. The rates are probed into memory only: as in
+    // scanEnginePath, the stick's metadata cache is the app's to keep.
+    const app::BeatGridSource source = [&rekordboxPath](const app::BeatGridCopyItem &item) {
+        return seabass::infrastructure::rekordbox::readBeatGrid(rekordboxPath, item.rekordboxTrackId);
+    };
+#ifdef SEABASS_HAVE_TAGLIB
+    seabass::infrastructure::audio::TagLibMetadataProbe probe;
+#else
+    seabass::application::NullTrackMetadataProbe probe;
+#endif
+    seabass::infrastructure::local::CachedSampleRates rates(stickRoot, probe);
+    const app::BeatGridFileFactsSource facts = [&rates](const app::BeatGridCopyItem &item) {
+        app::BeatGridFileFacts f;
+        if (!item.filePath.empty()) {
+            f.sampleRateHz = rates.rateOf(item.filePath);
+        }
+        if (item.durationMs > 0.0) {
+            f.durationMs = item.durationMs;
+        }
+        return f;
+    };
+    app::BeatGridCopyOptions options;
+    options.unanalysed = unanalysed;
+    options.overwriteEngineEdits = overwriteEngineEdits;
+
+    const auto printOutcomes = [&](const std::string &heading, const app::BeatGridCopyResult &r) {
+        for (const auto &failure : r.failures) {
+            Console::warn("  \"" + failure.item.title + "\" (Engine id " + failure.item.engineTrackId
+                          + "): " + failure.message);
+        }
+        Console::info("");
+        Console::heading(heading);
+        const auto line = [](const std::string &what, int count, bool always = false) {
+            if (count > 0 || always) {
+                Console::info("  " + what + std::string(what.size() < 32 ? 32 - what.size() : 1, ' ')
+                              + std::to_string(count));
+            }
+        };
+        if (options.previewOnly) {
+            line("would be written:", r.wouldWrite, true);
+        } else {
+            line("written:", r.written, true);
+        }
+        line("already the same:", r.alreadySame);
+        line("no rekordbox beat grid:", r.noRekordboxGrid);
+        line("not analysed by the player yet:", r.notAnalysed);
+        line("locked on Engine:", r.lockedOnEngine);
+        line("edited on Engine:", r.editedOnEngine);
+        line("no sample rate for the file:", r.noSampleRate);
+        line("Engine library too old:", r.unsupportedLibrary);
+        line("failed:", r.failed);
+        line("not reached:", r.notReached);
+        line("total:", r.total(), true);
+        if (trackFilter) {
+            line("left out by --track:", filteredOut, true);
+        }
+        if (r.barBreaks > 0) {
+            Console::info("  " + std::to_string(r.barBreaks)
+                          + " place(s) where rekordbox restarts the bar count: Engine counts bars in fours from the"
+                            " first downbeat, so the bars after them are numbered from there.");
+        }
+        if (r.notRecorded > 0) {
+            Console::warn("  " + std::to_string(r.notRecorded)
+                          + " grid(s) not recorded (the file is not under the stick root): the next run leaves them"
+                            " alone.");
+        }
+    };
+
+    // The check: every row through the writer as the copy would take it,
+    // with nothing written (previewOnly). It takes no stick lock and
+    // writes no backup, ledger or log line, so the dry run and the
+    // question before a copy name what the copy would actually do.
+    app::BeatGridCopyResult preview;
+    options.previewOnly = true;
+    try {
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(enginePath);
+        seabass::cli::TerminalProgressReporter progress;
+        preview = app::copyBeatGrids(plan, source, checker, ledger, options, facts, app::CancellationToken::none(),
+                                     progress);
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return 1;
+    }
+    printOutcomes("copy-beatgrids preview", preview);
+
     if (dryRun) {
         Console::info("");
         Console::info("--dry-run: no changes made.");
-        return 0;
+        return preview.failed > 0 ? 1 : 0;
+    }
+    if (preview.wouldWrite == 0) {
+        Console::info("");
+        Console::info("nothing would be written: no changes made.");
+        return preview.failed > 0 ? 1 : 0;
     }
 
-    const bool apply =
-        autoMode || Console::confirm("\nCopy beat grids to the " + std::to_string(plan.items.size()) + " track(s) above?");
+    const bool apply = autoMode
+                       || Console::confirm("\nCopy rekordbox's beat grid to the " + std::to_string(preview.wouldWrite)
+                                           + " track(s) that would be written?");
     if (!apply) {
         Console::info("skipped: no changes made.");
         return 0;
@@ -1894,6 +2002,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
 
     app::BeatGridCopyResult result;
     bool ledgerWriteFailed = false;
+    options.previewOnly = false;
     try {
         auto stickLocks = seabass::infrastructure::backup::acquireStickLocks(
             {seabass::infrastructure::backup::backupDirForCatalogPath(enginePath)});
@@ -1932,29 +2041,6 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
             }
         });
 
-        const app::BeatGridSource source = [&rekordboxPath](const app::BeatGridCopyItem &item) {
-            return seabass::infrastructure::rekordbox::readBeatGrid(rekordboxPath, item.rekordboxTrackId);
-        };
-#ifdef SEABASS_HAVE_TAGLIB
-        seabass::infrastructure::audio::TagLibMetadataProbe probe;
-#else
-        seabass::application::NullTrackMetadataProbe probe;
-#endif
-        seabass::infrastructure::local::CachedSampleRates rates(stickRoot, probe);
-        const app::BeatGridFileFactsSource facts = [&rates](const app::BeatGridCopyItem &item) {
-            app::BeatGridFileFacts f;
-            if (!item.filePath.empty()) {
-                f.sampleRateHz = rates.rateOf(item.filePath);
-            }
-            if (item.durationMs > 0.0) {
-                f.durationMs = item.durationMs;
-            }
-            return f;
-        };
-
-        app::BeatGridCopyOptions options;
-        options.unanalysed = unanalysed;
-        options.overwriteEngineEdits = overwriteEngineEdits;
         seabass::cli::TerminalProgressReporter progress;
         result = app::copyBeatGrids(plan, source, writer, ledger, options, facts, app::CancellationToken::none(),
                                     progress);
@@ -1987,38 +2073,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         return 1;
     }
 
-    for (const auto &failure : result.failures) {
-        Console::warn("  \"" + failure.item.title + "\" (Engine id " + failure.item.engineTrackId
-                      + "): " + failure.message);
-    }
-    Console::info("");
-    Console::heading("copy-beatgrids summary");
-    const auto line = [](const std::string &what, int count, bool always = false) {
-        if (count > 0 || always) {
-            Console::info("  " + what + std::string(what.size() < 32 ? 32 - what.size() : 1, ' ')
-                          + std::to_string(count));
-        }
-    };
-    line("written:", result.written, true);
-    line("already the same:", result.alreadySame);
-    line("no rekordbox beat grid:", result.noRekordboxGrid);
-    line("not analysed by the player yet:", result.notAnalysed);
-    line("locked on Engine:", result.lockedOnEngine);
-    line("edited on Engine:", result.editedOnEngine);
-    line("no sample rate for the file:", result.noSampleRate);
-    line("Engine library too old:", result.unsupportedLibrary);
-    line("failed:", result.failed);
-    line("not reached:", result.notReached);
-    line("total:", result.total(), true);
-    if (result.barBreaks > 0) {
-        Console::info("  " + std::to_string(result.barBreaks)
-                      + " place(s) where rekordbox restarts the bar count: Engine counts bars in fours from the"
-                        " first downbeat, so the bars after them are numbered from there.");
-    }
-    if (result.notRecorded > 0) {
-        Console::warn("  " + std::to_string(result.notRecorded)
-                      + " grid(s) not recorded (the file is not under the stick root): the next run leaves them alone.");
-    }
+    printOutcomes("copy-beatgrids summary", result);
     return result.failed > 0 || ledgerWriteFailed ? 1 : 0;
 }
 
@@ -2447,7 +2502,7 @@ int main(int argc, char **argv)
 
     if (commands[0] == "copy-beatgrids") {
         return runCopyBeatGridsCommand(rekordboxPath, enginePath, autoMode, dryRun, force, unanalysed,
-                                       overwriteEngineEdits);
+                                       overwriteEngineEdits, trackFilter);
     }
 
     if (commands[0] == "sync-after-export") {

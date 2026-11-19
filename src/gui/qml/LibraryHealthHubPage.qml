@@ -606,6 +606,21 @@ Page {
                 onActionRequested: root.detailRequested("samplerates")
             }
 
+            // Not a finding: a copy offered on every stick that has both
+            // libraries, so no tally and nothing red. What it would change
+            // is counted on its own page, which reads every track's grid.
+            HealthCheckCard {
+                objectName: "beatGridsCard"
+                visible: root.rekordboxPath.length > 0 && root.enginePath.length > 0
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Beat grids"
+                summary: "Seabass can copy rekordbox's beat grids into the Engine library, so a Denon player plays to "
+                    + "the same grid as a Pioneer one. Its page says what a copy would change before anything does."
+                actionLabel: "Review beat grids"
+                onActionRequested: root.detailRequested("beatgrids")
+            }
+
             HealthCheckCard {
                 objectName: "analysisStateCard"
                 // No actionLabel, ever: the card hides its whole action

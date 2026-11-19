@@ -24,7 +24,9 @@
 //   refused, and written when told to overwrite, the default grid kept;
 // - with an MP3 lead-in shift, a hot cue written at a source beat's time
 //   and that beat of the written grid land on the same sample;
-// - no beats or one beat: NoSourceGrid, nothing written.
+// - no beats or one beat: NoSourceGrid, nothing written;
+// - a preview (previewOnly) answers every one of those as the real call
+//   does, fingerprint included, writing nothing and calling no hook.
 //
 // usage: libdjinterop_engine_beat_grid_writer_test <tests/fixtures>
 
@@ -34,7 +36,9 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <string>
@@ -650,6 +654,98 @@ int main(int argc, char **argv)
                   && calls == 2,
               "nor for a refusal");
         std::cout << "case 10 (the hook before a write) done\n";
+    }
+
+    // 11. A preview: every row answers as the real call answers it, the
+    // fingerprint of the grid it would leave included, and not a byte of
+    // the database changes, nor is the hook before a write called. Over
+    // an analysed row, a locked one, one edited on the player, one the
+    // player has not analysed (Skip, Fill, FillAndLock), and a row whose
+    // grid is already the one given.
+    {
+        const Copy copy = freshCopy("preview");
+        exec(copy.mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = " + std::to_string(kLocked));
+        BeatData edited = *beatDataOf(copy.mdb, kEdited);
+        for (auto &marker : edited.adjusted_beat_grid) {
+            marker.sample_offset += 441.0;
+        }
+        {
+            auto db = djinterop::engine::v3::engine_library::load(pathToUtf8(copy.root));
+            db.performance_data().set_beat_data(kEdited, edited);
+        }
+        const auto lengthOf = [&](std::int64_t id) {
+            const BeatData blob = *beatDataOf(copy.mdb, id);
+            return blob.samples / blob.sample_rate * 1000.0;
+        };
+        struct Case
+        {
+            std::string what;
+            std::int64_t id;
+            std::vector<domain::Beat> beats;
+            BeatGridWriteOptions options;
+        };
+        BeatGridWriteOptions fill;
+        fill.unanalysed = UnanalysedRowGrid::Fill;
+        fill.fileSampleRateHz = 48000.0;
+        fill.fileDurationMs = 200000.0;
+        BeatGridWriteOptions fillAndLock = fill;
+        fillAndLock.unanalysed = UnanalysedRowGrid::FillAndLock;
+        const std::vector<Case> cases = {
+            {"an analysed row", kConstant, constantGrid(37.0, 60000.0 / 121.0, lengthOf(kConstant), 1), {}},
+            {"a locked row", kLocked, constantGrid(50.0, 451.0, lengthOf(kLocked), 1), {}},
+            {"a row edited on the player", kEdited, constantGrid(50.0, 488.0, lengthOf(kEdited), 1), {}},
+            {"an unanalysed row, Skip", kUnanalysed, constantGrid(120.0, 480.0, 200000.0, 1), {}},
+            {"an unanalysed row, Fill", kUnanalysed, constantGrid(120.0, 480.0, 200000.0, 1), fill},
+            {"an unanalysed row, FillAndLock", kUnanalysedToo, constantGrid(120.0, 480.0, 200000.0, 1), fillAndLock},
+        };
+
+        const auto fileBytes = [&]() {
+            std::ifstream in(pathFromUtf8(copy.mdb), std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        };
+        const std::string bytesBefore = fileBytes();
+        const auto beatDataBefore = allBeatData(copy.mdb);
+        const std::string lockBefore = trackColumn(copy.mdb, kUnanalysedToo, "isBeatGridLocked");
+        std::vector<BeatGridWriteResult> previews;
+        int hookCalls = 0;
+        {
+            auto preview = unshiftedWriter(copy);
+            preview.setBeforeBeatGridWrite([&] { ++hookCalls; });
+            for (const Case &c : cases) {
+                BeatGridWriteOptions options = c.options;
+                options.previewOnly = true;
+                previews.push_back(preview.writeBeatGrid(std::to_string(c.id), c.beats, options));
+            }
+        }
+        check(hookCalls == 0, "a preview never calls the hook before a write, " + std::to_string(hookCalls) + " calls");
+        check(fileBytes() == bytesBefore, "a preview leaves m.db byte for byte as it was");
+        check(allBeatData(copy.mdb) == beatDataBefore, "and every row's beat data");
+        check(trackColumn(copy.mdb, kUnanalysedToo, "isBeatGridLocked") == lockBefore, "and locks nothing");
+
+        auto real = unshiftedWriter(copy);
+        for (std::size_t i = 0; i < cases.size(); ++i) {
+            const auto done = real.writeBeatGrid(std::to_string(cases[i].id), cases[i].beats, cases[i].options);
+            check(previews[i].outcome == done.outcome, cases[i].what + ": the preview's outcome is the real call's");
+            check(previews[i].gridFingerprint == done.gridFingerprint,
+                  cases[i].what + ": and so is the fingerprint of the grid it leaves");
+            check(previews[i].markers == done.markers && previews[i].barBreaks == done.barBreaks,
+                  cases[i].what + ": and its markers and bar breaks");
+        }
+        check(previews[0].outcome == Outcome::Written && previews[1].outcome == Outcome::RowLocked
+                  && previews[2].outcome == Outcome::RowEditedOnEngine && previews[3].outcome == Outcome::RowNotAnalysed
+                  && previews[4].outcome == Outcome::Written && previews[5].outcome == Outcome::Written,
+              "the cases are the outcomes they are named for");
+
+        // The analysed row's grid is there now: the same grid again.
+        const std::string bytesAfter = fileBytes();
+        BeatGridWriteOptions preview;
+        preview.previewOnly = true;
+        const auto same = real.writeBeatGrid(std::to_string(kConstant), cases[0].beats, preview);
+        check(same.outcome == Outcome::AlreadySame, "a grid already there previews as AlreadySame");
+        check(same.gridFingerprint == real.writeBeatGrid(std::to_string(kConstant), cases[0].beats).gridFingerprint,
+              "with the real call's fingerprint");
+        check(fileBytes() == bytesAfter, "and neither wrote anything");
+        std::cout << "case 11 (preview) done\n";
     }
 
     if (failures == 0) {

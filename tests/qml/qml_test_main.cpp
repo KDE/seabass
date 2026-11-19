@@ -830,6 +830,55 @@ public:
         return changed;
     }
 
+    // A stick copy's Engine rows the player has analysed get their beat
+    // grid locked, as a DJ locks one on the player. How many rows changed,
+    // -1 on failure.
+    Q_INVOKABLE int lockAnalysedEngineBeatGrids(const QString &stickRoot)
+    {
+        const std::string file = stickRoot.toStdString() + "/Engine Library/Database2/m.db";
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return -1;
+        }
+        int changed = -1;
+        if (sqlite3_exec(db, "UPDATE Track SET isBeatGridLocked = 1 WHERE isAnalyzed = 1;", nullptr, nullptr, nullptr)
+            == SQLITE_OK) {
+            changed = sqlite3_changes(db);
+        }
+        sqlite3_close(db);
+        return changed;
+    }
+
+    // Every Engine row's beat data, as stored, by track id: the sha256 of
+    // the blob in hex, "" for NULL. Read straight from m.db, so a test can
+    // count the rows a save really changed. Empty on failure.
+    Q_INVOKABLE QVariantMap engineBeatDataDigests(const QString &stickRoot) const
+    {
+        const std::string file = stickRoot.toStdString() + "/Engine Library/Database2/m.db";
+        sqlite3 *db = nullptr;
+        QVariantMap out;
+        if (sqlite3_open_v2(file.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            sqlite3_close(db);
+            return out;
+        }
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT trackId, beatData FROM PerformanceData;", -1, &stmt, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                const QString id = QString::number(sqlite3_column_int64(stmt, 0));
+                const auto *bytes = static_cast<const char *>(sqlite3_column_blob(stmt, 1));
+                const int size = sqlite3_column_bytes(stmt, 1);
+                out[id] = bytes == nullptr ? QString()
+                                           : QString::fromLatin1(QCryptographicHash::hash(QByteArray(bytes, size),
+                                                                                          QCryptographicHash::Sha256)
+                                                                     .toHex());
+            }
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return out;
+    }
+
     // How many entries of a stick copy's Engine playlists a player cannot
     // resolve, read straight from m.db; -1 when it cannot be read.
     Q_INVOKABLE int unresolvedEngineEntries(const QString &stickRoot) const

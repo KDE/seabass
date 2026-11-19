@@ -72,6 +72,11 @@ std::string normalizedPathKey(const std::string &path);
 // are the same entry.
 std::string composedPathSpelling(const std::string &path);
 
+// Text with its combining marks composed and its letters lowercased, the
+// way normalizedPathKey folds a path's, and nothing else done to it: for
+// a search that ignores case ("ahmed" finds "Ahmed", "ö" finds "Ö").
+std::string foldedText(const std::string &text);
+
 // Whether two path strings name the same place, by normalizedPathKey.
 //
 // For every check in the app that holds one path and is handed another:

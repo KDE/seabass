@@ -128,7 +128,8 @@ public:
 
     // Called once before each beat grid write, after every check has
     // passed and before a byte of the row changes; never for a refusal or
-    // a grid that is already there. For a caller that backs the library
+    // a grid that is already there, nor for a preview (previewOnly). For
+    // a caller that backs the library
     // up only when something is about to be written. If it throws, the
     // write does not happen and the exception leaves writeBeatGrid().
     void setBeforeBeatGridWrite(std::function<void()> hook) { m_beforeBeatGridWrite = std::move(hook); }

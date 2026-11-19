@@ -354,6 +354,11 @@ std::string composedPathSpelling(const std::string &path)
     return composeUtf8(path);
 }
 
+std::string foldedText(const std::string &text)
+{
+    return lowerUtf8(composeUtf8(text));
+}
+
 bool samePath(const std::string &a, const std::string &b)
 {
     if (a.empty() || b.empty()) {

@@ -729,6 +729,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: beatGridsPageComponent
+        BeatGridsPage {}
+    }
+
+    Component {
         id: playlistSyncPageComponent
         PlaylistSyncPage {}
     }
@@ -764,6 +769,7 @@ ApplicationWindow {
         case "junkcues": return cuesAtZeroPageComponent;
         case "import": return importPromptPageComponent;
         case "samplerates": return sampleRatesPageComponent;
+        case "beatgrids": return beatGridsPageComponent;
         case "artwork": return coverArtPageComponent;
         case "playlists": return playlistSyncPageComponent;
         case "noplaylist": return noPlaylistTracksPageComponent;

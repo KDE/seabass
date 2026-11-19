@@ -35,6 +35,12 @@ struct BeatGridWriteOptions
     // conversion, so the check for player edits does not refuse it. A
     // locked row is still refused.
     std::optional<std::string> ownGridFingerprint;
+    // Every check runs and the result is the one the same call would
+    // return without this, fingerprint included (of the grid it would
+    // leave), but nothing is written: no grid, no lock, and the hook
+    // before a write is not called. For a page that says what a copy
+    // would do before the user asks for it.
+    bool previewOnly = false;
 };
 
 struct BeatGridWriteResult

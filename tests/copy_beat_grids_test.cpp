@@ -154,6 +154,40 @@ int main()
         std::cout << "case 1 (the plan) done\n";
     }
 
+    // 1b. --track: title or "artist - title", case ignored.
+    {
+        const auto item = [](const std::string &id, const std::string &artist, const std::string &title) {
+            BeatGridCopyItem i;
+            i.engineTrackId = id;
+            i.artist = artist;
+            i.title = title;
+            return i;
+        };
+        const BeatGridCopyPlan all{{item("e1", "Ahmed Spins", "Moroccan Dream"), item("e2", "Röyksopp", "Eple"),
+                                    item("e3", "Other", "Ahmed's Tune"), item("e4", "Someone", "Else")}};
+        const auto ids = [](const BeatGridCopyPlan &p) {
+            std::string out;
+            for (const auto &i : p.items) {
+                out += i.engineTrackId + " ";
+            }
+            return out;
+        };
+        BeatGridCopyPlan plan = all;
+        check(keepBeatGridItemsMatching(plan, "ahmed") == 2 && ids(plan) == "e1 e3 ",
+              "\"ahmed\" keeps the artist's track and the title's, got " + ids(plan));
+        plan = all;
+        check(keepBeatGridItemsMatching(plan, "spins - moroccan") == 3 && ids(plan) == "e1 ",
+              "\"artist - title\" is searched as one, got " + ids(plan));
+        plan = all;
+        check(keepBeatGridItemsMatching(plan, "RÖYKSOPP") == 3 && ids(plan) == "e2 ",
+              "case ignored beyond ASCII, got " + ids(plan));
+        plan = all;
+        check(keepBeatGridItemsMatching(plan, "") == 0 && plan.items.size() == 4, "an empty filter keeps every item");
+        plan = all;
+        check(keepBeatGridItemsMatching(plan, "nothing like it") == 4 && plan.items.empty(),
+              "a filter matching nothing keeps none");
+    }
+
     // 2. Every outcome in its bucket, the ledger in and out.
     {
         BeatGridCopyPlan plan;
@@ -296,6 +330,40 @@ int main()
         check(result.total() == 5, "still adding up to the plan");
         check(result.ledgerEntries.size() == 2, "only the rows written are recorded");
         std::cout << "case 4 (cancellation) done\n";
+    }
+
+    // 5. A preview: every row asked as a preview, the rows a run would
+    // write counted apart from written work and listed, nothing for the
+    // ledger, and the buckets still adding up.
+    {
+        BeatGridCopyPlan plan;
+        for (const char *id : {"1", "2", "3", "4"}) {
+            BeatGridCopyItem item;
+            item.engineTrackId = id;
+            item.ledgerKey = std::string("contents/") + id + ".mp3";
+            item.title = std::string("Title ") + id;
+            plan.items.push_back(item);
+        }
+        FakeWriter writer;
+        writer.outcomes["2"] = Outcome::AlreadySame;
+        writer.outcomes["3"] = Outcome::RowLocked;
+        BeatGridCopyOptions options;
+        options.previewOnly = true;
+        const BeatGridCopyResult result = copyBeatGrids(plan, twoBeats, writer, {}, options);
+        bool allPreviews = writer.calls.size() == 4;
+        for (const Call &call : writer.calls) {
+            allPreviews = allPreviews && call.options.previewOnly;
+        }
+        check(allPreviews, "every row is asked as a preview");
+        check(result.written == 0, "a preview writes nothing, and says so: written is " + std::to_string(result.written));
+        check(result.wouldWrite == 2 && result.alreadySame == 1 && result.lockedOnEngine == 1,
+              "the rows a run would write are their own bucket");
+        check(result.wouldWriteItems.size() == 2 && result.wouldWriteItems[0].engineTrackId == "1"
+                  && result.wouldWriteItems[1].engineTrackId == "4",
+              "and listed, in plan order");
+        check(result.ledgerEntries.empty() && result.notRecorded == 0, "nothing is recorded for the ledger");
+        check(result.total() == 4, "the buckets add up to the plan");
+        std::cout << "case 5 (preview) done\n";
     }
 
     if (failures == 0) {
