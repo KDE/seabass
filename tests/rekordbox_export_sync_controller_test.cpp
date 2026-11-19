@@ -1458,10 +1458,12 @@ void testMetadataWords()
     std::cout << "case 10 (a rating onto rekordbox: Seabass's put back, or Engine's set over it) OK\n";
 }
 
-// 8. With a record on the stick, a conflict answered with the side that
-//    writes nothing is something to stage (#97): canStage says so, the
-//    stage is the record alone, and the conflict is not asked again. And
-//    canStageChanged follows ticks and answers, as the page's button needs.
+// 8. canStageChanged follows ticks and answers, as the page's button needs
+//    (#97). And with a record on the stick, an empty answer to rekordbox
+//    playlists sharing one path (RekordboxPathShared) is not something to
+//    stage: the planner raises that conflict from the libraries whatever
+//    the record says, so a save of it would change nothing. An empty
+//    answer the record does settle is testshark_t73_test insync's.
 void testEmptyAnswerWithARecord(const fs::path &fixture)
 {
     const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_empty_answer");
@@ -1528,28 +1530,18 @@ void testEmptyAnswerWithARecord(const fs::path &fixture)
     controller.resolveConflict(row, rekordboxSide);
     assert(canStageChanged.size() > 0 && "an answer is told");
     assert(controller.checkedCount() == 0 && "the answer writes nothing, so it ticks nothing");
-    assert(controller.canStage() && "an answer is something to stage");
+    assert(rows[static_cast<std::size_t>(row)].header.reason
+           == seabass::domain::EngineUpdateReason::RekordboxPathShared);
+    assert(!controller.canStage() && "an empty answer the record cannot settle is nothing to stage");
     canStageChanged.clear();
     controller.clearConflictResolution(row);
     assert(canStageChanged.size() > 0 && "taking the answer back is told");
     assert(!controller.canStage());
     controller.resolveConflict(row, rekordboxSide);
-    assert(controller.canStage());
-
     controller.stageSelected();
-    assert(controller.statusMessage() != QStringLiteral("Nothing is selected, so there is nothing to stage."));
-    assert(session->pendingCount() == 1 && "the record alone");
-    const QVariantMap saved =
-        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
-    assert(saved.value("error").toString().isEmpty() && saved.value("warning").toString().isEmpty());
-    assert(session->pendingCount() == 0 && controller.hasBaseline());
-    // Not checked here: that the conflict stays away after this save. The
-    // fixture's only conflicts on top of a record are rekordbox playlists
-    // sharing one path (EngineUpdateReason::RekordboxPathShared), which
-    // the planner raises from the two libraries as they are, whatever the
-    // record says; suppressDeclined() does not cover conflicts.
-    std::cout << "case 8 (an answer that writes nothing is staged as the record alone and saved; "
-                 "canStageChanged follows ticks and answers) OK\n";
+    assert(session->pendingCount() == 0 && "nothing staged for it");
+    std::cout << "case 8 (canStageChanged follows ticks and answers; an empty answer to playlists sharing a path "
+                 "is nothing to stage) OK\n";
 }
 
 }  // namespace

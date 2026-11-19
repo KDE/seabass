@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -794,18 +795,23 @@ void testInSync()
 
     // A remember whose save fails leaves nothing staged: no Save offering
     // the record, the failure said, and the button there for a second try.
-    // The stick's Seabass folder read-only: the save cannot take its lock
-    // or make its backup, so the record is never applied.
-    const fs::path seabassDir = stick.root / "Seabass";
-    fs::create_directories(seabassDir);
-    fs::permissions(seabassDir, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+    // A file where the save's backup folder has to go: the save cannot
+    // make its backup, so the record is never applied. A file, not a
+    // permission: permissions do not stop root (CI) nor work alike on
+    // every platform.
+    const fs::path blocker = stick.root / "Seabass" / "backups";
+    fs::create_directories(blocker.parent_path());
+    assert(!fs::exists(blocker) && "precondition: no backup folder yet");
+    {
+        std::ofstream(blocker) << "not a folder";
+    }
     controller.rememberExport();
     for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
         finished.wait(100);
     }
     assert(!finished.isEmpty() && "the refused save finished");
     waitUntilIdle(controller);
-    fs::permissions(seabassDir, fs::perms::owner_all, fs::perm_options::replace);
+    fs::remove(blocker);
     {
         const QVariantMap refused = finished.takeFirst().at(0).toMap();
         std::cout << "  refused remember: error \"" << refused.value("error").toString().toStdString() << "\"\n";
@@ -884,6 +890,57 @@ void testInSync()
         assert(saidDeclined.size() == 1);
         assert(saidDeclined.takeFirst().at(0).toString() == QStringLiteral("Recorded your choices for the next sync."));
         std::cout << "insync: a stage of nothing ticked records the declines and says so OK\n";
+    }
+
+    // An empty answer the record settles: B01's comment changed on both
+    // sides since the record (BothChanged), answered with Engine's side,
+    // which writes nothing. Staged as the record alone, saved, and the
+    // conflict is not asked again.
+    {
+        const auto both = makeStick("t73_insync_both_changed", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+        assert(testing::sqlExec(both.db, "UPDATE Track SET comment = 'Engine comment' WHERE filename LIKE "
+                                         "'T73-B01-%';"));
+        std::string error;
+        auto record = seabass::infrastructure::local::readRekordboxBaseline(both.root, &error);
+        assert(error.empty() && record);
+        int planted = 0;
+        for (auto &track : record->tracks) {
+            if (track.comment == "T73 comment") {
+                track.comment = "Older comment";
+                ++planted;
+            }
+        }
+        assert(planted == 1 && "precondition: the record knew B01's comment");
+        assert(seabass::infrastructure::local::writeRekordboxBaseline(
+            both.root, *record, [](const std::string &) {}, &error));
+        RekordboxExportSyncController page;
+        analyze(page, both);
+        int row = -1;
+        std::string key;
+        for (std::size_t i = 0; i < page.rows()->rows().size(); ++i) {
+            const Row &r = page.rows()->rows()[i];
+            std::cerr << "  both changed lists: " << r.kind.toStdString() << " " << describe(r) << "\n";
+            if (r.section == Section::Conflicts && r.conflict
+                && r.header.reason == d::EngineUpdateReason::BothChanged && r.conflict->engineChoice.empty()) {
+                row = static_cast<int>(i);
+                key = r.header.key;
+            }
+        }
+        assert(row >= 0 && "precondition: the comment is a BothChanged conflict whose Engine side writes nothing");
+        assert(page.hasBaseline() && !page.canStage());
+        page.resolveConflict(row, false);
+        assert(page.checkedCount() == 0 && page.canStage() && "an empty answer the record settles is staged");
+        page.stageSelected();
+        LibraryEditSession *bothSession = sessionOf(both);
+        assert(bothSession->pendingCount() == 1 && "the record alone");
+        QSignalSpy said(&page, &RekordboxExportSyncController::recordSaved);
+        const QVariantMap summary = waitForSave(bothSession, page, false);
+        assert(summary.value("total").toInt() == 0);
+        assert(said.size() == 1);
+        for (const Row &r : page.rows()->rows()) {
+            assert(!(r.section == Section::Conflicts && r.header.key == key) && "the answered conflict is not asked again");
+        }
+        std::cout << "insync: an empty answer to a comment both sides changed is recorded and not asked again OK\n";
     }
 }
 

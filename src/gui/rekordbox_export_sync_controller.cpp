@@ -364,7 +364,13 @@ RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncA
                     for (const auto &key : withCueItems(conflict->header)) {
                         applied.insert(key);
                     }
-                    record.answeredWithoutAWrite = record.answeredWithoutAWrite || emptyAnswer;
+                    // Not for rekordbox playlists sharing one path: the
+                    // planner raises that conflict from the libraries as
+                    // they are, whatever the record says, so a save of the
+                    // answer alone would change nothing.
+                    record.answeredWithoutAWrite = record.answeredWithoutAWrite
+                        || (emptyAnswer
+                            && conflict->header.reason != domain::EngineUpdateReason::RekordboxPathShared);
                 }
             }
             continue;  // unanswered: comes back, never declined
