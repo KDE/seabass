@@ -47,6 +47,10 @@
 //           export 128 and the record at 128: nothing on the page, no cue
 //           row in any section; the cues the players kept are the samples
 //           Seabass wrote.
+// folder    Not a hardware step (#99's review): the replay's stick with
+//           "T73 Folder/T73 New" emptied in export.pdb, and the record and
+//           Engine as before rekordbox renamed "Old Folder" to "T73 Folder":
+//           the folder's rename alone, and the save lands.
 //
 // argv[1]: tests/fixtures/testshark_t73, argv[2]: the case.
 
@@ -92,11 +96,13 @@
 #include "infrastructure/audio/exact_sample_count.hpp"
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
@@ -2690,13 +2696,91 @@ void testCreate()
 #endif
 }
 
+// #99's review: rekordbox renames a folder and the playlist in it holds
+// no track, in the record and in rekordbox. The id pairs the folder and
+// its playlist moves with it: one row, the folder's rename, and the save
+// lands. (With the id match judged by members, the empty playlist was
+// planned as a create at the new path and a delete, and the create made
+// the new folder before the rename could, which then failed.) The stick
+// as the players left it (export 128 against the record at 128: nothing
+// to offer), then: export.pdb with "T73 Folder/T73 New" emptied, and the
+// record and Engine as before a rename from "Old Folder", the playlist
+// empty in both.
+void testFolderRenameWithEmptyPlaylist()
+{
+    const auto stick = makeStick("t73_folder", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    std::string error;
+    auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    d::BaselinePlaylist *folder = nullptr;
+    d::BaselinePlaylist *inside = nullptr;
+    for (auto &playlist : record->playlists) {
+        if (playlist.path == "T73 Folder") {
+            folder = &playlist;
+        } else if (playlist.path == "T73 Folder/T73 New") {
+            inside = &playlist;
+        }
+    }
+    assert(folder && folder->folder && inside && !inside->folder && !inside->members.empty());
+
+    // rekordbox: the playlist emptied.
+    std::set<std::uint32_t> trackIds;
+    for (const auto &key : inside->members) {
+        const auto *track = record->findTrack(key);
+        assert(track);
+        trackIds.insert(track->pdbId);
+    }
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        assert(pdb.removePlaylistEntries(inside->id, trackIds) == trackIds.size());
+        assert(pdb.commit());
+    }
+
+    // The record: the folder was "Old Folder", the playlist in it empty.
+    folder->path = "Old Folder";
+    inside->path = "Old Folder/T73 New";
+    inside->members.clear();
+    assert(seabass::infrastructure::local::writeRekordboxBaseline(stick.root, *record, [](const std::string &) {},
+                                                                    &error));
+
+    // Engine: the same.
+    const std::string enginePath = pathToUtf8(stick.engine);
+    assert(testing::sqlExec(stick.db, "UPDATE Playlist SET title = 'Old Folder' WHERE title = 'T73 Folder';"));
+    for (const auto &row : testing::sqlRows(stick.db, "SELECT DISTINCT e.trackId FROM PlaylistEntity e JOIN Playlist p "
+                                                      "ON p.id = e.listId WHERE p.title = 'T73 New';")) {
+        seabass::infrastructure::engine::removeFromEnginePlaylist(enginePath, "Old Folder/T73 New", std::stoll(row[0]));
+    }
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM PlaylistEntity e JOIN Playlist p ON p.id = e.listId "
+                                        "WHERE p.title = 'T73 New';")
+           == 0);
+
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    std::vector<std::string> listed;
+    for (const Row &row : controller.rows()->rows()) {
+        listed.push_back(describe(row));
+        std::cout << "  lists: " << row.kind.toStdString() << " " << listed.back() << "\n";
+    }
+    assert(listed == std::vector<std::string>{"rename Old Folder to T73 Folder"} && "the folder's rename, nothing else");
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    waitForSave(sessionOf(stick), controller, false);
+    assert(controller.rows()->rowCount() == 0 && "nothing left after the save");
+    const auto parent = testing::sqlRows(stick.db, "SELECT f.title, (SELECT count(*) FROM PlaylistEntity e WHERE "
+                                                   "e.listId = p.id) FROM Playlist p JOIN Playlist f ON f.id = "
+                                                   "p.parentListId WHERE p.title = 'T73 New';");
+    assert(parent.size() == 1 && parent[0][0] == "T73 Folder" && parent[0][1] == "0");
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'Old Folder';") == 0);
+    std::cout << "folder: a folder renamed with an empty playlist in it is the folder's rename alone, saved OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -2727,6 +2811,8 @@ int main(int argc, char **argv)
         testCreate();
     } else if (which == "cuesync") {
         testCueSync();
+    } else if (which == "folder") {
+        testFolderRenameWithEmptyPlaylist();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;

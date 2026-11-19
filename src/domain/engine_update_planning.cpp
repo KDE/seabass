@@ -347,9 +347,9 @@ private:
     std::map<std::uint32_t, PlaylistStatus> status;
     std::vector<std::pair<std::string, std::string>> renamesInOrder;
     std::set<std::string> claimedEnginePaths;
-    // rekordbox playlist ids the record knows as another playlist that
-    // this one is not shown to be (sameListByMembers): the record's
-    // playlist of the id is planned as deleted, rekordbox's as created.
+    // rekordbox playlist ids the record knows as another item that this
+    // one certainly is not (reusedForAnother): the record's item of the
+    // id is planned as deleted, rekordbox's as created.
     std::set<std::uint32_t> idsReused;
     // Cue items left out of their rows because the user declined them.
     std::set<std::string> cueSuppressed;
@@ -589,34 +589,108 @@ private:
         }
     }
 
-    // Whether the record's playlist `b` and rekordbox's `r`, which share an
-    // id under two paths, are plausibly one list renamed or moved (#99).
-    // rekordbox gives a deleted playlist's id to the next one it makes, so
-    // the id alone says nothing; the members decide: the record's members
-    // of `b` against rekordbox's of `r` now. At least half of the smaller
-    // list's tracks in the other is a rename. No track in common is two
-    // playlists. Anything between, or a list with no tracks to compare,
-    // cannot be judged; the planner has no way to ask about it with the
-    // members that go with each answer (a playlist-level conflict's
-    // members are not offered, so the record would advance them
-    // unanswered), so it is planned as two playlists too, which leaves
-    // Engine right whatever the truth: rekordbox's list under its name,
-    // the old one gone. Folders hold no members and keep pairing by id.
-    static bool sameListByMembers(const BaselinePlaylist &b, const BaselinePlaylist &r)
+    // Whether rekordbox gave the recorded playlist `b`'s id, under a new
+    // path, to another item `r` (#99): rekordbox hands a deleted
+    // playlist's id to the next one it makes, so an id alone does not say
+    // "renamed". Only where that is certain and both halves are safe is it
+    // planned as `b` deleted and `r` created; everywhere else the id
+    // pairs them as before, a rename or whatever conflict that raises.
+    //
+    // Certain: two playlists that each hold tracks and share none, or a
+    // playlist and a folder (a rename never turns one into the other).
+    // Two folders still pair by id: they hold no tracks to tell them by.
+    //
+    // Safe: the delete is a plain row, nothing the deletes below would
+    // turn into a conflict or a refusal (Engine has exactly one item at
+    // the old path, of the same kind, and a playlist there holds exactly
+    // the recorded tracks, each one Engine row; a folder holds nothing of
+    // Engine's), and the old tracks can be listed as rows of their own
+    // (removeRowsOfReused), so a record that keeps the pair keeps them.
+    // The create is a plain row at a path whose parent Engine already
+    // has, so it never waits on a rename staged after it, and a new
+    // playlist's every track gets a row of its own, so a record that
+    // keeps the pair takes each one out of the old playlist again.
+    bool reusedForAnother(const BaselinePlaylist &b, const BaselinePlaylist &r,
+                          const std::set<std::string> &rekordboxPaths) const
     {
-        if (b.folder || r.folder) {
-            return true;
-        }
-        const std::set<std::string> before(b.members.begin(), b.members.end());
-        const std::set<std::string> after(r.members.begin(), r.members.end());
-        if (before.empty() || after.empty()) {
+        if (b.folder && r.folder) {
             return false;
         }
-        std::size_t common = 0;
-        for (const auto &key : after) {
-            common += before.count(key);
+        const std::set<std::string> before(b.members.begin(), b.members.end());
+        if (!b.folder && !r.folder) {
+            if (before.empty() || r.members.empty()) {
+                return false;
+            }
+            for (const auto &key : r.members) {
+                if (before.count(key)) {
+                    return false;
+                }
+            }
         }
-        return 2 * common >= std::min(before.size(), after.size());
+        if (rekordboxPaths.count(b.path) || countAt(b.path) != 1) {
+            return false;
+        }
+        bool engineFolder = false;
+        for (const auto &playlist : in.enginePlaylists) {
+            if (playlist.path == b.path) {
+                engineFolder = playlist.folder;
+            }
+            if (b.folder && playlist.path.size() > b.path.size()
+                && playlist.path.compare(0, b.path.size(), b.path) == 0 && playlist.path[b.path.size()] == '/') {
+                return false;  // something of Engine's inside the old folder
+            }
+        }
+        if (engineFolder != b.folder) {
+            return false;
+        }
+        if (!b.folder) {
+            const auto members = eMembers.find(b.path);
+            const std::set<std::string> engineSet = members == eMembers.end()
+                ? std::set<std::string>()
+                : std::set<std::string>(members->second.begin(), members->second.end());
+            if (engineSet != before) {
+                return false;
+            }
+            for (const auto &key : before) {
+                if (!engineRow(key) || duplicateKeys.count(key)) {
+                    return false;
+                }
+            }
+        }
+        const std::string parent = parentPath(r.path);
+        if (!parent.empty() && countAt(parent) != 1) {
+            return false;
+        }
+        if (!r.folder) {
+            for (const auto &key : r.members) {
+                if (!rByKey.count(key) || duplicateKeys.count(key) || (!engineRow(key) && !addedKeys.count(key))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // The recorded tracks of a playlist whose id rekordbox reused, each a
+    // row taking it out of Engine's copy before the delete. The delete
+    // takes them anyway; as rows of their own under the id they are items
+    // the page offers, so a record that keeps the pair (declined, or not
+    // saved) keeps the old playlist with its tracks, not with the new
+    // one's (keepPreviousItems puts back only the items offered).
+    void removeRowsOfReused(const BaselinePlaylist &b, const std::string &enginePath, const std::string &playlistKey)
+    {
+        for (const auto &key : firstOccurrences(b.members)) {
+            MembershipEdit edit;
+            edit.kind = MembershipEdit::Kind::Remove;
+            edit.pdbId = b.id;
+            edit.playlistPath = enginePath;
+            edit.pathKey = key;
+            edit.track = *engineRow(key);
+            edit.header = makeHeader(memberItemKey(b.id, key), true, false, EngineUpdateReason::RekordboxRemoved,
+                                     "rekordbox deleted " + quoted(b.path) + ", which held this track" + since(),
+                                     "member:out", {playlistKey});
+            out.membership.push_back(std::move(edit));
+        }
     }
 
     static std::string playlistState(const BaselinePlaylist *r)
@@ -914,7 +988,7 @@ private:
             }
             // An id rekordbox gave to another playlist (#99): not this
             // record's playlist, which the deletes below take.
-            if (b && b->path != r.path && !sameListByMembers(*b, r)) {
+            if (b && b->path != r.path && reusedForAnother(*b, r, rekordboxPaths)) {
                 idsReused.insert(r.id);
                 b = nullptr;
             }
@@ -1098,6 +1172,10 @@ private:
                                         std::string("rekordbox deleted this ") + (b->folder ? "folder" : "playlist")
                                             + since(),
                                         state);
+                if (idsReused.count(b->id)) {
+                    // reusedForAnother made sure this is the plain row.
+                    removeRowsOfReused(*b, del.path, key);
+                }
                 out.playlistsToDelete.push_back(std::move(del));
             }
         }

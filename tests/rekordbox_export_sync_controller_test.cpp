@@ -1199,18 +1199,27 @@ void testDeclinedByDependency(const fs::path &fixture)
 // 12. Issue #99 on a copy of the fixture's stick: rekordbox gives a
 //     deleted playlist's id to a new, unrelated one. The record says id N
 //     was "Reused Old" holding tracks Q, and Engine has "Reused Old"
-//     holding Q; rekordbox's id N is "Playlist 006", which holds none of Q.
-//     The page deletes "Reused Old" and creates "Playlist 006" as one item,
-//     never renames the one into the other. Saved with the members ticked,
-//     Engine's "Playlist 006" holds rekordbox's tracks in rekordbox's
-//     order; saved with them unticked, it holds nothing. None of Q under
-//     the new name either way, and no "Reused Old" left.
-void testReusedPlaylistId(const fs::path &fixture, bool withMembers)
+//     holding exactly Q; rekordbox's id N is "Playlist 006", which holds
+//     none of Q. The page deletes "Reused Old" (its tracks taken out
+//     first) and creates "Playlist 006" as one item, never renames the one
+//     into the other.
+//     a: saved with the members ticked: "Playlist 006" holds rekordbox's
+//        tracks in rekordbox's order;
+//     b: saved with every membership row unticked: it holds nothing;
+//     both: none of Q under the new name, no "Reused Old" left, and the
+//     record such that the next analysis offers nothing under the id.
+//     c: the pair declined: Engine untouched, the record keeps "Reused
+//        Old" with Q, and the next analysis offers nothing under the id.
+enum class ReusedSave { Members, Bare, Declined };
+
+void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
 {
+    const bool withMembers = how == ReusedSave::Members;
+    const char *const names[] = {"export_sync_reused_id", "export_sync_reused_id_bare", "export_sync_reused_id_declined"};
     namespace d = seabass::domain;
     namespace engine = seabass::infrastructure::engine;
     const auto stick =
-        testing::makeEngineChangeStick(fixture, withMembers ? "export_sync_reused_id" : "export_sync_reused_id_bare");
+        testing::makeEngineChangeStick(fixture, names[static_cast<int>(how)]);
     const std::string newName = "Playlist 006";
     const std::string oldName = "Reused Old";
     const std::string enginePath = pathToUtf8(stick.engine);
@@ -1328,6 +1337,35 @@ void testReusedPlaylistId(const fs::path &fixture, bool withMembers)
     for (const char *section : sections) {
         controller.setSectionIncluded(QString::fromLatin1(section), false);
     }
+    // What the next analysis may list under the id: nothing.
+    const auto underTheId = [&]() {
+        int count = 0;
+        for (const auto &row : rowsOf(controller)) {
+            if (row.header.key == key || row.header.key.rfind("member:" + std::to_string(id) + ":", 0) == 0) {
+                std::cerr << "  listed again: " << row.kind.toStdString() << " " << row.header.key << "\n";
+                ++count;
+            }
+        }
+        return count;
+    };
+    if (how == ReusedSave::Declined) {
+        controller.stageSelected();
+        assert(controller.errorMessage().isEmpty());
+        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+        const auto record = testing::readBaseline(stick);
+        assert(record);
+        const auto *kept = record->findPlaylist(id);
+        assert(kept && kept->path == oldName && !kept->folder);
+        if (kept->members != q) {
+            std::cerr << "FAIL: the declined pair records \"" << oldName << "\" with " << kept->members.size()
+                      << " track(s), not its own " << q.size() << "\n";
+        }
+        assert(kept->members == q && "the record keeps the old playlist with its own tracks");
+        assert(testing::rootPlaylistTracks(stick.db, oldName).size() == q.size() && "Engine untouched");
+        assert(underTheId() == 0 && "declined, the pair stays out");
+        std::cout << "case 12c (#99: a declined pair keeps the old playlist and its tracks in the record) OK\n";
+        return;
+    }
     controller.setIncluded(create, true);
     assert(included(controller, del) && "one item: the delete goes with the create");
     if (withMembers) {
@@ -1361,6 +1399,8 @@ void testReusedPlaylistId(const fs::path &fixture, bool withMembers)
     } else {
         assert(holds.empty());
     }
+    // The page analysed the stick again after the save.
+    assert(underTheId() == 0 && "the record is right: nothing under the id again");
     std::cout << "case 12" << (withMembers ? "a" : "b") << " (#99: a reused rekordbox playlist id deletes the old "
               << "playlist and creates the new one" << (withMembers ? ", rekordbox's tracks in its order" : ", empty")
               << ") OK\n";
@@ -1745,8 +1785,9 @@ int main(int argc, char **argv)
     testDeclinedByDependency(fixture);
     testCancelUnits(fixture);
     testEmptyAnswerWithARecord(fixture);
-    testReusedPlaylistId(fixture, true);
-    testReusedPlaylistId(fixture, false);
+    testReusedPlaylistId(fixture, ReusedSave::Members);
+    testReusedPlaylistId(fixture, ReusedSave::Bare);
+    testReusedPlaylistId(fixture, ReusedSave::Declined);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }
