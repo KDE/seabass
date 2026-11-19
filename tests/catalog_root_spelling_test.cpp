@@ -200,10 +200,18 @@ int main(int argc, char **argv)
         const fs::path mixed = caseStick / "Contents" / "Akki (De)" / "Midnight";
         fs::create_directories(upper);
         fs::create_directories(mixed);
+        // Where the scratch folder is itself case-insensitive (a Mac's
+        // disk as it comes), the two spellings already are one folder:
+        // the filesystem gives FAT's answer without a hard link, and it
+        // cannot hold the two files that differ only in case, so that
+        // half of the case has nothing to stand on there.
+        const bool oneFolder = fs::equivalent(upper, mixed);
         std::ofstream(upper / "01 Midnight.mp3") << "one file";
-        fs::create_hard_link(upper / "01 Midnight.mp3", mixed / "01 Midnight.mp3");
-        std::ofstream(upper / "02 Other.mp3") << "a file";
-        std::ofstream(mixed / "02 Other.mp3") << "another file, the same name in other letters";
+        if (!oneFolder) {
+            fs::create_hard_link(upper / "01 Midnight.mp3", mixed / "01 Midnight.mp3");
+            std::ofstream(upper / "02 Other.mp3") << "a file";
+            std::ofstream(mixed / "02 Other.mp3") << "another file, the same name in other letters";
+        }
 
         const auto row = [](const std::string &format, const std::string &id, const fs::path &file) {
             Track t;
@@ -226,6 +234,10 @@ int main(int argc, char **argv)
         };
         if (pairs(mixed / "01 Midnight.mp3", upper / "01 Midnight.mp3") != 1) {
             fail("one file spelled \"Akki (De)\" and \"AKKI (DE)\" was not paired");
+        }
+        if (oneFolder) {
+            std::cout << "case 6 (one file in two letter cases is one track; this filesystem folds case itself) OK\n";
+            return 0;
         }
         if (pairs(mixed / "02 Other.mp3", upper / "02 Other.mp3") != 0) {
             fail("two files that differ only in letter case were paired");
