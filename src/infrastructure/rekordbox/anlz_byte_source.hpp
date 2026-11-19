@@ -64,4 +64,9 @@ private:
 // root, factored out so an archive can join an entry prefix instead.
 std::string anlzRelativePath(const std::string &analyzePath, bool wantExt);
 
+// The same for any sibling of the .DAT, `extension` with its dot (".EXT",
+// ".2EX"): rekordbox writes a track's analysis as up to three files that
+// differ only in extension, and the newer waveforms live in the .2EX.
+std::string anlzSiblingRelativePath(const std::string &analyzePath, const std::string &extension);
+
 }  // namespace seabass::infrastructure::rekordbox

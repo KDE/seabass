@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,5 +55,34 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pione
 domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
                                         std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
                                         const AnlzPathIndex *pathIndex = nullptr);
+
+// The parts of rekordbox's newer waveforms a Denon overview is made from
+// (see domain/engine_overview.hpp), as raw section bodies: each one
+// absent where the file or the section is not there.
+struct RekordboxWaveformSections
+{
+    // PWV6, from the .2EX: the three-band preview, 3 bytes an entry.
+    std::optional<std::string> threeBandPreview;
+    // PWV4, from the .EXT: the colour preview, 6 bytes an entry.
+    std::optional<std::string> colourPreview;
+    // How many entries the scrolling waveform has (150 a second): PWV7
+    // from the .2EX, else PWV5, else PWV3, both from the .EXT. They have
+    // had the same count on every track measured.
+    std::optional<std::uint32_t> scrollEntries;
+};
+
+// Reads those from the .EXT and .2EX siblings of `analyzePath` (the
+// path export.pdb gives, ending in .DAT) through `source`, the way the
+// cue reader reads the .EXT. A missing file, a missing section, or a
+// file that does not parse leaves its parts absent; nothing throws.
+RekordboxWaveformSections readWaveformSections(AnlzByteSource &source, const std::string &analyzePath);
+
+// The same for a track of the export under `pioneerRoot`, with the same
+// `anlzSource` and `pathIndex` choices as readTrackAnalysis(). All
+// absent for a track the export does not hold or an id that is not a
+// number.
+RekordboxWaveformSections readWaveformSections(const std::string &pioneerRoot, const std::string &trackSourceId,
+                                               std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
+                                               const AnlzPathIndex *pathIndex = nullptr);
 
 }  // namespace seabass::infrastructure::rekordbox

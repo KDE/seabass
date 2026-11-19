@@ -485,6 +485,7 @@ add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
     src/domain/camelot_key.cpp
+    src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
@@ -2152,6 +2153,12 @@ target_link_libraries(waveform_readers_test PRIVATE seabass_core DjInterop)
 target_compile_definitions(waveform_readers_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME waveform_readers_test COMMAND waveform_readers_test)
 
+add_executable(rekordbox_waveform_sections_test tests/rekordbox_waveform_sections_test.cpp)
+target_include_directories(rekordbox_waveform_sections_test PRIVATE src tests)
+target_link_libraries(rekordbox_waveform_sections_test PRIVATE seabass_core DjInterop)
+target_compile_definitions(rekordbox_waveform_sections_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME rekordbox_waveform_sections_test COMMAND rekordbox_waveform_sections_test)
+
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
 # makes the count mean anything.
@@ -2258,6 +2265,13 @@ add_executable(audio_levels_test
 )
 target_include_directories(audio_levels_test PRIVATE src)
 add_test(NAME audio_levels_test COMMAND audio_levels_test)
+
+add_executable(engine_overview_test
+    src/domain/engine_overview.cpp
+    tests/engine_overview_test.cpp
+)
+target_include_directories(engine_overview_test PRIVATE src)
+add_test(NAME engine_overview_test COMMAND engine_overview_test)
 
 add_executable(rekordbox_key_parser_test
     tests/rekordbox_key_parser_test.cpp
@@ -4520,6 +4534,18 @@ endif()
 add_executable(beat_grid_probe tools/beat_grid_probe.cpp)
 target_include_directories(beat_grid_probe PRIVATE src)
 target_link_libraries(beat_grid_probe PRIVATE seabass_core SQLite::SQLite3)
+
+# Calibration check for the rekordbox-to-Denon overview conversion: runs
+# domain/engine_overview over reference tracks made by the measuring
+# scripts and compares with what those predicted and what the player
+# wrote. The reference tracks are real ones from a private library and so
+# are not in the repository, which is why this is not a test.
+add_executable(waveform_calibration_check
+    src/domain/engine_overview.cpp
+    tools/waveform_calibration_check.cpp
+)
+target_include_directories(waveform_calibration_check PRIVATE src)
+target_link_libraries(waveform_calibration_check PRIVATE Qt6::Core ZLIB::ZLIB)
 
 # Release rig: a full stick backup as the app takes it, then verified, checked
 # for holes, previewed for leftovers and compared with the stick's catalogs.

@@ -21,4 +21,12 @@ namespace seabass::infrastructure::engine
 // this first version) rather than guessing wrong.
 std::optional<djinterop::musical_key> parseRekordboxKey(const std::string &key);
 
+// Parses Camelot notation ("8A", "11B", "05A"; 1 to 12, A for minor, B
+// for major) into the same enum, and nothing else: a note name is
+// parseRekordboxKey()'s. Kept apart so callers that have always seen
+// nullopt for "8A" keep seeing it; a caller ready for both tries one,
+// then the other. The wheel fixes one key per position (8B is C major,
+// 8A its relative minor, A minor), so there is nothing to guess.
+std::optional<djinterop::musical_key> parseCamelotKey(const std::string &key);
+
 }  // namespace seabass::infrastructure::engine

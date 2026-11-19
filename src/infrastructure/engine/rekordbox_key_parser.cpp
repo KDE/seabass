@@ -105,4 +105,38 @@ std::optional<djinterop::musical_key> parseRekordboxKey(const std::string &key)
                     : majorByPitchClass[static_cast<size_t>(pitchClass)];
 }
 
+std::optional<djinterop::musical_key> parseCamelotKey(const std::string &key)
+{
+    const size_t start = key.find_first_not_of(" \t");
+    const size_t end = key.find_last_not_of(" \t");
+    if (start == std::string::npos) {
+        return std::nullopt;
+    }
+    const std::string s = key.substr(start, end - start + 1);
+    if (s.size() < 2 || s.size() > 3) {
+        return std::nullopt;
+    }
+    const char mode = static_cast<char>(std::toupper(static_cast<unsigned char>(s.back())));
+    if (mode != 'A' && mode != 'B') {
+        return std::nullopt;
+    }
+    int number = 0;
+    for (size_t i = 0; i + 1 < s.size(); ++i) {
+        if (s[i] < '0' || s[i] > '9') {
+            return std::nullopt;
+        }
+        number = number * 10 + (s[i] - '0');
+    }
+    if (number < 1 || number > 12) {
+        return std::nullopt;
+    }
+    // Each step around the wheel is a fifth (seven semitones) and 8B is
+    // C major; the A ring is the relative minors, three semitones below.
+    const int majorPitchClass = ((7 * (number - 8)) % 12 + 12) % 12;
+    if (mode == 'B') {
+        return majorByPitchClass[static_cast<size_t>(majorPitchClass)];
+    }
+    return minorByPitchClass[static_cast<size_t>((majorPitchClass + 9) % 12)];
+}
+
 }  // namespace seabass::infrastructure::engine

@@ -4,6 +4,10 @@
 
 #include <cassert>
 #include <iostream>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 
@@ -87,5 +91,42 @@ int main()
     }
 
     std::cout << "All rekordbox_key_parser tests passed.\n";
+    // Case 9: Camelot notation, all 24 positions, against the wheel as
+    // DJ software prints it -- written out here rather than computed, so
+    // the test does not share the parser's arithmetic. Each position is a
+    // different key, and parseRekordboxKey() still refuses every one.
+    {
+        const std::vector<std::pair<std::string, musical_key>> wheel = {
+            {"1A", musical_key::a_flat_minor},   {"1B", musical_key::b_major},
+            {"2A", musical_key::e_flat_minor},   {"2B", musical_key::f_sharp_major},
+            {"3A", musical_key::b_flat_minor},   {"3B", musical_key::d_flat_major},
+            {"4A", musical_key::f_minor},        {"4B", musical_key::a_flat_major},
+            {"5A", musical_key::c_minor},        {"5B", musical_key::e_flat_major},
+            {"6A", musical_key::g_minor},        {"6B", musical_key::b_flat_major},
+            {"7A", musical_key::d_minor},        {"7B", musical_key::f_major},
+            {"8A", musical_key::a_minor},        {"8B", musical_key::c_major},
+            {"9A", musical_key::e_minor},        {"9B", musical_key::g_major},
+            {"10A", musical_key::b_minor},       {"10B", musical_key::d_major},
+            {"11A", musical_key::f_sharp_minor}, {"11B", musical_key::a_major},
+            {"12A", musical_key::d_flat_minor},  {"12B", musical_key::e_major},
+        };
+        std::set<musical_key> seen;
+        for (const auto &[text, expected] : wheel) {
+            const auto key = parseCamelotKey(text);
+            assert(key.has_value() && *key == expected);
+            seen.insert(*key);
+            assert(!parseRekordboxKey(text).has_value());
+        }
+        assert(seen.size() == 24);
+        assert(parseCamelotKey(" 05a ").value() == musical_key::c_minor);
+        assert(!parseCamelotKey("0A").has_value());
+        assert(!parseCamelotKey("13B").has_value());
+        assert(!parseCamelotKey("8").has_value());
+        assert(!parseCamelotKey("8C").has_value());
+        assert(!parseCamelotKey("Am").has_value());
+        assert(!parseCamelotKey("").has_value());
+        std::cout << "case 9 (Camelot notation, all 24 keys) OK\n";
+    }
+
     return 0;
 }

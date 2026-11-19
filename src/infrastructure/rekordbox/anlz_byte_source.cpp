@@ -29,6 +29,16 @@ std::string anlzRelativePath(const std::string &analyzePath, bool wantExt)
     return rel;
 }
 
+std::string anlzSiblingRelativePath(const std::string &analyzePath, const std::string &extension)
+{
+    std::string rel = anlzRelativePath(analyzePath, /*wantExt=*/false);
+    const size_t dot = rel.rfind(".DAT");
+    if (dot != std::string::npos) {
+        rel = rel.substr(0, dot) + extension;
+    }
+    return rel;
+}
+
 FilesystemAnlzSource::FilesystemAnlzSource(std::string pioneerRoot) : m_pioneerRoot(std::move(pioneerRoot)) {}
 
 std::optional<std::string> FilesystemAnlzSource::read(const std::string &relativePath)
