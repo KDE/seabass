@@ -146,11 +146,11 @@ int main()
 
     // A manifest from a newer build. Refused for restore and for append,
     // and the append leaves both the manifest and the archive as they
-    // were.
+    // were. 6: this build writes 5 for a record that notes moved files.
     {
         Stick s(root / "wrong-version");
         const std::string original = readFile(s.manifest);
-        const std::string newer = "MANIFEST-VERSION\t5" + original.substr(original.find('\n'));
+        const std::string newer = "MANIFEST-VERSION\t6" + original.substr(original.find('\n'));
         writeFile(s.manifest, newer);
         const auto archiveBefore = readFile(s.archive);
         assert(!s.store.isRestorable(s.record.id));
