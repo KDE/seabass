@@ -276,7 +276,8 @@ public:
     void writePlayCountForPath(const std::string &filePath, int playCount);
 
     // Points every content row listing `filePath` at `newFilePath`
-    // instead (content.path, converted the way every path here is), for
+    // instead (content.path, converted the way every path here is, and
+    // content.fileName, which the reader shows as the file's name), for
     // a file that moved on the stick (#103). Both absolute, on the stick.
     // Throws OneLibraryRowMissing when no row lists the file, and on any
     // failure; read back before it is trusted, like the annotation above.

@@ -1543,6 +1543,9 @@ int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::st
 
     const std::string contentPath = toContentPath(m_stickRoot, filePath);
     const std::string newContentPath = toContentPath(m_stickRoot, newFilePath);
+    // content.fileName too: the reader takes a track's file name from it,
+    // so a row pointed at a file under another name would show the old one.
+    const std::string newFileName = pathToUtf8(pathFromUtf8(newContentPath).filename());
     SqlCipherDb &db = writeConnection();
 
     // Every row listing the file; see contentIdsAt().
@@ -1554,9 +1557,10 @@ int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::st
     db.exec("BEGIN IMMEDIATE;");
     try {
         for (int64_t contentId : contentIds) {
-            SqlCipherStatement set(db, "UPDATE content SET path = ? WHERE content_id = ?");
+            SqlCipherStatement set(db, "UPDATE content SET path = ?, fileName = ? WHERE content_id = ?");
             set.bindText(1, newContentPath);
-            set.bindInt64(2, contentId);
+            set.bindText(2, newFileName);
+            set.bindInt64(3, contentId);
             set.run();
         }
         db.exec("COMMIT;");
@@ -1571,10 +1575,11 @@ int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::st
     // Read back through the verify connection before the staleness
     // baseline moves, for the reason writeAnnotationForPath gives.
     for (int64_t contentId : contentIds) {
-        SqlCipherStatement verify(verifyConnection(), "SELECT path FROM content WHERE content_id = ?");
+        SqlCipherStatement verify(verifyConnection(), "SELECT path, fileName FROM content WHERE content_id = ?");
         verify.bindInt64(1, contentId);
         verify.step();
-        if (verify.columnIsNull(0) || verify.columnText(0) != newContentPath) {
+        if (verify.columnIsNull(0) || verify.columnText(0) != newContentPath || verify.columnIsNull(1)
+            || verify.columnText(1) != newFileName) {
             throw std::runtime_error("onelibrary: post-write verification failed, the new path did not land for "
                                      + contentPath);
         }
