@@ -626,7 +626,19 @@ void RekordboxExportSyncController::onSessionSaveFinished(const QVariantMap &sum
         && summary.value(QStringLiteral("warning")).toString().isEmpty()
         && !summary.value(QStringLiteral("cancelled")).toBool();
     if (recordLanded && whole && summary.value(QStringLiteral("total")).toInt() == 0) {
-        emit recordSaved(remembered.isEmpty() ? QStringLiteral("Recorded what was left unselected.") : remembered);
+        emit recordSaved(remembered.isEmpty() ? QStringLiteral("Recorded your choices for the next sync.") : remembered);
+    }
+    // "Remember this export" stages the record only to save it at once. A
+    // save that ended without it (refused, failed and rolled back,
+    // cancelled) takes it back out, so nothing is left staged for a Save
+    // to offer and the button can be pressed again; the page says why.
+    QString notRemembered;
+    if (!remembered.isEmpty() && s && s->hasChange(record)) {
+        unstageAll();
+        const QString error = summary.value(QStringLiteral("error")).toString();
+        notRemembered = error.isEmpty() ? QStringLiteral("the save was cancelled.")
+            : error + (error.endsWith(QLatin1Char('.')) ? QString() : QStringLiteral("."));
+        notRemembered.prepend(QStringLiteral("This export was not remembered: "));
     }
     QStringList still;
     for (const QString &id : std::as_const(m_stagedIds)) {
@@ -650,10 +662,14 @@ void RekordboxExportSyncController::onSessionSaveFinished(const QVariantMap &sum
         clearStagedStatusIfNothingStaged();
         emit stagedChanged();
     }
-    if (m_rekordboxPath.isEmpty() || m_enginePath.isEmpty() || scanServes(analysisKey())) {
-        return;  // an undo already asked for it (reanalyzeAfterUndo)
+    // Not when an undo already asked for it (reanalyzeAfterUndo).
+    if (!m_rekordboxPath.isEmpty() && !m_enginePath.isEmpty() && !scanServes(analysisKey())) {
+        startAnalysis(true);
     }
-    startAnalysis(true);
+    // After the analysis has started, which clears the page's error.
+    if (!notRemembered.isEmpty()) {
+        setErrorMessage(notRemembered);
+    }
 }
 
 void RekordboxExportSyncController::setIncluded(int row, bool included)

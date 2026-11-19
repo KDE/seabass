@@ -791,7 +791,35 @@ void testInSync()
 
     QSignalSpy recorded(&controller, &RekordboxExportSyncController::recordSaved);
     QSignalSpy finished(session, &LibraryEditSession::saveFinished);
-    QSignalSpy pending(session, &LibraryEditSession::pendingChanged);
+
+    // A remember whose save fails leaves nothing staged: no Save offering
+    // the record, the failure said, and the button there for a second try.
+    // The stick's Seabass folder read-only: the save cannot take its lock
+    // or make its backup, so the record is never applied.
+    const fs::path seabassDir = stick.root / "Seabass";
+    fs::create_directories(seabassDir);
+    fs::permissions(seabassDir, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+    controller.rememberExport();
+    for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
+        finished.wait(100);
+    }
+    assert(!finished.isEmpty() && "the refused save finished");
+    waitUntilIdle(controller);
+    fs::permissions(seabassDir, fs::perms::owner_all, fs::perm_options::replace);
+    {
+        const QVariantMap refused = finished.takeFirst().at(0).toMap();
+        std::cout << "  refused remember: error \"" << refused.value("error").toString().toStdString() << "\"\n";
+        assert(!refused.value("error").toString().isEmpty() && "precondition: the save failed");
+    }
+    std::cout << "  page says: " << controller.errorMessage().toStdString() << "\n";
+    assert(session->pendingCount() == 0 && !session->dirty() && "nothing left staged after a remember that failed");
+    assert(controller.stagedCount() == 0);
+    assert(controller.errorMessage().startsWith(QStringLiteral("This export was not remembered: ")));
+    assert(recorded.isEmpty());
+    assert(!fs::exists(recordOf(stick)));
+    assert(!controller.hasBaseline() && controller.proposalEmpty() && "Remember this export is offered again");
+    std::cout << "insync: a remember whose save fails leaves nothing staged and says why OK\n";
+
     controller.rememberExport();
     assert(session->writing() && "saved at once, nothing left for the user to stage and save");
     for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
@@ -854,7 +882,7 @@ void testInSync()
         const QVariantMap declinedSummary = waitForSave(otherSession, page, false);
         assert(declinedSummary.value("total").toInt() == 0);
         assert(saidDeclined.size() == 1);
-        assert(saidDeclined.takeFirst().at(0).toString() == QStringLiteral("Recorded what was left unselected."));
+        assert(saidDeclined.takeFirst().at(0).toString() == QStringLiteral("Recorded your choices for the next sync."));
         std::cout << "insync: a stage of nothing ticked records the declines and says so OK\n";
     }
 }
