@@ -20,13 +20,6 @@ struct TrackAnalysis
 {
     std::vector<WaveformColumn> waveform;
     std::vector<Beat> beats;
-    // Whether the beat times rest on a sample rate the library records.
-    // rekordbox stores times, so always. Engine stores sample offsets, and
-    // a row the player has not analysed records no rate: the reader then
-    // works one out from the markers and the tempo, and the same row's
-    // cues are at a guess (Track::cueRateUnverified). The player still
-    // keeps time by such a grid; nothing draws it as fact.
-    bool beatRateRecorded = true;
 };
 
 }  // namespace seabass::domain

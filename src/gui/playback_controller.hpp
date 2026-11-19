@@ -204,9 +204,7 @@ public:
     Q_INVOKABLE QVariantList beatTicksFor(const QString &format, const QString &libraryPath,
                                            const QString &sourceId, double durationMs, double widthPx) const;
     // The same for the loaded track's grid, on the timeline the player
-    // plays on; nothing for an Engine row that records no sample rate
-    // (the player keeps time by that grid, but nothing draws it as fact).
-    // Bind with trackSerial so a new track is laid out again.
+    // plays on. Bind with trackSerial so a new track is laid out again.
     Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
 
     // The list the player walks: next(), previous(), and on to the next
@@ -323,7 +321,6 @@ private:
     // The loaded track's grid as beatTicksAt() draws it: shifted onto the
     // playback timeline, and whether its rate is the library's.
     std::vector<domain::Beat> m_drawnBeats;
-    bool m_drawnBeatsRateRecorded = true;
     int m_trackSerial = 0;
     QString m_errorMessage;
     // One read of a track's analysis, for waveformFor() and
@@ -335,7 +332,6 @@ private:
     {
         QVariantList waveform;
         std::vector<domain::Beat> beats;
-        bool beatRateRecorded = true;
     };
     CachedAnalysis cachedAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId) const;
     // Keyed on format+libraryPath+sourceId (see waveformFor()'s own doc
