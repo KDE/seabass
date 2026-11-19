@@ -2731,6 +2731,12 @@ target_include_directories(filesystem_backup_store_error_paths_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE ZLIB::ZLIB)
 add_test(NAME filesystem_backup_store_error_paths_test COMMAND filesystem_backup_store_error_paths_test)
 
+add_executable(backup_record_torn_append_test tests/backup_record_torn_append_test.cpp)
+target_link_libraries(backup_record_torn_append_test PRIVATE seabass_core_testing)
+target_include_directories(backup_record_torn_append_test PRIVATE src)
+target_link_libraries(backup_record_torn_append_test PRIVATE ZLIB::ZLIB)
+add_test(NAME backup_record_torn_append_test COMMAND backup_record_torn_append_test)
+
 # copy-beatgrids covers a file it did not foresee before changing it: into
 # the run's backup, noted absent there, or refused when it cannot be looked at.
 add_executable(cover_file_late_test tests/cover_file_late_test.cpp)

@@ -48,7 +48,11 @@ public:
     // and makes it durable, so the record is complete and readable after
     // every item -- the same guarantee the loose layout gives, since it
     // fsyncs every copy. The superseded central directories become dead
-    // space; archive_compactor reclaims it.
+    // space; archive_compactor reclaims it. An append cut short by a crash
+    // or a pulled stick, which no cut-back gets to undo, leaves the
+    // recorded part whole: restore() reads from the last end record
+    // before the torn bytes, and the next addToArchive() cuts them off
+    // first. Both say so in lastArchiveRepair().
     //
     // Throws if `id` is not an archive record.
     application::BackupRecord addToArchive(const std::string &id, const std::vector<std::string> &filePaths);
@@ -146,6 +150,13 @@ public:
     // True when the last restore() failed and could not move every file
     // it had moved back where it was; lastRestoreError() names them.
     bool lastRestoreLeftFilesMoved() const { return m_lastRestoreLeftMoves; }
+    // Set by the last restore() or addToArchive() when the record's
+    // archive ended in a torn append (a crash or a pulled stick part-way
+    // through an earlier addToArchive()) and was read from the last end
+    // record before it: says "the last addition to backup <id> was
+    // incomplete" and what was done about it. Empty when the archive read
+    // whole. The caller puts it in the stick's log.
+    const std::string &lastArchiveRepair() const { return m_lastArchiveRepair; }
     // Test seam: called in restore() before each file it moves back
     // (#103), with the directory of the pre-restore record the move is
     // noted in and the move's place in the restore's order (0 first). A
@@ -199,6 +210,7 @@ private:
 
     std::filesystem::path m_baseDirectory;
     std::string m_lastRestoreError;
+    std::string m_lastArchiveRepair;
     std::optional<std::string> m_lastPreRestoreId;
     std::vector<Moved> m_lastRestoreMoves;
     bool m_lastRestoreLeftMoves = false;

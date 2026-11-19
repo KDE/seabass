@@ -13,6 +13,7 @@
 #include "infrastructure/work_counters.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -34,6 +35,7 @@
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 #include "infrastructure/stick_backup/zip64_writer.hpp"
+#include "infrastructure/stick_backup/zip_format.hpp"
 
 namespace seabass::infrastructure::backup
 {
@@ -323,6 +325,113 @@ void cutArchiveBackTo(const fs::path &dir, std::uint64_t length)
     }
 }
 
+// The first `length` bytes of an archive, read-only: what a reader sees
+// of a record whose last append was torn, without writing to it.
+class ArchivePrefix final : public stick_backup::ArchiveFile
+{
+public:
+    ArchivePrefix(const stick_backup::ArchiveFile &whole, std::uint64_t length) : m_whole(whole), m_length(length) {}
+
+    std::uint64_t size() const override { return m_length; }
+    void append(std::span<const std::byte>) override { refuse(); }
+    void readAt(std::uint64_t offset, std::span<std::byte> out) const override
+    {
+        if (offset > m_length || out.size() > m_length - offset) {
+            throw stick_backup::ArchiveIoError("read past the recorded part of the archive");
+        }
+        m_whole.readAt(offset, out);
+    }
+    void truncate(std::uint64_t) override { refuse(); }
+    void barrier() override { refuse(); }
+
+private:
+    [[noreturn]] static void refuse() { throw stick_backup::ArchiveIoError("the recorded part of an archive is read-only"); }
+
+    const stick_backup::ArchiveFile &m_whole;
+    std::uint64_t m_length;
+};
+
+bool namesEvery(const stick_backup::Zip64Reader &reader, const std::vector<std::pair<std::string, std::string>> &entries)
+{
+    return std::all_of(entries.begin(), entries.end(),
+                       [&](const auto &entry) { return reader.findEntry(entry.first).has_value(); });
+}
+
+// How long the recorded part of a record's archive is, when the archive
+// does not read whole: the length up to the newest end-of-central-
+// directory record before the tail that reads strictly AND names every
+// entry the manifest does.
+//
+// addToArchive() appends in place -- new entries, a new central
+// directory and a new end record after the old ones, a barrier, and only
+// then the manifest -- and the cut-back on failure never runs when the
+// process is killed or the stick pulled. So a torn append leaves the old,
+// complete archive with bytes after it, under the manifest from before
+// the append. Every byte up to the old end record is exactly what it was.
+//
+// The manifest is the commit marker, and it is what keeps real damage
+// refused: it never names an entry before the end record that lists it
+// is on the medium, so the newest whole trailer must list them all. When
+// the recorded part's own trailer is damaged, the older trailers before
+// it lack the entries the last append recorded, none qualifies, and the
+// archive stays refused. Entry data is checked later, by CRC, as for any
+// archive.
+//
+// Scans backward for the end record's signature, which costs one read of
+// the tail; only ever run on an archive that already failed to read.
+std::optional<std::uint64_t> recordedLength(const stick_backup::ArchiveFile &file,
+                                            const std::vector<std::pair<std::string, std::string>> &entries)
+{
+    using namespace stick_backup::zip;
+    const std::uint64_t size = file.size();
+    if (size <= EndOfCentralDirectorySize) {
+        return std::nullopt;
+    }
+    // Candidate positions p: an end record that ends before the file does
+    // (one that ends exactly at the end is the whole file, which did not
+    // read). Read in windows from the end, each 3 bytes into the next so a
+    // signature across the seam is seen.
+    constexpr std::uint64_t Window = 1u << 16;
+    std::uint64_t high = size - EndOfCentralDirectorySize;  // exclusive bound for p
+    std::vector<std::byte> buffer;
+    while (high > 0) {
+        const std::uint64_t low = high > Window ? high - Window : 0;
+        buffer.resize(static_cast<std::size_t>(high - low + 3));
+        file.readAt(low, buffer);
+        for (std::uint64_t p = high; p-- > low;) {
+            const std::size_t at = static_cast<std::size_t>(p - low);
+            if (readU32(buffer, at) != EndOfCentralDirectorySignature) {
+                continue;
+            }
+            std::array<std::byte, 2> commentLength{};
+            file.readAt(p + 20, commentLength);
+            if (readU16(commentLength, 0) != 0) {
+                continue;  // never written with a comment
+            }
+            ArchivePrefix prefix(file, p + EndOfCentralDirectorySize);
+            try {
+                std::optional<stick_backup::Zip64Reader> reader = stick_backup::Zip64Reader::tryOpen(prefix);
+                if (reader && namesEvery(*reader, entries)) {
+                    return p + EndOfCentralDirectorySize;
+                }
+            } catch (const stick_backup::ArchiveIoError &) {
+                // A candidate that points outside itself is not a trailer;
+                // the next older one is tried.
+            }
+        }
+        high = low;
+    }
+    return std::nullopt;
+}
+
+std::string tornAppendNote(const std::string &id, const std::string &openError, std::uint64_t size, std::uint64_t recorded,
+                           std::size_t entryCount)
+{
+    return "the last addition to backup " + id + " was incomplete (" + openError + "): its " + std::to_string(entryCount)
+           + " recorded file(s) are read from the first " + std::to_string(recorded) + " of its " + std::to_string(size)
+           + " bytes";
+}
+
 // A directory holding the store's archive but no manifest is a backup
 // that died before its manifest: a pull or a crash between the two, or,
 // before archives were cut back on failure, a stick that filled up.
@@ -394,7 +503,10 @@ void sweepDeadRecords(const fs::path &base)
 struct FilesystemBackupStore::OpenedArchive
 {
     std::unique_ptr<stick_backup::PosixArchiveFile> file;
-    std::optional<stick_backup::Zip64Reader> reader;  // points into *file
+    // The recorded part of *file, when its last append was torn.
+    std::unique_ptr<stick_backup::ArchiveFile> recordedPart;
+    std::optional<stick_backup::Zip64Reader> reader;  // points into *recordedPart if set, else *file
+    std::string repair;                               // the torn-append note, if there was one
     std::vector<std::size_t> indexes;                 // one per manifest entry, in order
 };
 
@@ -616,6 +728,7 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
 
 BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const std::vector<std::string> &filePaths)
 {
+    m_lastArchiveRepair.clear();
     fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
@@ -665,6 +778,31 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
         // Refused before anything is written: a length taken from a
         // failed stat would have the cut-back remove a good archive.
         throw std::runtime_error("could not read the size of " + pathToUtf8(archivePath) + ": " + sizeEc.message());
+    }
+    // An earlier append torn by a crash or a pull: its bytes after the
+    // recorded part are cut off first (truncate, barrier), so this append
+    // goes onto an archive that reads whole and its new central directory
+    // carries the recorded entries. Nothing a manifest names is in those
+    // bytes (see recordedLength()). An archive that does not read and
+    // has no recorded part to fall back on is left as it is, and refused
+    // by writeArchiveEntries() below.
+    if (archiveBefore > 0) {
+        std::string openError;
+        std::optional<std::uint64_t> recorded;
+        {
+            stick_backup::PosixArchiveFile existing(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
+            if (!stick_backup::Zip64Reader::tryOpen(existing, &openError)) {
+                recorded = recordedLength(existing, manifest.entries);
+            }
+        }
+        if (recorded) {
+            stick_backup::PosixArchiveFile file(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadWrite);
+            file.truncate(*recorded);
+            file.barrier();
+            m_lastArchiveRepair = tornAppendNote(id, openError, archiveBefore, *recorded, manifest.entries.size())
+                                  + "; the rest was cut off before adding to it";
+            archiveBefore = *recorded;
+        }
     }
     std::vector<std::pair<std::string, std::string>> written;
     std::uint64_t archiveBytes = 0;
@@ -1042,6 +1180,7 @@ bool FilesystemBackupStore::isRestorable(const std::string &id) const
 bool FilesystemBackupStore::restore(const std::string &id)
 {
     m_lastRestoreError.clear();
+    m_lastArchiveRepair.clear();
     m_lastPreRestoreId.reset();
     m_lastRestoreMoves.clear();
     m_lastRestoreLeftMoves = false;
@@ -1092,6 +1231,7 @@ bool FilesystemBackupStore::restoreUnguarded(const std::string &id)
     if (!openArchive(dir, manifest.entries, &m_lastRestoreError, opened)) {
         return false;
     }
+    m_lastArchiveRepair = opened.repair;
 
     // The files the save moved, each to go back to where it was, newest
     // first: every one checked before anything is written, so a restore
@@ -1330,8 +1470,18 @@ bool FilesystemBackupStore::openArchive(const fs::path &dir, const std::vector<s
         std::string openError;
         opened.reader = stick_backup::Zip64Reader::tryOpen(*opened.file, &openError);
         if (!opened.reader.has_value()) {
-            *failure = "the backup's archive is damaged: " + openError;
-            return false;
+            // A torn append (see recordedLength()): the part recorded
+            // before it is read and restored, and the tear is said.
+            // Anything else is damage, refused in the reader's words.
+            const std::optional<std::uint64_t> recorded = recordedLength(*opened.file, entries);
+            if (!recorded) {
+                *failure = "the backup's archive is damaged: " + openError;
+                return false;
+            }
+            opened.recordedPart = std::make_unique<ArchivePrefix>(*opened.file, *recorded);
+            opened.reader = stick_backup::Zip64Reader::open(*opened.recordedPart);
+            opened.repair = tornAppendNote(pathToUtf8(dir.filename()), openError, opened.file->size(), *recorded,
+                                           entries.size());
         }
         for (const auto &[entryName, originalPath] : entries) {
             auto index = opened.reader->findEntry(entryName);

@@ -992,26 +992,27 @@ int main()
         assert(readFile(first) == firstContents);
         std::cout << "case: an append that fails part-way leaves the record as it was OK\n";
 
-        // An archive the reader refuses (trailing bytes from a torn append
-        // that never got cut back) is not appended to: appending would
-        // write a central directory naming only the new entries under a
-        // manifest that still names the old ones. The save is refused
-        // instead, and the manifest stays as it was.
+        // Trailing bytes from a torn append that never got cut back (a
+        // crash or a pull part-way through it): the recorded part is
+        // whole, so the tail is cut off, the append goes onto it, and the
+        // record holds both files. That it happened is said. (An archive
+        // whose recorded part is damaged is still refused; see
+        // backup_record_torn_append_test.)
+        const std::uintmax_t recordedLength = fs::file_size(archive);
         {
             std::ofstream tail(archive, std::ios::app | std::ios::binary);
             tail << "trailing bytes from a torn append";
         }
-        const std::string manifestBeforeRefusal = readFile(manifest);
-        threw = false;
-        try {
-            store.addToArchive(good.id, {pathToUtf8(second)});
-        } catch (const std::exception &e) {
-            threw = true;
-            std::cout << "  the append was refused: " << e.what() << '\n';
-        }
-        assert(threw && "an unreadable archive is not appended to");
-        assert(readFile(manifest) == manifestBeforeRefusal);
-        std::cout << "case: an unreadable archive is not appended to OK\n";
+        const auto appended = store.addToArchive(good.id, {pathToUtf8(second)});
+        assert(appended.filePaths.size() == 2 && "the append goes onto the recorded part");
+        assert(store.lastArchiveRepair().find("was incomplete") != std::string::npos);
+        assert(fs::file_size(archive) > recordedLength);
+        assert(readFile(archive).find("trailing bytes from a torn append") == std::string::npos
+               && "the torn tail is cut off, not carried");
+        writeFile(first, "changed after the torn append");
+        assert(store.restore(good.id) && "the record restores after the torn tail is cut off");
+        assert(readFile(first) == firstContents);
+        std::cout << "case: a torn append's tail is cut off before the next append OK\n";
 
         // Issue #27: restore() says why it failed, and a write that fails
         // is not reported as a backup that could not be read. Undo on a
@@ -1059,11 +1060,15 @@ int main()
             assert(spaceStore.restore(record.id) && readFile(big) == bigContents && "with room again it restores");
 
             // A damaged archive reads as damaged, not as a write problem --
-            // and is refused before any pre-restore copy is made.
+            // and is refused before any pre-restore copy is made. Its end
+            // record is what is damaged: trailing bytes alone are a torn
+            // append, read around (backup_record_torn_append_test).
             const std::size_t recordsBefore = spaceStore.list().size();
             {
-                std::ofstream tail(pathFromUtf8(record.path) / "backup.zip", std::ios::app | std::ios::binary);
-                tail << "trailing bytes";
+                const fs::path zip = pathFromUtf8(record.path) / "backup.zip";
+                std::string bytes = readFile(zip);
+                bytes[bytes.size() - 22] = static_cast<char>(bytes[bytes.size() - 22] ^ 0x5a);
+                writeFile(zip, bytes);
             }
             assert(!spaceStore.restore(record.id));
             assert(spaceStore.lastRestoreError().find("damaged") != std::string::npos);

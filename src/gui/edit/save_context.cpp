@@ -325,6 +325,9 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
                 noteSaveInProgress();
             } else if (!files.empty()) {
                 record = archiveStore().addToArchive(existing->second, files);
+                if (!archiveStore().lastArchiveRepair().empty()) {
+                    log().record(label + ": " + archiveStore().lastArchiveRepair());
+                }
             } else {
                 // Nothing to copy into the record this save already has;
                 // only absent files to note in it. Logged by its id.
@@ -494,6 +497,9 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
         noteSaveInProgress();
     } else {
         record = archiveStore().addToArchive(existing->second, {file});
+        if (!archiveStore().lastArchiveRepair().empty()) {
+            log().record(label + ": " + archiveStore().lastArchiveRepair());
+        }
     }
     log().record(label + ": backed up " + pathToUtf8(pathFromUtf8(file).filename()) + " -> " + record.path);
     m_backedUp[application::normalizedPathKey(file)] = record.id;

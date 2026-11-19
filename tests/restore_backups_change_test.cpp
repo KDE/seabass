@@ -106,13 +106,18 @@ struct SavedStick
     }
 };
 
-SaveLoopResult runUndo(const SavedStick &saved)
+SaveLoopResult runUndo(const fs::path &pioneer, const std::vector<UndoableBackup> &backups)
 {
     CancellationToken token;
     auto &noProgress = application::NullProgressReporter::instance();
-    SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(saved.pioneer), {});
-    std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RestoreBackupsChange>(saved.backups)};
+    SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(pioneer), {});
+    std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RestoreBackupsChange>(backups)};
     return runSaveLoop(changes, ctx);
+}
+
+SaveLoopResult runUndo(const SavedStick &saved)
+{
+    return runUndo(saved.pioneer, saved.backups);
 }
 
 }  // namespace
@@ -216,6 +221,60 @@ int main()
         std::cout << "case 4 (a list that cannot be rewritten warns, and keeps the restore) OK\n";
     }
 #endif
+
+    // 5. A save of several steps, killed while the record was taking its
+    //    third file (Round 12's F6): the first two steps had backed up
+    //    their files and written them, the third append is torn in the
+    //    middle of its data and the manifest is the one from before it.
+    //    After the restart the undo puts both written files back, and the
+    //    stick's log says the last addition was incomplete.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_restore_backups_torn_append");
+        const fs::path pioneer = scratch.path / "PIONEER";
+        const fs::path pdb = pioneer / "rekordbox" / "export.pdb";
+        const fs::path db = scratch.path / "Engine Library" / "Database2" / "m.db";
+        const fs::path third = pioneer / "USBANLZ" / "P001" / "ANLZ0000.EXT";
+        const std::string pdbBefore = seabass::testing::incompressible(30000, 1);
+        const std::string dbBefore = seabass::testing::incompressible(50000, 2);
+        write(pdb, pdbBefore);
+        write(db, dbBefore);
+        write(third, seabass::testing::incompressible(40000, 3));
+        std::vector<UndoableBackup> backups;
+        std::string id;
+        {
+            CancellationToken token;
+            auto &noProgress = application::NullProgressReporter::instance();
+            SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(pioneer), {});
+            assert(ctx.backupOnce(seabass::pathToUtf8(pdb), "sync"));
+            write(pdb, "pdb written by step 1");
+            assert(ctx.backupOnce(seabass::pathToUtf8(db), "sync"));
+            write(db, "m.db written by step 2");
+            id = ctx.backupIdOf(seabass::pathToUtf8(db));
+            assert(!id.empty() && ctx.backupIdOf(seabass::pathToUtf8(pdb)) == id && "one record for the save");
+            backups = ctx.takeBackups();
+        }
+        const fs::path record = scratch.path / "Seabass" / "backups" / seabass::pathFromUtf8(id);
+        const std::string archiveBefore = read(record / "backup.zip");
+        const std::string manifestBefore = read(record / ".manifest");
+        FilesystemBackupStore store(seabass::pathToUtf8(scratch.path / "Seabass" / "backups"));
+        store.addToArchive(id, {seabass::pathToUtf8(third)});
+        const std::string archiveAfter = read(record / "backup.zip");
+        assert(archiveAfter.size() > archiveBefore.size() + 30000);
+        // The kill: halfway into the third file's data, before its manifest.
+        write(record / "backup.zip", archiveAfter.substr(0, archiveBefore.size() + 20000));
+        write(record / ".manifest", manifestBefore);
+
+        const SaveLoopResult result = runUndo(pioneer, backups);
+        if (!result.error.isEmpty()) {
+            std::cerr << result.error.toStdString() << "\n";
+        }
+        assert(result.error.isEmpty() && "the undo of a save whose last backup step was torn goes through");
+        assert(read(pdb) == pdbBefore && "step 1's file is back");
+        assert(read(db) == dbBefore && "step 2's file is back");
+        const std::string log = read(scratch.path / "Seabass" / "seabass.log");
+        assert(log.find("undo: the last addition to backup " + id + " was incomplete") != std::string::npos);
+        std::cout << "case 5 (a save torn in its third backup step is undone, both written files back) OK\n";
+    }
 
     std::cout << "restore_backups_change_test: all cases passed\n";
     return 0;
