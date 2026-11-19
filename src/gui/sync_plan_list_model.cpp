@@ -241,7 +241,7 @@ QHash<int, QByteArray> SyncPlanListModel::roleNames() const
 void SyncPlanListModel::setAnalysis(std::vector<domain::SyncPlan> plans,
                                     std::vector<domain::CrossSourceSyncConflict> conflicts,
                                     const std::vector<SyncAnalysisOnlyTrack> &analysisOnly,
-                                    const std::map<std::string, SyncRowAnalysis> &riders)
+                                    const std::map<std::string, SyncRiderAnalysis> &riders)
 {
     beginResetModel();
     m_plans = std::move(plans);
@@ -252,7 +252,8 @@ void SyncPlanListModel::setAnalysis(std::vector<domain::SyncPlan> plans,
             continue;
         }
         if (const auto rider = riders.find(target.sourceId); rider != riders.end()) {
-            m_analysis[i].parts = rider->second;
+            m_analysis[i].parts = rider->second.parts;
+            m_analysis[i].digest = rider->second.digest;
         }
     }
     // rekordbox to Engine, nothing in cuesToApply: never a SyncPlanChange

@@ -488,8 +488,14 @@ struct Words
     QString tip;
 };
 
-QString cannotKeepTip()
+QString cannotKeepTip(const BeatGridTrackState &s)
 {
+    // What was kept before cannot be read: the write refuses the row (the
+    // preview says so, as the save would), and the way out is the button.
+    if (s.facts.kept == application::EngineAnalysisFacts::Kept::Damaged) {
+        return QStringLiteral("What Seabass kept of Engine's own analysis of this track before cannot be read, so it "
+                              "is not replaced. \"Let the Player Analyse Again\" clears it.");
+    }
     return QStringLiteral("Its file is not under the stick's root, so Engine's own analysis of it cannot be kept on "
                           "the stick first, and it is not replaced.");
 }
@@ -535,7 +541,7 @@ Words gridWords(const BeatGridTrackState &s)
         return {QStringLiteral("Not chosen"), QStringLiteral("muted"),
                 QStringLiteral("Beat grids are not chosen above.")};
     case Outcome::CannotKeepEngines:
-        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip()};
+        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip(s)};
     case Outcome::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     }
@@ -568,7 +574,7 @@ Words waveformWords(const BeatGridTrackState &s)
         return {QStringLiteral("Not chosen"), QStringLiteral("muted"),
                 QStringLiteral("Waveforms are not chosen above.")};
     case Waveform::CannotKeepEngines:
-        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip()};
+        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip(s)};
     case Waveform::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     }

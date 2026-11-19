@@ -26,9 +26,9 @@
 // on a FAT32 stick, up to 128 kB on a large exFAT one), so 5000 entries
 // can take 160 to 640 MB of space for 20 to 40 MB of data.
 //
-// Format version 2: plain text, one field a line, in this order:
+// Format version 3: plain text, one field a line, in this order:
 //
-//   seabass-engine-analysis<TAB>2
+//   seabass-engine-analysis<TAB>3
 //   pathKey<TAB>key                (escaped as BackupManifest escapes)
 //   trackFile<TAB>Track.path       (escaped)
 //   trackId<TAB>decimal
@@ -38,6 +38,7 @@
 //   seabassColumnStates<TAB>64 hex[,64 hex...] | -
 //   seabassColumnAnalyses<TAB>64 hex[,64 hex...] | -
 //   seabassFiles<TAB>64 hex[,64 hex...] | -
+//   seabassGrids<TAB>64 hex[,64 hex...] | -
 //   isAnalyzed<TAB>value
 //   isBeatGridLocked<TAB>value
 //   bpm<TAB>value
@@ -53,14 +54,15 @@
 // A value is a SQLite value as stored: "null", "int:" and a decimal,
 // "real:" and the 16 hex digits of the IEEE double's bits (exact),
 // "text:" or "blob:" and the bytes in base64. Every line ends with a
-// newline. Format 1 is the same without the three lists, and is read
-// (with them empty); it is written as 2. A reader that meets any other version, a field out of order,
+// newline. Format 1 is the same without the four lists, format 2 without
+// seabassGrids; both are read (with what they lack empty) and written as
+// 3. A reader that meets any other version, a field out of order,
 // a bad value or a checksum that does not match refuses the file: the
 // entry is Damaged and nothing in it is believed.
 namespace seabass::infrastructure::local
 {
 
-inline constexpr int KeptEngineAnalysisFormatVersion = 2;
+inline constexpr int KeptEngineAnalysisFormatVersion = 3;
 
 // The file of a track's entry.
 std::filesystem::path keptEngineAnalysisFile(const std::filesystem::path &stickRoot, const std::string &pathKey);

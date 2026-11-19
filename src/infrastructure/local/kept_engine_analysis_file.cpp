@@ -212,7 +212,8 @@ std::optional<std::vector<std::string>> parseFingerprintList(std::string_view te
 }
 
 // The body's lines in their order, field name and value. Format 1 had no
-// seabassColumnStates, seabassColumnAnalyses or seabassFiles.
+// seabassColumnStates, seabassColumnAnalyses or seabassFiles, format 2 no
+// seabassGrids.
 std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalysis &e, int version)
 {
     const auto &o = e.original;
@@ -228,6 +229,9 @@ std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalys
         fields.push_back({"seabassColumnStates", fingerprintList(e.seabassColumnStates)});
         fields.push_back({"seabassColumnAnalyses", fingerprintList(e.seabassColumnAnalyses)});
         fields.push_back({"seabassFiles", fingerprintList(e.seabassFiles)});
+    }
+    if (version >= 3) {
+        fields.push_back({"seabassGrids", fingerprintList(e.seabassGrids)});
     }
     const std::vector<std::pair<std::string, std::string>> columns{
         {"isAnalyzed", valueText(o.isAnalyzed)},
@@ -311,12 +315,14 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
     if (lines.empty() || lines[0].first != Magic) {
         return refuse("not a Seabass kept Engine analysis");
     }
-    // Format 1 is read as well: an entry it wrote holds the player's
-    // analysis as surely as one of today's, and is rewritten as format 2
-    // by the next write to its row.
+    // Formats 1 and 2 are read as well: an entry they wrote holds the
+    // player's analysis as surely as one of today's, and is rewritten as
+    // format 3 by the next write to its row.
     int version = 0;
     if (lines[0].second == "1") {
         version = 1;
+    } else if (lines[0].second == "2") {
+        version = 2;
     } else if (lines[0].second == std::to_string(KeptEngineAnalysisFormatVersion)) {
         version = KeptEngineAnalysisFormatVersion;
     } else {
@@ -391,6 +397,8 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
             ok = fingerprints(e.seabassColumnAnalyses);
         } else if (wanted == "seabassFiles") {
             ok = fingerprints(e.seabassFiles);
+        } else if (wanted == "seabassGrids") {
+            ok = fingerprints(e.seabassGrids);
         } else if (wanted == "isAnalyzed") {
             ok = column(o.isAnalyzed);
         } else if (wanted == "isBeatGridLocked") {

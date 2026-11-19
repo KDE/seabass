@@ -115,7 +115,16 @@ void collectPlaylistSummary(const std::vector<domain::Track> &rekordboxTracks,
 // it: a grid locked or moved on the player is never replaced here
 // (overwriteEngineEdits stays off), and a row the player has not analysed
 // is completed with both parts or not at all. A track whose preview failed
-// is left alone. Runs on the analysis' worker, inside its bar.
+// is left alone and counted (`unchecked`): the page says it was not
+// checked rather than showing it in step. Runs on the analysis' worker,
+// inside its bar.
+//
+// Only the parts asked for are read of rekordbox's analysis, and each
+// track's digest is of the parts it would get, as its save reads them
+// (SyncAnalysisChange). Every MP3's lead-in comes from the stick's
+// metadata cache, read once and kept there (saved at the end, also when
+// the pass ends early), so a page that analyses again after every save
+// does not read every file's head over USB again.
 //
 // One row per track, and never both a rider and a change of its own:
 // - a plan whose cues go from rekordbox (either format) onto Engine
@@ -129,7 +138,8 @@ void collectPlaylistSummary(const std::vector<domain::Track> &rekordboxTracks,
 struct AnalysisPreview
 {
     std::vector<SyncAnalysisOnlyTrack> only;
-    std::map<std::string, SyncRowAnalysis> riders;
+    std::map<std::string, SyncRiderAnalysis> riders;
+    int unchecked = 0;
 };
 
 AnalysisPreview previewAnalysis(const std::vector<domain::Track> &rekordboxTracks,
@@ -213,12 +223,20 @@ AnalysisPreview previewAnalysis(const std::vector<domain::Track> &rekordboxTrack
     const application::AnalysisFileFactsSource facts = [&rates](const application::BeatGridCopyItem &item) {
         return infrastructure::local::analysisFileFactsOf(item, rates);
     };
+    writer.setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
     options.previewOnly = true;
     options.overwriteEngineEdits = false;
     options.skipOverviewFile = false;
     options.zeroLoudness = false;
     using Outcome = application::BeatGridWriteResult::Outcome;
     using Waveform = application::AnalysisImportResult::Waveform;
+    // What the preview found of the metadata kept: a read-only or full
+    // stick costs a read next time, never the pass.
+    struct SaveRates
+    {
+        infrastructure::local::CachedSampleRates &rates;
+        ~SaveRates() { rates.save(); }
+    } saveRates{rates};
     for (size_t i = 0; i < plan.items.size(); ++i) {
         if (cancel.cancelled()) {
             throw application::OperationCancelled();
@@ -226,29 +244,45 @@ AnalysisPreview previewAnalysis(const std::vector<domain::Track> &rekordboxTrack
         const application::BeatGridCopyItem &item = plan.items[i];
         const auto rekordbox = rekordboxById.find(item.rekordboxTrackId);
         const auto engine = engineById.find(item.engineTrackId);
-        if (rekordbox != rekordboxById.end() && engine != engineById.end()) {
+        if (rekordbox == rekordboxById.end() || engine == engineById.end()) {
+            ++out.unchecked;
+        } else {
             try {
-                const application::RekordboxAnalysis analysis =
-                    infrastructure::local::rekordboxAnalysisOf(pioneer, item, index.get());
+                const application::RekordboxAnalysis analysis = infrastructure::local::rekordboxAnalysisOf(
+                    pioneer, item, index.get(), options.grids, options.waveforms);
                 const application::AnalysisItemOutcome outcome =
                     application::importAnalysisItem(item, analysis, writer, ledger, options, facts);
                 const bool grid = outcome.result.grid.outcome == Outcome::Written;
                 const bool waveform = outcome.result.waveform == Waveform::Written;
                 const SyncRowAnalysis parts{grid, waveform, outcome.result.completedRow};
+                // The digest of what the save reads: the parts it gets.
+                application::RekordboxAnalysis staged = analysis;
+                if (!grid) {
+                    staged.beats.clear();
+                }
+                if (!waveform) {
+                    staged.threeBandPreview.reset();
+                    staged.colourPreview.reset();
+                    staged.scrollEntries.reset();
+                }
+                const std::string digest = infrastructure::local::rekordboxAnalysisDigest(staged);
                 if (!parts.any()) {
                     // Nothing it would write: no row, nothing said.
                 } else if (riderEngineIds.count(item.engineTrackId)) {
-                    out.riders[item.engineTrackId] = parts;
+                    out.riders[item.engineTrackId] = SyncRiderAnalysis{parts, digest};
                 } else {
                     SyncAnalysisOnlyTrack track;
                     track.rekordbox = *rekordbox->second;
                     track.engine = *engine->second;
-                    track.analysisDigest = infrastructure::local::rekordboxAnalysisDigest(analysis);
+                    track.analysisDigest = digest;
                     track.analysis = parts;
                     out.only.push_back(std::move(track));
                 }
-            } catch (const std::exception &) {
-                // Unsure: left alone, as Beat Grids & Waveforms shows it.
+            } catch (const std::exception &e) {
+                // Unsure: left alone, and said on the page as not checked.
+                ++out.unchecked;
+                qWarning("Sync Cue Points: rekordbox's analysis of Engine track %s was not checked: %s",
+                         item.engineTrackId.c_str(), e.what());
             }
         }
         progress.tick(i + 1);
@@ -325,8 +359,12 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // With an analysis switch on, "Checking beat grids and waveforms":
         // at most one tick per track rekordbox and Engine share. With both
         // off nothing of it is planned, read or run.
-        const bool withAnalysis = (analysisOptions.grids || analysisOptions.waveforms) && hasRekordbox && hasEngine
-            && !stickRoot.empty();
+        result.analysisApplies = hasRekordbox && hasEngine && !stickRoot.empty();
+        const bool withAnalysis = (analysisOptions.grids || analysisOptions.waveforms) && result.analysisApplies;
+        if (result.analysisApplies) {
+            result.analysedGrids = analysisOptions.grids;
+            result.analysedWaveforms = analysisOptions.waveforms;
+        }
         if (withAnalysis) {
             addUnits(rekordboxRows && engineRows ? std::optional<size_t>(std::min(*rekordboxRows, *engineRows))
                                                  : std::nullopt);
@@ -453,10 +491,12 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
                                                           progress, cancel);
                 result.analysisOnly = std::move(preview.only);
                 result.riders = std::move(preview.riders);
+                result.analysisUnchecked = preview.unchecked;
             } catch (const application::OperationCancelled &) {
                 throw;
             } catch (const std::exception &e) {
                 qWarning("Sync Cue Points: rekordbox's analysis was not checked: %s", e.what());
+                result.analysisCheckFailed = true;
             }
         }
         result.plans = std::move(actionable);
@@ -553,6 +593,11 @@ void SyncController::onAnalyzeFinished(SyncTaskResult &&result)
     // previous one no longer means anything (the plan it produced is
     // already gone too, replaced by whatever this scan found), so this
     // never tries to carry old resolutions forward.
+    m_analysisApplies = result.analysisApplies;
+    m_analysedGrids = result.analysedGrids;
+    m_analysedWaveforms = result.analysedWaveforms;
+    m_analysisUnchecked = result.analysisUnchecked;
+    m_analysisCheckFailed = result.analysisCheckFailed;
     m_model.setAnalysis(std::move(result.plans), std::move(result.conflicts), result.analysisOnly, result.riders);
     // Plans staged before this re-analyze keep their mark if they are
     // still listed (the change itself lives in the session either way).
@@ -604,6 +649,14 @@ void SyncController::stageSelected(bool matchingSearchOnly)
     const int count = m_model.planCount();
     // Preferences read once for the batch, not once a track.
     const SyncAnalysisStaging staging = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
+    // The rows say what the analysis previewed with the switches as they
+    // were then: staged with others, a row would write what it does not
+    // say, or leave out what it says. Nothing is staged until the list is
+    // read again.
+    if (analysisSwitchesMoved(staging)) {
+        setErrorMessage(analysisSwitchesMovedMessage());
+        return;
+    }
     for (int i = 0; i < count; ++i) {
         if (!wouldStage(i, matchingSearchOnly)) {
             continue;
@@ -660,11 +713,11 @@ bool SyncController::stageAnalysisOnly(int index, const SyncAnalysisStaging &sta
     if (!m_model.isAnalysisOnly(index)) {
         return false;
     }
-    // The analysis found it with a switch on, and Preferences may have
-    // changed since: then nothing of it is staged.
-    if (!staging.any() || m_rekordboxPath.isEmpty() || m_enginePath.isEmpty()) {
-        setErrorMessage(QStringLiteral("Copying beat grids and waveforms from rekordbox is off in Preferences. "
-                                       "Re-Analyze to update the list."));
+    // The analysis found it with the switches as they were, and
+    // Preferences may have changed since: then nothing of it is staged.
+    const SyncRowAnalysis parts = m_model.analysis(index);
+    if (!parts.any() || analysisSwitchesMoved(staging) || m_rekordboxPath.isEmpty() || m_enginePath.isEmpty()) {
+        setErrorMessage(analysisSwitchesMovedMessage());
         return false;
     }
     if (!session()) {
@@ -684,13 +737,61 @@ bool SyncController::stageAnalysisOnly(int index, const SyncAnalysisStaging &sta
     track.engineTrackId = plan.match.trackB.sourceId;
     track.engineFilePath = plan.match.trackB.filePath;
     track.analysisDigest = m_model.analysisDigest(index);
+    // Exactly the parts the row said: a switch on since that it did not
+    // preview, or a part already the same, is not written.
     auto change = std::make_unique<SyncAnalysisChange>(QStringLiteral("sync"), m_rekordboxPath, m_enginePath,
-                                                       staging.stickRoot, std::move(track), staging.options,
-                                                       staging.probe, itemCountHint, true);
+                                                       staging.stickRoot, std::move(track),
+                                                       previewedParts(staging, parts), staging.probe, itemCountHint,
+                                                       true);
     // One track of the save, as a row whose cues sync is.
     change->countAsUnit();
     startNewSyncedCount();
     return stageChange(index, m_model.planKeyAt(index), std::move(change));
+}
+
+bool SyncController::analysisSwitchesMoved(const SyncAnalysisStaging &staging) const
+{
+    // Nothing was previewed where there is nothing to copy between (no
+    // rekordbox, no Engine): the switches say nothing about those rows.
+    if (!m_analysisApplies || m_rekordboxPath.isEmpty()) {
+        return false;
+    }
+    return staging.options.grids != m_analysedGrids || staging.options.waveforms != m_analysedWaveforms;
+}
+
+QString SyncController::analysisSwitchesMovedMessage()
+{
+    return QStringLiteral("Copying beat grids and waveforms from rekordbox was changed in Preferences since the list "
+                          "was read. Re-Analyze to update the list.");
+}
+
+application::AnalysisCopyOptions SyncController::previewedParts(const SyncAnalysisStaging &staging,
+                                                                const SyncRowAnalysis &parts)
+{
+    application::AnalysisCopyOptions options = staging.options;
+    options.grids = parts.grid;
+    options.waveforms = parts.waveform;
+    return options;
+}
+
+QString SyncController::analysisUncheckedText() const
+{
+    if (m_analysisCheckFailed) {
+        return QStringLiteral("Beat grids and waveforms could not be checked.");
+    }
+    if (m_analysisUnchecked > 0) {
+        return m_analysisUnchecked == 1
+            ? QStringLiteral("Beat grids and waveforms could not be checked for 1 track.")
+            : QStringLiteral("Beat grids and waveforms could not be checked for %1 tracks.").arg(m_analysisUnchecked);
+    }
+    return {};
+}
+
+void SyncController::setAnalysisUncheckedForTesting(int tracks, bool wholeCheckFailed)
+{
+    m_analysisUnchecked = tracks;
+    m_analysisCheckFailed = wholeCheckFailed;
+    emit analysisChanged();
 }
 
 void SyncController::startNewSyncedCount()
@@ -970,18 +1071,26 @@ bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging)
     // and both switches off, stage the change they always did.
     const domain::Track &source = change->source();
     const domain::Track &target = change->target();
+    // Only for a row the analysis' preview gave analysis to (its words on
+    // the row), with that preview's parts and digest: a track the preview
+    // could not check, or left out (an Engine row matched twice), gets
+    // none, and a row says all it writes.
+    const SyncRowAnalysis parts = m_model.analysis(index);
     if (target.format == "engine" && (source.format == "rekordbox" || source.format == "onelibrary")
-        && !m_rekordboxPath.isEmpty()) {
+        && !m_rekordboxPath.isEmpty() && parts.any()) {
         std::optional<SyncAnalysisStaging> own;
         if (!staging) {
             own = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
             staging = &*own;
         }
-        if (staging->any()) {
+        // stageSelected() refuses the batch first; a lone stage that
+        // finds the switches moved stages the cues alone.
+        if (!analysisSwitchesMoved(*staging)) {
             SyncAnalysisChange::Track track;
             track.rekordbox = source;
             track.engineTrackId = target.sourceId;
             track.engineFilePath = target.filePath;
+            track.analysisDigest = m_model.analysisDigest(index);
             if (source.format == "onelibrary") {
                 // Its id is not export.pdb's: its analysis is read from the
                 // file its row names, and a row naming none is left alone.
@@ -991,8 +1100,9 @@ bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging)
                 }
             }
             auto rider = std::make_unique<SyncAnalysisChange>(QStringLiteral("sync"), m_rekordboxPath, m_enginePath,
-                                                              staging->stickRoot, std::move(track), staging->options,
-                                                              staging->probe, itemCountHint, true);
+                                                              staging->stickRoot, std::move(track),
+                                                              previewedParts(*staging, parts), staging->probe,
+                                                              itemCountHint, true);
             rider->rideIn(change->id());
             change->setAnalysisRider(std::move(rider));
         }

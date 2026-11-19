@@ -759,15 +759,18 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
         if (m_keptStore && options.keepKey.empty()) {
             return {Outcome::CannotKeepEngines};
         }
+        const std::string written = textOf(plan.write->to_blob());
+        const auto apply = [&](EngineAnalysisColumns &after) { after.beatData = EngineSqlValue::ofBlob(written); };
+        const KeepFacts keep{true, false, options.ownGridFingerprint};
+        // What the write would refuse, a preview refuses too.
+        if (keepBeforeWrite(id, options.keepKey, keep, now, apply, true) == Keep::Refused) {
+            return {Outcome::CannotKeepEngines};
+        }
         if (options.previewOnly) {
             return plan.result;
         }
         beforeWrite();
-        const std::string written = textOf(plan.write->to_blob());
-        const auto apply = [&](EngineAnalysisColumns &after) { after.beatData = EngineSqlValue::ofBlob(written); };
-        keepBeforeWrite(id, options.keepKey, true,
-                        options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing), now,
-                        apply);
+        keepBeforeWrite(id, options.keepKey, keep, now, apply, false);
         EngineAnalysisColumns after = now.columns;
         apply(after);
         writeColumns(id, now.columns, after);
@@ -824,7 +827,7 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
             after.isBeatGridLocked = EngineSqlValue::ofInteger(1);
         }
     };
-    keepBeforeWrite(id, options.keepKey, false, false, now, apply);
+    keepBeforeWrite(id, options.keepKey, KeepFacts{}, now, apply, false);
     EngineAnalysisColumns after = now.columns;
     apply(after);
     writeColumns(id, now.columns, after);
@@ -1003,7 +1006,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         // The player's analysis of a row whose file is not under the stick
         // root has no key to be kept by: it is not replaced, in a preview
         // as in a write, and the parts that would have been say why.
-        if (m_keptStore && options.keepKey.empty()) {
+        const auto cannotKeep = [&]() {
             if (gridWrite) {
                 result.grid = {Outcome::CannotKeepEngines};
             }
@@ -1012,11 +1015,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
             }
             result.overviewFileRelativePath.clear();
             return result;
+        };
+        if (m_keptStore && options.keepKey.empty()) {
+            return cannotKeep();
         }
-        if (options.previewOnly) {
-            return result;
-        }
-        beforeWrite();
         const auto apply = [&](EngineAnalysisColumns &after) {
             if (gridWrite) {
                 after.beatData = EngineSqlValue::ofBlob(textOf(gridWrite->to_blob()));
@@ -1028,9 +1030,18 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 after.overviewFile = *fileWrite;
             }
         };
-        result.keptEngineAnalysis = keepBeforeWrite(
-            id, options.keepKey, true, options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing),
-            now, apply);
+        const KeepFacts keep{true, overviewWrite.has_value() || fileWrite.has_value(), options.ownGridFingerprint};
+        // What the write would refuse (a kept entry that cannot be read),
+        // a preview refuses too, so it never offers a track the save
+        // cannot write.
+        if (keepBeforeWrite(id, options.keepKey, keep, now, apply, true) == Keep::Refused) {
+            return cannotKeep();
+        }
+        if (options.previewOnly) {
+            return result;
+        }
+        beforeWrite();
+        result.keptEngineAnalysis = keepBeforeWrite(id, options.keepKey, keep, now, apply, false) == Keep::Kept;
         // The columns in one transaction, then the file: a failure between
         // the two leaves a mix of the row before and after, which the kept
         // entry recognises as Seabass's own (keepBeforeWrite()).
@@ -1161,7 +1172,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         }
         after.isAnalyzed = EngineSqlValue::ofInteger(1);
     };
-    keepBeforeWrite(id, options.keepKey, false, false, now, apply);
+    keepBeforeWrite(id, options.keepKey, KeepFacts{}, now, apply, false);
     // The file first, then every column and the analysed flag in one
     // transaction: until the flag is up the player takes the row for one
     // it is still to analyse, so a failure anywhere leaves a row that
@@ -1377,40 +1388,64 @@ bool waitingForAnalysis(const EngineAnalysisColumns &c)
 
 }  // namespace
 
-bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::string &keepKey, bool playerAnalysed,
-                                                  bool rowIsSeabass, const RowNow &row,
-                                                  const std::function<void(EngineAnalysisColumns &)> &apply)
+LibdjinteropEngineCueWriter::Keep LibdjinteropEngineCueWriter::keepBeforeWrite(
+    std::int64_t id, const std::string &keepKey, const KeepFacts &facts, const RowNow &row,
+    const std::function<void(EngineAnalysisColumns &)> &apply, bool previewOnly)
 {
     if (!m_keptStore) {
-        return false;
+        return Keep::Nothing;
     }
     using Status = application::KeptEngineAnalysisLookup::Status;
     try {
         if (keepKey.empty()) {
-            if (!playerAnalysed) {
-                return false;
+            if (!facts.playerAnalysed) {
+                return Keep::Nothing;
             }
             // The callers refuse such a row first (CannotKeepEngines).
             throw std::runtime_error("its file is not under the stick root, so there is no key to keep it by");
         }
-        RowNow now = row;
-        now.columns.overviewFileRelativePath = overviewFileRelativePath(now.libraryUuid, id);
-        now.columns.overviewFile =
-            readFileBytes(pathFromUtf8(overviewFileRoot()) / pathFromUtf8(now.columns.overviewFileRelativePath));
-        EngineAnalysisColumns after = now.columns;
-        apply(after);
         const application::KeptEngineAnalysisLookup found = m_keptStore->find(keepKey);
         if (found.status == Status::Damaged) {
-            if (!playerAnalysed) {
-                return false;
-            }
-            throw std::runtime_error("the analysis kept before cannot be read (" + found.error
-                                     + "); Let the Player Analyse Again clears it");
+            // A row the player never analysed has nothing to keep; any
+            // other is not replaced while what was kept of it before
+            // cannot be read (Let the Player Analyse Again clears it).
+            return facts.playerAnalysed ? Keep::Refused : Keep::Nothing;
         }
-        const bool valid = found.status == Status::Found && found.entry.trackFile == now.trackFile
-            && found.entry.trackId == id && found.entry.libraryUuid == now.libraryUuid;
+        const bool valid = found.status == Status::Found && found.entry.trackFile == row.trackFile
+            && found.entry.trackId == id && found.entry.libraryUuid == row.libraryUuid;
+        if (!valid && !facts.playerAnalysed) {
+            return Keep::Nothing;
+        }
+        // Before any other return, so that a library whose uuid cannot name
+        // the file fails a preview as it fails the write.
+        const std::string relative = overviewFileRelativePath(row.libraryUuid, id);
+        const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(row.columns.beatData);
+        const std::optional<std::string> gridNow =
+            existing ? std::optional<std::string>(gridFingerprint(*existing)) : std::nullopt;
+        const bool ledgersGrid = gridNow && facts.ledgerGrid && *facts.ledgerGrid == *gridNow;
+        if (!valid) {
+            // Nothing kept, or a stale entry of another row. Nothing is
+            // kept only when every part the write replaces is provably
+            // Seabass's: a row the player never analysed; one Seabass
+            // completed (both grids the ledger's, so the waveform is
+            // Seabass's too: the player's analysis writes its own grid);
+            // or a write of only the grid, when the grid is the ledger's.
+            const bool completedBySeabass =
+                ledgersGrid && sameGrid(existing->default_beat_grid, existing->adjusted_beat_grid);
+            const bool onlySeabassGrid = ledgersGrid && !facts.replacesWaveform;
+            if (!facts.playerAnalysed || completedBySeabass || onlySeabassGrid || previewOnly) {
+                return Keep::Nothing;
+            }
+        } else if (previewOnly && !facts.playerAnalysed) {
+            return Keep::Nothing;
+        }
+        RowNow now = row;
+        now.columns.overviewFileRelativePath = relative;
+        now.columns.overviewFile = readFileBytes(pathFromUtf8(overviewFileRoot()) / pathFromUtf8(relative));
+        EngineAnalysisColumns after = now.columns;
+        apply(after);
         application::KeptEngineAnalysis next;
-        bool newOriginal = false;
+        bool kept = false;
         if (valid) {
             next = found.entry;
             // The kept original is replaced only on positive evidence that
@@ -1420,22 +1455,41 @@ bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::st
             // Seabass's cut short, the columns written and the overview file
             // not (or a restore cut short the other way round), is known by
             // its parts and costs the original nothing.
-            if (playerAnalysed && !next.seabassAnalysis.empty() && !analysisIsKnown(next, now.columns)) {
+            if (facts.playerAnalysed && !next.seabassAnalysis.empty() && !analysisIsKnown(next, now.columns)) {
                 next.original = now.columns;
-                newOriginal = true;
+                kept = true;
+            } else if (facts.playerAnalysed && existing && after.beatData != now.columns.beatData && !ledgersGrid
+                       && !contains(next.seabassGrids, *gridNow) && !rowIsSeabassOrKept(next, now.columns)) {
+                // The grid about to be replaced is none Seabass wrote, on a
+                // row changed since Seabass left it: the DJ moved it on the
+                // player. It is the newest grid the player made, and the
+                // kept original takes it, its own analysis staying as kept.
+                const std::optional<BeatDataBlob> original = decoded<BeatDataBlob>(next.original.beatData);
+                if (!original || original->sample_rate != existing->sample_rate
+                    || original->samples != existing->samples) {
+                    // Nothing holds both the player's analysis and the
+                    // DJ's grid: unsure, so not replaced.
+                    return Keep::Refused;
+                }
+                if (original->is_beatgrid_set != existing->is_beatgrid_set
+                    || !sameGrid(original->adjusted_beat_grid, existing->adjusted_beat_grid)) {
+                    BeatDataBlob merged = *original;
+                    merged.is_beatgrid_set = existing->is_beatgrid_set;
+                    merged.adjusted_beat_grid = existing->adjusted_beat_grid;
+                    next.original.beatData = EngineSqlValue::ofBlob(textOf(merged.to_blob()));
+                    kept = true;
+                }
             }
         } else {
-            // Nothing kept, or a stale entry of another row: a row the
-            // player never analysed, or one Seabass completed, keeps none.
-            if (!playerAnalysed || rowIsSeabass) {
-                return false;
-            }
             next.pathKey = keepKey;
             next.trackFile = now.trackFile;
             next.trackId = id;
             next.libraryUuid = now.libraryUuid;
             next.original = now.columns;
-            newOriginal = true;
+            kept = true;
+        }
+        if (previewOnly) {
+            return Keep::Nothing;
         }
         // Before the row's first byte changes, the row as it is and as this
         // write will leave it: any mix of the two is Seabass's.
@@ -1445,11 +1499,16 @@ bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::st
         next.seabassColumnAnalyses =
             beforeAndAfter(columnAnalysisFingerprint(after), columnAnalysisFingerprint(now.columns));
         next.seabassFiles = beforeAndAfter(fileFingerprint(after), fileFingerprint(now.columns));
+        if (after.beatData != now.columns.beatData) {
+            if (const auto written = decoded<BeatDataBlob>(after.beatData)) {
+                addOnce(next.seabassGrids, gridFingerprint(*written));
+            }
+        }
         if (valid && next == found.entry) {
-            return false;
+            return Keep::Nothing;
         }
         m_keptStore->keep(next);
-        return newOriginal;
+        return kept ? Keep::Kept : Keep::Nothing;
     } catch (const std::exception &e) {
         throw std::runtime_error(std::string("Engine's own analysis of this track could not be kept on the stick, so "
                                              "it was not replaced: ")
@@ -1515,12 +1574,17 @@ EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(c
     // included; or waiting for the player's analysis, which nothing was
     // done to since.
     const bool asSeabassLeftIt = rowIsSeabassOrKept(kept, now.columns);
-    if (!asSeabassLeftIt && !waitingForAnalysis(now.columns) && !options.force) {
-        result.outcome = Outcome::ChangedSince;
-        result.reason = !analysisIsKnown(kept, now.columns)
-            ? "the player analysed it again since Seabass wrote it"
-            : "its beat grid, key or tempo was changed on the player since Seabass wrote it";
-        return result;
+    if (!asSeabassLeftIt && !waitingForAnalysis(now.columns)) {
+        // The player's new analysis is newer than what was kept and would
+        // be lost unkept: left alone, forced or not. Force reaches only a
+        // grid, key or tempo changed on the player.
+        const bool newerAnalysis = !analysisIsKnown(kept, now.columns);
+        if (newerAnalysis || !options.force) {
+            result.outcome = Outcome::ChangedSince;
+            result.reason = newerAnalysis ? "the player analysed it again since Seabass wrote it"
+                                          : "its beat grid, key or tempo was changed on the player since Seabass wrote it";
+            return result;
+        }
     }
     const std::string &relative = kept.original.overviewFileRelativePath.empty() ? now.columns.overviewFileRelativePath
                                                                                  : kept.original.overviewFileRelativePath;

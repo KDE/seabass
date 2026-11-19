@@ -249,6 +249,10 @@ private:
 // whose cues are already in step but whose analysis its preview found
 // would change, with that preview's digest (Track::analysisDigest).
 //
+// Preferences. A change staged for a part whose switch (or Experimental)
+// is off by the time it is applied is left alone, a skip said in the
+// note: what was staged under a switch is never written once it is off.
+//
 // Failures. Reading rekordbox's analysis writes nothing, so a track whose
 // analysis cannot be read is left alone and counted, and the sync goes
 // on. A failure while writing is a failure of the save, as every change's
@@ -278,10 +282,11 @@ public:
         // for a DeviceLibrary row.
         std::string analysisFile;
         // The digest (rekordboxAnalysisDigest()) of the analysis a preview
-        // showed, for a track staged on that preview's word (Sync Cue
-        // Points' tracks whose cues are already in step): a track whose
-        // analysis changed in rekordbox since is left alone, never written
-        // with what the preview did not show. Empty for none.
+        // showed, of the parts staged (the options' grids and waveforms;
+        // only those are read), for a track staged on that preview's word
+        // (Sync Cue Points' rows and riders): a track whose analysis
+        // changed in rekordbox since is left alone, never written with
+        // what the preview did not show. Empty for none.
         std::string analysisDigest;
     };
 

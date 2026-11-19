@@ -1575,13 +1575,20 @@ struct CueSyncRun
 
 const std::vector<std::string> CueRowsToEngine = {"B03", "B04", "B11"};
 
+// `prepare` runs on the stick before anything is read, `beforeSave` between
+// staging and the save.
 CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, bool>> options, bool experimental,
                       SyncController &controller, const std::vector<std::string> &unstage = {},
-                      const std::vector<std::string> &untick = {})
+                      const std::vector<std::string> &untick = {},
+                      const std::function<void(const testing::EngineChangeStick &)> &prepare = {},
+                      const std::function<void()> &beforeSave = {})
 {
     CueSyncRun run;
     run.stick = makeStick(name, "m-after-R3c-save1.db", "rekordbox-baseline-export128.tsv.gz");
     makeCueRows(run.stick, CueRowsToEngine, "N3");
+    if (prepare) {
+        prepare(run.stick);
+    }
     const bool locked = testing::sqlExec(run.stick.db, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = "
                                                            + std::to_string(trackIdOf(run.stick, "B11")) + ";");
     assert(locked);
@@ -1652,6 +1659,9 @@ CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, boo
     const int rows = static_cast<int>(4 - unstage.size() - untick.size());
     assert(run.pending.size() == rows);
     assert(ridersIn(run.pending) == 0 && "the analysis rides inside the row's own change");
+    if (beforeSave) {
+        beforeSave();
+    }
     run.summary = waitForSyncSave(session, controller, false);
     // The rows' own count, whatever the switches.
     assert(run.summary.value("written").toInt() == rows);
@@ -1725,10 +1735,11 @@ void testCueSyncBoth()
     std::string ledgerError;
     const auto ledger = seabass::infrastructure::local::readBeatGridLedger(stick.root, &ledgerError);
     assert(ledgerError.empty() && ledger.size() == 2 && "the grids written: B03's and B04's");
+    // B11's rider carries what its row said, the waveform: its locked
+    // grid is not asked for, so not "left alone" in the note either.
     assert(run.summary.value("notes").toString()
            == QStringLiteral("From rekordbox, 2 beat grids and 3 waveforms copied, one track now loads without "
-                             "analysis. Engine's own analysis of 2 tracks was kept on the stick first. Analysis left "
-                             "alone: one beat grid locked or moved on the player."));
+                             "analysis. Engine's own analysis of 2 tracks was kept on the stick first."));
     std::cout << "cue sync both: B03 completed, B04 replaced and kept, B11's locked grid left alone, N3 untouched OK\n";
 
     // Undo: m.db, overview files, kept analyses and ledger as before.
@@ -1799,8 +1810,9 @@ void testCueSyncGridsOnly()
     assert(run.after.at(b03) == run.before.at(b03) && "a row is completed with both or not at all");
     assert(run.summary.value("notes").toString()
            == QStringLiteral("From rekordbox, one beat grid copied. Engine's own analysis of one track was kept on the "
-                             "stick first. Analysis left alone: one beat grid locked or moved on the player, one track "
-                             "left for the player to analyse."));
+                             "stick first."));
+    // B11 and B03, whose rows said no analysis, carried none: nothing of
+    // theirs was asked for, so nothing is said "left alone".
     std::cout << "cue sync grids only: B04's grid, B03 left for the player, B11 locked OK\n";
 }
 
@@ -1981,10 +1993,11 @@ void testCueSyncAnalysisOnly()
     assert(summary.value("skipped").toInt() == 0);
     assert(summary.value("unit").toString() == QStringLiteral("tracks"));
     assert(summary.value("verb").toString() == QStringLiteral("synchronised"));
+    // B11 is staged with what its row said, its waveform: its locked grid
+    // is not asked for, so not "left alone" either.
     assert(summary.value("notes").toString()
            == QStringLiteral("From rekordbox, 9 beat grids and 10 waveforms copied, 9 tracks now load without "
-                             "analysis. Engine's own analysis of one track was kept on the stick first. Analysis left "
-                             "alone: one beat grid locked or moved on the player."));
+                             "analysis. Engine's own analysis of one track was kept on the stick first."));
     // The written rows leave; B04's, unticked, stays.
     assert(controller.planCount() == 1 && controller.stagedCount() == 0);
     assert(analysisOnlyOf(controller, stick, "B04") == 0);
@@ -2124,12 +2137,167 @@ void testCueSyncAnalysisOnlyChangedSincePreview()
     std::cout << "cue sync analysis only: a track changed since the preview is skipped, the rest land OK\n";
 }
 
+// The switches turned between Analyze and Stage, either way, or
+// Experimental turned off: the rows say what the analysis previewed then,
+// so nothing is staged ("Re-Analyze to update the list"). Read again, the
+// list stages as it says.
+void testCueSyncSwitchesMovedBeforeStage()
+{
+    using Switches = std::pair<bool, bool>;
+    const QString moved = QStringLiteral("Copying beat grids and waveforms from rekordbox was changed in Preferences "
+                                         "since the list was read. Re-Analyze to update the list.");
+    struct Case
+    {
+        const char *name;
+        Switches analysed;
+        Switches staged;
+        bool experimentalAtStage;
+    };
+    for (const Case &c : {Case{"t73_cuesync_moved_off", {true, true}, {true, false}, true},
+                          Case{"t73_cuesync_moved_on", {true, false}, {true, true}, true},
+                          Case{"t73_cuesync_moved_from_none", {false, false}, {true, true}, true},
+                          Case{"t73_cuesync_moved_gated", {true, true}, {true, true}, false}}) {
+        InStepStick in = makeInStepStick(c.name, "B03");
+        makeCueRows(in.stick, CueRowsToEngine, "N3");
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(c.analysed.first, c.analysed.second);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        SyncController controller;
+        analyze(controller, in.stick);
+        assert(controller.selectedCount() > 0);
+        SyncAnalysisPolicy::set(c.staged.first, c.staged.second);
+        SyncAnalysisPolicy::setExperimentalEnabled(c.experimentalAtStage);
+        controller.stageSelected(false);
+        std::cout << "  " << c.name << ": \"" << controller.errorMessage().toStdString() << "\"\n";
+        assert(controller.errorMessage() == moved);
+        assert(controller.stagedCount() == 0 && sessionOf(in.stick)->pendingDescriptions().isEmpty());
+        // Read again with the switches as they are: staged as it says.
+        analyze(controller, in.stick);
+        controller.stageSelected(false);
+        assert(controller.errorMessage().isEmpty() && controller.stagedCount() == controller.planCount());
+        for (int i = 0; i < controller.planCount(); ++i) {
+            const auto parts = controller.plansModel()->analysis(i);
+            const bool on = c.experimentalAtStage;
+            assert((!parts.grid || (on && c.staged.first)) && (!parts.waveform || (on && c.staged.second)));
+        }
+        sessionOf(in.stick)->discard();
+        std::cout << "cue sync, switches moved (" << c.name << "): refused, then staged after Re-Analyze OK\n";
+    }
+}
+
+// Staged with the switches on, turned off (or Experimental off) before
+// Save: the analysis is not written, said as a skip, and the cues of a
+// cue row still land.
+void testCueSyncSwitchOffAfterStage()
+{
+    {
+        InStepStick in = makeInStepStick("t73_cuesync_off_after_stage", "B03");
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(true, true);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        SyncController controller;
+        analyze(controller, in.stick);
+        const int offered = controller.analysisOnlyCount();
+        assert(offered > 0);
+        controller.stageSelected(false);
+        assert(controller.stagedCount() == offered);
+        SyncAnalysisPolicy::set(true, false);
+        const QVariantMap summary = waitForSyncSave(sessionOf(in.stick), controller, false);
+        std::cout << "  " << summary.value("notes").toString().toStdString() << "\n";
+        assert(summary.value("written").toInt() == 0 && summary.value("skipped").toInt() == offered);
+        assert(summary.value("notes").toString().contains(
+            QStringLiteral("(copying it from rekordbox was turned off in Preferences since it was staged)")));
+        assert(analysisRows(in.stick.db) == in.before && "no analysis written");
+        assert(filesUnder(overviewDirOf(in.stick)).empty());
+        std::cout << "cue sync, a switch turned off after staging: every analysis-only row skipped OK\n";
+    }
+    {
+        SyncController controller;
+        CueSyncRun run = runCueSync("t73_cuesync_gated_after_stage", std::make_pair(true, true), true, controller, {},
+                                    {}, {}, []() { SyncAnalysisPolicy::setExperimentalEnabled(false); });
+        assertCuesLanded(run, CueRowsToEngine);
+        assert(run.after == run.before && "Experimental off since staging: no analysis written");
+        assert(filesUnder(overviewDirOf(run.stick)).empty() && filesUnder(keptDirOf(run.stick)).empty());
+        std::cout << "cue sync, Experimental off after staging: cues land, no analysis OK\n";
+    }
+}
+
+// The preview could not check a track (here every track: the library's
+// uuid cannot name an overview file): its cue row shows no analysis, and
+// staged it carries none, so the save lands its cues and writes no
+// analysis rather than failing on it. The page says what was not checked.
+void testCueSyncPreviewFailedRider()
+{
+    SyncController controller;
+    CueSyncRun run = runCueSync("t73_cuesync_preview_failed", std::make_pair(true, true), true, controller, {}, {},
+                                [](const testing::EngineChangeStick &stick) {
+                                    const bool done =
+                                        testing::sqlExec(stick.db, "UPDATE Information SET uuid = 'not/a/uuid';");
+                                    assert(done);
+                                    (void)done;
+                                });
+    for (const auto &[track, text] : run.rowAnalysis) {
+        assert(text.isEmpty() && "a track the preview could not check says no analysis");
+    }
+    const QString unchecked = controller.analysisUncheckedText();
+    std::cout << "  \"" << unchecked.toStdString() << "\"\n";
+    assert(unchecked.startsWith(QStringLiteral("Beat grids and waveforms could not be checked for "))
+           && unchecked.endsWith(QStringLiteral(" tracks.")));
+    assert(run.summary.value("error").toString().isEmpty());
+    assertCuesLanded(run, CueRowsToEngine);
+    assert(run.after == run.before && "no analysis written for a track the preview did not check");
+    std::cout << "cue sync, preview failed: no rider, cues land, the page says what was not checked OK\n";
+}
+
+// What was kept of B04's own analysis before cannot be read: the save
+// would refuse to replace its analysis, so the preview does not offer it,
+// and a save of the other rows lands whole instead of rolling back.
+void testCueSyncDamagedKeptEntry()
+{
+    InStepStick in = makeInStepStick("t73_cuesync_damaged_kept", "B03");
+    const auto &stick = in.stick;
+    SyncAnalysisPolicy::reset();
+    SyncAnalysisPolicy::set(true, true);
+    SyncAnalysisPolicy::setExperimentalEnabled(true);
+    SyncController controller;
+    analyze(controller, stick);
+    const int b04 = analysisOnlyOf(controller, stick, "B04");
+    assert(b04 >= 0 && "precondition: B04 offered while nothing is kept");
+    const auto &plan = controller.plansModel()->plans()[static_cast<std::size_t>(b04)];
+    const auto item = seabass::application::beatGridCopyItemFor(plan.match.trackA, plan.match.trackB.sourceId,
+                                                                pathToUtf8(stick.root));
+    assert(!item.ledgerKey.empty());
+    const fs::path kept = seabass::infrastructure::local::keptEngineAnalysisFile(stick.root, item.ledgerKey);
+    fs::create_directories(kept.parent_path());
+    std::ofstream(kept, std::ios::binary) << "seabass-engine-analysis\t3\ndamaged";
+
+    analyze(controller, stick);
+    const int offered = controller.analysisOnlyCount();
+    assert(analysisOnlyOf(controller, stick, "B04") < 0 && "a track whose kept entry cannot be read is not offered");
+    assert(offered > 0);
+    controller.stageSelected(false);
+    assert(controller.stagedCount() == offered);
+    const QVariantMap summary = waitForSyncSave(sessionOf(stick), controller, false);
+    assert(summary.value("error").toString().isEmpty() && !summary.value("rolledBack").toBool());
+    assert(summary.value("written").toInt() == offered && summary.value("skipped").toInt() == 0);
+    const std::int64_t b04Id = trackIdOf(stick, "B04");
+    const std::int64_t b03Id = trackIdOf(stick, "B03");
+    const auto after = analysisRows(stick.db);
+    assert(after.at(b04Id) == in.before.at(b04Id) && "B04 left as it was");
+    assert(after.at(b03Id)[IsAnalyzed] == "1" && "the others landed");
+    std::cout << "cue sync, a damaged kept entry: its track not offered, the rest land OK\n";
+}
+
 void testCueSync()
 {
 #ifdef SEABASS_HAVE_TAGLIB
     testCueSyncAnalysisOnly();
     testCueSyncAnalysisOnlyNotOffered();
     testCueSyncAnalysisOnlyChangedSincePreview();
+    testCueSyncSwitchesMovedBeforeStage();
+    testCueSyncSwitchOffAfterStage();
+    testCueSyncPreviewFailedRider();
+    testCueSyncDamagedKeptEntry();
     testCueSyncBoth();
     testCueSyncUnstage();
     testCueSyncUntick();

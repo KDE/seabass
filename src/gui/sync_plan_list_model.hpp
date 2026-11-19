@@ -36,6 +36,16 @@ struct SyncRowAnalysis
     bool any() const { return grid || waveform; }
 };
 
+// What the preview found a cue row's Engine copy would get of rekordbox's
+// analysis (a rider on that row's change), with the digest of the analysis
+// it read (rekordboxAnalysisDigest()): the save writes those parts of that
+// analysis, or nothing.
+struct SyncRiderAnalysis
+{
+    SyncRowAnalysis parts;
+    std::string digest;
+};
+
 // A track in scope whose cues are already in step but whose Engine row
 // would take rekordbox's analysis, as the analysis' preview found it. It
 // is a row of the list like the tracks whose cues sync (the owner's call:
@@ -161,13 +171,14 @@ public:
     // row carries of rekordbox's analysis.
     void setAnalysis(std::vector<domain::SyncPlan> plans, std::vector<domain::CrossSourceSyncConflict> conflicts,
                      const std::vector<SyncAnalysisOnlyTrack> &analysisOnly = {},
-                     const std::map<std::string, SyncRowAnalysis> &riders = {});
+                     const std::map<std::string, SyncRiderAnalysis> &riders = {});
     const std::vector<domain::SyncPlan> &plans() const { return m_plans; }
     bool isAnalysisOnly(int planIndex) const;
     // What the plan's Engine copy gets of rekordbox's analysis (both
     // kinds of ready track); nothing for an index out of range.
     SyncRowAnalysis analysis(int planIndex) const;
-    // An analysis-only plan's preview digest (SyncAnalysisOnlyTrack).
+    // The preview's digest of the analysis the plan's Engine copy gets
+    // (both kinds of ready track); empty for none.
     std::string analysisDigest(int planIndex) const;
     int analysisOnlyCount() const;
     const std::vector<domain::CrossSourceSyncConflict> &conflicts() const { return m_conflicts; }

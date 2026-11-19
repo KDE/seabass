@@ -106,7 +106,10 @@ Page {
         name: "seabass.gui.sync"
     }
     function afterSave(summary) {
-        if (!summary || !(summary.written > 0)) {
+        // A save that wrote or skipped anything is read again: a skipped
+        // row left the list with its change, and only the stick can say
+        // whether it is still to do. Counts never drop for work not done.
+        if (!summary || !(summary.written > 0 || summary.skipped > 0)) {
             return;
         }
         const whole = !(summary.error && summary.error.length > 0)
@@ -117,7 +120,7 @@ Page {
         }
         // A save with notes (what copying rekordbox's analysis did) opens the
         // summary dialog instead, which says them (EditSessionHost).
-        if (whole && editHost.landsQuietly(summary)) {
+        if (whole && summary.written > 0 && editHost.landsQuietly(summary)) {
             // An Undo Last Save comes through here too, and it synced no
             // cues: in this page's words it read "Marked as already
             // imported". It says what every page says after an undo.
@@ -854,6 +857,15 @@ Page {
             }
         }
 
+        // The analysis' preview could not check rekordbox's beat grids and
+        // waveforms for some tracks (or at all): unsure, so said, never
+        // shown as in step.
+        WarningBanner {
+            objectName: "analysisUncheckedBanner"
+            visible: syncController.analysisUncheckedText.length > 0 && !syncController.busy
+            text: syncController.analysisUncheckedText
+        }
+
         ListView {
             id: plansListView
             objectName: "plansList"
@@ -1167,8 +1179,11 @@ Page {
                 // No rows at all: a track that gets only rekordbox's
                 // analysis is a row, so it is never "nothing to sync".
                 visible: plansListView.count === 0 && !syncController.busy
-                tone: root.searching ? "info" : "good"
-                iconName: root.searching ? "edit-find" : "checkmark"
+                // Not the green check while beat grids and waveforms were
+                // not all checked: the cues are in step, the rest unsure.
+                readonly property bool unsure: syncController.analysisUncheckedText.length > 0
+                tone: root.searching || unsure ? "info" : "good"
+                iconName: root.searching ? "edit-find" : unsure ? "help-about" : "checkmark"
                 // Names the playlist when one is picked: the result is about
                 // that playlist only, and the picker above is easy to forget
                 // -- "nothing to sync" is not true of the whole library.

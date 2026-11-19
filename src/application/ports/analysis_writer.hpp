@@ -117,7 +117,10 @@ struct AnalysisImportResult
 // Putting the player's own analysis back (KeptEngineAnalysis).
 struct EngineAnalysisRestoreOptions
 {
-    // Also over a row that has changed since Seabass wrote it.
+    // Also over a row whose grid, key or tempo was changed on the player
+    // since Seabass wrote it. Never over the player's new analysis, which
+    // is newer than what was kept and would be lost unkept (ChangedSince
+    // all the same).
     bool force = false;
     bool previewOnly = false;
 };
@@ -138,7 +141,8 @@ struct EngineAnalysisRestoreResult
         Stale,
         // The row changed since Seabass wrote it (the player analysed it
         // again, or the DJ moved or locked the grid): newer work, left
-        // alone unless forced.
+        // alone; a grid, key or tempo changed is written over when forced,
+        // the player's new analysis never.
         ChangedSince,
         UnsupportedSchema,
     };

@@ -13,12 +13,13 @@
 //    the overview file back byte for byte (an overview file the player had
 //    comes back, one it did not have goes), and drops the entry.
 // 2. Restore refuses a row changed since Seabass wrote it (the grid locked
-//    on the player; the player's new analysis), each with its reason, and
-//    writes it with force.
+//    on the player; the player's new analysis), each with its reason. Force
+//    writes over the lock, never over the player's new analysis.
 // 3. After the player analysed the row anew, the next copy keeps that
 //    newer analysis in place of the first one.
-// 4. A failure to keep (the store refuses, no key, a damaged entry) leaves
-//    the row untouched and throws.
+// 4. A failure to keep leaves the row untouched: the store refusing
+//    throws; no key, or a damaged entry, is CannotKeepEngines in a preview
+//    as in a write, never a throw.
 // 5. Let the player analyse again: the row waits for the player's analysis,
 //    the entry stays, and restore still puts it back.
 // 6. A row the player never analysed keeps nothing when completed, and its
@@ -34,6 +35,10 @@
 //    restore gives the player's analysis back.
 // 9. A flag that is not a number, or up over beat data that does not
 //    decode: RowUnreadable, the row left alone, never filled.
+// 10. No entry yet, the row's grid the ledger's over the player's own
+//    waveform: a copy of the waveform keeps the row first.
+// 11. A grid the DJ moved after Seabass wrote the row, replaced with
+//    overwriteEngineEdits: the kept original takes the DJ's grid.
 //
 // usage: engine_analysis_keep_test <tests/fixtures>
 
@@ -47,6 +52,7 @@
 #include <string>
 #include <vector>
 
+#include <djinterop/engine/v3/beat_data_blob.hpp>
 #include <djinterop/engine/v3/track_data_blob.hpp>
 #include <sqlite3.h>
 
@@ -237,13 +243,23 @@ int main(int argc, char **argv)
         const auto locked = snapshot(stick, 13);
         check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::ChangedSince && snapshot(stick, 13) == locked,
               "refused, nothing written");
+        check(writer.restoreEngineAnalysis("13", "k13", {true, false}).outcome == Restore::Restored, "forced");
+        check(snapshot(stick, 13) == before, "and then the row is as it was");
+
+        // The player's new analysis since: refused, and forced too, since
+        // it is newer than what was kept and would be lost unkept.
+        writer.importAnalysis("13", first, keyed("k13"));
         exec(stick.mdb, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE trackId = 5)"
                         " WHERE trackId = 13");
+        const auto newer = snapshot(stick, 13);
         const auto reanalysed = writer.restoreEngineAnalysis("13", "k13", {});
         check(reanalysed.outcome == Restore::ChangedSince && reanalysed.reason.find("analysed it again") != std::string::npos,
               "the player's new analysis since: " + reanalysed.reason);
-        check(writer.restoreEngineAnalysis("13", "k13", {true, false}).outcome == Restore::Restored, "forced");
-        check(snapshot(stick, 13) == before, "and then the row is as it was");
+        const auto forced = writer.restoreEngineAnalysis("13", "k13", {true, false});
+        check(forced.outcome == Restore::ChangedSince && forced.reason.find("analysed it again") != std::string::npos,
+              "forced over the player's new analysis: refused all the same");
+        check(snapshot(stick, 13) == newer && store.find("k13").status == Status::Found,
+              "the new analysis stays, and so does what was kept");
     }
 
     // 3. The player analysed the row anew: the next copy keeps that.
@@ -310,7 +326,23 @@ int main(int argc, char **argv)
         const fs::path file = infrastructure::local::keptEngineAnalysisFile(stick.root, "k13");
         fs::create_directories(file.parent_path());
         std::ofstream(file, std::ios::binary) << "seabass-engine-analysis\t1\ndamaged";
-        refused(keyed("k13"), "a damaged entry");
+        // A damaged entry: refused as a row with no key is, in a preview as
+        // in a write, so a preview never offers what the save would refuse
+        // (and a save with other rows is not rolled back for it).
+        for (const bool preview : {true, false}) {
+            AnalysisImportOptions options = keyed("k13");
+            options.previewOnly = preview;
+            const auto r = writer.importAnalysis("13", first, options);
+            check(r.grid.outcome == Outcome::CannotKeepEngines && r.waveform == Waveform::CannotKeepEngines
+                      && r.overviewFileRelativePath.empty() && !r.keptEngineAnalysis,
+                  std::string("a damaged entry: cannot be kept, so not replaced") + (preview ? " (preview)" : ""));
+            BeatGridWriteOptions grid;
+            grid.keepKey = "k13";
+            grid.previewOnly = preview;
+            check(writer.writeBeatGrid("13", first.beats, grid).outcome == Outcome::CannotKeepEngines,
+                  "a damaged entry: writeBeatGrid() refuses the same way");
+            check(snapshot(stick, 13) == before, "a damaged entry: the row is untouched");
+        }
         check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::KeptDamaged, "restore says damaged");
         check(writer.engineAnalysisFacts("13", "k13").kept == EngineAnalysisFacts::Kept::Damaged, "facts say damaged");
     }
@@ -522,6 +554,89 @@ int main(int argc, char **argv)
             check(snapshot(stick, id) == before, name + ": the row is untouched");
             check(store.find(options.keepKey).status == Status::None, name + ": nothing kept");
         }
+    }
+
+    // 10. Nothing kept yet, the row's grid Seabass's (the ledger's) over
+    //     the player's own waveform: a copy that replaces the waveform too
+    //     keeps the row first, and it can be put back. (Seen on a real
+    //     stick: an earlier build had written only the grid.)
+    {
+        const Stick stick = freshStick("grid-ours-waveform-theirs");
+        StickKeptEngineAnalysisStore store(stick.root);
+        // The earlier grid write, by a writer that kept nothing.
+        BeatGridWriteResult earlier;
+        {
+            LibdjinteropEngineCueWriter unkept(pathToUtf8(stick.library));
+            unkept.setLeadInSource([](const std::string &) { return std::optional<domain::Mp3LeadIn>(); });
+            earlier = unkept.writeBeatGrid("13", first.beats, {});
+        }
+        check(earlier.outcome == Outcome::Written && !earlier.gridFingerprint.empty(), "10. the earlier grid write");
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        auto writer = writerFor(stick, store);
+        AnalysisImportOptions ledger = keyed("k13");
+        ledger.ownGridFingerprint = earlier.gridFingerprint;
+        AnalysisImportOptions gridOnly = ledger;
+        gridOnly.waveforms = false;
+        gridOnly.previewOnly = true;
+        check(writer.importAnalysis("13", second, gridOnly).grid.outcome == Outcome::Written,
+              "10. a grid-only copy would replace only Seabass's grid");
+        const auto copied = writer.importAnalysis("13", second, ledger);
+        check(copied.waveform == Waveform::Written && copied.keptEngineAnalysis,
+              "10. the player's waveform is kept before it is replaced");
+        check(store.find("k13").entry.original == before, "10. kept as the row was");
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::Restored
+                  && snapshot(stick, 13) == before,
+              "10. and put back");
+    }
+
+    // 11. A grid the DJ moved on the player after Seabass wrote the row,
+    //     replaced with overwriteEngineEdits: the kept original takes the
+    //     DJ's grid, its analysis staying the player's first.
+    {
+        const Stick stick = freshStick("dj-moved-grid");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        const auto copied = writer.importAnalysis("13", first, keyed("k13"));
+        check(copied.keptEngineAnalysis && store.find("k13").entry.original == before, "11. kept first");
+        // The DJ moves the grid on the player by 4000 samples.
+        EngineAnalysisColumns moved = snapshot(stick, 13);
+        const auto blobOf = [](const std::string &bytes) {
+            const auto *start = reinterpret_cast<const std::byte *>(bytes.data());
+            return djinterop::engine::v3::beat_data_blob::from_blob(std::vector<std::byte>(start, start + bytes.size()));
+        };
+        auto beat = blobOf(moved.beatData.bytes);
+        for (auto &marker : beat.adjusted_beat_grid) {
+            marker.sample_offset += 4000.0;
+        }
+        const auto encoded = beat.to_blob();
+        moved.beatData = application::EngineSqlValue::ofBlob(
+            std::string(reinterpret_cast<const char *>(encoded.data()), encoded.size()));
+        std::string error;
+        check(writeEngineAnalysisColumns(stick.mdb, 13, moved, &error), "11. the DJ's move: " + error);
+        AnalysisImportOptions over = keyed("k13");
+        over.overwriteEngineEdits = true;
+        over.ownGridFingerprint = copied.grid.gridFingerprint;  // the ledger
+        const auto again = writer.importAnalysis("13", second, over);
+        check(again.grid.outcome == Outcome::Written && again.keptEngineAnalysis, "11. the DJ's grid is kept");
+        const auto original = store.find("k13").entry.original;
+        const auto keptBeat = blobOf(original.beatData.bytes);
+        const auto beforeBeat = blobOf(before.beatData.bytes);
+        check(keptBeat.adjusted_beat_grid.size() == beat.adjusted_beat_grid.size()
+                  && std::abs(keptBeat.adjusted_beat_grid.front().sample_offset
+                              - beat.adjusted_beat_grid.front().sample_offset)
+                      < 0.5,
+              "11. the kept adjusted grid is the DJ's");
+        check(keptBeat.default_beat_grid.size() == beforeBeat.default_beat_grid.size()
+                  && keptBeat.sample_rate == beforeBeat.sample_rate && keptBeat.samples == beforeBeat.samples
+                  && original.trackData == before.trackData
+                  && original.overviewWaveFormData == before.overviewWaveFormData,
+              "11. and the rest is the player's first analysis");
+        // Seabass's own grid replaced again keeps nothing new.
+        const auto third = writer.importAnalysis("13", first, over);
+        check(third.grid.outcome == Outcome::Written && !third.keptEngineAnalysis
+                  && store.find("k13").entry.original == original,
+              "11. Seabass's own grid is never taken for the DJ's");
     }
 
     if (failures > 0) {

@@ -269,7 +269,8 @@ void printUsage()
     Console::info("  --restore-engine-analysis  copy-beatgrids: put back the player's own");
     Console::info("                      analysis, kept on the stick when a copy replaced it, and");
     Console::info("                      copy nothing. A track changed on the player since is");
-    Console::info("                      left alone unless --overwrite-engine-edits is given.");
+    Console::info("                      left alone unless --overwrite-engine-edits is given;");
+    Console::info("                      one the player analysed again since is always left alone.");
     Console::info("  --let-player-analyse  copy-beatgrids: mark the analysed tracks for the");
     Console::info("                      player to analyse again, and copy nothing. What is kept");
     Console::info("                      of the player's analysis stays, so it can be put back.");

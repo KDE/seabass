@@ -76,6 +76,7 @@ KeptEngineAnalysis sample(const std::string &key)
     e.seabassColumnStates = {std::string(64, 'b'), std::string(64, 'c')};
     e.seabassColumnAnalyses = {std::string(64, 'd')};
     e.seabassFiles.clear();
+    e.seabassGrids = {std::string(64, 'e')};
     e.original.isAnalyzed = EngineSqlValue::ofInteger(1);
     e.original.isBeatGridLocked = EngineSqlValue::null();
     e.original.bpm = EngineSqlValue::ofInteger(-7);
@@ -139,7 +140,7 @@ int main()
     store.keep(noFile);
     check(store.find(key + "2").entry.original.overviewFile == std::nullopt, "no overview file stays none");
     const std::string text = readAll(file);
-    check(text.rfind("seabass-engine-analysis\t2\n", 0) == 0, "versioned header");
+    check(text.rfind("seabass-engine-analysis\t3\n", 0) == 0, "versioned header");
 
     // 3. Damaged files are not believed.
     const auto damaged = [&](const std::string &body, const std::string &why) {
@@ -153,7 +154,7 @@ int main()
     flipped[text.find("trackId\t42") + 8] = '3';
     damaged(flipped, "one byte changed: the checksum");
     std::string version = text;
-    version.replace(version.find("\t2\n"), 3, "\t3\n");
+    version.replace(version.find("\t3\n"), 3, "\t4\n");
     damaged(version, "another version");
     damaged("", "empty");
     // A file whose checksum holds but which belongs to another key.
@@ -176,11 +177,26 @@ int main()
     damaged("x", "one byte");
     damaged("\n\n", "two bytes");
     damaged("x\n", "two bytes, one line");
-    // Format 1: the same lines but the three lists, read with them empty.
+    // Format 2: the same lines but seabassGrids, read with it empty.
     {
         std::string body = text.substr(0, text.find("#sha256"));
-        body.replace(body.find("\t2\n"), 3, "\t1\n");
-        for (const std::string name : {"seabassColumnStates", "seabassColumnAnalyses", "seabassFiles"}) {
+        body.replace(body.find("\t3\n"), 3, "\t2\n");
+        const auto at = body.find("\nseabassGrids\t") + 1;
+        body.erase(at, body.find('\n', at) - at + 1);
+        body += "#sha256\t" + infrastructure::hashing::toHex(infrastructure::hashing::Sha256::of(std::string_view(body)))
+            + "\n";
+        writeAll(file, body);
+        const auto v2 = store.find(key);
+        KeptEngineAnalysis expected = kept;
+        expected.seabassGrids.clear();
+        check(v2.status == Status::Found && v2.entry == expected, "format 2 is read, without seabassGrids: " + v2.error);
+    }
+    // Format 1: the same lines but the four lists, read with them empty.
+    {
+        std::string body = text.substr(0, text.find("#sha256"));
+        body.replace(body.find("\t3\n"), 3, "\t1\n");
+        for (const std::string name :
+             {"seabassColumnStates", "seabassColumnAnalyses", "seabassFiles", "seabassGrids"}) {
             const auto at = body.find("\n" + name + "\t") + 1;
             body.erase(at, body.find('\n', at) - at + 1);
         }
@@ -192,6 +208,7 @@ int main()
         expected.seabassColumnStates.clear();
         expected.seabassColumnAnalyses.clear();
         expected.seabassFiles.clear();
+        expected.seabassGrids.clear();
         check(v1.status == Status::Found && v1.entry == expected, "format 1 is read, without the lists: " + v1.error);
     }
     writeAll(file, text);

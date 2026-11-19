@@ -571,6 +571,66 @@ TestCase {
         compare(controller.selectedVisibleCount, 1, "the search hides the analysis rows that do not match");
     }
 
+    // Beat grids and waveforms the analysis could not check are unsure:
+    // said in a banner, and the list empty of rows is then not the green
+    // "nothing to sync" check.
+    function test_analysisNotCheckedIsSaidNotShownAsFine() {
+        const page = openPage(1100, 720);
+        const controller = findChild(page, "syncController");
+        verify(syncPageFixture.fillEmpty(controller));
+        const nothing = findChild(page, "nothingToSyncLabel");
+        const banner = findChild(page, "analysisUncheckedBanner");
+        tryCompare(nothing, "visible", true, 2000);
+        compare(banner.visible, false, "everything checked: no banner");
+        compare(nothing.tone, "good");
+
+        controller.setAnalysisUncheckedForTesting(0, true);
+        tryCompare(banner, "visible", true, 2000);
+        compare(banner.text, "Beat grids and waveforms could not be checked.");
+        compare(nothing.visible, true, "the cues are still in step");
+        compare(nothing.tone, "info", "never the green check while unsure");
+        verify(nothing.iconName !== "checkmark");
+
+        controller.setAnalysisUncheckedForTesting(3, false);
+        compare(banner.text, "Beat grids and waveforms could not be checked for 3 tracks.");
+        controller.setAnalysisUncheckedForTesting(1, false);
+        compare(banner.text, "Beat grids and waveforms could not be checked for 1 track.");
+        verify(banner.text.indexOf("--") < 0 && banner.text.indexOf("\u2014") < 0);
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/SyncPage-analysis-unchecked.png");
+        }
+
+        controller.setAnalysisUncheckedForTesting(0, false);
+        tryCompare(banner, "visible", false, 2000);
+        compare(nothing.tone, "good");
+    }
+
+    // A save whose every change was skipped wrote nothing, but its rows
+    // left the list with their changes: the page reads the stick again, so
+    // what is still to do comes back rather than vanishing.
+    function test_aSaveThatOnlySkippedReadsTheListAgain() {
+        const page = openPage(1100, 720);
+        const controller = findChild(page, "syncController");
+        const list = listOf(page);
+        verify(list.count > 0, "precondition: the fixture's rows");
+        let analysed = 0;
+        const count = () => { ++analysed; };
+        controller.analysisChanged.connect(count);
+        page.afterSave({written: 0, skipped: 2, total: 2, unit: "tracks", verb: "synchronised",
+                        error: "", warning: "", notes: "", cancelled: false});
+        // Busy from the call on: what the check below the next one relies on.
+        verify(controller.busy || analysed > 0, "the read starts in the call");
+        tryVerify(() => analysed > 0, 5000, "the list is read again after a save that only skipped");
+        tryCompare(controller, "busy", false, 5000);
+        controller.analysisChanged.disconnect(count);
+        // And a save that did nothing at all is not a reason to read again:
+        // an analysis would be running right after the call (busy is set as
+        // it starts).
+        page.afterSave({written: 0, skipped: 0, total: 0, unit: "tracks", verb: "synchronised"});
+        compare(controller.busy, false, "nothing written or skipped: nothing read");
+    }
+
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(0);

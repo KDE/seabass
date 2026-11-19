@@ -92,6 +92,13 @@ struct KeptEngineAnalysis
     std::vector<std::string> seabassColumnStates;
     std::vector<std::string> seabassColumnAnalyses;
     std::vector<std::string> seabassFiles;
+    // The adjusted grids Seabass wrote to the row, each as the writer's
+    // grid fingerprint (rate, length and the adjusted grid, to the whole
+    // sample). A grid in the row that is none of these and not the
+    // original's was moved on the player: before Seabass replaces it, the
+    // kept original takes it (the newest grid the player made). Empty in
+    // an entry of format 1 or 2, which did not record them.
+    std::vector<std::string> seabassGrids;
 
     friend bool operator==(const KeptEngineAnalysis &, const KeptEngineAnalysis &) = default;
 };

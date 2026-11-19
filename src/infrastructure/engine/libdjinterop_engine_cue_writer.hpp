@@ -190,9 +190,11 @@ public:
     // Without one nothing is kept, which only a test wants.
     //
     // Kept after every check and the hook, before the row's first byte
-    // changes. A row with no key is refused before that
-    // (CannotKeepEngines). A failure to keep it (a kept entry that cannot
-    // be read; a write that fails) throws, and the row is not changed.
+    // changes. A row with no key, or one whose kept entry cannot be read
+    // (Damaged), is refused before that, in a preview as in a write
+    // (CannotKeepEngines in the parts that would be written): a preview
+    // never offers what the write would refuse. A failure to keep it (a
+    // write to the store that fails) throws, and the row is not changed.
     //
     // A write has two parts that can come apart: the row's columns (one
     // transaction) and the overview file. So the entry records, before the
@@ -205,16 +207,30 @@ public:
     // without being taken for a change on the player.
     //
     // Which analysis is kept:
-    // - nothing kept yet: the row as it is, unless it is Seabass's own (the
-    //   ledger's fingerprint is the row's grid: a row Seabass completed,
-    //   which the player never analysed);
+    // - nothing kept yet: the row as it is, unless every part the write
+    //   replaces is provably Seabass's own: a row Seabass completed (the
+    //   ledger's fingerprint is the row's grid and both grids are that one:
+    //   the player never analysed it), or a write that replaces only the
+    //   grid when that grid is the ledger's. A write that also replaces the
+    //   waveform of a row whose grid alone is Seabass's keeps the row: its
+    //   waveform is the player's. Unsure means keep;
     // - kept already: the kept one stays (first kept wins). It is replaced
     //   only on positive evidence of the player's new analysis: the
     //   analysis in the row's columns (analysis record, overview, Engine's
     //   own grid, the flag) is neither the kept one's nor one Seabass's last
     //   write found or left there. Then that newer analysis is kept instead.
     //   The overview file alone is no evidence (Seabass's write of it can be
-    //   cut short), nor is a grid the DJ moved or locked on the player;
+    //   cut short), nor is a grid the DJ moved or locked on the player.
+    //   A grid the DJ moved on the player since Seabass wrote the row
+    //   (overwriteEngineEdits replaces it) is the newest grid the player
+    //   made: the kept original takes it in place of its own adjusted grid,
+    //   its analysis (Engine's own grid, rate, length, waveform) staying the
+    //   player's first. The grid is the DJ's when it is neither the
+    //   ledger's nor one Seabass wrote to the row
+    //   (KeptEngineAnalysis::seabassGrids) and the row is not as Seabass
+    //   left it. The kept beat data is then re-encoded, the same grids, not
+    //   the same bytes. When the original's beat data does not decode or is
+    //   at another rate or length, nothing can hold both: Refused;
     // - either way the entry records the row as this write leaves it,
     //   written only when that changes.
     // A row the player has not analysed keeps nothing; when it has a kept
@@ -280,8 +296,33 @@ private:
     void beforeWrite();
     // See setKeptAnalysisStore(). `row` is the row as read before the
     // write; `apply` turns it into the row as the write will leave it.
-    bool keepBeforeWrite(std::int64_t id, const std::string &keepKey, bool playerAnalysed, bool rowIsSeabass,
-                         const RowNow &row, const std::function<void(application::EngineAnalysisColumns &)> &apply);
+    // With previewOnly nothing is kept: it says only whether the write
+    // would be refused, which is what a preview reports and a write checks
+    // before its hook, so that the two never disagree.
+    struct KeepFacts
+    {
+        // The player has analysed the row (its flag up over usable beat
+        // data): what is in it may be the player's.
+        bool playerAnalysed = false;
+        // The write replaces the overview column or the overview file.
+        bool replacesWaveform = false;
+        // The ledger's fingerprint of the grid Seabass last wrote to the
+        // row (AnalysisImportOptions::ownGridFingerprint).
+        std::optional<std::string> ledgerGrid;
+    };
+    enum class Keep {
+        // Nothing new kept (nothing to keep, or kept already).
+        Nothing,
+        // The player's analysis, or the grid the DJ last set on the player,
+        // was kept for this write.
+        Kept,
+        // What the write would replace cannot be kept: the entry kept
+        // before cannot be read, or the grid the DJ moved on the player
+        // cannot be put beside the kept original. Not written.
+        Refused,
+    };
+    Keep keepBeforeWrite(std::int64_t id, const std::string &keepKey, const KeepFacts &facts, const RowNow &row,
+                         const std::function<void(application::EngineAnalysisColumns &)> &apply, bool previewOnly);
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
                    std::optional<double> knownSampleRate);
 

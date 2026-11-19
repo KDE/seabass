@@ -20,6 +20,7 @@
 #include "domain/sync_planning.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "application/ports/cancellation_token.hpp"
+#include "application/use_cases/copy_beat_grids.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/staged_cue_edit_controller.hpp"
 #include "gui/sync_plan_list_model.hpp"
@@ -57,7 +58,17 @@ struct SyncTaskResult
     // of their own, SyncPlanListModel), and what the plans whose cues go
     // from rekordbox onto Engine carry of it, by Engine sourceId.
     std::vector<SyncAnalysisOnlyTrack> analysisOnly;
-    std::map<std::string, SyncRowAnalysis> riders;
+    std::map<std::string, SyncRiderAnalysis> riders;
+    // Whether the analysis could be copied at all (rekordbox and Engine on
+    // the stick), and the switches the preview ran with (both off when
+    // not): staging compares Preferences with these.
+    bool analysisApplies = false;
+    bool analysedGrids = false;
+    bool analysedWaveforms = false;
+    // Tracks whose analysis the preview could not check, and whether the
+    // whole preview failed: unsure, said on the page, never "in step".
+    int analysisUnchecked = 0;
+    bool analysisCheckFailed = false;
 };
 
 // Wraps SyncLibraries for QML: two-phase, non-destructive sync across
@@ -125,6 +136,11 @@ class SyncController : public StagedCueEditController
     // selected counts, ticked and staged like them. 0 with both switches
     // off.
     Q_PROPERTY(int analysisOnlyCount READ analysisOnlyCount NOTIFY listChanged)
+    // With an analysis switch on: "Beat grids and waveforms could not be
+    // checked for N tracks." when the preview failed for some tracks, or
+    // "... could not be checked." when it failed as a whole; empty when
+    // every track was checked. Never shown as "nothing to sync".
+    Q_PROPERTY(QString analysisUncheckedText READ analysisUncheckedText NOTIFY analysisChanged)
 
 public:
     explicit SyncController(QObject *parent = nullptr);
@@ -145,6 +161,7 @@ public:
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
     int analysisOnlyCount() const { return m_model.analysisOnlyCount(); }
+    QString analysisUncheckedText() const;
 
     // Phase 1: read-only. rekordboxPath/enginePath are the stick's
     // DetectedStick.rekordboxPath / .enginePath (either may be empty if
@@ -197,6 +214,9 @@ public:
     // `grids` of them a beat grid, `waveforms` a waveform and `completed`
     // completed. Every row ticked again, nothing marked staged.
     Q_INVOKABLE void setAnalysisOnlyForTesting(int tracks, int grids, int waveforms, int completed);
+    // Test seam: as if the analysis' preview had failed for `tracks`
+    // tracks, or as a whole.
+    Q_INVOKABLE void setAnalysisUncheckedForTesting(int tracks, bool wholeCheckFailed);
     // Test seam: as if a save had brought this many cues across.
 
     // Picks one side of conflicts()[conflictIndex] (the row's
@@ -236,6 +256,13 @@ private:
     // A first stage after everything staged before has landed or gone
     // starts a new count for "N cues synced".
     void startNewSyncedCount();
+    // Preferences' analysis switches (or Experimental) are not what the
+    // last analysis previewed with, where that preview applies.
+    bool analysisSwitchesMoved(const SyncAnalysisStaging &staging) const;
+    static QString analysisSwitchesMovedMessage();
+    // Preferences' options narrowed to the parts a row's preview showed.
+    static application::AnalysisCopyOptions previewedParts(const SyncAnalysisStaging &staging,
+                                                           const SyncRowAnalysis &parts);
     void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
     static QString leftOutKeyFor(const domain::SyncPlan &plan);
     void onImportSessionChangeApplied(const QString &changeId);
@@ -260,6 +287,13 @@ private:
     // the change lands.
     std::map<QString, int> m_gainedByChangeId;
     int m_syncedCueCount = 0;
+    // The last analysis' preview: whether it applied, the switches it ran
+    // with, and what it could not check (SyncTaskResult).
+    bool m_analysisApplies = false;
+    bool m_analysedGrids = false;
+    bool m_analysedWaveforms = false;
+    int m_analysisUnchecked = 0;
+    bool m_analysisCheckFailed = false;
     infrastructure::engine::RekordboxImportState m_importState;
     bool m_importMarkStaged = false;
     // The session the two import connections below are made on, so a

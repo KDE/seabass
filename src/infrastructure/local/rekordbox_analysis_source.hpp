@@ -54,9 +54,14 @@ inline void addKeyAndTempo(application::RekordboxAnalysis &analysis, const appli
 // analysis file the slow way, once. The .DAT, .EXT and .2EX are each read
 // once. A track the export does not hold, or an id that is not a number,
 // has none of it. Throws what the readers throw.
+//
+// `beats` and `waveforms` say which parts are read: a caller copying only
+// one leaves the other's file unread (over USB, each is a read per track),
+// and the part not read stays empty, in the digest below too.
 inline application::RekordboxAnalysis rekordboxAnalysisOf(const std::string &pioneerRoot,
                                                           const application::BeatGridCopyItem &item,
-                                                          const rekordbox::AnlzPathIndex *index)
+                                                          const rekordbox::AnlzPathIndex *index, bool beats = true,
+                                                          bool waveforms = true)
 {
     namespace rb = infrastructure::rekordbox;
     std::optional<std::string> analyzePath;
@@ -71,11 +76,15 @@ inline application::RekordboxAnalysis rekordboxAnalysisOf(const std::string &pio
     if (analyzePath) {
         try {
             const auto source = rb::anlzSourceForPioneerRoot(pioneerRoot);
-            analysis.beats = rb::readTrackAnalysis(*source, *analyzePath).beats;
-            const auto sections = rb::readWaveformSections(*source, *analyzePath);
-            analysis.threeBandPreview = sections.threeBandPreview;
-            analysis.colourPreview = sections.colourPreview;
-            analysis.scrollEntries = sections.scrollEntries;
+            if (beats) {
+                analysis.beats = rb::readTrackAnalysis(*source, *analyzePath).beats;
+            }
+            if (waveforms) {
+                const auto sections = rb::readWaveformSections(*source, *analyzePath);
+                analysis.threeBandPreview = sections.threeBandPreview;
+                analysis.colourPreview = sections.colourPreview;
+                analysis.scrollEntries = sections.scrollEntries;
+            }
         } catch (const std::exception &) {
             // No source for the export: no analysis, as the readers say.
         }
@@ -128,16 +137,21 @@ inline std::string rekordboxAnalysisDigest(const application::RekordboxAnalysis 
 // OneLibrary row, whose id is not export.pdb's.
 inline application::RekordboxAnalysis rekordboxAnalysisAt(const std::string &pioneerRoot,
                                                           const std::string &analyzePath,
-                                                          const application::BeatGridCopyItem &item)
+                                                          const application::BeatGridCopyItem &item,
+                                                          bool beats = true, bool waveforms = true)
 {
     namespace rb = infrastructure::rekordbox;
     const auto source = rb::anlzSourceForPioneerRoot(pioneerRoot);
     application::RekordboxAnalysis analysis;
-    analysis.beats = rb::readTrackAnalysis(*source, analyzePath).beats;
-    const auto sections = rb::readWaveformSections(*source, analyzePath);
-    analysis.threeBandPreview = sections.threeBandPreview;
-    analysis.colourPreview = sections.colourPreview;
-    analysis.scrollEntries = sections.scrollEntries;
+    if (beats) {
+        analysis.beats = rb::readTrackAnalysis(*source, analyzePath).beats;
+    }
+    if (waveforms) {
+        const auto sections = rb::readWaveformSections(*source, analyzePath);
+        analysis.threeBandPreview = sections.threeBandPreview;
+        analysis.colourPreview = sections.colourPreview;
+        analysis.scrollEntries = sections.scrollEntries;
+    }
     detail::addKeyAndTempo(analysis, item);
     return analysis;
 }

@@ -683,6 +683,13 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     if (!m_track.leaveAloneBecause.isEmpty()) {
         return leftAlone(m_track.leaveAloneBecause);
     }
+    // Staged while Preferences asked for these parts: a part whose switch,
+    // or Experimental, was turned off since is not written, and neither is
+    // the rest of the track's analysis (staged as one).
+    if ((m_options.grids && !application::SyncAnalysisPolicy::copyBeatGrids())
+        || (m_options.waveforms && !application::SyncAnalysisPolicy::copyWaveforms())) {
+        return leftAlone(QStringLiteral("copying it from rekordbox was turned off in Preferences since it was staged"));
+    }
     FormatWriteSession &session = sharedFormatWriteSession(ctx, Format, m_enginePath.toStdString(), m_itemCountHint,
                                                            Label);
     std::string engineId = m_track.engineTrackId;
@@ -708,9 +715,13 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     // left alone, and the sync goes on.
     application::RekordboxAnalysis analysis;
     try {
+        // Only the parts this copies: the other's file is not read, and a
+        // preview's digest was taken of the same parts.
         analysis = m_track.analysisFile.empty()
-            ? infrastructure::local::rekordboxAnalysisOf(pioneer, item, sources.index.get())
-            : infrastructure::local::rekordboxAnalysisAt(pioneer, m_track.analysisFile, item);
+            ? infrastructure::local::rekordboxAnalysisOf(pioneer, item, sources.index.get(), m_options.grids,
+                                                         m_options.waveforms)
+            : infrastructure::local::rekordboxAnalysisAt(pioneer, m_track.analysisFile, item, m_options.grids,
+                                                         m_options.waveforms);
     } catch (const std::exception &e) {
         return leftAlone(QStringLiteral("rekordbox's analysis could not be read (%1)").arg(QString::fromUtf8(e.what())));
     }
@@ -833,10 +844,10 @@ QString analysisSummaryNote(const AnalysisNoteCounts &c)
     }
     if (c.cannotKeep > 0) {
         alone << counted(c.cannotKeep,
-                         QStringLiteral("one track whose own Engine analysis could not be kept first, its file not "
-                                        "being under the stick's root"),
-                         QStringLiteral("tracks whose own Engine analysis could not be kept first, their files not "
-                                        "being under the stick's root"));
+                         QStringLiteral("one track whose own Engine analysis could not be kept first (its file "
+                                        "not under the stick's root, or what was kept of it before unreadable)"),
+                         QStringLiteral("tracks whose own Engine analysis could not be kept first (their files not "
+                                        "under the stick's root, or what was kept of them before unreadable)"));
     }
     for (const auto &[why, n] : c.other) {
         alone << counted(n, QStringLiteral("one track"), QStringLiteral("tracks")) + QStringLiteral(" (") + why
