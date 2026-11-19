@@ -43,10 +43,12 @@ double smallestGapMs(const std::vector<BeatTick> &ticks)
 }
 
 // The ticks with the second of every too-close pair taken out: a pair
-// less than half the median gap apart, which a damaged grid has (a beat
-// written twice a millisecond apart) and no music does -- a change to
-// double time is half the gap, and stays. Measured on what is left, the
-// tightest place is the music's, and two ticks never land on one pixel.
+// less than a tenth of the median gap apart, which a damaged grid has (a
+// beat written twice a millisecond apart) and no music does. A section
+// at double time or a little over (rekordbox's whole milliseconds give
+// 344 against 690) is far above that and keeps every beat. Measured on
+// what is left, the tightest place is the music's, and two ticks never
+// land on one pixel. Exactly a tenth stays.
 std::vector<BeatTick> withoutNearDuplicates(std::vector<BeatTick> ticks)
 {
     if (ticks.size() < 3) {
@@ -58,7 +60,7 @@ std::vector<BeatTick> withoutNearDuplicates(std::vector<BeatTick> ticks)
         gaps.push_back(ticks[i].timeMs - ticks[i - 1].timeMs);
     }
     std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2), gaps.end());
-    const double tooClose = gaps[gaps.size() / 2] / 2.0;
+    const double tooClose = gaps[gaps.size() / 2] / 10.0;
     std::vector<BeatTick> kept;
     kept.reserve(ticks.size());
     for (const BeatTick &tick : ticks) {

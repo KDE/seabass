@@ -109,17 +109,16 @@ int main()
                 const gui::BeatTickLayout whole = gui::layoutBeatTicks(*c.beats, c.spanMs, width);
                 const QVariantList kept = gui::beatTicksForDisplay(*c.beats, true, c.spanMs, width);
                 check(kept.size() == static_cast<qsizetype>(whole.ticks.size()), "a row keeps the beats drawn");
-                std::vector<domain::Beat> again;
-                for (const QVariant &entry : kept) {
-                    const QVariantMap beat = entry.toMap();
-                    again.push_back({beat.value("timeMs").toDouble(), beat.value("downbeat").toBool() ? 1 : 0});
-                }
-                const gui::BeatTickLayout relaid = gui::layoutBeatTicks(again, c.spanMs, width);
-                bool same = relaid.ticks.size() == whole.ticks.size();
+                // The row is handed exactly the ticks of one layout of the
+                // whole grid, which the view only places at x = time *
+                // width / span (WaveformView.beatsSelected): no second pass.
+                bool same = kept.size() == static_cast<qsizetype>(whole.ticks.size());
                 for (size_t i = 0; same && i < whole.ticks.size(); ++i) {
-                    same = relaid.ticks[i].x == whole.ticks[i].x && relaid.ticks[i].downbeat == whole.ticks[i].downbeat;
+                    const QVariantMap beat = kept[static_cast<qsizetype>(i)].toMap();
+                    same = beat.value("timeMs").toDouble() * width / c.spanMs == whole.ticks[i].x
+                        && beat.value("downbeat").toBool() == whole.ticks[i].downbeat;
                 }
-                check(same, "laid out again at " + std::to_string(width) + " px they are the same ticks");
+                check(same, "at " + std::to_string(width) + " px a row's ticks are the whole grid's");
                 for (size_t i = 1; i < whole.ticks.size(); ++i) {
                     const double gap = whole.ticks[i].x - whole.ticks[i - 1].x;
                     check(gap >= (whole.everyBeat ? gui::MinimumBeatSpacingPx : gui::MinimumDownbeatSpacingPx) - 1e-9,
@@ -152,6 +151,60 @@ int main()
                       + " px: " + std::to_string(withPair.ticks.size()) + " ticks, every " + std::to_string(withPair.barsPerTick)
                       + " bars, against " + std::to_string(clean.ticks.size()) + ", every " + std::to_string(clean.barsPerTick));
             }
+            // Only a true glitch is dropped: a beat closer to the one before
+            // than a tenth of the track's median gap. A section a little
+            // more than twice as fast as most of the track (rekordbox's
+            // whole milliseconds: 344 against 690) keeps every beat.
+            {
+                std::vector<domain::Beat> mixed;
+                double t = 0.0;
+                for (int i = 0; i < 140; ++i, t += 690.0) {
+                    mixed.push_back({t, i % 4 + 1});
+                }
+                for (int i = 0; i < 120; ++i, t += 344.0) {
+                    mixed.push_back({t, i % 4 + 1});
+                }
+                const auto wide = gui::layoutBeatTicks(mixed, t, 5000.0);
+                check(wide.everyBeat && wide.ticks.size() == 260,
+                      "70% at one tempo, 30% a little over double it: every beat drawn, got "
+                          + std::to_string(wide.ticks.size()));
+                // The boundary: exactly a tenth of the median gap stays, a
+                // millisecond closer goes.
+                std::vector<domain::Beat> grid500;
+                for (int i = 0; i < 120; ++i) {
+                    grid500.push_back({i * 500.0, i % 4 + 1});
+                }
+                std::vector<domain::Beat> atTenth = grid500;
+                atTenth.insert(atTenth.begin() + 61, {60 * 500.0 + 50.0, 0});
+                std::vector<domain::Beat> underTenth = grid500;
+                underTenth.insert(underTenth.begin() + 61, {60 * 500.0 + 49.0, 0});
+                check(gui::layoutBeatTicks(atTenth, 60000.0, 8000.0).ticks.size() == 121,
+                      "a beat a tenth of the median gap after another is kept");
+                check(gui::layoutBeatTicks(underTenth, 60000.0, 8000.0).ticks.size() == 120,
+                      "one closer than that is dropped");
+                // The reviewer's case: gaps of 290 ms four times, then
+                // (1, 599) four times. One pass drops the four 1 ms beats;
+                // the row is handed the same ticks as the direct layout.
+                std::vector<domain::Beat> odd;
+                double u = 0.0;
+                odd.push_back({u, 1});
+                for (int i = 0; i < 4; ++i) {
+                    odd.push_back({u += 290.0, 0});
+                }
+                for (int i = 0; i < 4; ++i) {
+                    odd.push_back({u += 1.0, 0});
+                    odd.push_back({u += 599.0, 0});
+                }
+                const auto direct = gui::layoutBeatTicks(odd, u + 100.0, 2000.0);
+                const QVariantList row = gui::beatTicksForDisplay(odd, true, u + 100.0, 2000.0);
+                bool same = row.size() == static_cast<qsizetype>(direct.ticks.size()) && direct.ticks.size() == 9;
+                for (size_t i = 0; same && i < direct.ticks.size(); ++i) {
+                    same = row[static_cast<qsizetype>(i)].toMap().value("timeMs").toDouble() == direct.ticks[i].timeMs;
+                }
+                check(same, "the reviewer's case: 9 ticks, the same through the row as directly, got "
+                                + std::to_string(direct.ticks.size()) + " and " + std::to_string(row.size()));
+            }
+
             // Out of order: laid out as in order, not as nonsense.
             std::vector<domain::Beat> shuffled = track;
             std::reverse(shuffled.begin() + 100, shuffled.begin() + 700);
