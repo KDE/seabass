@@ -73,6 +73,7 @@
 #include "gui/stick_events.hpp"
 #include "gui/process_end.hpp"
 #include "storm_fixture.hpp"
+#include "engine_grid_fixture.hpp"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <cstring>
@@ -3414,6 +3415,7 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("backupFixture"), new BackupFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("browseFixture"), new BrowseFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("engineGridFixture"), new EngineGridFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("catalogGate"), new CatalogGateFixture(engine));
     }
 

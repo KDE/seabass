@@ -362,6 +362,11 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
     return read;
 }
 
+void PlaybackController::forgetAnalyses()
+{
+    m_analysisCache.clear();
+}
+
 QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
                                               const QString &sourceId) const
 {
@@ -469,6 +474,11 @@ void PlaybackController::setLibraryBusy(bool busy)
     }
     m_libraryBusy = busy;
     emit libraryBusyChanged();
+    if (!busy) {
+        // A write has just finished, and any library may now say something
+        // else about any track: a sample rate recorded, a grid replaced.
+        forgetAnalyses();
+    }
     if (!busy && m_advanceWhenLibraryFree) {
         m_advanceWhenLibraryFree = false;
         if (m_player && m_player->mediaStatus() == QMediaPlayer::EndOfMedia) {

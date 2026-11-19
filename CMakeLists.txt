@@ -1249,7 +1249,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # (see the -input arg on the add_test() call below), so editing/
         # adding a test doesn't need a rebuild, only the components-under-
         # test do.
-        qt_add_executable(seabass_qml_tests tests/qml/qml_test_main.cpp tests/qml/storm_fixture.hpp)
+        qt_add_executable(seabass_qml_tests tests/qml/qml_test_main.cpp tests/qml/storm_fixture.hpp
+            tests/qml/engine_grid_fixture.hpp)
         # Must run before qt_add_qml_module() -- it reads this property at
         # call time (see src/gui/CMakeLists.txt's own comment on the exact
         # same ordering requirement for the real seabass target). Set

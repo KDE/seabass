@@ -35,6 +35,14 @@ ApplicationWindow {
         // Nothing moves through the queue while a library is being written.
         libraryBusy: EditSessionRegistry.anyWriting
     }
+    // A stick plugged in or taken out: what the player kept about tracks
+    // under a mount path may now be about another stick's.
+    Connections {
+        target: mediaCtrl.sticks
+        function onRowsInserted() { playbackCtrl.forgetAnalyses(); }
+        function onRowsRemoved() { playbackCtrl.forgetAnalyses(); }
+        function onModelReset() { playbackCtrl.forgetAnalyses(); }
+    }
 
     // Space toggles play/pause for whatever's loaded in the player bar --
     // disabled while a text-entry control has focus (any search field,

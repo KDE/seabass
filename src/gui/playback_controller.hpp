@@ -187,6 +187,13 @@ public:
     // few tracks' waveforms repeatedly as delegates scroll in and out.
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
+    // Drops every analysis waveformFor(), beatGridFor() and beatTicksFor()
+    // have kept, so the next ask reads the library again. Called when a
+    // write ends (libraryBusy going false) and, from Main.qml, when the
+    // set of sticks changes: a kept entry is keyed on a path and a track
+    // id, and another stick at the same path has other tracks under the
+    // same small Engine ids. The loaded track's own grid is not touched.
+    Q_INVOKABLE void forgetAnalyses();
     // The same track's beat grid, as WaveformView.beatData takes it
     // (beat_grid_display.hpp), from the same read and the same cache
     // entry as waveformFor(): a
