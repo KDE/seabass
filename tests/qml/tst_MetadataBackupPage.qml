@@ -62,6 +62,23 @@ TestCase {
         return page;
     }
 
+    // The first stored row `matches` accepts, or null. Walks the whole
+    // list, however many rows the run's store holds, and waits for each
+    // row's delegate rather than assuming positioning built it: rows that
+    // other cases (or a live stick's seed) leave in the store can sort
+    // ahead of the one a case is after, and push it out of view.
+    function storedRowWhere(list, matches) {
+        for (let i = 0; i < list.count; ++i) {
+            list.positionViewAtIndex(i, ListView.Contain);
+            tryVerify(() => list.itemAtIndex(i) !== null, 2000, "stored row " + i + " must be built");
+            const candidate = list.itemAtIndex(i);
+            if (matches(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     // A pick here is what the next page with a playlist picker opens on.
     function test_aPlaylistPickIsRemembered() {
         var before = realAppSettings.lastPlaylistName;
@@ -447,14 +464,7 @@ TestCase {
         // A stored row with cues, not simply the first: the store lives
         // across runs, and rows other cases leave in it (cue-less ones
         // among them) can sort ahead of the seeded tracks.
-        let row = null;
-        for (let i = 0; i < list.count && row === null; ++i) {
-            list.positionViewAtIndex(i, ListView.Contain);
-            const candidate = list.itemAtIndex(i);
-            if (candidate && candidate.cueCount > 0) {
-                row = candidate;
-            }
-        }
+        const row = storedRowWhere(list, candidate => candidate.cueCount > 0);
         verify(row !== null, "the harness seeds a stored track with cues");
         verify(findChild(row, "rowWaveform") === null, "a closed row builds no waveform");
         row.expandToggled();
@@ -572,58 +582,57 @@ TestCase {
     function test_aStoredRowPlaysFromAStickThatHasItsFile() {
         const scratch = stickFixture.scratchDirectory();
         verify(scratch.length > 0);
-        const stick = scratch + "/SEEDED";
+        const stick = scratch + "/PLAYHOME";
         verify(stickFixture.makeDirectory(stick + "/PIONEER"));
-        const sticks = createTemporaryObject(fakeSticksComponent, testCase, {rows: [{
-            label: "SEEDED", hasRekordbox: true, hasEngine: false, libraryId: "seeded",
-            rekordboxPath: stick + "/PIONEER", enginePath: "",
-        }]});
-        const player = createTemporaryObject(fakePlayerComponent, testCase);
-        const page = makeShowingTheStore({mediaController: {sticks: sticks}, playbackController: player});
-        const list = findChild(page, "storedTrackList");
-        // The harness's seeded track, backed up from SEEDED at
-        // Contents/seed-0.mp3. Found by title: other cases leave rows in
-        // the store that can sort ahead of it.
-        let row = null;
-        for (let i = 0; i < list.count && row === null; ++i) {
-            list.positionViewAtIndex(i, ListView.Contain);
-            const candidate = list.itemAtIndex(i);
-            if (candidate && candidate.title === "Seeded Track 1") {
-                row = candidate;
-            }
+        // Its own stored track rather than the harness's seed: the seed is
+        // the live stick's tracks when SEABASS_LIVE_STICK is set, and
+        // invented ones otherwise, and this case is about neither.
+        verify(stickFixture.storeBackedUpTrack("Stored Play Track", "rekordbox", "PLAYHOME", stick,
+                                               "Contents/play-track.mp3"));
+        try {
+            const sticks = createTemporaryObject(fakeSticksComponent, testCase, {rows: [{
+                label: "PLAYHOME", hasRekordbox: true, hasEngine: false, libraryId: "playhome",
+                rekordboxPath: stick + "/PIONEER", enginePath: "",
+            }]});
+            const player = createTemporaryObject(fakePlayerComponent, testCase);
+            const page = makeShowingTheStore({mediaController: {sticks: sticks}, playbackController: player});
+            const list = findChild(page, "storedTrackList");
+            const row = storedRowWhere(list, candidate => candidate.title === "Stored Play Track");
+            verify(row !== null, "the case stored this track");
+            compare(row.relativePath, "Contents/play-track.mp3");
+            compare(row.stickLabel, "PLAYHOME");
+            const key = findChild(row, "rowPlayButton");
+            mouseMove(page, 1, 1);
+            tryVerify(() => !row.hovered, 1000);
+            compare(key.visible, false, "no key until the row is hovered");
+
+            hoverRow(page, row);
+            compare(key.visible, true);
+            compare(key.enabled, false, "PLAYHOME is plugged in but does not have the file");
+            compare(row.playUnavailableText, "Plug in PLAYHOME to play this track");
+
+            verify(stickFixture.makeDirectory(stick + "/Contents"));
+            verify(stickFixture.touchNew(stick + "/Contents/play-track.mp3"));
+            hoverRow(page, row);
+            compare(key.enabled, true, "looked for again on the next hover, and found");
+            mouseClick(key);
+            compare(player.loads.length, 1);
+            const loaded = player.loads[0];
+            compare(loaded.filePath, stick + "/Contents/play-track.mp3");
+            compare(loaded.format, "rekordbox", "the catalog it was backed up from");
+            compare(loaded.libraryPath, "", "no catalog row stands behind it");
+            compare(loaded.sourceId, "backup:" + row.trackId);
+            compare(loaded.title, "Stored Play Track");
+            compare(loaded.cues.length, row.cueCount, "the backup's cues, which are what the row is about");
+            compare(loaded.cues[0].positionMs, 1000);
+            compare(loaded.cues[0].kind, "hot");
+            compare(key.text, "Pause", "the loaded row's key pauses it");
+            mouseMove(page, 1, 1);
+            tryVerify(() => !row.hovered, 1000);
+            compare(key.visible, true, "and stays up while it is the track loaded");
+        } finally {
+            stickFixture.removeStoredTracksFrom("PLAYHOME");
         }
-        verify(row !== null, "the harness seeds this track");
-        compare(row.relativePath, "Contents/seed-0.mp3");
-        compare(row.stickLabel, "SEEDED");
-        const key = findChild(row, "rowPlayButton");
-        mouseMove(page, 1, 1);
-        tryVerify(() => !row.hovered, 1000);
-        compare(key.visible, false, "no key until the row is hovered");
-
-        hoverRow(page, row);
-        compare(key.visible, true);
-        compare(key.enabled, false, "SEEDED is plugged in but does not have the file");
-        compare(row.playUnavailableText, "Plug in SEEDED to play this track");
-
-        verify(stickFixture.makeDirectory(stick + "/Contents"));
-        verify(stickFixture.touchNew(stick + "/Contents/seed-0.mp3"));
-        hoverRow(page, row);
-        compare(key.enabled, true, "looked for again on the next hover, and found");
-        mouseClick(key);
-        compare(player.loads.length, 1);
-        const loaded = player.loads[0];
-        compare(loaded.filePath, stick + "/Contents/seed-0.mp3");
-        compare(loaded.format, "rekordbox", "the catalog the harness seeded it from");
-        compare(loaded.libraryPath, "", "no catalog row stands behind it");
-        compare(loaded.sourceId, "backup:" + row.trackId);
-        compare(loaded.title, "Seeded Track 1");
-        compare(loaded.cues.length, row.cueCount, "the backup's cues, which are what the row is about");
-        compare(loaded.cues[0].positionMs, 1000);
-        compare(loaded.cues[0].kind, "hot");
-        compare(key.text, "Pause", "the loaded row's key pauses it");
-        mouseMove(page, 1, 1);
-        tryVerify(() => !row.hovered, 1000);
-        compare(key.visible, true, "and stays up while it is the track loaded");
     }
 
     // A track backed up from an Engine stick plays as an Engine track,
@@ -646,14 +655,7 @@ TestCase {
             const player = createTemporaryObject(fakePlayerComponent, testCase);
             const page = makeShowingTheStore({mediaController: {sticks: sticks}, playbackController: player});
             const list = findChild(page, "storedTrackList");
-            let row = null;
-            for (let i = 0; i < list.count && row === null; ++i) {
-                list.positionViewAtIndex(i, ListView.Contain);
-                const candidate = list.itemAtIndex(i);
-                if (candidate && candidate.title === "Engine Stored Track") {
-                    row = candidate;
-                }
-            }
+            const row = storedRowWhere(list, candidate => candidate.title === "Engine Stored Track");
             verify(row !== null, "the case stored this track");
             const key = findChild(row, "rowPlayButton");
             hoverRow(page, row);

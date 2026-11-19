@@ -318,8 +318,9 @@ TestCase {
 
     function openRow(page, row) {
         const list = findChild(page, "proposalList");
+        list.positionViewAtIndex(row, ListView.Contain);
+        tryVerify(() => list.itemAtIndex(row) !== null, 2000, "row " + row + " must be built");
         const item = list.itemAtIndex(row);
-        verify(item !== null, "row " + row + " must be built");
         item.expandToggled();
         waitForRendering(page);
         return item;
