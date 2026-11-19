@@ -110,9 +110,26 @@ TestCase {
         return text.indexOf(String.fromCharCode(0x2014)) < 0 && text.indexOf("-".repeat(2)) < 0;
     }
 
-    function makePage(props) {
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
+        id: realControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    // Whatever a test staged in a real session is not handed to the next.
+    function cleanup() {
+        EditSessionRegistry.discardAll();
+    }
+
+    function makePage(props, pageProps) {
         const controller = createTemporaryObject(controllerComponent, testCase, props || {});
-        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           Object.assign({sharedController: controller}, pageProps || {}));
         verify(page !== null);
         waitForRendering(page);
         return {page: page, controller: controller};
@@ -171,7 +188,7 @@ TestCase {
     // Pointing the library at the file is the other repair, offered only
     // where every catalog can take the path.
     function test_relinkIsOfferedOnlyWhereTheCatalogsCanTakeThePath() {
-        const t = makePage();
+        const t = makePage({}, {experimentalFeaturesEnabled: true});
         const alpha = findChild(t.page, "relink_/S/Contents/Old/Alpha.mp3");
         verify(alpha.enabled);
         compare(findChild(t.page, "relinkRefusal_/S/Contents/Old/Alpha.mp3").visible, false);
@@ -187,6 +204,66 @@ TestCase {
         verify(why.visible);
         verify(why.text.indexOf("export.pdb holds 24") >= 0, why.text);
         verify(noDashes(why.text));
+    }
+
+    // Pointing the library at the file rewrites export.pdb in place, the
+    // least proven write in Seabass, and no player has browsed a relinked
+    // track yet: Experimental (docs/experimental-features.md). Moving the
+    // file back writes no catalog and is there for everyone.
+    function test_relinkIsExperimental() {
+        const off = makePage();
+        compare(findChild(off.page, "relink_/S/Contents/Old/Alpha.mp3").visible, false, "not offered by default");
+        compare(findChild(off.page, "relinkRefusal_/S/Contents/Old/Bravo.mp3").visible, false,
+                "and no reason given for a repair that is not offered");
+        verify(findChild(off.page, "move_/S/Contents/Old/Alpha.mp3").visible, "Move Back is for everyone");
+        verify(findChild(off.page, "movedFilesExplanation").text.indexOf("Pointing the library") < 0,
+               "the explanation does not describe what is not offered");
+
+        const on = makePage({}, {experimentalFeaturesEnabled: true});
+        verify(findChild(on.page, "relink_/S/Contents/Old/Alpha.mp3").visible);
+        verify(findChild(on.page, "experimentalBadge").visible, "and says it is experimental");
+        verify(findChild(on.page, "relinkRefusal_/S/Contents/Old/Bravo.mp3").visible);
+        verify(findChild(on.page, "move_/S/Contents/Old/Alpha.mp3").visible);
+        verify(findChild(on.page, "movedFilesExplanation").text.indexOf("Pointing the library") >= 0);
+    }
+
+    // One file can go back to one place only: with two findings sharing
+    // their one file, staging it for the second is refused while it is
+    // staged for the first, and the refusal names the first. On the real
+    // controller, with its own session.
+    function test_aFileStagedForOneTrackIsRefusedForAnother() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controllerFixture.plantTwoMovedFilesSharingAFile(controller, stick);
+        compare(controller.movedFileCount, 2);
+        const alpha = stick + "/Contents/Old/Alpha.mp3";
+        const bravo = stick + "/Contents/Old/Bravo.mp3";
+        const stagedFor = () => controller.movedFiles.filter(f => f.staged !== "").map(f => f.title + ":" + f.staged);
+
+        controller.moveFileBack(alpha);
+        compare(controller.errorMessage, "");
+        compare(stagedFor(), ["Alpha:move"]);
+
+        controller.moveFileBack(bravo);
+        compare(stagedFor(), ["Alpha:move"], "the file is staged for Alpha already");
+        verify(controller.errorMessage.indexOf("\"Alpha\"") >= 0, "the refusal names the other track: "
+               + controller.errorMessage);
+        verify(noDashes(controller.errorMessage));
+        controller.relinkMovedFile(bravo);
+        compare(stagedFor(), ["Alpha:move"], "pointing the library at it is refused the same way");
+
+        // The same finding may change its repair: it is still one file for
+        // one track.
+        controller.relinkMovedFile(alpha);
+        compare(controller.errorMessage, "");
+        compare(stagedFor(), ["Alpha:relink"]);
+
+        // Unstaged from Alpha, the file is free for Bravo.
+        controller.unstageMovedFile(alpha);
+        controller.moveFileBack(bravo);
+        compare(controller.errorMessage, "");
+        compare(stagedFor(), ["Bravo:move"]);
     }
 
     // Several files, or none: said, and nothing offered.

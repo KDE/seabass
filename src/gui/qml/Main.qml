@@ -744,7 +744,9 @@ ApplicationWindow {
 
     Component {
         id: movedFilesPageComponent
-        MovedFilesPage {}
+        MovedFilesPage {
+            experimentalFeaturesEnabled: appSettingsCtrl.experimentalFeaturesEnabled
+        }
     }
 
     // Library Health opens on its hub: every check run once, each

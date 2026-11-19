@@ -45,6 +45,19 @@ from day one.
   created library works correctly on real Denon hardware (he has a Prime
   GO+ to test against).
 
+- **Moved files: Point Library at File** (added 2026-11-19, #103) — the
+  second repair on Library Health's Moved files page (`MovedFilesPage.qml`,
+  `RelinkMovedFileChange`): every catalog's row for a track whose file
+  moved on the stick is pointed at the file where it is now, instead of
+  the file being moved back. Engine and OneLibrary are plain updates;
+  export.pdb is rewritten in place, field by field, which is the least
+  proven write path in Seabass, and it takes only a new path and file
+  name of exactly the old lengths. Verified with this app's own readers
+  and byte for byte through the generated parser
+  (`moved_file_change_test`); no player has browsed a relinked track yet.
+  Promote once one has, on a stick whose export.pdb was relinked. Moving
+  the file back (repair A) writes no catalog and is not gated.
+
 ## Graduated to stable
 
 All of these graduated together on 2026-09-17, on Sebastian's call: the

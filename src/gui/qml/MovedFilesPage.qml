@@ -20,6 +20,12 @@ HealthCheckPage {
 
     checkTitle: "Moved files"
 
+    // Pointing the library at the file is Experimental
+    // (docs/experimental-features.md): it rewrites export.pdb in place,
+    // and no player has browsed a relinked track yet. Main.qml binds the
+    // app's setting; moving the file back is offered either way.
+    property bool experimentalFeaturesEnabled: false
+
     readonly property bool checked: consistencyController?.movedFilesChecked ?? false
     readonly property string error: consistencyController?.movedFilesError ?? ""
     readonly property var findings: consistencyController?.movedFiles ?? []
@@ -61,9 +67,12 @@ HealthCheckPage {
         wrapMode: Text.WordWrap
         color: Theme.textMuted
         text: "Moving a file back puts it where every library on the stick already looks for it, and writes no "
-            + "database; Undo moves it back again. Pointing the library at the file instead rewrites each "
-            + "catalog's path, which rekordbox's export can only take when the new path is no longer than the "
-            + "old. A file with the same name and size is the track; one that only probably is gets asked "
+            + "database; Undo moves it back again. "
+            + (root.experimentalFeaturesEnabled
+               ? "Pointing the library at the file instead rewrites each catalog's path, which rekordbox's "
+                 + "export can only take when the new path and file name are exactly as long as the old. "
+               : "")
+            + "A file with the same name and size is the track; one that only probably is gets asked "
             + "about first. Nothing changes until you Save."
     }
 
@@ -205,14 +214,18 @@ HealthCheckPage {
                         }
                         Button {
                             objectName: "relink_" + findingRow.modelData.expectedPath
-                            visible: !findingRow.staged
+                            visible: !findingRow.staged && root.experimentalFeaturesEnabled
                             text: "Point Library at File"
                             enabled: root.canStage && findingRow.modelData.relinkRefusal.length === 0
                             onClicked: root.stage(findingRow.modelData, true)
                         }
+                        ExperimentalBadge {
+                            visible: !findingRow.staged && root.experimentalFeaturesEnabled
+                        }
                         Label {
                             objectName: "relinkRefusal_" + findingRow.modelData.expectedPath
-                            visible: !findingRow.staged && findingRow.modelData.relinkRefusal.length > 0
+                            visible: !findingRow.staged && root.experimentalFeaturesEnabled
+                                && findingRow.modelData.relinkRefusal.length > 0
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: Theme.textMuted
