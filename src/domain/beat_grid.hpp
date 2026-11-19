@@ -53,7 +53,9 @@ MarkersFromBeats markersFromBeats(const std::vector<Beat> &beats, double duratio
 
 // Markers as markersFromBeats() gives them, numbered the way Engine
 // numbers its own: the first marker is beat -4, before the track starts,
-// and beat 0 is the first downbeat at or after the start. The first
+// and beat 0 is the first downbeat at or after the start, or within a
+// millisecond before it (the line through rounded beats is that far
+// off). The first
 // marker moves along its span's line to get there, and every index moves
 // by the same multiple of four, so each beat keeps its place in the bar.
 // Markers that cannot be put so (fewer than two, a number that is not

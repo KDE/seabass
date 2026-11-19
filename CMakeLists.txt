@@ -4514,6 +4514,13 @@ if(TARGET seabass_taglib)
     target_link_libraries(make_engine_library PRIVATE seabass_taglib)
 endif()
 
+# Hardware probe for Copy Beat Grids: a grid of the caller's making on one
+# Engine row, through the feature's own writer, to ask a player what a
+# copied grid on a click track cannot (does it play by this grid at all).
+add_executable(beat_grid_probe tools/beat_grid_probe.cpp)
+target_include_directories(beat_grid_probe PRIVATE src)
+target_link_libraries(beat_grid_probe PRIVATE seabass_core SQLite::SQLite3)
+
 # Release rig: a full stick backup as the app takes it, then verified, checked
 # for holes, previewed for leftovers and compared with the stick's catalogs.
 add_executable(rig_backup tools/rig_backup.cpp)

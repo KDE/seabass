@@ -313,6 +313,27 @@ int main(int argc, char **argv)
                   + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms");
     }
 
+    // A 128 BPM click track as rekordbox stores it, first beat at 0, in
+    // whole milliseconds: the line through its rounded beats starts a
+    // fraction of a millisecond before 0. Beat 0 is that first beat, as
+    // Denon's analysis of the file has it, not the downbeat a bar later
+    // (measured on TESTSHARK's T73 N3, which came out at 1874.25 ms).
+    {
+        std::vector<domain::Beat> source;
+        // The first beat the file gives is the second of the bar: the
+        // one before it would be at -0.75 ms, which no file stores.
+        for (int i = 1; i < 512; ++i) {
+            source.push_back({i * 468.75 - 0.75, i % 4 + 1});
+        }
+        const auto numbered = domain::engineNumbered(domain::markersFromBeats(source, 240000.0).markers);
+        check(numbered.size() == 2 && numbered.front().index == -4, "a grid from 0 is numbered from -4");
+        if (numbered.size() == 2) {
+            const double beatMs = (numbered[1].timeMs - numbered[0].timeMs) / (numbered[1].index - numbered[0].index);
+            const double beatZero = numbered[0].timeMs + 4 * beatMs;
+            check(std::abs(beatZero) <= 1.0, "and its beat 0 is the first beat, at " + std::to_string(beatZero) + " ms");
+        }
+    }
+
     // engineNumbered(): markers put the way Engine numbers its own, the
     // first one beat -4 before the start, beat 0 the first downbeat in it.
     {

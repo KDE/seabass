@@ -251,10 +251,16 @@ std::vector<BeatGridMarker> engineNumbered(std::vector<BeatGridMarker> markers)
     }
     const auto downbeatFrom = [](long long index) { return index + ((4 - index % 4) % 4); };
     long long downbeat = downbeatFrom(static_cast<long long>(std::ceil(atStart)));
-    while (timeOf(downbeat - 4) >= 0.0) {
+    // "At the start" allows for the line's own error: a grid whose first
+    // beat is at 0 in rekordbox comes off the line through its rounded
+    // beats at -0.75 ms as easily as at 0 (measured on a 128 BPM click
+    // track), and beat 0 a whole bar later for that is not what Denon's
+    // analysis of the same file says.
+    const double start = -kBeatOffLineMs;
+    while (timeOf(downbeat - 4) >= start) {
         downbeat -= 4;
     }
-    while (timeOf(downbeat) < 0.0) {
+    while (timeOf(downbeat) < start) {
         downbeat += 4;
     }
     // The new first marker stays on the first span's line only while it
