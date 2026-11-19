@@ -84,6 +84,11 @@ class RekordboxExportSyncController : public StagedCueEditController
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY listChanged)
     // Conflicts not answered yet.
     Q_PROPERTY(int conflictCount READ conflictCount NOTIFY listChanged)
+    // Whether stageSelected() would stage anything: a ticked row, the
+    // record of rows left unticked, or a first record. False with a
+    // record on the stick and nothing ticked or left to decline, where
+    // staging would stage nothing (#97).
+    Q_PROPERTY(bool canStage READ canStage NOTIFY canStageChanged)
 
 public:
     explicit RekordboxExportSyncController(QObject *parent = nullptr);
@@ -104,6 +109,7 @@ public:
     bool proposalEmpty() const;
     int checkedCount() const { return m_model.checkedCount(); }
     int conflictCount() const { return m_model.unresolvedConflictCount(); }
+    bool canStage() const;
 
     // Read-only. The stick's DetectedStick.label, .rekordboxPath and
     // .enginePath; both catalogs are needed.
@@ -129,6 +135,12 @@ public:
     Q_INVOKABLE void stageSelected();
     // Takes back what stageSelected() staged.
     Q_INVOKABLE void unstageAll();
+    // The libraries match and the stick has no record yet: records this
+    // rekordbox export as the starting point of the next comparison, and
+    // saves it at once through the session's save (backed up first, Undo
+    // Last Save takes it away again). Nothing for the user to stage
+    // (#97). recordSaved() says what was recorded once it landed.
+    Q_INVOKABLE void rememberExport();
 
     // What the staged write of one track's rating and comment says it
     // does, from its edits (one track, one direction). Onto rekordbox it
@@ -148,6 +160,11 @@ public:
 signals:
     void analysisChanged();
     void listChanged();
+    void canStageChanged();
+    // A save of this page that wrote only the record landed whole, in
+    // the words the page's toast says it in. A save of the page's
+    // changes is said from the session's summary as on every page.
+    void recordSaved(const QString &text);
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
@@ -159,7 +176,7 @@ private:
     QString analysisKey() const;
     void onAnalyzeFinished(RekordboxExportSyncAnalysis &&result);
     void attachSession();
-    void onSessionSaveFinished();
+    void onSessionSaveFinished(const QVariantMap &summary);
 
     RekordboxExportSyncListModel m_model;
     QString m_stickLabel;
@@ -172,6 +189,8 @@ private:
     // The session saveFinished is connected on, so a repeat attach does
     // not connect it twice.
     LibraryEditSession *m_connectedSession = nullptr;
+    // What recordSaved() says once the save rememberExport() started lands.
+    QString m_rememberedText;
 };
 
 }  // namespace seabass::gui

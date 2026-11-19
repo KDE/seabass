@@ -24,6 +24,12 @@
 //           levelled, as every save with both catalogs leaves it) and the
 //           record back at 40, the 24 rows again. Saved again: the same
 //           m.db as the first save, row for row, but the write times.
+// insync    The libraries match (#97). With the record at 128: nothing to
+//           stage or save, Stage Selected not offered, nothing staged by
+//           a press. Without a record: "Remember this export" records
+//           export 128 through the session's save, backed up, with
+//           nothing left staged, and says what it recorded; the page then
+//           has the record, and Undo Last Save takes it away again.
 // replay    What the players wrote after the saves (engine/m-after-R3d.db,
 //           the Prime 4's analysis; engine/m-after-R1b.db, the Go+) against
 //           export 128 and the record at 128: nothing on the page, no cue
@@ -62,6 +68,7 @@
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
+#include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "scratch_path.hpp"
 
@@ -84,6 +91,7 @@ fs::path g_fixture;
 
 // A stick under the scratch root: the fixture's PIONEER (export 128) and
 // Contents, `engineDb` as Engine's m.db, `baseline` as Seabass's record.
+// An empty `baseline` leaves the stick without one.
 testing::EngineChangeStick makeStick(const std::string &name, const std::string &engineDb,
                                      const std::string &baseline)
 {
@@ -93,6 +101,7 @@ testing::EngineChangeStick makeStick(const std::string &name, const std::string 
     fs::create_directories(stick.root);
     stick.pioneer = stick.root / "PIONEER";
     stick.engine = stick.root / "Engine Library";
+    stick.db = pathToUtf8(stick.engine / "Database2" / "m.db");
     std::error_code ec;
     testing::copyPioneerFixture(g_fixture / "stick" / "PIONEER", stick.pioneer, ec);
     assert(!ec && "the fixture's PIONEER copies");
@@ -101,11 +110,13 @@ testing::EngineChangeStick makeStick(const std::string &name, const std::string 
     fs::create_directories(stick.engine / "Database2");
     fs::copy_file(g_fixture / "engine" / engineDb, stick.engine / "Database2" / "m.db", ec);
     assert(!ec && "the Engine state copies");
+    if (baseline.empty()) {
+        return stick;  // no record yet: the first visit
+    }
     const fs::path record = seabass::infrastructure::paths::stickRekordboxBaseline(stick.root);
     fs::create_directories(record.parent_path());
     fs::copy_file(g_fixture / "baseline" / baseline, record, ec);
     assert(!ec && "the record copies");
-    stick.db = pathToUtf8(stick.engine / "Database2" / "m.db");
     return stick;
 }
 
@@ -744,6 +755,110 @@ void testSaveUndoSave()
     std::cout << "save again: the same m.db as save 1 but its write times, nothing left to propose OK\n";
 }
 
+// --- in sync (#97) -----------------------------------------------------
+
+void testInSync()
+{
+    // The record at 128 and Engine after save 2: nothing to do.
+    {
+        const auto stick = makeStick("t73_insync_recorded", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+        const std::string record = fileBytes(recordOf(stick));
+        RekordboxExportSyncController controller;
+        analyze(controller, stick);
+        assert(controller.hasBaseline() && controller.proposalEmpty());
+        assert(!controller.canStage() && "nothing ticked and nothing to decline: nothing to stage");
+        LibraryEditSession *session = sessionOf(stick);
+        controller.stageSelected();
+        assert(session->pendingCount() == 0 && "a press stages nothing");
+        controller.rememberExport();
+        assert(session->pendingCount() == 0 && !session->writing() && "the record is there already");
+        assert(fileBytes(recordOf(stick)) == record);
+        std::cout << "insync: with the record, nothing to stage and nothing saved OK\n";
+    }
+
+    // No record yet: the first visit after Create Engine Library.
+    const auto stick = makeStick("t73_insync_first", "m-after-R3d.db", "");
+    assert(!fs::exists(recordOf(stick)));
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    for (const Row &row : controller.rows()->rows()) {
+        std::cerr << "  first visit lists: " << row.kind.toStdString() << " " << describe(row) << "\n";
+    }
+    assert(!controller.hasBaseline());
+    assert(controller.proposalEmpty() && "the libraries match");
+    LibraryEditSession *session = sessionOf(stick);
+    assert(!session->canUndo());
+
+    QSignalSpy recorded(&controller, &RekordboxExportSyncController::recordSaved);
+    QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+    QSignalSpy pending(session, &LibraryEditSession::pendingChanged);
+    controller.rememberExport();
+    assert(session->writing() && "saved at once, nothing left for the user to stage and save");
+    for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
+        finished.wait(100);
+    }
+    assert(!finished.isEmpty() && "the save finished");
+    waitUntilIdle(controller);
+    const QVariantMap summary = finished.takeFirst().at(0).toMap();
+    std::cout << "  remember: error \"" << summary.value("error").toString().toStdString() << "\", warning \""
+              << summary.value("warning").toString().toStdString() << "\"\n";
+    assert(summary.value("error").toString().isEmpty());
+    assert(summary.value("warning").toString().isEmpty());
+    assert(session->pendingCount() == 0 && !session->dirty());
+    assert(controller.stagedCount() == 0);
+
+    std::string error;
+    const auto baseline = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(error.empty() && baseline && "the record is on the stick");
+    assert(baseline->pdbSequence == 128);
+    assert(!baseline->tracks.empty());
+    assert(recorded.size() == 1 && "the page is told what was recorded");
+    const QString said = recorded.takeFirst().at(0).toString();
+    std::cout << "  said: " << said.toStdString() << "\n";
+    assert(said.startsWith(QStringLiteral("Remembered this export: ")));
+    assert(said.contains(QString::number(baseline->tracks.size()) + QStringLiteral(" tracks")));
+    assert(!said.contains(QStringLiteral("record")) && !said.contains(QStringLiteral("0 ")));
+    assert(controller.hasBaseline() && controller.proposalEmpty() && controller.baselineSequence() == 128);
+    assert(session->canUndo() && "backed up first: Undo Last Save takes it away");
+    std::cout << "insync: without a record, Remember this export records export 128 at once OK\n";
+
+    controller.undoLastOperation();
+    for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
+        finished.wait(100);
+    }
+    assert(!finished.isEmpty() && "the undo finished");
+    waitUntilIdle(controller);
+    assert(finished.takeFirst().at(0).toMap().value("error").toString().isEmpty());
+    assert(!fs::exists(recordOf(stick)) && "the undo takes the first record away");
+    assert(!controller.hasBaseline() && controller.proposalEmpty());
+    assert(recorded.isEmpty() && "an undo is not a record saved");
+    std::cout << "insync: Undo Last Save takes the first record away again OK\n";
+
+    // Not in sync, every row unticked: Stage Selected records what was
+    // left (declined), and the page is told so, the save counting nothing.
+    {
+        const auto other = makeStick("t73_insync_declined", "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+        RekordboxExportSyncController page;
+        analyze(page, other);
+        assert(page.canStage() && page.checkedCount() > 0);
+        for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
+                                    "cuesToEngine", "restoresToRekordbox"}) {
+            page.setSectionIncluded(QString::fromLatin1(section), false);
+        }
+        assert(page.checkedCount() == 0);
+        assert(page.canStage() && "nothing ticked, but the rows left unticked are recorded as declined");
+        page.stageSelected();
+        LibraryEditSession *otherSession = sessionOf(other);
+        assert(otherSession->pendingCount() == 1 && "the record alone");
+        QSignalSpy saidDeclined(&page, &RekordboxExportSyncController::recordSaved);
+        const QVariantMap declinedSummary = waitForSave(otherSession, page, false);
+        assert(declinedSummary.value("total").toInt() == 0);
+        assert(saidDeclined.size() == 1);
+        assert(saidDeclined.takeFirst().at(0).toString() == QStringLiteral("Recorded what was left unselected."));
+        std::cout << "insync: a stage of nothing ticked records the declines and says so OK\n";
+    }
+}
+
 // --- replay ------------------------------------------------------------
 
 void testReplay()
@@ -785,7 +900,7 @@ void testReplay()
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|replay\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -806,6 +921,8 @@ int main(int argc, char **argv)
         testProposal();
     } else if (which == "save") {
         testSaveUndoSave();
+    } else if (which == "insync") {
+        testInSync();
     } else if (which == "replay") {
         testReplay();
     } else {

@@ -272,6 +272,132 @@ struct Planned
     std::function<std::unique_ptr<PendingChange>(int engineChanges)> make;
 };
 
+// An item's key and its cue items' keys.
+std::vector<std::string> withCueItems(const domain::EngineUpdateItemHeader &header)
+{
+    std::vector<std::string> keys{header.key};
+    for (const auto &item : header.cueItems) {
+        keys.push_back(item.key);
+    }
+    return keys;
+}
+
+// What a stage records beside its changes (domain::nextBaseline): every
+// item the page offered, the items it applies (the ticked rows', and the
+// conflicts decided without a write), and the items left unticked, which
+// are declined. anyTicked: some ticked row makes a change of its own.
+// stageSelected() records this; canStage() asks whether it holds anything.
+struct RecordPlan
+{
+    std::set<std::string> offered;
+    std::set<std::string> applied;
+    std::map<std::string, std::string> declined;
+    bool anyTicked = false;
+};
+
+RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncAnalysis &analysis)
+{
+    RecordPlan record;
+    std::set<std::string> &offered = record.offered;
+    std::set<std::string> &applied = record.applied;
+    std::map<std::string, std::string> &declined = record.declined;
+    for (const Row &row : rows) {
+        for (const auto &key : withCueItems(row.header)) {
+            offered.insert(key);
+        }
+    }
+    for (const auto &key : analysis.proposal.declinedSuppressed) {
+        offered.insert(key);
+    }
+    std::set<int> answeredByARow;
+    for (const Row &row : rows) {
+        if (RekordboxExportSyncListModel::writable(row.section) && row.included && row.fromConflictUid >= 0) {
+            answeredByARow.insert(row.fromConflictUid);
+        }
+    }
+    // A row is declined only when the user unticked it itself: one whose
+    // dependency is unticked went with it (a playlist's create takes its
+    // members) and is neither applied nor declined, so it is offered again
+    // with the record before. Declined on its own key, a member would stay
+    // out after rekordbox renamed its playlist and the create came back.
+    std::set<std::string> listedKeys;
+    std::set<std::string> tickedKeys;
+    for (const Row &row : rows) {
+        if (row.section == Section::Conflicts || RekordboxExportSyncListModel::writable(row.section)) {
+            listedKeys.insert(row.header.key);
+        }
+        for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
+            listedKeys.insert(conflict->header.key);
+        }
+        if (RekordboxExportSyncListModel::writable(row.section) && row.included) {
+            tickedKeys.insert(row.header.key);
+        }
+    }
+    const auto untickedWithADependency = [&](const Row &row) {
+        return std::any_of(row.header.dependsOn.begin(), row.header.dependsOn.end(), [&](const std::string &key) {
+            return listedKeys.count(key) && !tickedKeys.count(key);
+        });
+    };
+    for (const Row &row : rows) {
+        if (row.section == Section::Conflicts) {
+            // An answer whose side writes nothing is decided all the same:
+            // the item advances, and Engine keeps what it has.
+            // Each conflict the row answers: its own, or a group's.
+            for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
+                const bool emptyAnswer = !row.resolvedSide.isEmpty()
+                    && (row.resolvedSide == QLatin1String("rekordbox") ? conflict->rekordboxChoice.empty()
+                                                                       : conflict->engineChoice.empty());
+                // Left open on a run without a record (unanswered, or its
+                // answer unticked): recorded as the rekordbox side stands,
+                // so it reads as Engine's own from now on and is not asked
+                // again (the plan's step 10 review decision). Keeping "the
+                // record before" would take the item out of a record there
+                // was none of, and a member both sides hold would then come
+                // back as a change of both. A refusal answers nothing and
+                // comes back.
+                const bool refusal = conflict->rekordboxChoice.empty() && conflict->engineChoice.empty();
+                const bool openWithoutRecord = !analysis.baseline && !refusal;
+                if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
+                    for (const auto &key : withCueItems(conflict->header)) {
+                        applied.insert(key);
+                    }
+                }
+            }
+            continue;  // unanswered: comes back, never declined
+        }
+        if (!RekordboxExportSyncListModel::writable(row.section)) {
+            continue;  // Engine's own and the refused adds are never written
+        }
+        if (row.included) {
+            continue;  // applied below, through the change it rides in
+        }
+        if (row.fromConflictUid >= 0) {
+            continue;  // an answer left unticked leaves its conflict open
+        }
+        if (untickedWithADependency(row)) {
+            continue;  // unticked with what it depends on: offered, not declined
+        }
+        declined[row.header.key] = row.header.rekordboxState;
+        for (const auto &item : row.header.cueItems) {
+            declined[item.key] = item.rekordboxState;
+        }
+    }
+    // What the ticked rows apply: each rides in one change of the save.
+    for (const Row &row : rows) {
+        if (!RekordboxExportSyncListModel::writable(row.section) || !row.included || !row.edit) {
+            continue;
+        }
+        record.anyTicked = true;
+        for (const auto &key : withCueItems(row.header)) {
+            applied.insert(key);
+        }
+    }
+    for (const auto &key : applied) {
+        declined.erase(key);
+    }
+    return record;
+}
+
 }  // namespace
 
 RekordboxExportSyncController::RekordboxExportSyncController(QObject *parent) : StagedCueEditController(parent)
@@ -280,6 +406,11 @@ RekordboxExportSyncController::RekordboxExportSyncController(QObject *parent) : 
     // from many places: an analysis, a tick, an answer, a row leaving once
     // its change landed. The model says so for all of them.
     connect(&m_model, &RekordboxExportSyncListModel::countsChanged, this, &RekordboxExportSyncController::listChanged);
+    // canStage reads the rows and the analysis, and the rows change before
+    // the analysis they came from is in place.
+    connect(this, &RekordboxExportSyncController::listChanged, this, &RekordboxExportSyncController::canStageChanged);
+    connect(this, &RekordboxExportSyncController::analysisChanged, this,
+            &RekordboxExportSyncController::canStageChanged);
 }
 
 RekordboxExportSyncController::~RekordboxExportSyncController() = default;
@@ -310,6 +441,75 @@ QString RekordboxExportSyncController::introText() const
 bool RekordboxExportSyncController::proposalEmpty() const
 {
     return m_analysis && m_analysis->proposal.empty();
+}
+
+// The same test stageSelected() answers "nothing to stage" with: no
+// change, nothing declined, and a record already on the stick.
+bool RekordboxExportSyncController::canStage() const
+{
+    if (!m_analysis) {
+        return false;
+    }
+    if (!m_analysis->proposal.hasBaseline) {
+        return true;  // the first record is worth staging on its own
+    }
+    const RecordPlan record = recordPlanOf(m_model.rows(), *m_analysis);
+    return record.anyTicked || !record.declined.empty();
+}
+
+void RekordboxExportSyncController::rememberExport()
+{
+    if (busy() || !m_analysis || !m_analysis->proposal.empty() || m_analysis->proposal.hasBaseline) {
+        return;  // only for matching libraries on a stick without a record
+    }
+    attachSession();
+    LibraryEditSession *s = session();
+    if (!s) {
+        setErrorMessage("This stick's library could not be identified; nothing was changed.");
+        return;
+    }
+    if (s->writing()) {
+        setErrorMessage("A save is running. Try again once it has finished.");
+        return;
+    }
+    // The save writes everything staged; the record is saved alone.
+    if (s->dirty()) {
+        setErrorMessage("Save or discard the staged changes first; nothing was changed.");
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+
+    const RekordboxExportSyncAnalysis &analysis = *m_analysis;
+    const RecordPlan record = recordPlanOf(m_model.rows(), analysis);
+    const auto stickRelativeOf = [root = analysis.stickRoot](const std::string &filePath) {
+        return baselineStickRelativePath(root, filePath);
+    };
+    const auto pathKeyOf = [](const std::string &relative) { return baselinePathKey(relative); };
+    domain::RekordboxBaseline next =
+        domain::nextBaseline(nullptr, analysis.rekordbox, analysis.rekordboxPlaylists, analysis.currentSequence,
+                             record.offered, record.applied, record.declined, stickRelativeOf, pathKeyOf);
+    // Said as what the user knows of the export, not as "1 record".
+    const auto tracks = static_cast<int>(next.tracks.size());
+    const auto playlists = static_cast<int>(
+        std::count_if(next.playlists.begin(), next.playlists.end(), [](const auto &p) { return !p.folder; }));
+    const QString text = QStringLiteral("Remembered this export: %1 %2 and %3 %4.")
+                             .arg(tracks)
+                             .arg(tracks == 1 ? QStringLiteral("track") : QStringLiteral("tracks"))
+                             .arg(playlists)
+                             .arg(playlists == 1 ? QStringLiteral("playlist") : QStringLiteral("playlists"));
+
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    changes.push_back(std::make_unique<RecordRekordboxBaselineChange>(analysis.stickRoot, std::move(next),
+                                                                      RecordRekordboxBaselineChange::AppliedBy{}));
+    if (!s->stageAll(std::move(changes))) {
+        return;  // the session said why (a lock, a read-only backup, another page)
+    }
+    m_stagedIds = {RecordRekordboxBaselineChange::idString()};
+    m_rememberedText = text;
+    // Saved at once, as Undo Last Save is: there is nothing to choose, so
+    // nothing is left staged for a Save button to offer.
+    s->save();
 }
 
 bool RekordboxExportSyncController::onlyCues() const
@@ -413,9 +613,21 @@ void RekordboxExportSyncController::attachSession()
 // A save of this stick ended (this page's, or the undo of one): what is
 // staged of ours is whatever the session still holds, and the page is
 // analysed again, so it shows what is left.
-void RekordboxExportSyncController::onSessionSaveFinished()
+void RekordboxExportSyncController::onSessionSaveFinished(const QVariantMap &summary)
 {
     LibraryEditSession *s = session();
+    // A save of the record and nothing else counts no unit, so the
+    // session's summary has nothing to say about it ("0 records
+    // recorded"): the page says it in the words given here.
+    const QString record = RecordRekordboxBaselineChange::idString();
+    const bool recordLanded = m_stagedIds.contains(record) && !(s && s->hasChange(record));
+    const QString remembered = std::exchange(m_rememberedText, QString());
+    const bool whole = summary.value(QStringLiteral("error")).toString().isEmpty()
+        && summary.value(QStringLiteral("warning")).toString().isEmpty()
+        && !summary.value(QStringLiteral("cancelled")).toBool();
+    if (recordLanded && whole && summary.value(QStringLiteral("total")).toInt() == 0) {
+        emit recordSaved(remembered.isEmpty() ? QStringLiteral("Recorded what was left unselected.") : remembered);
+    }
     QStringList still;
     for (const QString &id : std::as_const(m_stagedIds)) {
         if (s && s->hasChange(id)) {
@@ -789,97 +1001,10 @@ void RekordboxExportSyncController::stageSelected()
         static_cast<int>(std::count_if(planned.begin(), planned.end(), [](const Planned &p) { return p.engine; }));
 
     // The record: what the page offered, what it stages, what was left.
-    std::set<std::string> offered;
-    std::set<std::string> applied;
-    std::map<std::string, std::string> declined;
-    const auto withCueItems = [](const domain::EngineUpdateItemHeader &header) {
-        std::vector<std::string> keys{header.key};
-        for (const auto &item : header.cueItems) {
-            keys.push_back(item.key);
-        }
-        return keys;
-    };
-    for (const Row &row : rows) {
-        for (const auto &key : withCueItems(row.header)) {
-            offered.insert(key);
-        }
-    }
-    for (const auto &key : analysis.proposal.declinedSuppressed) {
-        offered.insert(key);
-    }
-    std::set<int> answeredByARow;
-    for (const Row &row : rows) {
-        if (RekordboxExportSyncListModel::writable(row.section) && row.included && row.fromConflictUid >= 0) {
-            answeredByARow.insert(row.fromConflictUid);
-        }
-    }
-    // A row is declined only when the user unticked it itself: one whose
-    // dependency is unticked went with it (a playlist's create takes its
-    // members) and is neither applied nor declined, so it is offered again
-    // with the record before. Declined on its own key, a member would stay
-    // out after rekordbox renamed its playlist and the create came back.
-    std::set<std::string> listedKeys;
-    std::set<std::string> tickedKeys;
-    for (const Row &row : rows) {
-        if (row.section == Section::Conflicts || RekordboxExportSyncListModel::writable(row.section)) {
-            listedKeys.insert(row.header.key);
-        }
-        for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
-            listedKeys.insert(conflict->header.key);
-        }
-        if (RekordboxExportSyncListModel::writable(row.section) && row.included) {
-            tickedKeys.insert(row.header.key);
-        }
-    }
-    const auto untickedWithADependency = [&](const Row &row) {
-        return std::any_of(row.header.dependsOn.begin(), row.header.dependsOn.end(), [&](const std::string &key) {
-            return listedKeys.count(key) && !tickedKeys.count(key);
-        });
-    };
-    for (const Row &row : rows) {
-        if (row.section == Section::Conflicts) {
-            // An answer whose side writes nothing is decided all the same:
-            // the item advances, and Engine keeps what it has.
-            // Each conflict the row answers: its own, or a group's.
-            for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(row)) {
-                const bool emptyAnswer = !row.resolvedSide.isEmpty()
-                    && (row.resolvedSide == QLatin1String("rekordbox") ? conflict->rekordboxChoice.empty()
-                                                                       : conflict->engineChoice.empty());
-                // Left open on a run without a record (unanswered, or its
-                // answer unticked): recorded as the rekordbox side stands,
-                // so it reads as Engine's own from now on and is not asked
-                // again (the plan's step 10 review decision). Keeping "the
-                // record before" would take the item out of a record there
-                // was none of, and a member both sides hold would then come
-                // back as a change of both. A refusal answers nothing and
-                // comes back.
-                const bool refusal = conflict->rekordboxChoice.empty() && conflict->engineChoice.empty();
-                const bool openWithoutRecord = !analysis.baseline && !refusal;
-                if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
-                    for (const auto &key : withCueItems(conflict->header)) {
-                        applied.insert(key);
-                    }
-                }
-            }
-            continue;  // unanswered: comes back, never declined
-        }
-        if (!RekordboxExportSyncListModel::writable(row.section)) {
-            continue;  // Engine's own and the refused adds are never written
-        }
-        if (row.included) {
-            continue;  // applied below, through the change it rides in
-        }
-        if (row.fromConflictUid >= 0) {
-            continue;  // an answer left unticked leaves its conflict open
-        }
-        if (untickedWithADependency(row)) {
-            continue;  // unticked with what it depends on: offered, not declined
-        }
-        declined[row.header.key] = row.header.rekordboxState;
-        for (const auto &item : row.header.cueItems) {
-            declined[item.key] = item.rekordboxState;
-        }
-    }
+    RecordPlan record = recordPlanOf(rows, analysis);
+    std::set<std::string> &offered = record.offered;
+    std::set<std::string> &applied = record.applied;
+    std::map<std::string, std::string> &declined = record.declined;
 
     std::vector<std::unique_ptr<PendingChange>> changes;
     RecordRekordboxBaselineChange::AppliedBy appliedBy;

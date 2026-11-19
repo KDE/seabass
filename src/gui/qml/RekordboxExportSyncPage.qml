@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQml.Models
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Sync after Rekordbox Export (docs/sync-after-rekordbox-export-plan.md,
 // "The page"): what rekordbox changed since this stick was last saved, as
@@ -65,12 +66,65 @@ Page {
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "rekordbox-export-sync"
         saveLabel: "Sync Engine"
+        // A save that landed whole is the toast below; anything short of
+        // that still gets the summary dialog (#97).
+        quietCleanSaves: true
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
             ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
         stickLabel: root.stickLabel
         rekordboxPath: root.rekordboxPath
         enginePath: root.enginePath
+    }
+
+    // A save that landed whole is said over the page with the countdown
+    // toast, as the other editing pages say theirs: the summary's own
+    // words ("16 changes made"), "Changes undone." after an undo, and for
+    // a save of the record alone what the controller says it recorded
+    // (recordSaved), since that counts nothing in the summary (#97).
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            // The page may be gone by the time this runs (a save finishing
+            // as the user leaves), and root is null then.
+            Qt.callLater(() => { if (root) { root.sayWholeSave(summary); } });
+        }
+    }
+    Connections {
+        target: root.controller
+        ignoreUnknownSignals: true
+        function onRecordSaved(text) {
+            savedToast.show(text);
+        }
+    }
+    function sayWholeSave(summary) {
+        if (!summary || !(summary.written > 0)) {
+            return;
+        }
+        const whole = !(summary.error && summary.error.length > 0)
+            && !(summary.warning && summary.warning.length > 0) && summary.cancelled !== true
+            && !(summary.skipped > 0) && summary.written === summary.total;
+        if (whole) {
+            const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
+            savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
+                : summary.written + " " + unit + " " + summary.verb);
+        }
+    }
+    // The summary's unit is plural ("changes", "playlists"); one of them
+    // reads as one. The same rule OperationSummaryDialog uses.
+    function singular(unit) {
+        if (unit.endsWith("ies")) {
+            return unit.substring(0, unit.length - 3) + "y";
+        }
+        return unit.endsWith("s") ? unit.substring(0, unit.length - 1) : unit;
     }
 
     // What each section is called, and what its header says beside it.
@@ -404,7 +458,11 @@ Page {
                         visible: root.controller.analyzed
                         wrapMode: Text.WordWrap
                         color: Theme.text
-                        text: root.controller.proposalEmpty
+                        // In sync once the record is there; before it, the
+                        // row below offers to make one.
+                        text: root.controller.proposalEmpty && root.controller.hasBaseline
+                            ? "This stick is in sync: Engine already matches its rekordbox library."
+                            : root.controller.proposalEmpty
                             ? "Engine already matches this stick's rekordbox library."
                             : "Rekordbox has changed the library on this stick. This page brings everything back "
                               + "in step with Engine."
@@ -522,15 +580,62 @@ Page {
                     ToolTip.text: "Take everything staged here back out of the changes to save"
                     onClicked: root.controller.unstageAll()
                 }
+                // Not offered while the libraries match: there is nothing
+                // to stage then (#97). Disabled while nothing is selected
+                // and nothing would be recorded, and says why on hover: a
+                // disabled control gets no hover events of its own, so the
+                // handler sits on the slot around it (as BackBreadcrumb's).
+                Item {
+                    id: stageSlot
+                    objectName: "stageSlot"
+                    visible: !root.controller.proposalEmpty
+                    implicitWidth: stageButton.implicitWidth
+                    implicitHeight: stageButton.implicitHeight
+                    readonly property bool tipShown: stageHover.hovered
+                    Button {
+                        id: stageButton
+                        objectName: "stageButton"
+                        anchors.fill: parent
+                        highlighted: true
+                        text: root.controller.stagedCount > 0 ? "Stage Selected Again" : "Stage Selected"
+                        readonly property bool nothingToStage: root.controller.analyzed
+                            && root.controller.canStage !== true
+                        enabled: root.idle && root.controller.analyzed && !stageButton.nothingToStage
+                        readonly property string tip: stageButton.nothingToStage
+                            ? "Nothing is selected. Tick the rows to stage, or answer a conflict."
+                            : "Stage every selected row, and the record of what was left, as one batch; "
+                              + "Sync Engine writes it. Staging again replaces the batch."
+                        ToolTip.visible: stageHover.hovered
+                        ToolTip.text: stageButton.tip
+                        onClicked: root.controller.stageSelected()
+                    }
+                    HoverHandler { id: stageHover }
+                }
+            }
+
+            // The libraries match and the stick has no record yet: the
+            // record is what the next sync compares against, so it gets a
+            // button of its own that saves it at once, not an empty stage
+            // and a Save (#97).
+            RowLayout {
+                objectName: "rememberRow"
+                Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                visible: root.controller.analyzed && root.controller.proposalEmpty && !root.controller.hasBaseline
+                Label {
+                    objectName: "rememberExportText"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "Records this rekordbox export as the starting point, so the next sync can tell what "
+                        + "changed."
+                }
                 Button {
-                    objectName: "stageButton"
+                    objectName: "rememberExportButton"
                     highlighted: true
-                    text: root.controller.stagedCount > 0 ? "Stage Selected Again" : "Stage Selected"
-                    enabled: root.idle && root.controller.analyzed
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Stage every selected row, and the record of what was left, as one batch; "
-                        + "Sync Engine writes it. Staging again replaces the batch."
-                    onClicked: root.controller.stageSelected()
+                    text: "Remember this export"
+                    enabled: root.idle
+                    onClicked: root.controller.rememberExport()
                 }
             }
 

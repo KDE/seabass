@@ -278,6 +278,17 @@ with it, one line each, from the row's own payload (the model's
 Save label "Sync Engine". After the save the badge is gone, because the
 save loop levels the counter and the baseline is recorded.
 
+**Decision (#97, 2026-11-19):** when the libraries match the page offers
+no stage and no save. With a baseline it says the stick is in sync.
+Without one it offers "Remember this export", which records the baseline
+through the session's save at once (`rememberExport()`: staged alone and
+saved, backed up as every save is), so the first visit never asks for an
+empty stage and a Save reading "(1)". Stage Selected is disabled, with
+the reason in its tooltip, whenever staging would stage nothing
+(`canStage`). A save that landed whole is the confirmation toast, as on
+the other editing pages; a save of the record alone counts no unit, so
+the controller says what it recorded (`recordSaved`).
+
 The badge: `DetectedStickListModel` gains an `engineUpdate` role with
 the values `""`, `"cues"` and `"library"`, computed by an `AsyncRequest`
 per mounted stick with both catalogs in `MediaController` (started in

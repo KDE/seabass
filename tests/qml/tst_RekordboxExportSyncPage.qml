@@ -546,10 +546,26 @@ TestCase {
         const undo = findChild(page.header, "undoLastSaveButton");
         verify(undo.visible, "Undo is offered");
         verify(undo.enabled);
+        // The save is confirmed by the toast, in the summary's words, not
+        // by a dialog to close (#97).
+        const toast = findChild(page, "savedToast");
+        verify(toast !== null, "the page has its confirmation toast");
+        tryCompare(findChild(toast, "confirmationToastLabel"), "text",
+                   summary.written + " " + summary.unit + " " + summary.verb, 5000);
+        verify(toast.showing);
         const dialog = findChild(page, "summaryDialog");
-        if (dialog && dialog.visible) {
-            dialog.close();
-        }
+        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+        // The record is there and nothing is selected: the conflicts left
+        // need an answer first. Stage Selected is not offered for nothing,
+        // and says why on hover (#97).
+        compare(page.controller.checkedCount, 0);
+        compare(page.controller.canStage, false);
+        const stage = findChild(page.header, "stageButton");
+        verify(stage.visible);
+        compare(stage.enabled, false, "nothing to stage");
+        compare(stage.tip, "Nothing is selected. Tick the rows to stage, or answer a conflict.");
+        mouseMove(stage);
+        tryVerify(() => findChild(page.header, "stageSlot").tipShown, 2000, "the disabled button says why on hover");
         if (screenshotDir && screenshotDir.length > 0) {
             listOf(page).positionViewAtBeginning();
             // At the top the header unfolds; the picture waits for all of it.
@@ -560,6 +576,103 @@ TestCase {
             wait(100);
             grabImage(page).save(screenshotDir + "/rekordbox-export-sync-page-after-save.png");
         }
+    }
+
+    // The libraries match (#97). A stand-in controller: matching
+    // libraries and a stick without a record need a stick of their own,
+    // which the controller's test has (testshark_t73_test insync); here,
+    // what the page offers in each case.
+    Component {
+        id: matchingControllerComponent
+        QtObject {
+            property var rows: null
+            readonly property var sectionCounts: ({})
+            readonly property var sectionCheckedCounts: ({})
+            readonly property var categoryCounts: ({})
+            property bool analyzed: true
+            property bool busy: false
+            property bool writing: false
+            property bool canUndo: false
+            property bool onlyCues: false
+            property bool proposalEmpty: true
+            property bool hasBaseline: true
+            property bool canStage: false
+            property bool scanCancellable: false
+            property int checkedCount: 0
+            property int conflictCount: 0
+            property int stagedCount: 0
+            property int scanCurrent: 0
+            property int scanTotal: 0
+            property string scanLabel: ""
+            property string errorMessage: ""
+            property string statusMessage: ""
+            property string introText: ""
+            readonly property var legendTexts: ({})
+            property int stageCalls: 0
+            property int rememberCalls: 0
+            signal scanCancelled()
+            signal recordSaved(string text)
+            function analyze() {}
+            function cancelScan() {}
+            function setIncluded() {}
+            function setSectionIncluded() {}
+            function resolveConflict() {}
+            function clearConflictResolution() {}
+            function resolveAllConflicts() {}
+            function clearAllConflictResolutions() {}
+            function stageSelected() { stageCalls++; }
+            function unstageAll() {}
+            function undoLastOperation() {}
+            function rememberExport() { rememberCalls++; }
+        }
+    }
+
+    // With a record: in sync, said plainly, and nothing to stage or save.
+    function test_matchingLibrariesWithARecordOfferNothing() {
+        const fake = createTemporaryObject(matchingControllerComponent, testCase,
+                                           {rows: stickFixture.emptyExportSyncRows()});
+        const page = createTemporaryObject(pageComponent, testCase, {controller: fake});
+        verify(page !== null);
+        waitForRendering(page);
+        compare(findChild(page.header, "explanationLabel").text,
+                "This stick is in sync: Engine already matches its rekordbox library.");
+        compare(findChild(page.header, "stageButton").visible, false, "no Stage Selected");
+        compare(findChild(page.header, "rememberRow").visible, false, "nothing to remember either");
+        const save = findChild(page, "saveButton");
+        verify(save === null || !save.visible, "no save");
+    }
+
+    // Without a record: its own button, saying what it does, and the toast
+    // after it in the controller's words.
+    function test_matchingLibrariesWithoutARecordOfferToRememberTheExport() {
+        const fake = createTemporaryObject(matchingControllerComponent, testCase,
+                                           {rows: stickFixture.emptyExportSyncRows(), hasBaseline: false,
+                                            canStage: true});
+        const page = createTemporaryObject(pageComponent, testCase, {controller: fake});
+        verify(page !== null);
+        waitForRendering(page);
+        compare(findChild(page.header, "explanationLabel").text,
+                "Engine already matches this stick's rekordbox library.");
+        compare(findChild(page.header, "stageButton").visible, false, "no Stage Selected for an empty change");
+        const row = findChild(page.header, "rememberRow");
+        verify(row.visible, "the page offers to remember the export");
+        const remember = findChild(row, "rememberExportButton");
+        compare(remember.text, "Remember this export");
+        verify(remember.enabled);
+        compare(findChild(row, "rememberExportText").text,
+                "Records this rekordbox export as the starting point, so the next sync can tell what changed.");
+        // One left line: the sentence starts where the figures do.
+        compare(Math.round(findChild(row, "rememberExportText").mapToItem(page, 0, 0).x),
+                Math.round(findChild(page.header, "checkedFigure").mapToItem(page, 0, 0).x));
+        mouseClick(remember);
+        compare(fake.rememberCalls, 1);
+        compare(fake.stageCalls, 0);
+        fake.recordSaved("Remembered this export: 11 tracks and 3 playlists.");
+        const toast = findChild(page, "savedToast");
+        tryCompare(toast, "showing", true, 2000);
+        compare(findChild(toast, "confirmationToastLabel").text, "Remembered this export: 11 tracks and 3 playlists.");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible);
     }
 
     // One left line: the breadcrumb, the intro, a section header's box

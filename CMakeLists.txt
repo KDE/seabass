@@ -3198,7 +3198,7 @@ if(TARGET seabass_edit)
     if(TARGET seabass_taglib)
         target_link_libraries(testshark_t73_test PRIVATE seabass_taglib)
     endif()
-    foreach(_t73_case fixture proposal save replay)
+    foreach(_t73_case fixture proposal save insync replay)
         add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73 ${_t73_case})
         set_tests_properties(testshark_t73_${_t73_case}_test PROPERTIES LABELS "integration"
