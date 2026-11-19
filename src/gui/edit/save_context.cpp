@@ -114,6 +114,7 @@ infrastructure::backup::FilesystemBackupStore &SaveContext::archiveStore()
     if (!m_backupStore) {
         m_backupStore = std::make_unique<infrastructure::backup::FilesystemBackupStore>(
             infrastructure::backup::backupDirForStickRoot(stickRoot()));
+        m_backupStore->setArchiveRepairLog([this](const std::string &note) { log().record("save: " + note); });
     }
     return *m_backupStore;
 }
@@ -325,9 +326,6 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets, bool co
                 noteSaveInProgress();
             } else if (!files.empty()) {
                 record = archiveStore().addToArchive(existing->second, files);
-                if (!archiveStore().lastArchiveRepair().empty()) {
-                    log().record(label + ": " + archiveStore().lastArchiveRepair());
-                }
             } else {
                 // Nothing to copy into the record this save already has;
                 // only absent files to note in it. Logged by its id.
@@ -497,9 +495,6 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
         noteSaveInProgress();
     } else {
         record = archiveStore().addToArchive(existing->second, {file});
-        if (!archiveStore().lastArchiveRepair().empty()) {
-            log().record(label + ": " + archiveStore().lastArchiveRepair());
-        }
     }
     log().record(label + ": backed up " + pathToUtf8(pathFromUtf8(file).filename()) + " -> " + record.path);
     m_backedUp[application::normalizedPathKey(file)] = record.id;

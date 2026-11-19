@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/backup/cover_file_late.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -181,7 +182,12 @@ void tornAt(const fs::path &root, const std::string &name, std::uint64_t (*cut)(
     assert(length > layout.oldLength && length < layout.newLength);
     writeFile(s.archive, after.substr(0, length));
 
-    // Undo: the recorded files come back, and the tear is said.
+    // Undo: the recorded files come back, and the tear is said -- in
+    // lastArchiveRepair() and to the log the caller set. The restore only
+    // reads: the archive is as torn afterwards as before.
+    const std::string torn = readFile(s.archive);
+    std::vector<std::string> said;
+    s.store.setArchiveRepairLog([&said](const std::string &note) { said.push_back(note); });
     s.changeEverything();
     const bool restored = s.store.restore(s.id);
     if (!restored) {
@@ -191,6 +197,8 @@ void tornAt(const fs::path &root, const std::string &name, std::uint64_t (*cut)(
     s.assertRecordedFilesBack();
     assert(readFile(s.next) == "written by the save" && "the torn entry was never recorded, so nothing of it comes back");
     assert(contains(s.store.lastArchiveRepair(), "the last addition to backup " + s.id + " was incomplete"));
+    assert(said.size() == 1 && said.front() == s.store.lastArchiveRepair());
+    assert(readFile(s.archive) == torn && "a restore leaves the torn archive byte for byte as it was");
 
     // The next step of a save: the append goes onto the recorded part,
     // and the record holds one more file, read without any repair.
@@ -198,6 +206,7 @@ void tornAt(const fs::path &root, const std::string &name, std::uint64_t (*cut)(
     const auto record = s.store.addToArchive(s.id, {pathToUtf8(s.next)});
     assert(record.filePaths.size() == RecordedFiles + 1);
     assert(contains(s.store.lastArchiveRepair(), "was incomplete"));
+    assert(said.size() == 2 && contains(said.back(), "cut off before adding to it"));
     {
         sb::PosixArchiveFile file(s.archive, sb::PosixArchiveFile::OpenMode::ReadOnly);
         std::string error;
@@ -258,6 +267,62 @@ int main()
         s.assertRecordedFilesBack();
         assert(readFile(s.next) == s.nextOriginal);
         std::cout << "torn append (garbage after the end record): recorded files restore, the next append works OK\n";
+    }
+
+    // Two trailers that both name every recorded file: an append of a
+    // file that was gone by then writes a new trailer and adds nothing.
+    // Under a torn tail the NEWEST of them is the recorded part, so the
+    // cut leaves every byte up to it, and the older one is dead space.
+    {
+        Stick s(root / "newest-wins");
+        const fs::path gone = s.root / "gone.db";
+        const std::uintmax_t olderEnd = fs::file_size(s.archive);
+        s.store.addToArchive(s.id, {pathToUtf8(gone)});
+        const std::string whole = readFile(s.archive);
+        assert(whole.size() > olderEnd && "an append of nothing still writes a trailer");
+        writeFile(s.archive, whole + seabass::testing::incompressible(5000, 8));
+        s.changeEverything();
+        assert(s.store.restore(s.id));
+        s.assertRecordedFilesBack();
+        assert(contains(s.store.lastArchiveRepair(), "read from the first " + std::to_string(whole.size()) + " of"));
+        writeFile(s.next, s.nextOriginal);
+        assert(s.store.addToArchive(s.id, {pathToUtf8(s.next)}).filePaths.size() == RecordedFiles + 1);
+        assert(readFile(s.archive).compare(0, whole.size(), whole) == 0 && "cut at the newest trailer, not the older");
+        std::cout << "two trailers name every recorded file: the newest is the recorded part OK\n";
+    }
+
+    // The cut is said the moment it is made: an append that then fails
+    // (the stick pulled, here a progress callback that throws) has still
+    // reported it, and leaves the archive at its recorded part.
+    {
+        Stick s(root / "cut-then-fail");
+        const std::string recorded = readFile(s.archive);
+        writeFile(s.archive, recorded + seabass::testing::incompressible(3000, 9));
+        std::vector<std::string> said;
+        s.store.setArchiveRepairLog([&said](const std::string &note) { said.push_back(note); });
+        s.store.setFileProgress([](std::size_t) { throw std::runtime_error("the stick went away"); });
+        const std::string refusal = thrownBy([&] { s.store.addToArchive(s.id, {pathToUtf8(s.next)}); });
+        s.store.setFileProgress({});
+        assert(refusal == "the stick went away");
+        assert(said.size() == 1 && contains(said.front(), "cut off before adding to it"));
+        assert(readFile(s.archive) == recorded && "the failed append is cut back to the recorded part");
+        s.changeEverything();
+        assert(s.store.restore(s.id) && s.store.lastArchiveRepair().empty());
+        s.assertRecordedFilesBack();
+        std::cout << "a cut is said even when the append after it fails OK\n";
+    }
+
+    // coverFileLate() (the command line's late additions) goes through the
+    // same addToArchive(), so its caller's log hears of the cut too.
+    {
+        Stick s(root / "cover-file-late");
+        writeFile(s.archive, readFile(s.archive) + seabass::testing::incompressible(3000, 10));
+        std::vector<std::string> said;
+        s.store.setArchiveRepairLog([&said](const std::string &note) { said.push_back(note); });
+        const auto record = coverFileLate(s.store, s.id, pathToUtf8(s.next), "copy-beatgrids");
+        assert(record && record->filePaths.size() == RecordedFiles + 1);
+        assert(said.size() == 1 && contains(said.front(), "the last addition to backup " + s.id + " was incomplete"));
+        std::cout << "coverFileLate onto a torn record: the cut is said OK\n";
     }
 
     // The recorded part damaged: the newest end record's central directory

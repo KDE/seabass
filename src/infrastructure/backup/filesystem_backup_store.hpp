@@ -155,8 +155,14 @@ public:
     // through an earlier addToArchive()) and was read from the last end
     // record before it: says "the last addition to backup <id> was
     // incomplete" and what was done about it. Empty when the archive read
-    // whole. The caller puts it in the stick's log.
+    // whole.
     const std::string &lastArchiveRepair() const { return m_lastArchiveRepair; }
+    // Called with that same note the moment it is true -- in
+    // addToArchive() right after the torn bytes are cut off, before the
+    // append that may still fail; in restore() once the recorded part is
+    // what will be read -- so the stick's log gets it on every path. A
+    // caller that holds the stick's log sets it.
+    void setArchiveRepairLog(std::function<void(const std::string &note)> log) { m_archiveRepairLog = std::move(log); }
     // Test seam: called in restore() before each file it moves back
     // (#103), with the directory of the pre-restore record the move is
     // noted in and the move's place in the restore's order (0 first). A
@@ -211,6 +217,7 @@ private:
     std::filesystem::path m_baseDirectory;
     std::string m_lastRestoreError;
     std::string m_lastArchiveRepair;
+    std::function<void(const std::string &)> m_archiveRepairLog;
     std::optional<std::string> m_lastPreRestoreId;
     std::vector<Moved> m_lastRestoreMoves;
     bool m_lastRestoreLeftMoves = false;

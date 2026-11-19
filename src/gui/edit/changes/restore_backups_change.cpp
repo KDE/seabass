@@ -71,14 +71,11 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
     int restored = 0;
     for (auto it = m_backups.rbegin(); it != m_backups.rend(); ++it) {
         infrastructure::backup::FilesystemBackupStore store(it->backupDir.toStdString());
-        const bool restoredThis = store.restore(it->id.toStdString());
         // A record whose last addition was torn (a crash or a pull during
-        // that save) restores what it had recorded before it; said here,
-        // in the stick's log, whichever way the restore went.
-        if (!store.lastArchiveRepair().empty()) {
-            ctx.log().record("undo: " + store.lastArchiveRepair());
-        }
-        if (!restoredThis) {
+        // that save) restores what it had recorded before it; said in the
+        // stick's log, whichever way the restore goes.
+        store.setArchiveRepairLog([&ctx](const std::string &note) { ctx.log().record("undo: " + note); });
+        if (!store.restore(it->id.toStdString())) {
             // The pre-restore copies of the records that did go through
             // stay: the save loop rolls those files back next, and if that
             // fails too the copies are the only record of what was there.

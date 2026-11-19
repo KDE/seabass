@@ -336,8 +336,11 @@ public:
     void append(std::span<const std::byte>) override { refuse(); }
     void readAt(std::uint64_t offset, std::span<std::byte> out) const override
     {
+        // A format error, not an I/O one: a candidate trailer that points
+        // past itself is not a trailer, and Zip64Reader::tryOpen() says
+        // so with nullopt. A real read error on the file still throws.
         if (offset > m_length || out.size() > m_length - offset) {
-            throw stick_backup::ArchiveIoError("read past the recorded part of the archive");
+            throw stick_backup::ArchiveFormatError("points past the end record it was read from");
         }
         m_whole.readAt(offset, out);
     }
@@ -377,8 +380,14 @@ bool namesEvery(const stick_backup::Zip64Reader &reader, const std::vector<std::
 // archive stays refused. Entry data is checked later, by CRC, as for any
 // archive.
 //
-// Scans backward for the end record's signature, which costs one read of
-// the tail; only ever run on an archive that already failed to read.
+// Scans backward for the end record's signature and stops at the first
+// trailer that reads, whichever way it answers. For a torn append that is
+// a read of the torn bytes and one central directory; for a record whose
+// newest trailer is damaged, a read back through the last append to the
+// trailer before it, and that one directory. Only an archive with no
+// trailer that reads at all is read to its start. Only ever run on an
+// archive that already failed to read whole. A read error on the file is
+// thrown, not taken for a missing trailer.
 std::optional<std::uint64_t> recordedLength(const stick_backup::ArchiveFile &file,
                                             const std::vector<std::pair<std::string, std::string>> &entries)
 {
@@ -409,15 +418,18 @@ std::optional<std::uint64_t> recordedLength(const stick_backup::ArchiveFile &fil
                 continue;  // never written with a comment
             }
             ArchivePrefix prefix(file, p + EndOfCentralDirectorySize);
-            try {
-                std::optional<stick_backup::Zip64Reader> reader = stick_backup::Zip64Reader::tryOpen(prefix);
-                if (reader && namesEvery(*reader, entries)) {
-                    return p + EndOfCentralDirectorySize;
-                }
-            } catch (const stick_backup::ArchiveIoError &) {
-                // A candidate that points outside itself is not a trailer;
-                // the next older one is tried.
+            std::optional<stick_backup::Zip64Reader> reader = stick_backup::Zip64Reader::tryOpen(prefix);
+            if (!reader) {
+                continue;
             }
+            // The newest trailer that reads decides. Every older one lists
+            // a subset of its entries (each append carries the ones before
+            // it), so if it lacks a manifest entry they all do, and
+            // parsing them would only cost time before the same refusal.
+            if (namesEvery(*reader, entries)) {
+                return p + EndOfCentralDirectorySize;
+            }
+            return std::nullopt;
         }
         high = low;
     }
@@ -802,6 +814,10 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
             m_lastArchiveRepair = tornAppendNote(id, openError, archiveBefore, *recorded, manifest.entries.size())
                                   + "; the rest was cut off before adding to it";
             archiveBefore = *recorded;
+            // Said now: the cut is made, whatever the append below does.
+            if (m_archiveRepairLog) {
+                m_archiveRepairLog(m_lastArchiveRepair);
+            }
         }
     }
     std::vector<std::pair<std::string, std::string>> written;
@@ -1232,6 +1248,9 @@ bool FilesystemBackupStore::restoreUnguarded(const std::string &id)
         return false;
     }
     m_lastArchiveRepair = opened.repair;
+    if (!m_lastArchiveRepair.empty() && m_archiveRepairLog) {
+        m_archiveRepairLog(m_lastArchiveRepair);
+    }
 
     // The files the save moved, each to go back to where it was, newest
     // first: every one checked before anything is written, so a restore

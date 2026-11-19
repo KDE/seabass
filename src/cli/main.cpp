@@ -1971,6 +1971,9 @@ int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan,
         seabass::infrastructure::backup::FilesystemBackupStore backupStore(
             seabass::pathToUtf8(paths::stickBackupsDir(root)));
         seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(paths::stickOperationLog(root)));
+        // Should the run's backup record turn out to end in a torn append
+        // when coverFileLate adds to it, the stick's log says so.
+        backupStore.setArchiveRepairLog([&log](const std::string &note) { log.record("copy-beatgrids: " + note); });
 
         // What the run may change, backed up once before its first byte:
         // m.db, the ledger and the overview files the check named. What is
@@ -2419,6 +2422,9 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
             seabass::pathToUtf8(paths::stickBackupsDir(seabass::pathFromUtf8(stickRoot))));
         seabass::infrastructure::logging::FileOperationLog log(
             seabass::pathToUtf8(paths::stickOperationLog(seabass::pathFromUtf8(stickRoot))));
+        // Should the run's backup record turn out to end in a torn append
+        // when coverFileLate adds to it, the stick's log says so.
+        backupStore.setArchiveRepairLog([&log](const std::string &note) { log.record("copy-beatgrids: " + note); });
 
         // The overview files the check found would be written, from the
         // library folder: the backup covers those already there, and

@@ -357,6 +357,33 @@ int main()
         std::cout << "case 7 (finish hooks: all run, warnings apart from errors, once only) OK\n";
     }
 
+    // Case 8: the save's record ends in a torn append (an earlier step's
+    // append cut short) and the next step's append fails after the torn
+    // bytes are cut off. The cut is in the stick's log all the same.
+    {
+        const fs::path stick = freshStick(scratch, "torn-record");
+        const fs::path rb = stick / "PIONEER" / "rekordbox";
+        SaveContext ctx(CancellationToken(), noProgress, {}, seabass::gui::pathToQString(stick / "PIONEER"), QString());
+        assert(ctx.backupOnce(seabass::pathToUtf8(rb / "export.pdb"), "sync"));
+        const std::string id = ctx.backupIdOf(seabass::pathToUtf8(rb / "export.pdb"));
+        const fs::path archive = backupsOf(stick) / seabass::pathFromUtf8(id) / "backup.zip";
+        const std::string recorded = readFile(archive);
+        writeFile(archive, recorded + "the start of an append that never finished");
+        ctx.archiveStore().setFileProgress([](std::size_t) { throw std::runtime_error("the stick went away"); });
+        bool threw = false;
+        try {
+            ctx.backupOnce(seabass::pathToUtf8(rb / "exportExt.pdb"), "sync");
+        } catch (const std::exception &) {
+            threw = true;
+        }
+        ctx.archiveStore().setFileProgress({});
+        assert(threw);
+        assert(readFile(archive) == recorded);
+        assert(stickLog(stick).find("save: the last addition to backup " + id + " was incomplete") != std::string::npos
+               && "the cut is in the stick's log though the append failed");
+        std::cout << "case 8 (a torn record's cut is logged even when the append after it fails) OK\n";
+    }
+
     std::cout << "save_context_archive_test: all cases passed\n";
     return 0;
 }
