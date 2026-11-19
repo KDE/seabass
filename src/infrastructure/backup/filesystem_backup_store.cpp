@@ -121,6 +121,23 @@ std::string readWholeFile(const fs::path &path)
 // refuses a manifest it does not recognise instead of misinterpreting
 // one, and that guard is worth a line.
 constexpr int ManifestFormatVersion = 4;
+// A record that notes a moved file (#103, MOVED lines) says so in its
+// version. Seabass 1.0.x reads an unknown key as an archive entry, so it
+// would take a MOVED line for a file named "MOVED" and fail its restore
+// with "the backup's archive lacks MOVED"; it does refuse a version it
+// does not know, cleanly and before writing anything ("is not a record
+// this build wrote"), and does not offer such a record for Undo. Only
+// records with moves carry it: every other record stays at 4, fully
+// usable by 1.0.x. writeManifest() derives it from the content, so a
+// record that gains its first move gains the version in the same atomic
+// write. Version 4 with MOVED lines (written during #103's development,
+// sizes absent) is read as well.
+constexpr int ManifestFormatVersionWithMoves = 5;
+
+bool isKnownManifestVersion(int version)
+{
+    return version == ManifestFormatVersion || version == ManifestFormatVersionWithMoves;
+}
 constexpr const char *ManifestVersionKey = "MANIFEST-VERSION";
 constexpr const char *ArchiveFileName = "backup.zip";
 
@@ -251,7 +268,8 @@ std::string originValue(BackupOrigin origin)
 bool writeManifest(const fs::path &dir, const Manifest &manifest)
 {
     std::ostringstream out;
-    out << ManifestVersionKey << '\t' << manifest.version << '\n';
+    out << ManifestVersionKey << '\t'
+        << (manifest.moved.empty() ? ManifestFormatVersion : ManifestFormatVersionWithMoves) << '\n';
     if (manifest.origin) {
         out << OriginKey << '\t' << originValue(*manifest.origin) << '\n';
     }
@@ -604,7 +622,7 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
         throw std::runtime_error("no backup with id " + id + " to add to");
     }
     Manifest manifest = readManifest(dir);
-    if (manifest.version != ManifestFormatVersion) {
+    if (!isKnownManifestVersion(manifest.version)) {
         throw std::runtime_error("backup " + id + " is not a record this build wrote");
     }
     if (!manifest.readable) {
@@ -685,7 +703,7 @@ void FilesystemBackupStore::recordAbsent(const std::string &id, const std::vecto
         throw std::runtime_error("no backup with id " + id + " to note an absent file in");
     }
     Manifest manifest = readManifest(dir);
-    if (manifest.version != ManifestFormatVersion) {
+    if (!isKnownManifestVersion(manifest.version)) {
         throw std::runtime_error("backup " + id + " is not a record this build wrote");
     }
     if (!manifest.readable) {
@@ -719,7 +737,7 @@ void FilesystemBackupStore::recordMoved(const std::string &id, const std::string
         throw std::runtime_error("no backup with id " + id + " to note a moved file in");
     }
     Manifest manifest = readManifest(dir);
-    if (manifest.version != ManifestFormatVersion) {
+    if (!isKnownManifestVersion(manifest.version)) {
         throw std::runtime_error("backup " + id + " is not a record this build wrote");
     }
     if (!manifest.readable) {
@@ -1017,7 +1035,7 @@ bool FilesystemBackupStore::isRestorable(const std::string &id) const
     }
     const Manifest manifest = readManifest(dir);
     return manifest.readable && (!manifest.entries.empty() || !manifest.absent.empty() || !manifest.moved.empty())
-           && manifest.version == ManifestFormatVersion
+           && isKnownManifestVersion(manifest.version)
            && fs::is_regular_file(dir / ArchiveFileName, ec);
 }
 
@@ -1052,7 +1070,7 @@ bool FilesystemBackupStore::restoreUnguarded(const std::string &id)
         m_lastRestoreError = "backup " + id + " lists no files";
         return false;  // nothing was ever backed up for this id
     }
-    if (manifest.version != ManifestFormatVersion) {
+    if (!isKnownManifestVersion(manifest.version)) {
         // Not a shape this build wrote: refuse rather than misinterpret
         // it. This is the only reason the version line still exists.
         m_lastRestoreError = "backup " + id + " is not a record this build wrote";

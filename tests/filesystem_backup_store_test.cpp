@@ -1240,7 +1240,9 @@ int main()
         store.recordMoved(record.id, pathToUtf8(from), pathToUtf8(to), 5);
         const fs::path manifest = pathFromUtf8(record.path) / ".manifest";
         const std::string withSize = readFile(manifest);
-        assert(withSize.find("\t5\n") != std::string::npos && "the size is on the MOVED line");
+        assert(withSize.size() > 3 && withSize.compare(withSize.size() - 3, 3, "\t5\n") == 0
+               && "the size is on the MOVED line");
+        assert(withSize.rfind("MANIFEST-VERSION\t5\n", 0) == 0 && "a record with a move says so in its version");
 
         writeFile(to, "another file, longer");
         assert(!store.restore(record.id) && "another size is not the file the save moved");
@@ -1252,9 +1254,12 @@ int main()
         assert(store.restore(record.id) && "the same size moves back");
         assert(readFile(from) == "audio" && !fs::exists(to));
 
-        // The old form: the same line without its size.
+        // The old form, as #103's development wrote it: version 4, and
+        // the same line without its size.
         std::string oldForm = withSize;
-        oldForm.replace(oldForm.find("\t5\n"), 3, "\n");
+        oldForm.replace(oldForm.rfind("\t5\n"), 3, "\n");  // the MOVED line's size, the last line
+        oldForm.replace(0, std::string("MANIFEST-VERSION\t5").size(), "MANIFEST-VERSION\t4");
+        assert(oldForm.rfind("MANIFEST-VERSION\t4\n", 0) == 0);
         writeFile(manifest, oldForm);
         fs::create_directories(to.parent_path());
         fs::rename(from, to);
@@ -1266,6 +1271,79 @@ int main()
         }
         assert(readFile(from) == "another file, longer" && !fs::exists(to) && "moved back as before sizes");
         std::cout << "case: a move note holds the size, and an old note without one still restores OK\n";
+    }
+
+    // The manifest's version says whether the record notes moves (#103):
+    // Seabass 1.0.x refuses a version it does not know before it writes
+    // anything, where it would misread a MOVED line as a file named
+    // "MOVED". Only such a record carries 5; every other one is written
+    // exactly as before, at 4, so 1.0.x can still restore it. And the
+    // version follows the content in every state a crash can leave: a
+    // record made for a move holds no move (and 4) until the note lands
+    // with its 5 in the same write, and keeps 5 when files join it.
+    {
+        fs::path stick = root / "manifest-version";
+        fs::path file = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        fs::path gone = stick / "PIONEER" / "rekordbox" / "new.db";
+        fs::path from = stick / "Contents" / "New" / "Track.mp3";
+        fs::path to = stick / "Contents" / "Old" / "Track.mp3";
+        writeFile(file, "library");
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+
+        // Without moves: exactly the lines a 4 record has always had.
+        auto plain = store.backup({pathToUtf8(file)}, "sync");
+        store.recordAbsent(plain.id, {pathToUtf8(gone)});
+        const std::string text = readFile(pathFromUtf8(plain.path) / ".manifest");
+        std::vector<std::string> lines;
+        for (size_t at = 0; at < text.size();) {
+            const size_t end = text.find('\n', at);
+            assert(end != std::string::npos && "every line ends in a newline");
+            lines.push_back(text.substr(at, end - at));
+            at = end + 1;
+        }
+        if (lines.size() != 4) {
+            std::cerr << text;
+        }
+        assert(lines.size() == 4);
+        assert(lines[0] == "MANIFEST-VERSION\t4");
+        assert(lines[1] == "ORIGIN\tautomatic");
+        const std::string entrySuffix = "\tPIONEER/rekordbox/export.pdb";
+        assert(lines[2].size() > entrySuffix.size()
+               && lines[2].compare(lines[2].size() - entrySuffix.size(), entrySuffix.size(), entrySuffix) == 0
+               && lines[2].find("MOVED") == std::string::npos);
+        assert(lines[3] == "ABSENT\tPIONEER/rekordbox/new.db");
+
+        // A record made for a move: 4 until the note, 5 with it, 5 after.
+        writeFile(to, "audio");
+        auto moved = store.backup({}, "moved-files");
+        const fs::path manifest = pathFromUtf8(moved.path) / ".manifest";
+        assert(readFile(manifest).rfind("MANIFEST-VERSION\t4\n", 0) == 0 && "no move noted yet");
+        assert(readFile(manifest).find("MOVED") == std::string::npos);
+        store.recordMoved(moved.id, pathToUtf8(from), pathToUtf8(to), 5);
+        assert(readFile(manifest).rfind("MANIFEST-VERSION\t5\n", 0) == 0);
+        store.addToArchive(moved.id, {pathToUtf8(file)});
+        assert(readFile(manifest).rfind("MANIFEST-VERSION\t5\n", 0) == 0 && "and keeps it when files join");
+        // Round trip: listed with its move and its file, restorable.
+        bool listed = false;
+        for (const auto &r : store.list()) {
+            if (r.id == moved.id) {
+                listed = r.movedPaths.size() == 1 && r.filePaths.size() == 1;
+            }
+        }
+        assert(listed);
+        assert(store.isRestorable(moved.id));
+        writeFile(file, "changed since");
+        if (!store.restore(moved.id)) {
+            std::cerr << "restoring a version 5 record: " << store.lastRestoreError() << "\n";
+            assert(false);
+        }
+        assert(readFile(file) == "library" && readFile(from) == "audio" && !fs::exists(to));
+        // A version this build does not know is refused, as before.
+        std::string unknown = readFile(manifest);
+        unknown.replace(0, std::string("MANIFEST-VERSION\t5").size(), "MANIFEST-VERSION\t6");
+        writeFile(manifest, unknown);
+        assert(!store.isRestorable(moved.id) && !store.restore(moved.id));
+        std::cout << "case: a record with moves is version 5, one without is the 4 it always was OK\n";
     }
 
     std::cout << "all cases passed\n";
