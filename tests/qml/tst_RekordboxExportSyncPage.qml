@@ -554,7 +554,8 @@ TestCase {
                    summary.written + " " + summary.unit + " " + summary.verb, 5000);
         verify(toast.showing);
         const dialog = findChild(page, "summaryDialog");
-        verify(dialog === null || !dialog.visible, "no summary dialog over a save that landed whole");
+        verify(dialog !== null, "the lookup reaches the host's summary dialog");
+        verify(!dialog.visible, "no summary dialog over a save that landed whole");
         // The record is there and nothing is selected: the conflicts left
         // need an answer first. Stage Selected is not offered for nothing,
         // and says why on hover (#97).
@@ -672,7 +673,15 @@ TestCase {
         tryCompare(toast, "showing", true, 2000);
         compare(findChild(toast, "confirmationToastLabel").text, "Remembered this export: 11 tracks and 3 playlists.");
         const dialog = findChild(page, "summaryDialog");
-        verify(dialog === null || !dialog.visible);
+        verify(dialog !== null, "the lookup reaches the host's summary dialog");
+        verify(!dialog.visible);
+        // The lookup above is the one the save tests use to say "no
+        // dialog": shown on purpose, it is seen, so those checks can fail.
+        dialog.show({written: 0, total: 1, unit: "records", verb: "recorded", error: "planted"});
+        tryCompare(dialog, "visible", true, 2000);
+        verify(findChild(page, "summaryDialog").visible, "a dialog that is up is found up");
+        dialog.close();
+        tryCompare(dialog, "visible", false, 2000);
     }
 
     // One left line: the breadcrumb, the intro, a section header's box

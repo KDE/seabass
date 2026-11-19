@@ -293,6 +293,9 @@ struct RecordPlan
     std::set<std::string> applied;
     std::map<std::string, std::string> declined;
     bool anyTicked = false;
+    // A conflict on a stick with a record answered with a side that writes
+    // nothing: decided all the same, and only the record says so.
+    bool answeredWithoutAWrite = false;
 };
 
 RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncAnalysis &analysis)
@@ -361,6 +364,7 @@ RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncA
                     for (const auto &key : withCueItems(conflict->header)) {
                         applied.insert(key);
                     }
+                    record.answeredWithoutAWrite = record.answeredWithoutAWrite || emptyAnswer;
                 }
             }
             continue;  // unanswered: comes back, never declined
@@ -454,7 +458,7 @@ bool RekordboxExportSyncController::canStage() const
         return true;  // the first record is worth staging on its own
     }
     const RecordPlan record = recordPlanOf(m_model.rows(), *m_analysis);
-    return record.anyTicked || !record.declined.empty();
+    return record.anyTicked || !record.declined.empty() || record.answeredWithoutAWrite;
 }
 
 void RekordboxExportSyncController::rememberExport()
@@ -1047,7 +1051,7 @@ void RekordboxExportSyncController::stageSelected()
         declined.erase(key);
     }
 
-    if (changes.empty() && declined.empty() && analysis.proposal.hasBaseline) {
+    if (changes.empty() && declined.empty() && !record.answeredWithoutAWrite && analysis.proposal.hasBaseline) {
         setStatusMessage(QStringLiteral("Nothing is selected, so there is nothing to stage."));
         return;
     }
@@ -1094,8 +1098,8 @@ void RekordboxExportSyncController::stageSelected()
     setStagedStatusMessage(changeCount > 0
                                ? QStringLiteral("Staged %1 change(s). Press Sync Engine to write them to the stick.")
                                      .arg(changeCount)
-                               : QStringLiteral("Staged the record of what was left unselected. Press Sync Engine to "
-                                                "write it to the stick."));
+                               : QStringLiteral("Staged the record of your choices. Press Sync Engine to write it "
+                                                "to the stick."));
 }
 
 }  // namespace seabass::gui

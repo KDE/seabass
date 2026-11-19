@@ -1458,6 +1458,100 @@ void testMetadataWords()
     std::cout << "case 10 (a rating onto rekordbox: Seabass's put back, or Engine's set over it) OK\n";
 }
 
+// 8. With a record on the stick, a conflict answered with the side that
+//    writes nothing is something to stage (#97): canStage says so, the
+//    stage is the record alone, and the conflict is not asked again. And
+//    canStageChanged follows ticks and answers, as the page's button needs.
+void testEmptyAnswerWithARecord(const fs::path &fixture)
+{
+    const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_empty_answer");
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    assert(controller.errorMessage().isEmpty() && !controller.hasBaseline());
+    QSignalSpy canStageChanged(&controller, &RekordboxExportSyncController::canStageChanged);
+    const int someRow = firstRow(controller, Section::Playlists, QStringLiteral("createPlaylist"));
+    assert(someRow >= 0);
+    controller.setIncluded(someRow, false);
+    assert(canStageChanged.size() > 0 && "unticking a row is told");
+    canStageChanged.clear();
+    controller.setIncluded(someRow, true);
+    assert(canStageChanged.size() > 0 && "ticking a row is told");
+
+    // A first save of nothing ticked: the record, and with it the
+    // conflicts the planner can ask again on top of a record.
+    for (const char *section : {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
+                                "cuesToEngine", "restoresToRekordbox"}) {
+        controller.setSectionIncluded(QString::fromLatin1(section), false);
+    }
+    controller.stageSelected();
+    LibraryEditSession *session = sessionOf(stick);
+    const QVariantMap first =
+        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+    assert(first.value("error").toString().isEmpty());
+    assert(controller.hasBaseline());
+    printCounts(controller);
+
+    // A conflict whose one side writes nothing.
+    int row = -1;
+    bool rekordboxSide = false;
+    const auto &rows = rowsOf(controller);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].section != Section::Conflicts) {
+            continue;
+        }
+        const auto conflicts = RekordboxExportSyncListModel::conflictsOf(rows[i]);
+        std::cout << "  conflict " << rows[i].header.key << ":";
+        for (const auto *c : conflicts) {
+            std::cout << " rekordbox " << (c->rekordboxChoice.empty() ? "empty" : "writes") << ", engine "
+                      << (c->engineChoice.empty() ? "empty" : "writes") << ";";
+        }
+        std::cout << " (" << rows[i].header.reasonText << ")\n";
+        const bool engineWritesNothing = std::all_of(conflicts.begin(), conflicts.end(), [](const auto *c) {
+            return c->engineChoice.empty() && !c->rekordboxChoice.empty();
+        });
+        const bool rekordboxWritesNothing = std::all_of(conflicts.begin(), conflicts.end(), [](const auto *c) {
+            return c->rekordboxChoice.empty() && !c->engineChoice.empty();
+        });
+        if (row < 0 && !conflicts.empty() && (engineWritesNothing || rekordboxWritesNothing)) {
+            row = static_cast<int>(i);
+            rekordboxSide = rekordboxWritesNothing;
+        }
+    }
+    assert(row >= 0 && "precondition: a conflict one of whose sides writes nothing");
+    const std::string conflictKey = rows[static_cast<std::size_t>(row)].header.key;
+    std::cout << "  answering " << conflictKey << " with " << (rekordboxSide ? "rekordbox's" : "Engine's")
+              << " side, which writes nothing\n";
+    assert(controller.checkedCount() == 0);
+    assert(!controller.canStage() && "precondition: nothing ticked, nothing answered");
+
+    canStageChanged.clear();
+    controller.resolveConflict(row, rekordboxSide);
+    assert(canStageChanged.size() > 0 && "an answer is told");
+    assert(controller.checkedCount() == 0 && "the answer writes nothing, so it ticks nothing");
+    assert(controller.canStage() && "an answer is something to stage");
+    canStageChanged.clear();
+    controller.clearConflictResolution(row);
+    assert(canStageChanged.size() > 0 && "taking the answer back is told");
+    assert(!controller.canStage());
+    controller.resolveConflict(row, rekordboxSide);
+    assert(controller.canStage());
+
+    controller.stageSelected();
+    assert(controller.statusMessage() != QStringLiteral("Nothing is selected, so there is nothing to stage."));
+    assert(session->pendingCount() == 1 && "the record alone");
+    const QVariantMap saved =
+        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+    assert(saved.value("error").toString().isEmpty() && saved.value("warning").toString().isEmpty());
+    assert(session->pendingCount() == 0 && controller.hasBaseline());
+    // Not checked here: that the conflict stays away after this save. The
+    // fixture's only conflicts on top of a record are rekordbox playlists
+    // sharing one path (EngineUpdateReason::RekordboxPathShared), which
+    // the planner raises from the two libraries as they are, whatever the
+    // record says; suppressDeclined() does not cover conflicts.
+    std::cout << "case 8 (an answer that writes nothing is staged as the record alone and saved; "
+                 "canStageChanged follows ticks and answers) OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -1482,6 +1576,7 @@ int main(int argc, char **argv)
     testOrderOnFirstRun(fixture);
     testDeclinedByDependency(fixture);
     testCancelUnits(fixture);
+    testEmptyAnswerWithARecord(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }

@@ -358,6 +358,7 @@ TestCase {
         tryCompare(findChild(toast, "confirmationToastLabel"), "text", "Changes undone.", 5000);
         verify(toast.showing, "the undo's toast is up");
         const dialog = findChild(page, "summaryDialog");
-        verify(dialog === null || !dialog.visible, "no summary dialog over an undo that landed whole");
+        verify(dialog !== null, "the lookup reaches the host's summary dialog");
+        verify(!dialog.visible, "no summary dialog over an undo that landed whole");
     }
 }
