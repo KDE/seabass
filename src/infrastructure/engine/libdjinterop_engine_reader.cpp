@@ -667,7 +667,7 @@ std::vector<domain::CuePoint> cuesOfRow(const std::vector<std::optional<djintero
         cp.hotCueNumber = static_cast<int>(i) + 1;  // Engine slots are 0-based; rekordbox numbers from 1
         cp.positionMs = hotCue.sample_offset / sampleRate * 1000.0;
         cp.color = colorHex(hotCue.color);
-        cp.comment = hotCue.label;
+        cp.comment = domain::withoutTrailingNuls(hotCue.label);
         cues.push_back(std::move(cp));
     }
 
@@ -693,7 +693,7 @@ std::vector<domain::CuePoint> cuesOfRow(const std::vector<std::optional<djintero
         cp.positionMs = loop.start_sample_offset / sampleRate * 1000.0;
         cp.loopEndMs = loop.end_sample_offset / sampleRate * 1000.0;
         cp.color = colorHex(loop.color);
-        cp.comment = loop.label;
+        cp.comment = domain::withoutTrailingNuls(loop.label);
         cues.push_back(std::move(cp));
     }
 

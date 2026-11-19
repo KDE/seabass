@@ -465,10 +465,13 @@ void OneLibraryCueWriter::writeCueRows(SqlCipherDb &db, const std::vector<int64_
                     // defined, inert default) rather than a fabricated guess.
                     auto knownColour = colorByKindAndPosition.find({static_cast<int64_t>(kind), inUsec});
                     insert.bindInt64(3, knownColour == colorByKindAndPosition.end() ? 0 : knownColour->second);
-                    if (cue.comment.empty()) {
+                    // Never rekordbox's trailing NUL (#100), whatever the
+                    // cue came through.
+                    const std::string comment = domain::withoutTrailingNuls(cue.comment);
+                    if (comment.empty()) {
                         insert.bindNull(4);
                     } else {
-                        insert.bindText(4, cue.comment);
+                        insert.bindText(4, comment);
                     }
                     insert.bindInt64(5, cue.isLoop ? 1 : 0);
                     insert.bindInt64(6, inUsec);

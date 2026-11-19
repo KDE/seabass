@@ -266,9 +266,9 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
                 }
                 continue;
             }
-            loopSlots[slot] = djinterop::loop{cue.comment, startOffset, endOffset, padColor(cue.color, slot + 1)};
+            loopSlots[slot] = djinterop::loop{domain::withoutTrailingNuls(cue.comment), startOffset, endOffset, padColor(cue.color, slot + 1)};
         } else {
-            slots[slot] = djinterop::hot_cue{cue.comment, startOffset, padColor(cue.color, slot + 1)};
+            slots[slot] = djinterop::hot_cue{domain::withoutTrailingNuls(cue.comment), startOffset, padColor(cue.color, slot + 1)};
         }
     }
 

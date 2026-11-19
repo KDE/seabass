@@ -962,6 +962,31 @@ int main()
         std::cout << "case: a content row is found whatever its letter case OK\n";
     }
 
+    // Issue #100: a cue comment that still carries rekordbox's trailing NUL
+    // ("1.1Bars\0", from a metadata backup an older Seabass made) is stored
+    // without it. Checked on the column's bytes: a C-string read of the
+    // text would stop at the NUL and could not see it.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        createFixture(pioneerRoot);
+        OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
+        CuePoint padded{CuePoint::Kind::Hot, 1, 1000.0, "", std::string("1.1Bars\0", 8)};
+        writer.writeCuesForPath(pathToUtf8(scratch / "Contents" / "Test Track.mp3"), {padded});
+
+        SqlCipherLibrary lib;
+        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
+        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        SqlCipherStatement stmt(db, "SELECT hex(CAST(cueComment AS BLOB)) FROM cue WHERE content_id = 1");
+        assert(stmt.step());
+        const std::string stored = stmt.columnText(0);
+        if (stored != "312E3142617273") {
+            std::cerr << "FAIL: OneLibrary stored the comment as bytes " << stored << ", not \"1.1Bars\"\n";
+            return 1;
+        }
+        std::cout << "case: a cue comment's trailing NUL is not written into OneLibrary OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

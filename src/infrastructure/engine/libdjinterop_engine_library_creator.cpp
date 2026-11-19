@@ -147,9 +147,9 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
                 continue;
             }
             loopSlots[static_cast<size_t>(slot)] =
-                djinterop::loop{cue.comment, sampleOffset, endOffset, parseColor(cue.color)};
+                djinterop::loop{domain::withoutTrailingNuls(cue.comment), sampleOffset, endOffset, parseColor(cue.color)};
         } else {
-            slots[static_cast<size_t>(slot)] = djinterop::hot_cue{cue.comment, sampleOffset, parseColor(cue.color)};
+            slots[static_cast<size_t>(slot)] = djinterop::hot_cue{domain::withoutTrailingNuls(cue.comment), sampleOffset, parseColor(cue.color)};
         }
         hotCuesSet++;
     }

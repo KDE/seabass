@@ -74,6 +74,9 @@ void testEscaping()
     assert(escapeXmlText(std::string("A\x0C")) == "A");
     assert(escapeXmlText(std::string("a\x01" "\x02" "b")) == "ab");
     assert(escapeXmlText(std::string("a\x7F" "b")) == "ab");
+    // rekordbox's own cue comments end in a NUL ("1.1Bars\0", #100): never
+    // into a Name.
+    assert(escapeXmlText(std::string("1.1Bars\0", 8)) == "1.1Bars");
 
     // Tab/LF/CR are legal, but attribute-value normalization would turn
     // them into spaces on parse. As character references they survive.

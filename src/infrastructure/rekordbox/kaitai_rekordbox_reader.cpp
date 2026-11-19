@@ -184,7 +184,7 @@ std::vector<domain::CuePoint> readCues(const std::string &anlzBytes, const std::
             }
             cp.color = cueColor(*cue);
             if (!cue->_is_null_comment()) {
-                cp.comment = cue->comment();
+                cp.comment = domain::withoutTrailingNuls(cue->comment());
             }
             cues.push_back(std::move(cp));
         }

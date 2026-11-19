@@ -3790,6 +3790,16 @@ target_include_directories(libdjinterop_engine_library_creator_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_library_creator_test COMMAND libdjinterop_engine_library_creator_test)
 
+# Issue #100: rekordbox's trailing NUL on a cue comment is read off, on the
+# ANLZ side and on Engine's, and never written into a label.
+add_executable(cue_comment_trailing_nul_test
+    tests/cue_comment_trailing_nul_test.cpp
+)
+target_link_libraries(cue_comment_trailing_nul_test PRIVATE seabass_core_testing)
+target_include_directories(cue_comment_trailing_nul_test PRIVATE src)
+target_link_libraries(cue_comment_trailing_nul_test PRIVATE DjInterop SQLite::SQLite3)
+add_test(NAME cue_comment_trailing_nul_test COMMAND cue_comment_trailing_nul_test)
+
 add_executable(libdjinterop_engine_sync_scratch_replace_test
     tests/libdjinterop_engine_sync_scratch_replace_test.cpp
 )

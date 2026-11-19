@@ -42,6 +42,21 @@ struct CuePoint
     double loopEndMs = 0.0;  // meaningful only when isLoop
 };
 
+// A cue comment as Seabass keeps it: without trailing NUL characters.
+// rekordbox stores its comments with one (its automatic hot cues say
+// "1.1Bars\0" in the ANLZ file), and Seabass 1.0.x carried that NUL into
+// Engine's quickCues labels (#100). Every reader of a cue comment or
+// label takes them off, so "1.1Bars\0" and "1.1Bars" are one label
+// wherever they meet, and every writer of one does too, so none is
+// written again. Only trailing NULs: nothing else is trimmed.
+inline std::string withoutTrailingNuls(std::string text)
+{
+    while (!text.empty() && text.back() == '\0') {
+        text.pop_back();
+    }
+    return text;
+}
+
 // Whether Engine can hold this memory cue. Engine keeps one memory-style
 // cue per track (its main cue) as a sample offset, and offset 0 is how it
 // spells "no cue set": a memory cue at 0:00 written there reads back as
