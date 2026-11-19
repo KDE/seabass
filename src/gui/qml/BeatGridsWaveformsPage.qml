@@ -510,6 +510,9 @@ Page {
                             objectName: "stateMarks"
                             // The title column's width: a badge with more to
                             // say than that elides, never reaching the tempo.
+                            // The Flow fills that column and its width does not
+                            // follow the badges back: one width change of the
+                            // page moves it once (test_stateMarksSettleInOnePass).
                             readonly property real room: parent ? parent.width : 0
                             spacing: Theme.tightSpacing / 2
                             StateMark {

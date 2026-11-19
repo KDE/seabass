@@ -39,6 +39,7 @@ Rectangle {
 
     Row {
         id: badgeContent
+        objectName: "badgeContent"
         anchors.centerIn: parent
         spacing: 4
         SeabassIcon {
@@ -51,9 +52,15 @@ Rectangle {
         }
         Label {
             id: badgeLabel
+            objectName: "badgeLabel"
             text: badge.label
-            width: Math.min(implicitWidth, Math.max(0, badge.width - 12
-                - (badgeIcon.visible ? badgeIcon.width + badgeContent.spacing : 0)))
+            // All of it whenever the badge has its own width or more. Taken
+            // back out of the badge's width instead, the sum the badge's
+            // implicit width was made of can come back an ulp short of the
+            // label's (fractional icon sizes, a Mac's 13 pt), and a badge
+            // with all the room it asked for elided "New" to "Ne...".
+            width: badge.width >= badge.implicitWidth ? implicitWidth
+                : Math.max(0, badge.width - 12 - (badgeIcon.visible ? badgeIcon.width + badgeContent.spacing : 0))
             elide: Text.ElideRight
             font.bold: true
             font.pointSize: Theme.fontTiny

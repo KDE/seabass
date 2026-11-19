@@ -66,6 +66,7 @@ TestCase {
 
     function cleanup() {
         EditSessionRegistry.discardAll();
+        SystemFontMetrics.generalPointSizeOverride = 0;
     }
 
     // A page on a stick copy, with no session left over from an earlier
@@ -814,6 +815,60 @@ TestCase {
         compare(last.x, first.x, "and starts it on the left line");
         verify(last.x + last.width <= options.width, "and fits the page");
         verifyBoxLabelGap(o.page, "replaceEditsCheckBox");
+    }
+
+    // The state badges are bounded by their row's title column (`room`,
+    // the Flow they sit in), and their widths in turn are part of what
+    // that column asks the row for: a loop, if the row gave the column
+    // less when it asked for less. It does not, and this says so: at the
+    // narrowest width, on a Mac-sized font, each change of the page's
+    // width moves `room` at most once, `room` is the title column's
+    // width as the row laid it out, and nothing moves afterwards.
+    function test_stateMarksSettleInOnePass_data() {
+        return [
+            {tag: "system font", pointSize: 0},
+            {tag: "13pt", pointSize: 13},
+        ];
+    }
+    function test_stateMarksSettleInOnePass(data) {
+        SystemFontMetrics.generalPointSizeOverride = data.pointSize;
+        const o = openOn(t73(), {width: 800, height: 760});
+        o.c.setTicked(b01, true);
+        o.c.setTicked(b04, true);
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        const delegate = delegateInView(o.page, b04);
+        const marks = findChild(delegate, "stateMarks");
+        const flow = findChild(delegate, "rowDetailItems");
+        const column = flow.parent;
+        const badge = findChild(findChild(delegate, "gridMark"), "stateBadge");
+        verify(badge !== null && badge.visible, "B04 has a beat grid badge");
+        let roomMoves = 0;
+        let badgeMoves = 0;
+        const onRoom = () => ++roomMoves;
+        const onBadge = () => ++badgeMoves;
+        marks.roomChanged.connect(onRoom);
+        badge.widthChanged.connect(onBadge);
+        try {
+            for (const width of [720, 760, 720]) {
+                roomMoves = 0;
+                badgeMoves = 0;
+                o.page.width = width;
+                verify(waitForPolish(o.page.Window.window));
+                waitForRendering(o.page);
+                // Time for frames more, for anything a second pass would move.
+                wait(100);
+                verify(roomMoves <= 1, width + " px: room moved " + roomMoves + " times");
+                verify(badgeMoves <= 1, width + " px: the badge's width moved " + badgeMoves + " times");
+                compare(marks.room, flow.width, width + " px: room is the Flow's width");
+                compare(flow.width, column.width, width + " px: and the Flow fills the title column");
+                verify(badge.mapToItem(delegate, badge.width, 0).x <= column.mapToItem(delegate, column.width, 0).x + 0.5,
+                       width + " px: the badge ends inside the title column");
+            }
+        } finally {
+            marks.roomChanged.disconnect(onRoom);
+            badge.widthChanged.disconnect(onBadge);
+        }
     }
 
     // The anonymized library: its export has no waveform for the analysed
