@@ -181,6 +181,14 @@ public:
     // The id of the backup this save made for `file` (empty if none yet),
     // for records that want to name it (the pending-deletion manifest).
     std::string backupIdOf(const std::string &file) const;
+    // Notes, in this save's record under `label`, that the change about to
+    // run moves the file at `from` to `to` (#103), so that Undo moves it
+    // back (FilesystemBackupStore::recordMoved) and so that a change or a
+    // save that fails after it moves it back too (rollBackChange(),
+    // rollBackSave()). Called BEFORE the move: a note of a move that then
+    // did not happen is nothing to undo. Throws when the record cannot be
+    // written, which fails the change before it has moved anything.
+    void noteMoved(const std::string &from, const std::string &to, const std::string &label);
 
     template <class T>
     T &shared(const std::string &key, const std::function<std::unique_ptr<T>()> &make)
@@ -395,6 +403,18 @@ private:
     // returns the first error.
     std::optional<QString> putBack(const std::vector<Checkpoint> &checkpoints, std::set<std::string> &notPutBack,
                                    int &putBack);
+    // A file a change of this save moved (noteMoved()), to move back.
+    struct Move
+    {
+        std::string from;
+        std::string to;
+    };
+    // Moves each file in `moves` back, newest first, and empties the list;
+    // counts in `putBack` the ones that went back and returns the first
+    // error. A file still at `from` and not at `to` was never moved.
+    std::optional<QString> putBackMoves(std::vector<Move> &moves, int &putBack);
+    std::vector<Move> m_movesThisChange;
+    std::vector<Move> m_movesThisSave;
     // A database with only part of its set put back has one generation's
     // .db beside another's sidecars, which SQLite would replay into it on
     // the next open: its sidecars are renamed out of reach. True when it

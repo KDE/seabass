@@ -1147,6 +1147,78 @@ int main()
         std::cout << "case: a record holds a file as absent and its restore removes it OK\n";
     }
 
+    // A record can hold a file as moved (#103): a note, not a copy, and
+    // the restore moves it back. A move noted and never made is nothing
+    // to do; a file at both ends, or at neither, refuses the restore; and
+    // the restore notes its own move the other way round, so it can be
+    // undone.
+    {
+        fs::path stick = root / "moved";
+        fs::path from = stick / "Contents" / "New" / "Track.mp3";
+        fs::path to = stick / "Contents" / "Old" / "Track.mp3";
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        writeFile(from, "audio");
+        auto record = store.backup({}, "moved-files");
+        store.recordMoved(record.id, pathToUtf8(from), pathToUtf8(to));
+        assert(store.isRestorable(record.id) && "a record holding only a move is restorable");
+        bool listed = false;
+        for (const auto &r : store.list()) {
+            if (r.id == record.id) {
+                listed = true;
+                assert(r.filePaths.empty() && r.absentPaths.empty() && r.movedPaths.size() == 1);
+                assert(r.movedPaths[0].first == pathToUtf8(fs::absolute(from)));
+                assert(r.movedPaths[0].second == pathToUtf8(fs::absolute(to)));
+            }
+        }
+        assert(listed);
+        assert(fs::file_size(pathFromUtf8(record.path) / "backup.zip") < 1024 && "a note, not a copy of the audio");
+        bool refused = false;
+        try {
+            store.recordMoved(record.id, "", pathToUtf8(to));
+        } catch (const std::runtime_error &) {
+            refused = true;
+        }
+        assert(refused && "a move needs both paths");
+
+        // Noted and never made: nothing to do, and no failure.
+        assert(store.restore(record.id));
+        assert(fs::exists(from) && !fs::exists(to));
+
+        // Made: moved back, and the restore's own record says the reverse.
+        fs::create_directories(to.parent_path());
+        fs::rename(from, to);
+        assert(store.restore(record.id));
+        assert(fs::exists(from) && !fs::exists(to) && "the file is back where it was");
+        assert(readFile(from) == "audio");
+        assert(store.lastPreRestoreId().has_value());
+        bool reverse = false;
+        for (const auto &r : store.list()) {
+            if (r.id == *store.lastPreRestoreId()) {
+                reverse = r.movedPaths.size() == 1 && r.movedPaths[0].first == pathToUtf8(fs::absolute(to))
+                    && r.movedPaths[0].second == pathToUtf8(fs::absolute(from));
+            }
+        }
+        assert(reverse && "the pre-restore record moves it forward again");
+        const std::string pre = *store.lastPreRestoreId();
+        if (!store.restore(pre)) {
+            std::cerr << "restoring the pre-restore record failed: " << store.lastRestoreError() << "\n";
+            assert(false);
+        }
+        assert(fs::exists(to) && !fs::exists(from));
+
+        // At both ends: which is the file cannot be told, so nothing moves.
+        writeFile(from, "another");
+        assert(!store.restore(record.id));
+        assert(store.lastRestoreError().find("both there") != std::string::npos);
+        assert(readFile(from) == "another" && readFile(to) == "audio");
+        // At neither: gone, and said so.
+        fs::remove(from);
+        fs::remove(to);
+        assert(!store.restore(record.id));
+        assert(store.lastRestoreError().find("is gone") != std::string::npos);
+        std::cout << "case: a record holds a file as moved and its restore moves it back OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

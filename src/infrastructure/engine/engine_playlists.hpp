@@ -101,6 +101,17 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
                                                 const std::string &filePath);
 
+// Points every Track row for `filePath` at `newFilePath` instead (#103),
+// both absolute on the stick, in the library at `databaseRoot` by the
+// path relative to `realLibraryPath` as engineTrackIdsForFile reads it:
+// Track.path through libdjinterop, and Track.filename in SQL afterwards,
+// since libdjinterop derives the filename from the path and never writes
+// that column (see the anonymizer). Returns how many rows were pointed,
+// 0 when none lists the file; throws when the database cannot be written
+// or the new path cannot be made relative to the library.
+int setEngineTrackPath(const std::string &databaseRoot, const std::string &realLibraryPath,
+                       const std::string &filePath, const std::string &newFilePath);
+
 // How many playlists (or folders) spell `playlistPath` ("Folder/List"):
 // more than one when two share a name in one folder, or a name holds a
 // "/" that reads as a folder. Only exactly one can be edited by path.

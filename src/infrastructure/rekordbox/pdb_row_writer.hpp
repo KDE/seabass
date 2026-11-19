@@ -134,6 +134,29 @@ public:
     // to change. Returns false if no track with this id exists.
     bool overwriteTrackText(uint32_t trackId, const TrackTextOverride &text);
 
+    // How much text the row's filename and file_path fields can hold, in
+    // ASCII characters: what setTrackFilePath() may write without cutting
+    // it short, since a field keeps the span its current value takes.
+    // nullopt when there is no such row, or when either field cannot be
+    // written at all (its slot is unused, or its string leaves the page).
+    struct TrackPathCapacity
+    {
+        size_t filename = 0;
+        size_t filePath = 0;
+    };
+    std::optional<TrackPathCapacity> trackPathCapacity(uint32_t trackId) const;
+
+    // Points the row at another file on the stick (#103): filename and
+    // file_path overwritten in place, like overwriteTrackText(), and
+    // nothing else on the row. Unlike that call this never truncates: a
+    // path cut short names a file that is not there, which is the fault
+    // a relink exists to repair. Refused, with *refusal saying why and
+    // nothing written, when either value is not plain ASCII or is longer
+    // than its field's capacity. Returns false, and no refusal, when no
+    // track with this id exists.
+    bool setTrackFilePath(uint32_t trackId, const std::string &filename, const std::string &filePath,
+                          std::string *refusal = nullptr);
+
     // The track row's other free-text slots. Kept apart from
     // TrackTextOverride because those four are the ones a caller
     // normally wants to set, while these exist only to be emptied --

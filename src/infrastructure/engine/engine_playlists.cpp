@@ -143,6 +143,64 @@ std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot,
     return ids;
 }
 
+int setEngineTrackPath(const std::string &databaseRoot, const std::string &realLibraryPath,
+                       const std::string &filePath, const std::string &newFilePath)
+{
+    std::error_code ec;
+    const auto oldRelative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(realLibraryPath), ec);
+    if (ec || oldRelative.empty()) {
+        return 0;
+    }
+    const auto newRelative = std::filesystem::relative(pathFromUtf8(newFilePath), pathFromUtf8(realLibraryPath), ec);
+    if (ec || newRelative.empty()) {
+        throw std::runtime_error("engine: " + newFilePath + " cannot be spelled relative to " + realLibraryPath);
+    }
+    const std::string newPath = pathToGenericUtf8(newRelative);
+    const std::string newName = pathToUtf8(newRelative.filename());
+    std::vector<std::int64_t> ids;
+    {
+        auto db = djinterop::engine::load_database(databaseRoot);
+        for (auto t : db.tracks_by_relative_path(pathToGenericUtf8(oldRelative))) {
+            t.set_relative_path(newPath);
+            ids.push_back(t.id());
+        }
+    }
+    if (ids.empty()) {
+        return 0;
+    }
+    // The filename column, once libdjinterop has closed its connection:
+    // it derives filename() from the path and never writes the column, so
+    // a row pointed elsewhere would keep the old name there, and Engine
+    // DJ reads it.
+    sqlite3 *db = nullptr;
+    const std::string file = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
+    if (sqlite3_open_v2(file.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        const std::string why = db ? sqlite3_errmsg(db) : "out of memory";
+        sqlite3_close(db);
+        throw std::runtime_error("engine: could not open " + file + ": " + why);
+    }
+    sqlite3_busy_timeout(db, 5000);
+    sqlite3_stmt *stmt = nullptr;
+    std::string failure;
+    if (sqlite3_prepare_v2(db, "UPDATE Track SET filename = ?1 WHERE id = ?2;", -1, &stmt, nullptr) != SQLITE_OK) {
+        failure = sqlite3_errmsg(db);
+    }
+    for (size_t i = 0; failure.empty() && i < ids.size(); ++i) {
+        sqlite3_reset(stmt);
+        sqlite3_bind_text(stmt, 1, newName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 2, ids[i]);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            failure = sqlite3_errmsg(db);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    if (!failure.empty()) {
+        throw std::runtime_error("engine: could not write the filename of the relinked track: " + failure);
+    }
+    return static_cast<int>(ids.size());
+}
+
 namespace
 {
 

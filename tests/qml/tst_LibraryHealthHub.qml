@@ -159,6 +159,7 @@ TestCase {
             {card: "coverArtCard", section: "artwork"},
             {card: "playlistSyncCard", section: "playlists"},
             {card: "noPlaylistCard", section: "noplaylist"},
+            {card: "movedFilesCard", section: "movedfiles"},
             {card: "cueTableCard", section: "cuetables"},
         ];
         for (var i = 0; i < expected.length; ++i) {

@@ -1537,6 +1537,53 @@ void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int
     refreshStalenessBaseline();
 }
 
+int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::string &newFilePath)
+{
+    checkNotStale();
+
+    const std::string contentPath = toContentPath(m_stickRoot, filePath);
+    const std::string newContentPath = toContentPath(m_stickRoot, newFilePath);
+    SqlCipherDb &db = writeConnection();
+
+    // Every row listing the file; see contentIdsAt().
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+    if (contentIds.empty()) {
+        throw OneLibraryRowMissing("onelibrary: no content row for path " + contentPath);
+    }
+
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (int64_t contentId : contentIds) {
+            SqlCipherStatement set(db, "UPDATE content SET path = ? WHERE content_id = ?");
+            set.bindText(1, newContentPath);
+            set.bindInt64(2, contentId);
+            set.run();
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+
+    // Read back through the verify connection before the staleness
+    // baseline moves, for the reason writeAnnotationForPath gives.
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement verify(verifyConnection(), "SELECT path FROM content WHERE content_id = ?");
+        verify.bindInt64(1, contentId);
+        verify.step();
+        if (verify.columnIsNull(0) || verify.columnText(0) != newContentPath) {
+            throw std::runtime_error("onelibrary: post-write verification failed, the new path did not land for "
+                                     + contentPath);
+        }
+    }
+
+    refreshStalenessBaseline();
+    return static_cast<int>(contentIds.size());
+}
+
 void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donorFilePath,
                                                           const std::string &targetFilePath, bool copyBpm,
                                                           bool copyKey, bool copyArtwork)

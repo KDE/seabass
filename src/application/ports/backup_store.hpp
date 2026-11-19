@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace seabass::application
@@ -36,6 +37,9 @@ struct BackupRecord
     // Original paths of files that did not exist when this backup was
     // made: restoring it removes them (FilesystemBackupStore::recordAbsent).
     std::vector<std::string> absentPaths;
+    // Files the backed-up save moved, from and to (FilesystemBackupStore
+    // ::recordMoved): restoring moves each back.
+    std::vector<std::pair<std::string, std::string>> movedPaths;
     // Defaults to Automatic because that is what a record with nothing
     // recorded actually is: until this field existed, every record in
     // this store was written by a save. See readOrigin() in

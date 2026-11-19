@@ -865,6 +865,15 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   Without `--execute` it only checks.
 - `rig_read <stick> [<archive>]`: catalog counts and the read-only scans,
   timed, without writing to the stick.
+- `rig_moved_file <stick>`: check X5, issue #103. Moves one track's audio
+  file into another folder under Contents and runs Library Health's
+  moved-file check the way the app runs it (the missing split, the files
+  no catalog names, `domain::findMovedFiles`): exactly one finding, for
+  that track, with exactly one candidate at high confidence (the same
+  name and size), and nothing found once the file is back. The file is
+  put back whatever happens, as `rig_file_failure` (X3) puts its plant
+  back; a stick that already has a track pointing at a missing file is
+  refused, since the check could not tell its own finding from that one.
 - `rig_fs_repair [--keep]`: Library Health's filesystem repair end to end,
   on a FAT32 loopback image the tool damages itself -- no stick and no
   root. It clears FAT32's clean-shutdown bit and wrongs the free-cluster

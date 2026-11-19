@@ -26,6 +26,7 @@
 #include "domain/onelibrary_cue_table.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
+#include "domain/moved_files.hpp"
 #include <set>
 
 #include "infrastructure/engine/engine_analysis_state.hpp"
@@ -221,6 +222,16 @@ struct ScanChainPlan
     bool empty() const { return formats.isEmpty(); }
 };
 
+// One path the catalogs name and no file answers to, with the files that
+// may be it (#103), and whether the catalogs could be pointed at its one
+// candidate instead (empty) or why not (export.pdb's fixed spans, see
+// relinkRefusalFor()). Decided at scan time, since it reads export.pdb.
+struct MovedFileEntry
+{
+    domain::MovedFileFinding finding;
+    std::string relinkRefusal;
+};
+
 struct LibraryConsistencyScanResult
 {
     // Filled by the first leg, which counts for the chain; empty after.
@@ -272,6 +283,12 @@ struct LibraryConsistencyScanResult
     domain::CueTableAudit cueTables;
     bool cueTablesChecked = false;
     std::string cueTablesError;
+    // The last leg only: rows whose file is gone, paired with the files
+    // on the stick no catalog names (#103, domain::findMovedFiles). The
+    // walk of the stick happens only when some row is missing.
+    std::vector<MovedFileEntry> movedFiles;
+    bool movedFilesChecked = false;
+    std::string movedFilesError;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -454,6 +471,26 @@ private:
     Q_PROPERTY(QVariantList cueTableRows READ cueTableRows NOTIFY cueTablesChanged)
     Q_PROPERTY(int cueTableStagedCount READ cueTableStagedCount NOTIFY cueTablesChanged)
     Q_PROPERTY(int cueTableLeftAloneCount READ cueTableLeftAloneCount NOTIFY cueTablesChanged)
+    // Tracks whose rows point at a file that is gone, and the files on
+    // the stick that may be it (#103): "N tracks point at a file that has
+    // moved. Found on the stick: M." Checked by the last leg of a full
+    // scan. Each {expectedPath, title, artist, libraries, candidates:
+    // [{filePath, confidence: "high"|"confirm", reason}], oneClick,
+    // oneToConfirm, relinkRefusal, staged: "" | "move" | "relink"}. A
+    // finding with one candidate can be repaired by moving the file back
+    // (moveFileBack, the default, no catalog written) or, when
+    // relinkRefusal is empty, by pointing the catalogs at the file
+    // (relinkMovedFile). Several candidates, or none, is report only.
+    Q_PROPERTY(bool movedFilesChecked READ movedFilesChecked NOTIFY movedFilesChanged)
+    Q_PROPERTY(QString movedFilesError READ movedFilesError NOTIFY movedFilesChanged)
+    Q_PROPERTY(int movedFileCount READ movedFileCount NOTIFY movedFilesChanged)
+    Q_PROPERTY(int movedFileFoundCount READ movedFileFoundCount NOTIFY movedFilesChanged)
+    // Findings with exactly one high-confidence candidate: what Move All
+    // Back does, and what is left for it to do.
+    Q_PROPERTY(int movedFileOneClickCount READ movedFileOneClickCount NOTIFY movedFilesChanged)
+    Q_PROPERTY(int unstagedMovedFileOneClickCount READ unstagedMovedFileOneClickCount NOTIFY movedFilesChanged)
+    Q_PROPERTY(int movedFileStagedCount READ movedFileStagedCount NOTIFY movedFilesChanged)
+    Q_PROPERTY(QVariantList movedFiles READ movedFiles NOTIFY movedFilesChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -582,6 +619,14 @@ public:
     QVariantList cueTableRows() const;
     int cueTableLeftAloneCount() const { return m_cueTables.noReadableFile + m_cueTables.notUnderstood; }
     int cueTableStagedCount() const;
+    bool movedFilesChecked() const { return m_movedFilesChecked; }
+    QString movedFilesError() const { return m_movedFilesError; }
+    int movedFileCount() const { return static_cast<int>(m_movedFiles.size()); }
+    int movedFileFoundCount() const;
+    int movedFileOneClickCount() const;
+    int unstagedMovedFileOneClickCount() const;
+    int movedFileStagedCount() const;
+    QVariantList movedFiles() const;
     QString playlistsError() const { return m_playlistsError; }
     int playlistDifferenceCount() const { return static_cast<int>(m_playlistFindings.size()); }
     QVariantList playlistDifferences() const;
@@ -667,6 +712,22 @@ public:
     Q_INVOKABLE void repairCueTables(const QStringList &contentIds);
     Q_INVOKABLE void unstageCueTable(const QString &contentId);
     Q_INVOKABLE void unstageCueTables();
+    // Stages moving the one candidate file of the finding for
+    // `expectedPath` (from movedFiles) back to that path: repair A of
+    // #103, no catalog written. Refused for a finding with several
+    // candidates or none; a candidate that needs confirming is the page's
+    // to confirm before it calls this.
+    Q_INVOKABLE void moveFileBack(const QString &expectedPath);
+    // moveFileBack() for every finding with one high-confidence candidate
+    // that is not staged yet.
+    Q_INVOKABLE void moveAllFilesBack();
+    // Stages pointing every catalog's row for `expectedPath` at the one
+    // candidate instead: repair B. Refused when the finding's
+    // relinkRefusal is not empty. Replaces a staged moveFileBack() of the
+    // same finding, and that replaces this.
+    Q_INVOKABLE void relinkMovedFile(const QString &expectedPath);
+    Q_INVOKABLE void unstageMovedFile(const QString &expectedPath);
+    Q_INVOKABLE void unstageMovedFiles();
     Q_INVOKABLE void removeDanglingPlaylistEntries();
     Q_INVOKABLE void unstageDanglingPlaylistEntries();
     Q_INVOKABLE void repairUnresolvedPlaylistEntries();
@@ -710,6 +771,7 @@ signals:
     void sampleRatesChanged();
     void playlistsChanged();
     void cueTablesChanged();
+    void movedFilesChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -807,6 +869,18 @@ private:
     // Whether the page may change what is staged now; says why not.
     bool cueTableStagingAllowed();
     bool cueTableRowStaged(int64_t contentId) const;
+    std::vector<MovedFileEntry> m_movedFiles;
+    bool m_movedFilesChecked = false;
+    QString m_movedFilesError;
+    // normalizedPathKey(expected path) -> "move" or "relink", for the
+    // findings whose repair is staged (one change per finding, with one
+    // id for both repairs: moved_file_changes.hpp).
+    std::map<std::string, QString> m_stagedMovedFiles;
+    const MovedFileEntry *movedFileEntry(const QString &expectedPath) const;
+    // True when the finding's change is staged in the session now.
+    bool movedFileStaged(const MovedFileEntry &entry) const;
+    // Stages one repair for `entry`; false when staging refused.
+    bool stageMovedFile(const MovedFileEntry &entry, bool relink);
     infrastructure::engine::RekordboxImportState m_importState;
     QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;

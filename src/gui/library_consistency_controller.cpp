@@ -19,7 +19,14 @@
 #include "application/path_key.hpp"
 #include "application/phased_progress.hpp"
 #include "application/track_file_presence.hpp"
+#include "application/use_cases/find_unreferenced_files.hpp"
+#include "application/use_cases/unreferenced_tracks.hpp"
 #include "domain/clustered_cue.hpp"
+#include "domain/moved_files.hpp"
+#include "gui/edit/changes/moved_file_changes.hpp"
+#include "infrastructure/cleanup/audio_file_walk.hpp"
+#include "infrastructure/local/metadata_cache.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/sync_planning.hpp"
 #include "domain/track_scope.hpp"
@@ -561,7 +568,8 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                                           application::CancellationToken cancel,
                                           infrastructure::engine::ArtworkSourceByTrackFile artSources,
                                           QString backupDirectory, ScanChainPlan chain, QStringList chainFormats,
-                                          QString rekordboxPath, QString enginePath)
+                                          QString rekordboxPath, QString enginePath,
+                                          std::vector<domain::Track> priorMissing)
 {
     runningScanTasks().fetch_add(1);
     struct Running
@@ -848,6 +856,99 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             (application::trackFileIsPresent(t) ? healthy : broken).push_back(std::move(t));
         }
         result.issues = domain::LibraryConsistencyChecker::check(healthy, broken);
+
+        if (lastLeg) {
+            // #103: the rows every leg found missing (the earlier legs'
+            // came with the request, this leg's are above), beside the
+            // audio files no catalog names. The stick is walked only
+            // when something is missing: a library with every file in
+            // place pays nothing here.
+            try {
+                std::vector<domain::Track> missing = std::move(priorMissing);
+                for (const auto &issue : result.issues) {
+                    if (issue.kind != domain::LibraryConsistencyIssue::Kind::Missing) {
+                        continue;
+                    }
+                    missing.insert(missing.end(), issue.brokenGroup.begin(), issue.brokenGroup.end());
+                }
+                std::vector<MovedFileEntry> entries;
+                if (!missing.empty()) {
+                    // Every catalog's rows, unscoped, from the cache the
+                    // legs filled: a file is unreferenced only when no
+                    // row anywhere names it, whatever playlist the page
+                    // is showing.
+                    application::CatalogTracks catalogs;
+                    for (const QString &f : chain.formats) {
+                        const QString at = f == QStringLiteral("engine") ? enginePath : rekordboxPath;
+                        auto rows = scanTracks(f, at, application::NullProgressReporter::instance(), cancel);
+                        if (f == QStringLiteral("rekordbox")) {
+                            catalogs.rekordbox = std::move(rows);
+                        } else if (f == QStringLiteral("engine")) {
+                            catalogs.engine = std::move(rows);
+                        } else {
+                            catalogs.oneLibrary = std::move(rows);
+                        }
+                    }
+                    const std::string stickRoot =
+                        infrastructure::paths::stickRootForCatalogPath(pathToUtf8(pathFromQString(path)));
+                    progress.start("Looking for the files of missing tracks", 1);
+                    const auto walk = infrastructure::cleanup::walkAudioFiles(
+                        pathToUtf8(pathFromUtf8(stickRoot) / "Contents"), cancel);
+                    progress.tick(1);
+                    const auto unreferenced = application::findUnreferencedFiles(walk.files, catalogs);
+                    std::vector<domain::Track> files;
+                    if (unreferenced.usable) {
+                        // Each stray file as a Track: its name and size
+                        // for every file, its tags where they can be
+                        // read (cached on the stick, as Clean Up's scan
+                        // caches them), so a file whose tags cannot be
+                        // read is still found by its name.
+                        infrastructure::local::MetadataCache cache(stickRoot);
+#ifdef SEABASS_HAVE_TAGLIB
+                        infrastructure::audio::TagLibMetadataProbe probe;
+#else
+                        application::NullTrackMetadataProbe probe;
+#endif
+                        progress.start("Reading the files no library names", unreferenced.unreferenced.size());
+                        size_t done = 0;
+                        for (const auto &file : unreferenced.unreferenced) {
+                            cancel.throwIfCancelled();
+                            auto read = application::unreferencedFilesAsTracks({file}, probe, &cache, cancel);
+                            if (!read.empty()) {
+                                files.push_back(std::move(read.front()));
+                            } else {
+                                domain::Track bare;
+                                bare.format = "disk";
+                                bare.isUnreferenced = true;
+                                bare.sourceId = file.filePath;
+                                bare.filePath = file.filePath;
+                                bare.filename = pathToUtf8(pathFromUtf8(file.filePath).filename());
+                                bare.fileSizeBytes = file.fileSizeBytes;
+                                files.push_back(std::move(bare));
+                            }
+                            progress.tick(++done);
+                        }
+                        cache.save();
+                    }
+                    const auto key = [](const std::string &p) { return application::normalizedPathKey(p); };
+                    for (auto &finding : domain::findMovedFiles(missing, files, key)) {
+                        cancel.throwIfCancelled();
+                        MovedFileEntry entry;
+                        if (const auto *one = finding.only()) {
+                            entry.relinkRefusal = relinkRefusalFor(rekordboxPath, finding, one->file.filePath);
+                        }
+                        entry.finding = std::move(finding);
+                        entries.push_back(std::move(entry));
+                    }
+                }
+                result.movedFiles = std::move(entries);
+                result.movedFilesChecked = true;
+            } catch (const application::OperationCancelled &) {
+                throw;
+            } catch (const std::exception &e) {
+                result.movedFilesError = e.what();
+            }
+        }
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;
     } catch (const std::exception &e) {
@@ -1044,6 +1145,20 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_cueTables = {};
     m_cueTablesChecked = false;
     m_cueTablesError.clear();
+    m_movedFiles.clear();
+    m_movedFilesChecked = false;
+    m_movedFilesError.clear();
+    // Unstaged like the cue table repair below, and for the same reason:
+    // the findings are gone until the scan lists them again.
+    if (!m_session || !m_session->writing()) {
+        for (const auto &[key, kind] : m_stagedMovedFiles) {
+            if (m_session) {
+                m_session->unstage("moved-file:" + QString::fromStdString(key));
+            }
+        }
+        m_stagedMovedFiles.clear();
+    }
+    emit movedFilesChanged();
     // Unlike the fixes above, the cue table repair is unstaged here: its
     // rows are gone until the scan lists them again, and a staged repair
     // must never outlive the row it was staged from. Not while a save
@@ -1160,11 +1275,22 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
     const QStringList chainFormats = m_chainFormats;
     const QString rekordboxPath = m_rekordboxPath;
     const QString enginePath = m_enginePath;
+    // The rows the legs before this one found missing, for the last leg's
+    // moved-file check (#103): it pairs them with the stray files once
+    // every catalog is read, without stat-ing every track again.
+    std::vector<domain::Track> priorMissing;
+    if (m_pendingScanFormats.empty()) {
+        for (const auto &issue : m_model.issues()) {
+            if (issue.kind == domain::LibraryConsistencyIssue::Kind::Missing) {
+                priorMissing.insert(priorMissing.end(), issue.brokenGroup.begin(), issue.brokenGroup.end());
+            }
+        }
+    }
     AsyncRequest<LibraryConsistencyScanResult>::Work work =
         [format, path, playlist, depth, reporter, artSources, backupDirectory, chain, chainFormats, rekordboxPath,
-         enginePath](application::CancellationToken cancel) {
+         enginePath, priorMissing](application::CancellationToken cancel) {
             return runScanTask(format, path, playlist, depth, reporter, cancel, artSources, backupDirectory, chain,
-                               chainFormats, rekordboxPath, enginePath);
+                               chainFormats, rekordboxPath, enginePath, priorMissing);
         };
     AsyncRequest<LibraryConsistencyScanResult>::Ending ending{
         [this](LibraryConsistencyScanResult &&result) { onScanFinished(std::move(result)); },
@@ -1246,6 +1372,12 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
             m_cueTablesChecked = result.cueTablesChecked;
             m_cueTablesError = QString::fromStdString(result.cueTablesError);
             emit cueTablesChanged();
+        }
+        if (result.movedFilesChecked || !result.movedFilesError.empty()) {
+            m_movedFiles = std::move(result.movedFiles);
+            m_movedFilesChecked = result.movedFilesChecked;
+            m_movedFilesError = QString::fromStdString(result.movedFilesError);
+            emit movedFilesChanged();
         }
         // Same rule as the two above: a leg that read nothing must not
         // wipe what a leg that did read left behind. hasColumn is part
@@ -1410,6 +1542,13 @@ void LibraryConsistencyController::attachSession()
                     emit cueTablesChanged();
                     return;
                 }
+                if (changeId.startsWith(QStringLiteral("moved-file:"))) {
+                    m_stagedMovedFiles.erase(changeId.mid(QStringLiteral("moved-file:").size()).toStdString());
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit movedFilesChanged();
+                    return;
+                }
                 if (changeId == RemoveDanglingPlaylistEntriesChange::idFor()) {
                     m_danglingFixStaged = false;
                     m_rescanAfterSave = true;
@@ -1502,6 +1641,11 @@ void LibraryConsistencyController::attachSession()
                     m_stagedCueTables.clear();
                     emit cueTablesChanged();
                 }
+                if (std::erase_if(m_stagedMovedFiles, [this](const auto &staged) {
+                        return !m_session->hasChange("moved-file:" + QString::fromStdString(staged.first));
+                    }) > 0) {
+                    emit movedFilesChanged();
+                }
                 if (m_rescanAfterSave) {
                     m_rescanAfterSave = false;
                     rescanAfterWrite();
@@ -1520,6 +1664,8 @@ void LibraryConsistencyController::attachSession()
                 emit playlistsChanged();
                 m_stagedCueTables.clear();
                 emit cueTablesChanged();
+                m_stagedMovedFiles.clear();
+                emit movedFilesChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
                 emit sampleRatesChanged();
@@ -2661,9 +2807,213 @@ void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
         && !m_sampleRateFillStaged && m_stagedPlaylists.empty() && !m_danglingFixStaged && !m_unresolvedFixStaged
         && !m_importMarkStaged
-        && m_stagedNoPlaylistFiles.empty() && m_stagedCueTables.empty()) {
+        && m_stagedNoPlaylistFiles.empty() && m_stagedCueTables.empty() && m_stagedMovedFiles.empty()) {
         setStatusMessage({});
     }
+}
+
+// ---- Moved files (#103) --------------------------------------------------
+
+int LibraryConsistencyController::movedFileFoundCount() const
+{
+    return static_cast<int>(std::count_if(m_movedFiles.begin(), m_movedFiles.end(), [](const MovedFileEntry &e) {
+        return !e.finding.candidates.empty();
+    }));
+}
+
+int LibraryConsistencyController::movedFileOneClickCount() const
+{
+    return static_cast<int>(std::count_if(m_movedFiles.begin(), m_movedFiles.end(),
+                                          [](const MovedFileEntry &e) { return e.finding.oneClick(); }));
+}
+
+int LibraryConsistencyController::unstagedMovedFileOneClickCount() const
+{
+    return static_cast<int>(std::count_if(m_movedFiles.begin(), m_movedFiles.end(), [this](const MovedFileEntry &e) {
+        return e.finding.oneClick() && !movedFileStaged(e);
+    }));
+}
+
+int LibraryConsistencyController::movedFileStagedCount() const
+{
+    return static_cast<int>(std::count_if(m_movedFiles.begin(), m_movedFiles.end(),
+                                          [this](const MovedFileEntry &e) { return movedFileStaged(e); }));
+}
+
+bool LibraryConsistencyController::movedFileStaged(const MovedFileEntry &entry) const
+{
+    // Asked of the session too, so the page never shows a repair staged
+    // that the session does not hold.
+    const auto staged = m_stagedMovedFiles.find(application::normalizedPathKey(entry.finding.expectedPath));
+    return staged != m_stagedMovedFiles.end() && m_session
+        && m_session->hasChange(movedFileChangeId(entry.finding.expectedPath));
+}
+
+QVariantList LibraryConsistencyController::movedFiles() const
+{
+    QVariantList out;
+    for (const auto &entry : m_movedFiles) {
+        const auto &finding = entry.finding;
+        QStringList libraries;
+        for (const auto &row : finding.rows) {
+            const QString name = libraryNameOf(row.format);
+            if (!libraries.contains(name)) {
+                libraries << name;
+            }
+        }
+        QVariantList candidates;
+        for (const auto &candidate : finding.candidates) {
+            QVariantMap c;
+            c["filePath"] = QString::fromStdString(candidate.file.filePath);
+            c["confidence"] = candidate.confidence == domain::MovedFileCandidate::Confidence::High
+                ? QStringLiteral("high")
+                : QStringLiteral("confirm");
+            c["reason"] = QString::fromStdString(candidate.reason);
+            candidates << c;
+        }
+        QVariantMap m;
+        m["expectedPath"] = QString::fromStdString(finding.expectedPath);
+        m["title"] = QString::fromStdString(finding.title());
+        m["artist"] = QString::fromStdString(finding.artist());
+        m["libraries"] = libraries.join(QStringLiteral(", "));
+        m["candidates"] = candidates;
+        m["oneClick"] = finding.oneClick();
+        m["oneToConfirm"] = finding.oneToConfirm();
+        m["relinkRefusal"] = QString::fromStdString(entry.relinkRefusal);
+        const auto staged = m_stagedMovedFiles.find(application::normalizedPathKey(finding.expectedPath));
+        m["staged"] = movedFileStaged(entry) ? staged->second : QString();
+        out << m;
+    }
+    return out;
+}
+
+const MovedFileEntry *LibraryConsistencyController::movedFileEntry(const QString &expectedPath) const
+{
+    const std::string key = application::normalizedPathKey(expectedPath.toStdString());
+    for (const auto &entry : m_movedFiles) {
+        if (application::normalizedPathKey(entry.finding.expectedPath) == key) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+bool LibraryConsistencyController::stageMovedFile(const MovedFileEntry &entry, bool relink)
+{
+    const auto *one = entry.finding.only();
+    if (one == nullptr) {
+        setErrorMessage(QStringLiteral("\"%1\" has %2 on the stick, so nothing is offered for it.")
+                            .arg(QString::fromStdString(entry.finding.title()),
+                                 entry.finding.candidates.empty() ? QStringLiteral("no matching file")
+                                                                   : QStringLiteral("more than one file that could be it")));
+        return false;
+    }
+    if (relink && !entry.relinkRefusal.empty()) {
+        setErrorMessage(QStringLiteral("The library cannot be pointed at %1: %2")
+                            .arg(QString::fromStdString(one->file.filePath),
+                                 QString::fromStdString(entry.relinkRefusal)));
+        return false;
+    }
+    if (!ensureSessionForStaging()) {
+        return false;
+    }
+    std::unique_ptr<PendingChange> change;
+    if (relink) {
+        change = std::make_unique<RelinkMovedFileChange>(m_rekordboxPath, m_enginePath, entry.finding, one->file);
+    } else {
+        change = std::make_unique<RelocateMovedFileChange>(entry.finding, one->file);
+    }
+    if (!m_session->stage(std::move(change))) {
+        return false;  // the session reported the lock refusal; the page shows it
+    }
+    m_stagedMovedFiles[application::normalizedPathKey(entry.finding.expectedPath)] =
+        relink ? QStringLiteral("relink") : QStringLiteral("move");
+    return true;
+}
+
+void LibraryConsistencyController::moveFileBack(const QString &expectedPath)
+{
+    const MovedFileEntry *entry = movedFileEntry(expectedPath);
+    if (busy() || entry == nullptr) {
+        return;
+    }
+    setErrorMessage({});
+    if (!stageMovedFile(*entry, false)) {
+        return;
+    }
+    emit movedFilesChanged();
+    setStagedStatusMessage(QStringLiteral("Staged moving %1 file(s) back where the library expects them. Press Save "
+                                          "to write it.")
+                               .arg(movedFileStagedCount()));
+}
+
+void LibraryConsistencyController::moveAllFilesBack()
+{
+    if (busy()) {
+        return;
+    }
+    setErrorMessage({});
+    int staged = 0;
+    for (const auto &entry : m_movedFiles) {
+        if (!entry.finding.oneClick() || movedFileStaged(entry)) {
+            continue;
+        }
+        if (!stageMovedFile(entry, false)) {
+            break;
+        }
+        ++staged;
+    }
+    emit movedFilesChanged();
+    if (staged > 0) {
+        setStagedStatusMessage(QStringLiteral("Staged moving %1 file(s) back where the library expects them. Press "
+                                              "Save to write it.")
+                                   .arg(movedFileStagedCount()));
+    }
+}
+
+void LibraryConsistencyController::relinkMovedFile(const QString &expectedPath)
+{
+    const MovedFileEntry *entry = movedFileEntry(expectedPath);
+    if (busy() || entry == nullptr) {
+        return;
+    }
+    setErrorMessage({});
+    if (!stageMovedFile(*entry, true)) {
+        return;
+    }
+    emit movedFilesChanged();
+    setStagedStatusMessage(QStringLiteral("Staged repairing %1 moved file(s). Press Save to write it.")
+                               .arg(movedFileStagedCount()));
+}
+
+void LibraryConsistencyController::unstageMovedFile(const QString &expectedPath)
+{
+    const std::string key = application::normalizedPathKey(expectedPath.toStdString());
+    const auto staged = m_stagedMovedFiles.find(key);
+    if (staged == m_stagedMovedFiles.end()) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage("moved-file:" + QString::fromStdString(key));
+    }
+    m_stagedMovedFiles.erase(staged);
+    emit movedFilesChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
+void LibraryConsistencyController::unstageMovedFiles()
+{
+    if (m_stagedMovedFiles.empty()) {
+        return;
+    }
+    if (m_session) {
+        for (const auto &[key, kind] : m_stagedMovedFiles) {
+            m_session->unstage("moved-file:" + QString::fromStdString(key));
+        }
+    }
+    m_stagedMovedFiles.clear();
+    emit movedFilesChanged();
+    clearStagedStatusIfNothingStaged();
 }
 
 void LibraryConsistencyController::setStatusMessage(const QString &message)

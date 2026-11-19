@@ -156,6 +156,7 @@ set(SEABASS_GUI_QML_FILES
     qml/PlaylistSyncPage.qml
     qml/NoPlaylistTracksPage.qml
     qml/CueTablePage.qml
+    qml/MovedFilesPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/PlaylistDiffPage.qml

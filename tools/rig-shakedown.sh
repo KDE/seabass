@@ -1355,6 +1355,11 @@ check X4-everyday-profile-untouched sandbox_profile_still_clean
 # Windows -- and puts the file back whatever happens. Runs on B, which is
 # already at its reference here, and leaves it there.
 check X3-file-failures-as-issues "$build/rig_file_failure" "$B"
+# X5 (#103): a file moved to another folder on the stick has to be found
+# again, as one high-confidence match for the one track that lost it, and
+# nothing may be found once it is back. Moves one file on B and puts it
+# back whatever happens, like X3; B stays at its reference.
+check X5-moved-file-found "$build/rig_moved_file" "$B"
 
 check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
 check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute

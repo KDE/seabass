@@ -275,6 +275,14 @@ public:
     // trusted, like the annotation above.
     void writePlayCountForPath(const std::string &filePath, int playCount);
 
+    // Points every content row listing `filePath` at `newFilePath`
+    // instead (content.path, converted the way every path here is), for
+    // a file that moved on the stick (#103). Both absolute, on the stick.
+    // Throws OneLibraryRowMissing when no row lists the file, and on any
+    // failure; read back before it is trusted, like the annotation above.
+    // Returns how many rows were pointed.
+    int setTrackPath(const std::string &filePath, const std::string &newFilePath);
+
     // A playlist's membership, by the playlist's full path ("Folder/List",
     // as the reader spells it) and the file's path. Add appends the file
     // at the end of the playlist (sequenceNo one past the last) unless it

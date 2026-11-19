@@ -320,6 +320,22 @@ Page {
             ? counted + " in no playlist in any library. You can delete the ones you do not need."
             : counted + " listed because this stick has no playlists at all.";
     }
+    // #103. Rows whose file is gone, beside the files no catalog names:
+    // see MovedFilesPage. Only once the last leg has every catalog.
+    readonly property bool movedFilesShown: healthController.movedFilesChecked
+        || healthController.movedFilesError.length > 0
+    readonly property int movedFileCount: healthController.movedFileCount
+    readonly property int movedFileFoundCount: healthController.movedFileFoundCount
+    readonly property string movedFilesSummary: {
+        if (healthController.movedFilesError.length > 0) {
+            return healthController.movedFilesError;
+        }
+        if (root.movedFileCount === 0) {
+            return "Every track's file is where its library expects it.";
+        }
+        return (root.movedFileCount === 1 ? "One track points" : root.movedFileCount + " tracks point")
+            + " at a file that is not there. Found on the stick: " + root.movedFileFoundCount + ".";
+    }
     // #57. OneLibrary rows whose cue table holds cues their analysis
     // file does not: see CueTablePage. Only on a stick with OneLibrary,
     // once its leg has read it.
@@ -664,6 +680,22 @@ Page {
                 ok: root.noPlaylistTrackCount === 0
                 actionLabel: root.noPlaylistTrackCount > 0 ? "Review tracks" : ""
                 onActionRequested: root.detailRequested("noplaylist")
+            }
+
+            HealthCheckCard {
+                objectName: "movedFilesCard"
+                visible: root.movedFilesShown
+                fixableCount: root.movedFileFoundCount
+                foundCount: root.movedFileCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Moved files"
+                summary: root.movedFilesSummary
+                running: root.scanning
+                ok: root.movedFileCount === 0 && healthController.movedFilesError.length === 0
+                failed: healthController.movedFilesError.length > 0
+                actionLabel: root.movedFileCount > 0 ? "Review moved files" : ""
+                onActionRequested: root.detailRequested("movedfiles")
             }
 
             HealthCheckCard {

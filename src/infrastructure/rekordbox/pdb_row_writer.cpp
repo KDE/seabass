@@ -1168,6 +1168,83 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
     return true;
 }
 
+namespace
+{
+
+// The ASCII characters a track string slot can take, or nullopt when the
+// slot cannot be written: unused (it points back into the row header, see
+// overwriteTrackStringIfUsed), or its string leaves the page.
+std::optional<size_t> trackStringCapacity(const std::string &buffer, size_t rowBodyOffset, int stringIndex)
+{
+    const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
+    const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, stringIndex);
+    if (absOffset < header || !stringStaysInRowPage(buffer, rowBodyOffset, absOffset)) {
+        return std::nullopt;
+    }
+    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
+    return span.isUtf16 ? span.textCapacityBytes / 2 : span.textCapacityBytes;
+}
+
+}  // namespace
+
+std::optional<PdbRowWriter::TrackPathCapacity> PdbRowWriter::trackPathCapacity(uint32_t trackId) const
+{
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return std::nullopt;
+    }
+    const auto filename = trackStringCapacity(m_buffer, found->rowBodyOffset, TrackStringIndexFilename);
+    const auto filePath = trackStringCapacity(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath);
+    if (!filename || !filePath) {
+        return std::nullopt;
+    }
+    return TrackPathCapacity{*filename, *filePath};
+}
+
+bool PdbRowWriter::setTrackFilePath(uint32_t trackId, const std::string &filename, const std::string &filePath,
+                                    std::string *refusal)
+{
+    const auto refuse = [&](const std::string &why) {
+        if (refusal != nullptr) {
+            *refusal = why;
+        }
+        return false;
+    };
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return false;
+    }
+    // Both checked before either is written, like overwriteTrackText():
+    // a row with its path replaced and its filename refused names a file
+    // under two names.
+    if (!isPlainAscii(filename) || !isPlainAscii(filePath)) {
+        return refuse("export.pdb takes only plain ASCII in a track's path, and this path is not");
+    }
+    const auto capacity = trackPathCapacity(trackId);
+    if (!capacity) {
+        return refuse("this track's path fields in export.pdb cannot be written in place");
+    }
+    if (filePath.size() > capacity->filePath) {
+        return refuse("the new path is " + std::to_string(filePath.size()) + " characters, and this track's path "
+                      "field in export.pdb holds " + std::to_string(capacity->filePath)
+                      + "; a row cannot grow without rewriting its page");
+    }
+    if (filename.size() > capacity->filename) {
+        return refuse("the new filename is " + std::to_string(filename.size()) + " characters, and this track's "
+                      "filename field in export.pdb holds " + std::to_string(capacity->filename));
+    }
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilename, filename);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath, filePath);
+    m_editedPageIndices.insert(found->pageIndex);
+    return true;
+}
+
 bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTextOverride &text)
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {

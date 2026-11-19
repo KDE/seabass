@@ -492,6 +492,67 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
     return true;
 }
 
+void SaveContext::noteMoved(const std::string &from, const std::string &to, const std::string &label)
+{
+    auto existing = m_recordByLabel.find(label);
+    std::string id;
+    if (existing == m_recordByLabel.end()) {
+        // A record with no copies in it, as a label with only absent files
+        // gets: the note is what its restore acts on.
+        const application::BackupRecord record = archiveStore().backup({}, label);
+        id = record.id;
+        m_recordByLabel[label] = id;
+        m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
+                             QString::fromStdString(id)});
+        noteSaveInProgress();
+    } else {
+        id = existing->second;
+    }
+    archiveStore().recordMoved(id, from, to);
+    if (m_inChange) {
+        m_movesThisChange.push_back({from, to});
+    }
+    m_movesThisSave.push_back({from, to});
+    log().record(label + ": moving " + from + " to " + to + "; undoing this save moves it back");
+}
+
+std::optional<QString> SaveContext::putBackMoves(std::vector<Move> &moves, int &putBack)
+{
+    std::optional<QString> firstError;
+    for (auto it = moves.rbegin(); it != moves.rend(); ++it) {
+        const fs::path from = pathFromUtf8(it->from);
+        const fs::path to = pathFromUtf8(it->to);
+        std::error_code fromEc;
+        std::error_code toEc;
+        const bool atFrom = fs::exists(from, fromEc);
+        const bool atTo = fs::exists(to, toEc);
+        QString error;
+        if (fromEc || toEc) {
+            error = QStringLiteral("could not tell whether %1 is there").arg(pathToQString(atFrom ? to : from));
+        } else if (atFrom && !atTo) {
+            continue;  // never moved
+        } else if (atFrom == atTo) {
+            error = atFrom ? QStringLiteral("%1 and %2 are both there").arg(pathToQString(from), pathToQString(to))
+                           : QStringLiteral("%1 is gone").arg(pathToQString(to));
+        } else {
+            std::error_code moveEc;
+            fs::rename(to, from, moveEc);
+            if (moveEc) {
+                error = QStringLiteral("could not move %1 back to %2: %3")
+                            .arg(pathToQString(to), pathToQString(from), QString::fromStdString(moveEc.message()));
+            } else {
+                ++putBack;
+                continue;
+            }
+        }
+        if (!firstError) {
+            firstError = error;
+        }
+    }
+    moves.clear();
+    return firstError;
+}
+
 std::string SaveContext::backupIdOf(const std::string &file) const
 {
     auto it = m_backedUp.find(application::normalizedPathKey(file));
@@ -674,6 +735,7 @@ void SaveContext::endChange()
     m_checkpoints.clear();
     m_protected.clear();
     m_checkpointDir.reset();
+    m_movesThisChange.clear();
     m_inChange = false;
 }
 
@@ -824,7 +886,18 @@ std::optional<QString> SaveContext::rollBackChange()
     // has its .db from one generation beside sidecars from another.
     std::set<std::string> notPutBack;
     int putBackCount = 0;
-    const std::optional<QString> firstError = putBack(m_checkpoints, notPutBack, putBackCount);
+    std::optional<QString> firstError = putBack(m_checkpoints, notPutBack, putBackCount);
+    // And the files this change moved (#103), back where they were. The
+    // save's own list forgets them too: moved back, they are not the
+    // save's to move back again.
+    if (!m_movesThisChange.empty()) {
+        const size_t undone = m_movesThisChange.size();
+        m_movesThisSave.resize(m_movesThisSave.size() >= undone ? m_movesThisSave.size() - undone : 0);
+        const std::optional<QString> moveError = putBackMoves(m_movesThisChange, putBackCount);
+        if (moveError && !firstError) {
+            firstError = moveError;
+        }
+    }
 
     // Then the logs themselves. Keyed on the databases this save WROTE, not
     // on the files the failing change protected: a save whose OneLibrary
@@ -888,7 +961,15 @@ std::optional<QString> SaveContext::rollBackSave()
 
     std::set<std::string> notPutBack;
     int putBackCount = 0;
-    const std::optional<QString> firstError = putBack(m_saveCheckpoints, notPutBack, putBackCount);
+    std::optional<QString> firstError = putBack(m_saveCheckpoints, notPutBack, putBackCount);
+    // And every file a change of this save moved (#103), back where it
+    // was, after the catalogs so that nothing names a file mid-move.
+    {
+        const std::optional<QString> moveError = putBackMoves(m_movesThisSave, putBackCount);
+        if (moveError && !firstError) {
+            firstError = moveError;
+        }
+    }
 
     // No log is folded here, unlike after a change: each database went back
     // together with its sidecars, as they were before the save, and folding

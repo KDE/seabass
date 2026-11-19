@@ -508,6 +508,7 @@ add_library(seabass_core STATIC
     src/infrastructure/audio/playback_timeline.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
+    src/domain/moved_files.cpp
     src/domain/library_statistics.cpp
     src/domain/stick_performance.cpp
     src/domain/local_restore.cpp
@@ -705,6 +706,7 @@ add_library(seabass_core_testing STATIC
     src/domain/rekordbox_baseline.cpp
     src/domain/engine_update_planning.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/moved_files.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
@@ -1123,6 +1125,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/engine_membership_change.cpp
         src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/delete_tracks_change.cpp
+        src/gui/edit/changes/moved_file_changes.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/repoint_playlist_entries_change.cpp
@@ -2098,6 +2101,12 @@ add_executable(library_consistency_test
 target_link_libraries(library_consistency_test PRIVATE seabass_core_testing)
 target_include_directories(library_consistency_test PRIVATE src)
 add_test(NAME library_consistency_test COMMAND library_consistency_test)
+
+# #103: a missing row paired with the stray file it moved to, by tier.
+add_executable(moved_files_test tests/moved_files_test.cpp)
+target_link_libraries(moved_files_test PRIVATE seabass_core_testing)
+target_include_directories(moved_files_test PRIVATE src)
+add_test(NAME moved_files_test COMMAND moved_files_test)
 
 add_executable(filesystem_health_test
     tests/filesystem_health_test.cpp
@@ -3346,6 +3355,18 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME failed_change_rollback_test COMMAND failed_change_rollback_test)
 
+    # #103: a moved file put back (and the move undone, and rolled back
+    # with a failed save), and the catalogs pointed at it instead, on a
+    # copy of the fixture.
+    add_executable(moved_file_change_test tests/moved_file_change_test.cpp)
+    target_include_directories(moved_file_change_test PRIVATE src tests)
+    target_link_libraries(moved_file_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(moved_file_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME moved_file_change_test COMMAND moved_file_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+
     add_executable(restore_backups_change_test tests/restore_backups_change_test.cpp)
     target_include_directories(restore_backups_change_test PRIVATE src tests)
     target_link_libraries(restore_backups_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
@@ -4304,6 +4325,13 @@ target_link_libraries(rig_read PRIVATE seabass_core)
 add_executable(rig_file_failure tools/rig_file_failure.cpp)
 target_include_directories(rig_file_failure PRIVATE src)
 target_link_libraries(rig_file_failure PRIVATE seabass_core)
+
+# X5 (#103): moves one track's file to another folder on the stick and asks
+# whether the moved-file check finds it, with one high-confidence match,
+# and finds nothing once it is back. Needs the catalog readers, like X3.
+add_executable(rig_moved_file tools/rig_moved_file.cpp)
+target_include_directories(rig_moved_file PRIVATE src)
+target_link_libraries(rig_moved_file PRIVATE seabass_core)
 
 # Issue #1: rewrites the My Tag names in an exportExt.pdb in place, so a
 # real one can be kept as a fixture instead of deleted. Separate from the

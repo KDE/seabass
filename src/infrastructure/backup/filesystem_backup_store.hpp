@@ -64,6 +64,18 @@ public:
     // after all (or cannot be examined): that one needs a copy.
     void recordAbsent(const std::string &id, const std::vector<std::string> &filePaths);
 
+    // Notes in record `id` that the save moves the file at `from` to `to`
+    // (#103: a moved audio file put back where the catalogs expect it),
+    // so restore() moves it back and gives back a stick with the file
+    // where it was. A note, not a copy: the file is not read, and the
+    // record stays the size of its other entries. Noted BEFORE the move,
+    // so a crash between the two leaves a note of a move that did not
+    // happen, which restore() reads as nothing to do.
+    //
+    // Throws if `id` is not a record this build wrote, or a path is
+    // empty or holds a tab.
+    void recordMoved(const std::string &id, const std::string &from, const std::string &to);
+
     // Called with the number of files a backup() or addToArchive() has
     // dealt with so far, before each file and once more at the end, on
     // the thread doing the backup. A save backing up hundreds of analysis

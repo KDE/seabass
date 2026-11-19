@@ -689,6 +689,42 @@ int main()
         std::cout << "case 10 (artist and playlist names refuse non-ASCII and still take ASCII) OK\n";
     }
 
+    // setTrackFilePath (#103): the row's path fields hold what they hold,
+    // and a path that does not fit is refused whole rather than cut
+    // short -- a path cut short names a file that is not there, which is
+    // the fault a relink exists to repair.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
+        const auto capacity = writer.trackPathCapacity(100);
+        assert(capacity.has_value());
+        assert(capacity->filename == 8 && "the 8-byte long_ascii filename slot");
+        assert(capacity->filePath == 0 && "a file_path slot that holds nothing");
+        assert(!writer.trackPathCapacity(999999).has_value());
+        std::string refusal;
+        assert(!writer.setTrackFilePath(100, "ok.mp3", "/x", &refusal));
+        assert(refusal.find("holds 0") != std::string::npos && "refused for the path, with the capacity");
+        refusal.clear();
+        assert(!writer.setTrackFilePath(100, "too-long.mp3", "", &refusal));
+        assert(refusal.find("filename") != std::string::npos);
+        refusal.clear();
+        assert(!writer.setTrackFilePath(100, "caf\xC3\xA9.mp3", "", &refusal));
+        assert(refusal.find("ASCII") != std::string::npos);
+        refusal.clear();
+        assert(!writer.setTrackFilePath(999999, "ok.mp3", "", &refusal) && refusal.empty() && "no row, no refusal");
+        assert(!writer.commit() && "nothing was edited, so there is nothing to commit");
+        assert(readTrackTexts(pdbPath, 100).filename == "real.mp3" && "every refusal left the row untouched");
+
+        assert(writer.setTrackFilePath(100, "new.mp3", "", &refusal) && refusal.empty());
+        assert(writer.commit());
+        const auto after = readTrackTexts(pdbPath, 100);
+        // Padded to the span on disk; the helper reads the field as the
+        // reader does, so the padding may or may not come back.
+        assert((after.filename == "new.mp3 " || after.filename == "new.mp3") && "fits, in the same span");
+        assert(after.title == "Real Title" && after.comment == "Hi" && "nothing else on the row changed");
+        std::cout << "case 11 (setTrackFilePath refuses what does not fit, writes what does) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
