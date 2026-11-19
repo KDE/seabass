@@ -825,7 +825,8 @@ runs on its own, and those that need a person on that platform. A summary
 line for a manual check carries a third column, `manual`
 (`<check>\t<verdict>\tmanual`); a line without one is automatic. Which checks
 are manual is `rig_manual_ids()` in `tools/rig-platform.sh`: the by-hand checks
-of docs/manual-testing.md (`P1-player-hardware`, `P3-pull-mid-save`)
+of docs/manual-testing.md (`P1-player-hardware`, `P3-pull-mid-save`,
+`P4-player-first-load`)
 everywhere, and on Windows also D2's format (a UAC prompt), the stick pull and
 H1. A manual check nobody has done in this round is `PENDING` -- still to do,
 not failed -- and a person who does it reports its `PASS` or `FAIL` for the

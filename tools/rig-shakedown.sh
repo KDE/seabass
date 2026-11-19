@@ -1394,6 +1394,7 @@ check S1-corpus corpus
 # has done one reports its PASS or FAIL there.
 pending P1-player-hardware "a stick in a real player; see docs/manual-testing.md"
 pending P3-pull-mid-save "a stick pulled during a save, by hand; see docs/manual-testing.md"
+pending P4-player-first-load "the player bar on a stick, with the player made on first load (#96); see docs/manual-testing.md"
 
 set -f  # a name like F4-* must be reported as typed, not glob-expanded
 for wanted in $(rig_only_names); do

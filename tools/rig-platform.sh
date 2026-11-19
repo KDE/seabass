@@ -214,7 +214,7 @@ is_protected_label() {  # <label>
 # mount and Repair-Volume both need administrator rights. On Linux and
 # macOS those three run unattended and stay automatic.
 rig_manual_ids() {
-    local ids="P1-player-hardware P3-pull-mid-save"
+    local ids="P1-player-hardware P3-pull-mid-save P4-player-first-load"
     if rig_is_windows; then
         ids="$ids D2-format-stick-A live-stick-pulled H1-filesystem-repair"
     fi

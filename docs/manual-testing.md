@@ -166,6 +166,45 @@ starting a long run rather than after:
 df -h ~; du -sh ~/Seabass\ Backups
 ```
 
+## 6. Playback with the player made on first load (#96)
+
+Board row `P4-player-first-load`. Since #96 `PlaybackController` makes its
+`QMediaPlayer` and `QAudioOutput` on the first track that is loaded, not
+when the app starts, so the media backend (on Windows the FFmpeg plugin
+and the 19 DLLs behind it) is not loaded before the first window. The
+suite covers the controller (`tst_PlaybackLazyPlayer`, the playback QML
+files) and a real MP3 through the lazy player on Linux, macOS and
+Windows; what no script does is the whole transport in the running app
+with a stick, and the start itself on an installed package.
+
+On every platform, sandbox profile, a test stick:
+
+- [ ] Open the stick, play a track. It plays, the waveform moves, the
+      levels move.
+- [ ] Pause, then play again from where it stopped.
+- [ ] Click in the waveform: playback continues from the click.
+- [ ] Skip beats forward and back, and jump to a hot cue.
+- [ ] Next and previous track, from the player bar.
+- [ ] The volume slider, including from 0 back up.
+- [ ] The media keys (play/pause, next, previous), with Seabass not
+      focused.
+- [ ] Let a track run to its end: the next one starts by itself.
+- [ ] Stop, then eject the stick from Seabass: it ejects, no "busy".
+- [ ] macOS 12 (the Monterey build): Play on a track from a stick plays
+      it; the seek-in-place workaround moved into the lazily made player
+      and is only exercised there.
+
+On Windows, the installed package, the number #96 asks for:
+
+- [ ] Uninstall, reinstall, time the first start from the double click to
+      the first window, with Real-time protection on. 1.0.1 took 6.6 s on
+      the Windows laptop (1.9 s with protection off); after #96 the first
+      window must come before the FFmpeg group is loaded, so clearly
+      under that. Write both numbers into #96, then the second start.
+- [ ] Task Manager during that first start: "Antimalware Service
+      Executable" is what is busy, and the first play of a track is where
+      the remaining wait moved to.
+
 ## Verified
 
 Nothing yet. First entry goes here with the date and what the badge said.
