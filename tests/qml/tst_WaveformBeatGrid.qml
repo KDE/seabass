@@ -179,6 +179,8 @@ TestCase {
         Rectangle {
             id: ground
             property alias view: waveform
+            // One SignalSpy on each canvas's painted signal (paintSpies).
+            property var paints: []
             width: 600
             height: 80
             color: Theme.background
@@ -189,14 +191,48 @@ TestCase {
         }
     }
 
+    Component {
+        id: spyComponent
+        SignalSpy {}
+    }
+
+    // A WaveformView draws on three canvases: the bars (the view itself),
+    // the grid and the overlay. A Canvas paints once it is available,
+    // which may be frames after it is made or changed: under the software
+    // scene graph (the offscreen platform on macOS) a grab right after the
+    // first rendering found only the ground, and a paint that came late
+    // was counted as a repaint by a test that had started counting. So
+    // nothing is looked at, or counted, before every canvas has painted.
+    // grabImage() renders the window itself; waitForRendering() after the
+    // paint only sat out its five seconds for a frame nothing asked for.
+    function paintSpies(view) {
+        const canvases = [view, findChild(view, "beatGridLayer"), findChild(view, "waveformOverlay")];
+        return canvases.map((canvas) => {
+            verify(canvas !== null, "a WaveformView has three canvases");
+            return createTemporaryObject(spyComponent, testCase, {target: canvas, signalName: "painted"});
+        });
+    }
+
+    function waitUntilPainted(spies, what) {
+        tryVerify(() => spies.every((spy) => spy.count > 0), 5000, what || "every canvas has painted");
+        waitForPolish(testCase.Window.window);
+    }
+
+    // `change` run, and then every canvas painted again.
+    function repaintedAfter(host, change, what) {
+        host.paints.forEach((spy) => spy.clear());
+        change();
+        waitUntilPainted(host.paints, what);
+    }
+
     function makeView(props) {
         const host = createTemporaryObject(viewComponent, testCase);
         verify(host !== null);
+        host.paints = paintSpies(host.view);
         for (const key in props) {
             host.view[key] = props[key];
         }
-        waitForPolish(testCase.Window.window);
-        waitForRendering(host);
+        waitUntilPainted(host.paints);
         return host;
     }
 
@@ -226,10 +262,8 @@ TestCase {
     // downbeats, so the bar still reads.
     function test_downbeatsAreTallerAndBrighter() {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
-        host.width = 1200;
-        waitForPolish(testCase.Window.window);
+        repaintedAfter(host, () => host.width = 1200);
         tryCompare(host.view.beatTicks, "length", 120);
-        waitForRendering(host);
         const downbeat = 400;   // beat 40
         const beat = 410;       // beat 41
         verify(inkAt(host, beat, 2) > 0.05, "an ordinary beat has a tick, ink " + inkAt(host, beat, 2));
@@ -247,13 +281,11 @@ TestCase {
     // on screen and not just in the numbers.
     function test_resizingTheViewRedrawsTheGrid() {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
-        host.width = 1200;
+        repaintedAfter(host, () => host.width = 1200);
         tryCompare(host.view.beatTicks, "length", 120);
-        waitForRendering(host);
         verify(inkAt(host, 410, 2) > 0.05);
-        host.width = 600;
+        repaintedAfter(host, () => host.width = 600);
         tryCompare(host.view.beatTicks, "length", 30);
-        waitForRendering(host);
         verify(inkAt(host, 205, 2) < 0.05, "beat 41 is gone at 600 px, ink " + inkAt(host, 205, 2));
         verify(inkAt(host, 200, 2) > 0.3, "downbeat 40 stays");
     }
@@ -317,11 +349,6 @@ TestCase {
         tryVerify(() => gridPaints.count > 0, 2000, "a new width repaints it");
     }
 
-    Component {
-        id: spyComponent
-        SignalSpy {}
-    }
-
     // The overlay is repainted for everything it draws: a highlighted
     // cue, new cues, and the loop being dragged out.
     function test_theOverlayRepaintsForWhatItDraws() {
@@ -368,23 +395,12 @@ TestCase {
             columns.push({low: 1, mid: 1, high: 1});
         }
         const host = createTemporaryObject(fadedComponent, testCase);
-        // A Canvas paints once it is available, which may be frames after
-        // it is made: under the software scene graph (the offscreen
-        // platform on macOS) a grab right after the first rendering found
-        // neither the bars nor the cue yet, only the ground. So the grab
-        // waits until the bars and the overlay have painted. grabImage()
-        // renders the window itself; a waitForRendering() after the paint
-        // only sat out its five seconds for a frame nothing asked for.
-        const barsPainted = createTemporaryObject(spyComponent, testCase, {target: host.view, signalName: "painted"});
-        const overlayPainted = createTemporaryObject(spyComponent, testCase,
-                                                     {target: findChild(host.view, "waveformOverlay"),
-                                                      signalName: "painted"});
+        const paints = paintSpies(host.view);
         host.view.waveformData = columns;
         host.view.trackDurationMs = 60000;
         host.view.cueData = [{kind: "hot", hotCueNumber: 1, positionMs: 30000, color: "#ff0000", isLoop: false}];
         host.view.opacity = 0.5;
-        tryVerify(() => barsPainted.count > 0 && overlayPainted.count > 0, 5000, "the bars and the cue are painted");
-        waitForPolish(testCase.Window.window);
+        waitUntilPainted(paints, "the bars and the cue are painted");
         const image = grabImage(host);
         // x 300 is the cue line, two pixels wide over a full-height bar.
         const got = PixelScale.pixel(image, host, 300, host.height / 2);
