@@ -111,6 +111,18 @@ TestCase {
         return c.tracks.get(i);
     }
 
+    // A click where the item is drawn once the page is laid out. The page
+    // lays itself out again when its read lands (the header grows with the
+    // options it then shows, and the lists move down under it), and that
+    // waits for the next polish: a position read before it is where the
+    // item was, and on a loaded Mac the click landed on nothing there,
+    // the box ticking no track.
+    function clickOn(item) {
+        verify(item !== null, "something to click");
+        verify(waitForPolish(item.Window.window), "the page is laid out before the click");
+        mouseClick(item);
+    }
+
     // A playlist's row in the list ("All tracks" for ""), and its box.
     function playlistRow(page, name) {
         const list = findChild(page, "playlistList");
@@ -134,10 +146,10 @@ TestCase {
     function clickPlaylistBox(page, name) {
         const box = findChild(playlistRow(page, name), "playlistRowCheck");
         verify(box !== null && box.visible, "the playlist row has a box");
-        mouseClick(box);
+        clickOn(box);
     }
     function showPlaylist(page, name) {
-        mouseClick(findChild(playlistRow(page, name), "playlistRowName"));
+        clickOn(findChild(playlistRow(page, name), "playlistRowName"));
         compare(page.controller.shownPlaylist, name);
     }
     // A track's row delegate, built because it is in view.
@@ -307,7 +319,7 @@ TestCase {
         compare(o.c.tracks.count, 5);
         verify(waitForPolish(o.page.Window.window));
         const delegate = delegateInView(o.page, b12);
-        mouseClick(findChild(delegate, "selectCheckBox"));
+        clickOn(findChild(delegate, "selectCheckBox"));
         compare(o.c.tickedCount, 1);
         compare(row(o.c, b12).ticked, true);
 
@@ -390,14 +402,14 @@ TestCase {
 
         const box = findChild(o.page, "replaceEditsCheckBox");
         compare(box.checked, false, "off by default");
-        mouseClick(box);
+        clickOn(box);
         compare(o.c.replaceEngineEdits, true);
         compare(row(o.c, n1).pending, true, "worked out again");
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Replaces Engine's");
         compare(o.c.gridsToCopy, 11);
 
-        mouseClick(box);
+        clickOn(box);
         compare(o.c.replaceEngineEdits, false);
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Locked on the player", "and back");
@@ -411,7 +423,7 @@ TestCase {
         const o = openOn(t73());
         clickPlaylistBox(o.page, "T73 Renamed");
         waitSettled(o.c);
-        mouseClick(findChild(o.page, "waveformsCheckBox"));
+        clickOn(findChild(o.page, "waveformsCheckBox"));
         compare(o.c.waveforms, false);
         waitSettled(o.c);
         compare(row(o.c, b01).gridState, "Left for the player");
@@ -426,7 +438,7 @@ TestCase {
         compare(findChild(o.page, "summaryLabel").text, "5 tracks ticked: one beat grid to copy.");
         compare(findChild(o.page, "leftAloneLabel").text, "4 ticked tracks are left alone: 4 left for the player.");
 
-        mouseClick(findChild(o.page, "gridsCheckBox"));
+        clickOn(findChild(o.page, "gridsCheckBox"));
         compare(o.c.grids, false);
         compare(findChild(o.page, "summaryLabel").text, "Choose beat grids, waveforms or both.");
         compare(findChild(o.page, "stageButton").enabled, false);
@@ -453,7 +465,7 @@ TestCase {
 
         const button = findChild(o.page, "stageButton");
         verify(button.enabled);
-        mouseClick(button);
+        clickOn(button);
         compare(o.c.stagedCount, 11, "one change per track");
         const session = EditSessionRegistry.sessionFor(o.libraryId);
         compare(session.pendingCount, 11);
@@ -515,7 +527,7 @@ TestCase {
         // The save's progress is modal, and a style's exit transition keeps
         // it over the page for a moment: the press goes in once it is gone.
         tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
-        const undone = finished(session, () => mouseClick(undo), "the undo");
+        const undone = finished(session, () => clickOn(undo), "the undo");
         compare(undone.error, "", JSON.stringify(undone));
         // Said as every page says it (#98), not as the summary's "1 undo
         // steps written".
@@ -540,7 +552,7 @@ TestCase {
         compare(o.c.keptTickedCount, 0, "nothing kept before a copy");
         compare(findChild(o.page, "restoreButton").enabled, false, "nothing to restore yet");
         compare(findChild(o.page, "letPlayerAnalyseButton").enabled, true, "three analysed rows");
-        mouseClick(findChild(o.page, "stageButton"));
+        clickOn(findChild(o.page, "stageButton"));
         const session = EditSessionRegistry.sessionFor(o.libraryId);
         const saved = finished(session, () => session.save(), "the copy");
         compare(saved.error, "", JSON.stringify(saved));
@@ -578,7 +590,7 @@ TestCase {
         const restore = findChild(o.page, "restoreButton");
         compare(restore.text, "Restore Engine's Analysis");
         verify(restore.enabled);
-        mouseClick(restore);
+        clickOn(restore);
         compare(o.c.stagedCount, 3, "one change per track");
         compare(o.c.stagedAction, "restore");
         compare(session.pendingCount, 3);
@@ -603,7 +615,7 @@ TestCase {
         const undo = findChild(o.page, "undoLastSaveButton");
         tryVerify(() => undo.visible && undo.enabled, 5000);
         tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
-        const undone = finished(session, () => mouseClick(undo), "the undo");
+        const undone = finished(session, () => clickOn(undo), "the undo");
         compare(undone.error, "", JSON.stringify(undone));
         compare(stickFixture.sha256(db), copied, "m.db is the copy's again");
         compare(stickFixture.keptEngineAnalyses(stick), 3, "the kept analyses are back");
@@ -621,7 +633,7 @@ TestCase {
         const button = findChild(o.page, "letPlayerAnalyseButton");
         compare(button.text, "Let the Player Analyse Again");
         compare(o.c.analysedTickedCount, 3);
-        mouseClick(button);
+        clickOn(button);
         compare(o.c.stagedCount, 3);
         compare(o.c.stagedAction, "letPlayerAnalyse");
         const saved = finished(session, () => session.save(), "marking");
@@ -689,7 +701,7 @@ TestCase {
         clickPlaylistBox(o.page, "T73 Folder/T73 New");
         waitSettled(o.c);
         compare(o.c.tracksToWrite, 3);
-        mouseClick(findChild(o.page, "stageButton"));
+        clickOn(findChild(o.page, "stageButton"));
         compare(o.c.stagedCount, 3);
         verify(stickFixture.removeRekordboxBeatGridFile(stick, n1), "N1's beat grid leaves rekordbox's export");
         const session = EditSessionRegistry.sessionFor(o.libraryId);
@@ -754,7 +766,7 @@ TestCase {
         waitSettled(o.c);
         compare(o.c.tickedCount, 11);
         compare(o.c.tracksToWrite, 8, "the 3 copied before are already the same");
-        mouseClick(findChild(o.page, "stageButton"));
+        clickOn(findChild(o.page, "stageButton"));
         const session = EditSessionRegistry.sessionFor(o.libraryId);
         const saved = finished(session, () => session.save(), "the copy");
         compare(saved.error, "", JSON.stringify(saved));
