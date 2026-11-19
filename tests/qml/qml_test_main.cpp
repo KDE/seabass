@@ -16,6 +16,7 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "application/sync_analysis_policy.hpp"
 #include "infrastructure/paths/read_access.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
@@ -1970,6 +1971,15 @@ public:
     // binary made), past every setter's validation: what a settings file
     // edited by hand, or written by another build, can hold. An invalid
     // QVariant removes the key. Hands back what was there before.
+    // What the workflows that copy rekordbox's analysis obey right now
+    // (application::SyncAnalysisPolicy, the experimental gate included):
+    // [beat grids, waveforms].
+    Q_INVOKABLE QVariantList syncAnalysisInForce() const
+    {
+        return {seabass::application::SyncAnalysisPolicy::copyBeatGrids(),
+                seabass::application::SyncAnalysisPolicy::copyWaveforms()};
+    }
+
     Q_INVOKABLE QVariant storeRawSetting(const QString &key, const QVariant &value)
     {
         QSettings settings = seabass::gui::openSeabassSettings();

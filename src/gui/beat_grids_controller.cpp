@@ -672,15 +672,17 @@ QString BeatGridsController::notInEngineText() const
     if (m_notInEngineShown == 0) {
         return {};
     }
-    // True now and once Preferences has its switches for Sync to copy beat
-    // grids and waveforms (sync/copyBeatGridsToEngine and
-    // sync/copyWaveformsToEngine), which say "when ... switched on".
+    // Preferences' two switches (music/copyBeatGridsToEngine and
+    // music/copyWaveformsToEngine): a track Sync after Rekordbox Export adds
+    // is new and unanalysed, so it is completed only with both on. The
+    // switches are experimental, as this page is, so a reader here sees
+    // them.
     return plural(m_notInEngineShown, QStringLiteral("One track here is"), QStringLiteral("tracks here are"))
         + QStringLiteral(" not in the Engine library yet, so nothing can be copied to ")
         + (m_notInEngineShown == 1 ? QStringLiteral("it") : QStringLiteral("them"))
         + QStringLiteral(". Sync the libraries first with <a href=\"sync\">Sync after Rekordbox Export</a>, which "
-                         "also copies beat grids and waveforms as it goes when that is switched on in Preferences, "
-                         "or come back here once the libraries are in step.");
+                         "also copies their beat grids and waveforms as it adds them when both are switched on in "
+                         "Preferences, or come back here once the libraries are in step.");
 }
 
 void BeatGridsController::load(const QString &rekordboxPath, const QString &enginePath)

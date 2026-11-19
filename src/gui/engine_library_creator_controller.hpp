@@ -13,30 +13,11 @@
 #include <memory>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/engine_library_creation_task.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
 {
-
-// Result of the background creation task, see
-// EngineLibraryCreatorController::create(). Built entirely on a worker
-// thread, no access to the controller.
-struct EngineLibraryCreationTaskResult
-{
-    int tracksCreated = 0;
-    int tracksSkipped = 0;
-    int cuesCopied = 0;
-    int tracksTotal = 0;
-    bool cancelled = false;  // nothing was created on the stick
-    QString errorMessage;  // empty on success
-    // The library was made from a rekordbox export but could not be told
-    // so (issue #42): a player may offer to import over it on first insert.
-    bool importNotRecorded = false;
-    // Cues the MP3 lead-in shift left out (#50,
-    // EngineLibraryCreationResult): said, not lost quietly.
-    int memoryCuesDroppedByLeadInShift = 0;
-    int loopsDroppedByLeadInShift = 0;
-};
 
 // Wraps infrastructure::engine::EngineLibraryCreator for QML. See that
 // class's own doc comment for exactly what is and isn't carried over
@@ -96,8 +77,9 @@ public:
 signals:
     void busyChanged();
     void cancellableChanged();
-    // {written, total, unit, verb, cancelled, error, detail}, the
-    // OperationSummaryDialog shape.
+    // {written, total, unit, verb, cancelled, error, detail, notes}, the
+    // OperationSummaryDialog shape; notes says what the copy of
+    // rekordbox's analysis did, when Preferences asks for one.
     void writeFinished(const QVariantMap &summary);
     // Another instance is editing this library; nothing was created.
     void lockRefused(const QVariantMap &holder);

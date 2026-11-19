@@ -40,6 +40,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
+#include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
 #include "gui/qt_path.hpp"
@@ -400,20 +401,30 @@ void SyncController::stageSelected(bool matchingSearchOnly)
     setErrorMessage({});
     setStatusMessage({});
     std::vector<int> staged;
+    int withAnalysis = 0;
     const int count = m_model.planCount();
     for (int i = 0; i < count; ++i) {
         if (!wouldStage(i, matchingSearchOnly)) {
             continue;
         }
-        stagePlan(i);
+        withAnalysis += stagePlan(i) ? 1 : 0;
         staged.push_back(i);
         if (session() && !session()->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }
     }
     if (!staged.empty()) {
+        // With the analysis switches on, said as Sync after Rekordbox Export
+        // says it; with them off, the line it always was.
+        QString analysis;
+        if (withAnalysis > 0) {
+            analysis = QStringLiteral(" The tracks whose cues go to Engine also get rekordbox's %1, as set in "
+                                      "Preferences.")
+                           .arg(SyncAnalysisStaging::fromPreferences(m_rekordboxPath).partsInWords());
+        }
         setStagedStatusMessage(
-            QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged.size()));
+            QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged.size())
+            + analysis);
         noticeCuesLeftOut(staged);
     }
 }
@@ -626,15 +637,15 @@ void SyncController::attachSession()
     }
 }
 
-void SyncController::stagePlan(int index)
+bool SyncController::stagePlan(int index)
 {
     const auto &plans = m_model.plans();
     if (index < 0 || static_cast<size_t>(index) >= plans.size()) {
-        return;
+        return false;
     }
     const SyncPlan &plan = plans[static_cast<size_t>(index)];
     if (plan.direction == SyncPlan::Direction::None) {
-        return;
+        return false;
     }
     if (!session()) {
         attachSession();
@@ -658,9 +669,39 @@ void SyncController::stagePlan(int index)
         emit syncedChanged();
     }
     auto change = std::make_unique<SyncPlanChange>(m_rekordboxPath, m_enginePath, plan, itemCountHint);
+    // Cues from rekordbox (either format) onto Engine: the row also gets
+    // rekordbox's analysis when Preferences asks for it, inside the same
+    // change, so the row stays one staged change. Every other direction,
+    // and both switches off, stage the change they always did.
+    const domain::Track &source = change->source();
+    const domain::Track &target = change->target();
+    if (target.format == "engine" && (source.format == "rekordbox" || source.format == "onelibrary")
+        && !m_rekordboxPath.isEmpty()) {
+        const SyncAnalysisStaging staging = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
+        if (staging.any()) {
+            SyncAnalysisChange::Track track;
+            track.rekordbox = source;
+            track.engineTrackId = target.sourceId;
+            track.engineFilePath = target.filePath;
+            if (source.format == "onelibrary") {
+                // Its id is not export.pdb's: its analysis is read from the
+                // file its row names, and a row naming none is left alone.
+                track.analysisFile = source.analysisFile;
+                if (track.analysisFile.empty()) {
+                    track.leaveAloneBecause = QStringLiteral("its OneLibrary row names no analysis file");
+                }
+            }
+            auto rider = std::make_unique<SyncAnalysisChange>(QStringLiteral("sync"), m_rekordboxPath, m_enginePath,
+                                                              staging.stickRoot, std::move(track), staging.options,
+                                                              staging.probe, itemCountHint, true);
+            rider->rideIn(change->id());
+            change->setAnalysisRider(std::move(rider));
+        }
+    }
+    const bool withAnalysis = change->hasAnalysisRider();
     const domain::CueChange gained = SyncPlanListModel::cueChangeOf(plan);
     m_gainedByChangeId[change->id()] = gained.gainedHot + gained.gainedMemory;
-    stageChange(index, targetKey, std::move(change));
+    return stageChange(index, targetKey, std::move(change)) && withAnalysis;
 }
 
 }  // namespace seabass::gui

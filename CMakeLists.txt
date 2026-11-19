@@ -3498,6 +3498,10 @@ if(TARGET seabass_edit)
         src/gui/staged_cue_edit_controller.cpp
         src/gui/sync_plan_list_model.hpp
         src/gui/sync_plan_list_model.cpp
+        src/gui/sync_controller.hpp
+        src/gui/sync_controller.cpp
+        src/gui/engine_library_creation_task.hpp
+        src/gui/engine_library_creation_task.cpp
         tests/engine_chain_check.hpp
         tests/testshark_t73_test.cpp
     )
@@ -3511,8 +3515,10 @@ if(TARGET seabass_edit)
     # "Copy beat grids/waveforms from rekordbox to Engine when syncing" on
     # that save: completing a created row takes its file's own sample
     # count, which only TagLib reads.
+    # Sync Cue Points and Create Engine Library with the same switches:
+    # the same reason.
     if(TARGET seabass_taglib)
-        list(APPEND _t73_cases analysis)
+        list(APPEND _t73_cases analysis cuesync create)
     endif()
     foreach(_t73_case ${_t73_cases})
         add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test

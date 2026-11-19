@@ -19,7 +19,6 @@
 #include "application/phased_progress.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/track_metadata_probe.hpp"
-#include "application/sync_analysis_policy.hpp"
 #include "application/use_cases/copy_beat_grids.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
 #include "domain/engine_update_planning.hpp"
@@ -1088,15 +1087,9 @@ void RekordboxExportSyncController::stageSelected()
     // Preferences asks for it (application::SyncAnalysisPolicy). With both
     // off nothing is staged, and the save is the one it always was.
     const std::size_t analysisAt = planned.size();
-    application::AnalysisCopyOptions analysisOptions;
-    analysisOptions.grids = application::SyncAnalysisPolicy::copyBeatGrids();
-    analysisOptions.waveforms = application::SyncAnalysisPolicy::copyWaveforms();
-    // The stick root spelt as Beat Grids & Waveforms spells it, so the
-    // ledger and the kept analyses are keyed as the page keys them.
-    const std::string analysisStickRoot =
-        infrastructure::paths::normalStickRootForCatalogPath(rekordboxPath.toStdString());
-    const std::vector<SyncAnalysisChange::Track> analysisTracks = analysisOptions.grids || analysisOptions.waveforms
-        ? tracksForAnalysis(rows, adds, metadataToEngine, cuesToEngine, analysisStickRoot)
+    const SyncAnalysisStaging analysisStaging = SyncAnalysisStaging::fromPreferences(rekordboxPath);
+    const std::vector<SyncAnalysisChange::Track> analysisTracks = analysisStaging.any()
+        ? tracksForAnalysis(rows, adds, metadataToEngine, cuesToEngine, analysisStaging.stickRoot)
         : std::vector<SyncAnalysisChange::Track>{};
     for (std::size_t i : deletes) {
         const auto e = std::get<PlaylistDelete>(*rows[i].edit);
@@ -1168,12 +1161,11 @@ void RekordboxExportSyncController::stageSelected()
     // count (SyncAnalysisChange::unitsWritten) and says what it did in the
     // save's summary notes, so the count above is the sync's as it was.
     if (!analysisTracks.empty()) {
-        auto tally = std::make_shared<AnalysisSaveTally>();
         std::vector<std::unique_ptr<PendingChange>> riders;
         for (const auto &track : analysisTracks) {
-            riders.push_back(std::make_unique<SyncAnalysisChange>(rekordboxExportSyncOwner(), rekordboxPath, enginePath,
-                                                                  analysisStickRoot, track, analysisOptions, probe,
-                                                                  engineChanges, riders.empty(), tally));
+            riders.push_back(std::make_unique<SyncAnalysisChange>(
+                rekordboxExportSyncOwner(), rekordboxPath, enginePath, analysisStaging.stickRoot, track,
+                analysisStaging.options, analysisStaging.probe, engineChanges, riders.empty()));
         }
         changes.insert(changes.begin() + static_cast<std::ptrdiff_t>(analysisAt),
                        std::make_move_iterator(riders.begin()), std::make_move_iterator(riders.end()));
@@ -1216,10 +1208,7 @@ void RekordboxExportSyncController::stageSelected()
                                           ? QString()
                                           : QStringLiteral(" The tracks it writes also get rekordbox's %1, as set in "
                                                            "Preferences.")
-                                                .arg(analysisOptions.grids && analysisOptions.waveforms
-                                                         ? QStringLiteral("beat grids and waveforms")
-                                                         : analysisOptions.grids ? QStringLiteral("beat grids")
-                                                                                 : QStringLiteral("waveforms")))
+                                                .arg(analysisStaging.partsInWords()))
                                : QStringLiteral("Staged the record of your choices. Press Sync Engine to write it "
                                                 "to the stick."));
 }

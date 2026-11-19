@@ -104,6 +104,42 @@ TestCase {
         dialog.close();
     }
 
+    // With Preferences' "Copy beat grids/waveforms from rekordbox to
+    // Engine" on (and Experimental, which they need), the summary says what
+    // the copy of rekordbox's analysis did, after the counts, in the
+    // syncs' words; the status line ends with the same sentence. Both off:
+    // nothing of it, the summary it always was (the test above).
+    Component {
+        id: settingsComponent
+        AppSettingsController {}
+    }
+    function test_theAnalysisNoteFollowsTheCounts() {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        const was = [settings.experimentalFeaturesEnabled, settings.copyBeatGridsOnSync, settings.copyWaveformsOnSync];
+        settings.experimentalFeaturesEnabled = true;
+        settings.copyBeatGridsOnSync = true;
+        settings.copyWaveformsOnSync = true;
+        const stick = stickFixture.rekordboxOnlyStickCopy(fixture());
+        const page = createTemporaryObject(pageComponent, testCase, {
+            rekordboxPath: stick + "/PIONEER",
+            mediaController: {calls: [], detect: function() { this.calls.push("detect"); }},
+        });
+        const dialog = findChild(page, "summaryDialog");
+        page.controller.create(page.rekordboxPath, 2, "TESTSTICK");
+        tryVerify(() => dialog.opened, 60000, "the create must finish and open its summary");
+        settings.copyBeatGridsOnSync = was[1];
+        settings.copyWaveformsOnSync = was[2];
+        settings.experimentalFeaturesEnabled = was[0];
+        compare(page.controller.errorMessage, "");
+        compare(findChild(dialog, "headlineLabel").text, "Engine library created.");
+        const detail = findChild(dialog, "detailLabel").text;
+        verify(/(^|\. )(From rekordbox, |Analysis left alone: )/.test(detail), "the note: " + detail);
+        verify(detail.indexOf("\u2014") < 0 && detail.indexOf("--") < 0, detail);
+        verify(page.controller.statusMessage.endsWith(detail.substring(detail.search(/From rekordbox|Analysis left/))),
+               "status line: " + page.controller.statusMessage);
+        dialog.close();
+    }
+
     // A failed or cancelled create has nothing to lead with: no headline.
     function test_aFailedWriteHasNoHeadline() {
         const page = makePage();

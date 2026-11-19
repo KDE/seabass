@@ -142,6 +142,8 @@ TestCase {
     // The two boxes under Music show the settings and change them, in
     // words with no dash, with the line that says what they do.
     function test_the_sync_analysis_boxes_toggle_the_settings() {
+        // Experimental: the boxes are there only with the setting on.
+        settings.experimentalFeaturesEnabled = true;
         settings.copyBeatGridsOnSync = false;
         settings.copyWaveformsOnSync = false;
         const page = make(900, 700);
@@ -152,6 +154,9 @@ TestCase {
         compare(grids.text, "Copy beat grids from rekordbox to Engine when syncing");
         compare(waveforms.text, "Copy waveforms from rekordbox to Engine when syncing");
         verify(line.text.indexOf("Sync after Rekordbox Export") === 0, line.text);
+        // Exactly the workflows that honour the switches.
+        verify(line.text.indexOf("Sync Cue Points the tracks whose cues it copies to Engine") > 0, line.text);
+        verify(line.text.indexOf("Create Engine Library every track it creates") > 0, line.text);
         verify(line.text.indexOf("kept on the stick first") > 0, line.text);
         verify(line.text.indexOf("Beat Grids & Waveforms page") > 0, line.text);
         for (const text of [grids.text, waveforms.text, line.text]) {
@@ -176,6 +181,39 @@ TestCase {
         settings.copyWaveformsOnSync = true;
         compare(waveforms.checked, true, "the box follows the setting");
         settings.copyWaveformsOnSync = false;
+    }
+
+    // Experimental (docs/experimental-features.md): with Experimental off
+    // the heading, the two boxes and their line are not shown, and the
+    // policy every workflow reads is off whatever is stored; the stored
+    // choice stays, and comes back with Experimental on.
+    function test_the_sync_analysis_switches_are_experimental() {
+        settings.experimentalFeaturesEnabled = true;
+        settings.copyBeatGridsOnSync = true;
+        settings.copyWaveformsOnSync = true;
+        compare(JSON.stringify(controllerFixture.syncAnalysisInForce()), JSON.stringify([true, true]));
+        const page = make(900, 700);
+        const setting = findChild(page, "syncAnalysisSetting");
+        verify(setting !== null);
+        compare(setting.visible, true);
+        settings.experimentalFeaturesEnabled = false;
+        compare(setting.visible, false, "hidden with Experimental off");
+        compare(findChild(page, "copyBeatGridsOnSyncCheck").visible, false);
+        compare(findChild(page, "copyWaveformsOnSyncCheck").visible, false);
+        compare(JSON.stringify(controllerFixture.syncAnalysisInForce()), JSON.stringify([false, false]),
+                "no effect with Experimental off");
+        compare(settings.copyBeatGridsOnSync, true, "the choice is kept");
+        compare(settings.copyWaveformsOnSync, true);
+        // A controller made with Experimental off stored (a start) obeys it too.
+        const fresh = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(fresh.copyBeatGridsOnSync, true);
+        compare(JSON.stringify(controllerFixture.syncAnalysisInForce()), JSON.stringify([false, false]));
+        settings.experimentalFeaturesEnabled = true;
+        compare(JSON.stringify(controllerFixture.syncAnalysisInForce()), JSON.stringify([true, true]),
+                "back with Experimental on");
+        settings.copyBeatGridsOnSync = false;
+        settings.copyWaveformsOnSync = false;
+        settings.experimentalFeaturesEnabled = false;
     }
 
     function test_content_never_exceeds_the_window_width() {

@@ -234,7 +234,9 @@ Item {
     // rekordbox's beat grids and waveforms into the Engine library: from
     // one catalog to the other on one stick, so, like Sync after Rekordbox
     // Export, hidden rather than disabled without both.
+    // Experimental (see docs/experimental-features.md).
     readonly property bool showBeatGrids: root.writable && root.hasRekordbox && root.hasEngine
+        && root.appSettingsController.experimentalFeaturesEnabled === true
     // Experimental (see docs/experimental-features.md), and hidden once
     // the stick has an Engine Library rather than shown disabled.
     readonly property bool showCreateEngine: root.writable && !root.hasEngine
@@ -543,6 +545,12 @@ Item {
                 onReadOnlyClicked: root.explainWriteBlock()
                 cardSubtitle: "Copy rekordbox's beat grids and waveforms into the Engine library"
                 cardIcon: "view-media-visualization"
+                // Experimental (docs/experimental-features.md): it replaces
+                // analysis a player made, and has not met one yet. As for
+                // Create Engine Library, the visible binding replaces
+                // ActionCard's, so showBeatGrids restates the gate.
+                experimental: true
+                experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                 visible: root.group === "sync" && root.showBeatGrids
                 onClicked: root.beatGridsWaveformsRequested(root.label, root.rekordboxPath, root.enginePath)
             }

@@ -52,6 +52,10 @@ public:
         bool noRekordboxAnalysis = false;
         bool alreadySame = false;
         QString otherReason;
+        // With leftForPlayer, what kept the row from being completed, in
+        // words ("no rekordbox waveform", "no length for the file"); empty
+        // when the row was left only because one part was asked for.
+        QString leftForPlayerBecause;
     };
     void record(const QString &changeId, Row row)
     {
@@ -69,6 +73,36 @@ private:
     mutable std::mutex m_mutex;
     std::map<QString, Row> m_rows;
 };
+
+// What one importAnalysis() left on its row, as the tally keeps it:
+// written parts, and why a part was left alone.
+AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResult &result);
+
+// The counts behind the sentence a sync or a new library says beside its
+// own count, summed from tally rows.
+struct AnalysisNoteCounts
+{
+    int grids = 0;
+    int waveforms = 0;
+    int completed = 0;
+    int kept = 0;
+    int setOnPlayer = 0;
+    int forPlayer = 0;
+    int noAnalysis = 0;
+    int same = 0;
+    // Left for the player, by what kept the row from being completed.
+    std::map<QString, int> forPlayerBecause;
+    std::map<QString, int> other;
+
+    void add(const AnalysisSaveTally::Row &row);
+};
+
+// The sentence for a summary, from those counts: what was copied, what
+// was kept first, what was left alone and why. Empty when there is
+// nothing to say. Shared by every workflow that copies rekordbox's
+// analysis as part of another job (Sync after Rekordbox Export, Sync Cue
+// Points, Create Engine Library), so they say it alike.
+QString analysisSummaryNote(const AnalysisNoteCounts &counts);
 
 // Beat Grids & Waveforms, one Engine row: rekordbox's analysis (its beat
 // grid, its waveform, and for a row the player has not analysed, all it
@@ -182,7 +216,13 @@ private:
 // It carries no unit of the save's count (unitsWritten() is 0): the sync's
 // own summary stays what it was, and what this did is said beside it, in
 // the save's summary notes (SaveContext::addSummaryNote, one sentence for
-// the batch from the tally, counting only changes that landed).
+// the batch from the tally, counting only changes that landed). The tally
+// is the save's own (SaveContext::sharedForWholeSave), so changes staged
+// at different times, as Sync Cue Points stages them, are counted in one
+// sentence, and nothing of an earlier save is counted again.
+//
+// Sync Cue Points carries one inside the SyncPlanChange of each row whose
+// cues go to Engine (rideIn()), so the row stays one staged change.
 //
 // Failures. Reading rekordbox's analysis writes nothing, so a track whose
 // analysis cannot be read is left alone and counted, and the sync goes
@@ -207,17 +247,28 @@ public:
         // Staged only to be counted: the reason the track is left alone
         // (two rekordbox tracks for one Engine row or one file).
         QString leaveAloneBecause;
+        // The analysis file the source row names, read instead of looking
+        // the track up in export.pdb: for a OneLibrary row, whose id is
+        // not export.pdb's ("/PIONEER/USBANLZ/.../ANLZ0000.DAT"). Empty
+        // for a DeviceLibrary row.
+        std::string analysisFile;
     };
 
     SyncAnalysisChange(QString owner, QString rekordboxPath, QString enginePath, std::string stickRoot, Track track,
                        application::AnalysisCopyOptions options,
-                       std::shared_ptr<application::TrackMetadataProbe> probe, int itemCountHint, bool declaresFiles,
-                       std::shared_ptr<AnalysisSaveTally> tally);
+                       std::shared_ptr<application::TrackMetadataProbe> probe, int itemCountHint, bool declaresFiles);
 
     static QString idFor(const QString &owner, const std::string &rekordboxTrackId);
     // The batch's sentence for the summary, from the tally rows of the
     // changes in `applied`; empty when nothing of it landed.
     static QString summaryNote(const AnalysisSaveTally &tally, const QStringList &applied);
+
+    // Carried inside another change rather than staged on its own (Sync
+    // Cue Points: SyncPlanChange::setAnalysisRider()): this change then
+    // answers to the carrier's id, so the ledger and the summary note,
+    // which count the ids that landed, count the carrier's. Its apply()
+    // runs inside the carrier's, after the carrier's own write.
+    void rideIn(const QString &carrierId) { m_carrierId = carrierId; }
 
     QString id() const override;
     QString owner() const override { return m_owner; }
@@ -242,7 +293,33 @@ private:
     std::shared_ptr<application::TrackMetadataProbe> m_probe;
     int m_itemCountHint = 1;
     bool m_declaresFiles = true;
-    std::shared_ptr<AnalysisSaveTally> m_tally;
+    QString m_carrierId;
+};
+
+// What a workflow that stages SyncAnalysisChange riders reads once when it
+// stages (on the GUI thread, from Preferences: application::
+// SyncAnalysisPolicy), shared by Sync after Rekordbox Export and Sync Cue
+// Points so both stage them alike, and the parts in words for the line
+// that says so; Create Engine Library reads the same options and words.
+struct SyncAnalysisStaging
+{
+    application::AnalysisCopyOptions options;
+    // The stick root spelt as Beat Grids & Waveforms spells it, so the
+    // ledger and the kept analyses are keyed as the page keys them.
+    std::string stickRoot;
+    // Reads a created or unanalysed row's file for its exact length.
+    std::shared_ptr<application::TrackMetadataProbe> probe;
+
+    // Off when neither switch is on: nothing is staged, the save is the
+    // one it always was.
+    bool any() const { return options.grids || options.waveforms; }
+    // "beat grids and waveforms", "beat grids" or "waveforms".
+    QString partsInWords() const;
+
+    static SyncAnalysisStaging fromPreferences(const QString &rekordboxPath);
+    // The probe a save reads audio files with: TagLib's when the build has
+    // it.
+    static std::shared_ptr<application::TrackMetadataProbe> metadataProbe();
 };
 
 // Beat Grids & Waveforms, one Engine row, the two ways back from a copy:

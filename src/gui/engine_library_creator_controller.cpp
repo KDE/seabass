@@ -22,115 +22,12 @@
 #include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
-#include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
-#include "infrastructure/local/cached_sample_rates.hpp"
-#include "infrastructure/paths/seabass_paths.hpp"
-
-#ifdef SEABASS_HAVE_TAGLIB
-#include "infrastructure/audio/taglib_metadata_probe.hpp"
-#endif
+#include "application/sync_analysis_policy.hpp"
 
 namespace seabass::gui
 {
 
 namespace fs = std::filesystem;
-using infrastructure::engine::EngineLibraryCreator;
-using infrastructure::engine::EngineSchemaGeneration;
-
-namespace
-{
-
-EngineSchemaGeneration schemaFromInt(int value)
-{
-    switch (value) {
-    case 0: return EngineSchemaGeneration::V1;
-    case 1: return EngineSchemaGeneration::V2;
-    case 2: return EngineSchemaGeneration::V3;
-    default: return EngineSchemaGeneration::V3;  // the page's default, see EngineLibraryCreatorPage.qml
-    }
-}
-
-// Runs entirely on a background thread (see
-// EngineLibraryCreatorController::create()) -- no access to the
-// controller itself.
-EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaGeneration,
-                                               std::shared_ptr<QtProgressReporter> reporter,
-                                               application::CancellationToken cancel)
-{
-    EngineLibraryCreationTaskResult result;
-    // One bar (#58): the rekordbox read the cache still has to make, one
-    // unit per track created, and the copy to the stick. The playlists
-    // stretch is a few dozen units nobody can count before the read and
-    // is left out of the plan; it runs the bar a moment early.
-    // The plan counts rekordbox once (the cache remembers the count for
-    // the countTracks() after plannedUnits()) and looks at the token
-    // first, so a stop before the read ends here as cancelled.
-    auto &cache = LibraryCatalogCache::instance();
-    try {
-        const auto readUnits =
-            cache.plannedUnits("rekordbox", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full, cancel);
-        const auto rows = cache.countTracks("rekordbox", rekordboxPath.toStdString(), cancel);
-        application::PhasedProgress progress(*reporter, "Creating the Engine library",
-                                             readUnits && rows ? *readUnits + *rows + 1 : 0);
-        auto tracks = cache.tracksFor("rekordbox", rekordboxPath.toStdString(), progress, cancel);
-
-        std::string engineLibraryPath =
-            pathToUtf8(pathFromQString(rekordboxPath).parent_path() / "Engine Library");
-        // Invalidated before create() runs, not just on success: a
-        // partially-failed create() may still have written real files at
-        // this exact path, and a stale "engine" entry from a prior
-        // library that once lived here (and was since deleted) must not
-        // keep being served either way.
-        LibraryCatalogCache::instance().invalidate("engine", engineLibraryPath);
-        // The sequence of the export the tracks came from, recorded in
-        // the new library so a player does not offer to import it all
-        // over again on first insert (issue #42).
-        const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, rekordboxPath.toStdString());
-        // Engine counts cues in the file's own samples. The creator reads
-        // an MP3's rate from its header; any other file's comes from the
-        // stick's metadata cache, probed once and cached when it is not
-        // there, as the catalog cache's Cues stage does.
-#ifdef SEABASS_HAVE_TAGLIB
-        infrastructure::audio::TagLibMetadataProbe probe;
-#else
-        application::NullTrackMetadataProbe probe;
-#endif
-        infrastructure::local::CachedSampleRates rates(
-            infrastructure::paths::stickRootForCatalogPath(rekordboxPath.toStdString()), probe);
-        infrastructure::engine::EngineLibraryCreationResult creation;
-        try {
-            creation = EngineLibraryCreator::create(
-                engineLibraryPath, tracks, schemaFromInt(schemaGeneration), progress, cancel,
-                rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence)
-                                              : std::nullopt,
-                [&rates](const std::string &file) { return rates.rateOf(file); });
-        } catch (...) {
-            // What was probed before it ended is still true.
-            rates.save();
-            throw;
-        }
-        rates.save();
-
-        result.tracksCreated = creation.tracksCreated;
-        result.tracksSkipped = creation.tracksSkipped;
-        result.cuesCopied = creation.cuesCopied;
-        result.tracksTotal = creation.tracksTotal;
-        result.cancelled = creation.cancelled;
-        result.importNotRecorded = rekordbox.hasRekordboxLibrary && !creation.rekordboxImportRecorded;
-        result.memoryCuesDroppedByLeadInShift = creation.memoryCuesDroppedByLeadInShift;
-        result.loopsDroppedByLeadInShift = creation.loopsDroppedByLeadInShift;
-        if (!creation.errorMessage.empty()) {
-            result.errorMessage = QString::fromStdString(creation.errorMessage);
-        }
-    } catch (const application::OperationCancelled &) {
-        result.cancelled = true;  // during the scan; nothing was written
-    } catch (const std::exception &e) {
-        result.errorMessage = QString::fromStdString(e.what());
-    }
-    return result;
-}
-
-}  // namespace
 
 EngineLibraryCreatorController::~EngineLibraryCreatorController()
 {
@@ -216,9 +113,15 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
     emit cancellableChanged();
     // Awake while the library is written: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Creating an Engine library on a USB stick"));
+    // Preferences' copy of rekordbox's analysis, read here on the GUI
+    // thread like the syncs read it when they stage (experimental: off
+    // while experimental features are, see SyncAnalysisPolicy).
+    application::AnalysisCopyOptions analysis;
+    analysis.grids = application::SyncAnalysisPolicy::copyBeatGrids();
+    analysis.waveforms = application::SyncAnalysisPolicy::copyWaveforms();
     m_watcher.setFuture(QtConcurrent::run(
-        [keepAwake, rekordboxPath, schemaGeneration, reporter = makeReporter(), cancel = m_cancel]() {
-            return runCreateTask(rekordboxPath, schemaGeneration, reporter, cancel);
+        [keepAwake, rekordboxPath, schemaGeneration, analysis, reporter = makeReporter(), cancel = m_cancel]() {
+            return runEngineLibraryCreation(rekordboxPath, schemaGeneration, analysis, *reporter, cancel);
         }));
 }
 
@@ -259,6 +162,11 @@ void EngineLibraryCreatorController::onCreateFinished()
         if (!leftOut.empty()) {
             said += QStringLiteral(" ") + QString::fromStdString(leftOut) + QStringLiteral(".");
         }
+        for (const QString &part : {result.analysisWarning, result.analysisNote}) {
+            if (!part.isEmpty()) {
+                said += QLatin1Char(' ') + part;
+            }
+        }
         setStatusMessage(said);
     }
     // The summary dialog's lines under the counts: the import marker that
@@ -275,6 +183,9 @@ void EngineLibraryCreatorController::onCreateFinished()
             result.memoryCuesDroppedByLeadInShift, result.loopsDroppedByLeadInShift);
         if (!leftOut.empty()) {
             detailLines << QString::fromStdString(leftOut) + QStringLiteral(".");
+        }
+        if (!result.analysisWarning.isEmpty()) {
+            detailLines << result.analysisWarning;
         }
     }
     const QString leftOutDetail = detailLines.join(QLatin1Char(' '));
@@ -293,6 +204,9 @@ void EngineLibraryCreatorController::onCreateFinished()
         {"error", result.errorMessage},
         {"detail", result.cancelled ? QStringLiteral("Stopped at your request. Nothing was created on the stick.")
                                     : leftOutDetail},
+        // What the copy of rekordbox's analysis did (Preferences), after
+        // everything else, as a sync's save says it.
+        {"notes", created ? result.analysisNote : QString()},
     });
 }
 

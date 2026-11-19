@@ -473,10 +473,11 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
-    // One card answers to the experimental setting, Create Engine Library;
-    // every card that used to be gated is there with it off, Sync after
-    // Rekordbox Export since 2026-10-10.
-    function test_onlyCreateEngineLibraryAnswersToTheSetting() {
+    // Two cards answer to the experimental setting, Create Engine Library
+    // and Beat Grids & Waveforms (since 2026-11-19); every card that used to
+    // be gated is there with it off, Sync after Rekordbox Export since
+    // 2026-10-10.
+    function test_onlyTheExperimentalCardsAnswerToTheSetting() {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
@@ -510,14 +511,21 @@ TestCase {
         verify(card(bothOff, "Sync after Rekordbox Export").visible, "not behind the setting");
         compare(card(bothOff, "Sync after Rekordbox Export").experimental, false);
         compare(JSON.stringify(shownTitles(bothOff)),
-                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Metadata", "Restore Metadata"]));
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]));
         compare(card(withEngine, "Sync after Rekordbox Export").visible, true);
         compare(card(withEngine, "Sync after Rekordbox Export").experimental, false);
         compare(card(on, "Sync after Rekordbox Export").visible, false, "not without an Engine library");
         const engineOnly = makeCards(makeStick({hasRekordbox: false, rekordboxPath: ""}), "sync", {});
         compare(card(engineOnly, "Sync after Rekordbox Export").visible, false, "not without a rekordbox export");
-        // Beat Grids & Waveforms: the same rule, from one catalog to the other.
-        compare(card(bothOff, "Beat Grids & Waveforms").visible, true);
+        // Beat Grids & Waveforms: experimental, and then the same rule, from
+        // one catalog to the other.
+        compare(card(bothOff, "Beat Grids & Waveforms").visible, false, "behind the setting");
+        compare(card(bothOff, "Beat Grids & Waveforms").experimental, true);
+        compare(card(withEngine, "Beat Grids & Waveforms").visible, true, "shown with the setting on");
+        compare(card(withEngine, "Beat Grids & Waveforms").experimental, true);
+        compare(JSON.stringify(shownTitles(withEngine)),
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Metadata",
+                                "Restore Metadata"]));
         compare(card(on, "Beat Grids & Waveforms").visible, false, "not without an Engine library");
         compare(card(engineOnly, "Beat Grids & Waveforms").visible, false, "not without a rekordbox export");
         // Built last, so it is the one on top when grabbed.

@@ -626,8 +626,8 @@ TestCase {
         compare(label.visible, true);
         compare(label.text, "2 tracks here are not in the Engine library yet, so nothing can be copied to them. "
                 + "Sync the libraries first with <a href=\"sync\">Sync after Rekordbox Export</a>, which also copies "
-                + "beat grids and waveforms as it goes when that is switched on in Preferences, or come back here "
-                + "once the libraries are in step.");
+                + "their beat grids and waveforms as it adds them when both are switched on in Preferences, or come "
+                + "back here once the libraries are in step.");
         compare(row(o.c, b07).matched, false);
         compare(row(o.c, b07).note, "Not in the Engine library yet: sync the libraries first");
         o.c.setTicked(b07, true);

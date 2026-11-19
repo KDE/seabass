@@ -45,8 +45,11 @@ class AppSettingsController : public QObject
     Q_PROPERTY(bool correctMp3CueTiming READ correctMp3CueTiming WRITE setCorrectMp3CueTiming NOTIFY
                    correctMp3CueTimingChanged)
     // The two "Beat grids and waveforms" preferences, under "Music": the
-    // same shape, pushed into application::SyncAnalysisPolicy, which Sync
-    // after Rekordbox Export reads when it stages a save.
+    // same shape, pushed into application::SyncAnalysisPolicy with the
+    // experimental gate, which Sync after Rekordbox Export and Sync Cue
+    // Points read when they stage a save and Create Engine Library when it
+    // starts. Experimental: no effect while experimental features are off;
+    // the stored choices stay.
     Q_PROPERTY(bool copyBeatGridsOnSync READ copyBeatGridsOnSync WRITE setCopyBeatGridsOnSync NOTIFY
                    copyBeatGridsOnSyncChanged)
     Q_PROPERTY(bool copyWaveformsOnSync READ copyWaveformsOnSync WRITE setCopyWaveformsOnSync NOTIFY
@@ -147,9 +150,11 @@ public:
     bool correctMp3CueTiming() const { return m_correctMp3CueTiming; }
     void setCorrectMp3CueTiming(bool value);
 
-    // Whether Sync after Rekordbox Export also copies rekordbox's beat
-    // grids, and its waveforms, onto the Engine tracks it writes -- see
-    // application::SyncAnalysisPolicy. Both off by default.
+    // Whether the syncs and Create Engine Library also copy rekordbox's
+    // beat grids, and its waveforms, onto the Engine tracks they write --
+    // see application::SyncAnalysisPolicy. Both off by default. The
+    // stored choice, which is in force only with experimental features
+    // enabled.
     bool copyBeatGridsOnSync() const { return m_copyBeatGridsOnSync; }
     void setCopyBeatGridsOnSync(bool value);
     bool copyWaveformsOnSync() const { return m_copyWaveformsOnSync; }

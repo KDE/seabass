@@ -26,16 +26,32 @@ std::atomic<bool> &waveformsStore()
     return value;
 }
 
+std::atomic<bool> &experimentalStore()
+{
+    static std::atomic<bool> value{false};
+    return value;
+}
+
 }  // namespace
 
 bool SyncAnalysisPolicy::copyBeatGrids()
 {
-    return beatGridsStore().load(std::memory_order_relaxed);
+    return experimentalEnabled() && beatGridsStore().load(std::memory_order_relaxed);
 }
 
 bool SyncAnalysisPolicy::copyWaveforms()
 {
-    return waveformsStore().load(std::memory_order_relaxed);
+    return experimentalEnabled() && waveformsStore().load(std::memory_order_relaxed);
+}
+
+void SyncAnalysisPolicy::setExperimentalEnabled(bool enabled)
+{
+    experimentalStore().store(enabled, std::memory_order_relaxed);
+}
+
+bool SyncAnalysisPolicy::experimentalEnabled()
+{
+    return experimentalStore().load(std::memory_order_relaxed);
 }
 
 void SyncAnalysisPolicy::set(bool copyBeatGrids, bool copyWaveforms)
@@ -47,6 +63,7 @@ void SyncAnalysisPolicy::set(bool copyBeatGrids, bool copyWaveforms)
 void SyncAnalysisPolicy::reset()
 {
     set(DefaultCopyBeatGrids, DefaultCopyWaveforms);
+    setExperimentalEnabled(false);
 }
 
 }  // namespace seabass::application

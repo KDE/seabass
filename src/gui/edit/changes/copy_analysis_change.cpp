@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "application/path_key.hpp"
+#include "application/sync_analysis_policy.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
@@ -26,6 +27,9 @@
 #include "infrastructure/local/rekordbox_analysis_source.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 
 namespace seabass::gui
 {
@@ -248,40 +252,6 @@ std::string keptFileOf(const std::string &stickRoot, const application::BeatGrid
         : pathToUtf8(infrastructure::local::keptEngineAnalysisFile(pathFromUtf8(stickRoot), item.ledgerKey));
 }
 
-// What one importAnalysis() left on its row, for the tally: written parts,
-// and why a part was left alone.
-AnalysisSaveTally::Row tallyRowOf(const application::AnalysisImportResult &result)
-{
-    using Outcome = application::BeatGridWriteResult::Outcome;
-    using Waveform = application::AnalysisImportResult::Waveform;
-    AnalysisSaveTally::Row row;
-    row.grid = result.grid.outcome == Outcome::Written;
-    row.waveform = result.waveform == Waveform::Written;
-    row.completed = result.completedRow;
-    row.keptEngineAnalysis = result.keptEngineAnalysis;
-    row.gridSetOnPlayer = result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine;
-    row.leftForPlayer = !result.completedRow
-        && (result.grid.outcome == Outcome::RowNotAnalysed || result.grid.outcome == Outcome::NoSampleRate
-            || result.waveform == Waveform::RowNotAnalysed || result.waveform == Waveform::NoSampleCount);
-    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer) {
-        return row;
-    }
-    const bool gridNone = result.grid.outcome == Outcome::NoSourceGrid || result.grid.outcome == Outcome::NotRequested;
-    const bool waveformNone =
-        result.waveform == Waveform::NoSourceWaveform || result.waveform == Waveform::NotRequested;
-    const bool gridSame = result.grid.outcome == Outcome::AlreadySame || result.grid.outcome == Outcome::NotRequested;
-    const bool waveformSame = result.waveform == Waveform::AlreadySame || result.waveform == Waveform::NotRequested;
-    if (gridNone && waveformNone) {
-        row.noRekordboxAnalysis = true;
-    } else if (gridSame && waveformSame) {
-        row.alreadySame = true;
-    } else {
-        row.otherReason = QStringLiteral("grid %1, waveform %2")
-                              .arg(gridWords(result.grid.outcome), waveformWords(result.waveform));
-    }
-    return row;
-}
-
 // One importAnalysis() landed on its row: the ledger told of the grid the
 // row now has, the tally of what was written, the log of either, and the
 // change's outcome. Shared by CopyAnalysisChange and SyncAnalysisChange,
@@ -302,7 +272,7 @@ ChangeOutcome landImport(SaveContext &ctx, FormatWriteSession &session, const QS
         }
     }
     if (tally) {
-        tally->record(changeId, tallyRowOf(result));
+        tally->record(changeId, analysisTallyRowOf(result));
     }
     if (gridWritten || waveformWritten) {
         session.noteItemApplied();
@@ -321,6 +291,67 @@ ChangeOutcome landImport(SaveContext &ctx, FormatWriteSession &session, const QS
 }
 
 }  // namespace
+
+AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResult &result)
+{
+    using Outcome = application::BeatGridWriteResult::Outcome;
+    using Waveform = application::AnalysisImportResult::Waveform;
+    AnalysisSaveTally::Row row;
+    row.grid = result.grid.outcome == Outcome::Written;
+    row.waveform = result.waveform == Waveform::Written;
+    row.completed = result.completedRow;
+    row.keptEngineAnalysis = result.keptEngineAnalysis;
+    row.gridSetOnPlayer = result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine;
+    row.leftForPlayer = !result.completedRow
+        && (result.grid.outcome == Outcome::RowNotAnalysed || result.grid.outcome == Outcome::NoSampleRate
+            || result.waveform == Waveform::RowNotAnalysed || result.waveform == Waveform::NoSampleCount);
+    if (row.leftForPlayer) {
+        // What kept it from being completed, when it is more than one part
+        // asked for alone: the part that was missing.
+        if (result.waveform == Waveform::NoSampleCount) {
+            row.leftForPlayerBecause = waveformWords(result.waveform);
+        } else if (result.grid.outcome == Outcome::NoSampleRate || result.grid.outcome == Outcome::NoSourceGrid) {
+            row.leftForPlayerBecause = gridWords(result.grid.outcome);
+        } else if (result.waveform == Waveform::NoSourceWaveform) {
+            row.leftForPlayerBecause = waveformWords(result.waveform);
+        }
+    }
+    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer) {
+        return row;
+    }
+    const bool gridNone = result.grid.outcome == Outcome::NoSourceGrid || result.grid.outcome == Outcome::NotRequested;
+    const bool waveformNone =
+        result.waveform == Waveform::NoSourceWaveform || result.waveform == Waveform::NotRequested;
+    const bool gridSame = result.grid.outcome == Outcome::AlreadySame || result.grid.outcome == Outcome::NotRequested;
+    const bool waveformSame = result.waveform == Waveform::AlreadySame || result.waveform == Waveform::NotRequested;
+    if (gridNone && waveformNone) {
+        row.noRekordboxAnalysis = true;
+    } else if (gridSame && waveformSame) {
+        row.alreadySame = true;
+    } else {
+        row.otherReason = QStringLiteral("grid %1, waveform %2")
+                              .arg(gridWords(result.grid.outcome), waveformWords(result.waveform));
+    }
+    return row;
+}
+
+void AnalysisNoteCounts::add(const AnalysisSaveTally::Row &row)
+{
+    grids += row.grid ? 1 : 0;
+    waveforms += row.waveform ? 1 : 0;
+    completed += row.completed ? 1 : 0;
+    kept += row.keptEngineAnalysis ? 1 : 0;
+    setOnPlayer += row.gridSetOnPlayer ? 1 : 0;
+    forPlayer += row.leftForPlayer ? 1 : 0;
+    if (row.leftForPlayer && !row.leftForPlayerBecause.isEmpty()) {
+        ++forPlayerBecause[row.leftForPlayerBecause];
+    }
+    noAnalysis += row.noRekordboxAnalysis ? 1 : 0;
+    same += row.alreadySame ? 1 : 0;
+    if (!row.otherReason.isEmpty()) {
+        ++other[row.otherReason];
+    }
+}
 
 CopyAnalysisChange::CopyAnalysisChange(QString enginePath, std::string stickRoot, application::BeatGridCopyItem item,
                                        application::RekordboxAnalysis analysis,
@@ -467,9 +498,12 @@ struct SyncAnalysisSources
     std::unique_ptr<infrastructure::local::CachedSampleRates> rates;
 };
 
-QString counted(int n, const QString &one, const QString &many)
+// The save's own tally of the analysis riders of one owner: one per
+// save, so the summary note counts this save's changes and nothing else.
+AnalysisSaveTally &saveTallyOf(SaveContext &ctx, const QString &owner)
 {
-    return n == 1 ? one : QStringLiteral("%1 %2").arg(n).arg(many);
+    return ctx.sharedForWholeSave<AnalysisSaveTally>("sync-analysis:tally:" + owner.toStdString(),
+                                                     []() { return std::make_unique<AnalysisSaveTally>(); });
 }
 
 }  // namespace
@@ -477,7 +511,7 @@ QString counted(int n, const QString &one, const QString &many)
 SyncAnalysisChange::SyncAnalysisChange(QString owner, QString rekordboxPath, QString enginePath, std::string stickRoot,
                                        Track track, application::AnalysisCopyOptions options,
                                        std::shared_ptr<application::TrackMetadataProbe> probe, int itemCountHint,
-                                       bool declaresFiles, std::shared_ptr<AnalysisSaveTally> tally)
+                                       bool declaresFiles)
     : m_owner(std::move(owner))
     , m_rekordboxPath(std::move(rekordboxPath))
     , m_enginePath(std::move(enginePath))
@@ -487,7 +521,6 @@ SyncAnalysisChange::SyncAnalysisChange(QString owner, QString rekordboxPath, QSt
     , m_probe(std::move(probe))
     , m_itemCountHint(itemCountHint)
     , m_declaresFiles(declaresFiles)
-    , m_tally(std::move(tally))
 {
     // Never a preview, and never over the DJ's own grid: there is no box
     // for that in a sync.
@@ -504,7 +537,7 @@ QString SyncAnalysisChange::idFor(const QString &owner, const std::string &rekor
 
 QString SyncAnalysisChange::id() const
 {
-    return idFor(m_owner, m_track.rekordbox.sourceId);
+    return m_carrierId.isEmpty() ? idFor(m_owner, m_track.rekordbox.sourceId) : m_carrierId;
 }
 
 QString SyncAnalysisChange::subject() const
@@ -567,20 +600,17 @@ std::vector<BackupTarget> SyncAnalysisChange::filesToBackup(SaveContext &) const
 void SyncAnalysisChange::beforeSave(SaveContext &ctx)
 {
     recordLedgerAfterCommit(ctx, m_stickRoot);
-    if (!m_tally) {
-        return;
-    }
     // One sentence for the batch, once per save, from what landed.
     bool created = false;
-    ctx.sharedForWholeSave<std::shared_ptr<AnalysisSaveTally>>(
-        "sync-analysis:note:" + m_owner.toStdString(), [&]() {
-            created = true;
-            return std::make_unique<std::shared_ptr<AnalysisSaveTally>>(m_tally);
-        });
+    ctx.sharedForWholeSave<bool>("sync-analysis:note:" + m_owner.toStdString(), [&]() {
+        created = true;
+        return std::make_unique<bool>(true);
+    });
     if (!created) {
         return;
     }
-    ctx.onAfterCommit([&ctx, tally = m_tally](const SaveContext::AfterCommit &after) {
+    AnalysisSaveTally *tally = &saveTallyOf(ctx, m_owner);
+    ctx.onAfterCommit([&ctx, tally](const SaveContext::AfterCommit &after) {
         const QString note = summaryNote(*tally, after.appliedIds);
         if (!note.isEmpty()) {
             ctx.addSummaryNote(note);
@@ -594,9 +624,7 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     const auto leftAlone = [&](const QString &why) {
         AnalysisSaveTally::Row row;
         row.otherReason = why;
-        if (m_tally) {
-            m_tally->record(id(), row);
-        }
+        saveTallyOf(ctx, m_owner).record(id(), row);
         ctx.log().record("beat grids: left " + subject().toStdString() + " alone: " + why.toStdString());
         return ChangeOutcome::skip();
     };
@@ -628,7 +656,9 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     // left alone, and the sync goes on.
     application::RekordboxAnalysis analysis;
     try {
-        analysis = infrastructure::local::rekordboxAnalysisOf(pioneer, item, sources.index.get());
+        analysis = m_track.analysisFile.empty()
+            ? infrastructure::local::rekordboxAnalysisOf(pioneer, item, sources.index.get())
+            : infrastructure::local::rekordboxAnalysisAt(pioneer, m_track.analysisFile, item);
     } catch (const std::exception &e) {
         return leftAlone(QStringLiteral("rekordbox's analysis could not be read (%1)").arg(QString::fromUtf8(e.what())));
     }
@@ -641,75 +671,109 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     Writer &writer = analysisWriterFor(ctx, session, m_stickRoot);
     const application::AnalysisItemOutcome outcome =
         application::importAnalysisItem(item, analysis, writer, sources.ledger, m_options, facts);
-    return landImport(ctx, session, id(), item, m_stickRoot, outcome.result, m_tally.get());
+    return landImport(ctx, session, id(), item, m_stickRoot, outcome.result, &saveTallyOf(ctx, m_owner));
+}
+
+QString SyncAnalysisStaging::partsInWords() const
+{
+    if (options.grids && options.waveforms) {
+        return QStringLiteral("beat grids and waveforms");
+    }
+    return options.grids ? QStringLiteral("beat grids") : QStringLiteral("waveforms");
+}
+
+SyncAnalysisStaging SyncAnalysisStaging::fromPreferences(const QString &rekordboxPath)
+{
+    SyncAnalysisStaging staging;
+    staging.options.grids = application::SyncAnalysisPolicy::copyBeatGrids();
+    staging.options.waveforms = application::SyncAnalysisPolicy::copyWaveforms();
+    staging.stickRoot = infrastructure::paths::normalStickRootForCatalogPath(rekordboxPath.toStdString());
+    if (staging.any()) {
+        staging.probe = metadataProbe();
+    }
+    return staging;
+}
+
+std::shared_ptr<application::TrackMetadataProbe> SyncAnalysisStaging::metadataProbe()
+{
+#ifdef SEABASS_HAVE_TAGLIB
+    return std::make_shared<infrastructure::audio::TagLibMetadataProbe>();
+#else
+    return std::make_shared<application::NullTrackMetadataProbe>();
+#endif
 }
 
 QString SyncAnalysisChange::summaryNote(const AnalysisSaveTally &tally, const QStringList &applied)
 {
-    int grids = 0;
-    int waveforms = 0;
-    int completed = 0;
-    int kept = 0;
-    int setOnPlayer = 0;
-    int forPlayer = 0;
-    int noAnalysis = 0;
-    int same = 0;
-    std::map<QString, int> other;
+    AnalysisNoteCounts counts;
     for (const QString &changeId : applied) {
-        const auto row = tally.rowFor(changeId);
-        if (!row) {
-            continue;
-        }
-        grids += row->grid ? 1 : 0;
-        waveforms += row->waveform ? 1 : 0;
-        completed += row->completed ? 1 : 0;
-        kept += row->keptEngineAnalysis ? 1 : 0;
-        setOnPlayer += row->gridSetOnPlayer ? 1 : 0;
-        forPlayer += row->leftForPlayer ? 1 : 0;
-        noAnalysis += row->noRekordboxAnalysis ? 1 : 0;
-        same += row->alreadySame ? 1 : 0;
-        if (!row->otherReason.isEmpty()) {
-            ++other[row->otherReason];
+        if (const auto row = tally.rowFor(changeId)) {
+            counts.add(*row);
         }
     }
+    return analysisSummaryNote(counts);
+}
+
+namespace
+{
+
+QString counted(int n, const QString &one, const QString &many)
+{
+    return n == 1 ? one : QStringLiteral("%1 %2").arg(n).arg(many);
+}
+
+}  // namespace
+
+QString analysisSummaryNote(const AnalysisNoteCounts &c)
+{
     QStringList sentences;
-    if (grids > 0 || waveforms > 0) {
+    if (c.grids > 0 || c.waveforms > 0) {
         QStringList copied;
-        if (grids > 0) {
-            copied << counted(grids, QStringLiteral("one beat grid"), QStringLiteral("beat grids"));
+        if (c.grids > 0) {
+            copied << counted(c.grids, QStringLiteral("one beat grid"), QStringLiteral("beat grids"));
         }
-        if (waveforms > 0) {
-            copied << counted(waveforms, QStringLiteral("one waveform"), QStringLiteral("waveforms"));
+        if (c.waveforms > 0) {
+            copied << counted(c.waveforms, QStringLiteral("one waveform"), QStringLiteral("waveforms"));
         }
         QString text = QStringLiteral("From rekordbox, ") + copied.join(QStringLiteral(" and ")) + QStringLiteral(" copied");
-        if (completed > 0) {
+        if (c.completed > 0) {
             text += QStringLiteral(", ")
-                + counted(completed, QStringLiteral("one track now loads"), QStringLiteral("tracks now load"))
+                + counted(c.completed, QStringLiteral("one track now loads"), QStringLiteral("tracks now load"))
                 + QStringLiteral(" without analysis");
         }
         sentences << text + QLatin1Char('.');
-        if (kept > 0) {
+        if (c.kept > 0) {
             sentences << QStringLiteral("Engine's own analysis of %1 was kept on the stick first.")
-                             .arg(counted(kept, QStringLiteral("one track"), QStringLiteral("tracks")));
+                             .arg(counted(c.kept, QStringLiteral("one track"), QStringLiteral("tracks")));
         }
     }
     QStringList alone;
-    if (setOnPlayer > 0) {
-        alone << counted(setOnPlayer, QStringLiteral("one beat grid locked or moved on the player"),
+    if (c.setOnPlayer > 0) {
+        alone << counted(c.setOnPlayer, QStringLiteral("one beat grid locked or moved on the player"),
                          QStringLiteral("beat grids locked or moved on the player"));
     }
-    if (forPlayer > 0) {
-        alone << counted(forPlayer, QStringLiteral("one track left for the player to analyse"),
-                         QStringLiteral("tracks left for the player to analyse"));
+    if (c.forPlayer > 0) {
+        QString text = counted(c.forPlayer, QStringLiteral("one track left for the player to analyse"),
+                               QStringLiteral("tracks left for the player to analyse"));
+        // Why, where it was more than one part asked for alone.
+        if (!c.forPlayerBecause.empty()) {
+            QStringList why;
+            for (const auto &[reason, n] : c.forPlayerBecause) {
+                why << (c.forPlayerBecause.size() == 1 && n == c.forPlayer ? reason
+                                                                          : QStringLiteral("%1: %2").arg(reason).arg(n));
+            }
+            text += QStringLiteral(" (") + why.join(QStringLiteral(", ")) + QLatin1Char(')');
+        }
+        alone << text;
     }
-    if (noAnalysis > 0) {
-        alone << counted(noAnalysis, QStringLiteral("one track rekordbox has no analysis of"),
+    if (c.noAnalysis > 0) {
+        alone << counted(c.noAnalysis, QStringLiteral("one track rekordbox has no analysis of"),
                          QStringLiteral("tracks rekordbox has no analysis of"));
     }
-    if (same > 0) {
-        alone << counted(same, QStringLiteral("one track already the same"), QStringLiteral("tracks already the same"));
+    if (c.same > 0) {
+        alone << counted(c.same, QStringLiteral("one track already the same"), QStringLiteral("tracks already the same"));
     }
-    for (const auto &[why, n] : other) {
+    for (const auto &[why, n] : c.other) {
         alone << counted(n, QStringLiteral("one track"), QStringLiteral("tracks")) + QStringLiteral(" (") + why
                 + QLatin1Char(')');
     }

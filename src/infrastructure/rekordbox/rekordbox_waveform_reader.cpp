@@ -20,7 +20,6 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const st
                                         std::shared_ptr<AnlzByteSource> anlzSource,
                                         const AnlzPathIndex *pathIndex)
 {
-    domain::TrackAnalysis analysis;
     try {
         const auto trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
         auto analyzePath = pathIndex != nullptr ? pathIndex->pathFor(trackId)
@@ -32,7 +31,17 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const st
         if (!anlzSource) {
             anlzSource = anlzSourceForPioneerRoot(pioneerRoot);
         }
-        auto bytes = anlzSource->read(anlzRelativePath(*analyzePath, /*wantExt=*/false));
+        return readTrackAnalysis(*anlzSource, *analyzePath);
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+
+domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath)
+{
+    domain::TrackAnalysis analysis;
+    try {
+        auto bytes = anlzSource.read(anlzRelativePath(analyzePath, /*wantExt=*/false));
         if (!bytes || bytes->empty()) {
             return {};
         }

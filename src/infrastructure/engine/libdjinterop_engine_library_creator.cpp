@@ -511,9 +511,11 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
 // anyway. Everything the player cannot derive stays where it is: title,
 // artist, bpm, key, rating, length and the cues.
 //
-// When this project can convert a real waveform, this pass has to
-// become conditional on not having one, rather than unconditional as it
-// is here.
+// This project can now convert rekordbox's grid and waveform (Create
+// Engine Library with Preferences' switches on). That runs after this
+// pass, as create()'s beforeCopy step, on rows in exactly the state this
+// leaves them, and completes the ones it can; this pass stays
+// unconditional.
 //
 // Returns the number of tracks handed over, or -1 if the database could
 // not be opened. A failure costs the waveform display and nothing else,
@@ -658,6 +660,31 @@ double resolveSampleRate(const std::string &filePath, const std::optional<domain
     return DefaultSampleRate;
 }
 
+// The scratch library onto `destination`, the database files last: every
+// other file (cover art, overview files) is on the stick before a database
+// that names it. A copy that fails part way then leaves, at worst, files
+// no database names yet, never a row flagged analysed whose overview file
+// is missing.
+void copyLibraryDatabaseLast(const fs::path &scratch, const fs::path &destination)
+{
+    std::vector<fs::path> databases;
+    fs::create_directories(destination);
+    for (auto it = fs::recursive_directory_iterator(scratch); it != fs::recursive_directory_iterator(); ++it) {
+        const fs::path relative = fs::relative(it->path(), scratch);
+        if (it->is_directory()) {
+            fs::create_directories(destination / relative);
+        } else if (it->path().extension() == ".db" || it->path().extension() == ".db-journal"
+                   || it->path().extension() == ".db-wal") {
+            databases.push_back(relative);
+        } else {
+            fs::copy_file(it->path(), destination / relative);
+        }
+    }
+    for (const fs::path &relative : databases) {
+        fs::copy_file(scratch / relative, destination / relative);
+    }
+}
+
 }  // namespace
 
 using infrastructure::ScratchDirGuard;
@@ -668,7 +695,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                                                            application::ProgressReporter &reporter,
                                                            const application::CancellationToken &cancel,
                                                            std::optional<std::uint64_t> rekordboxLibrarySequence,
-                                                           const SampleRateSource &sampleRateSource)
+                                                           const SampleRateSource &sampleRateSource,
+                                                           const ScratchLibraryStep &beforeCopy)
 {
     EngineLibraryCreationResult result;
     result.tracksTotal = static_cast<int>(tracks.size());
@@ -704,6 +732,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
     // rekordbox side already resolved for it. Outlives the block below,
     // because the art is written once that database connection is closed.
     std::map<std::string, std::string> artworkByTrackPath;
+    // Every row made, for beforeCopy.
+    std::vector<CreatedRow> createdRows;
 
     try {
         {
@@ -714,7 +744,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
             // Filled as tracks are created, spent once they all exist.
             PlaylistMembers playlistMembers;
 
-            for (const auto &track : tracks) {
+            for (std::size_t trackIndex = 0; trackIndex < tracks.size(); ++trackIndex) {
+                const domain::Track &track = tracks[trackIndex];
                 if (cancel.cancelled()) {
                     // The scratch copy dies with scratchGuard; the stick
                     // has not been touched yet.
@@ -810,6 +841,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
                 djinterop::track created = db.create_track(snapshot);
                 result.tracksCreated++;
+                createdRows.push_back({trackIndex, created.id()});
                 if (!track.artworkPath.empty()) {
                     std::error_code artEc;
                     if (fs::exists(pathFromUtf8(track.artworkPath), artEc)) {
@@ -878,12 +910,29 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         const int marked = markTracksForDeviceAnalysis(scratchDir);
         result.tracksLeftForDeviceAnalysis = marked < 0 ? 0 : marked;
 
+        // Still on the scratch copy, on rows as the player expects to
+        // analyse them: the caller's own work (rekordbox's analysis), which
+        // goes onto the stick with the rest or not at all.
+        if (beforeCopy) {
+            beforeCopy(pathToUtf8(scratchDir), createdRows);
+            if (cancel.cancelled()) {
+                result.cancelled = true;
+                reporter.finish();
+                return result;
+            }
+        }
+
         // One pass of large sequential writes onto the real target, instead
         // of the many small fsync'd writes the per-track loop above would
         // otherwise have done directly against it.
         reporter.start("Copying to stick", 1);
-        fs::copy(scratchDir, pathFromUtf8(directory), fs::copy_options::recursive);
+        copyLibraryDatabaseLast(scratchDir, pathFromUtf8(directory));
         reporter.tick(1);
+        reporter.finish();
+    } catch (const application::OperationCancelled &) {
+        // From beforeCopy: before the copy, so the stick is untouched and
+        // the scratch copy dies with scratchGuard.
+        result.cancelled = true;
         reporter.finish();
     } catch (const std::exception &e) {
         result.errorMessage = e.what();

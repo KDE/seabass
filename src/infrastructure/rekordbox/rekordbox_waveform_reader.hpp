@@ -56,6 +56,12 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const st
                                         std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
                                         const AnlzPathIndex *pathIndex = nullptr);
 
+// The same, from the analysis file at `analyzePath` (as export.pdb's
+// analyze_path and exportLibrary.db's content.analysisDataFilePath spell
+// it) through `anlzSource`: for a row whose file is known without asking
+// export.pdb, a OneLibrary row's. Nothing throws.
+domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath);
+
 // The parts of rekordbox's newer waveforms a Denon overview is made from
 // (see domain/engine_overview.hpp), as raw section bodies: each one
 // absent where the file or the section is not there.

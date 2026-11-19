@@ -93,10 +93,30 @@ struct EngineLibraryCreationResult
 // Engine's own rekordbox import hands over its own: marked unanalysed,
 // with the analysis columns empty, so the player runs its own analysis
 // and draws the waveform with Denon's algorithms. The beatgrid is part
-// of that analysis and is recomputed with it.
+// of that analysis and is recomputed with it. A caller that has
+// rekordbox's analysis to give the rows (Create Engine Library with
+// Preferences' switches on, gui::runEngineLibraryCreation()) does so in
+// create()'s beforeCopy step, on those unanalysed rows.
 class EngineLibraryCreator
 {
 public:
+    // One row create() made: the track it came from (an index into the
+    // `tracks` it was given) and the row's id in the new library.
+    struct CreatedRow
+    {
+        std::size_t trackIndex = 0;
+        std::int64_t engineTrackId = 0;
+    };
+    // Work on the finished library while it is still the scratch copy
+    // (`scratchLibrary`, its "Engine Library" folder), after every row is
+    // made and marked for the player's analysis, before anything reaches
+    // the stick: Create Engine Library's copy of rekordbox's analysis.
+    // Anything it writes goes to the stick with the rest, in the one copy.
+    // Throwing fails the creation with the stick untouched; throwing
+    // application::OperationCancelled cancels it, the same.
+    using ScratchLibraryStep =
+        std::function<void(const std::string &scratchLibrary, const std::vector<CreatedRow> &rows)>;
+
     // What an audio file says its sample rate is, in Hz, or nothing when
     // it cannot say. Given the track's absolute file path. The shape of
     // LibdjinteropEngineReader::SampleRateSource.
@@ -130,6 +150,12 @@ public:
     // import the rekordbox library over the one just created. Measured:
     // TESTRIG_2's export at 513, a library created from it at 0.
     //
+    // beforeCopy: see ScratchLibraryStep; none by default.
+    //
+    // The copy onto `directory` puts the database files last, so a copy
+    // that stops part way never leaves a database whose rows name overview
+    // files it has not copied yet.
+    //
     // sampleRateSource: the rate each cue is converted at, for a file
     // whose rate the creator cannot read itself. Engine stores a cue as a
     // sample offset at the file's own rate; an MP3's comes from its frame
@@ -143,7 +169,8 @@ public:
                                                const application::CancellationToken &cancel =
                                                    application::CancellationToken::none(),
                                                std::optional<std::uint64_t> rekordboxLibrarySequence = std::nullopt,
-                                               const SampleRateSource &sampleRateSource = {});
+                                               const SampleRateSource &sampleRateSource = {},
+                                               const ScratchLibraryStep &beforeCopy = {});
 };
 
 }  // namespace seabass::infrastructure::engine

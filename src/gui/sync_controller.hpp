@@ -202,7 +202,10 @@ protected:
 private:
     void onAnalyzeFinished(SyncTaskResult &&result);
     void attachSession();
-    void stagePlan(int index);
+    // Stages the plan at `index`; true when its change also carries
+    // rekordbox's analysis for the Engine row (Preferences, see
+    // SyncPlanChange::setAnalysisRider()).
+    bool stagePlan(int index);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
     void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
     static QString leftOutKeyFor(const domain::SyncPlan &plan);

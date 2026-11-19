@@ -31,6 +31,9 @@ import SeabassGui
 // has the player analyse the ticked rows anew. Each stages one change per
 // track into the same session. A track row says when its analysis is kept.
 //
+// Experimental (docs/experimental-features.md): its card is behind the
+// setting, and the page says so under its title.
+//
 // A rekordbox track with no Engine row cannot be ticked; when the list
 // shows such tracks the page says how many and asks for the libraries to
 // be synced first, with a link to Sync after Rekordbox Export.
@@ -153,6 +156,11 @@ Page {
                     onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                     onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
                 }
+                // Experimental (docs/experimental-features.md): the card
+                // that opens this page is behind the setting.
+                ExperimentalBadge {
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 Item { Layout.fillWidth: true }
             }
 
@@ -168,6 +176,14 @@ Page {
                     text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, for the "
                         + "tracks you tick. A track the player has not analysed yet then loads without analysis; "
                         + "on one it has, Engine's own grid stays beside the copy, so the player can go back to it."
+                }
+                Label {
+                    objectName: "experimentalLabel"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.conflictText
+                    text: "Experimental: this replaces analysis a Denon player made with one converted from "
+                        + "rekordbox, and the conversion has not yet been confirmed on a player."
                 }
 
                 // What to copy. The boxes themselves on the page's left line.

@@ -86,6 +86,9 @@ AppSettingsController::AppSettingsController(QObject *parent)
     // line is the one difference between master and the train.
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", true).toBool();
 #endif
+    // Again now the gate is known: the copy of rekordbox's analysis is
+    // experimental.
+    applySyncAnalysisPolicy();
 }
 
 void AppSettingsController::setUseSystemTheme(bool value)
@@ -223,11 +226,12 @@ void AppSettingsController::setCorrectMp3CueTiming(bool value)
 
 void AppSettingsController::applySyncAnalysisPolicy()
 {
+    // The user's two choices as stored, and the experimental gate beside
+    // them: with Experimental off (or a build without it) every workflow
+    // reads both off, and the choices come back when it is switched on.
+    // Not read back into the members, which would forget the choices.
     application::SyncAnalysisPolicy::set(m_copyBeatGridsOnSync, m_copyWaveformsOnSync);
-    // Read back, as applyMatchingPolicy() does: what the page shows is
-    // what a sync will do.
-    m_copyBeatGridsOnSync = application::SyncAnalysisPolicy::copyBeatGrids();
-    m_copyWaveformsOnSync = application::SyncAnalysisPolicy::copyWaveforms();
+    application::SyncAnalysisPolicy::setExperimentalEnabled(experimentalFeaturesEnabled());
 }
 
 void AppSettingsController::setCopyBeatGridsOnSync(bool value)
@@ -352,6 +356,7 @@ void AppSettingsController::setExperimentalFeaturesEnabled(bool value)
     }
     m_experimentalFeaturesEnabled = value;
     m_settings.setValue("experimentalFeaturesEnabled", value);
+    applySyncAnalysisPolicy();
     emit experimentalFeaturesEnabledChanged();
 }
 #endif

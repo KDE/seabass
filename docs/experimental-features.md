@@ -36,7 +36,12 @@ from day one.
   Deliberately narrow: title/artist/BPM/key/duration/bitrate/rating/
   comment/hot+memory cues plus a simple two-point approximate beatgrid;
   no cover art (libdjinterop's own album_art API is unfinished), no real
-  per-beat grid, no waveform, no playlists. Verified by creating a
+  per-beat grid, no waveform, no playlists. (Since 2026-11-19: with
+  both "Copy beat grids/waveforms from rekordbox to Engine" switches on
+  in Preferences, itself experimental, see below, every track it creates
+  that can be completed gets rekordbox's real grid and waveform; with
+  them off, or only one on, it is still as described here, every track
+  left for the player to analyse.) Verified by creating a
   library and reading it back correctly with this app's own reader
   (`libdjinterop_engine_library_creator_test`); never tested against
   real Denon hardware. Exposes the Engine schema generation (1.x/2.x/3.x)
@@ -57,6 +62,39 @@ from day one.
   (`moved_file_change_test`); no player has browsed a relinked track yet.
   Promote once one has, on a stick whose export.pdb was relinked. Moving
   the file back (repair A) writes no catalog and is not gated.
+
+- **Beat grid and waveform conversion** (added 2026-11-19) — rekordbox's
+  beat grid (PQTZ) and waveform preview (PWV6, or PWV4 for an export
+  without a .2EX) converted into Engine's beat data, overview and
+  overview file, written onto the stick's Engine tracks. Two ways in: the
+  Beat Grids & Waveforms page (its card is `experimental: true`, the page
+  carries the `ExperimentalBadge`), and the two Preferences switches
+  "Copy beat grids/waveforms from rekordbox to Engine when syncing"
+  (shown only with Experimental on), which Sync after Rekordbox Export
+  and Sync Cue Points obey for the tracks they write to Engine and Create
+  Engine Library for every track it creates. With Experimental off the
+  switches do nothing anywhere, whatever is stored
+  (`application::SyncAnalysisPolicy` reads both off); the stored choice
+  comes back with it. It replaces analysis a Denon player made: before a
+  row the player analysed changes, its own analysis is kept on the stick
+  (`Seabass/engine-analysis/`) and "Restore Engine's Analysis" puts it
+  back byte for byte; "Let the Player Analyse Again" hands a row back to
+  the player. A grid locked or moved on the player is never replaced by a
+  sync. A row the player has not analysed yet (a created one included)
+  is completed all or nothing, so only with both parts. Measured: the
+  conversion was calibrated on 192 tracks of one library against what a
+  Prime 4 analysed itself, and a completed row's length is the sample
+  count a Prime 4 stores (the container's count for FLAC, AIFF and M4A,
+  an MP3's frames times 1152; testshark_t73). Never met hardware: a
+  converted grid or waveform loaded and played on a player, a completed
+  row the player then leaves alone (rather than analysing again), a
+  library made by Create Engine Library with the conversion on, and
+  Restore Engine's Analysis read back by a player. Before it graduates, a
+  Denon player (Prime 4 or Prime GO+) must load converted tracks with the
+  grid on the beat and the overview drawn, leave completed rows as they
+  are, and take a restored row back as its own. The command line's
+  `copy-beatgrids` (with `--waveforms` an experiment of its own) has no
+  experimental gate, as the command line has none.
 
 ## Graduated to stable
 

@@ -80,6 +80,13 @@ int main()
         using seabass::application::SyncAnalysisPolicy;
         SyncAnalysisPolicy::reset();
         assert(!SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
+        // Experimental: both switches on do nothing with the gate closed,
+        // which is how reset() leaves it.
+        SyncAnalysisPolicy::set(true, true);
+        assert(!SyncAnalysisPolicy::experimentalEnabled());
+        assert(!SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        assert(SyncAnalysisPolicy::copyBeatGrids() && SyncAnalysisPolicy::copyWaveforms());
         SyncAnalysisPolicy::set(true, false);
         assert(SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
         SyncAnalysisPolicy::set(false, true);

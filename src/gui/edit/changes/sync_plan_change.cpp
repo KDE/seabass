@@ -4,6 +4,7 @@
 
 #include "gui/edit/changes/sync_plan_change.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -89,6 +90,13 @@ SyncPlanChange::SyncPlanChange(QString rekordboxPath, QString enginePath, SyncPl
 {
 }
 
+SyncPlanChange::~SyncPlanChange() = default;
+
+void SyncPlanChange::setAnalysisRider(std::unique_ptr<PendingChange> rider)
+{
+    m_rider = std::move(rider);
+}
+
 const domain::Track &SyncPlanChange::target() const
 {
     return m_plan.direction == SyncPlan::Direction::ToB ? m_plan.match.trackB : m_plan.match.trackA;
@@ -149,7 +157,25 @@ std::vector<BackupTarget> SyncPlanChange::filesToBackup(SaveContext &ctx) const
     for (const auto &file : filesWrittenFor(scope, {tgt.format, tgt.sourceId}, path, ctx)) {
         targets.push_back({file, "sync"});
     }
+    // The rider's (its kept analysis and the ledger), each file once: the
+    // database is this change's already.
+    if (m_rider) {
+        for (auto &target : m_rider->filesToBackup(ctx)) {
+            const bool declared = std::any_of(targets.begin(), targets.end(),
+                                              [&](const BackupTarget &t) { return t.file == target.file; });
+            if (!declared) {
+                targets.push_back(std::move(target));
+            }
+        }
+    }
     return targets;
+}
+
+void SyncPlanChange::beforeSave(SaveContext &ctx)
+{
+    if (m_rider) {
+        m_rider->beforeSave(ctx);
+    }
 }
 
 // The rekordbox target's whole set is the plan's cues, which apply()
@@ -245,6 +271,15 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
     ctx.log().record("sync: copied cues (" + describeCues(m_plan.cuesToApply).toStdString() + ") from " + src.format
                      + " track \"" + src.title + "\" (id=" + src.sourceId + ") to " + targetFormat + " track id="
                      + tgt.sourceId);
+    // rekordbox's analysis onto the row whose cues were just written. What
+    // it left alone is a skip of its own, said in the summary note; the
+    // cues stand either way. A failure fails this change, cues included.
+    if (m_rider) {
+        const ChangeOutcome analysis = m_rider->apply(ctx);
+        if (!analysis.ok) {
+            return analysis;
+        }
+    }
     return ChangeOutcome::success();
 }
 

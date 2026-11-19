@@ -236,6 +236,8 @@ set(SEABASS_GUI_SOURCES
     stick_performance_controller.cpp
     engine_library_creator_controller.hpp
     engine_library_creator_controller.cpp
+    engine_library_creation_task.hpp
+    engine_library_creation_task.cpp
     format_usb_controller.hpp
     format_usb_controller.cpp
     home_backups_controller.hpp

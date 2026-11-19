@@ -60,11 +60,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -79,13 +81,19 @@
 #include "application/sync_analysis_policy.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/engine_library_creation_task.hpp"
+#include "gui/library_catalog_cache.hpp"
 #include "gui/rekordbox_export_sync_controller.hpp"
+#include "gui/sync_controller.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "gui/rekordbox_export_sync_list_model.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/exact_sample_count.hpp"
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -1097,7 +1105,7 @@ struct AnalysisRun
 };
 
 AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, bool>> options, bool analyseB01,
-                        bool lockB01, RekordboxExportSyncController &controller)
+                        bool lockB01, RekordboxExportSyncController &controller, bool experimental = true)
 {
     AnalysisRun run;
     run.stick = makeStick(name, "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
@@ -1110,6 +1118,8 @@ AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, b
     if (options) {
         SyncAnalysisPolicy::set(options->first, options->second);
     }
+    // Experimental: the switches count only with the gate open.
+    SyncAnalysisPolicy::setExperimentalEnabled(experimental);
     analyze(controller, run.stick);
     assertGoldenProposal(controller);
     controller.stageSelected();
@@ -1303,7 +1313,23 @@ StickState stateOf(const testing::EngineChangeStick &stick)
     for (const auto &[path, bytes] : filesUnder(stick.root / "Seabass")) {
         state.seabassFiles.insert(path);
     }
-    state.baseline = fileBytes(recordOf(stick));
+    // The record as written, but the second it was written in: read, the
+    // time cleared, written again elsewhere. Two runs a second apart
+    // otherwise differ there and nowhere else.
+    {
+        std::string error;
+        auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+        assert(record && error.empty());
+        record->recordedAtUnix = 0;
+        const fs::path elsewhere = stick.root.parent_path() / (pathToUtf8(stick.root.filename()) + "-record");
+        fs::remove_all(elsewhere);
+        fs::create_directories(elsewhere);
+        std::string writeError;
+        const bool written = seabass::infrastructure::local::writeRekordboxBaseline(elsewhere, *record, [](const std::string &) {}, &writeError);
+        assert(written);
+        (void)written;
+        state.baseline = fileBytes(seabass::infrastructure::paths::stickRekordboxBaseline(elsewhere));
+    }
     return state;
 }
 
@@ -1325,12 +1351,33 @@ void testAnalysisOff()
         assert(run.summary.value("notes").toString().isEmpty());
         off = stateOf(run.stick);
     }
-    const auto diffs = testing::differences(never.dump, off.dump);
-    testing::printDifferences(diffs);
-    assert(diffs.empty());
-    assert(never.playlists == off.playlists && never.tracks == off.tracks);
-    assert(never.engineFiles == off.engineFiles && never.pioneerFiles == off.pioneerFiles);
-    assert(never.contents == off.contents && never.baseline == off.baseline);
+    // Both switches stored on, Experimental off: the switches have no
+    // effect (SyncAnalysisPolicy reads both off), the same save again.
+    StickState gated;
+    {
+        RekordboxExportSyncController controller;
+        AnalysisRun run =
+            runSyncWith("t73_analysis_gated", std::make_pair(true, true), false, false, controller, false);
+        assert(ridersIn(run.pending) == 0 && "no rider while Experimental is off");
+        assert(run.summary.value("notes").toString().isEmpty());
+        gated = stateOf(run.stick);
+    }
+    for (const StickState *other : {&off, &gated}) {
+        const auto diffs = testing::differences(never.dump, other->dump);
+        testing::printDifferences(diffs);
+        assert(diffs.empty());
+        assert(never.playlists == other->playlists && never.tracks == other->tracks);
+        assert(never.engineFiles == other->engineFiles && never.pioneerFiles == other->pioneerFiles);
+        for (const auto &[path, bytes] : never.contents) {
+            if (!other->contents.count(path) || other->contents.at(path) != bytes) {
+                std::cout << "  differs: Contents/" << path << "\n";
+            }
+        }
+        if (never.baseline != other->baseline) {
+            std::cout << "  differs: the record\n";
+        }
+        assert(never.contents == other->contents && never.baseline == other->baseline);
+    }
     // The same files under Seabass/, but the backups' own names.
     const auto named = [](const std::set<std::string> &files) {
         std::multiset<std::string> out;
@@ -1340,13 +1387,14 @@ void testAnalysisOff()
         return out;
     };
     assert(named(never.seabassFiles) == named(off.seabassFiles));
+    assert(named(never.seabassFiles) == named(gated.seabassFiles));
     for (const auto &f : off.seabassFiles) {
         assert(f.find("engine-analysis") == std::string::npos && f.find("beat-grids") == std::string::npos);
     }
     for (const auto &[path, bytes] : off.engineFiles) {
         assert(path.rfind("Database2/OverviewData", 0) != 0 && "no overview file written");
     }
-    std::cout << "analysis off: never set and both off write the same m.db and the same stick OK\n";
+    std::cout << "analysis off: never set, both off, and both on with Experimental off write the same m.db and the same stick OK\n";
 }
 
 void testAnalysis()
@@ -1359,6 +1407,684 @@ void testAnalysis()
     SyncAnalysisPolicy::reset();
 #else
     std::cerr << "analysis: needs TagLib (a row is completed from its file's own sample count)\n";
+    std::exit(1);
+#endif
+}
+
+
+// --- Sync Cue Points with rekordbox's analysis ------------------------------
+
+using seabass::gui::SyncController;
+
+std::int64_t trackIdOfDb(const std::string &db, const std::string &name)
+{
+    return testing::sqlScalar(db, "SELECT id FROM Track WHERE filename LIKE 'T73-" + name + "-%';");
+}
+
+void waitUntilIdle(SyncController &controller)
+{
+    QSignalSpy busy(&controller, &SyncController::busyChanged);
+    for (int i = 0; i < 3000 && controller.busy(); ++i) {
+        busy.wait(100);
+    }
+    assert(!controller.busy());
+}
+
+void analyze(SyncController &controller, const testing::EngineChangeStick &stick)
+{
+    controller.analyze(stick.pioneerPath(), stick.enginePath());
+    waitUntilIdle(controller);
+    if (!controller.errorMessage().isEmpty()) {
+        std::cerr << "sync analysis: " << controller.errorMessage().toStdString() << "\n";
+    }
+    assert(controller.errorMessage().isEmpty());
+}
+
+void printPlans(SyncController &controller)
+{
+    for (const auto &plan : controller.plansModel()->plans()) {
+        const bool toB = plan.direction == d::SyncPlan::Direction::ToB;
+        const auto &src = toB ? plan.match.trackA : plan.match.trackB;
+        const auto &tgt = toB ? plan.match.trackB : plan.match.trackA;
+        std::cout << "  plan: " << src.format << " " << src.filename << " -> " << tgt.format << " id=" << tgt.sourceId
+                  << " (" << plan.cuesToApply.size() << " cues)\n";
+    }
+}
+
+// Engine's cues of `names` taken away (N3's cue list, which holds none of
+// theirs), so Sync Cue Points proposes rekordbox's onto Engine; and
+// `toRekordbox` given B02's on Engine, so that row goes the other way.
+void makeCueRows(const testing::EngineChangeStick &stick, const std::vector<std::string> &names,
+                 const std::string &toRekordbox)
+{
+    const std::string n3 = std::to_string(trackIdOf(stick, "N3"));
+    for (const auto &name : names) {
+        const std::string id = std::to_string(trackIdOf(stick, name));
+        const bool done = testing::sqlExec(
+            stick.db, "UPDATE PerformanceData SET quickCues = (SELECT quickCues FROM PerformanceData WHERE trackId = "
+                          + n3 + "), loops = (SELECT loops FROM PerformanceData WHERE trackId = " + n3
+                          + ") WHERE trackId = " + id + ";");
+        assert(done);
+        (void)done;
+    }
+    if (!toRekordbox.empty()) {
+        const std::string b02 = std::to_string(trackIdOf(stick, "B02"));
+        const std::string id = std::to_string(trackIdOf(stick, toRekordbox));
+        const bool done = testing::sqlExec(
+            stick.db, "UPDATE PerformanceData SET quickCues = (SELECT quickCues FROM PerformanceData WHERE trackId = "
+                          + b02 + ") WHERE trackId = " + id + ";");
+        assert(done);
+        (void)done;
+    }
+}
+
+QVariantMap waitForSyncSave(LibraryEditSession *session, SyncController &controller, bool undo)
+{
+    QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+    if (undo) {
+        controller.undoLastOperation();
+    } else {
+        session->save();
+    }
+    for (int i = 0; i < 1200 && finished.isEmpty(); ++i) {
+        finished.wait(100);
+    }
+    assert(!finished.isEmpty() && "the save finished");
+    waitUntilIdle(controller);
+    const QVariantMap summary = finished.takeFirst().at(0).toMap();
+    std::cout << "  " << (undo ? "undo" : "save") << ": " << summary.value("written").toInt() << " of "
+              << summary.value("total").toInt() << " " << summary.value("unit").toString().toStdString()
+              << "; error \"" << summary.value("error").toString().toStdString() << "\", notes \""
+              << summary.value("notes").toString().toStdString() << "\"\n";
+    assert(summary.value("error").toString().isEmpty());
+    assert(summary.value("warning").toString().isEmpty());
+    return summary;
+}
+
+int planIndexOf(SyncController &controller, const std::string &name)
+{
+    const auto &plans = controller.plansModel()->plans();
+    for (std::size_t i = 0; i < plans.size(); ++i) {
+        const auto &m = plans[i].match;
+        if (m.trackA.filename.rfind("T73-" + name + "-", 0) == 0 || m.trackB.filename.rfind("T73-" + name + "-", 0) == 0) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+std::string quickCuesOf(const testing::EngineChangeStick &stick, const std::string &name)
+{
+    return testing::sqlRows(stick.db, "SELECT hex(quickCues) || '/' || hex(loops) FROM PerformanceData WHERE trackId = "
+                                          + std::to_string(trackIdOf(stick, name)) + ";")
+        .at(0)
+        .at(0);
+}
+
+// One Sync Cue Points run: B04 and B11 (analysed by the player) and B03
+// (not) lose their cues on Engine, so their rekordbox cues go to Engine;
+// N3 gains cues on Engine, so its row goes to rekordbox. `lockB11`: B11's
+// grid locked on the player. `experimental`: the gate, the switches as
+// `options` (none: never set).
+struct CueSyncRun
+{
+    testing::EngineChangeStick stick;
+    std::map<std::int64_t, std::vector<std::string>> before;
+    testing::DatabaseDump dumpBefore;
+    std::map<std::string, std::string> cuesBefore;
+    QStringList pending;
+    QString staged;
+    QVariantMap summary;
+    std::map<std::int64_t, std::vector<std::string>> after;
+};
+
+const std::vector<std::string> CueRowsToEngine = {"B03", "B04", "B11"};
+
+CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, bool>> options, bool experimental,
+                      SyncController &controller, const std::vector<std::string> &unstage = {})
+{
+    CueSyncRun run;
+    run.stick = makeStick(name, "m-after-R3c-save1.db", "rekordbox-baseline-export128.tsv.gz");
+    makeCueRows(run.stick, CueRowsToEngine, "N3");
+    const bool locked = testing::sqlExec(run.stick.db, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = "
+                                                           + std::to_string(trackIdOf(run.stick, "B11")) + ";");
+    assert(locked);
+    (void)locked;
+    run.before = analysisRows(run.stick.db);
+    run.dumpBefore = testing::dumpDatabase(run.stick.db);
+    for (const char *track : {"B03", "B04", "B11", "N3", "B01"}) {
+        run.cuesBefore[track] = quickCuesOf(run.stick, track);
+    }
+    SyncAnalysisPolicy::reset();
+    if (options) {
+        SyncAnalysisPolicy::set(options->first, options->second);
+    }
+    SyncAnalysisPolicy::setExperimentalEnabled(experimental);
+    analyze(controller, run.stick);
+    printPlans(controller);
+    // B03, B04 and B11 to Engine, N3 to rekordbox, nothing else.
+    assert(controller.planCount() == 4 && controller.conflictCount() == 0);
+    for (const auto &track : CueRowsToEngine) {
+        const int i = planIndexOf(controller, track);
+        assert(i >= 0);
+        const auto &plan = controller.plansModel()->plans()[static_cast<std::size_t>(i)];
+        assert(plan.direction == d::SyncPlan::Direction::ToB && plan.match.trackB.format == "engine");
+    }
+    {
+        const auto &plan = controller.plansModel()->plans()[static_cast<std::size_t>(planIndexOf(controller, "N3"))];
+        const auto &target = plan.direction == d::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
+        assert(target.format == "rekordbox" && "N3 goes the other way");
+    }
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    run.staged = controller.statusMessage();
+    std::cout << "  staged: \"" << run.staged.toStdString() << "\"\n";
+    assert(controller.stagedCount() == 4);
+    for (const auto &track : unstage) {
+        controller.unstage(planIndexOf(controller, track));
+    }
+    LibraryEditSession *session = sessionOf(run.stick);
+    run.pending = session->pendingDescriptions();
+    // One staged change per row, rider or not.
+    assert(run.pending.size() == static_cast<int>(4 - unstage.size()));
+    assert(ridersIn(run.pending) == 0 && "the analysis rides inside the row's own change");
+    run.summary = waitForSyncSave(session, controller, false);
+    // The rows' own count, whatever the switches.
+    assert(run.summary.value("written").toInt() == static_cast<int>(4 - unstage.size()));
+    assert(run.summary.value("unit").toString() == QStringLiteral("tracks"));
+    run.after = analysisRows(run.stick.db);
+    return run;
+}
+
+void assertCuesLanded(const CueSyncRun &run, const std::vector<std::string> &tracks)
+{
+    for (const auto &track : tracks) {
+        assert(quickCuesOf(run.stick, track) != run.cuesBefore.at(track) && "rekordbox's cues are on Engine");
+    }
+}
+
+void testCueSyncBoth()
+{
+    SyncController controller;
+    CueSyncRun run = runCueSync("t73_cuesync_both", std::make_pair(true, true), true, controller);
+    const auto &stick = run.stick;
+    assert(run.staged.contains(QStringLiteral("The tracks whose cues go to Engine also get rekordbox's beat grids and "
+                                              "waveforms, as set in Preferences.")));
+    assertCuesLanded(run, CueRowsToEngine);
+    const std::int64_t b03 = trackIdOf(stick, "B03");
+    const std::int64_t b04 = trackIdOf(stick, "B04");
+    const std::int64_t b11 = trackIdOf(stick, "B11");
+    const std::int64_t n3 = trackIdOf(stick, "N3");
+    // B04, analysed by the player: rekordbox's grid and waveform, its own
+    // record stays.
+    assert(run.after.at(b04)[BeatData] != run.before.at(b04)[BeatData]);
+    assert(run.after.at(b04)[Overview] != run.before.at(b04)[Overview]);
+    assert(run.after.at(b04)[TrackData] == run.before.at(b04)[TrackData]);
+    // B11, its grid locked: the grid left alone, the waveform copied.
+    assert(run.after.at(b11)[BeatData] == run.before.at(b11)[BeatData] && "a locked grid is never replaced");
+    assert(run.after.at(b11)[Overview] != run.before.at(b11)[Overview]);
+    // B03, not analysed: completed over its file's own length.
+    {
+        const auto &row = run.after.at(b03);
+        assert(row[IsAnalyzed] == "1" && row[TrackData] != "<null>" && row[BeatData] != "<null>");
+        const auto file = testing::sqlRows(stick.db, "SELECT path FROM Track WHERE id = " + std::to_string(b03) + ";");
+        const fs::path audio = fs::weakly_canonical(stick.engine / pathFromUtf8(file.at(0).at(0)));
+        const auto exact = seabass::infrastructure::audio::readExactSampleCount(pathToUtf8(audio));
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            blobOf(stick.db, "SELECT trackData FROM PerformanceData WHERE trackId = " + std::to_string(b03) + ";"));
+        assert(exact && record.samples == static_cast<std::int64_t>(exact->samples));
+    }
+    // Every other row as it was, N3 (its cues went to rekordbox) included.
+    for (const auto &[id, row] : run.before) {
+        if (id != b03 && id != b04 && id != b11) {
+            assert(run.after.at(id) == row);
+        }
+    }
+    assert(quickCuesOf(stick, "N3") == run.cuesBefore.at("N3") && "N3's Engine row is not written");
+    (void)n3;
+    std::set<std::int64_t> overviewIds;
+    for (const auto &[path, bytes] : filesUnder(overviewDirOf(stick))) {
+        overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
+    }
+    assert((overviewIds == std::set<std::int64_t>{b03, b04, b11}));
+    assert(filesUnder(keptDirOf(stick)).size() == 2 && "B04's and B11's own analysis kept");
+    std::string ledgerError;
+    const auto ledger = seabass::infrastructure::local::readBeatGridLedger(stick.root, &ledgerError);
+    assert(ledgerError.empty() && ledger.size() == 2 && "the grids written: B03's and B04's");
+    assert(run.summary.value("notes").toString()
+           == QStringLiteral("From rekordbox, 2 beat grids and 3 waveforms copied, one track now loads without "
+                             "analysis. Engine's own analysis of 2 tracks was kept on the stick first. Analysis left "
+                             "alone: one beat grid locked or moved on the player."));
+    std::cout << "cue sync both: B03 completed, B04 replaced and kept, B11's locked grid left alone, N3 untouched OK\n";
+
+    // Undo: m.db, overview files, kept analyses and ledger as before.
+    waitForSyncSave(sessionOf(stick), controller, true);
+    {
+        testing::DatabaseDump after = testing::dumpDatabase(stick.db);
+        testing::DatabaseDump before = run.dumpBefore;
+        before.erase("Information");
+        after.erase("Information");
+        const auto diffs = testing::differences(before, after);
+        testing::printDifferences(diffs);
+        assert(diffs.empty());
+    }
+    assert(filesUnder(overviewDirOf(stick)).empty());
+    assert(filesUnder(keptDirOf(stick)).empty());
+    assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(stick.root)));
+    std::cout << "cue sync undo: m.db, overview files, kept analyses and ledger as before OK\n";
+}
+
+// A row unstaged takes its analysis with it: B04 as it was, cues and all.
+void testCueSyncUnstage()
+{
+    SyncController controller;
+    CueSyncRun run = runCueSync("t73_cuesync_unstage", std::make_pair(true, true), true, controller, {"B04"});
+    const std::int64_t b04 = trackIdOf(run.stick, "B04");
+    assert(run.after.at(b04) == run.before.at(b04) && "no analysis without its row");
+    assert(quickCuesOf(run.stick, "B04") == run.cuesBefore.at("B04"));
+    assertCuesLanded(run, {"B03", "B11"});
+    std::set<std::int64_t> overviewIds;
+    for (const auto &[path, bytes] : filesUnder(overviewDirOf(run.stick))) {
+        overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
+    }
+    assert(!overviewIds.count(b04) && overviewIds.size() == 2);
+    assert(filesUnder(keptDirOf(run.stick)).size() == 1 && "B11's only");
+    std::cout << "cue sync unstage: B04's analysis left with its row OK\n";
+}
+
+// Grids only: B04's grid, B03 left for the player.
+void testCueSyncGridsOnly()
+{
+    SyncController controller;
+    CueSyncRun run = runCueSync("t73_cuesync_grids", std::make_pair(true, false), true, controller);
+    assert(run.staged.contains(QStringLiteral("also get rekordbox's beat grids, as set in Preferences.")));
+    const std::int64_t b03 = trackIdOf(run.stick, "B03");
+    assert(run.after.at(b03) == run.before.at(b03) && "a row is completed with both or not at all");
+    assert(run.summary.value("notes").toString()
+           == QStringLiteral("From rekordbox, one beat grid copied. Engine's own analysis of one track was kept on the "
+                             "stick first. Analysis left alone: one beat grid locked or moved on the player, one track "
+                             "left for the player to analyse."));
+    std::cout << "cue sync grids only: B04's grid, B03 left for the player, B11 locked OK\n";
+}
+
+// Off, never set, and both on with Experimental off: the same save.
+void testCueSyncOff()
+{
+    std::vector<StickState> states;
+    for (const auto &[name, options, experimental] :
+         {std::tuple{"t73_cuesync_never", std::optional<std::pair<bool, bool>>{}, true},
+          std::tuple{"t73_cuesync_off", std::optional<std::pair<bool, bool>>{std::make_pair(false, false)}, true},
+          std::tuple{"t73_cuesync_gated", std::optional<std::pair<bool, bool>>{std::make_pair(true, true)}, false}}) {
+        SyncController controller;
+        CueSyncRun run = runCueSync(name, options, experimental, controller);
+        assert(!run.staged.contains(QStringLiteral("rekordbox's")) && "the staged line as it always was");
+        assert(run.summary.value("notes").toString().isEmpty());
+        assertCuesLanded(run, CueRowsToEngine);
+        assert(run.after == run.before && "no row's analysis changes");
+        assert(filesUnder(overviewDirOf(run.stick)).empty());
+        assert(filesUnder(keptDirOf(run.stick)).empty());
+        assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(run.stick.root)));
+        states.push_back(stateOf(run.stick));
+    }
+    for (std::size_t i = 1; i < states.size(); ++i) {
+        const auto diffs = testing::differences(states[0].dump, states[i].dump);
+        testing::printDifferences(diffs);
+        assert(diffs.empty());
+        assert(states[0].tracks == states[i].tracks && states[0].engineFiles == states[i].engineFiles);
+        // exportLibrary.db is SQLCipher: N3's cues written into it make
+        // different bytes on every write, whatever the switches (its cue
+        // write is not this change's); every other file the same.
+        auto pioneerA = states[0].pioneerFiles;
+        auto pioneerB = states[i].pioneerFiles;
+        pioneerA.erase("rekordbox/exportLibrary.db");
+        pioneerB.erase("rekordbox/exportLibrary.db");
+        assert(pioneerA == pioneerB && states[0].contents == states[i].contents);
+    }
+    std::cout << "cue sync off: never set, both off and Experimental off write the same stick OK\n";
+}
+
+void testCueSync()
+{
+#ifdef SEABASS_HAVE_TAGLIB
+    testCueSyncBoth();
+    testCueSyncUnstage();
+    testCueSyncGridsOnly();
+    testCueSyncOff();
+    SyncAnalysisPolicy::reset();
+#else
+    std::cerr << "cuesync: needs TagLib (a row is completed from its file's own sample count)\n";
+    std::exit(1);
+#endif
+}
+
+// --- Create Engine Library with rekordbox's analysis -----------------------
+
+using seabass::gui::EngineLibraryCreationTaskResult;
+
+// A stick with only the rekordbox side and its audio: the fixture's PIONEER
+// (export 128) and Contents, no Engine Library.
+fs::path makeRekordboxOnlyStick(const std::string &name)
+{
+    const fs::path root = testing::scratchRoot() / name;
+    fs::remove_all(root);
+    fs::create_directories(root);
+    std::error_code ec;
+    testing::copyPioneerFixture(g_fixture / "stick" / "PIONEER", root / "PIONEER", ec);
+    assert(!ec);
+    fs::copy(g_fixture / "stick" / "Contents", root / "Contents", fs::copy_options::recursive, ec);
+    assert(!ec);
+    return root;
+}
+
+// The phases a run names, and a hook on each.
+struct PhaseReporter : seabass::application::ProgressReporter
+{
+    std::function<void(const std::string &)> onPhase;
+    std::vector<std::string> phases;
+    std::size_t planned = 0;
+    void start(const std::string &label, std::size_t total) override
+    {
+        if (phases.empty()) {
+            planned = total;
+        }
+        phases.push_back(label);
+        if (onPhase) {
+            onPhase(label);
+        }
+    }
+    void tick(std::size_t) override {}
+    void finish() override {}
+    void phase(const std::string &label) override
+    {
+        phases.push_back(label);
+        if (onPhase) {
+            onPhase(label);
+        }
+    }
+    void warn(const std::string &) override {}
+};
+
+EngineLibraryCreationTaskResult createOn(const fs::path &root, bool grids, bool waveforms,
+                                         PhaseReporter *reporter = nullptr,
+                                         seabass::application::CancellationToken cancel = {})
+{
+    seabass::application::AnalysisCopyOptions options;
+    options.grids = grids;
+    options.waveforms = waveforms;
+    PhaseReporter own;
+    const EngineLibraryCreationTaskResult result = seabass::gui::runEngineLibraryCreation(
+        QString::fromStdString(pathToUtf8(root / "PIONEER")), 2, options, reporter ? *reporter : own, cancel);
+    std::cout << "  create (" << grids << "," << waveforms << "): " << result.tracksCreated << " of "
+              << result.tracksTotal << " created, error \"" << result.errorMessage.toStdString() << "\", note \""
+              << result.analysisNote.toStdString() << "\"\n";
+    return result;
+}
+
+std::string createdDb(const fs::path &root)
+{
+    return pathToUtf8(root / "Engine Library" / "Database2" / "m.db");
+}
+
+// The new library's tables, but what differs between two creations of the
+// same library whatever they do: the library's uuid and the clock.
+testing::DatabaseDump createdDump(const fs::path &root)
+{
+    testing::DatabaseDump dump = testing::dumpDatabase(createdDb(root));
+    dump.erase("Information");
+    dump.erase("Track");
+    dump.erase("Playlist");
+    dump.erase("PlaylistEntity");
+    return dump;
+}
+
+// The Track and Playlist rows but the clock, and the playlist entries but
+// the library's uuid each names.
+std::vector<std::vector<std::string>> createdTracks(const fs::path &root)
+{
+    auto rows = rowsButClock(createdDb(root), "Track");
+    for (auto &row : rowsButClock(createdDb(root), "Playlist")) {
+        rows.push_back(std::move(row));
+    }
+    for (auto &row : testing::sqlRows(createdDb(root), "SELECT id, listId, trackId, nextEntityId, membershipReference "
+                                                       "FROM PlaylistEntity ORDER BY id;")) {
+        rows.push_back(std::move(row));
+    }
+    // The library's own uuid (originDatabaseUuid) and a clock written as
+    // text ("2026-11-19 10:57:12.15"): another on every creation.
+    const auto uuid = testing::sqlRows(createdDb(root), "SELECT uuid FROM Information;").at(0).at(0);
+    for (auto &row : rows) {
+        for (auto &value : row) {
+            if (value == uuid) {
+                value = "<library uuid>";
+            } else if (value.size() > 19 && value[4] == '-' && value[7] == '-' && value[10] == ' ' && value[13] == ':') {
+                value = "<clock>";
+            }
+        }
+    }
+    return rows;
+}
+
+// The rekordbox track's DeviceLibrary analysis file of the fixture file
+// named "T73-<name>-...", from the copy under `root`.
+fs::path anlzDatOf(const fs::path &root, const std::string &name)
+{
+    auto &cache = seabass::gui::LibraryCatalogCache::instance();
+    for (const auto &track : cache.tracksFor("rekordbox", pathToUtf8(root / "PIONEER"))) {
+        if (track.filename.rfind("T73-" + name + "-", 0) == 0) {
+            assert(!track.analysisFile.empty());
+            return root / pathFromUtf8(track.analysisFile.substr(1));
+        }
+    }
+    assert(false && "no such track");
+    return {};
+}
+
+fs::path audioOf(const fs::path &root, const std::string &name)
+{
+    for (const auto &entry : fs::recursive_directory_iterator(root / "Contents")) {
+        if (entry.is_regular_file() && pathToUtf8(entry.path().filename()).rfind("T73-" + name + "-", 0) == 0) {
+            return entry.path();
+        }
+    }
+    assert(false && "no such file");
+    return {};
+}
+
+void testCreateBoth()
+{
+    const fs::path root = makeRekordboxOnlyStick("t73_create_both");
+    PhaseReporter reporter;
+    const auto result = createOn(root, true, true, &reporter);
+    assert(result.errorMessage.isEmpty() && !result.cancelled && result.tracksCreated > 0);
+    // One bar: the plan counts the tracks to give rekordbox's analysis.
+    assert(std::find(reporter.phases.begin(), reporter.phases.end(), "Copying rekordbox's analysis")
+           != reporter.phases.end());
+    const std::string db = createdDb(root);
+    const auto rows = analysisRows(db);
+    assert(static_cast<int>(rows.size()) == result.tracksCreated);
+    const fs::path engine = root / "Engine Library";
+    const auto overviews = filesUnder(engine / "Database2" / "OverviewData");
+    std::set<std::int64_t> overviewIds;
+    for (const auto &[path, bytes] : overviews) {
+        overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
+    }
+    int completed = 0;
+    for (const auto &[id, row] : rows) {
+        const bool done = row[IsAnalyzed] == "1";
+        if (!done) {
+            // Left for the player: as the creator always left it.
+            assert(row[TrackData] == "<null>" && row[Overview] == "<null>" && row[BeatData] == "<null>");
+            assert(!overviewIds.count(id) && "no overview file for a row left for the player");
+            continue;
+        }
+        ++completed;
+        assert(row[TrackData] != "<null>" && row[Overview] != "<null>" && row[BeatData] != "<null>");
+        assert(overviewIds.count(id) && "the analysed flag never without its overview file");
+        const auto file = testing::sqlRows(db, "SELECT path FROM Track WHERE id = " + std::to_string(id) + ";");
+        const fs::path audio = fs::weakly_canonical(engine / pathFromUtf8(file.at(0).at(0)));
+        const auto exact = seabass::infrastructure::audio::readExactSampleCount(pathToUtf8(audio));
+        assert(exact);
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            blobOf(db, "SELECT trackData FROM PerformanceData WHERE trackId = " + std::to_string(id) + ";"));
+        assert(record.samples == static_cast<std::int64_t>(exact->samples) && "the file's own length");
+        assert(record.sample_rate == exact->sampleRateHz);
+    }
+    std::cout << "  " << completed << " of " << rows.size() << " rows completed, " << overviews.size()
+              << " overview file(s)\n";
+    assert(completed > 0);
+    assert(static_cast<int>(overviews.size()) == completed);
+    // The counts are what landed.
+    assert(result.analysisCompleted == completed && result.analysisGrids == completed
+           && result.analysisWaveforms == completed);
+    assert(result.analysisCompleted + result.analysisLeftForPlayer + result.analysisLeftOther == result.tracksCreated);
+    std::string ledgerError;
+    const auto ledger = seabass::infrastructure::local::readBeatGridLedger(root, &ledgerError);
+    assert(ledgerError.empty() && static_cast<int>(ledger.size()) == completed && "the ledger knows every grid");
+    assert(result.analysisNote.startsWith(
+        QStringLiteral("From rekordbox, %1 beat grids and %1 waveforms copied, %1 tracks now load without analysis.")
+            .arg(completed)));
+    // The ledger is what a later copy reads: every row it names carries
+    // that very grid.
+    std::cout << "create both: every row that can be completed is, counts and ledger as landed OK\n";
+}
+
+// One track without a readable audio file, one without a preview: left for
+// the player and counted, the rest completed, the creation not failed.
+void testCreateLeftForPlayer()
+{
+    const fs::path root = makeRekordboxOnlyStick("t73_create_left");
+    // N1: its audio file no longer reads (the bytes of no audio format).
+    const fs::path audio = audioOf(root, "N1");
+    const auto size = fs::file_size(audio);
+    {
+        std::ofstream out(audio, std::ios::binary | std::ios::trunc);
+        out << std::string(static_cast<std::size_t>(size), '\x5a');
+    }
+    // N2: no preview, its .EXT and .2EX gone.
+    const fs::path dat = anlzDatOf(root, "N2");
+    fs::remove(fs::path(dat).replace_extension(".EXT"));
+    fs::remove(fs::path(dat).replace_extension(".2EX"));
+    const auto result = createOn(root, true, true);
+    assert(result.errorMessage.isEmpty() && !result.cancelled);
+    const std::string db = createdDb(root);
+    for (const char *name : {"N1", "N2"}) {
+        const auto row = analysisRows(db).at(trackIdOfDb(db, name));
+        assert(row[IsAnalyzed] == "0" && row[BeatData] == "<null>" && row[TrackData] == "<null>");
+    }
+    assert(result.analysisLeftForPlayer >= 2);
+    assert(result.analysisNote.contains(QStringLiteral("no length for the file")));
+    assert(result.analysisNote.contains(QStringLiteral("no rekordbox waveform")));
+    std::cout << "create left for the player: an unreadable file and a missing preview counted with why OK\n";
+}
+
+// Off, and one switch alone, make the library the creator makes without
+// any of this (the infrastructure call as it always was).
+void testCreateOffAndOneSwitch()
+{
+    const fs::path plain = makeRekordboxOnlyStick("t73_create_plain");
+    {
+        auto &cache = seabass::gui::LibraryCatalogCache::instance();
+        const auto tracks = cache.tracksFor("rekordbox", pathToUtf8(plain / "PIONEER"));
+        // The rates as Create Engine Library hands them in.
+        seabass::infrastructure::audio::TagLibMetadataProbe probe;
+        seabass::infrastructure::local::CachedSampleRates rates(
+            seabass::infrastructure::paths::stickRootForCatalogPath(pathToUtf8(plain / "PIONEER")), probe);
+        const auto made = seabass::infrastructure::engine::EngineLibraryCreator::create(
+            pathToUtf8(plain / "Engine Library"), tracks, seabass::infrastructure::engine::EngineSchemaGeneration::V3,
+            seabass::application::NullProgressReporter::instance(), seabass::application::CancellationToken::none(),
+            seabass::infrastructure::engine::readRekordboxImportState({}, pathToUtf8(plain / "PIONEER")).librarySequence,
+            [&rates](const std::string &file) { return rates.rateOf(file); });
+        assert(made.errorMessage.empty());
+    }
+    const auto plainDump = createdDump(plain);
+    const auto plainTracks = createdTracks(plain);
+    for (const auto &[grids, waveforms] : {std::pair{false, false}, std::pair{true, false}, std::pair{false, true}}) {
+        const fs::path root = makeRekordboxOnlyStick("t73_create_" + std::to_string(grids) + std::to_string(waveforms));
+        const auto result = createOn(root, grids, waveforms);
+        assert(result.errorMessage.isEmpty());
+        const auto diffs = testing::differences(plainDump, createdDump(root));
+        testing::printDifferences(diffs);
+        assert(diffs.empty() && "the same library as the creator always made");
+        assert(createdTracks(root) == plainTracks);
+        assert(filesUnder(root / "Engine Library" / "Database2" / "OverviewData").empty());
+        assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(root)));
+        if (!grids && !waveforms) {
+            assert(result.analysisNote.isEmpty());
+        } else {
+            assert(result.analysisLeftForPlayer == result.tracksCreated);
+            assert(result.analysisNote
+                   == QStringLiteral("Analysis left alone: %1 tracks left for the player to analyse (a new track is "
+                                     "completed only with both beat grids and waveforms switched on).")
+                          .arg(result.tracksCreated));
+        }
+    }
+    std::cout << "create off and one switch: the library the creator always made, nothing else OK\n";
+}
+
+std::vector<fs::path> scratchBuilds()
+{
+    std::vector<fs::path> out;
+    for (const auto &entry : fs::directory_iterator(fs::temp_directory_path())) {
+        if (pathToUtf8(entry.path().filename()).rfind("seabass-engine-build-", 0) == 0) {
+            out.push_back(entry.path());
+        }
+    }
+    return out;
+}
+
+// A cancel during the copy of rekordbox's analysis, and a write that fails
+// there: the stick as it was, no half-made library, no ledger, no scratch.
+void testCreateCancelAndFailure()
+{
+    {
+        const fs::path root = makeRekordboxOnlyStick("t73_create_cancel");
+        seabass::application::CancellationToken cancel;
+        PhaseReporter reporter;
+        reporter.onPhase = [&](const std::string &label) {
+            if (label == "Copying rekordbox's analysis") {
+                cancel.cancel();
+            }
+        };
+        const auto result = createOn(root, true, true, &reporter, cancel);
+        assert(result.cancelled && result.errorMessage.isEmpty());
+        assert(!fs::exists(root / "Engine Library") && "nothing created on the stick");
+        assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(root)));
+        assert(scratchBuilds().empty() && "the scratch library is gone");
+    }
+    {
+        const fs::path root = makeRekordboxOnlyStick("t73_create_failure");
+        PhaseReporter reporter;
+        reporter.onPhase = [&](const std::string &label) {
+            if (label != "Copying rekordbox's analysis") {
+                return;
+            }
+            // The overview folder made a file: the first overview write fails.
+            const auto builds = scratchBuilds();
+            assert(builds.size() == 1);
+            std::ofstream(builds.front() / "Database2" / "OverviewData") << "x";
+        };
+        const auto result = createOn(root, true, true, &reporter);
+        assert(!result.errorMessage.isEmpty() && "a write that fails fails the creation");
+        assert(!fs::exists(root / "Engine Library") && "nothing created on the stick");
+        assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(root)));
+        assert(scratchBuilds().empty());
+    }
+    std::cout << "create cancel and failure: no library, no ledger, no scratch left OK\n";
+}
+
+void testCreate()
+{
+#ifdef SEABASS_HAVE_TAGLIB
+    // The scratch builds in a folder of this test's own, to look into.
+    const fs::path tmp = testing::scratchRoot() / "testshark_t73_create" / "tmp";
+    fs::create_directories(tmp);
+    qputenv("TMPDIR", QByteArray::fromStdString(pathToUtf8(tmp)));
+    testCreateBoth();
+    testCreateLeftForPlayer();
+    testCreateOffAndOneSwitch();
+    testCreateCancelAndFailure();
+#else
+    std::cerr << "create: needs TagLib (a row is completed from its file's own sample count)\n";
     std::exit(1);
 #endif
 }
@@ -1395,6 +2121,10 @@ int main(int argc, char **argv)
         testReplay();
     } else if (which == "analysis") {
         testAnalysis();
+    } else if (which == "create") {
+        testCreate();
+    } else if (which == "cuesync") {
+        testCueSync();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;
