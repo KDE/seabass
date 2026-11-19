@@ -1102,7 +1102,15 @@ struct AnalysisRun
     std::map<std::int64_t, std::vector<std::string>> after;
     testing::DatabaseDump dumpBefore;
     QStringList pending;
+    // Each staged row's text on the page, by the row's key.
+    std::map<QString, QString> stagedText;
 };
+
+// The staged rows' texts of every run, switches on or off: the same
+// proposal staged the same way, so the same text on every row.
+std::vector<std::pair<std::string, std::map<QString, QString>>> g_stagedTexts;
+
+int ridersIn(const QStringList &pending);
 
 AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, bool>> options, bool analyseB01,
                         bool lockB01, RekordboxExportSyncController &controller, bool experimental = true)
@@ -1127,6 +1135,29 @@ AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, b
     assert(controller.stagedCount() == 24);
     LibraryEditSession *session = sessionOf(run.stick);
     run.pending = session->pendingDescriptions();
+    // Every staged row says its own change: one of the save's lines, never
+    // an analysis rider's (the riders sit among the changes, before the
+    // deletes and removals, and stage no row of their own).
+    {
+        RekordboxExportSyncListModel *model = controller.rows();
+        int staged = 0;
+        for (int r = 0; r < model->rowCount(); ++r) {
+            const QModelIndex index = model->index(r, 0);
+            if (!model->data(index, RekordboxExportSyncListModel::StagedRole).toBool()) {
+                continue;
+            }
+            ++staged;
+            const QString key = model->data(index, RekordboxExportSyncListModel::KeyRole).toString();
+            const QString text = model->data(index, RekordboxExportSyncListModel::StagedDescriptionRole).toString();
+            if (!run.pending.contains(text) || ridersIn({text}) != 0) {
+                std::cout << "  staged row " << key.toStdString() << " says \"" << text.toStdString() << "\"\n";
+            }
+            assert(!text.isEmpty() && run.pending.contains(text) && ridersIn({text}) == 0);
+            run.stagedText[key] = text;
+        }
+        assert(staged == 24);
+        g_stagedTexts.emplace_back(name, run.stagedText);
+    }
     run.summary = waitForSave(session, controller, false);
     // The sync's own count, whatever the options: the analysis is said
     // beside it, never in it.
@@ -1405,6 +1436,20 @@ void testAnalysis()
     testAnalysisGridsOnly();
     testAnalysisOff();
     SyncAnalysisPolicy::reset();
+    // Riders or none, every run put the same text on the same rows.
+    assert(g_stagedTexts.size() >= 2);
+    for (const auto &[name, texts] : g_stagedTexts) {
+        for (const auto &[key, text] : g_stagedTexts.front().second) {
+            if (!texts.count(key) || texts.at(key) != text) {
+                std::cout << "  " << name << ": row " << key.toStdString() << " says \""
+                          << (texts.count(key) ? texts.at(key).toStdString() : std::string("<not staged>"))
+                          << "\", " << g_stagedTexts.front().first << " \"" << text.toStdString() << "\"\n";
+            }
+        }
+        assert(texts == g_stagedTexts.front().second);
+    }
+    std::cout << "analysis staged rows: every row its own change's text, riders or none, in "
+              << g_stagedTexts.size() << " runs OK\n";
 #else
     std::cerr << "analysis: needs TagLib (a row is completed from its file's own sample count)\n";
     std::exit(1);

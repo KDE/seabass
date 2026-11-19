@@ -1124,7 +1124,16 @@ void RekordboxExportSyncController::stageSelected()
 
     std::vector<std::unique_ptr<PendingChange>> changes;
     RecordRekordboxBaselineChange::AppliedBy appliedBy;
-    std::vector<std::pair<std::vector<std::size_t>, QString>> rowsOfChange;
+    // Each change's rows with the change's own id and words, taken here:
+    // the analysis riders are inserted among the changes below, so a
+    // position in `changes` is not a position in `planned`.
+    struct RowsOfChange
+    {
+        std::vector<std::size_t> rows;
+        QString id;
+        QString description;
+    };
+    std::vector<RowsOfChange> rowsOfChange;
     std::set<std::pair<QString, QString>> unitsAndVerbs;
     for (Planned &p : planned) {
         std::unique_ptr<PendingChange> change = std::make_unique<PageChange>(
@@ -1139,7 +1148,7 @@ void RekordboxExportSyncController::stageSelected()
             }
         }
         appliedBy.emplace_back(change->id().toStdString(), std::move(keys));
-        rowsOfChange.emplace_back(p.rows, change->id());
+        rowsOfChange.push_back({p.rows, change->id(), change->description()});
         unitsAndVerbs.insert({change->unit(), change->verb()});
         changes.push_back(std::move(change));
     }
@@ -1187,21 +1196,18 @@ void RekordboxExportSyncController::stageSelected()
     changes.push_back(std::make_unique<RecordRekordboxBaselineChange>(analysis.stickRoot, std::move(next),
                                                                       std::move(appliedBy)));
 
-    std::vector<QString> descriptions;
     QStringList ids;
     for (const auto &change : changes) {
-        descriptions.push_back(change->description());
         ids << change->id();
     }
     if (!s->stageAll(std::move(changes))) {
         return;  // the session said why (a lock, a read-only backup, another page)
     }
     m_stagedIds = ids;
-    for (std::size_t c = 0; c < rowsOfChange.size(); ++c) {
-        const auto &[rowIndexes, id] = rowsOfChange[c];
-        for (std::size_t i : rowIndexes) {
-            m_stagedByKey[rows[i].planKey] = {id, descriptions[c]};
-            m_model.setStaged(static_cast<int>(i), true, descriptions[c]);
+    for (const RowsOfChange &staged : rowsOfChange) {
+        for (std::size_t i : staged.rows) {
+            m_stagedByKey[rows[i].planKey] = {staged.id, staged.description};
+            m_model.setStaged(static_cast<int>(i), true, staged.description);
         }
     }
     emit stagedChanged();
