@@ -11,6 +11,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -142,6 +144,13 @@ public:
     void setLibraryPaths(const QString &rekordboxPath, const QString &enginePath);
     void setStickLabel(const QString &label);
     bool backupGoesLocal() const { return m_stickSpace.backupGoesLocal(); }
+    // Test seam: what measures a stick's space when a session opens, in
+    // place of infrastructure::backup::measureStickSpace; empty restores
+    // it. The QML suite's scratch sticks live on the developer's own disk,
+    // and a nearly full one opened the low-space dialog over every page
+    // under test, swallowing their clicks.
+    using StickSpaceMeasure = std::function<infrastructure::backup::StickSpace(const std::filesystem::path &)>;
+    static void setStickSpaceMeasureForTesting(StickSpaceMeasure measure);
     // double, not qint64: QML numbers are doubles anyway, and a stick's
     // byte counts are far inside the 2^53 a double holds exactly.
     double stickBytesFree() const { return static_cast<double>(m_stickSpace.freeBytes); }

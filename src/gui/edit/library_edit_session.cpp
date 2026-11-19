@@ -34,6 +34,22 @@ namespace seabass::gui
 
 namespace
 {
+// Set once by a test harness before any session opens; read on the main
+// thread only (the measure itself is copied into the worker's lambda).
+LibraryEditSession::StickSpaceMeasure &stickSpaceMeasureForTesting()
+{
+    static LibraryEditSession::StickSpaceMeasure measure;
+    return measure;
+}
+}  // namespace
+
+void LibraryEditSession::setStickSpaceMeasureForTesting(StickSpaceMeasure measure)
+{
+    stickSpaceMeasureForTesting() = std::move(measure);
+}
+
+namespace
+{
 
 // Bridges the worker's progress and status lines to the session on the
 // GUI thread (same lifetime rule as QtProgressReporter: owned by the
@@ -240,7 +256,11 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     if (!any.isEmpty()) {
         const std::filesystem::path root =
             pathFromUtf8(infrastructure::backup::stickRootForCatalogPath(any.toStdString()));
-        m_stickSpaceWatcher.setFuture(runRead([root] { return infrastructure::backup::measureStickSpace(root); }));
+        StickSpaceMeasure measure = stickSpaceMeasureForTesting();
+        if (!measure) {
+            measure = &infrastructure::backup::measureStickSpace;
+        }
+        m_stickSpaceWatcher.setFuture(runRead([root, measure] { return measure(root); }));
     }
 }
 

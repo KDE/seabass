@@ -150,6 +150,27 @@ TestCase {
         }
         return null;
     }
+    // The same row, scrolled into view first and waited for. A row the
+    // list built ahead of the view (its cache) is no row to click on, and
+    // with taller rows (macOS's fonts) or a shorter window one asked for
+    // may not be built at all.
+    function delegateInView(page, id) {
+        const list = findChild(page, "trackList");
+        const index = page.controller.tracks.indexOf(id);
+        verify(index >= 0, "track " + id + " is listed");
+        list.positionViewAtIndex(index, ListView.Contain);
+        verify(waitForPolish(page.Window.window));
+        let found = null;
+        tryVerify(() => {
+            found = trackDelegate(page, id);
+            if (found === null) {
+                return false;
+            }
+            const top = found.mapToItem(list, 0, 0).y;
+            return top >= 0 && top + found.height <= list.height;
+        }, 5000, "track " + id + "'s row is in view");
+        return found;
+    }
     function shownBadges(delegate) {
         const shown = [];
         for (const name of ["gridMark", "waveformMark"]) {
@@ -165,8 +186,7 @@ TestCase {
         let height = -1;
         let badgeX = -1;
         for (const id of ids) {
-            const delegate = trackDelegate(page, id);
-            verify(delegate !== null, why + ": " + id + " is in view");
+            const delegate = delegateInView(page, id);
             if (height < 0) {
                 height = delegate.height;
             }
@@ -285,8 +305,7 @@ TestCase {
         waitSettled(o.c);
         compare(o.c.tracks.count, 5);
         verify(waitForPolish(o.page.Window.window));
-        const delegate = trackDelegate(o.page, b12);
-        verify(delegate !== null, "B12's row is in view");
+        const delegate = delegateInView(o.page, b12);
         mouseClick(findChild(delegate, "selectCheckBox"));
         compare(o.c.tickedCount, 1);
         compare(row(o.c, b12).ticked, true);
@@ -768,8 +787,7 @@ TestCase {
 
         const list = findChild(o.page, "trackList");
         for (const id of [b01, b02, b04, b12]) {
-            const delegate = trackDelegate(o.page, id);
-            verify(delegate !== null, id + " is in view");
+            const delegate = delegateInView(o.page, id);
             const title = findChild(delegate, "rowTitle");
             const bpm = findChild(delegate, "bpmLabel");
             const titleRight = title.mapToItem(delegate, title.width, 0).x;

@@ -439,7 +439,12 @@ Page {
             PlaylistListView {
                 id: playlistList
                 objectName: "playlistList"
-                Layout.preferredWidth: Theme.scaled(240)
+                // Narrower on a narrow page, down to a floor that still
+                // shows a playlist's name: the tracks beside it need the
+                // room more, their state marks most of all (on macOS, where
+                // Theme.scaled() is 1.3 and the small fonts are not small,
+                // the full width left the title column 86 px at 720).
+                Layout.preferredWidth: Math.min(Theme.scaled(240), Math.max(Theme.scaled(160), body.width * 0.3))
                 Layout.fillHeight: true
                 scanController: root.controller
                 summariesEnabled: false
@@ -501,10 +506,15 @@ Page {
                     noteOnOneLine: true
                     detailItems: [
                         Column {
+                            id: stateMarks
                             objectName: "stateMarks"
+                            // The title column's width: a badge with more to
+                            // say than that elides, never reaching the tempo.
+                            readonly property real room: parent ? parent.width : 0
                             spacing: Theme.tightSpacing / 2
                             StateMark {
                                 objectName: "gridMark"
+                                maxWidth: stateMarks.room
                                 caption: "Beat grid"
                                 pending: trackRow.pending
                                 value: trackRow.model.gridState
@@ -513,6 +523,7 @@ Page {
                             }
                             StateMark {
                                 objectName: "waveformMark"
+                                maxWidth: stateMarks.room
                                 caption: "Waveform"
                                 pending: trackRow.pending
                                 value: trackRow.model.waveformState
@@ -553,6 +564,8 @@ Page {
         property string value: ""
         property string tone: ""
         property string tip: ""
+        // The most the mark may take; its badge elides to stay inside it.
+        property real maxWidth: Infinity
         readonly property bool shown: mark.pending || mark.value.length > 0
         height: badgeMetric.implicitHeight
         spacing: Theme.tightSpacing
@@ -578,9 +591,11 @@ Page {
             objectName: "stateBadge"
             anchors.verticalCenter: parent.verticalCenter
             visible: !mark.pending && mark.value.length > 0
+            width: Math.min(implicitWidth, Math.max(0, mark.maxWidth - root.stateCaptionWidth - mark.spacing))
             label: mark.value
             badgeColor: root.toneColor(mark.tone)
-            tooltipText: mark.tip
+            // Elided, the badge's words are said in full on hover.
+            tooltipText: truncated ? mark.value + (mark.tip.length > 0 ? "\n" + mark.tip : "") : mark.tip
         }
     }
     // What StateMark measures itself by: never shown.

@@ -24,12 +24,17 @@ Rectangle {
     // A badge that is also a way somewhere: the pointer says so, and a tap
     // emits clicked().
     property bool clickable: false
+    // The label did not fit the width the badge was given and is elided.
+    readonly property bool truncated: badgeLabel.truncated
     signal clicked()
 
     radius: 3
     border.color: badge.badgeColor
     color: Qt.rgba(badge.badgeColor.r, badge.badgeColor.g, badge.badgeColor.b, 0.15)
-    implicitWidth: badgeContent.implicitWidth + 12
+    // Off the label's own implicit width, not the Row's, so a badge set
+    // narrower than its words (a row with no room for them) elides them
+    // rather than running over whatever is beside it.
+    implicitWidth: (badgeIcon.visible ? badgeIcon.width + badgeContent.spacing : 0) + badgeLabel.implicitWidth + 12
     implicitHeight: badgeContent.implicitHeight + 6
 
     Row {
@@ -37,6 +42,7 @@ Rectangle {
         anchors.centerIn: parent
         spacing: 4
         SeabassIcon {
+            id: badgeIcon
             objectName: "badgeIcon"
             visible: badge.iconName.length > 0
             iconName: badge.iconName
@@ -46,6 +52,9 @@ Rectangle {
         Label {
             id: badgeLabel
             text: badge.label
+            width: Math.min(implicitWidth, Math.max(0, badge.width - 12
+                - (badgeIcon.visible ? badgeIcon.width + badgeContent.spacing : 0)))
+            elide: Text.ElideRight
             font.bold: true
             font.pointSize: Theme.fontTiny
             color: badge.badgeColor

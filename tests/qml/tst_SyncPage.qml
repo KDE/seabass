@@ -557,13 +557,18 @@ TestCase {
         const last = list.itemAtIndex(list.count - 1);
         verify(last.analysisOnly, "the analysis rows come last");
         compare(last.section, "ready", "in the ready section, not one of their own");
+        // Lined up with the cue rows. The last row's columns are read while
+        // it is built: the list need not keep it once the third row is in
+        // view, and with taller rows (macOS's fonts) it does not.
+        const names = ["rowTitle", "directionColumn", "cueSummaryColumn", "statusColumn"];
+        const lastX = names.map(name => xIn(page, findChild(last, name)));
+        list.positionViewAtIndex(2, ListView.Contain);
+        tryVerify(() => list.itemAtIndex(2) !== null, 2000, "the third row is on screen");
         const cueRow = list.itemAtIndex(2);
         verify(!cueRow.analysisOnly);
         compare(findChild(cueRow, "rowNote").visible, false, "a cue row carrying no analysis says none");
-        // Lined up with the cue rows.
-        const names = ["rowTitle", "directionColumn", "cueSummaryColumn", "statusColumn"];
         for (let n = 0; n < names.length; ++n) {
-            compare(xIn(page, findChild(last, names[n])), xIn(page, findChild(cueRow, names[n])),
+            compare(lastX[n], xIn(page, findChild(cueRow, names[n])),
                     names[n] + " is out of line on an analysis row");
         }
         findChild(page, "searchField").text = "kollektiv";

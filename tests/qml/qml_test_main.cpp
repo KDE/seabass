@@ -3167,6 +3167,22 @@ void seedMetadataStoreForTests()
 
         seedMetadataStoreForTests();
 
+        // Every scratch stick is a folder on this computer's disk, so its
+        // free space is the disk's: on a developer's nearly full disk the
+        // low-space question opened over every page under test and took
+        // their clicks (a Mac with 9 GB free, under its 2% headroom). The
+        // stick is measured as it is, its free space then at least what
+        // the question asks for. The question itself is tst_MessageDialog's.
+        seabass::gui::LibraryEditSession::setStickSpaceMeasureForTesting([](const std::filesystem::path &root) {
+            auto space = seabass::infrastructure::backup::measureStickSpace(root);
+            if (space.capacityBytes == 0) {
+                return space;  // not measured: nothing is asked anyway
+            }
+            space.freeBytes = std::max(space.freeBytes, space.worstCaseBackupBytes + space.headroomBytes());
+            space.capacityBytes = std::max(space.capacityBytes, space.freeBytes);
+            return space;
+        });
+
         QGuiApplication::setFont(seabass::gui::interfaceFont());
 
         // AppSettingsController, main.cpp's exportMaterialPalette() and
