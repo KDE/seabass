@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // A dedicated, discoverable entry point for LibraryConsistencyController's
 // junk-cue cleanup (see domain::JunkCueFinder's own doc comment: a memory
@@ -301,7 +302,8 @@ Page {
         if (!whole || !(summary.written > 0)) {
             return;
         }
-        savedToast.show(summary.written + " " + summary.unit + " " + summary.verb);
+        savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
+            : summary.written + " " + summary.unit + " " + summary.verb);
     }
 
     MessageDialog {

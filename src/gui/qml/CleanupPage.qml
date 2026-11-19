@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 Page {
     id: root
@@ -581,10 +582,11 @@ Page {
             && !(summary.skipped > 0) && summary.written === summary.total;
         if (whole) {
             const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
-            savedToast.show(summary.written + " " + unit + " " + summary.verb);
+            savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
+                : summary.written + " " + unit + " " + summary.verb);
         }
     }
-    // The summary's unit is plural ("groups", "undo steps"); one of them
+    // The summary's unit is plural ("groups", "tracks"); one of them
     // reads as one. The same rule OperationSummaryDialog uses.
     function singular(unit) {
         if (unit.endsWith("ies")) {

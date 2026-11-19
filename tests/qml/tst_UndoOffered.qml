@@ -347,8 +347,17 @@ TestCase {
         tryVerify(() => summary !== null, 120000, "the press ran the session's undo");
         session.saveFinished.disconnect(done);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.unit, "undo steps", JSON.stringify(summary));
+        compare(summary.undo, true, "the summary says it was the undo: " + JSON.stringify(summary));
         verify(!session.canUndo, "undone, nothing left to undo");
         tryCompare(undo, "visible", false, 5000, "and the button goes");
+        // Every page says the same after an undo that landed whole, and
+        // no count: the number of backup records it restored means
+        // nothing to the user (#98: "1 undo steps written").
+        const toast = findChild(page, "savedToast");
+        verify(toast !== null, "the page has its confirmation toast");
+        tryCompare(findChild(toast, "confirmationToastLabel"), "text", "Changes undone.", 5000);
+        verify(toast.showing, "the undo's toast is up");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog === null || !dialog.visible, "no summary dialog over an undo that landed whole");
     }
 }

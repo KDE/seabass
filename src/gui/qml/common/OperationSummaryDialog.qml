@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "SaveSummary.js" as SaveSummary
 
 // "27 cues removed", or "5 of 31 tracks synchronised" when some of it
 // did not happen: what the user asked for and how much of it took
@@ -68,6 +69,13 @@ SeabassDialog {
     readonly property string countSentence: {
         if (dialog.rolledBack) {
             return "Nothing was saved. The stick is as it was before.";
+        }
+        // Undo Last Save that landed whole says what every page says
+        // after one, with no count (SaveSummary.js); one that did not
+        // keeps the count below.
+        if (SaveSummary.isUndo(dialog.summary) && dialog.written === dialog.total && dialog.error.length === 0
+            && dialog.warning.length === 0 && !dialog.cancelled && dialog.skipped === 0) {
+            return SaveSummary.undoneText();
         }
         // The noun agrees with the number it follows, which is the
         // total in both shapes: "1 cue added", but "1 of 9 groups

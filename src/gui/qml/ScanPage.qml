@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Templates as T
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 Page {
     id: root
@@ -829,7 +830,8 @@ Page {
         }
         const edits = ("lastSavedSummary" in root.playlistEditController)
             ? root.playlistEditController.lastSavedSummary : "";
-        savedToast.show(edits.length > 0 ? edits : summary.written + " " + summary.unit + " " + summary.verb);
+        savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
+            : edits.length > 0 ? edits : summary.written + " " + summary.unit + " " + summary.verb);
     }
 
     property int selectedPlaylistIndex: 0

@@ -473,6 +473,7 @@ void LibraryEditSession::save()
                          {"total", pendingUnits()},
                          {"unit", m_changes.front()->unit()},
                          {"verb", m_changes.front()->verb()},
+                         {"undo", m_changes.front()->id() == QLatin1String("undo:last-save")},
                          {"cancelled", false},
                          {"error", QStringLiteral("no library path is known for this session")}};
         emit saveFinished(m_lastSummary);
@@ -481,6 +482,9 @@ void LibraryEditSession::save()
 
     m_savingUnit = m_changes.front()->unit();
     m_savingVerb = m_changes.front()->verb();
+    // Undo Last Save is staged alone (undoLastSave() refuses while
+    // anything else is pending), so the first change says what the save is.
+    m_savingUndo = m_changes.front()->id() == QLatin1String("undo:last-save");
     m_writeCancel = application::CancellationToken();
     m_cancelRequested = false;
     // No total yet: the save loop announces its one bar, with the undo
@@ -619,6 +623,10 @@ void LibraryEditSession::onSaveFinished()
         {"skipped", skippedUnits},
         {"unit", m_savingUnit},
         {"verb", m_savingVerb},
+        // The save was Undo Last Save, whether or not it landed: pages say
+        // one that landed whole in the same words (SaveSummary.js), not
+        // from the unit (#98).
+        {"undo", m_savingUndo},
         {"cancelled", result.cancelled},
         {"error", result.error},
         // Distinct from error on purpose: the save worked and the changes

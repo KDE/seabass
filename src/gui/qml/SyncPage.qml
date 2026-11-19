@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Sync Cue Points: every track whose copies in the stick's catalogs carry
 // different cues, and the one decision each needs.
@@ -117,10 +118,8 @@ Page {
         if (whole) {
             // An Undo Last Save comes through here too, and it synced no
             // cues: in this page's words it read "Marked as already
-            // imported". It gets the summary's own words, as the other
-            // pages say every save.
-            const undo = summary.unit === "undo steps";
-            savedToast.show(undo ? summary.written + " " + summary.unit + " " + summary.verb
+            // imported". It says what every page says after an undo.
+            savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
                 : syncController.syncedCueCount > 0
                 ? root.plural(syncController.syncedCueCount, "cue") + " synced"
                 : "Marked as already imported");

@@ -428,7 +428,7 @@ TestCase {
         tryVerify(() => summary !== null, 300000, "the undo finishes");
         session.saveFinished.disconnect(done);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.unit, "undo steps", JSON.stringify(summary));
+        compare(summary.undo, true, JSON.stringify(summary));
         // The toast below needs the summary whole (SyncPage.afterSave), and
         // its tryCompare can only print the two texts. Each condition on its
         // own, with the summary, so a failure names the one that broke
@@ -442,7 +442,7 @@ TestCase {
 
         // The save's own toast can still be up when the undo finishes, so
         // "showing" alone proves nothing: wait for the undo's words.
-        tryCompare(findChild(toast, "confirmationToastLabel"), "text", summary.written + " undo steps written", 5000);
+        tryCompare(findChild(toast, "confirmationToastLabel"), "text", "Changes undone.", 5000);
         verify(toast.showing, "the undo's toast is up");
         const dialog = findChild(page, "summaryDialog");
         verify(dialog === null || !dialog.visible, "no summary dialog over an undo that landed whole");

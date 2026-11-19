@@ -144,7 +144,7 @@ TestCase {
         tryVerify(() => undo.enabled, 300000, "and can be pressed once the page is idle");
         const undone = finished(session, () => undo.clicked());
         compare(undone.error, "", JSON.stringify(undone));
-        compare(undone.unit, "undo steps", JSON.stringify(undone));
+        compare(undone.undo, true, JSON.stringify(undone));
         compare(rescanned(page), 1, "undone: the drifted row is back");
         compare(controller.cueTableRows[0].contentId, "392");
         const expected = Object.assign({}, before);

@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "SaveSummary.js" as SaveSummary
 
 // The frame every one of Library Health's check pages sits in: one check,
 // its findings, its repair, and nothing else.
@@ -143,7 +144,8 @@ Page {
             && !(summary.skipped > 0) && summary.written === summary.total;
         if (whole) {
             const unit = summary.written === 1 ? root.singular(summary.unit) : summary.unit;
-            savedToast.show(summary.written + " " + unit + " " + summary.verb);
+            savedToast.show(SaveSummary.isUndo(summary) ? SaveSummary.undoneText()
+                : summary.written + " " + unit + " " + summary.verb);
         }
     }
     // The summary's unit is plural ("tracks", "libraries"); one of them

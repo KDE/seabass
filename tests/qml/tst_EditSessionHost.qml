@@ -185,6 +185,30 @@ TestCase {
         tryCompare(summary, "opened", false);
     }
 
+    // A page that shows its saves in the summary dialog (Device Profile,
+    // Cover Art) says an undo that landed whole as every page does, with
+    // no count (#98: it read "1 undo step written."). One that did not
+    // land whole keeps the count and its error.
+    function test_aWholeUndoSaysChangesUndoneInTheSummary() {
+        const t = makeHost();
+        t.session.saveFinished({written: 1, total: 1, unit: "undo steps", verb: "written", undo: true,
+                                cancelled: false, error: ""});
+        const summary = findByObjectName(t.host, "summaryDialog");
+        tryCompare(summary, "opened", true);
+        compare(findByObjectName(summary, "countLabel").text, "Changes undone.");
+        compare(summary.title, "Done");
+        findByObjectName(summary, "okButton").clicked();
+        tryCompare(summary, "opened", false);
+
+        t.session.saveFinished({written: 0, total: 1, unit: "undo steps", verb: "written", undo: true,
+                                cancelled: false, error: "Undo Last Save stopped at backup 1: no room."});
+        tryCompare(summary, "opened", true);
+        compare(summary.title, "Stopped with an error");
+        compare(findByObjectName(summary, "countLabel").text, "0 of 1 undo step written.");
+        findByObjectName(summary, "okButton").clicked();
+        tryCompare(summary, "opened", false);
+    }
+
     // Ctrl+S saves whenever the floating button would, and not otherwise
     // (Sebastian 2026-10-17: a staged edit should not need the mouse).
     function test_ctrlSSavesWhenTheButtonIsUp() {

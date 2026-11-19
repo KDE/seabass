@@ -257,6 +257,7 @@ private:
     QString m_editorOwner;
     QString m_savingUnit;
     QString m_savingVerb;
+    bool m_savingUndo = false;
     int m_refs = 0;
 };
 

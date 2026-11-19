@@ -177,7 +177,7 @@ TestCase {
         // done. An undo that landed whole is a toast on Sync Cue Points,
         // as a save is, not a summary to close (b8751a09).
         const toast = findChild(page, "savedToast");
-        tryCompare(findChild(toast, "confirmationToastLabel"), "text", summary.written + " undo steps written", 5000,
+        tryCompare(findChild(toast, "confirmationToastLabel"), "text", "Changes undone.", 5000,
                    "the undo says what it did");
         verify(toast.showing, "the undo's toast is up");
         const dialog = findChild(page, "summaryDialog");
