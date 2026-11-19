@@ -15,16 +15,19 @@
 // both databases (never on the stick's own file):
 //
 // - the app itself vouches for it: the record the restore left on the
-//   target names the archive's database and the fingerprint the target's
-//   still has, which is what makes the stick list call the target current;
-// - the same schema, and every table but AlbumArt the same, row for row.
+//   target names the archive's database, the target's label, and the
+//   fingerprint and content hash the target's still has, which is what
+//   makes the stick list call the target current;
+// - the same schema, and every table but AlbumArt the same, row for row
+//   (as multisets: a duplicate row lost is a difference).
 //   Track too, but for albumArtId on the tracks whose cover was copied in,
 //   and lastEditTime on exactly those rows (Engine's own trigger stamps it
 //   when albumArtId changes); sqlite_sequence but for AlbumArt's counter;
 // - every AlbumArt row of the archive still there under its id: unchanged,
 //   or a link to another stick's name renamed to the target's, with the
 //   rest of the link as it was; every new row a stored cover (a hash whose
-//   image file is under Engine Library/Artwork, or the image in the row);
+//   image file is under Engine Library/Artwork, or the image in the row),
+//   the image the one its hash names, not empty, and on some track;
 // - every track whose cover changed was on a link to another stick's name
 //   and is now on such a stored cover;
 // - and no track's cover is a link naming any stick but the target.
@@ -33,11 +36,13 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <span>
@@ -46,6 +51,8 @@
 #include <vector>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/hashing/sha1.hpp"
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/restored_databases.hpp"
@@ -169,15 +176,53 @@ inline std::string quoted(const std::string &name)
     return out + "\"";
 }
 
-// A stored cover: a 20-byte hash with its image under the library's
-// Artwork folder, or a text hash with the image in the row.
-inline bool isStoredCover(const Value &hash, const Value &image, const std::filesystem::path &artworkDir)
+inline std::string readWhole(const std::filesystem::path &file)
+{
+    std::ifstream in(file, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return in.bad() ? std::string() : bytes;
+}
+
+// The text hash Engine gives an image it keeps in the database, as the
+// clone's repair writes it (engine_artwork.cpp's databaseImageHash):
+// lowercase hex of a SHA-1 of the bytes, leading zeros dropped.
+inline std::string databaseImageHash(std::string_view image)
+{
+    const std::string hex = infrastructure::hashing::toHex(infrastructure::hashing::sha1(image));
+    const auto first = hex.find_first_not_of('0');
+    return first == std::string::npos ? std::string("0") : hex.substr(first);
+}
+
+// A stored cover: a 20-byte hash whose image is under the library's
+// Artwork folder, a JPEG or PNG and not empty, or a text hash with the
+// image in the row. `checkContent`, for a row the clone wrote: the hash
+// is the image's, as the repair names it (the file's SHA-256, its first
+// 20 bytes; the row's image's SHA-1 for a text hash), so a cover cut
+// short or swapped for another image does not pass for one.
+inline bool isStoredCover(const Value &hash, const Value &image, const std::filesystem::path &artworkDir,
+                          bool checkContent)
 {
     if (hash.type == SQLITE_BLOB && hash.bytes.size() == 20) {
         const auto *bytes = reinterpret_cast<const std::uint8_t *>(hash.bytes.data());
-        return !infrastructure::engine::cachedArtworkFile(pathToUtf8(artworkDir), std::span(bytes, 20)).empty();
+        const std::string file = infrastructure::engine::cachedArtworkFile(pathToUtf8(artworkDir), std::span(bytes, 20));
+        if (file.empty()) {
+            return false;
+        }
+        const std::string content = readWhole(pathFromUtf8(file));
+        if (content.empty()) {
+            return false;
+        }
+        if (!checkContent) {
+            return true;
+        }
+        const infrastructure::hashing::Sha256Digest digest =
+            infrastructure::hashing::Sha256::of(std::as_bytes(std::span(content)));
+        return std::equal(digest.begin(), digest.begin() + 20, bytes);
     }
-    return hash.type == SQLITE_TEXT && !linkLabel(hash.bytes) && image.type == SQLITE_BLOB && !image.bytes.empty();
+    if (hash.type != SQLITE_TEXT || linkLabel(hash.bytes) || image.type != SQLITE_BLOB || image.bytes.empty()) {
+        return false;
+    }
+    return !checkContent || databaseImageHash(image.bytes) == hash.bytes;
 }
 
 }  // namespace clone_covers_detail
@@ -293,8 +338,16 @@ inline bool checkLabelProofEngineDatabase(const infrastructure::stick_backup::Ba
         if (table == "sqlite_sequence") {
             where = " WHERE name <> 'AlbumArt'";
         }
-        const std::string mine = "SELECT " + columns + " FROM main." + quoted(table) + where;
-        const std::string theirs = "SELECT " + columns + " FROM a." + quoted(table) + where;
+        // As multisets, not sets: each distinct row with how many times it
+        // is there. EXCEPT alone folds duplicates, and a table that lost
+        // one of two identical rows (no primary key: a playlist entry
+        // listed twice) would compare equal.
+        const auto counted = [&](const std::string &schema) {
+            return "SELECT " + columns + ", count(*) FROM " + schema + "." + quoted(table) + where + " GROUP BY "
+                   + columns;
+        };
+        const std::string mine = counted("main");
+        const std::string theirs = counted("a");
         const std::int64_t differ = db.count("SELECT count(*) FROM (" + mine + " EXCEPT " + theirs + ")")
                                     + db.count("SELECT count(*) FROM (" + theirs + " EXCEPT " + mine + ")");
         if (differ != 0) {
@@ -341,13 +394,23 @@ inline bool checkLabelProofEngineDatabase(const infrastructure::stick_backup::Ba
     if (!problem.empty()) {
         return fail(problem);
     }
-    // The rows the clone added: stored covers only.
+    // The rows the clone added: stored covers only, each the image its hash
+    // names, and each one a track is on (the clone adds a row only for a
+    // track it moves onto it).
     int added = 0;
-    if (!db.each("SELECT id, hash, albumArt FROM main.AlbumArt WHERE id NOT IN (SELECT id FROM a.AlbumArt);",
+    if (!db.each("SELECT id, hash, albumArt, "
+                 "EXISTS (SELECT 1 FROM main.Track t WHERE t.albumArtId = main.AlbumArt.id) "
+                 "FROM main.AlbumArt WHERE id NOT IN (SELECT id FROM a.AlbumArt);",
                  [&](sqlite3_stmt *stmt) {
                      ++added;
-                     if (!isStoredCover(column(stmt, 1), column(stmt, 2), artworkDir) && problem.empty()) {
-                         problem = "added cover row " + column(stmt, 0).bytes + " is not a stored cover";
+                     if (!problem.empty()) {
+                         return;
+                     }
+                     if (!isStoredCover(column(stmt, 1), column(stmt, 2), artworkDir, true)) {
+                         problem = "added cover row " + column(stmt, 0).bytes
+                                   + " is not a stored cover (its image missing, empty, or not the one its hash names)";
+                     } else if (sqlite3_column_int(stmt, 3) == 0) {
+                         problem = "added cover row " + column(stmt, 0).bytes + " is on no track";
                      }
                  })) {
         return fail(db.error());
@@ -358,13 +421,17 @@ inline bool checkLabelProofEngineDatabase(const infrastructure::stick_backup::Ba
     // The tracks whose cover changed: from a link to another stick's name
     // to a stored cover.
     int copied = 0;
-    if (!db.each("SELECT t.id, oa.hash, ta.hash, ta.albumArt FROM main.Track t JOIN a.Track o ON o.id = t.id "
+    // A cover row the archive already had is the library's own, hashed
+    // however its writer hashed it: only its file is checked.
+    if (!db.each("SELECT t.id, oa.hash, ta.hash, ta.albumArt, ta.id IN (SELECT id FROM a.AlbumArt) "
+                 "FROM main.Track t JOIN a.Track o ON o.id = t.id "
                  "LEFT JOIN a.AlbumArt oa ON oa.id = o.albumArtId LEFT JOIN main.AlbumArt ta ON ta.id = t.albumArtId "
                  "WHERE t.albumArtId IS NOT o.albumArtId;",
                  [&](sqlite3_stmt *stmt) {
                      ++copied;
+                     const bool archiveRow = sqlite3_column_int(stmt, 4) != 0;
                      if ((!namesAnotherStick(column(stmt, 1).bytes, label)
-                          || !isStoredCover(column(stmt, 2), column(stmt, 3), artworkDir))
+                          || !isStoredCover(column(stmt, 2), column(stmt, 3), artworkDir, !archiveRow))
                          && problem.empty()) {
                          problem = "track " + column(stmt, 0).bytes
                                    + "'s cover changed, but not from a link to another stick to a stored cover";
