@@ -370,6 +370,16 @@ QVariantList PlaybackController::beatGridFor(const QString &format, const QStrin
     return beatGridForDisplay(analysis.beats, analysis.beatRateRecorded);
 }
 
+QVariantList PlaybackController::beatTicksFor(const QString &format, const QString &libraryPath,
+                                               const QString &sourceId, double durationMs, double widthPx) const
+{
+    if (!(durationMs > 0.0) || !(widthPx > 0.0)) {
+        return {};
+    }
+    const CachedAnalysis analysis = cachedAnalysis(format, libraryPath, sourceId);
+    return beatTicksForDisplay(analysis.beats, analysis.beatRateRecorded, durationMs, widthPx);
+}
+
 // Rebuilt whenever export.pdb's size or modification time differs from
 // the one the index was built from, which covers every rewrite that
 // changes either. What it cannot see is a rewrite in place that keeps

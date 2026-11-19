@@ -87,7 +87,6 @@ set(SEABASS_GUI_QML_FILES
     qml/common/HomeIcon.qml
     qml/common/HomeModel.js
     qml/common/SaveSummary.js
-    qml/common/BeatGridTicks.js
     qml/common/HomeRail.qml
     qml/common/HeartIcon.qml
     qml/common/SeabassIcon.qml
@@ -287,6 +286,8 @@ set(SEABASS_GUI_SOURCES
     metadata_restore_proposal_model.cpp
     beat_grid_display.hpp
     beat_grid_display.cpp
+    beat_grid_ticks.hpp
+    beat_grid_ticks.cpp
     playback_controller.hpp
     playback_controller.cpp
     cover_cache.hpp

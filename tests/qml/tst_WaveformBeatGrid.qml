@@ -5,7 +5,6 @@
 import QtQuick
 import QtTest
 import SeabassGui
-import "../../src/gui/qml/common/BeatGridTicks.js" as BeatGridTicks
 import "PixelScale.js" as PixelScale
 
 // The beat grid drawn over a waveform (#40): ticks where the library's
@@ -363,6 +362,19 @@ TestCase {
                downbeats + " downbeats of " + beats.length + ": one a bar");
         const waveform = controller.waveformFor("rekordbox", pioneer, id);
         verify(waveform.length > 0, "and the waveform of the same read");
+
+        // A list row is handed only the beats it will draw, and draws the
+        // same ticks as the whole grid would at its width.
+        const durationMs = Math.ceil(beats[beats.length - 1].timeMs / 1000) * 1000 + 1000;
+        for (const width of [300, 600, 1200]) {
+            const kept = controller.beatTicksFor("rekordbox", pioneer, id, durationMs, width);
+            const whole = BeatGridTicks.layout(beats, durationMs, width).ticks;
+            verify(kept.length > 0 && kept.length < beats.length || whole.length === beats.length,
+                   "a row is handed fewer beats at " + width + " px: " + kept.length + " of " + beats.length);
+            compare(xs(BeatGridTicks.layout(kept, durationMs, width).ticks), xs(whole), "same ticks at " + width);
+        }
+        compare(controller.beatTicksFor("rekordbox", pioneer, id, 0, 600).length, 0, "no length, nothing");
+        compare(controller.beatTicksFor("rekordbox", pioneer, id, durationMs, 0).length, 0, "no width, nothing");
 
         const lastMs = beats[beats.length - 1].timeMs;
         const track = {title: "Fixture track", artist: "Anonymized", key: "8A", bpm: 120,

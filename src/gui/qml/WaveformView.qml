@@ -5,7 +5,6 @@
 import QtQuick
 import QtQuick.Controls
 import SeabassGui
-import "common/BeatGridTicks.js" as BeatGridTicks
 
 // Draws a waveform (as normalized 0..1 amplitude bars) with the track's
 // beat grid and cue markers overlaid at their real position. Used both by
@@ -24,7 +23,9 @@ Canvas {
     property var cueData: []
     // The track's beat grid as the library holds it (#40): one
     // {timeMs, downbeat} per beat, in order -- PlaybackController's
-    // beatGrid for the loaded track, beatGridFor() for any other. Empty
+    // beatGrid for the loaded track, beatGridFor() for any other, and
+    // beatTicksFor() in a list row, which hands over only the beats drawn
+    // at the row's width. Empty
     // (the default) draws no grid: a track without one, and a track whose
     // grid would be placed by a sample rate the library does not record,
     // which the controller hands over as no grid. Seabass draws a grid
@@ -96,9 +97,9 @@ Canvas {
     // line, the same as a row without a waveform, and the cues on it.
     readonly property bool drawsBars: root.hasWaveform && !root.lengthUnknown
     // Which beats get a tick at this width, and where: see
-    // BeatGridTicks.js for the density rule. Against the track's real
-    // length only, never the cues' own span: a grid on a line with no
-    // length would be placed against nothing. Re-evaluated on every
+    // layoutBeatTicks() in beat_grid_display.hpp for the density rule.
+    // Against the track's real length only, never the cues' own span: a
+    // grid on a line with no length would be placed against nothing. Re-evaluated on every
     // change of the beats, the length or the width.
     readonly property var beatGridLayout: BeatGridTicks.layout(
         root.beatData, root.trackDurationMs, root.width)

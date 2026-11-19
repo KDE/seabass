@@ -77,6 +77,55 @@ int main()
         check(gui::beatGridForDisplay({}, true, 0.0).isEmpty(), "no grid, no ticks");
     }
 
+    // ---- The density rule, in C++ ------------------------------------
+    // tst_WaveformBeatGrid tests it case by case through BeatGridTicks;
+    // here, what a list row relies on: the beats it is handed for a width
+    // lay out at that width as exactly the ticks the whole grid does.
+    {
+        std::vector<domain::Beat> track;   // 10 minutes at 128 BPM
+        for (int i = 0; i < 1280; ++i) {
+            track.push_back({i * 60000.0 / 128.0, i % 4 + 1});
+        }
+        // and one with a tempo change: 120 BPM for a minute, then 60.
+        std::vector<domain::Beat> change;
+        for (int i = 0; i < 120; ++i) {
+            change.push_back({i * 500.0, i % 4 + 1});
+        }
+        for (int i = 0; i < 60; ++i) {
+            change.push_back({60000.0 + i * 1000.0, i % 4 + 1});
+        }
+        struct Case { const std::vector<domain::Beat> *beats; double spanMs; };
+        for (const Case &c : {Case{&track, 600000.0}, Case{&change, 120000.0}}) {
+            for (double width : {150.0, 300.0, 600.0, 960.0, 1200.0, 1920.0, 5000.0}) {
+                const gui::BeatTickLayout whole = gui::layoutBeatTicks(*c.beats, c.spanMs, width);
+                const QVariantList kept = gui::beatTicksForDisplay(*c.beats, true, c.spanMs, width);
+                check(kept.size() == static_cast<qsizetype>(whole.ticks.size()), "a row keeps the beats drawn");
+                std::vector<domain::Beat> again;
+                for (const QVariant &entry : kept) {
+                    const QVariantMap beat = entry.toMap();
+                    again.push_back({beat.value("timeMs").toDouble(), beat.value("downbeat").toBool() ? 1 : 0});
+                }
+                const gui::BeatTickLayout relaid = gui::layoutBeatTicks(again, c.spanMs, width);
+                bool same = relaid.ticks.size() == whole.ticks.size();
+                for (size_t i = 0; same && i < whole.ticks.size(); ++i) {
+                    same = relaid.ticks[i].x == whole.ticks[i].x && relaid.ticks[i].downbeat == whole.ticks[i].downbeat;
+                }
+                check(same, "laid out again at " + std::to_string(width) + " px they are the same ticks");
+                for (size_t i = 1; i < whole.ticks.size(); ++i) {
+                    const double gap = whole.ticks[i].x - whole.ticks[i - 1].x;
+                    check(gap >= (whole.everyBeat ? gui::MinimumBeatSpacingPx : gui::MinimumDownbeatSpacingPx) - 1e-9,
+                          "no two ticks closer than the rule allows at " + std::to_string(width) + " px");
+                }
+            }
+        }
+        const gui::BeatTickLayout whole = gui::layoutBeatTicks(track, 600000.0, 600.0);
+        check(!whole.everyBeat && whole.barsPerTick == 8 && whole.ticks.size() == 40,
+              "a whole track at 600 px: every 8th downbeat, 40 ticks");
+        check(gui::beatTicksForDisplay(track, false, 600000.0, 600.0).isEmpty(), "an unrecorded rate keeps none");
+        check(gui::layoutBeatTicks(track, 0.0, 600.0).ticks.empty(), "no length, no ticks");
+        check(gui::layoutBeatTicks(track, 600000.0, 0.0).ticks.empty(), "no width, no ticks");
+    }
+
     // ---- Engine: the rate the row records, or no grid -----------------
     {
         const fs::path root = testing::scratchRoot() / ("seabass-beat-grid-display-" + std::to_string(

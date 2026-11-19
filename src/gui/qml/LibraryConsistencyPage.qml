@@ -625,9 +625,11 @@ HealthCheckPage {
                                     // bug, see the class's own read-only contract).
                                     waveformData: root.playbackController.waveformFor(issueDelegate.format,
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
-                                    // The same cached read as the waveform's.
-                                    beatData: root.playbackController.beatGridFor(issueDelegate.format,
-                                        root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
+                                    // The same cached read as the waveform's, only
+                                    // the beats drawn at this width.
+                                    beatData: root.playbackController.beatTicksFor(issueDelegate.format,
+                                        root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
+                                        modelData.durationMs, width)
                                     format: issueDelegate.format
                                     cueData: modelData.cues
                                     trackDurationMs: modelData.durationMs

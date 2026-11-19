@@ -25,4 +25,50 @@ namespace seabass::gui
 // none.
 QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double shiftMs = 0.0);
 
+// Which beats of a grid get a tick on a waveform this wide: the one
+// density rule (#40), decided by pixels, not by which page the waveform is
+// on. A whole ten minute track in 600 px is 1300 beats, and drawn every
+// one they are a grey smear.
+//
+//   - Every beat, downbeats marked, when no two neighbouring beats are
+//     closer than MinimumBeatSpacingPx.
+//   - Otherwise the downbeats alone, when no two are closer than
+//     MinimumDownbeatSpacingPx.
+//   - Otherwise every Nth downbeat, N the smallest power of two (2, 4, 8,
+//     16 bars ...) that keeps them that far apart.
+//
+// "Closer than" is measured at the tightest place in the track, so a
+// tempo change can only ever thin the grid, never crowd part of it; the
+// ticks stay where the data puts them. A downbeat is a beat with
+// beatInBar 1. Beats before the start or after `spanMs` get no tick, and
+// without a length or a width there are none.
+//
+// WaveformView lays out its beatData with this (BeatGridTicks, the QML
+// face of it), and a list row is handed only the beats this keeps
+// (PlaybackController::beatTicksFor()). Laid out again, those come out as
+// the same ticks, so the two never disagree.
+inline constexpr double MinimumBeatSpacingPx = 6.0;
+inline constexpr double MinimumDownbeatSpacingPx = 12.0;
+
+struct BeatTick
+{
+    double timeMs = 0.0;
+    double x = 0.0;  // pixels from the left edge
+    bool downbeat = false;
+};
+
+struct BeatTickLayout
+{
+    std::vector<BeatTick> ticks;
+    bool everyBeat = false;  // whether the ordinary beats are drawn
+    int barsPerTick = 0;     // the N of "every Nth downbeat"; 1 for every one (or every beat), 0 for none
+};
+
+BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double spanMs, double widthPx);
+
+// The beats layoutBeatTicks() keeps, as beatGridForDisplay() hands them
+// (and as empty, for a rate not recorded).
+QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double spanMs,
+                                 double widthPx);
+
 }  // namespace seabass::gui

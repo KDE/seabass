@@ -195,6 +195,14 @@ public:
     // own timeline, not the player's.
     Q_INVOKABLE QVariantList beatGridFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
+    // For a row of a list: only the beats of that grid a waveform
+    // `widthPx` wide showing `durationMs` will draw (layoutBeatTicks()),
+    // a few dozen where the whole grid is some 1300, so that a delegate
+    // does not turn every beat into a map and lay them all out again.
+    // Laid out by the view at that width they give the same ticks. Empty
+    // without a length or a width.
+    Q_INVOKABLE QVariantList beatTicksFor(const QString &format, const QString &libraryPath,
+                                           const QString &sourceId, double durationMs, double widthPx) const;
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
