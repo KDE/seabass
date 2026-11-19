@@ -44,6 +44,13 @@ class AppSettingsController : public QObject
                    ignoreCuesAtStartChanged)
     Q_PROPERTY(bool correctMp3CueTiming READ correctMp3CueTiming WRITE setCorrectMp3CueTiming NOTIFY
                    correctMp3CueTimingChanged)
+    // The two "Beat grids and waveforms" preferences, under "Music": the
+    // same shape, pushed into application::SyncAnalysisPolicy, which Sync
+    // after Rekordbox Export reads when it stages a save.
+    Q_PROPERTY(bool copyBeatGridsOnSync READ copyBeatGridsOnSync WRITE setCopyBeatGridsOnSync NOTIFY
+                   copyBeatGridsOnSyncChanged)
+    Q_PROPERTY(bool copyWaveformsOnSync READ copyWaveformsOnSync WRITE setCopyWaveformsOnSync NOTIFY
+                   copyWaveformsOnSyncChanged)
     // Whether this build can decode audio at all. QML gates the
     // "compare audio" row's explanation on it, so a build that cannot
     // do it says so instead of offering a number that does nothing.
@@ -140,6 +147,14 @@ public:
     bool correctMp3CueTiming() const { return m_correctMp3CueTiming; }
     void setCorrectMp3CueTiming(bool value);
 
+    // Whether Sync after Rekordbox Export also copies rekordbox's beat
+    // grids, and its waveforms, onto the Engine tracks it writes -- see
+    // application::SyncAnalysisPolicy. Both off by default.
+    bool copyBeatGridsOnSync() const { return m_copyBeatGridsOnSync; }
+    void setCopyBeatGridsOnSync(bool value);
+    bool copyWaveformsOnSync() const { return m_copyWaveformsOnSync; }
+    void setCopyWaveformsOnSync(bool value);
+
     // Whether audio can actually be decoded HERE, now. Not a
     // compile-time #ifdef: a build with QtMultimedia linked in still
     // decodes nothing when the FFmpeg plugin did not load, and in that
@@ -219,6 +234,8 @@ signals:
     void compareAudioSecondsChanged();
     void ignoreCuesAtStartChanged();
     void correctMp3CueTimingChanged();
+    void copyBeatGridsOnSyncChanged();
+    void copyWaveformsOnSyncChanged();
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
     void lastPlaylistNameChanged();
@@ -238,12 +255,16 @@ private:
     int m_compareAudioSeconds = 10;
     bool m_ignoreCuesAtStart = true;
     bool m_correctMp3CueTiming = true;
+    bool m_copyBeatGridsOnSync = false;
+    bool m_copyWaveformsOnSync = false;
 
     // Pushes the trio into domain::MatchingPolicy, which is where every
     // layer below the GUI actually reads them. One function called by
     // the constructor and by all three setters, so there is no path
     // that stores a preference without applying it.
     void applyMatchingPolicy();
+    // The same for the two sync preferences and SyncAnalysisPolicy.
+    void applySyncAnalysisPolicy();
     QString m_stickBackupDirectory;
     QString m_seabassHomeDirectory;
     QString m_lastPlaylistName;

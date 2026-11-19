@@ -19,12 +19,15 @@
 #include "application/phased_progress.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/track_metadata_probe.hpp"
+#include "application/sync_analysis_policy.hpp"
+#include "application/use_cases/copy_beat_grids.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
 #include "domain/engine_update_planning.hpp"
 #include "domain/metadata_restore.hpp"
 #include "domain/rekordbox_baseline.hpp"
 #include "domain/track_matching.hpp"
 #include "gui/edit/changes/add_engine_track_change.hpp"
+#include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/engine_membership_change.hpp"
 #include "gui/edit/changes/engine_playlist_changes.hpp"
 #include "gui/edit/changes/owned_change.hpp"
@@ -39,6 +42,7 @@
 #include "gui/qt_path.hpp"
 #include "gui/stick_path.hpp"
 #include "infrastructure/local/engine_update_stick_facts.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -406,6 +410,79 @@ RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncA
         declined.erase(key);
     }
     return record;
+}
+
+// The tracks a save writes to or creates on the Engine side, for
+// "Copy beat grids/waveforms from rekordbox to Engine when syncing": the
+// ticked adds (rows the save creates, found by rekordbox's file, which is
+// the one AddEngineTrackChange writes), ratings and comments to Engine,
+// and cues to Engine (a conflict's answer included), each track once, in
+// that order, with the keys of every row that writes it. Not memberships,
+// renames or deletes, which write playlists and not a track's row. Two
+// tracks for one Engine row or one file are left alone (and counted), as
+// Beat Grids & Waveforms leaves them: which analysis goes where is a guess.
+std::vector<SyncAnalysisChange::Track> tracksForAnalysis(const std::vector<Row> &rows,
+                                                         const std::vector<std::size_t> &adds,
+                                                         const std::vector<std::size_t> &metadataToEngine,
+                                                         const std::vector<std::size_t> &cuesToEngine,
+                                                         const std::string &stickRoot)
+{
+    std::vector<SyncAnalysisChange::Track> tracks;
+    std::map<std::string, std::size_t> byRekordboxId;
+    const auto add = [&](std::size_t rowIndex, const domain::Track &rekordbox, const domain::Track *engine) {
+        if (rekordbox.sourceId.empty() || rekordbox.filePath.empty()) {
+            return;
+        }
+        const QString key = QString::fromStdString(rows[rowIndex].header.key);
+        if (const auto known = byRekordboxId.find(rekordbox.sourceId); known != byRekordboxId.end()) {
+            QStringList &keys = tracks[known->second].unitKeys;
+            if (!keys.contains(key)) {
+                keys << key;
+            }
+            return;
+        }
+        SyncAnalysisChange::Track track;
+        track.rekordbox = rekordbox;
+        if (engine) {
+            track.engineTrackId = engine->sourceId;
+            track.engineFilePath = engine->filePath;
+        } else {
+            track.engineFilePath = rekordbox.filePath;
+        }
+        track.unitKeys << key;
+        byRekordboxId[rekordbox.sourceId] = tracks.size();
+        tracks.push_back(std::move(track));
+    };
+    for (std::size_t i : adds) {
+        add(i, std::get<TrackToAdd>(*rows[i].edit).rekordbox, nullptr);
+    }
+    for (std::size_t i : metadataToEngine) {
+        const auto &e = std::get<MetadataEdit>(*rows[i].edit);
+        add(i, e.rekordbox, &e.engine);
+    }
+    for (std::size_t i : cuesToEngine) {
+        const SyncPlan &plan = std::get<CueEdit>(*rows[i].edit).plan;
+        add(i, plan.match.trackA, &plan.match.trackB);
+    }
+    std::map<std::string, int> perEngineRow;
+    std::map<std::string, int> perFile;
+    for (const auto &track : tracks) {
+        if (!track.engineTrackId.empty()) {
+            ++perEngineRow[track.engineTrackId];
+        }
+        const std::string ledgerKey = application::beatGridCopyItemFor(track.rekordbox, {}, stickRoot).ledgerKey;
+        if (!ledgerKey.empty()) {
+            ++perFile[ledgerKey];
+        }
+    }
+    for (auto &track : tracks) {
+        const std::string ledgerKey = application::beatGridCopyItemFor(track.rekordbox, {}, stickRoot).ledgerKey;
+        if ((!track.engineTrackId.empty() && perEngineRow[track.engineTrackId] > 1)
+            || (!ledgerKey.empty() && perFile[ledgerKey] > 1)) {
+            track.leaveAloneBecause = QStringLiteral("two rekordbox tracks for one Engine row");
+        }
+    }
+    return tracks;
 }
 
 }  // namespace
@@ -1006,6 +1083,21 @@ void RekordboxExportSyncController::stageSelected()
     };
     metadataChanges(metadataToEngine, true);
     cueChanges(cuesToEngine, true);
+    // rekordbox's analysis of the tracks written to Engine goes here, after
+    // every Engine write of a track and before the deletes, when
+    // Preferences asks for it (application::SyncAnalysisPolicy). With both
+    // off nothing is staged, and the save is the one it always was.
+    const std::size_t analysisAt = planned.size();
+    application::AnalysisCopyOptions analysisOptions;
+    analysisOptions.grids = application::SyncAnalysisPolicy::copyBeatGrids();
+    analysisOptions.waveforms = application::SyncAnalysisPolicy::copyWaveforms();
+    // The stick root spelt as Beat Grids & Waveforms spells it, so the
+    // ledger and the kept analyses are keyed as the page keys them.
+    const std::string analysisStickRoot =
+        infrastructure::paths::normalStickRootForCatalogPath(rekordboxPath.toStdString());
+    const std::vector<SyncAnalysisChange::Track> analysisTracks = analysisOptions.grids || analysisOptions.waveforms
+        ? tracksForAnalysis(rows, adds, metadataToEngine, cuesToEngine, analysisStickRoot)
+        : std::vector<SyncAnalysisChange::Track>{};
     for (std::size_t i : deletes) {
         const auto e = std::get<PlaylistDelete>(*rows[i].edit);
         planned.push_back({{i}, true, [enginePath, e](int) -> std::unique_ptr<PendingChange> {
@@ -1024,7 +1116,8 @@ void RekordboxExportSyncController::stageSelected()
     // What the save may write into m.db: every Engine change, which is what
     // decides the scratch copy.
     const int engineChanges =
-        static_cast<int>(std::count_if(planned.begin(), planned.end(), [](const Planned &p) { return p.engine; }));
+        static_cast<int>(std::count_if(planned.begin(), planned.end(), [](const Planned &p) { return p.engine; }))
+        + static_cast<int>(analysisTracks.size());
 
     // The record: what the page offered, what it stages, what was left.
     RecordPlan record = recordPlanOf(rows, analysis);
@@ -1071,6 +1164,21 @@ void RekordboxExportSyncController::stageSelected()
             std::move(changes.front()), PageChange::Said{{}, {}, QStringLiteral("changes"), QStringLiteral("made")});
     }
 
+    // The analysis rides with the tracks: it carries none of the save's
+    // count (SyncAnalysisChange::unitsWritten) and says what it did in the
+    // save's summary notes, so the count above is the sync's as it was.
+    if (!analysisTracks.empty()) {
+        auto tally = std::make_shared<AnalysisSaveTally>();
+        std::vector<std::unique_ptr<PendingChange>> riders;
+        for (const auto &track : analysisTracks) {
+            riders.push_back(std::make_unique<SyncAnalysisChange>(rekordboxExportSyncOwner(), rekordboxPath, enginePath,
+                                                                  analysisStickRoot, track, analysisOptions, probe,
+                                                                  engineChanges, riders.empty(), tally));
+        }
+        changes.insert(changes.begin() + static_cast<std::ptrdiff_t>(analysisAt),
+                       std::make_move_iterator(riders.begin()), std::make_move_iterator(riders.end()));
+    }
+
     const auto stickRelativeOf = [root = analysis.stickRoot](const std::string &filePath) {
         return baselineStickRelativePath(root, filePath);
     };
@@ -1079,7 +1187,7 @@ void RekordboxExportSyncController::stageSelected()
         domain::nextBaseline(analysis.baseline ? &*analysis.baseline : nullptr, analysis.rekordbox,
                              analysis.rekordboxPlaylists, analysis.currentSequence, offered, applied, declined,
                              stickRelativeOf, pathKeyOf);
-    const int changeCount = static_cast<int>(changes.size());
+    const int changeCount = static_cast<int>(changes.size() - analysisTracks.size());
     changes.push_back(std::make_unique<RecordRekordboxBaselineChange>(analysis.stickRoot, std::move(next),
                                                                       std::move(appliedBy)));
 
@@ -1104,6 +1212,14 @@ void RekordboxExportSyncController::stageSelected()
     setStagedStatusMessage(changeCount > 0
                                ? QStringLiteral("Staged %1 change(s). Press Sync Engine to write them to the stick.")
                                      .arg(changeCount)
+                                   + (analysisTracks.empty()
+                                          ? QString()
+                                          : QStringLiteral(" The tracks it writes also get rekordbox's %1, as set in "
+                                                           "Preferences.")
+                                                .arg(analysisOptions.grids && analysisOptions.waveforms
+                                                         ? QStringLiteral("beat grids and waveforms")
+                                                         : analysisOptions.grids ? QStringLiteral("beat grids")
+                                                                                 : QStringLiteral("waveforms")))
                                : QStringLiteral("Staged the record of your choices. Press Sync Engine to write it "
                                                 "to the stick."));
 }

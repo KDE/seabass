@@ -30,6 +30,7 @@
 #include "infrastructure/local/analysis_file_facts.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
+#include "infrastructure/local/rekordbox_analysis_source.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -375,27 +376,8 @@ struct PreviewInput
 // the waveform sections, the key in Engine's numbering and the tempo.
 application::RekordboxAnalysis readAnalysis(const BeatGridLibrary &library, const application::BeatGridCopyItem &item)
 {
-    namespace rb = infrastructure::rekordbox;
-    const std::string pioneer = library.rekordboxPath.toStdString();
-    application::RekordboxAnalysis analysis;
-    analysis.beats = rb::readTrackAnalysis(pioneer, item.rekordboxTrackId, nullptr, library.anlzIndex.get()).beats;
-    const auto sections = rb::readWaveformSections(pioneer, item.rekordboxTrackId, nullptr, library.anlzIndex.get());
-    analysis.threeBandPreview = sections.threeBandPreview;
-    analysis.colourPreview = sections.colourPreview;
-    analysis.scrollEntries = sections.scrollEntries;
-    if (!item.key.empty()) {
-        auto key = infrastructure::engine::parseRekordboxKey(item.key);
-        if (!key) {
-            key = infrastructure::engine::parseCamelotKey(item.key);
-        }
-        if (key) {
-            analysis.key = static_cast<int>(*key);
-        }
-    }
-    if (item.bpm > 0.0) {
-        analysis.bpm = item.bpm;
-    }
-    return analysis;
+    return infrastructure::local::rekordboxAnalysisOf(library.rekordboxPath.toStdString(), item,
+                                                      library.anlzIndex.get());
 }
 
 // Each item through the writer with nothing written (previewOnly), as the

@@ -30,6 +30,18 @@
 //           export 128 through the session's save, backed up, with
 //           nothing left staged, and says what it recorded; the page then
 //           has the record, and Undo Last Save takes it away again.
+// analysis  "Copy beat grids/waveforms from rekordbox to Engine when
+//           syncing" (Preferences, application::SyncAnalysisPolicy) on the
+//           same save, B01 made a row the player analysed (B04's analysis
+//           copied onto it): both on, the four tracks the save writes (N1,
+//           N2, N3 created, B01's rating) get rekordbox's grid and waveform,
+//           the created rows completed over their files' exact length,
+//           B01's own analysis kept, the ledger written, the summary's note
+//           saying what landed, every other row as it was; Undo takes all
+//           of it back. B01's grid locked on the player: left alone and
+//           counted. Grids only: B01's grid, the new rows left for the
+//           player. Both off, explicitly or never set: the save the "save"
+//           case makes, the same m.db and the same files on the stick.
 // replay    What the players wrote after the saves (engine/m-after-R3d.db,
 //           the Prime 4's analysis; engine/m-after-R1b.db, the Go+) against
 //           export 128 and the record at 128: nothing on the page, no cue
@@ -59,16 +71,22 @@
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
+#include <djinterop/engine/v3/track_data_blob.hpp>
+#include <sqlite3.h>
 
 #include "engine_chain_check.hpp"
 #include "engine_change_fixture.hpp"
+#include "application/sync_analysis_policy.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/rekordbox_export_sync_controller.hpp"
 #include "gui/rekordbox_export_sync_list_model.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/exact_sample_count.hpp"
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
+#include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "scratch_path.hpp"
@@ -980,12 +998,377 @@ void testReplay()
     }
 }
 
+// --- rekordbox's analysis with the sync ------------------------------------
+
+using seabass::application::SyncAnalysisPolicy;
+
+// Track id by the file's short name ("B01", "N1").
+std::int64_t trackIdOf(const testing::EngineChangeStick &stick, const std::string &name)
+{
+    return testing::sqlScalar(stick.db, "SELECT id FROM Track WHERE filename LIKE 'T73-" + name + "-%';");
+}
+
+// Every row's analysis, the columns a copy may write, by track id.
+std::map<std::int64_t, std::vector<std::string>> analysisRows(const std::string &db)
+{
+    std::map<std::int64_t, std::vector<std::string>> out;
+    for (auto row : testing::sqlRows(db, "SELECT t.id, t.isAnalyzed, t.isBeatGridLocked, t.bpmAnalyzed, t.key, "
+                                         "p.trackData, p.overviewWaveFormData, p.beatData FROM Track t LEFT JOIN "
+                                         "PerformanceData p ON p.trackId = t.id ORDER BY t.id;")) {
+        const std::int64_t id = std::stoll(row.front());
+        row.erase(row.begin());
+        out[id] = std::move(row);
+    }
+    return out;
+}
+
+enum Column { IsAnalyzed = 0, Locked = 1, BpmAnalyzed = 2, Key = 3, TrackData = 4, Overview = 5, BeatData = 6 };
+
+// The player analysed B01: B04's analysis (a Prime 4's own, from S4) on
+// B01's row, the columns a player writes. `locked`: and its grid locked.
+void pretendPlayerAnalysedB01(const testing::EngineChangeStick &stick, bool locked)
+{
+    const std::string b01 = std::to_string(trackIdOf(stick, "B01"));
+    const std::string b04 = std::to_string(trackIdOf(stick, "B04"));
+    const bool done = testing::sqlExec(
+        stick.db, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE trackId = " + b04
+                      + "), overviewWaveFormData = (SELECT overviewWaveFormData FROM PerformanceData WHERE trackId = "
+                      + b04 + "), beatData = (SELECT beatData FROM PerformanceData WHERE trackId = " + b04
+                      + ") WHERE trackId = " + b01 + "; UPDATE Track SET isAnalyzed = 1, isBeatGridLocked = "
+                      + (locked ? "1" : "0") + " WHERE id = " + b01 + ";");
+    assert(done);
+    (void)done;
+    assert(analysisRows(stick.db).at(std::stoll(b01))[IsAnalyzed] == "1");
+}
+
+// The files under `dir`, by path from it, with their bytes; none when it
+// is not there.
+std::map<std::string, std::string> filesUnder(const fs::path &dir)
+{
+    std::map<std::string, std::string> out;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        return out;
+    }
+    for (const auto &entry : fs::recursive_directory_iterator(dir)) {
+        if (entry.is_regular_file()) {
+            out[pathToUtf8(fs::relative(entry.path(), dir))] = fileBytes(entry.path());
+        }
+    }
+    return out;
+}
+
+fs::path overviewDirOf(const testing::EngineChangeStick &stick)
+{
+    return stick.engine / "Database2" / "OverviewData";
+}
+
+fs::path keptDirOf(const testing::EngineChangeStick &stick)
+{
+    return seabass::infrastructure::local::keptEngineAnalysisFile(stick.root, "x").parent_path();
+}
+
+std::vector<std::byte> blobOf(const std::string &db, const std::string &sql)
+{
+    sqlite3 *handle = nullptr;
+    sqlite3_open_v2(db.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr);
+    sqlite3_stmt *stmt = nullptr;
+    sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr);
+    std::vector<std::byte> out;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto *bytes = static_cast<const std::byte *>(sqlite3_column_blob(stmt, 0));
+        out.assign(bytes, bytes + sqlite3_column_bytes(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+    return out;
+}
+
+// What one save with the options did: the summary, and the stick before
+// and after.
+struct AnalysisRun
+{
+    testing::EngineChangeStick stick;
+    QVariantMap summary;
+    std::map<std::int64_t, std::vector<std::string>> before;
+    std::map<std::int64_t, std::vector<std::string>> after;
+    testing::DatabaseDump dumpBefore;
+    QStringList pending;
+};
+
+AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, bool>> options, bool analyseB01,
+                        bool lockB01, RekordboxExportSyncController &controller)
+{
+    AnalysisRun run;
+    run.stick = makeStick(name, "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+    if (analyseB01) {
+        pretendPlayerAnalysedB01(run.stick, lockB01);
+    }
+    run.before = analysisRows(run.stick.db);
+    run.dumpBefore = testing::dumpDatabase(run.stick.db);
+    SyncAnalysisPolicy::reset();
+    if (options) {
+        SyncAnalysisPolicy::set(options->first, options->second);
+    }
+    analyze(controller, run.stick);
+    assertGoldenProposal(controller);
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    assert(controller.stagedCount() == 24);
+    LibraryEditSession *session = sessionOf(run.stick);
+    run.pending = session->pendingDescriptions();
+    run.summary = waitForSave(session, controller, false);
+    // The sync's own count, whatever the options: the analysis is said
+    // beside it, never in it.
+    assert(run.summary.value("written").toInt() == 16 && run.summary.value("total").toInt() == 16);
+    assert(run.summary.value("unit").toString() == QStringLiteral("changes"));
+    assert(controller.proposalEmpty());
+    run.after = analysisRows(run.stick.db);
+    std::cout << "  notes: \"" << run.summary.value("notes").toString().toStdString() << "\"\n";
+    return run;
+}
+
+int ridersIn(const QStringList &pending)
+{
+    return static_cast<int>(std::count_if(pending.begin(), pending.end(), [](const QString &line) {
+        return line.startsWith(QStringLiteral("Copy rekordbox's"));
+    }));
+}
+
+void testAnalysisBoth()
+{
+    RekordboxExportSyncController controller;
+    AnalysisRun run = runSyncWith("t73_analysis_both", std::make_pair(true, true), true, false, controller);
+    const auto &stick = run.stick;
+    assert(ridersIn(run.pending) == 4 && "N1, N2, N3 and B01, once each");
+    const std::int64_t b01 = trackIdOf(stick, "B01");
+    const std::vector<std::int64_t> created = {trackIdOf(stick, "N1"), trackIdOf(stick, "N2"), trackIdOf(stick, "N3")};
+    for (const std::int64_t id : created) {
+        assert(!run.before.count(id) && "made by this save");
+    }
+
+    // The created rows: completed, over their files' exact length.
+    int completed = 0;
+    for (const std::int64_t id : created) {
+        const auto &row = run.after.at(id);
+        assert(row[IsAnalyzed] == "1" && row[TrackData] != "<null>" && row[Overview] != "<null>"
+               && row[BeatData] != "<null>");
+        ++completed;
+        const auto file = testing::sqlRows(stick.db, "SELECT path FROM Track WHERE id = " + std::to_string(id) + ";");
+        const fs::path audio = fs::weakly_canonical(stick.engine / pathFromUtf8(file.at(0).at(0)));
+        const auto exact = seabass::infrastructure::audio::readExactSampleCount(pathToUtf8(audio));
+        assert(exact && "the head keeps its container's count");
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            blobOf(stick.db, "SELECT trackData FROM PerformanceData WHERE trackId = " + std::to_string(id) + ";"));
+        std::cout << "  created row " << id << ": " << record.samples << " samples at " << record.sample_rate
+                  << " Hz, the file " << exact->samples << " at " << exact->sampleRateHz << "\n";
+        assert(record.samples == static_cast<double>(exact->samples));
+        assert(record.sample_rate == exact->sampleRateHz);
+    }
+    // B01, analysed by the player: rekordbox's grid and waveform, the
+    // record the player wrote kept.
+    {
+        const auto &was = run.before.at(b01);
+        const auto &now = run.after.at(b01);
+        assert(now[BeatData] != was[BeatData] && "rekordbox's grid");
+        assert(now[Overview] != was[Overview] && "rekordbox's waveform");
+        assert(now[TrackData] == was[TrackData] && now[IsAnalyzed] == "1" && "the player's record stays");
+    }
+    // Every other row as it was (B05, B06, B09 and B10 the sync removes).
+    int removed = 0;
+    for (const auto &[id, row] : run.before) {
+        if (!run.after.count(id)) {
+            ++removed;
+        } else if (id != b01) {
+            assert(run.after.at(id) == row);
+        }
+    }
+    assert(removed == 4);
+    int grids = 0;
+    int waveforms = 0;
+    for (const auto &[id, row] : run.after) {
+        const bool fresh = !run.before.count(id);
+        grids += (fresh ? row[BeatData] != "<null>" : row[BeatData] != run.before.at(id)[BeatData]) ? 1 : 0;
+        waveforms += (fresh ? row[Overview] != "<null>" : row[Overview] != run.before.at(id)[Overview]) ? 1 : 0;
+    }
+    // The overview files of exactly those rows, the player's analysis of
+    // B01 kept, and the ledger with the four grids.
+    const auto overviews = filesUnder(overviewDirOf(stick));
+    std::set<std::int64_t> overviewIds;
+    for (const auto &[path, bytes] : overviews) {
+        overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
+    }
+    assert((overviewIds == std::set<std::int64_t>{created[0], created[1], created[2], b01}));
+    const auto kept = filesUnder(keptDirOf(stick));
+    assert(kept.size() == 1 && "B01's own analysis, and only that");
+    std::string ledgerError;
+    const auto ledger = seabass::infrastructure::local::readBeatGridLedger(stick.root, &ledgerError);
+    assert(ledgerError.empty() && ledger.size() == 4);
+    // The summary says what landed, counted from the stick.
+    std::cout << "  landed: " << grids << " grid(s), " << waveforms << " waveform(s), " << completed
+              << " completed, " << kept.size() << " kept\n";
+    assert(grids == 4 && waveforms == 4 && completed == 3);
+    assert(run.summary.value("notes").toString()
+           == QStringLiteral("From rekordbox, 4 beat grids and 4 waveforms copied, 3 tracks now load without "
+                             "analysis. Engine's own analysis of one track was kept on the stick first."));
+    std::cout << "analysis both: 4 grids, 4 waveforms, 3 rows completed, B01's analysis kept, the rest as it was OK\n";
+
+    // Undo: m.db as before the save (but the import counter, as the "save"
+    // case has it), no overview file, nothing kept, no ledger.
+    LibraryEditSession *session = sessionOf(stick);
+    waitForSave(session, controller, true);
+    {
+        testing::DatabaseDump after = testing::dumpDatabase(stick.db);
+        testing::DatabaseDump before = run.dumpBefore;
+        before.erase("Information");
+        after.erase("Information");
+        const auto diffs = testing::differences(before, after);
+        testing::printDifferences(diffs);
+        assert(diffs.empty());
+    }
+    assert(filesUnder(overviewDirOf(stick)).empty());
+    assert(filesUnder(keptDirOf(stick)).empty());
+    assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(stick.root)));
+    std::cout << "analysis undo: m.db, overview files, kept analysis and ledger as before OK\n";
+}
+
+void testAnalysisLocked()
+{
+    RekordboxExportSyncController controller;
+    AnalysisRun run = runSyncWith("t73_analysis_locked", std::make_pair(true, true), true, true, controller);
+    const std::int64_t b01 = trackIdOf(run.stick, "B01");
+    const auto &was = run.before.at(b01);
+    const auto &now = run.after.at(b01);
+    assert(now[BeatData] == was[BeatData] && now[Locked] == "1" && "a locked grid is never replaced by a sync");
+    assert(now[Overview] != was[Overview] && "the waveform has no lock");
+    assert(run.summary.value("notes").toString()
+           == QStringLiteral("From rekordbox, 3 beat grids and 4 waveforms copied, 3 tracks now load without "
+                             "analysis. Engine's own analysis of one track was kept on the stick first. Analysis "
+                             "left alone: one beat grid locked or moved on the player."));
+    std::cout << "analysis locked: B01's grid left alone and counted, its waveform copied OK\n";
+}
+
+void testAnalysisGridsOnly()
+{
+    RekordboxExportSyncController controller;
+    AnalysisRun run = runSyncWith("t73_analysis_grids", std::make_pair(true, false), true, false, controller);
+    const auto &stick = run.stick;
+    assert(ridersIn(run.pending) == 4);
+    const std::int64_t b01 = trackIdOf(stick, "B01");
+    for (const char *name : {"N1", "N2", "N3"}) {
+        const auto &row = run.after.at(trackIdOf(stick, name));
+        assert(row[IsAnalyzed] == "0" && row[TrackData] == "<null>" && row[BeatData] == "<null>"
+               && "left for the player: a row is completed with both or not at all");
+    }
+    assert(run.after.at(b01)[BeatData] != run.before.at(b01)[BeatData]);
+    assert(run.after.at(b01)[Overview] == run.before.at(b01)[Overview] && "no waveform asked for");
+    assert(filesUnder(overviewDirOf(stick)).empty());
+    assert(filesUnder(keptDirOf(stick)).size() == 1);
+    assert(run.summary.value("notes").toString()
+           == QStringLiteral("From rekordbox, one beat grid copied. Engine's own analysis of one track was kept on "
+                             "the stick first. Analysis left alone: 3 tracks left for the player to analyse."));
+    std::cout << "analysis grids only: B01's grid, the 3 new rows left for the player OK\n";
+}
+
+// The stick after a save, but what differs between two runs of the same
+// save whatever they do: the clock in Playlist and Track, the backups'
+// own ids and dates, and the log's times.
+struct StickState
+{
+    testing::DatabaseDump dump;
+    std::vector<std::vector<std::string>> playlists;
+    std::vector<std::vector<std::string>> tracks;
+    std::map<std::string, std::string> engineFiles;
+    std::map<std::string, std::string> pioneerFiles;
+    std::map<std::string, std::string> contents;
+    std::set<std::string> seabassFiles;
+    std::string baseline;
+};
+
+StickState stateOf(const testing::EngineChangeStick &stick)
+{
+    StickState state;
+    state.dump = testing::dumpDatabase(stick.db);
+    state.dump.erase("Playlist");
+    state.dump.erase("Track");
+    state.playlists = rowsButClock(stick.db, "Playlist");
+    state.tracks = rowsButClock(stick.db, "Track");
+    for (auto [path, bytes] : filesUnder(stick.engine)) {
+        if (path.rfind("Database2/m.db", 0) != 0) {
+            state.engineFiles[path] = std::move(bytes);
+        }
+    }
+    state.pioneerFiles = filesUnder(stick.pioneer);
+    state.contents = filesUnder(stick.root / "Contents");
+    for (const auto &[path, bytes] : filesUnder(stick.root / "Seabass")) {
+        state.seabassFiles.insert(path);
+    }
+    state.baseline = fileBytes(recordOf(stick));
+    return state;
+}
+
+void testAnalysisOff()
+{
+    StickState never;
+    StickState off;
+    {
+        RekordboxExportSyncController controller;
+        AnalysisRun run = runSyncWith("t73_analysis_never", std::nullopt, false, false, controller);
+        assert(ridersIn(run.pending) == 0);
+        assert(run.summary.value("notes").toString().isEmpty());
+        never = stateOf(run.stick);
+    }
+    {
+        RekordboxExportSyncController controller;
+        AnalysisRun run = runSyncWith("t73_analysis_off", std::make_pair(false, false), false, false, controller);
+        assert(ridersIn(run.pending) == 0);
+        assert(run.summary.value("notes").toString().isEmpty());
+        off = stateOf(run.stick);
+    }
+    const auto diffs = testing::differences(never.dump, off.dump);
+    testing::printDifferences(diffs);
+    assert(diffs.empty());
+    assert(never.playlists == off.playlists && never.tracks == off.tracks);
+    assert(never.engineFiles == off.engineFiles && never.pioneerFiles == off.pioneerFiles);
+    assert(never.contents == off.contents && never.baseline == off.baseline);
+    // The same files under Seabass/, but the backups' own names.
+    const auto named = [](const std::set<std::string> &files) {
+        std::multiset<std::string> out;
+        for (const auto &f : files) {
+            out.insert(f.rfind("backups/", 0) == 0 ? std::string("backups/<record>") : f);
+        }
+        return out;
+    };
+    assert(named(never.seabassFiles) == named(off.seabassFiles));
+    for (const auto &f : off.seabassFiles) {
+        assert(f.find("engine-analysis") == std::string::npos && f.find("beat-grids") == std::string::npos);
+    }
+    for (const auto &[path, bytes] : off.engineFiles) {
+        assert(path.rfind("Database2/OverviewData", 0) != 0 && "no overview file written");
+    }
+    std::cout << "analysis off: never set and both off write the same m.db and the same stick OK\n";
+}
+
+void testAnalysis()
+{
+#ifdef SEABASS_HAVE_TAGLIB
+    testAnalysisBoth();
+    testAnalysisLocked();
+    testAnalysisGridsOnly();
+    testAnalysisOff();
+    SyncAnalysisPolicy::reset();
+#else
+    std::cerr << "analysis: needs TagLib (a row is completed from its file's own sample count)\n";
+    std::exit(1);
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -1010,6 +1393,8 @@ int main(int argc, char **argv)
         testInSync();
     } else if (which == "replay") {
         testReplay();
+    } else if (which == "analysis") {
+        testAnalysis();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;

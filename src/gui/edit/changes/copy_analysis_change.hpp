@@ -15,6 +15,8 @@
 
 #include "application/ports/analysis_writer.hpp"
 #include "application/use_cases/copy_beat_grids.hpp"
+#include "application/ports/track_metadata_probe.hpp"
+#include "domain/track.hpp"
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::gui
@@ -40,6 +42,16 @@ public:
         bool markedForPlayer = false;
         // The player's own analysis was kept on the stick first.
         bool keptEngineAnalysis = false;
+        // Why a part was left alone, for a summary that says so: the grid
+        // locked or moved on the player (never replaced here), a row the
+        // player has not analysed that was not completed (left for the
+        // player), no analysis in rekordbox, everything already the same,
+        // or another reason in words.
+        bool gridSetOnPlayer = false;
+        bool leftForPlayer = false;
+        bool noRekordboxAnalysis = false;
+        bool alreadySame = false;
+        QString otherReason;
     };
     void record(const QString &changeId, Row row)
     {
@@ -142,6 +154,92 @@ private:
     application::RekordboxAnalysis m_analysis;
     application::AnalysisImportOptions m_options;
     std::string m_overviewFile;
+    int m_itemCountHint = 1;
+    bool m_declaresFiles = true;
+    std::shared_ptr<AnalysisSaveTally> m_tally;
+};
+
+// Sync after Rekordbox Export with "Copy beat grids/waveforms from
+// rekordbox to Engine when syncing" on (Preferences, application::
+// SyncAnalysisPolicy): one track the save writes to or creates on the
+// Engine side, given rekordbox's analysis in the same save, by exactly the
+// rules of CopyAnalysisChange (the same writer, kept store, ledger and
+// LibdjinteropEngineCueWriter::importAnalysis() through
+// application::importAnalysisItem()): a row the player analysed gets the
+// parts asked for, Engine's own analysis kept on the stick first; a row
+// the player has not analysed, one this very save created included, is
+// completed all or nothing, so only with both parts asked for; a grid
+// locked or moved on the player is never replaced (overwriteEngineEdits
+// is always off) and is counted as left alone.
+//
+// There is no preview behind it: rekordbox's analysis is read, and a row
+// the save creates is found by its file (it has no id until
+// AddEngineTrackChange made it), when the save reaches the change, on the
+// save's thread. Staged after the Engine writes of the sync, linked to the
+// track's rows by their keys (unitKeys) so a cancel never keeps a created
+// row and drops its analysis.
+//
+// It carries no unit of the save's count (unitsWritten() is 0): the sync's
+// own summary stays what it was, and what this did is said beside it, in
+// the save's summary notes (SaveContext::addSummaryNote, one sentence for
+// the batch from the tally, counting only changes that landed).
+//
+// Failures. Reading rekordbox's analysis writes nothing, so a track whose
+// analysis cannot be read is left alone and counted, and the sync goes
+// on. A failure while writing is a failure of the save, as every change's
+// is: the save lands whole or not at all (runSaveLoop, SaveContext::
+// rollBackSave), so a sync whose analysis could not be written goes back
+// whole and stays staged, and saying so beats a half written stick.
+class SyncAnalysisChange : public PendingChange
+{
+public:
+    struct Track
+    {
+        // The rekordbox row (sourceId, file, title, key, tempo).
+        domain::Track rekordbox;
+        // The Engine row, or empty for one this save creates, which is then
+        // found by `engineFilePath` (exactly one row, or the track is left
+        // alone).
+        std::string engineTrackId;
+        std::string engineFilePath;
+        // The keys of the sync's rows that write the track.
+        QStringList unitKeys;
+        // Staged only to be counted: the reason the track is left alone
+        // (two rekordbox tracks for one Engine row or one file).
+        QString leaveAloneBecause;
+    };
+
+    SyncAnalysisChange(QString owner, QString rekordboxPath, QString enginePath, std::string stickRoot, Track track,
+                       application::AnalysisCopyOptions options,
+                       std::shared_ptr<application::TrackMetadataProbe> probe, int itemCountHint, bool declaresFiles,
+                       std::shared_ptr<AnalysisSaveTally> tally);
+
+    static QString idFor(const QString &owner, const std::string &rekordboxTrackId);
+    // The batch's sentence for the summary, from the tally rows of the
+    // changes in `applied`; empty when nothing of it landed.
+    static QString summaryNote(const AnalysisSaveTally &tally, const QStringList &applied);
+
+    QString id() const override;
+    QString owner() const override { return m_owner; }
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    int unitsWritten() const override { return 0; }
+    QString verb() const override;
+    QStringList unitKeys() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    void beforeSave(SaveContext &ctx) override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+private:
+    QString m_owner;
+    QString m_rekordboxPath;
+    QString m_enginePath;
+    std::string m_stickRoot;
+    Track m_track;
+    application::AnalysisCopyOptions m_options;
+    std::shared_ptr<application::TrackMetadataProbe> m_probe;
     int m_itemCountHint = 1;
     bool m_declaresFiles = true;
     std::shared_ptr<AnalysisSaveTally> m_tally;

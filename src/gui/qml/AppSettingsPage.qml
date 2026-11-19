@@ -42,7 +42,8 @@ Page {
     // back the way it was when the page opened (Sebastian, 2026-09-28).
     // The breadcrumb's Back keeps them, as it always did.
     readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "showPlayCount", "exactMatchSeconds",
-        "compareAudioSeconds", "ignoreCuesAtStart", "correctMp3CueTiming", "seabassHomeDirectory", "stickBackupDirectory",
+        "compareAudioSeconds", "ignoreCuesAtStart", "correctMp3CueTiming", "copyBeatGridsOnSync",
+        "copyWaveformsOnSync", "seabassHomeDirectory", "stickBackupDirectory",
         "useSystemTheme", "experimentalFeaturesEnabled"]
     readonly property var updateSettingKeys: ["automatic", "includeTesting"]
     property var openedWith: ({})
@@ -355,10 +356,11 @@ Page {
 
             // ---- Music ------------------------------------------------
             //
-            // What counts as the same recording, and what counts as a
-            // cue. These three reach the parts of Seabass that read and
-            // write libraries (domain::MatchingPolicy), not just what is
-            // drawn, which is why they sit apart from Appearance.
+            // What counts as the same recording, what counts as a cue, and
+            // what a sync carries from rekordbox to Engine besides the cues.
+            // These reach the parts of Seabass that read and write libraries
+            // (domain::MatchingPolicy, application::SyncAnalysisPolicy), not
+            // just what is drawn, which is why they sit apart from Appearance.
             SectionHeader { text: "Music" }
 
             ColumnLayout {
@@ -541,6 +543,43 @@ Page {
                             + "If cues copied to Engine land noticeably off the sound they were set on. With "
                             + "it off, positions are copied exactly as each library stores them."
                     }
+                }
+            }
+
+            // Off by default, for now (Sebastian, 2026-11-19). Read by Sync
+            // after Rekordbox Export when it stages a save: the tracks that
+            // save adds to Engine or writes there also get rekordbox's
+            // analysis, inside the same save, Undo and summary. The Beat
+            // Grids & Waveforms page names this setting; its sentence and
+            // this line name the same workflow.
+            ColumnLayout {
+                objectName: "syncAnalysisSetting"
+                spacing: 6 * Theme.iconScale
+                Subtitle { text: "Beat grids and waveforms" }
+                SeabassCheckBox {
+                    objectName: "copyBeatGridsOnSyncCheck"
+                    Layout.leftMargin: root.settingIndent
+                    text: "Copy beat grids from rekordbox to Engine when syncing"
+                    checked: root.appSettingsController.copyBeatGridsOnSync
+                    onToggled: root.appSettingsController.copyBeatGridsOnSync = checked
+                }
+                SeabassCheckBox {
+                    objectName: "copyWaveformsOnSyncCheck"
+                    Layout.leftMargin: root.settingIndent
+                    text: "Copy waveforms from rekordbox to Engine when syncing"
+                    checked: root.appSettingsController.copyWaveformsOnSync
+                    onToggled: root.appSettingsController.copyWaveformsOnSync = checked
+                }
+                Label {
+                    objectName: "syncAnalysisExplanation"
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "Sync after Rekordbox Export then also gives the tracks it adds to Engine or updates there "
+                        + "rekordbox's analysis. Engine's own analysis of a track is kept on the stick first and can "
+                        + "be put back on the Beat Grids & Waveforms page. A beat grid locked or moved on the player "
+                        + "is left alone, and a track the player has not analysed yet is only completed with both on."
                 }
             }
 

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include "application/sync_analysis_policy.hpp"
 #include "domain/matching_policy.hpp"
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
@@ -52,6 +53,15 @@ AppSettingsController::AppSettingsController(QObject *parent)
     // would allow, and the members are read back from it so the page
     // shows what is actually in force rather than what was typed.
     applyMatchingPolicy();
+    m_copyBeatGridsOnSync = m_settings
+                                .value("music/copyBeatGridsToEngine",
+                                       application::SyncAnalysisPolicy::DefaultCopyBeatGrids)
+                                .toBool();
+    m_copyWaveformsOnSync = m_settings
+                                .value("music/copyWaveformsToEngine",
+                                       application::SyncAnalysisPolicy::DefaultCopyWaveforms)
+                                .toBool();
+    applySyncAnalysisPolicy();
     m_stickBackupDirectory = m_settings.value("stickBackupDirectory", defaultStickBackupDirectory()).toString();
     if (m_stickBackupDirectory.isEmpty()) {
         m_stickBackupDirectory = defaultStickBackupDirectory();
@@ -209,6 +219,37 @@ void AppSettingsController::setCorrectMp3CueTiming(bool value)
     applyMatchingPolicy();
     m_settings.setValue("music/correctMp3CueTiming", m_correctMp3CueTiming);
     emit correctMp3CueTimingChanged();
+}
+
+void AppSettingsController::applySyncAnalysisPolicy()
+{
+    application::SyncAnalysisPolicy::set(m_copyBeatGridsOnSync, m_copyWaveformsOnSync);
+    // Read back, as applyMatchingPolicy() does: what the page shows is
+    // what a sync will do.
+    m_copyBeatGridsOnSync = application::SyncAnalysisPolicy::copyBeatGrids();
+    m_copyWaveformsOnSync = application::SyncAnalysisPolicy::copyWaveforms();
+}
+
+void AppSettingsController::setCopyBeatGridsOnSync(bool value)
+{
+    if (m_copyBeatGridsOnSync == value) {
+        return;
+    }
+    m_copyBeatGridsOnSync = value;
+    applySyncAnalysisPolicy();
+    m_settings.setValue("music/copyBeatGridsToEngine", m_copyBeatGridsOnSync);
+    emit copyBeatGridsOnSyncChanged();
+}
+
+void AppSettingsController::setCopyWaveformsOnSync(bool value)
+{
+    if (m_copyWaveformsOnSync == value) {
+        return;
+    }
+    m_copyWaveformsOnSync = value;
+    applySyncAnalysisPolicy();
+    m_settings.setValue("music/copyWaveformsToEngine", m_copyWaveformsOnSync);
+    emit copyWaveformsOnSyncChanged();
 }
 
 void AppSettingsController::setKeyNotation(const QString &value)

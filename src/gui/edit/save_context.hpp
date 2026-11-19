@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 #include <map>
@@ -329,6 +330,14 @@ public:
     // origin ledger included (RecordRekordboxBaselineChange), so the save
     // loop's own ledger step leaves the file alone.
     void noteRekordboxBaselineRecordedBySave() { m_baselineRecordedBySave = true; }
+
+    // A sentence for the save's summary, beside its count: what part of
+    // the save did that the count's unit cannot say (the beat grids and
+    // waveforms a sync copied along with the tracks it wrote). Added by an
+    // after-commit hook, from the changes that landed, so a save that went
+    // back says nothing; runSaveLoop() hands them on in SaveLoopResult.
+    void addSummaryNote(const QString &note) { m_summaryNotes << note; }
+    const QStringList &summaryNotes() const { return m_summaryNotes; }
     bool rekordboxBaselineRecordedBySave() const { return m_baselineRecordedBySave; }
 
     void onFinish(std::function<void(bool ok)> hook);
@@ -393,6 +402,7 @@ private:
     std::vector<std::function<void(const AfterCommit &)>> m_afterCommitHooks;
     bool m_afterCommitRan = false;
     bool m_baselineRecordedBySave = false;
+    QStringList m_summaryNotes;
 
     // Whether this save has a stick to log to; tests run without one.
     bool hasStick() const { return !m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty(); }

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "application/sync_analysis_policy.hpp"
 #include "domain/audio_content_probe.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "domain/junk_cue.hpp"
@@ -71,6 +72,23 @@ public:
 
 int main()
 {
+    // The other two settings under "Music": whether a sync copies
+    // rekordbox's beat grids and waveforms to Engine. Off unless set
+    // (Sebastian, 2026-11-19: "default off (for now)"), each its own, and
+    // reset() puts both back off.
+    {
+        using seabass::application::SyncAnalysisPolicy;
+        SyncAnalysisPolicy::reset();
+        assert(!SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
+        SyncAnalysisPolicy::set(true, false);
+        assert(SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
+        SyncAnalysisPolicy::set(false, true);
+        assert(!SyncAnalysisPolicy::copyBeatGrids() && SyncAnalysisPolicy::copyWaveforms());
+        SyncAnalysisPolicy::reset();
+        assert(!SyncAnalysisPolicy::copyBeatGrids() && !SyncAnalysisPolicy::copyWaveforms());
+        std::cout << "case 0 (copying analysis on sync is off by default, each part its own) OK\n";
+    }
+
     // Case 1: the defaults are what the code used as constants before
     // any of this was a setting. A change here changes what every
     // existing user's next scan finds, so it is pinned.

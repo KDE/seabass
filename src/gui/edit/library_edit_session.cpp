@@ -633,6 +633,9 @@ void LibraryEditSession::onSaveFinished()
         // stand; something after them did not, and the user should hear it
         // without being told to save again.
         {"warning", result.warning},
+        // What a part of the save did that the count above cannot say
+        // (SaveContext::addSummaryNote): beside it, never instead of it.
+        {"notes", result.notes.join(QLatin1Char(' '))},
         {"failedId", result.failedId},
         // The save failed and went back whole: nothing on the stick
         // changed, and every change is still pending.

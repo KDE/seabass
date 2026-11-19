@@ -8,6 +8,7 @@
 #include <cctype>
 #include <exception>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "application/path_key.hpp"
@@ -15,6 +16,23 @@
 
 namespace seabass::application
 {
+
+BeatGridCopyItem beatGridCopyItemFor(const domain::Track &rekordbox, std::string engineTrackId,
+                                     const std::string &stickRoot)
+{
+    BeatGridCopyItem item;
+    item.rekordboxTrackId = rekordbox.sourceId;
+    item.engineTrackId = std::move(engineTrackId);
+    item.title = rekordbox.title;
+    item.artist = rekordbox.artist;
+    item.stickRelativePath = stickRelativePathOf(rekordbox.filePath, stickRoot);
+    item.ledgerKey = item.stickRelativePath.empty() ? std::string() : normalizedPathKey(item.stickRelativePath);
+    item.filePath = rekordbox.filePath;
+    item.durationMs = rekordbox.durationSeconds > 0.0 ? rekordbox.durationSeconds * 1000.0 : 0.0;
+    item.key = rekordbox.key;
+    item.bpm = rekordbox.bpm > 0.0 ? rekordbox.bpm : 0.0;
+    return item;
+}
 
 BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
                                   const std::vector<domain::Track> &engine, const std::string &stickRoot,
@@ -32,17 +50,7 @@ BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
     std::vector<const domain::Track *> engineRows;
     for (const auto &[rekordboxTrack, engineTrack] : matches) {
         ++timesMatched[engineTrack];
-        BeatGridCopyItem item;
-        item.rekordboxTrackId = rekordboxTrack->sourceId;
-        item.engineTrackId = engineTrack->sourceId;
-        item.title = rekordboxTrack->title;
-        item.artist = rekordboxTrack->artist;
-        item.stickRelativePath = stickRelativePathOf(rekordboxTrack->filePath, stickRoot);
-        item.ledgerKey = item.stickRelativePath.empty() ? std::string() : normalizedPathKey(item.stickRelativePath);
-        item.filePath = rekordboxTrack->filePath;
-        item.durationMs = rekordboxTrack->durationSeconds > 0.0 ? rekordboxTrack->durationSeconds * 1000.0 : 0.0;
-        item.key = rekordboxTrack->key;
-        item.bpm = rekordboxTrack->bpm > 0.0 ? rekordboxTrack->bpm : 0.0;
+        BeatGridCopyItem item = beatGridCopyItemFor(*rekordboxTrack, engineTrack->sourceId, stickRoot);
         if (!item.ledgerKey.empty()) {
             ++timesKeyed[item.ledgerKey];
         }

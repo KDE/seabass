@@ -113,6 +113,71 @@ TestCase {
         settings.showPlayCount = false;
     }
 
+    // Music: "Copy beat grids/waveforms from rekordbox to Engine when
+    // syncing", both off by default (Sebastian, 2026-11-19), kept across
+    // starts under their own keys, and read back from the policy a sync
+    // reads (AppSettingsController::applySyncAnalysisPolicy).
+    function test_sync_analysis_settings_are_off_by_default_and_persist() {
+        const grids = controllerFixture.storeRawSetting("music/copyBeatGridsToEngine", undefined);
+        const waveforms = controllerFixture.storeRawSetting("music/copyWaveformsToEngine", undefined);
+        const fresh = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(fresh.copyBeatGridsOnSync, false, "beat grids off when nothing is stored");
+        compare(fresh.copyWaveformsOnSync, false, "waveforms off when nothing is stored");
+        fresh.copyBeatGridsOnSync = true;
+        const again = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(again.copyBeatGridsOnSync, true, "a new controller reads it back");
+        compare(again.copyWaveformsOnSync, false, "the other one is its own");
+        compare(controllerFixture.storeRawSetting("music/copyBeatGridsToEngine", false), true,
+                "stored as music/copyBeatGridsToEngine");
+        again.copyWaveformsOnSync = true;
+        compare(controllerFixture.storeRawSetting("music/copyWaveformsToEngine", false), true,
+                "stored as music/copyWaveformsToEngine");
+        const third = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(third.copyBeatGridsOnSync, false);
+        compare(third.copyWaveformsOnSync, false);
+        controllerFixture.storeRawSetting("music/copyBeatGridsToEngine", grids);
+        controllerFixture.storeRawSetting("music/copyWaveformsToEngine", waveforms);
+    }
+
+    // The two boxes under Music show the settings and change them, in
+    // words with no dash, with the line that says what they do.
+    function test_the_sync_analysis_boxes_toggle_the_settings() {
+        settings.copyBeatGridsOnSync = false;
+        settings.copyWaveformsOnSync = false;
+        const page = make(900, 700);
+        const grids = findChild(page, "copyBeatGridsOnSyncCheck");
+        const waveforms = findChild(page, "copyWaveformsOnSyncCheck");
+        const line = findChild(page, "syncAnalysisExplanation");
+        verify(grids !== null && waveforms !== null && line !== null);
+        compare(grids.text, "Copy beat grids from rekordbox to Engine when syncing");
+        compare(waveforms.text, "Copy waveforms from rekordbox to Engine when syncing");
+        verify(line.text.indexOf("Sync after Rekordbox Export") === 0, line.text);
+        verify(line.text.indexOf("kept on the stick first") > 0, line.text);
+        verify(line.text.indexOf("Beat Grids & Waveforms page") > 0, line.text);
+        for (const text of [grids.text, waveforms.text, line.text]) {
+            verify(text.indexOf("\u2014") < 0 && text.indexOf("\u2013") < 0 && text.indexOf("--") < 0, text);
+        }
+        compare(grids.checked, false);
+        compare(waveforms.checked, false);
+        // Scrolled into view first: the Music section is below the fold.
+        const scroll = findChild(page, "settingsScroll");
+        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
+                                               grids.mapToItem(scroll.contentItem, 0, 0).y - 100));
+        wait(50);
+        mouseClick(grids);
+        compare(settings.copyBeatGridsOnSync, true, "a click switches beat grids on");
+        compare(settings.copyWaveformsOnSync, false, "and only beat grids");
+        mouseClick(waveforms);
+        compare(settings.copyWaveformsOnSync, true);
+        mouseClick(grids);
+        mouseClick(waveforms);
+        compare(settings.copyBeatGridsOnSync, false, "and off again");
+        compare(settings.copyWaveformsOnSync, false);
+        settings.copyWaveformsOnSync = true;
+        compare(waveforms.checked, true, "the box follows the setting");
+        settings.copyWaveformsOnSync = false;
+    }
+
     function test_content_never_exceeds_the_window_width() {
         var page = make(700, 700);
         var scroll = findChild(page, "settingsScroll");

@@ -63,6 +63,13 @@ struct BeatGridCopyPlan
     int ambiguous = 0;
 };
 
+// The item for one rekordbox track and the Engine row it goes to, as
+// planBeatGridCopy() makes each: keyed for the ledger by the rekordbox
+// file's path from `stickRoot`. `engineTrackId` may be empty for a row a
+// save has not made yet; the caller fills it in once it has.
+BeatGridCopyItem beatGridCopyItemFor(const domain::Track &rekordbox, std::string engineTrackId,
+                                     const std::string &stickRoot);
+
 // Every rekordbox track paired with its Engine row the way Sync Cue
 // Points pairs them (domain::matchTracks, MatchScope::OneStick, with
 // `files` for another spelling of one file). `stickRoot` keys each item

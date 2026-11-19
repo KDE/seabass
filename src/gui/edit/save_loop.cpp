@@ -447,6 +447,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         result.bytesReleased = ctx.releaseAutomaticBackupsIfTight();
     }
 
+    if (!ctx.saveFailed() && !finish.error) {
+        result.notes = ctx.summaryNotes();
+    }
     ctx.progress().tick(total);
     ctx.progress().finish();
     result.backups = ctx.takeBackups();

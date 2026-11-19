@@ -40,6 +40,10 @@ SeabassDialog {
     // warning nobody renders is worse than the error it replaced.
     readonly property string warning: dialog.summary.warning !== undefined ? dialog.summary.warning : ""
     readonly property string detail: dialog.summary.detail !== undefined ? dialog.summary.detail : ""
+    // What a part of the save did that the count cannot say (the beat
+    // grids and waveforms a sync copied along with its tracks): said after
+    // everything else, never instead of it.
+    readonly property string notes: dialog.summary.notes !== undefined ? dialog.summary.notes : ""
     readonly property string headline: dialog.summary.headline !== undefined ? dialog.summary.headline : ""
     readonly property string guidance: dialog.summary.guidance !== undefined ? dialog.summary.guidance : ""
     // Reached by the save and gone by then: a track deleted, or an image
@@ -179,7 +183,8 @@ SeabassDialog {
                    : dialog.warning.length > 0 ? dialog.warning
                    : dialog.detail.length > 0 ? dialog.detail
                    : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
-                   : ""].filter(part => part.length > 0).join(" ")
+                   : "",
+                   dialog.notes].filter(part => part.length > 0).join(" ")
         }
     }
 }

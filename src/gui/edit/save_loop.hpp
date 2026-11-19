@@ -37,6 +37,9 @@ struct SaveLoopResult
     // reporting them as pending would have the user save again and apply
     // the same removals twice.
     QString warning;
+    // SaveContext::addSummaryNote(), in order: said with the summary of a
+    // save whose changes stand; empty after one that went back.
+    QStringList notes;
     bool cancelled = false;  // stopped between two changes on request
     // The save failed and everything it had written went back: the stick
     // is as it was before it, and every change is still pending. A save

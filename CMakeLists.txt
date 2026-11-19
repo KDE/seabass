@@ -635,6 +635,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/unreferenced_tracks.cpp
     src/application/use_cases/plan_engine_update.cpp
     src/application/use_cases/copy_beat_grids.cpp
+    src/application/sync_analysis_policy.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/infrastructure/local/engine_update_stick_facts.cpp
     src/infrastructure/cleanup/audio_file_walk.cpp
@@ -696,6 +697,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/restore_stick_backup.cpp
     src/application/use_cases/plan_engine_update.cpp
     src/application/use_cases/copy_beat_grids.cpp
+    src/application/sync_analysis_policy.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/domain/engine_overview.cpp
     src/domain/duplicate_cue_consolidation.cpp
@@ -3505,7 +3507,14 @@ if(TARGET seabass_edit)
     if(TARGET seabass_taglib)
         target_link_libraries(testshark_t73_test PRIVATE seabass_taglib)
     endif()
-    foreach(_t73_case fixture proposal save insync replay)
+    set(_t73_cases fixture proposal save insync replay)
+    # "Copy beat grids/waveforms from rekordbox to Engine when syncing" on
+    # that save: completing a created row takes its file's own sample
+    # count, which only TagLib reads.
+    if(TARGET seabass_taglib)
+        list(APPEND _t73_cases analysis)
+    endif()
+    foreach(_t73_case ${_t73_cases})
         add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73 ${_t73_case})
         set_tests_properties(testshark_t73_${_t73_case}_test PROPERTIES LABELS "integration"

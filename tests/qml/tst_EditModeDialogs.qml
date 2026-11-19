@@ -296,6 +296,29 @@ TestCase {
         dialog.close();
     }
 
+    // A part of the save the count cannot say (the beat grids and
+    // waveforms a sync copied with its tracks): said after everything
+    // else, never in place of it, and the save stays plain Done.
+    function test_summaryDialogSaysTheNotesBesideTheCount() {
+        const dialog = createTemporaryObject(summaryComponent, testCase);
+        const note = "From rekordbox, 4 beat grids and 4 waveforms copied, 3 tracks now load without analysis.";
+        dialog.show({written: 16, total: 16, unit: "changes", verb: "made", cancelled: false, error: "", notes: note});
+        tryCompare(dialog, "opened", true);
+        compare(findByObjectName(dialog, "countLabel").text, "16 changes made.");
+        compare(findByObjectName(dialog, "detailLabel").text, note);
+        compare(findByObjectName(dialog, "detailLabel").visible, true);
+        compare(dialog.title, "Done");
+        dialog.close();
+
+        // Beside a cancel: the cancel first, the note after it.
+        dialog.show({written: 3, total: 16, unit: "changes", verb: "made", cancelled: true, error: "", notes: note});
+        tryCompare(dialog, "opened", true);
+        const both = findByObjectName(dialog, "detailLabel").text;
+        verify(both.indexOf("Stopped at your request") === 0, both);
+        verify(both.indexOf(note) > 0, "the note is not dropped");
+        dialog.close();
+    }
+
     function test_lockedLibraryDialogDefaultsToStayingSafe() {
         var dialog = createTemporaryObject(lockedComponent, testCase);
         var spy = createTemporaryObject(spyComponent, testCase, {target: dialog, signalName: "removeLockRequested"});
