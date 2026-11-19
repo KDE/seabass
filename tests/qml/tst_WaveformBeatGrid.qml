@@ -368,12 +368,23 @@ TestCase {
             columns.push({low: 1, mid: 1, high: 1});
         }
         const host = createTemporaryObject(fadedComponent, testCase);
+        // A Canvas paints once it is available, which may be frames after
+        // it is made: under the software scene graph (the offscreen
+        // platform on macOS) a grab right after the first rendering found
+        // neither the bars nor the cue yet, only the ground. So the grab
+        // waits until the bars and the overlay have painted. grabImage()
+        // renders the window itself; a waitForRendering() after the paint
+        // only sat out its five seconds for a frame nothing asked for.
+        const barsPainted = createTemporaryObject(spyComponent, testCase, {target: host.view, signalName: "painted"});
+        const overlayPainted = createTemporaryObject(spyComponent, testCase,
+                                                     {target: findChild(host.view, "waveformOverlay"),
+                                                      signalName: "painted"});
         host.view.waveformData = columns;
         host.view.trackDurationMs = 60000;
         host.view.cueData = [{kind: "hot", hotCueNumber: 1, positionMs: 30000, color: "#ff0000", isLoop: false}];
         host.view.opacity = 0.5;
+        tryVerify(() => barsPainted.count > 0 && overlayPainted.count > 0, 5000, "the bars and the cue are painted");
         waitForPolish(testCase.Window.window);
-        waitForRendering(host);
         const image = grabImage(host);
         // x 300 is the cue line, two pixels wide over a full-height bar.
         const got = PixelScale.pixel(image, host, 300, host.height / 2);
