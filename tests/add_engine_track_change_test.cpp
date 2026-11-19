@@ -380,6 +380,34 @@ int main(int argc, char **argv)
         std::cout << "case 5 (an Engine 1.x library is refused) OK\n";
     }
 
+    // 6. A rekordbox row that spells a folder unlike the stick (#103
+    //    review): rekordbox made "Music", a later row says "music". The
+    //    row Seabass adds is in the disk's spelling, and the readback by
+    //    the rekordbox row's path finds it: the change lands. A disk that
+    //    does not tell case apart finds "music" as it is; elsewhere a
+    //    link stands in.
+    {
+        const testing::EngineChangeStick stick = testing::makeEngineChangeStick(fixture, "add_engine_track_spelled");
+        domain::Track row = rekordboxRow(stick, "Spelled", false);
+        const fs::path other = stick.root / "music";
+        if (!fs::exists(other)) {
+            fs::create_directory_symlink("Music", other);
+        }
+        assert(fs::equivalent(other, stick.root / "Music"));
+        row.filePath = pathToUtf8(other / "Spelled.wav");
+        auto change = std::make_shared<AddEngineTrackChange>(stick.enginePath(), row, probe, 1);
+        const SaveLoopResult saved = testing::saveChanges({change}, stick.pioneerPath(), stick.enginePath());
+        if (!saved.error.isEmpty()) {
+            std::cerr << "save: " << saved.error.toStdString() << "\n";
+        }
+        assert(saved.error.isEmpty() && saved.appliedIds == QStringList{change->id()});
+        assert(change->createdId() > 0);
+        const auto rows = testing::sqlRows(stick.db, "SELECT path FROM Track WHERE id = "
+                                                         + std::to_string(change->createdId()) + ";");
+        assert(rows.size() == 1 && rows[0][0] == "../Music/Spelled.wav" && "the row is in the disk's spelling");
+        std::cout << "case 6 (a rekordbox row spelling a folder unlike the disk adds its Engine row) OK\n";
+    }
+
     std::cout << "add_engine_track_change_test: all cases passed\n";
     return 0;
 }

@@ -98,4 +98,16 @@ std::string relinkRefusalFor(const QString &pioneerRoot, const domain::MovedFile
 // folder is `pioneerRoot`.
 std::string rekordboxPathOnStick(const std::string &pioneerRoot, const std::string &filePath);
 
+// The spellings export.pdb's rows for `filePath`, a path a reader made by
+// joining the stick and a row's path, are looked up by, in order: the
+// row's own, undoing that join lexically, and then rekordboxPathOnStick's,
+// once, if it is another. rekordboxPathOnStick asks the filesystem, and a
+// disk that does not tell case apart (macOS's own, FAT and exFAT on macOS
+// and Windows) answers with its own spelling of every folder there, not
+// the row's (#103); it stays second because other lookups and writes go
+// through it, so nothing found by it before is missed now. The first
+// spelling that finds rows wins: two rows that differ only in case are
+// two rows, and the path passed is this one's.
+std::vector<std::string> rekordboxLookupSpellings(const std::string &pioneerRoot, const std::string &filePath);
+
 }  // namespace seabass::gui

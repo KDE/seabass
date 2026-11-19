@@ -47,12 +47,15 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/onelibrary/onelibrary_key.hpp"
+#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "engine_change_fixture.hpp"
 #include "fixture_copy.hpp"
 #include "scratch_path.hpp"
 
@@ -205,6 +208,44 @@ std::string withFolderCase(const std::string &path, bool upper)
                                     : std::tolower(static_cast<unsigned char>(c)));
     }
     return pathToUtf8(p.parent_path().parent_path() / folder / p.filename());
+}
+
+// A catalog row's path written as given, with no filesystem in between:
+// the writers spell a path the way the disk does once its folder exists,
+// and a test of other spellings must not depend on whether it does yet.
+void spellEngineRow(const fs::path &engine, const std::string &id, const std::string &relative)
+{
+    const std::string db = pathToUtf8(engine / "Database2" / "m.db");
+    const std::string name = pathToUtf8(pathFromUtf8(relative).filename());
+    assert(relative.find('\'') == std::string::npos && name.find('\'') == std::string::npos);
+    assert(seabass::testing::sqlExec(db, "UPDATE Track SET path = '" + relative + "', filename = '" + name
+                                             + "' WHERE id = " + id + ";"));
+    assert(seabass::testing::sqlScalar(db, "SELECT count(*) FROM Track WHERE id = " + id + " AND path = '" + relative
+                                               + "';")
+           == 1);
+}
+
+// The OneLibrary rows at `stickPath` ("/Contents/...") moved to `newPath`,
+// as given. Returns how many.
+int spellOneLibraryRows(const fs::path &pioneer, const std::string &stickPath, const std::string &newPath)
+{
+    infrastructure::onelibrary::SqlCipherLibrary lib;
+    infrastructure::onelibrary::SqlCipherDb db(
+        lib, infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)), false);
+    db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+    int rows = 0;
+    {
+        infrastructure::onelibrary::SqlCipherStatement count(db, "SELECT count(*) FROM content WHERE path = ?");
+        count.bindText(1, stickPath);
+        if (count.step()) {
+            rows = static_cast<int>(count.columnInt64(0));
+        }
+    }
+    infrastructure::onelibrary::SqlCipherStatement update(db, "UPDATE content SET path = ? WHERE path = ?");
+    update.bindText(1, newPath);
+    update.bindText(2, stickPath);
+    update.run();
+    return rows;
 }
 
 // A copy of the fixture as a stick: rekordbox, OneLibrary and Engine.
@@ -590,20 +631,21 @@ int main(int argc, char **argv)
         const std::string engineSpelling = withFolderCase(rekordboxSpelling, false);
         assert(oneLibrarySpelling != rekordboxSpelling && engineSpelling != rekordboxSpelling
                && oneLibrarySpelling != engineSpelling && "three spellings of one path");
-        {
-            infrastructure::onelibrary::OneLibraryCueWriter oneLibrary(pathToUtf8(f.pioneer));
-            assert(oneLibrary.setTrackPath(oneLibraryOld, oneLibrarySpelling) >= 1);
-        }
-        std::string engineRowPath;
+        // Each spelling written into its catalog as it is, so that it
+        // holds whether or not the folder is on disk yet.
+        const auto onStick = [&](const std::string &path) {
+            return "/" + pathToGenericUtf8(pathFromUtf8(path).lexically_relative(f.stick));
+        };
+        assert(spellOneLibraryRows(f.pioneer, onStick(oneLibraryOld), onStick(oneLibrarySpelling)) >= 1);
+        std::string engineRowId;
         for (const auto &r : f.readAll()) {
             if (r.format == "engine" && !r.filePath.empty()) {
-                engineRowPath = r.filePath;
+                engineRowId = r.sourceId;
                 break;
             }
         }
-        assert(infrastructure::engine::setEngineTrackPath(pathToUtf8(f.engine), pathToUtf8(f.engine), engineRowPath,
-                                                          engineSpelling)
-               == 1);
+        assert(!engineRowId.empty());
+        spellEngineRow(f.engine, engineRowId, pathToGenericUtf8(pathFromUtf8(engineSpelling).lexically_relative(f.engine)));
 
         domain::MovedFileFinding finding;
         finding.expectedPath = oneLibrarySpelling;  // as the first row spells it
@@ -640,15 +682,18 @@ int main(int argc, char **argv)
             }
             assert(fs::equivalent(otherFolder, folder) && "every spelling of the folder finds it");
         }
-        // export.pdb's lookup spells a row's path as the row does too.
-        const std::string engineOnStick = rekordboxPathOnStick(pathToUtf8(f.pioneer), engineSpelling);
-        if (key(engineOnStick) != key(rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling))
-            || engineOnStick == rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling)) {
-            std::cerr << "export.pdb would look \"" << engineSpelling << "\" up as \"" << engineOnStick << "\"\n";
+        // export.pdb's lookup tries a row's path as the row spells it
+        // first, and the disk's spelling after it.
+        const auto spellings = rekordboxLookupSpellings(pathToUtf8(f.pioneer), engineSpelling);
+        if (spellings.empty() || spellings.front() != onStick(engineSpelling)) {
+            std::cerr << "export.pdb would look \"" << engineSpelling << "\" up as \""
+                      << (spellings.empty() ? std::string() : spellings.front()) << "\" first\n";
         }
-        assert(engineOnStick != rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling)
-               && key(engineOnStick) == key(rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling))
-               && "a path on the stick keeps its own spelling");
+        assert(spellings.size() == 2 && spellings.front() == onStick(engineSpelling)
+               && spellings.back() == onStick(rekordboxSpelling) && "its own spelling first, then the disk's");
+        assert(rekordboxLookupSpellings(pathToUtf8(f.pioneer), rekordboxSpelling)
+                   == std::vector<std::string>{onStick(rekordboxSpelling)}
+               && "once when the two agree");
         finding.candidates.push_back({fileAt(newFile), domain::MovedFileCandidate::Confidence::High, "the same"});
         assert(relinkRefusalFor(pathToQString(f.pioneer), finding, pathToUtf8(newFile)).empty());
         auto change = std::make_shared<RelinkMovedFileChange>(pathToQString(f.pioneer), pathToQString(f.engine),
@@ -1042,6 +1087,91 @@ int main(int argc, char **argv)
         }
         assert(preRestoreRecords(t).size() == 1 && "the record noting the stuck moves is kept");
         std::cout << "case 14 (moves that cannot be put back are named and their record kept) OK\n";
+    }
+
+    // 15. An Engine row is found by its own path, and by the disk's
+    //     spelling of it when no row has that path (#103 review). Seabass
+    //     writes a row it adds in the disk's spelling (createEngineTrack
+    //     asks the filesystem), and its readback, playlist edits and copy
+    //     analysis look it up by the rekordbox row's path, which may spell
+    //     a folder otherwise: rekordbox made "ABBA", a later row says
+    //     "Abba". And two rows that differ only in a folder's case are two
+    //     rows: each is found by its own path, never the other's.
+    if (runs(15)) {
+        const FixtureStick f(fixture, "seabass_moved_file_engine_spellings");
+        std::vector<std::string> ids;
+        for (const auto &r : f.readAll()) {
+            if (r.format == "engine" && !r.filePath.empty() && ids.size() < 3) {
+                ids.push_back(r.sourceId);
+            }
+        }
+        assert(ids.size() == 3 && "three Engine rows");
+        // On disk the folder is "ABBA". A disk that does not tell case
+        // apart finds it as "Abba" too; elsewhere a link stands in.
+        const fs::path disk = f.stick / "Contents" / "ABBA";
+        const fs::path other = f.stick / "Contents" / "Abba";
+        fs::create_directories(disk);
+        if (!fs::exists(other)) {
+            fs::create_directory_symlink("ABBA", other);
+        }
+        assert(fs::equivalent(disk, other));
+        write(disk / "added.mp3", "audio bytes");
+        write(disk / "twice.mp3", "audio bytes");
+
+        const std::string engine = pathToUtf8(f.engine);
+        // A row in the disk's spelling, as Seabass adds one.
+        spellEngineRow(f.engine, ids[0], "../Contents/ABBA/added.mp3");
+        // Two rows for one file, its folder in two spellings.
+        spellEngineRow(f.engine, ids[1], "../Contents/ABBA/twice.mp3");
+        spellEngineRow(f.engine, ids[2], "../Contents/Abba/twice.mp3");
+        const auto idsOf = [&](const fs::path &file) {
+            std::vector<std::string> found;
+            for (const std::int64_t id : infrastructure::engine::engineTrackIdsForFile(engine, engine, pathToUtf8(file))) {
+                found.push_back(std::to_string(id));
+            }
+            return found;
+        };
+        const auto said = [](const std::vector<std::string> &found) {
+            std::string out;
+            for (const auto &id : found) {
+                out += (out.empty() ? "" : ",") + id;
+            }
+            return "[" + out + "]";
+        };
+
+        const auto byOtherSpelling = idsOf(other / "added.mp3");
+        if (byOtherSpelling != std::vector<std::string>{ids[0]}) {
+            std::cerr << "Abba/added.mp3 found " << said(byOtherSpelling) << ", the row is " << ids[0] << "\n";
+        }
+        assert(byOtherSpelling == std::vector<std::string>{ids[0]} && "found through another spelling of its folder");
+        assert(idsOf(disk / "added.mp3") == std::vector<std::string>{ids[0]} && "and through its own");
+
+        const auto upper = idsOf(disk / "twice.mp3");
+        const auto mixed = idsOf(other / "twice.mp3");
+        if (upper != std::vector<std::string>{ids[1]} || mixed != std::vector<std::string>{ids[2]}) {
+            std::cerr << "ABBA/twice.mp3 found " << said(upper) << " (row " << ids[1] << "), Abba/twice.mp3 found "
+                      << said(mixed) << " (row " << ids[2] << ")\n";
+        }
+        assert(upper == std::vector<std::string>{ids[1]} && mixed == std::vector<std::string>{ids[2]}
+               && "two rows that differ only in case: each found by its own path");
+
+        // And pointed elsewhere the same way: through another spelling,
+        // and only the row of the spelling given.
+        assert(infrastructure::engine::setEngineTrackPath(engine, engine, pathToUtf8(other / "added.mp3"),
+                                                          pathToUtf8(disk / "moved.mp3"))
+               == 1);
+        assert(seabass::testing::sqlScalar(pathToUtf8(f.engine / "Database2" / "m.db"),
+                                           "SELECT count(*) FROM Track WHERE id = " + ids[0]
+                                               + " AND path = '../Contents/ABBA/moved.mp3';")
+               == 1);
+        assert(infrastructure::engine::setEngineTrackPath(engine, engine, pathToUtf8(other / "twice.mp3"),
+                                                          pathToUtf8(disk / "moved twice.mp3"))
+               == 1);
+        assert(seabass::testing::sqlScalar(pathToUtf8(f.engine / "Database2" / "m.db"),
+                                           "SELECT count(*) FROM Track WHERE id = " + ids[1]
+                                               + " AND path = '../Contents/ABBA/twice.mp3';")
+               == 1 && "the other row is left alone");
+        std::cout << "case 15 (an Engine row is found by its own spelling first, then by the disk's) OK\n";
     }
 
     std::cout << "moved_file_change_test: all cases OK\n";

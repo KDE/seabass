@@ -76,16 +76,27 @@ QString movedFileChangeId(const std::string &expectedPath)
     return "moved-file:" + QString::fromStdString(application::normalizedPathKey(expectedPath));
 }
 
-// Lexically, as the readers joined the stick and the row's path to make
-// `filePath`: fs::relative() asks the filesystem, and one that does not
-// tell case apart (macOS's own disk, and FAT and exFAT on macOS and
-// Windows) answers with the disk's spelling of every folder there,
-// not the row's, and export.pdb is looked up byte for byte (#103).
 std::string rekordboxPathOnStick(const std::string &pioneerRoot, const std::string &filePath)
 {
-    const auto relative = pathFromUtf8(filePath).lexically_normal().lexically_relative(
+    std::error_code ec;
+    const auto relative = fs::relative(pathFromUtf8(filePath), pathFromUtf8(pioneerRoot).parent_path(), ec);
+    return ec || relative.empty() ? filePath : "/" + pathToGenericUtf8(relative);
+}
+
+std::vector<std::string> rekordboxLookupSpellings(const std::string &pioneerRoot, const std::string &filePath)
+{
+    std::vector<std::string> spellings;
+    const auto own = pathFromUtf8(filePath).lexically_normal().lexically_relative(
         pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(pioneerRoot)));
-    return relative.empty() ? filePath : "/" + pathToGenericUtf8(relative);
+    const std::string text = pathToGenericUtf8(own);
+    if (!text.empty() && text != "." && text.rfind("..", 0) != 0) {
+        spellings.push_back("/" + text);
+    }
+    const std::string disk = rekordboxPathOnStick(pioneerRoot, filePath);
+    if (spellings.empty() || spellings.front() != disk) {
+        spellings.push_back(disk);
+    }
+    return spellings;
 }
 
 std::string relinkRefusalFor(const QString &pioneerRoot, const domain::MovedFileFinding &finding,
@@ -384,7 +395,15 @@ ChangeOutcome RelinkMovedFileChange::apply(SaveContext &ctx)
             const std::string name = basenameOf(newPath);
             for (const auto &[spelling, listed] : rows->second) {
                 // By the path, not the id from the scan: a re-export renumbers.
-                const std::vector<uint32_t> ids = pdb.trackIdsWithFilePath(rekordboxPathOnStick(pioneer, spelling));
+                // The row's own spelling first, then the disk's (see
+                // rekordboxLookupSpellings).
+                std::vector<uint32_t> ids;
+                for (const std::string &onStick : rekordboxLookupSpellings(pioneer, spelling)) {
+                    ids = pdb.trackIdsWithFilePath(onStick);
+                    if (!ids.empty()) {
+                        break;
+                    }
+                }
                 if (ids.size() < listed) {
                     return vanished(QStringLiteral("export.pdb"), spelling, ids.size(), listed);
                 }
