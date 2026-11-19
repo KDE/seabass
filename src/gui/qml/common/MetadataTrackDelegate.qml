@@ -71,6 +71,9 @@ Rectangle {
     // this row before it is opened (Sync Cue Points: why a decision is
     // needed). Hidden when empty.
     property string note: ""
+    // The note's colour, for a page whose note says how a row stands (Beat
+    // Grids & Waveforms: "Loads without analysis").
+    property color noteColor: Theme.textMuted
     property string playlistNames: ""
 
     // ---- where it came from ------------------------------------------
@@ -160,6 +163,10 @@ Rectangle {
     readonly property bool playingThis: delegate.isCurrentTrack && delegate.playbackController.playing
 
     property alias actionItems: actionRow.data
+    // Page-specific marks under the artist, in the title's column, wrapping
+    // as the row narrows (Beat Grids & Waveforms: what copying does to the
+    // track's grid and its waveform). Shown when there are any.
+    property alias detailItems: detailFlow.data
     // Page-specific content under the expanded half's facts, lined up with
     // the title like they are. Only shown while expanded.
     property alias expandedItems: expandedExtra.data
@@ -349,12 +356,20 @@ Rectangle {
                     elide: Text.ElideRight
                     font.strikeout: delegate.markedForRemoval
                 }
+                Flow {
+                    id: detailFlow
+                    objectName: "rowDetailItems"
+                    Layout.fillWidth: true
+                    Layout.topMargin: visible ? 2 : 0
+                    visible: children.length > 0
+                    spacing: Theme.tightSpacing
+                }
                 Label {
                     objectName: "rowNote"
                     Layout.fillWidth: true
                     visible: delegate.note.length > 0
                     text: delegate.note
-                    color: Theme.textMuted
+                    color: delegate.noteColor
                     font.pointSize: Theme.fontSmall
                     wrapMode: Text.Wrap
                     maximumLineCount: 2

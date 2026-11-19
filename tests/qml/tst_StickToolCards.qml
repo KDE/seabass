@@ -195,7 +195,7 @@ TestCase {
              expected: ["Browse Library", "Compare Playlists", "Library Statistics", "Device Profile",
                         "USB Stick Performance"]},
             {tag: "sync", group: "sync", stick: {},
-             expected: ["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]},
+             expected: ["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Metadata", "Restore Metadata"]},
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
              expected: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"]},
             {tag: "backup", group: "backup", stick: {},
@@ -293,6 +293,7 @@ TestCase {
              args: main.concat(["/media/MAIN"])},
             {tag: "Sync Cue Points", group: "sync", signalName: "syncRequested", args: main},
             {tag: "Sync after Rekordbox Export", group: "sync", signalName: "rekordboxExportSyncRequested", args: main},
+            {tag: "Beat Grids & Waveforms", group: "sync", signalName: "beatGridsWaveformsRequested", args: main},
             {tag: "Create Engine Library", group: "sync", noEngine: true, signalName: "engineLibraryCreatorRequested",
              args: ["MAIN", "/media/MAIN/PIONEER"]},
             {tag: "Full Stick Backup", group: "backup", signalName: "fullStickBackupRequested", args: main},
@@ -328,7 +329,7 @@ TestCase {
         const registry = fakeEditRegistry(["lib-main"]);
         const locked = {
             "explore": ["Device Profile"],
-            "sync": ["Sync Cue Points", "Sync after Rekordbox Export", "Restore Metadata"],
+            "sync": ["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Restore Metadata"],
             "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
             "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
                  "Free Up Space", "Library Health"],
@@ -400,6 +401,10 @@ TestCase {
         verify(exportSync !== null && exportSync.visible, "Sync after Rekordbox Export missing");
         compare(exportSync.readOnly, true);
         verify(exportSync.readOnlyReason.indexOf("Library Health") >= 0);
+        const beatGrids = card(bothCatalogs, "Beat Grids & Waveforms");
+        verify(beatGrids !== null && beatGrids.visible, "Beat Grids & Waveforms missing");
+        compare(beatGrids.readOnly, true);
+        verify(beatGrids.readOnlyReason.indexOf("Library Health") >= 0);
         // An empty stick's own two cards write too.
         const empty = makeCards(emptyStick({readOnly: true}), "backup",
                                 {"/media/SPARE": makeAdvice({cloneSource: mainCloneSource(true)})});
@@ -505,12 +510,16 @@ TestCase {
         verify(card(bothOff, "Sync after Rekordbox Export").visible, "not behind the setting");
         compare(card(bothOff, "Sync after Rekordbox Export").experimental, false);
         compare(JSON.stringify(shownTitles(bothOff)),
-                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]));
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Metadata", "Restore Metadata"]));
         compare(card(withEngine, "Sync after Rekordbox Export").visible, true);
         compare(card(withEngine, "Sync after Rekordbox Export").experimental, false);
         compare(card(on, "Sync after Rekordbox Export").visible, false, "not without an Engine library");
         const engineOnly = makeCards(makeStick({hasRekordbox: false, rekordboxPath: ""}), "sync", {});
         compare(card(engineOnly, "Sync after Rekordbox Export").visible, false, "not without a rekordbox export");
+        // Beat Grids & Waveforms: the same rule, from one catalog to the other.
+        compare(card(bothOff, "Beat Grids & Waveforms").visible, true);
+        compare(card(on, "Beat Grids & Waveforms").visible, false, "not without an Engine library");
+        compare(card(engineOnly, "Beat Grids & Waveforms").visible, false, "not without a rekordbox export");
         // Built last, so it is the one on top when grabbed.
         saveScreenshot(makeCards(makeStick({}), "sync", {}), "stick-tools-sync");
     }
@@ -872,7 +881,7 @@ TestCase {
         cards.row = makeStick({});
         compare(cards.empty, false);
         compare(JSON.stringify(shownTitles(cards)),
-                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Metadata", "Restore Metadata"]));
+                JSON.stringify(["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Metadata", "Restore Metadata"]));
     }
 
     // Format is the one card the app-wide busy flag disables: erasing a

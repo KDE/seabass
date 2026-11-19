@@ -172,7 +172,7 @@ TestCase {
     function test_readOnlyStickGreysOutEveryWritingCard() {
         var page = makePage([makeStick({readOnly: true})], {});
         const writers = ["Clean Up Duplicates", "Restore Metadata", "Sync Cue Points", "Sync after Rekordbox Export",
-                       "USB Stick Performance"];
+                       "Beat Grids & Waveforms", "USB Stick Performance"];
         for (var i = 0; i < writers.length; ++i) {
             var card = findCard(page, "/media/MAIN", writers[i]);
             verify(card !== null, writers[i] + " missing");
@@ -882,7 +882,8 @@ TestCase {
             compare(card.visible, true, reads[i] + " should stay");
         }
         var writes = ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Clean Up Duplicates", "Library Health", "Restore Metadata",
-                      "Create Engine Library", "Sync Cue Points", "Sync after Rekordbox Export", "Device Profile",
+                      "Create Engine Library", "Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms",
+                      "Device Profile",
                       "Format USB Stick"];
         for (var j = 0; j < writes.length; ++j) {
             var w = findCard(page, mp, writes[j]);

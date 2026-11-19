@@ -60,6 +60,10 @@
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
+#include <djinterop/engine/v3/beat_data_blob.hpp>
+#include <djinterop/engine/v3/overview_waveform_data_blob.hpp>
+#include <djinterop/engine/v3/track_data_blob.hpp>
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include "gui/scan_controller.hpp"
@@ -99,6 +103,7 @@
 #include <system_error>
 
 #include <sqlite3.h>
+#include <iterator>
 
 // Runs every tst_*.qml file found under the directory passed via -input
 // (see the add_test() call in CMakeLists.txt) against a real QQmlEngine --
@@ -876,6 +881,167 @@ public:
         }
         sqlite3_finalize(stmt);
         sqlite3_close(db);
+        return out;
+    }
+
+    // The TESTSHARK stick of tests/fixtures/testshark_t73 put back
+    // together the way tests/assemble_t73_stick.cmake does: its PIONEER
+    // folder and audio heads, and engine/<db> as the Engine library's m.db.
+    // The stick's root, or empty on failure.
+    Q_INVOKABLE QString t73StickCopy(const QString &fixtureRoot, const QString &db)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        static std::atomic<int> copies{0};
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_t73_" + std::to_string(QCoreApplication::applicationPid()) + "_"
+               + std::to_string(copies++));
+        fs::remove_all(root, ec);
+        fs::create_directories(root, ec);
+        const fs::path from = seabass::pathFromUtf8(fixtureRoot.toStdString());
+        fs::copy(from / "stick", root, fs::copy_options::recursive, ec);
+        if (ec) {
+            return {};
+        }
+        fs::create_directories(root / "Engine Library" / "Database2", ec);
+        fs::copy_file(from / "engine" / seabass::pathFromUtf8(db.toStdString()),
+                      root / "Engine Library" / "Database2" / "m.db", ec);
+        if (ec) {
+            return {};
+        }
+        m_roots.append(seabass::gui::pathToQString(root));
+        return m_roots.last();
+    }
+
+    // Moves a file inside a stick copy (an Engine 1.x layout made from a
+    // 2.x or 3.x one). False when it did not move.
+    Q_INVOKABLE bool moveFile(const QString &from, const QString &to)
+    {
+        std::error_code ec;
+        std::filesystem::rename(seabass::gui::pathFromQString(from), seabass::gui::pathFromQString(to), ec);
+        return !ec;
+    }
+
+    // Takes a rekordbox track's .DAT analysis file (its beat grid) off a
+    // stick copy, as an export that never analysed its grid leaves it; the
+    // .EXT, with the waveform, stays. False when there was none to take.
+    Q_INVOKABLE bool removeRekordboxBeatGridFile(const QString &stickRoot, const QString &rekordboxTrackId)
+    {
+        try {
+            const std::string pioneer = stickRoot.toStdString() + "/PIONEER";
+            const seabass::infrastructure::rekordbox::AnlzPathIndex index(pioneer);
+            const auto path = index.pathFor(static_cast<uint32_t>(rekordboxTrackId.toUInt()));
+            if (!path) {
+                return false;
+            }
+            std::error_code ec;
+            return std::filesystem::remove(seabass::pathFromUtf8(stickRoot.toStdString() + *path), ec);
+        } catch (const std::exception &) {
+            return false;
+        }
+    }
+
+    // What a stick copy's Engine library holds of analysis, read straight
+    // from m.db and the overview files beside it, decoded with libdjinterop's
+    // own blob code (as tests/engine_analysis_rows.cpp does for the command
+    // line): rows, analysed (isAnalyzed = 1), overviews (overviewWaveFormData
+    // of 1024 points), gridsSet (beatData with is_beatgrid_set), overviewFiles
+    // (.rgb files in the database's uuid folder), matchingFiles (ones of 1024
+    // points over their row's own length), analysedIds. Empty on failure.
+    Q_INVOKABLE QVariantMap engineAnalysisRows(const QString &stickRoot) const
+    {
+        namespace fs = std::filesystem;
+        using Overview = djinterop::engine::v3::overview_waveform_data_blob;
+        using TrackData = djinterop::engine::v3::track_data_blob;
+        using BeatData = djinterop::engine::v3::beat_data_blob;
+        const fs::path library = seabass::pathFromUtf8(stickRoot.toStdString()) / "Engine Library";
+        const std::string file = seabass::pathToUtf8(library / "Database2" / "m.db");
+        sqlite3 *db = nullptr;
+        QVariantMap out;
+        if (sqlite3_open_v2(file.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            sqlite3_close(db);
+            return out;
+        }
+        const auto blob = [](sqlite3_stmt *stmt, int c) {
+            std::vector<std::byte> bytes;
+            if (sqlite3_column_type(stmt, c) != SQLITE_NULL) {
+                const auto *data = static_cast<const std::byte *>(sqlite3_column_blob(stmt, c));
+                bytes.assign(data, data + sqlite3_column_bytes(stmt, c));
+            }
+            return bytes;
+        };
+        std::string uuid;
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT uuid FROM Information", -1, &stmt, nullptr) == SQLITE_OK
+            && sqlite3_step(stmt) == SQLITE_ROW) {
+            uuid = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        }
+        sqlite3_finalize(stmt);
+        int rows = 0, analysed = 0, overviews = 0, gridsSet = 0;
+        QStringList analysedIds;
+        std::map<std::int64_t, double> samplesOf;
+        if (sqlite3_prepare_v2(db,
+                               "SELECT t.id, t.isAnalyzed, p.trackData, p.overviewWaveFormData, p.beatData FROM Track t"
+                               " LEFT JOIN PerformanceData p ON p.trackId = t.id",
+                               -1, &stmt, nullptr)
+            == SQLITE_OK) {
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                ++rows;
+                const std::int64_t id = sqlite3_column_int64(stmt, 0);
+                if (sqlite3_column_int(stmt, 1) == 1) {
+                    ++analysed;
+                    analysedIds << QString::number(id);
+                }
+                try {
+                    if (const auto record = blob(stmt, 2); !record.empty()) {
+                        samplesOf[id] = static_cast<double>(TrackData::from_blob(record).samples);
+                    }
+                    if (const auto overview = blob(stmt, 3);
+                        !overview.empty() && Overview::from_blob(overview).waveform_points.size() == 1024) {
+                        ++overviews;
+                    }
+                    if (const auto beats = blob(stmt, 4);
+                        !beats.empty() && BeatData::from_blob(beats).is_beatgrid_set == 1) {
+                        ++gridsSet;
+                    }
+                } catch (const std::exception &) {
+                    // A blob that does not decode is none of these.
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        int files = 0, matching = 0;
+        std::error_code ec;
+        const fs::path dir = library / "Database2" / "OverviewData" / seabass::pathFromUtf8(uuid);
+        if (!uuid.empty() && fs::is_directory(dir, ec)) {
+            for (const auto &entry : fs::directory_iterator(dir, ec)) {
+                if (entry.path().extension() != ".rgb") {
+                    continue;
+                }
+                ++files;
+                std::ifstream in(entry.path(), std::ios::binary);
+                const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                std::vector<std::byte> bytes(text.size());
+                std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+                try {
+                    const Overview overview = Overview::from_blob(bytes);
+                    const auto row = samplesOf.find(std::stoll(seabass::pathToUtf8(entry.path().stem())));
+                    if (overview.waveform_points.size() == 1024 && row != samplesOf.end()
+                        && overview.samples_per_waveform_point == row->second / 1024.0) {
+                        ++matching;
+                    }
+                } catch (const std::exception &) {
+                }
+            }
+        }
+        out[QStringLiteral("rows")] = rows;
+        out[QStringLiteral("analysed")] = analysed;
+        out[QStringLiteral("overviews")] = overviews;
+        out[QStringLiteral("gridsSet")] = gridsSet;
+        out[QStringLiteral("overviewFiles")] = files;
+        out[QStringLiteral("matchingFiles")] = matching;
+        out[QStringLiteral("analysedIds")] = analysedIds;
         return out;
     }
 

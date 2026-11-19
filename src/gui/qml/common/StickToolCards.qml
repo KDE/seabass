@@ -35,7 +35,7 @@ Item {
             return !(root.showBrowse || root.showCompare || root.showStatistics || root.showDeviceProfile
                      || root.showPerformance);
         case "sync":
-            return !(root.showSync || root.showRekordboxExportSync || root.showMetadataBackup
+            return !(root.showSync || root.showRekordboxExportSync || root.showBeatGrids || root.showMetadataBackup
                      || root.showRestoreMetadata || root.showCreateEngine);
         case "backup":
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
@@ -69,6 +69,7 @@ Item {
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal beatGridsWaveformsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     // `currentArchivePath`: this stick's own full backup, when the advisor
     // matched one to it; Manage Backups lists it first.
@@ -230,6 +231,10 @@ Item {
     // Needs both catalogs, so it is hidden rather than disabled without
     // them. Out of the experimental setting since 2026-10-10.
     readonly property bool showRekordboxExportSync: root.writable && root.hasRekordbox && root.hasEngine
+    // rekordbox's beat grids and waveforms into the Engine library: from
+    // one catalog to the other on one stick, so, like Sync after Rekordbox
+    // Export, hidden rather than disabled without both.
+    readonly property bool showBeatGrids: root.writable && root.hasRekordbox && root.hasEngine
     // Experimental (see docs/experimental-features.md), and hidden once
     // the stick has an Engine Library rather than shown disabled.
     readonly property bool showCreateEngine: root.writable && !root.hasEngine
@@ -525,6 +530,21 @@ Item {
                 cardIcon: "document-import"
                 visible: root.group === "sync" && root.showRekordboxExportSync
                 onClicked: root.rekordboxExportSyncRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "beatGridsWaveformsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Beat Grids & Waveforms"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Copy rekordbox's beat grids and waveforms into the Engine library"
+                cardIcon: "view-media-visualization"
+                visible: root.group === "sync" && root.showBeatGrids
+                onClicked: root.beatGridsWaveformsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
                 objectName: "metadataBackupCard"

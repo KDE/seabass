@@ -87,6 +87,16 @@ ListView {
             }
         }
     }
+    // Tick boxes on the rows (Beat Grids & Waveforms): checkStateOf(name)
+    // gives a row's state ("" for "All tracks"), read again when
+    // checkRevision moves; a click asks with playlistCheckToggled.
+    property bool checkable: false
+    property var checkStateOf: name => Qt.Unchecked
+    property var checkEnabledFor: name => true
+    // Every box at once: off while what is ticked cannot change.
+    property bool checksEnabled: true
+    property int checkRevision: 0
+    signal playlistCheckToggled(string name, bool checked)
     signal createRequested()
     // A playlist staged to be created was clicked.
     signal newPlaylistPicked(string name)
@@ -258,6 +268,11 @@ ListView {
         pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
         countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
         showsThumbnail: true
+        checkable: root.checkable
+        checkState: root.checkable && root.checkRevision >= 0 ? root.checkStateOf(index === 0 ? "" : modelData) : Qt.Unchecked
+        checkEnabled: root.checkable && root.checksEnabled && root.checkRevision >= 0 && root.checkEnabledFor(index === 0 ? "" : modelData)
+        checkTooltip: index === 0 ? "Tick every track" : "Tick every track of this playlist"
+        onCheckToggled: checked => root.playlistCheckToggled(index === 0 ? "" : modelData, checked)
         thumbnailSource: isNew ? "" : ((root.scanController.playlistThumbnails || {})[index === 0 ? "" : modelData] ?? "")
         // The summary's part: the pointer on a row that has one, a
         // press or the wheel there, and what to show for it.

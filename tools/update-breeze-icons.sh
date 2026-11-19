@@ -67,6 +67,7 @@ actions/22/document-import.svg
 places/22/server-database.svg
 actions/22/exchange-positions.svg
 actions/22/view-media-equalizer.svg
+actions/22/view-media-visualization.svg
 actions/22/edit-delete-shred.svg
 actions/22/edit-copy.svg
 actions/22/document-revert.svg

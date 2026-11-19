@@ -500,6 +500,7 @@ Item {
         case "settings": return "Device Profile";
         case "sync": return "Sync Cue Points";
         case "rekordbox-export-sync": return "Sync after Rekordbox Export";
+        case "beat-grids": return "Beat Grids & Waveforms";
         case "library-health": return "Library Health";
         case "cleanup": return "Clean Up Duplicates";
         case "dup": return "Cues on Duplicate Copies";

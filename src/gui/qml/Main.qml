@@ -580,6 +580,11 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
+            onBeatGridsWaveformsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(beatGridsWaveformsPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
             onAppSettingsRequested: stackView.push(appSettingsPageComponent)
             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
                 stickLabel: stickLabel,
@@ -729,11 +734,6 @@ ApplicationWindow {
     }
 
     Component {
-        id: beatGridsPageComponent
-        BeatGridsPage {}
-    }
-
-    Component {
         id: playlistSyncPageComponent
         PlaylistSyncPage {}
     }
@@ -769,7 +769,6 @@ ApplicationWindow {
         case "junkcues": return cuesAtZeroPageComponent;
         case "import": return importPromptPageComponent;
         case "samplerates": return sampleRatesPageComponent;
-        case "beatgrids": return beatGridsPageComponent;
         case "artwork": return coverArtPageComponent;
         case "playlists": return playlistSyncPageComponent;
         case "noplaylist": return noPlaylistTracksPageComponent;
@@ -863,6 +862,14 @@ ApplicationWindow {
                 enginePath: enginePath,
                 hubLabel: "Sync after Rekordbox Export",
             })
+        }
+    }
+
+    Component {
+        id: beatGridsWaveformsPageComponent
+        BeatGridsWaveformsPage {
+            playbackController: playbackCtrl
+            appSettingsController: appSettingsCtrl
         }
     }
 

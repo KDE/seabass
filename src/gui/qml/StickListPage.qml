@@ -461,6 +461,8 @@ Page {
     // The stick card's "Engine needs syncing" badge: Sync after Rekordbox
     // Export for this stick.
     signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // Sync's Beat Grids & Waveforms card.
+    signal beatGridsWaveformsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal appSettingsRequested()
     signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal aboutRequested()
@@ -791,6 +793,8 @@ Page {
                                 root.syncRequested(stickLabel, rekordboxPath, enginePath)
                             onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.rekordboxExportSyncRequested(stickLabel, rekordboxPath, enginePath)
+                            onBeatGridsWaveformsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.beatGridsWaveformsRequested(stickLabel, rekordboxPath, enginePath)
                             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.fullStickBackupRequested(stickLabel, rekordboxPath, enginePath)
                             onManageBackupsRequested: (stickLabel, currentArchivePath) =>

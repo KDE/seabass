@@ -249,6 +249,28 @@ using AnalysisSource = std::function<RekordboxAnalysis(const BeatGridCopyItem &)
 // has not analysed). May be empty.
 using AnalysisFileFactsSource = std::function<AnalysisFileFacts(const BeatGridCopyItem &)>;
 
+// The writer's options for one item of a run with `options`: the ledger's
+// fingerprint for it handed on, so a grid Seabass wrote before is not
+// taken for the DJ's edit on the player.
+AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
+                                               const std::map<std::string, std::string> &ledger,
+                                               const AnalysisCopyOptions &options);
+
+// One item through the writer, as copyRekordboxAnalysis() takes each: with
+// the options above, and once more with the file's rate and kind when the
+// writer found no length for a row the player has not analysed. What it
+// returned, and the options it returned that with, so a later call (a
+// save after a preview) can make the same one. Throws what the writer or
+// `fileFacts` throws.
+struct AnalysisItemOutcome
+{
+    AnalysisImportResult result;
+    AnalysisImportOptions options;
+};
+AnalysisItemOutcome importAnalysisItem(const BeatGridCopyItem &item, const RekordboxAnalysis &analysis,
+                                       AnalysisWriter &writer, const std::map<std::string, std::string> &ledger,
+                                       const AnalysisCopyOptions &options, const AnalysisFileFactsSource &fileFacts);
+
 // copyBeatGrids() for the whole analysis: each item through
 // AnalysisWriter::importAnalysis(), in order, with the ledger as there and
 // the same handling of failures, cancelling and progress ("Copying

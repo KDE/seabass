@@ -8,25 +8,41 @@
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "application/ports/analysis_writer.hpp"
 #include "application/use_cases/copy_beat_grids.hpp"
-#include "domain/beat_grid.hpp"
 #include "gui/async_request.hpp"
+
+namespace seabass::infrastructure::rekordbox
+{
+class AnlzPathIndex;
+}
 
 namespace seabass::gui
 {
 
+class AnalysisSaveTally;
 class LibraryEditSession;
 
-// The tracks a copy would write, title and artist, in plan order.
+// The tracks of the playlist the Beat Grids & Waveforms page shows, in the
+// playlist's order: what rekordbox says of each (title, artist, tempo,
+// key, cover), whether it is ticked, and what copying would do to it, as
+// the preview last worked it out. Rows whose preview has not arrived say
+// so (pending) and carry no state.
 class BeatGridTrackListModel : public QAbstractListModel
 {
     Q_OBJECT
@@ -34,19 +50,66 @@ class BeatGridTrackListModel : public QAbstractListModel
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
 
 public:
-    enum Roles { TitleRole = Qt::UserRole + 1, ArtistRole };
+    enum Roles {
+        RekordboxIdRole = Qt::UserRole + 1,
+        TitleRole,
+        ArtistRole,
+        BpmRole,
+        KeyNameRole,
+        ArtworkUrlRole,
+        FallbackArtworkUrlRole,
+        MatchedRole,
+        TickedRole,
+        PendingRole,
+        GridStateRole,
+        GridToneRole,
+        GridTipRole,
+        WaveformStateRole,
+        WaveformToneRole,
+        WaveformTipRole,
+        NoteRole,
+        NoteToneRole,
+    };
+
+    struct Row
+    {
+        QString rekordboxId;
+        QString title;
+        QString artist;
+        double bpm = 0.0;
+        QString keyName;
+        QString artworkUrl;
+        QString fallbackArtworkUrl;
+        // In the Engine library, as one row for one rekordbox track: only
+        // such a track can be ticked.
+        bool matched = false;
+        // Below: refreshed by the controller from its ticks and states.
+        bool ticked = false;
+        bool pending = false;
+        QString gridState;
+        QString gridTone;
+        QString gridTip;
+        QString waveformState;
+        QString waveformTone;
+        QString waveformTip;
+        QString note;
+        QString noteTone;
+    };
 
     using QAbstractListModel::QAbstractListModel;
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    struct Row
-    {
-        QString title;
-        QString artist;
-    };
     void setRows(std::vector<Row> rows);
+    // Every row through `update`; the rows it changed are announced.
+    void refresh(const std::function<void(Row &)> &update);
+    const std::vector<Row> &rows() const { return m_rows; }
+
+    // For tests and the page: a row as the delegate sees it, by index or by
+    // its rekordbox id ({} for none).
+    Q_INVOKABLE QVariantMap get(int index) const;
+    Q_INVOKABLE int indexOf(const QString &rekordboxId) const;
 
 signals:
     void countChanged();
@@ -55,140 +118,313 @@ private:
     std::vector<Row> m_rows;
 };
 
-// What one analysis found: Copy Beat Grids planned for this stick and run
-// as a preview (application::BeatGridCopyOptions::previewOnly), so every
-// count is what a copy would do now, and nothing was written.
-struct BeatGridAnalysis
+// What the page's worker reads once per stick: both catalogs, the tracks
+// they share (planBeatGridCopy), rekordbox's playlists, and what keeps a
+// copy from being offered at all.
+struct BeatGridLibrary
 {
-    bool cancelled = false;
     QString error;
-    // Engine 1.x, whose grids Seabass does not write. Nothing else is
-    // counted then.
+    bool cancelled = false;
+    // Engine 1.x, whose analysis Seabass does not write.
     bool engineTooOld = false;
-    // The ledger on the stick could not be read; what is wrong with it.
+    bool stickReadOnly = false;
     QString ledgerError;
     std::string stickRoot;
+    QString rekordboxPath;
     QString enginePath;
-    bool overwriteEngineEdits = false;
-    int matched = 0;
-    application::BeatGridCopyResult preview;
-    // For each row in preview.wouldWriteItems, by Engine id: the beats the
-    // preview read, and what the ledger said for it.
-    std::map<std::string, std::vector<domain::Beat>> beats;
-    std::map<std::string, std::string> ownFingerprints;
+
+    struct Track
+    {
+        std::string rekordboxId;
+        std::string title;
+        std::string artist;
+        double bpm = 0.0;
+        std::string key;
+        QString artworkUrl;
+        QString fallbackArtworkUrl;
+        // Into plan.items, -1 for a track with no Engine row of its own.
+        int item = -1;
+    };
+    // rekordbox's tracks in the catalog's order: "All tracks".
+    std::vector<Track> tracks;
+    std::map<std::string, std::size_t> trackIndex;
+    application::BeatGridCopyPlan plan;
+    // Each playlist (its full path, "Folder/List") with its tracks' ids in
+    // the playlist's order, by name.
+    std::map<std::string, std::vector<std::string>> playlists;
+    QVariantMap playlistThumbnails;
+    std::shared_ptr<const infrastructure::rekordbox::AnlzPathIndex> anlzIndex;
 };
 
-// The Beat Grids page (Library Health): runs the plan and a preview of
-// Copy Beat Grids off the UI thread, shows what a copy would do in
-// counts, and stages one CopyBeatGridChange per track it would write into
-// the library's edit session, which Save writes like every other Library
-// Health fix.
+// What one track's preview found: importAnalysis() with previewOnly, the
+// options it ran with, and rekordbox's analysis it read (kept only where
+// something would be written, for the change that writes it).
+struct BeatGridTrackState
+{
+    bool failed = false;
+    QString failure;
+    application::AnalysisImportResult result;
+    application::AnalysisImportOptions options;
+    std::optional<application::RekordboxAnalysis> analysis;
+
+    bool wouldWrite() const;
+};
+
+// The Beat Grids & Waveforms page (Sync): rekordbox's beat grids and
+// waveforms copied into the stick's Engine library for the playlists and
+// tracks the user ticks.
 //
-// The counts are a preview's and are named for what they are
-// (wouldCopyCount, never "written"): what a save did is said by the save
-// itself, from the changes that landed. Re-analysed after every save and
-// undo, so a copy that landed shows as "already the same".
+// Loads both catalogs once, off the UI thread, and plans which rekordbox
+// track is which Engine row. What copying would do to a track is worked
+// out by a preview (importAnalysis with previewOnly: every check, nothing
+// written), only for the tracks of the playlist shown and the ticked ones,
+// in batches off the UI thread: one progress bar while a batch runs, a
+// newer batch cancelling an older one, and every row a batch finished kept
+// even when it was cancelled. A track's state is kept until the options
+// change or a save lands.
+//
+// Ticks are by rekordbox track, so a tick survives switching playlists and
+// a track in two playlists is ticked in both. Nothing is ticked at first.
+//
+// The counts are a preview's and are named for what they are (gridsToCopy,
+// never "copied"): what a save did is counted from the changes that landed
+// (lastSave*).
 class BeatGridsController : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
-    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
-    Q_PROPERTY(bool scanCancellable READ busy NOTIFY busyChanged)
-    Q_PROPERTY(int scanCurrent READ scanCurrent NOTIFY scanProgressChanged)
-    Q_PROPERTY(int scanTotal READ scanTotal NOTIFY scanProgressChanged)
-    Q_PROPERTY(QString scanLabel READ scanLabel NOTIFY scanProgressChanged)
+    // Reading the libraries: the page's busy overlay.
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(int loadCurrent READ loadCurrent NOTIFY loadProgressChanged)
+    Q_PROPERTY(int loadTotal READ loadTotal NOTIFY loadProgressChanged)
+    Q_PROPERTY(QString loadLabel READ loadLabel NOTIFY loadProgressChanged)
+    Q_PROPERTY(bool loaded READ loaded NOTIFY libraryChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
-    // An analysis has landed and its counts are current.
-    Q_PROPERTY(bool analysed READ analysed NOTIFY resultChanged)
-    Q_PROPERTY(bool engineTooOld READ engineTooOld NOTIFY resultChanged)
-    Q_PROPERTY(QString ledgerWarning READ ledgerWarning NOTIFY resultChanged)
-    // Tracks in both libraries with one rekordbox track for one Engine row.
-    Q_PROPERTY(int matchedCount READ matchedCount NOTIFY resultChanged)
-    // The preview's buckets. wouldCopyCount is what a copy WOULD write.
-    Q_PROPERTY(int wouldCopyCount READ wouldCopyCount NOTIFY resultChanged)
-    Q_PROPERTY(int alreadySameCount READ alreadySameCount NOTIFY resultChanged)
-    Q_PROPERTY(int notAnalysedCount READ notAnalysedCount NOTIFY resultChanged)
-    Q_PROPERTY(int lockedCount READ lockedCount NOTIFY resultChanged)
-    Q_PROPERTY(int editedCount READ editedCount NOTIFY resultChanged)
-    Q_PROPERTY(int noRekordboxGridCount READ noRekordboxGridCount NOTIFY resultChanged)
-    // Rows the preview could not check (the row or its grid did not read).
-    Q_PROPERTY(int unreadableCount READ unreadableCount NOTIFY resultChanged)
+    Q_PROPERTY(bool engineTooOld READ engineTooOld NOTIFY libraryChanged)
+    Q_PROPERTY(bool stickReadOnly READ stickReadOnly NOTIFY libraryChanged)
+    Q_PROPERTY(QString ledgerWarning READ ledgerWarning NOTIFY ledgerWarningChanged)
+    // What PlaylistListView reads of a controller.
+    Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY libraryChanged)
+    Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY libraryChanged)
+    Q_PROPERTY(QVariantMap playlistThumbnails READ playlistThumbnails NOTIFY libraryChanged)
+    Q_PROPERTY(int totalTrackCount READ totalTrackCount NOTIFY libraryChanged)
+    Q_PROPERTY(int matchedCount READ matchedCount NOTIFY libraryChanged)
+    // The playlist whose tracks are listed; "" for every track.
+    Q_PROPERTY(QString shownPlaylist READ shownPlaylist WRITE setShownPlaylist NOTIFY shownPlaylistChanged)
     Q_PROPERTY(QAbstractListModel *tracks READ tracks CONSTANT)
-    // Also write over grids locked or moved on the player. Setting it runs
-    // the analysis again with it.
-    Q_PROPERTY(bool replaceEngineEdits READ replaceEngineEdits WRITE setReplaceEngineEdits NOTIFY
-                   replaceEngineEditsChanged)
-    // How many copies are staged and not saved yet.
+
+    // What to copy, and whether over a grid set on the player. Both parts
+    // on by default; the last off.
+    Q_PROPERTY(bool grids READ grids WRITE setGrids NOTIFY optionsChanged)
+    Q_PROPERTY(bool waveforms READ waveforms WRITE setWaveforms NOTIFY optionsChanged)
+    Q_PROPERTY(bool replaceEngineEdits READ replaceEngineEdits WRITE setReplaceEngineEdits NOTIFY optionsChanged)
+
+    // Moves whenever a tick does, for bindings that ask playlistCheckState().
+    Q_PROPERTY(int tickRevision READ tickRevision NOTIFY ticksChanged)
+
+    // A preview batch: the page's one inline progress bar.
+    Q_PROPERTY(bool previewBusy READ previewBusy NOTIFY previewBusyChanged)
+    Q_PROPERTY(int previewCurrent READ previewCurrent NOTIFY previewProgressChanged)
+    Q_PROPERTY(int previewTotal READ previewTotal NOTIFY previewProgressChanged)
+
+    // What the ticked tracks would get, from their previews.
+    Q_PROPERTY(int tickedCount READ tickedCount NOTIFY summaryChanged)
+    Q_PROPERTY(int tickedPendingCount READ tickedPendingCount NOTIFY summaryChanged)
+    Q_PROPERTY(int gridsToCopy READ gridsToCopy NOTIFY summaryChanged)
+    Q_PROPERTY(int waveformsToCopy READ waveformsToCopy NOTIFY summaryChanged)
+    Q_PROPERTY(int tracksToComplete READ tracksToComplete NOTIFY summaryChanged)
+    Q_PROPERTY(int tracksToWrite READ tracksToWrite NOTIFY summaryChanged)
+    Q_PROPERTY(int leftAloneCount READ leftAloneCount NOTIFY summaryChanged)
+    // [{reason, count}], the largest group first.
+    Q_PROPERTY(QVariantList leftAlone READ leftAlone NOTIFY summaryChanged)
+    Q_PROPERTY(QString summaryText READ summaryText NOTIFY summaryChanged)
+    Q_PROPERTY(QString leftAloneText READ leftAloneText NOTIFY summaryChanged)
+    Q_PROPERTY(bool canStage READ canStage NOTIFY summaryChanged)
+
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY stagedChanged)
     Q_PROPERTY(bool writing READ writing NOTIFY writingChanged)
+
+    // The last save, counted from the changes that landed.
+    Q_PROPERTY(int lastSaveGrids READ lastSaveGrids NOTIFY lastSaveChanged)
+    Q_PROPERTY(int lastSaveWaveforms READ lastSaveWaveforms NOTIFY lastSaveChanged)
+    Q_PROPERTY(int lastSaveCompleted READ lastSaveCompleted NOTIFY lastSaveChanged)
+    Q_PROPERTY(int lastSaveTracks READ lastSaveTracks NOTIFY lastSaveChanged)
+    Q_PROPERTY(QString lastSaveText READ lastSaveText NOTIFY lastSaveChanged)
 
 public:
     explicit BeatGridsController(QObject *parent = nullptr);
     ~BeatGridsController() override;
 
-    bool busy() const { return m_scan.busy(); }
-    int scanCurrent() const { return m_scanCurrent; }
-    int scanTotal() const { return m_scanTotal; }
-    QString scanLabel() const { return m_scanLabel; }
+    bool loading() const { return m_load.busy(); }
+    int loadCurrent() const { return m_loadCurrent; }
+    int loadTotal() const { return m_loadTotal; }
+    QString loadLabel() const { return m_loadLabel; }
+    bool loaded() const { return m_library != nullptr; }
     QString errorMessage() const { return m_errorMessage; }
-    bool analysed() const { return m_result.has_value(); }
-    bool engineTooOld() const { return m_result && m_result->engineTooOld; }
+    bool engineTooOld() const { return m_library && m_library->engineTooOld; }
+    bool stickReadOnly() const { return m_library && m_library->stickReadOnly; }
     QString ledgerWarning() const;
-    int matchedCount() const { return m_result ? m_result->matched : 0; }
-    int wouldCopyCount() const { return m_result ? m_result->preview.wouldWrite : 0; }
-    int alreadySameCount() const { return m_result ? m_result->preview.alreadySame : 0; }
-    int notAnalysedCount() const { return m_result ? m_result->preview.notAnalysed : 0; }
-    int lockedCount() const { return m_result ? m_result->preview.lockedOnEngine : 0; }
-    int editedCount() const { return m_result ? m_result->preview.editedOnEngine : 0; }
-    int noRekordboxGridCount() const { return m_result ? m_result->preview.noRekordboxGrid : 0; }
-    int unreadableCount() const { return m_result ? m_result->preview.failed : 0; }
+    QStringList playlistNames() const { return m_playlistNames; }
+    QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
+    QVariantMap playlistThumbnails() const;
+    int totalTrackCount() const { return m_library ? static_cast<int>(m_library->tracks.size()) : 0; }
+    int matchedCount() const { return m_library ? static_cast<int>(m_library->plan.items.size()) : 0; }
+    QString shownPlaylist() const { return m_shownPlaylist; }
+    void setShownPlaylist(const QString &name);
     QAbstractListModel *tracks() { return &m_tracks; }
-    bool replaceEngineEdits() const { return m_replaceEngineEdits; }
-    void setReplaceEngineEdits(bool replace);
+    bool grids() const { return m_options.grids; }
+    void setGrids(bool on);
+    bool waveforms() const { return m_options.waveforms; }
+    void setWaveforms(bool on);
+    bool replaceEngineEdits() const { return m_options.overwriteEngineEdits; }
+    void setReplaceEngineEdits(bool on);
+    int tickRevision() const { return m_tickRevision; }
+    bool previewBusy() const { return m_preview.busy(); }
+    int previewCurrent() const { return m_previewCurrent; }
+    int previewTotal() const { return m_previewTotal; }
+
+    int tickedCount() const { return static_cast<int>(m_ticked.size()); }
+    int tickedPendingCount() const { return m_summary.pending; }
+    int gridsToCopy() const { return m_summary.grids; }
+    int waveformsToCopy() const { return m_summary.waveforms; }
+    int tracksToComplete() const { return m_summary.completed; }
+    int tracksToWrite() const { return m_summary.rows; }
+    int leftAloneCount() const { return m_summary.leftAlone; }
+    QVariantList leftAlone() const { return m_summary.groups; }
+    QString summaryText() const { return m_summary.text; }
+    QString leftAloneText() const { return m_summary.leftAloneText; }
+    bool canStage() const;
     int stagedCount() const { return static_cast<int>(m_stagedIds.size()); }
     bool writing() const;
+    int lastSaveGrids() const { return m_lastSave.grids; }
+    int lastSaveWaveforms() const { return m_lastSave.waveforms; }
+    int lastSaveCompleted() const { return m_lastSave.completed; }
+    int lastSaveTracks() const { return m_lastSave.tracks; }
+    QString lastSaveText() const { return m_lastSave.text; }
 
-    // Plans and previews the copy for the stick holding these two
-    // catalogs. A request for the same paths while one runs is served by
-    // it.
-    Q_INVOKABLE void analyze(const QString &rekordboxPath, const QString &enginePath);
-    Q_INVOKABLE void cancelScan();
-    // Stages a copy of every grid the last analysis would write. Refused
-    // while an analysis runs, or with nothing to write.
+    // Reads the stick holding these two catalogs. A request for the same
+    // paths while one runs is served by it.
+    Q_INVOKABLE void load(const QString &rekordboxPath, const QString &enginePath);
+    Q_INVOKABLE void cancelLoad();
+
+    // PlaylistListView asks for a playlist's hover summary; this page
+    // shows none.
+    Q_INVOKABLE QVariantMap playlistSummary(const QString &) const { return {}; }
+
+    Q_INVOKABLE bool isTicked(const QString &rekordboxId) const { return m_ticked.contains(rekordboxId); }
+    Q_INVOKABLE void setTicked(const QString &rekordboxId, bool ticked);
+    // Every track of a playlist ("" for every track) that can be ticked.
+    Q_INVOKABLE void setPlaylistTicked(const QString &name, bool ticked);
+    // Qt::Unchecked, Qt::PartiallyChecked or Qt::Checked over the tracks of
+    // a playlist ("" for all) that can be ticked; Unchecked for one with
+    // none.
+    Q_INVOKABLE int playlistCheckState(const QString &name) const;
+    // How many of a playlist's tracks can be ticked.
+    Q_INVOKABLE int tickablePlaylistTracks(const QString &name) const;
+
+    // One change per ticked track that would change, into the library's
+    // edit session, which Save writes. Refused unless canStage.
     Q_INVOKABLE void stage();
     Q_INVOKABLE void unstage();
 
 signals:
-    void busyChanged();
-    void scanProgressChanged();
+    void loadingChanged();
+    void loadProgressChanged();
+    void libraryChanged();
+    void loadCancelled();
     void errorMessageChanged();
-    void resultChanged();
-    void replaceEngineEditsChanged();
+    void ledgerWarningChanged();
+    void shownPlaylistChanged();
+    void optionsChanged();
+    void ticksChanged();
+    void previewBusyChanged();
+    void previewProgressChanged();
+    void summaryChanged();
     void stagedChanged();
     void writingChanged();
-    void scanCancelled();
+    void lastSaveChanged();
+    // A save of this page's changes finished; `whole` when every change
+    // landed and nothing went wrong. The page's toast says lastSaveText.
+    void saveCounted(bool whole);
 
 private:
-    void start(bool restart);
+    struct Summary
+    {
+        int pending = 0;
+        int grids = 0;
+        int waveforms = 0;
+        int completed = 0;
+        int rows = 0;
+        int leftAlone = 0;
+        QVariantList groups;
+        QString text;
+        QString leftAloneText;
+    };
+    struct LastSave
+    {
+        int grids = 0;
+        int waveforms = 0;
+        int completed = 0;
+        int tracks = 0;
+        QString text;
+    };
+
+    void startLoad();
+    void adoptLibrary(std::shared_ptr<BeatGridLibrary> library);
+    void rebuildRows();
+    void refreshRows();
+    void schedulePreview();
+    void runPreview();
+    void takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows,
+                         const QString &ledgerError);
+    void invalidateStates();
+    void recount();
+    void ticksMoved();
     void attachSession();
-    void setErrorMessage(const QString &message);
-    void setScanProgress(int current, int total);
     void clearStaged();
+    void onSaveFinished(const QVariantMap &summary);
+    void setErrorMessage(const QString &message);
+    void setLoadProgress(int current, int total);
+    void setPreviewProgress(int current, int total);
+    // The rekordbox ids of a playlist ("" for every track) that can be ticked.
+    std::vector<std::string> tickableIn(const QString &name) const;
+    const std::vector<std::string> *playlistIds(const QString &name) const;
+    void describe(BeatGridTrackListModel::Row &row) const;
 
     QString m_rekordboxPath;
     QString m_enginePath;
-    bool m_replaceEngineEdits = false;
-    int m_scanCurrent = 0;
-    int m_scanTotal = 0;
-    QString m_scanLabel;
+    int m_loadCurrent = 0;
+    int m_loadTotal = 0;
+    QString m_loadLabel;
     QString m_errorMessage;
-    std::optional<BeatGridAnalysis> m_result;
+    QString m_ledgerError;
+    std::shared_ptr<const BeatGridLibrary> m_library;
+    QStringList m_playlistNames;
+    QVariantMap m_playlistTrackCounts;
+    QString m_shownPlaylist;
     BeatGridTrackListModel m_tracks;
+    application::AnalysisCopyOptions m_options;
+    QSet<QString> m_ticked;
+    int m_tickRevision = 0;
+    // Bumped when the options change or a save lands: a state worked out
+    // before belongs to another generation and is dropped on arrival.
+    std::uint64_t m_generation = 1;
+    std::map<std::string, BeatGridTrackState> m_states;
+    bool m_previewScheduled = false;
+    int m_previewCurrent = 0;
+    int m_previewTotal = 0;
+    Summary m_summary;
     QStringList m_stagedIds;
+    std::shared_ptr<AnalysisSaveTally> m_tally;
+    QStringList m_appliedThisSave;
+    LastSave m_lastSave;
     QPointer<LibraryEditSession> m_session;
+    // Where preview workers hand their rows (PreviewSink in the .cpp).
+    std::shared_ptr<QObject> m_previewSink;
 
-    // Last, so it is destroyed first: its destructor cancels the analysis.
-    AsyncRequest<std::shared_ptr<BeatGridAnalysis>> m_scan{this, [this]() { emit busyChanged(); }};
+    // Last, so they are destroyed first: their destructors cancel the work.
+    AsyncRequest<std::shared_ptr<BeatGridLibrary>> m_load{this, [this]() { emit loadingChanged(); }};
+    AsyncRequest<QString> m_preview{this, [this]() { emit previewBusyChanged(); }};
 };
 
 }  // namespace seabass::gui

@@ -260,6 +260,45 @@ void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform wa
 
 }  // namespace
 
+AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
+                                               const std::map<std::string, std::string> &ledger,
+                                               const AnalysisCopyOptions &options)
+{
+    AnalysisImportOptions write;
+    write.grids = options.grids;
+    write.waveforms = options.waveforms;
+    write.overwriteEngineEdits = options.overwriteEngineEdits;
+    write.previewOnly = options.previewOnly;
+    write.skipOverviewFile = options.skipOverviewFile;
+    write.zeroLoudness = options.zeroLoudness;
+    if (!item.ledgerKey.empty()) {
+        if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
+            write.ownGridFingerprint = own->second;
+        }
+    }
+    return write;
+}
+
+AnalysisItemOutcome importAnalysisItem(const BeatGridCopyItem &item, const RekordboxAnalysis &analysis,
+                                       AnalysisWriter &writer, const std::map<std::string, std::string> &ledger,
+                                       const AnalysisCopyOptions &options, const AnalysisFileFactsSource &fileFacts)
+{
+    AnalysisItemOutcome out;
+    out.options = analysisImportOptionsFor(item, ledger, options);
+    out.result = writer.importAnalysis(item.engineTrackId, analysis, out.options);
+    // The file's rate only when the row needs it: finding it can mean
+    // reading the file.
+    if (out.result.waveform == AnalysisImportResult::Waveform::NoSampleCount && fileFacts) {
+        const AnalysisFileFacts facts = fileFacts(item);
+        if (facts.sampleRateHz) {
+            out.options.fileSampleRateHz = facts.sampleRateHz;
+            out.options.fileIsMp3 = facts.isMp3;
+            out.result = writer.importAnalysis(item.engineTrackId, analysis, out.options);
+        }
+    }
+    return out;
+}
+
 AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const AnalysisSource &source,
                                          AnalysisWriter &writer, const std::map<std::string, std::string> &ledger,
                                          const AnalysisCopyOptions &options, const AnalysisFileFactsSource &fileFacts,
@@ -281,29 +320,8 @@ AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const Ana
         }
         try {
             const RekordboxAnalysis analysis = source(item);
-            AnalysisImportOptions write;
-            write.grids = options.grids;
-            write.waveforms = options.waveforms;
-            write.overwriteEngineEdits = options.overwriteEngineEdits;
-            write.previewOnly = options.previewOnly;
-            write.skipOverviewFile = options.skipOverviewFile;
-            write.zeroLoudness = options.zeroLoudness;
-            if (!item.ledgerKey.empty()) {
-                if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
-                    write.ownGridFingerprint = own->second;
-                }
-            }
-            AnalysisImportResult imported = writer.importAnalysis(item.engineTrackId, analysis, write);
-            // The file's rate only when the row needs it: finding it can
-            // mean reading the file.
-            if (imported.waveform == Waveform::NoSampleCount && fileFacts) {
-                const AnalysisFileFacts facts = fileFacts(item);
-                if (facts.sampleRateHz) {
-                    write.fileSampleRateHz = facts.sampleRateHz;
-                    write.fileIsMp3 = facts.isMp3;
-                    imported = writer.importAnalysis(item.engineTrackId, analysis, write);
-                }
-            }
+            const AnalysisItemOutcome outcome = importAnalysisItem(item, analysis, writer, ledger, options, fileFacts);
+            const AnalysisImportResult &imported = outcome.result;
             countGrid(result.grids, imported.grid, item, options.previewOnly);
             countWaveform(result.waveforms, imported.waveform, options.previewOnly);
             if (imported.grid.outcome == Outcome::Written || imported.waveform == Waveform::Written) {

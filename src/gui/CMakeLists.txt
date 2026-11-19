@@ -155,7 +155,7 @@ set(SEABASS_GUI_QML_FILES
     qml/CuesAtZeroPage.qml
     qml/ImportPromptPage.qml
     qml/SampleRatesPage.qml
-    qml/BeatGridsPage.qml
+    qml/BeatGridsWaveformsPage.qml
     qml/PlaylistSyncPage.qml
     qml/NoPlaylistTracksPage.qml
     qml/CueTablePage.qml
@@ -393,6 +393,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/speedometer.svg
     qml/icons/breeze/view-list-details.svg
     qml/icons/breeze/view-media-equalizer.svg
+    qml/icons/breeze/view-media-visualization.svg
     qml/icons/breeze/view-media-track.svg
     qml/icons/breeze/vcs-diff.svg
     qml/icons/breeze/view-refresh.svg

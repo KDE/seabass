@@ -48,6 +48,15 @@ Rectangle {
     property bool showsThumbnail: false
     property string thumbnailSource: ""
     signal picked()
+    // A tick box before the name, where the host picks playlists to act
+    // on (Beat Grids & Waveforms): checkState is the host's (Qt.Unchecked,
+    // Qt.PartiallyChecked, Qt.Checked), and a click asks for the whole
+    // playlist ticked, or for none of it once all of it is.
+    property bool checkable: false
+    property int checkState: Qt.Unchecked
+    property bool checkEnabled: true
+    property string checkTooltip: ""
+    signal checkToggled(bool checked)
     // Right click, or a long press on touch: Browse offers its playlist
     // menu here. The Matching page's combo ignores it.
     signal contextRequested()
@@ -99,6 +108,29 @@ Rectangle {
         // this the bar sat on top of the numbers.
         anchors.rightMargin: 8 + Theme.scaled(10)
         spacing: 6
+        SeabassCheckBox {
+            id: rowCheck
+            objectName: "playlistRowCheck"
+            visible: root.checkable
+            Layout.alignment: Qt.AlignVCenter
+            // Every side, not `padding`: a style that sets a side itself
+            // (FluentWinUI3 does) wins over it.
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: 0
+            bottomPadding: 0
+            enabled: root.checkEnabled
+            checkState: root.checkState
+            ToolTip.visible: hovered && root.checkTooltip.length > 0
+            ToolTip.delay: 400
+            ToolTip.text: root.checkTooltip
+            onClicked: {
+                // The host's state decides; the click only asks.
+                const wanted = root.checkState !== Qt.Checked;
+                rowCheck.checkState = Qt.binding(() => root.checkState);
+                root.checkToggled(wanted);
+            }
+        }
         PlaylistThumbnail {
             objectName: "playlistThumbnailTile"
             visible: root.showsThumbnail

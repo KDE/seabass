@@ -161,7 +161,6 @@ TestCase {
             {card: "noPlaylistCard", section: "noplaylist"},
             {card: "movedFilesCard", section: "movedfiles"},
             {card: "cueTableCard", section: "cuetables"},
-            {card: "beatGridsCard", section: "beatgrids"},
         ];
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);
@@ -204,43 +203,6 @@ TestCase {
         }
         compare(cards, expected.length + 2, "every card on the page was pressed");
         compare(detailSpy.count, expected.length, "and all but the two without a page asked for one");
-    }
-
-    // Copy Beat Grids goes from a rekordbox export to an Engine library on
-    // the same stick: its card is there only when the stick has both.
-    Component {
-        id: engineOnlyPageComponent
-        LibraryHealthHubPage {
-            playbackController: realPlayback
-            stickLabel: "TESTSTICK"
-            rekordboxPath: ""
-            enginePath: "/nonexistent/TESTSTICK/Engine Library"
-        }
-    }
-    Component {
-        id: rekordboxOnlyPageComponent
-        LibraryHealthHubPage {
-            playbackController: realPlayback
-            stickLabel: "TESTSTICK"
-            rekordboxPath: "/nonexistent/TESTSTICK/PIONEER"
-            enginePath: ""
-        }
-    }
-    function test_theBeatGridsCardNeedsBothLibraries() {
-        const both = createTemporaryObject(pageComponent, testCase);
-        tryCompare(both.consistencyController, "busy", false);
-        const card = findByObjectName(both, "beatGridsCard");
-        verify(card !== null, "the hub has a beat grids card");
-        compare(card.visible, true, "shown on a stick with both libraries");
-        compare(card.actionLabel, "Review beat grids");
-        compare(card.hasTally, false, "an offer, not a finding: no tally");
-        for (const only of [engineOnlyPageComponent, rekordboxOnlyPageComponent]) {
-            const page = createTemporaryObject(only, testCase);
-            tryCompare(page.consistencyController, "busy", false);
-            const hidden = findByObjectName(page, "beatGridsCard");
-            verify(hidden !== null);
-            compare(hidden.visible, false, "not shown with one library: " + page.rekordboxPath + page.enginePath);
-        }
     }
 
     function test_aCleanCheckStillGetsACard() {

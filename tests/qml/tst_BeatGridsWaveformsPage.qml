@@ -1,0 +1,550 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+import QtQuick
+import QtQuick.Controls
+import QtTest
+import SeabassGui
+
+// Sync's Beat Grids & Waveforms page with the real controller, on scratch
+// copies of two fixtures:
+//
+// - TESTSHARK after the Prime Go+ (tests/fixtures/testshark_t73,
+//   m-after-R1b.db, put together as tests/assemble_t73_stick.cmake does):
+//   11 tracks in both libraries, 5 analysed by a player (B04, B11, N1, N2,
+//   N3), 6 not; rekordbox has a grid and a colour waveform for every one,
+//   and the audio heads give each file's rate, so the 6 can be completed.
+//   Playlists "T73 Renamed" (B01 to B04, B12), "T73 Order" (B07, B11, B12,
+//   B08) and "T73 Folder/T73 New" (N1 to N3): B12 is in two. The numbers
+//   are the command line's cli_copy_analysis_* tests' on the same stick.
+// - the anonymized library: 1161 tracks in both, 188 analysed, no
+//   three-band or colour waveform in its export.
+//
+// Ids below are rekordbox's (the page ticks rekordbox tracks).
+TestCase {
+    id: testCase
+    name: "BeatGridsWaveformsPage"
+    width: 1100
+    height: 820
+    visible: true
+    when: windowShown
+
+    // rekordbox ids on the TESTSHARK stick.
+    readonly property string b01: "9"     // not analysed
+    readonly property string b02: "10"    // not analysed
+    readonly property string b04: "12"    // analysed
+    readonly property string b07: "1"     // not analysed
+    readonly property string b12: "6"     // not analysed, in two playlists
+    readonly property string n1: "13"     // analysed
+
+    function fixture(name) {
+        const url = Qt.resolvedUrl("../fixtures/" + name).toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+    function t73() {
+        const stick = stickFixture.t73StickCopy(fixture("testshark_t73"), "m-after-R1b.db");
+        verify(stick.length > 0, "the TESTSHARK stick must assemble");
+        return stick;
+    }
+
+    Component {
+        id: pageComponent
+        BeatGridsWaveformsPage {
+            width: 1080
+            height: 800
+            stickLabel: "TESTSHARK"
+        }
+    }
+
+    function init() {
+        failOnWarning(/TypeError/);
+        failOnWarning(/ReferenceError/);
+        failOnWarning(/Cannot read property/);
+        failOnWarning(/Unable to assign/);
+    }
+
+    function cleanup() {
+        EditSessionRegistry.discardAll();
+    }
+
+    // A page on a stick copy, with no session left over from an earlier
+    // test (one filesystem, one library id for every copy).
+    function openOn(stick, properties) {
+        const libraryId = EditSessionRegistry.libraryIdForPath(stick + "/PIONEER");
+        verify(libraryId.length > 0);
+        if (EditSessionRegistry.hasSession(libraryId)) {
+            EditSessionRegistry.closeSession(libraryId);
+        }
+        const page = createTemporaryObject(pageComponent, testCase, Object.assign({
+            rekordboxPath: stick + "/PIONEER",
+            enginePath: stick + "/Engine Library",
+        }, properties || {}));
+        verify(page !== null, "the page must instantiate");
+        tryVerify(() => page.controller.loaded && !page.controller.loading, 120000, "the libraries are read");
+        compare(page.controller.errorMessage, "");
+        return {page: page, c: page.controller, libraryId: libraryId};
+    }
+
+    // Every row shown and every ticked track has its state.
+    function settled(c) {
+        if (c.loading || c.previewBusy || c.tickedPendingCount > 0) {
+            return false;
+        }
+        for (let i = 0; i < c.tracks.count; ++i) {
+            if (c.tracks.get(i).pending) {
+                return false;
+            }
+        }
+        return true;
+    }
+    function waitSettled(c, why) {
+        tryVerify(() => settled(c), 120000, (why || "every state is worked out") + " " + JSON.stringify({
+            loading: c.loading, previewBusy: c.previewBusy, pending: c.tickedPendingCount,
+            error: c.errorMessage, first: c.tracks.count > 0 ? c.tracks.get(0) : null}));
+    }
+
+    function row(c, id) {
+        const i = c.tracks.indexOf(id);
+        verify(i >= 0, "track " + id + " is listed");
+        return c.tracks.get(i);
+    }
+
+    // A playlist's row in the list ("All tracks" for ""), and its box.
+    function playlistRow(page, name) {
+        const list = findChild(page, "playlistList");
+        verify(list !== null);
+        const wanted = name.length === 0 ? "All tracks" : name;
+        for (let i = 0; i < list.contentItem.children.length; ++i) {
+            const item = list.contentItem.children[i];
+            if (item.name === wanted) {
+                return item;
+            }
+        }
+        fail("no playlist row " + wanted);
+        return null;
+    }
+    function clickPlaylistBox(page, name) {
+        const box = findChild(playlistRow(page, name), "playlistRowCheck");
+        verify(box !== null && box.visible, "the playlist row has a box");
+        mouseClick(box);
+    }
+    function showPlaylist(page, name) {
+        mouseClick(findChild(playlistRow(page, name), "playlistRowName"));
+        compare(page.controller.shownPlaylist, name);
+    }
+    // A track's row delegate, built because it is in view.
+    function trackDelegate(page, id) {
+        const list = findChild(page, "trackList");
+        for (let i = 0; i < list.contentItem.children.length; ++i) {
+            const item = list.contentItem.children[i];
+            if (item.objectName === "trackRow_" + id) {
+                return item;
+            }
+        }
+        return null;
+    }
+    function shownBadges(delegate) {
+        const shown = [];
+        for (const name of ["gridMark", "waveformMark"]) {
+            const mark = findChild(delegate, name);
+            shown.push(mark !== null && mark.visible ? findChild(mark, "stateBadge").label : null);
+        }
+        return shown;
+    }
+
+    function finished(session, run, what) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        run();
+        tryVerify(() => summary !== null, 300000, (what || "the save") + " finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    // Nothing is copied that the user did not choose: nothing ticked, the
+    // action off, the parts both on and the replace box off.
+    function test_nothingTickedAtFirstAndTheActionIsOff() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        compare(o.c.totalTrackCount, 11);
+        compare(o.c.matchedCount, 11);
+        compare(JSON.stringify(o.c.playlistNames), JSON.stringify(["T73 Folder/T73 New", "T73 Order", "T73 Renamed"]));
+        compare(o.c.tickedCount, 0);
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            compare(o.c.tracks.get(i).ticked, false, "row " + i + " starts unticked");
+        }
+        compare(o.c.grids, true);
+        compare(o.c.waveforms, true);
+        compare(o.c.replaceEngineEdits, false);
+        compare(findChild(o.page, "gridsCheckBox").checked, true);
+        compare(findChild(o.page, "waveformsCheckBox").checked, true);
+        compare(findChild(o.page, "replaceEditsCheckBox").checked, false);
+        const button = findChild(o.page, "stageButton");
+        compare(button.text, "Stage Selected");
+        compare(button.enabled, false, "nothing ticked: nothing to stage");
+        compare(o.c.canStage, false);
+        compare(findChild(o.page, "summaryLabel").text,
+                "Nothing is ticked. Tick a playlist or tracks to copy their beat grids and waveforms.");
+        compare(playlistRow(o.page, "T73 Renamed").checkState, Qt.Unchecked);
+        compare(playlistRow(o.page, "").checkState, Qt.Unchecked);
+        for (const name of ["errorLabel", "engineTooOldLabel", "readOnlyLabel", "ledgerWarningLabel",
+                            "nothingMatchedLabel", "noPlaylistsLabel"]) {
+            compare(findChild(o.page, name).visible, false, name + " says nothing here");
+        }
+    }
+
+    // Ticking a playlist's box ticks its tracks, and the summary counts
+    // what the controller's previews say of them: 5 grids and 5 waveforms,
+    // 4 of the 5 completed (B04 is analysed already).
+    function test_tickingAPlaylistTicksItsTracks() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        clickPlaylistBox(o.page, "T73 Renamed");
+        compare(o.c.tickedCount, 5);
+        compare(playlistRow(o.page, "T73 Renamed").checkState, Qt.Checked);
+        compare(playlistRow(o.page, "").checkState, Qt.PartiallyChecked, "All tracks: some of it");
+        compare(playlistRow(o.page, "T73 Order").checkState, Qt.PartiallyChecked, "B12 is in T73 Order too");
+        compare(playlistRow(o.page, "T73 Folder/T73 New").checkState, Qt.Unchecked);
+        for (const id of [b01, b02, b04, b12]) {
+            compare(row(o.c, id).ticked, true, id + " is ticked");
+        }
+        compare(row(o.c, b07).ticked, false);
+        waitSettled(o.c);
+        compare(o.c.gridsToCopy, 5);
+        compare(o.c.waveformsToCopy, 5);
+        compare(o.c.tracksToComplete, 4);
+        compare(o.c.tracksToWrite, 5);
+        compare(o.c.leftAloneCount, 0);
+        compare(findChild(o.page, "summaryLabel").text,
+                "5 tracks ticked: 5 beat grids and 5 waveforms to copy, 4 tracks then load without analysis.");
+        compare(findChild(o.page, "leftAloneLabel").visible, false);
+        verify(findChild(o.page, "stageButton").enabled, "something to stage");
+
+        // And off again, all of it.
+        clickPlaylistBox(o.page, "T73 Renamed");
+        compare(o.c.tickedCount, 0);
+        compare(playlistRow(o.page, "").checkState, Qt.Unchecked);
+        compare(findChild(o.page, "stageButton").enabled, false);
+    }
+
+    // A tick is the track's, not the row's: B12 ticked in one playlist is
+    // ticked in the other, and survives switching between them.
+    function test_aTrackInTwoPlaylistsIsOneTrack() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        compare(o.c.tracks.count, 5);
+        verify(waitForPolish(o.page.Window.window));
+        const delegate = trackDelegate(o.page, b12);
+        verify(delegate !== null, "B12's row is in view");
+        mouseClick(findChild(delegate, "selectCheckBox"));
+        compare(o.c.tickedCount, 1);
+        compare(row(o.c, b12).ticked, true);
+
+        showPlaylist(o.page, "T73 Order");
+        compare(o.c.tracks.count, 4);
+        compare(row(o.c, b12).ticked, true, "ticked in the other playlist too");
+        compare(playlistRow(o.page, "T73 Order").checkState, Qt.PartiallyChecked);
+        compare(playlistRow(o.page, "T73 Renamed").checkState, Qt.PartiallyChecked);
+        o.c.setTicked(b12, false);
+        showPlaylist(o.page, "T73 Renamed");
+        compare(row(o.c, b12).ticked, false, "and unticked in both");
+        compare(o.c.tickedCount, 0);
+    }
+
+    // What each kind of row reads, in the model and on screen: analysed,
+    // not analysed, no beat grid in rekordbox (its .DAT taken off), locked
+    // on the player.
+    function test_perTrackStates() {
+        const stick = t73();
+        verify(stickFixture.removeRekordboxBeatGridFile(stick, b04), "B04's grid file is taken off");
+        verify(stickFixture.removeRekordboxBeatGridFile(stick, b02), "B02's grid file is taken off");
+        compare(stickFixture.lockAnalysedEngineBeatGrids(stick), 5, "the 5 analysed rows are locked");
+        const o = openOn(stick);
+        waitSettled(o.c);
+        // N1: analysed, locked.
+        compare(row(o.c, n1).gridState, "Locked on the player");
+        compare(row(o.c, n1).waveformState, "Replaces Engine's", "a waveform has no lock");
+        compare(row(o.c, n1).note, "");
+        // B01: not analysed, completed from rekordbox.
+        compare(row(o.c, b01).gridState, "New");
+        compare(row(o.c, b01).waveformState, "New");
+        compare(row(o.c, b01).note, "Loads without analysis");
+        // B04: analysed, no grid in rekordbox.
+        compare(row(o.c, b04).gridState, "No beat grid in rekordbox");
+        compare(row(o.c, b04).waveformState, "Replaces Engine's");
+        // B02: not analysed and no grid: cannot be completed.
+        compare(row(o.c, b02).gridState, "No beat grid in rekordbox");
+        compare(row(o.c, b02).waveformState, "Left for the player");
+        compare(row(o.c, b02).note, "Not analysed by the player yet: rekordbox has no beat grid to complete it with");
+
+        // On screen, the delegate says the same.
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        compare(JSON.stringify(shownBadges(trackDelegate(o.page, b01))), JSON.stringify(["New", "New"]));
+        compare(findChild(trackDelegate(o.page, b01), "rowNote").text, "Loads without analysis");
+        compare(JSON.stringify(shownBadges(trackDelegate(o.page, b02))),
+                JSON.stringify(["No beat grid in rekordbox", "Left for the player"]));
+        compare(findChild(trackDelegate(o.page, b04), "bpmLabel").text, "108 BPM");
+
+        // Ticked, the ones that would change nothing are said and grouped.
+        clickPlaylistBox(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        compare(o.c.tracksToWrite, 4, "B01, B03, B12 completed and B04's waveform");
+        compare(o.c.leftAloneCount, 1);
+        compare(findChild(o.page, "leftAloneLabel").text, "One ticked track is left alone: 1 left for the player.");
+    }
+
+    // The box that replaces grids set on the player: off, a locked grid is
+    // left; on, the states are worked out again and it is replaced.
+    function test_alsoReplaceBox() {
+        const stick = t73();
+        compare(stickFixture.lockAnalysedEngineBeatGrids(stick), 5);
+        const o = openOn(stick);
+        clickPlaylistBox(o.page, "");
+        compare(o.c.tickedCount, 11);
+        waitSettled(o.c);
+        compare(row(o.c, n1).gridState, "Locked on the player");
+        compare(o.c.gridsToCopy, 6, "only the 6 rows the player has not analysed");
+        compare(o.c.waveformsToCopy, 11);
+        compare(o.c.leftAloneCount, 0, "every row still gets its waveform");
+
+        const box = findChild(o.page, "replaceEditsCheckBox");
+        compare(box.checked, false, "off by default");
+        mouseClick(box);
+        compare(o.c.replaceEngineEdits, true);
+        compare(row(o.c, n1).pending, true, "worked out again");
+        waitSettled(o.c);
+        compare(row(o.c, n1).gridState, "Replaces Engine's");
+        compare(o.c.gridsToCopy, 11);
+
+        mouseClick(box);
+        compare(o.c.replaceEngineEdits, false);
+        waitSettled(o.c);
+        compare(row(o.c, n1).gridState, "Locked on the player", "and back");
+        compare(o.c.gridsToCopy, 6);
+    }
+
+    // A row the player has not analysed is completed with both parts or
+    // not at all: with waveforms off it is left for the player, and says
+    // why, in the row and in the summary.
+    function test_waveformsOffLeavesUnanalysedRowsForThePlayer() {
+        const o = openOn(t73());
+        clickPlaylistBox(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        mouseClick(findChild(o.page, "waveformsCheckBox"));
+        compare(o.c.waveforms, false);
+        waitSettled(o.c);
+        compare(row(o.c, b01).gridState, "Left for the player");
+        compare(row(o.c, b01).waveformState, "Not chosen");
+        compare(row(o.c, b01).note, "Not analysed by the player yet: only completed with both beat grids and waveforms");
+        compare(row(o.c, b04).gridState, "Replaces Engine's", "an analysed row still gets its grid");
+        compare(row(o.c, b04).waveformState, "Not chosen");
+        compare(o.c.gridsToCopy, 1);
+        compare(o.c.waveformsToCopy, 0);
+        compare(o.c.tracksToComplete, 0);
+        compare(o.c.leftAloneCount, 4);
+        compare(findChild(o.page, "summaryLabel").text, "5 tracks ticked: one beat grid to copy.");
+        compare(findChild(o.page, "leftAloneLabel").text, "4 ticked tracks are left alone: 4 left for the player.");
+
+        mouseClick(findChild(o.page, "gridsCheckBox"));
+        compare(o.c.grids, false);
+        compare(findChild(o.page, "summaryLabel").text, "Choose beat grids, waveforms or both.");
+        compare(findChild(o.page, "stageButton").enabled, false);
+    }
+
+    // Stage and Save on TESTSHARK: the database really holds the grids,
+    // overviews and completed rows, the overview files are there, the
+    // ledger is written, the toast says what landed, the page then finds
+    // everything already the same. Undo puts the database back byte for
+    // byte and takes the new overview files and the ledger away.
+    function test_stageSaveThenAlreadyTheSameThenUndo() {
+        const stick = t73();
+        const db = stick + "/Engine Library/Database2/m.db";
+        const before = stickFixture.sha256(db);
+        const rowsBefore = stickFixture.engineAnalysisRows(stick);
+        compare(rowsBefore.analysed, 5);
+        compare(rowsBefore.overviewFiles, 0);
+        const o = openOn(stick);
+        clickPlaylistBox(o.page, "");
+        waitSettled(o.c);
+        compare(o.c.tracksToWrite, 11);
+        compare(o.c.tracksToComplete, 6);
+        compare(stickFixture.sha256(db), before, "the previews wrote nothing");
+
+        const button = findChild(o.page, "stageButton");
+        verify(button.enabled);
+        mouseClick(button);
+        compare(o.c.stagedCount, 11, "one change per track");
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        compare(session.pendingCount, 11);
+        compare(session.editorOwner, "beat-grids");
+        compare(button.text, "Unstage");
+        compare(findChild(o.page, "stagedNote").visible, true);
+        compare(findChild(o.page, "waveformsCheckBox").enabled, false, "what to copy waits for the save");
+        compare(playlistRow(o.page, "").checkEnabled, false, "and so do the ticks");
+        compare(stickFixture.sha256(db), before, "staging wrote nothing");
+
+        const saved = finished(session, () => session.save(), "the save");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.written, 11, JSON.stringify(saved));
+        compare(saved.total, 11);
+        compare(saved.skipped, 0);
+        compare(saved.unit, "tracks");
+
+        // What landed, read from the stick.
+        const after = stickFixture.engineAnalysisRows(stick);
+        compare(after.rows, 11);
+        compare(after.analysed, 11, "the 6 unanalysed rows are completed");
+        compare(after.gridsSet, 11);
+        compare(after.overviews, 11);
+        compare(after.overviewFiles, 11, "an overview file for every row");
+        compare(after.matchingFiles, 11, "each over its row's own length");
+        const ledger = stickFixture.readText(stick + "/Seabass/beat-grids.tsv");
+        const lines = ledger.split("\n").filter(line => line.length > 0);
+        compare(lines[0], "seabass-beat-grids\t1");
+        compare(lines.length, 1 + 11, "the ledger records every grid written");
+
+        // The toast says what landed, counted from the changes that did.
+        compare(o.c.lastSaveGrids, 11);
+        compare(o.c.lastSaveWaveforms, 11);
+        compare(o.c.lastSaveCompleted, 6);
+        compare(o.c.lastSaveTracks, 11);
+        const toast = findChild(o.page, "savedToast");
+        tryVerify(() => toast.showing, 5000, "the save is said with the toast");
+        compare(toast.text, "11 beat grids and 11 waveforms copied, 6 tracks now load without analysis");
+        compare(o.c.stagedCount, 0);
+
+        // A second look finds it all there.
+        waitSettled(o.c, "worked out again after the save");
+        compare(o.c.tickedCount, 11, "the ticks stay");
+        compare(o.c.tracksToWrite, 0);
+        compare(o.c.leftAloneCount, 11);
+        compare(findChild(o.page, "leftAloneLabel").text, "11 ticked tracks are left alone: 11 already the same.");
+        for (const id of [b01, b04, n1]) {
+            compare(row(o.c, id).gridState, "Already the same", id);
+            compare(row(o.c, id).waveformState, "Already the same", id);
+        }
+        compare(button.text, "Stage Selected");
+        compare(button.enabled, false, "nothing left to copy: the action is off");
+
+        // Undo Last Save: the database back byte for byte, the files the
+        // save made gone, the ledger with them.
+        const undo = findChild(o.page, "undoLastSaveButton");
+        tryVerify(() => undo.visible && undo.enabled, 5000);
+        // The save's progress is modal, and a style's exit transition keeps
+        // it over the page for a moment: the press goes in once it is gone.
+        tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
+        const undone = finished(session, () => mouseClick(undo), "the undo");
+        compare(undone.error, "", JSON.stringify(undone));
+        compare(stickFixture.sha256(db), before, "m.db is as it was");
+        const restored = stickFixture.engineAnalysisRows(stick);
+        compare(restored.analysed, 5);
+        compare(restored.overviewFiles, 0, "the overview files the save made are gone");
+        compare(stickFixture.fileExists(stick + "/Seabass/beat-grids.tsv"), false, "and the ledger it made");
+        waitSettled(o.c, "worked out again after the undo");
+        compare(o.c.tracksToWrite, 11);
+        compare(row(o.c, b01).gridState, "New");
+    }
+
+    // One left line at the narrowest width the page is laid out for, the
+    // title and the row's marks never on top of each other, and a picture
+    // of it with a playlist shown and some tracks ticked.
+    function test_layoutAtTheNarrowestWidth() {
+        const o = openOn(t73(), {width: 720, height: 760});
+        showPlaylist(o.page, "T73 Renamed");
+        o.c.setTicked(b01, true);
+        o.c.setTicked(b04, true);
+        o.c.setTicked(b12, true);
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window), "the page is laid out");
+        const body = findChild(o.page, "pageBody");
+        const left = body.mapToItem(o.page, 0, 0).x;
+        compare(left, Theme.pageMargin);
+        for (const name of ["introLabel", "summaryLabel", "playlistList", "breadcrumb"]) {
+            compare(findChild(o.page, name).mapToItem(o.page, 0, 0).x, left, name + " is on the page's left line");
+        }
+        const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
+        compare(box.mapToItem(o.page, 0, 0).x, left, "the first box itself is on the left line");
+
+        const list = findChild(o.page, "trackList");
+        for (const id of [b01, b02, b04, b12]) {
+            const delegate = trackDelegate(o.page, id);
+            verify(delegate !== null, id + " is in view");
+            const title = findChild(delegate, "rowTitle");
+            const bpm = findChild(delegate, "bpmLabel");
+            const titleRight = title.mapToItem(delegate, title.width, 0).x;
+            verify(titleRight <= bpm.mapToItem(delegate, 0, 0).x,
+                   id + ": the title (to " + titleRight + ") stops before the tempo");
+            const marks = findChild(delegate, "rowDetailItems");
+            const titleBottom = title.mapToItem(delegate, 0, title.height).y;
+            verify(marks.mapToItem(delegate, 0, 0).y >= titleBottom, id + ": the marks are under the title");
+            verify(marks.mapToItem(delegate, 0, marks.height).y <= delegate.height, id + ": inside the row");
+            verify(delegate.mapToItem(list, delegate.width, 0).x <= list.width, id + ": the row fits the list");
+        }
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage.png");
+        }
+    }
+
+    // The anonymized library: its export has no waveform for the analysed
+    // rows, and the preview of every track is timed for the report.
+    function test_anonymizedLibraryHasNoWaveforms() {
+        const stick = stickFixture.stickCopy(fixture("anonymized_library"));
+        verify(stick.length > 0);
+        const o = openOn(stick);
+        compare(o.c.matchedCount, 1161);
+        const started = Date.now();
+        waitSettled(o.c, "every track of All tracks is worked out");
+        console.log("Beat Grids & Waveforms: preview of " + o.c.tracks.count + " tracks took "
+                    + (Date.now() - started) + " ms");
+        let analysed = 0;
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            const r = o.c.tracks.get(i);
+            if (r.matched && r.gridState === "Replaces Engine's") {
+                ++analysed;
+                compare(r.waveformState, "No waveform in rekordbox", r.title);
+            }
+        }
+        compare(analysed, 188);
+    }
+
+    // The edge states, each with its own sentence.
+    function test_engine1xLibrary() {
+        const stick = t73();
+        // Engine 1.x keeps m.db at the library's root.
+        verify(stickFixture.moveFile(stick + "/Engine Library/Database2/m.db", stick + "/Engine Library/m.db"));
+        const o = openOn(stick);
+        compare(o.c.engineTooOld, true);
+        compare(findChild(o.page, "engineTooOldLabel").visible, true);
+        compare(findChild(o.page, "panes").visible, false, "nothing to tick");
+        compare(findChild(o.page, "optionsRow").visible, false);
+        compare(findChild(o.page, "summaryRow").visible, false);
+    }
+
+    function test_unreadableLedgerIsSaid() {
+        const stick = t73();
+        verify(stickFixture.makeDirectory(stick + "/Seabass"));
+        verify(stickFixture.writeText(stick + "/Seabass/beat-grids.tsv", "not a ledger\n"));
+        const o = openOn(stick);
+        waitSettled(o.c);
+        const label = findChild(o.page, "ledgerWarningLabel");
+        compare(label.visible, true);
+        verify(label.text.indexOf("Seabass's record of the beat grids it copied before cannot be read") === 0,
+               label.text);
+    }
+
+    function test_readOnlyStickTicksNothing() {
+        const o = openOn(t73(), {stickReadOnly: true});
+        waitSettled(o.c);
+        compare(findChild(o.page, "readOnlyLabel").visible, true);
+        compare(playlistRow(o.page, "T73 Renamed").checkEnabled, false);
+        compare(findChild(o.page, "gridsCheckBox").enabled, false);
+        o.c.setPlaylistTicked("T73 Renamed", true);
+        waitSettled(o.c);
+        compare(findChild(o.page, "stageButton").enabled, false, "a read-only stick takes no copy");
+    }
+}

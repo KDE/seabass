@@ -23,6 +23,10 @@ import SeabassGui
 CheckBox {
     id: control
 
+    // Some, not all: a playlist's box when only part of it is ticked. Drawn
+    // as the ticked box with a bar for its mark.
+    readonly property bool partial: control.checkState === Qt.PartiallyChecked
+
     indicator: Rectangle {
         objectName: "seabassCheckIndicator"
         readonly property real side: Theme.scaled(18)
@@ -31,9 +35,9 @@ CheckBox {
         x: control.mirrored ? control.width - width - control.rightPadding : control.leftPadding
         y: control.topPadding + (control.availableHeight - height) / 2
         radius: Theme.scaled(3)
-        color: control.checked ? Theme.accent : "transparent"
+        color: control.checked || control.partial ? Theme.accent : "transparent"
         border.width: Math.max(1, Math.round(Theme.scaled(1.5)))
-        border.color: control.checked || control.visualFocus || (control.hovered && control.enabled)
+        border.color: control.checked || control.partial || control.visualFocus || (control.hovered && control.enabled)
             ? Theme.accent : Theme.textMuted
         opacity: control.enabled ? 1 : 0.5
 
@@ -46,6 +50,15 @@ CheckBox {
             // Theme's ink for anything drawn on the accent: dark in either
             // theme, since the accent does not change with it, and a light
             // mark on it reads at barely 2:1.
+            color: Theme.accentInk
+        }
+        Rectangle {
+            objectName: "seabassPartialMark"
+            anchors.centerIn: parent
+            visible: control.partial
+            width: Math.round(parent.side * 0.55)
+            height: Math.max(2, Math.round(Theme.scaled(2)))
+            radius: height / 2
             color: Theme.accentInk
         }
     }

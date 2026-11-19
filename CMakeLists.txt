@@ -1157,8 +1157,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/artwork_rescue_sources.cpp
         src/gui/edit/changes/fill_sample_rate_change.hpp
         src/gui/edit/changes/fill_sample_rate_change.cpp
-        src/gui/edit/changes/copy_beat_grid_change.hpp
-        src/gui/edit/changes/copy_beat_grid_change.cpp
+        src/gui/edit/changes/copy_analysis_change.hpp
+        src/gui/edit/changes/copy_analysis_change.cpp
         src/gui/edit/changes/mark_rekordbox_imported_change.hpp
         src/gui/edit/changes/mark_rekordbox_imported_change.cpp
         src/gui/edit/changes/repair_issue_change.hpp
