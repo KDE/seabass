@@ -205,6 +205,9 @@ Rectangle {
          : (delegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
     radius: Theme.cornerRadius
     opacity: delegate.markedForRemoval ? 0.55 : 1.0
+    // Faded as one picture: the waveform is three layers since #40, which
+    // would otherwise each blend with what is behind them.
+    layer.enabled: opacity < 1
 
     // Not rowMouse's own hover: a HoverHandler under the pointer keeps it
     // from the MouseArea below, and the title has one for its tooltip
