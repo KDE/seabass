@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -215,9 +216,19 @@ inline bool isProtectedStick(const std::filesystem::path &root)
     return false;
 }
 
+// A catalog file that is not the archive's byte for byte, offered to the
+// caller before it is called a mismatch: true when the caller has checked
+// the difference is one the operation must make, false when it checked
+// and the difference is not (either way it printed what it found), no
+// value when the file is none of its business.
+using CatalogDifferenceCheck =
+    std::function<std::optional<bool>(const infrastructure::stick_backup::BackupManifest &, const infrastructure::stick_backup::ManifestRow &,
+                       const infrastructure::stick_backup::Zip64Reader &)>;
+
 // Every catalog file the manifest lists, hashed on the stick and compared.
 // Returns the number checked; mismatches are printed and counted in `bad`.
-inline std::size_t checkCatalogFiles(const std::filesystem::path &archive, const std::filesystem::path &root, std::size_t &bad)
+inline std::size_t checkCatalogFiles(const std::filesystem::path &archive, const std::filesystem::path &root, std::size_t &bad,
+                                     const CatalogDifferenceCheck &acceptDifference = {})
 {
     namespace sb = infrastructure::stick_backup;
     sb::PosixArchiveFile file(archive, sb::PosixArchiveFile::OpenMode::ReadOnly);
@@ -263,6 +274,12 @@ inline std::size_t checkCatalogFiles(const std::filesystem::path &archive, const
             continue;
         }
         const bool same = hasher.finish() == row.sha256;
+        if (!same && acceptDifference) {
+            if (const std::optional<bool> accepted = acceptDifference(*manifest, row, reader)) {
+                bad += *accepted ? 0 : 1;
+                continue;
+            }
+        }
         std::cout << "  " << (same ? "same    " : "DIFFERS ") << row.path << "\n";
         if (!same) {
             ++bad;

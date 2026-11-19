@@ -17,7 +17,19 @@
 // - it reports Cloned;
 // - a restore preview of the target against the archive afterwards has no
 //   file left to write, and with --exact no extra file left to remove;
-// - every catalog file the archive records matches the target's.
+// - every catalog file the archive records matches the target's byte for
+//   byte, except Engine's m.db when the clone made its covers label-proof
+//   (the target is called something else than the source, #101): that one
+//   must be the archive's in every table and row but the covers, every
+//   track that was on a link to another stick's name now on a stored
+//   cover, none left on such a link, and the target's own record of the
+//   clone must vouch for it (rig_clone_covers.hpp);
+// - the target reads as current against the archive, as the stick list
+//   judges it (rig_advise checks the same with both sticks plugged in).
+//
+// The target's label is the last component of its path (rig_catalog.hpp's
+// stickLabelFor), handed to the clone as the Backup USB Stick page hands
+// it the volume's label.
 //
 // With --expect-too-small nothing runs at all: the preview must report
 // that the target has no room for the source's library, which is what
@@ -53,13 +65,17 @@
 #include <string>
 #include <utility>
 
+#include "application/use_cases/advise_stick_backup.hpp"
 #include "application/use_cases/clone_stick.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
+#include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
+#include "infrastructure/stick_backup/library_catalog_mtime.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
+#include "rig_clone_covers.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -152,6 +168,7 @@ int main(int argc, char **argv)
         options.backup.legacyStickIdentifier = hardware.legacyStickIdentifier;
         options.backup.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
         options.targetRoot = target;
+        options.targetLabel = rig::stickLabelFor(target);
         options.exact = exact;
         options.libraryCheck = infrastructure::engine::checkRestoredEngineLibrary;
         std::cout << "clone " << pathToUtf8(source) << " -> " << pathToUtf8(target) << " via "
@@ -293,6 +310,9 @@ int main(int argc, char **argv)
         check.archivePath = options.backup.archivePath;
         check.targetRoot = target;
         check.exact = exact;
+        // As the clone restored it: onto a stick with this label.
+        check.targetLabel = options.targetLabel;
+        check.targetIsStick = true;
         const application::RestorePreview after = application::RestoreStickBackup::preview(check);
         const bool nothingLeft = after.error.empty() && after.filesToWrite == 0 && (!exact || after.extras == 0);
         std::cout << "after: " << after.filesToWrite << " files to write, " << after.extras << " extra on the target"
@@ -302,9 +322,48 @@ int main(int argc, char **argv)
 
         std::cout << "catalog files against the archive's checksums:\n";
         std::size_t mismatches = 0;
-        const std::size_t checked = rig::checkCatalogFiles(options.backup.archivePath, target, mismatches);
+        const std::string engineDatabase =
+            pathToGenericUtf8(infrastructure::engine::engineMainDatabasePath(fs::path()));
+        const std::size_t checked = rig::checkCatalogFiles(
+            options.backup.archivePath, target, mismatches,
+            [&](const infrastructure::stick_backup::BackupManifest &manifest,
+                const infrastructure::stick_backup::ManifestRow &row,
+                const infrastructure::stick_backup::Zip64Reader &reader) -> std::optional<bool> {
+                // Only the Engine database, and only on a target the clone
+                // had to make its covers label-proof for.
+                if (row.path != engineDatabase
+                    || infrastructure::engine::sameStickLabel(options.targetLabel, manifest.stickLabel)) {
+                    return std::nullopt;
+                }
+                return rig::checkLabelProofEngineDatabase(manifest, row, reader, target, options.targetLabel);
+            });
         std::cout << "catalogs: " << checked << " checked, " << mismatches << " differ\n";
         pass = pass && checked > 0 && mismatches == 0;
+
+        // What the stick list says about the target against this archive:
+        // the same inputs, read the same way, as rig_advise and the app.
+        std::cout << "the target as the stick list reads it:\n";
+        const application::StickBackupDescription described =
+            application::RestoreStickBackup::describe(options.backup.archivePath);
+        application::StickBackupAdviceInput input;
+        input.hasLibrary = true;
+        input.stickLabel = options.targetLabel;
+        const auto targetHardware = infrastructure::system::readStickHardwareInfo(pathToUtf8(target), input.stickLabel);
+        input.stickIdentifier = targetHardware.stickIdentifier;
+        input.legacyStickIdentifier = targetHardware.legacyStickIdentifier;
+        input.liveFingerprint = rig::fingerprintStick(target);
+        input.backups = {described};
+        application::StickDatabaseState databases = application::readStickDatabaseState(target, input.backups, true);
+        input.liveDatabaseFingerprints = std::move(databases.fingerprints);
+        input.restoredDatabases = std::move(databases.restoredDatabases);
+        input.catalogModifiedAtUnix = infrastructure::stick_backup::libraryCatalogModifiedAt(target);
+        const application::StickBackupAdvice advice = application::adviseStickBackup(input);
+        const bool current = advice.state == application::StickBackupAdvice::State::Current
+                             && advice.updateSource.kind == application::StickBackupAdvice::SourceRef::Kind::None;
+        std::cout << "target: " << application::toString(advice.state) << ", update from "
+                  << application::toString(advice.updateSource.kind) << " (" << advice.detail << ") -> "
+                  << (current ? "current" : "NOT CURRENT") << "\n";
+        pass = pass && current;
     } catch (const std::exception &e) {
         std::cout << "error: " << e.what() << "\nRIG RESULT: FAIL\n";
         return 1;

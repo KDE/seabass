@@ -16,7 +16,10 @@
 #   C5     Create Backup USB Stick from A onto B, cancelled during the
 #          backup stage: B untouched, partial archive kept
 #   C1     the same again, resuming: B holds A's library, the stray file
-#          survives, both sticks read as current
+#          survives, both sticks read as current. B's catalogs are the
+#          archive's byte for byte but Engine's m.db, whose covers the
+#          clone made label-proof for B's name; rig_clone proves that one
+#          is the archive's in every other row (rig_clone_covers.hpp)
 #   C2     a cue added on A: B is offered the update; the update runs;
 #          both current again
 #   C3     a cue added on B: A is offered the update
