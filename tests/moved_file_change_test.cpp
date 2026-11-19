@@ -971,21 +971,27 @@ int main(int argc, char **argv)
         std::cout << "case 13 (a rename failing partway through an undo moves back what it had moved) OK\n";
     }
 
-    // 14. The stuck path: the fifth rename fails and so do the moves back
-    //     (the folder they go back from cannot be written). The files that
-    //     could not be put back are named, the pre-restore record that
-    //     notes them is kept, and the message does NOT say nothing was
-    //     kept.
+    // 14. The stuck path: the fifth rename fails and so do the moves back.
+    //     Obstacles, not permissions (a CI runner as root ignores those):
+    //     a non-empty folder where the fifth file goes, and one where each
+    //     file already moved has to go back to. The files that could not
+    //     be put back are named, the pre-restore record that notes them is
+    //     kept, and the message does NOT say nothing was kept.
     if (runs(14)) {
         TenMoved t = tenMovedBack("seabass_moved_file_undo_stuck");
-        const fs::path newFolder = t.moved[0].parent_path();
         bool locked = false;
+        std::vector<fs::path> planted;
         infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting(
             [&](const std::string &, std::size_t index) {
                 if (index == 4) {
-                    write(t.moved[5] / "in the way", "x");
-                    fs::permissions(newFolder, fs::perms::owner_read | fs::perms::owner_exec,
-                                    fs::perm_options::replace);
+                    // Newest first: Track9 to Track6 have moved, Track5 is next.
+                    planted.push_back(t.moved[5]);
+                    for (int i = 6; i < 10; ++i) {
+                        planted.push_back(t.expected[i]);
+                    }
+                    for (const auto &folder : planted) {
+                        write(folder / "in the way", "x");
+                    }
                     locked = true;
                 }
             });
@@ -993,8 +999,9 @@ int main(int argc, char **argv)
             save({std::make_shared<RestoreBackupsChange>(t.result.backups)}, pathToQString(t.pioneer), {});
         infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting({});
         std::error_code ec;
-        fs::permissions(newFolder, fs::perms::owner_all, fs::perm_options::replace, ec);
-        fs::remove_all(t.moved[5], ec);
+        for (const auto &folder : planted) {
+            fs::remove_all(folder, ec);
+        }
         std::cerr << "undo error: " << undone.error.toStdString() << "\n";
         assert(locked && "the fifth move was reached");
         assert(!undone.error.isEmpty());
