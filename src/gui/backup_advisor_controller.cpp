@@ -276,7 +276,7 @@ void BackupAdvisorController::startNext()
         // compared with each other even when no backup captured either --
         // and the record of what a restore or clone last wrote there.
         application::StickDatabaseState databases =
-            application::readStickDatabaseState(root, result->backups, facts.hasLibrary);
+            application::readStickDatabaseState(root, result->backups, facts.hasLibrary, facts.stickLabel);
         facts.databaseFingerprints = std::move(databases.fingerprints);
         facts.restoredDatabases = std::move(databases.restoredDatabases);
         return result;

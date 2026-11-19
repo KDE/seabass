@@ -247,6 +247,27 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
     return fp;
 }
 
+std::optional<hashing::Sha256Digest> hashDbSet(const fs::path &mainDb)
+{
+    bool presenceKnown = true;
+    const std::vector<fs::path> members = dbSetMembers(mainDb, &presenceKnown);
+    if (!presenceKnown) {
+        return std::nullopt;
+    }
+    const std::string mainName = pathToGenericUtf8(mainDb.filename());
+    hashing::Sha256 set;
+    for (const fs::path &member : members) {
+        const std::optional<hashing::Sha256Digest> bytes = hashFile(member);
+        if (!bytes) {
+            return std::nullopt;
+        }
+        set.update(pathToGenericUtf8(member.filename()).substr(mainName.size()));
+        set.update(std::string_view("\0", 1));
+        set.update(std::as_bytes(std::span<const std::uint8_t>(bytes->data(), bytes->size())));
+    }
+    return set.finish();
+}
+
 DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relativeMainDb, ArchiveUpdater &updater, int retries,
                           const std::function<void(std::uint64_t)> &progress, bool salvage,
                           const std::function<std::optional<std::uint64_t>(const std::string &relativePath)>

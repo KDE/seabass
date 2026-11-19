@@ -206,7 +206,7 @@ inline bool checkLabelProofEngineDatabase(const infrastructure::stick_backup::Ba
     }
     // The app's own judgement first: what the stick list and the restore
     // planner go by.
-    if (!sb::holdsBackupDatabase(sb::readRestoredDatabases(root), row.path, row.extra, live->toHex())) {
+    if (!sb::holdsBackupDatabase(sb::vouchedRestoredDatabases(root, label), row.path, row.extra, live->toHex())) {
         return fail("the target's record of the clone does not vouch for it (the stick list reads it as changed)");
     }
 

@@ -353,7 +353,8 @@ int main(int argc, char **argv)
         input.legacyStickIdentifier = targetHardware.legacyStickIdentifier;
         input.liveFingerprint = rig::fingerprintStick(target);
         input.backups = {described};
-        application::StickDatabaseState databases = application::readStickDatabaseState(target, input.backups, true);
+        application::StickDatabaseState databases =
+            application::readStickDatabaseState(target, input.backups, true, options.targetLabel);
         input.liveDatabaseFingerprints = std::move(databases.fingerprints);
         input.restoredDatabases = std::move(databases.restoredDatabases);
         input.catalogModifiedAtUnix = infrastructure::stick_backup::libraryCatalogModifiedAt(target);

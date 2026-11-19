@@ -131,8 +131,10 @@ const StickBackupDescription *firstByLabel(const StickBackupAdviceInput &input,
 //
 // A database a restore of this backup wrote and then changed (the covers
 // a clone onto another label copies into the Engine library) is the
-// backup's as long as its fingerprint is still the one the restore
-// recorded; written by anything since, it is not.
+// backup's while the record vouches for it: `restoredDatabases` holds
+// only what vouchedRestoredDatabases() kept (the stick's label the one
+// recorded, the fingerprint and then the content still what the restore
+// left), and this compares the fingerprints those entries name.
 bool backupMatchesCopy(const std::map<std::string, std::string> &databaseFingerprints,
                        const RestoredDatabases &restoredDatabases, const std::optional<LibraryFingerprint> &fingerprint,
                        const StickBackupDescription &backup)
@@ -176,6 +178,11 @@ bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescr
 // changed after writing it (its covers made label-proof): the same
 // database when that side's record says its fingerprint is what the
 // restore made of the other side's.
+//
+// Two clones of one backup never compare as the same here, since each
+// record names its own stick's result, not the other's: an update
+// between them is offered that would change nothing. That is the safe
+// way to be wrong; calling two different databases the same is not.
 bool sameDatabases(const std::map<std::string, std::string> &a, const RestoredDatabases &aRestored,
                    const std::map<std::string, std::string> &b, const RestoredDatabases &bRestored)
 {
@@ -419,7 +426,8 @@ StickBackupAdvice adviseStickBackup(const StickBackupAdviceInput &input)
 }
 
 StickDatabaseState readStickDatabaseState(const std::filesystem::path &stickRoot,
-                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary)
+                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary,
+                                          const std::string &stickLabel)
 {
     namespace sb = infrastructure::stick_backup;
     StickDatabaseState state;
@@ -437,7 +445,7 @@ StickDatabaseState readStickDatabaseState(const std::filesystem::path &stickRoot
             state.fingerprints[path] = fingerprint->toHex();
         }
     }
-    state.restoredDatabases = sb::readRestoredDatabases(stickRoot);
+    state.restoredDatabases = sb::vouchedRestoredDatabases(stickRoot, stickLabel);
     return state;
 }
 

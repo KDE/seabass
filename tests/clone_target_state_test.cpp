@@ -16,6 +16,8 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -26,6 +28,7 @@
 #include "domain/library_fingerprint.hpp"
 #include "infrastructure/stick_backup/library_catalog_mtime.hpp"
 #include "infrastructure/stick_backup/restored_databases.hpp"
+#include "infrastructure/stick_backup/sqlite_db_set.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "scratch_path.hpp"
 #include "stick_fixture.hpp"
@@ -120,16 +123,16 @@ struct Fixture
     // What the stick list says about `stick`, with `other` plugged in
     // beside it: the inputs read exactly as BackupAdvisorController and
     // rig_advise read them.
-    StickBackupAdvice advise(const fs::path &stick, const fs::path &other) const
+    StickBackupAdvice advise(const fs::path &stick, const fs::path &other, const std::string &label = {}) const
     {
         const std::vector<StickBackupDescription> described = RestoreStickBackup::describeAll(backups);
         const auto fingerprint = seabass::domain::LibraryFingerprint::parse(libraryFingerprint());
         StickBackupAdviceInput input;
         input.hasLibrary = true;
-        input.stickLabel = seabass::pathToUtf8(stick.filename());
+        input.stickLabel = label.empty() ? seabass::pathToUtf8(stick.filename()) : label;
         input.stickIdentifier = "uuid-" + input.stickLabel;
         input.liveFingerprint = fingerprint;
-        StickDatabaseState mine = readStickDatabaseState(stick, described, true);
+        StickDatabaseState mine = readStickDatabaseState(stick, described, true, input.stickLabel);
         input.liveDatabaseFingerprints = mine.fingerprints;
         input.restoredDatabases = mine.restoredDatabases;
         input.catalogModifiedAtUnix = sb::libraryCatalogModifiedAt(stick);
@@ -139,7 +142,7 @@ struct Fixture
         peer.label = seabass::pathToUtf8(other.filename());
         peer.stickIdentifier = "uuid-" + peer.label;
         peer.fingerprint = fingerprint;
-        StickDatabaseState theirs = readStickDatabaseState(other, described, true);
+        StickDatabaseState theirs = readStickDatabaseState(other, described, true, peer.label);
         peer.databaseFingerprints = theirs.fingerprints;
         peer.restoredDatabases = theirs.restoredDatabases;
         peer.catalogModifiedAtUnix = sb::libraryCatalogModifiedAt(other);
@@ -148,9 +151,9 @@ struct Fixture
     }
 
     void expect(const fs::path &stick, const fs::path &other, State state, Kind update, bool diverged,
-                const char *what) const
+                const char *what, const std::string &label = {}) const
     {
-        const StickBackupAdvice advice = advise(stick, other);
+        const StickBackupAdvice advice = advise(stick, other, label);
         const bool ok = advice.state == state && advice.updateSource.kind == update && advice.diverged == diverged;
         if (!ok) {
             std::cerr << what << ": " << seabass::pathToUtf8(stick.filename()) << " reads " << toString(advice.state)
@@ -315,6 +318,140 @@ int main()
         const RestorePreview after = RestoreStickBackup::preview(restore);
         assert(after.filesToWrite == 0 && after.extras == 0);
         std::cout << "case 6 (restored as backed up: no record, no folder left for it) OK\n";
+    }
+
+    // ---- m.db changed in place, same size, header as it was: not the clone's any more ----
+    // The fingerprint reads the header's change counter and schema cookie,
+    // the sizes and the WAL's salts. A commit checkpointed back into a main
+    // file of the same page count can leave all of them as they were, so
+    // the record vouches only when the content's hash matches as well.
+    {
+        Fixture f("samesize");
+        assert(f.clone().status == CloneStickOutcome::Status::Cloned);
+        f.expect(f.target, f.source, State::Current, Kind::None, false, "right after the clone");
+        const fs::path db = Fixture::mdb(f.target);
+        const std::optional<sb::DbSetFingerprint> before = sb::fingerprintDbSet(db);
+        const std::string bytesBefore = readFile(db);
+        const fs::file_time_type mtimeBefore = fs::last_write_time(db);
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &handle) == SQLITE_OK);
+        assert(sqlite3_exec(handle, "UPDATE Track SET path = 'Contents/A.mp3' WHERE path = 'Contents/a.mp3'", nullptr,
+                            nullptr, nullptr)
+               == SQLITE_OK);
+        assert(sqlite3_changes(handle) == 1);
+        sqlite3_close(handle);
+        std::string bytes = readFile(db);
+        assert(bytes.size() == bytesBefore.size() && bytes != bytesBefore);
+        bytes.replace(0, 100, bytesBefore, 0, 100);  // the header as it was
+        {
+            std::ofstream out(db, std::ios::binary | std::ios::trunc);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        fs::last_write_time(db, mtimeBefore);
+        assert(sb::fingerprintDbSet(db) == before && "the fingerprint cannot see this change");
+        f.expect(f.target, f.source, State::BehindBackup, Kind::DiskBackup, false, "after a same-size change in place");
+        const CloneStickPreview preview = CloneStick::preview(f.options);
+        assert(preview.restore && preview.restore->filesToWrite >= 1 && "an update writes the database again");
+        std::cout << "case 7 (same-size change in place, header restored: not current) OK\n";
+    }
+
+    // ---- A record vouches only for the stick under the label it was written for ----
+    {
+        Fixture f("relabelled");
+        assert(f.clone().status == CloneStickOutcome::Status::Cloned);
+        RestoreOptions restore;
+        restore.archivePath = f.options.backup.archivePath;
+        restore.targetRoot = f.target;
+        restore.targetLabel = "TARGET";
+        assert(RestoreStickBackup::preview(restore).filesToWrite == 0);
+        // Relabelled to the source's own name, and to a third one: the
+        // links are TARGET's, so neither the stick list nor the planner
+        // takes the database for the backup's.
+        for (const std::string label : {"SOURCE", "THIRD"}) {
+            f.expect(f.target, f.source, State::BehindBackup, Kind::DiskBackup, false, "relabelled", label);
+            restore.targetLabel = label;
+            const RestorePreview preview = RestoreStickBackup::preview(restore);
+            assert(preview.filesToWrite >= 1 && "and a restore under that label writes m.db");
+        }
+        // Copied file by file onto another stick, record and all: its links
+        // name TARGET, not COPY.
+        const fs::path copy = f.root / "COPY";
+        fs::copy(f.target, copy, fs::copy_options::recursive);
+        assert(fs::exists(copy / seabass::pathFromUtf8(std::string(sb::RestoredDatabasesPath))));
+        // (The copy has its own mtimes, newer than the backup.)
+        f.expect(copy, f.source, State::Outdated, Kind::None, false, "a file manager copy");
+        restore.targetRoot = copy;
+        restore.targetLabel = "COPY";
+        assert(RestoreStickBackup::preview(restore).filesToWrite >= 1);
+        // The clone itself, under its own name, is still the backup's.
+        f.expect(f.target, f.source, State::Current, Kind::None, false, "the clone under its own name");
+        std::cout << "case 8 (relabelled, or copied with its record: not vouched for, by either) OK\n";
+    }
+
+    // ---- A record naming files outside the Artwork folder is not trusted at all ----
+    {
+        Fixture f("foreignfile");
+        f.options.exact = true;
+        assert(f.clone().status == CloneStickOutcome::Status::Cloned);
+        RestoreOptions restore;
+        restore.archivePath = f.options.backup.archivePath;
+        restore.targetRoot = f.target;
+        restore.targetLabel = "TARGET";
+        restore.exact = true;
+        RestorePreview preview = RestoreStickBackup::preview(restore);
+        assert(preview.filesToWrite == 0 && preview.extras == 0);
+        const fs::path recordFile = f.target / seabass::pathFromUtf8(std::string(sb::RestoredDatabasesPath));
+        const std::string record = readFile(recordFile);
+        for (const std::string foreign :
+             {"Contents/old.mp3", "Engine Library/Artwork/../../Contents/old.mp3", "Engine Library/Artwork/./x.jpg",
+              "/Contents/old.mp3", "engine library/database2/m.db"}) {
+            std::ofstream(recordFile, std::ios::binary | std::ios::trunc)
+                << record << "file\tEngine Library/Database2/m.db\t" << foreign << "\n";
+            assert(sb::readRestoredDatabases(f.target).empty() && "one foreign line and the record says nothing");
+        }
+        // Contents/old.mp3 is an extra like any other, not kept.
+        std::ofstream(recordFile, std::ios::binary | std::ios::trunc)
+            << record << "file\tEngine Library/Database2/m.db\tContents/old.mp3\n";
+        const RestorePreview without = RestoreStickBackup::preview(restore);
+        assert(without.filesToWrite >= 1 && "the database is written again");
+        writeFile(f.target / "Contents" / "old.mp3", "not in the backup", 1'700'000'100);
+        preview = RestoreStickBackup::preview(restore);
+        if (preview.extras != without.extras + 1) {
+            std::cerr << "extras with Contents/old.mp3 on the stick: " << preview.extras << ", without: " << without.extras
+                      << "\n";
+        }
+        assert(preview.extras == without.extras + 1);
+        const RestoreSummary summary = RestoreStickBackup::execute(restore);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(!fs::exists(f.target / "Contents" / "old.mp3"));
+        f.expectCoversStored();
+        f.expect(f.target, f.source, State::Current, Kind::None, false, "after the exact restore");
+        std::cout << "case 9 (a record listing Contents/old.mp3: untrusted, the file an extra) OK\n";
+    }
+
+    // ---- Bytes that are not UTF-8 in the record: ignored, and nothing throws ----
+    {
+        Fixture f("badutf8");
+        assert(f.clone().status == CloneStickOutcome::Status::Cloned);
+        const fs::path recordFile = f.target / seabass::pathFromUtf8(std::string(sb::RestoredDatabasesPath));
+        const std::string record = readFile(recordFile);
+        assert(!sb::readRestoredDatabases(f.target).empty());
+        for (const std::string bad : {std::string("Engine Library/Artwork/\xff\xfe.jpg"),
+                                      std::string("Engine Library/Artwork/\xc0\xaf.jpg"),
+                                      std::string("Engine Library/Artwork/\xed\xa0\x80.jpg")}) {
+            std::ofstream(recordFile, std::ios::binary | std::ios::trunc)
+                << record << "file\tEngine Library/Database2/m.db\t" << bad << "\n";
+            assert(sb::readRestoredDatabases(f.target).empty());
+        }
+        RestoreOptions restore;
+        restore.archivePath = f.options.backup.archivePath;
+        restore.targetRoot = f.target;
+        restore.targetLabel = "TARGET";
+        const RestoreSummary summary = RestoreStickBackup::execute(restore);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(sb::readRestoredDatabases(f.target).size() == 1 && "the run wrote a record that reads");
+        f.expect(f.target, f.source, State::Current, Kind::None, false, "after a restore over the bad record");
+        std::cout << "case 10 (a record with bytes that are not UTF-8: ignored, replaced) OK\n";
     }
 
     std::cout << "All clone_target_state tests passed." << std::endl;

@@ -100,7 +100,8 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
     // The same databases the backups captured, plus the stick's own Engine
     // database, and the record of what a restore wrote there: the app's
     // own reader, as BackupAdvisorController uses it.
-    application::StickDatabaseState databases = application::readStickDatabaseState(root, backups, facts.hasLibrary);
+    application::StickDatabaseState databases =
+        application::readStickDatabaseState(root, backups, facts.hasLibrary, facts.label);
     facts.databaseFingerprints = std::move(databases.fingerprints);
     facts.restoredDatabases = std::move(databases.restoredDatabases);
     return facts;

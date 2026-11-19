@@ -300,17 +300,21 @@ bool makesCoversLabelProof(const RestoreOptions &options, const BackupManifest &
     return targetIsStick && !infrastructure::engine::sameStickLabel(options.targetLabel, manifest.stickLabel);
 }
 
-// `coversLabelProof`: makesCoversLabelProof() for this restore. Only then
-// is a database the record says an earlier restore of this backup made
-// label-proof what this one would write; onto the backup's own stick, or
-// into a folder, the backup's database is written as it is.
-RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifest, const fs::path &targetRoot,
-                        bool coversLabelProof)
+// Only when this restore makes the covers label-proof
+// (makesCoversLabelProof()) is a database the record says an earlier
+// restore of this backup made label-proof what this one would write; onto
+// the backup's own stick, or into a folder, the backup's database is
+// written as it is. And only a record that vouches for the target under
+// the label this restore writes it for (vouchedRestoredDatabases(), the
+// one test the stick list goes by too) is taken at its word.
+RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifest, const RestoreOptions &options)
 {
     RestorePlan plan;
+    const fs::path &targetRoot = options.targetRoot;
     const infrastructure::stick_backup::RestoredDatabases restored =
-        coversLabelProof ? infrastructure::stick_backup::readRestoredDatabases(targetRoot)
-                         : infrastructure::stick_backup::RestoredDatabases{};
+        makesCoversLabelProof(options, manifest)
+            ? infrastructure::stick_backup::vouchedRestoredDatabases(targetRoot, options.targetLabel)
+            : infrastructure::stick_backup::RestoredDatabases{};
     std::vector<PlannedEntry> databaseFiles;
     std::map<std::string, const ManifestRow *> rowsByPath;
     for (const ManifestRow &row : manifest.rows) {
@@ -370,12 +374,13 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
                     // Not the backup's bytes, and not their size either, but
                     // exactly what a restore of this database left here: the
                     // record names this backup's fingerprint and the one the
-                    // target still has. Anything written since moves the
-                    // fingerprint, and the set is written again as before.
+                    // target still has, and the record vouched for the
+                    // content too (the fingerprint does not move on every
+                    // write). A set written since is written again as before.
                     const auto recorded = restored.find(entry.name);
                     if (!planned.unchanged && live && recorded != restored.end()
-                        && recorded->second.archiveFingerprint == row->second->extra
-                        && recorded->second.writtenFingerprint == live->toHex()) {
+                        && infrastructure::stick_backup::holdsBackupDatabase(restored, entry.name, row->second->extra,
+                                                                             live->toHex())) {
                         plan.setsAsRestored.insert(entry.name);
                         for (const std::string &file : recorded->second.files) {
                             plan.filesAsRestored.insert(normalizedPathKey(file));
@@ -704,8 +709,7 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
     preview.unreadableEntries = opened.unreadableEntries;
     preview.rollsBackUnfinishedUpdate = opened.rollsBackUnfinishedUpdate;
 
-    RestorePlan plan =
-        planRestore(*opened.reader, *opened.manifest, options.targetRoot, makesCoversLabelProof(options, *opened.manifest));
+    RestorePlan plan = planRestore(*opened.reader, *opened.manifest, options);
     preview.entries = plan.directories.size() + plan.files.size();
     preview.bytes = plan.totalBytes;
     preview.filesUnchanged = plan.unchanged;
@@ -781,8 +785,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         }
     };
     report(RestoreProgress::Phase::Analyzing);
-    RestorePlan plan =
-        planRestore(*opened.reader, *opened.manifest, options.targetRoot, makesCoversLabelProof(options, *opened.manifest));
+    RestorePlan plan = planRestore(*opened.reader, *opened.manifest, options);
     summary.rejected = plan.rejected;
     summary.filesUnchanged = plan.unchanged;
     std::vector<std::string> extras = options.exact ? extrasOnTarget(options.targetRoot, plan) : std::vector<std::string>{};
@@ -1140,20 +1143,33 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
 
     // What this restore left of the backup's Engine database, for the
     // next look at this stick (restored_databases.hpp): when it is no
-    // longer the backup's byte for byte, which fingerprint it has now.
-    // Without this a clone read as behind its own backup a second after
-    // it finished, and every run wrote the database again.
+    // longer the backup's byte for byte, which fingerprint and content it
+    // has now, and the label it was made label-proof for. Without this a
+    // clone read as behind its own backup a second after it finished, and
+    // every run wrote the database again.
     {
+        // Validated as it is read (restored_databases.cpp): every string in
+        // it is UTF-8 and every file a plain path under the library's
+        // Artwork folder, so nothing below can throw on one.
         const infrastructure::stick_backup::RestoredDatabases before =
             infrastructure::stick_backup::readRestoredDatabases(options.targetRoot);
+        const fs::path recordFile =
+            options.targetRoot / seabass::pathFromUtf8(std::string(infrastructure::stick_backup::RestoredDatabasesPath));
+        const bool recordFileThere = fs::exists(longPathSafe(recordFile), ec);
+        ec.clear();
         infrastructure::stick_backup::RestoredDatabases record;
         if (engineMain != nullptr && setsNotPlaced.count(engineMain->setMainPath) == 0 && !coverStepFailed) {
             const auto row = rowsByPath.find(engineMain->name);
             const std::optional<DbSetFingerprint> live = fingerprintDbSet(targetDatabase);
-            if (row != rowsByPath.end() && !row->second->extra.empty() && live && live->toHex() != row->second->extra) {
+            const std::optional<infrastructure::hashing::Sha256Digest> content =
+                infrastructure::stick_backup::hashDbSet(targetDatabase);
+            if (row != rowsByPath.end() && !row->second->extra.empty() && live && content
+                && live->toHex() != row->second->extra) {
                 infrastructure::stick_backup::RestoredDatabase &restored = record[engineMain->name];
                 restored.archiveFingerprint = row->second->extra;
                 restored.writtenFingerprint = live->toHex();
+                restored.contentHash = infrastructure::hashing::toHex(*content);
+                restored.targetLabel = options.targetLabel;
                 // The covers an earlier run copied, when this run found the
                 // database as that run left it and so copied none itself.
                 const auto earlier = before.find(engineMain->name);
@@ -1170,7 +1186,10 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                 restored.files.erase(std::unique(restored.files.begin(), restored.files.end()), restored.files.end());
             }
         }
-        if (record != before && !infrastructure::stick_backup::writeRestoredDatabases(options.targetRoot, record)) {
+        // A record on the stick that did not read (another version, a bad
+        // line) is replaced, or taken away when there is nothing to say.
+        const bool rewrite = record != before || (record.empty() && recordFileThere);
+        if (rewrite && !infrastructure::stick_backup::writeRestoredDatabases(options.targetRoot, record)) {
             summary.warnings.push_back(
                 "could not note on this drive what the restore wrote into its Engine library, so it may read as "
                 "behind its backup and be offered the same update again");
@@ -1178,10 +1197,8 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         // A record taken away leaves no empty folder of its own behind:
         // the backup does not hold it, so it would be an extra the next
         // exact restore removes.
-        if (record.empty() && !before.empty()) {
-            const fs::path folder = (options.targetRoot
-                                     / seabass::pathFromUtf8(std::string(infrastructure::stick_backup::RestoredDatabasesPath)))
-                                        .parent_path();
+        if (record.empty() && recordFileThere) {
+            const fs::path folder = recordFile.parent_path();
             const std::string folderName = pathToGenericUtf8(folder.lexically_relative(options.targetRoot));
             if (plan.backupDirectories.count(folderName) == 0 && fs::is_empty(longPathSafe(folder), ec)) {
                 fs::remove(longPathSafe(folder), ec);

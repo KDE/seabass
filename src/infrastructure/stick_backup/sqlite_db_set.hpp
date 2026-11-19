@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/stick_backup/archive_updater.hpp"
 
 namespace seabass::infrastructure::stick_backup
@@ -23,6 +24,11 @@ namespace seabass::infrastructure::stick_backup
 // on every commit in WAL mode and its salts change on every reset --
 // together they move whenever a transaction landed, even when the FAT
 // mtime, at 2 s resolution, did not).
+//
+// Likely, not certain: a WAL commit that was checkpointed and its WAL
+// removed, into a main file of the same page count, by a writer that
+// does not bump the change counter in WAL mode, leaves every field as it
+// was. Where "unchanged" must be known, hash the set (hashDbSet).
 struct DbSetFingerprint
 {
     std::uint32_t changeCounter = 0;
@@ -56,6 +62,14 @@ std::vector<std::filesystem::path> dbSetMembers(const std::filesystem::path &mai
 // nullopt when `mainDb` is not a SQLite file (wrong magic) or cannot be
 // read -- callers then treat it as an ordinary file.
 std::optional<DbSetFingerprint> fingerprintDbSet(const std::filesystem::path &mainDb);
+
+// A SHA-256 over the whole set as it is on disk: each member's name
+// suffix ("", "-wal", "-journal") and its bytes' own SHA-256, in
+// dbSetMembers() order. Reads every byte, so it is the test of last
+// resort behind fingerprintDbSet(), for when "unchanged" has to be known
+// rather than likely. nullopt when the set's members cannot be told or a
+// member cannot be read to its end.
+std::optional<hashing::Sha256Digest> hashDbSet(const std::filesystem::path &mainDb);
 
 // SQLite's byte-range locks sit at offset 0x40000000; on Windows a raw
 // read of that page fails while a connection holds a lock. Rather than

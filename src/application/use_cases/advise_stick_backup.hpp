@@ -141,16 +141,21 @@ StickBackupAdvice adviseStickBackup(const StickBackupAdviceInput &input);
 // at `stickRoot`: the DbSetFingerprint of every database `backups`
 // captured, plus the stick's own Engine database when it has a library
 // (so two sticks compare with each other when no backup captured
-// either), and the record of what the last restore wrote there. What the
-// stick list and the rig tools fill StickBackupAdviceInput's
+// either), and the record of what the last restore wrote there, as far
+// as it vouches for the stick under `stickLabel`, its label now
+// (vouchedRestoredDatabases: the test the restore planner goes by too).
+// What the stick list and the rig tools fill StickBackupAdviceInput's
 // liveDatabaseFingerprints and restoredDatabases (and a peer's) with.
+// Hashes the Engine database when the record's fingerprint still matches:
+// on a worker, never on the GUI thread.
 struct StickDatabaseState
 {
     std::map<std::string, std::string> fingerprints;
     infrastructure::stick_backup::RestoredDatabases restoredDatabases;
 };
 StickDatabaseState readStickDatabaseState(const std::filesystem::path &stickRoot,
-                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary);
+                                          const std::vector<StickBackupDescription> &backups, bool hasLibrary,
+                                          const std::string &stickLabel);
 
 std::string_view toString(StickBackupAdvice::State state);
 std::string_view toString(StickBackupAdvice::MatchedBy matchedBy);
