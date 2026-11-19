@@ -9,6 +9,8 @@
 #include <QString>
 
 #include <cstddef>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "domain/cross_source_sync_conflict.hpp"
@@ -17,6 +19,37 @@
 
 namespace seabass::gui
 {
+
+// What a row's Engine copy gets of rekordbox's analysis with Preferences'
+// "Copy beat grids/waveforms from rekordbox to Engine" on, as Sync Cue
+// Points' analysis previewed it (nothing written): a grid locked or moved
+// on the player is never replaced, and a row the player has not analysed is
+// completed with both parts or not at all. Nothing for a row whose preview
+// would write nothing, and for every row with both switches off.
+struct SyncRowAnalysis
+{
+    bool grid = false;
+    bool waveform = false;
+    // A row the player has not analysed, completed by the copy: it then
+    // loads without analysis on the player.
+    bool completes = false;
+    bool any() const { return grid || waveform; }
+};
+
+// A track in scope whose cues are already in step but whose Engine row
+// would take rekordbox's analysis, as the analysis' preview found it. It
+// is a row of the list like the tracks whose cues sync (the owner's call:
+// a track that gets its beat grid or waveform is a synced track), staged
+// as a SyncAnalysisChange of its own.
+struct SyncAnalysisOnlyTrack
+{
+    domain::Track rekordbox;
+    domain::Track engine;
+    // rekordboxAnalysisDigest() of what the preview read: the save writes
+    // that, or nothing.
+    std::string analysisDigest;
+    SyncRowAnalysis analysis;
+};
 
 // The Sync Cue Points list: every track SyncController's last analysis
 // found out of step across the stick's catalogs, in one list with two
@@ -36,6 +69,14 @@ namespace seabass::gui
 // already loaded, not a rescan, and never touches a tick; Select All and
 // Select None reach only the rows the search shows. Decisions carry no
 // tick at all -- they cannot be staged until someone picks a side.
+//
+// A ready track is either a cue sync (with, for cues going from rekordbox
+// to Engine with Preferences' analysis switches on, what its Engine copy
+// gets of rekordbox's analysis as well: analysis()) or a track whose cues
+// are already in step that gets only rekordbox's analysis
+// (isAnalysisOnly()). The second kind is a plan too, rekordbox to Engine
+// with nothing in cuesToApply, so ticks, the search, the counts and
+// staging treat both alike; the rows list the cue syncs first.
 //
 // Two index spaces, kept apart on purpose. A *row* is what the ListView
 // shows and moves with the search. A *plan index* or *conflict index* is
@@ -89,6 +130,13 @@ public:
         // and on a second line the cues a pick writing Engine leaves off it.
         // Empty on a ready track.
         ReasonRole,
+        // A ready track whose cues are already in step and that gets only
+        // rekordbox's analysis (SyncAnalysisOnlyTrack).
+        AnalysisOnlyRole,
+        // What the row's Engine copy gets of rekordbox's analysis, in the
+        // row's words ("Beat grid and waveform from rekordbox"); empty for
+        // nothing and on a decision.
+        AnalysisRole,
     };
 
     explicit SyncPlanListModel(QObject *parent = nullptr);
@@ -107,8 +155,21 @@ public:
     // of a real "scanning takes forever" report. QML fetches a waveform on
     // demand via PlaybackController::waveformFor(), so only rows actually
     // rendered pay for one.
-    void setAnalysis(std::vector<domain::SyncPlan> plans, std::vector<domain::CrossSourceSyncConflict> conflicts);
+    //
+    // analysisOnly become ready tracks after the cue syncs; riders, keyed
+    // by an Engine track's sourceId, say what a cue sync onto that Engine
+    // row carries of rekordbox's analysis.
+    void setAnalysis(std::vector<domain::SyncPlan> plans, std::vector<domain::CrossSourceSyncConflict> conflicts,
+                     const std::vector<SyncAnalysisOnlyTrack> &analysisOnly = {},
+                     const std::map<std::string, SyncRowAnalysis> &riders = {});
     const std::vector<domain::SyncPlan> &plans() const { return m_plans; }
+    bool isAnalysisOnly(int planIndex) const;
+    // What the plan's Engine copy gets of rekordbox's analysis (both
+    // kinds of ready track); nothing for an index out of range.
+    SyncRowAnalysis analysis(int planIndex) const;
+    // An analysis-only plan's preview digest (SyncAnalysisOnlyTrack).
+    std::string analysisDigest(int planIndex) const;
+    int analysisOnlyCount() const;
     const std::vector<domain::CrossSourceSyncConflict> &conflicts() const { return m_conflicts; }
 
     // A decision made: the pick becomes an ordinary plan, appended ticked,
@@ -156,6 +217,12 @@ public:
     static domain::CueChange cueChangeOf(const domain::SyncPlan &plan);
     static QString choiceSummary(const domain::CrossSourceSyncConflict &conflict);
     static QString reasonOf(const domain::CrossSourceSyncConflict &conflict);
+    // "Beat grid and waveform from rekordbox", "Beat grid from rekordbox"
+    // or "Waveform from rekordbox", and ", then loads without analysis on
+    // the player" for a row it completes. Empty for nothing.
+    static QString analysisText(const SyncRowAnalysis &analysis);
+    // The cue column of a track that gets only rekordbox's analysis.
+    static QString analysisOnlyCueSummary();
 
 signals:
     // Any count above may have moved. Emitted even when no row did: a
@@ -181,10 +248,18 @@ private:
     std::vector<domain::SyncPlan> m_plans;
     std::vector<QString> m_stagedDescriptions;  // empty = not staged; parallel to m_plans
     std::vector<bool> m_included;               // parallel to m_plans
+    struct PlanAnalysis
+    {
+        bool only = false;
+        SyncRowAnalysis parts;
+        std::string digest;
+    };
+    std::vector<PlanAnalysis> m_analysis;  // parallel to m_plans
     std::vector<domain::CrossSourceSyncConflict> m_conflicts;
     QString m_filter;
-    // What rowCount()/data() walk: decisions first, then ready tracks,
-    // each only while it matches m_filter.
+    // What rowCount()/data() walk: decisions first, then ready tracks (the
+    // cue syncs, then the analysis-only ones), each only while it matches
+    // m_filter.
     std::vector<Row> m_rows;
 };
 

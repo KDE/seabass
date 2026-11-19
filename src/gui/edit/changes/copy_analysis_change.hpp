@@ -245,9 +245,9 @@ private:
 //
 // Sync Cue Points carries one inside the SyncPlanChange of each row whose
 // cues go to Engine (rideIn()), so the row stays one staged change, and
-// stages one on its own (countAsUnit()) for each track in scope whose cues
-// are already in step but whose analysis its preview found would change,
-// with that preview's digest (Track::analysisDigest).
+// stages one on its own (countAsUnit()) for each ticked row of a track
+// whose cues are already in step but whose analysis its preview found
+// would change, with that preview's digest (Track::analysisDigest).
 //
 // Failures. Reading rekordbox's analysis writes nothing, so a track whose
 // analysis cannot be read is left alone and counted, and the sync goes
@@ -301,11 +301,11 @@ public:
     // runs inside the carrier's, after the carrier's own write.
     void rideIn(const QString &carrierId) { m_carrierId = carrierId; }
 
-    // Staged on its own as a unit of the save (Sync Cue Points' tracks
-    // that need only their analysis): counted as one track, so a save of
-    // nothing else says it wrote them and a skip says so too. A rider or
-    // a change beside a sync's own (Sync after Rekordbox Export) counts
-    // nothing.
+    // Staged on its own as a unit of the save (Sync Cue Points' rows of
+    // tracks that need only their analysis): counted as one synced track,
+    // with SyncPlanChange's verb, so a save of nothing else says it wrote
+    // them and a skip says so too. A rider or a change beside a sync's own
+    // (Sync after Rekordbox Export) counts nothing.
     void countAsUnit() { m_countsAsUnit = true; }
 
     QString id() const override;

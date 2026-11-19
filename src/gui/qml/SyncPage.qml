@@ -211,6 +211,9 @@ Page {
                 + " disagree. The side you pick is staged onto " + root.formatLabel(row.targetFormat)
                 + ". Nothing is written until Save.";
         }
+        if (row.analysisOnly) {
+            return "The cues are already in step. " + row.analysis + ". Nothing is written until Save.";
+        }
         var change = row.cueChange;
         var source = root.formatLabel(row.sourceFormat);
         var target = root.formatLabel(row.targetFormat);
@@ -233,7 +236,8 @@ Page {
         if (dropped > 0) {
             sentence += " and replaces " + root.plural(dropped, "cue") + " of its own";
         }
-        return sentence + ". Nothing is written until Save.";
+        const analysis = row.analysis.length > 0 ? " " + row.analysis + "." : "";
+        return sentence + "." + analysis + " Nothing is written until Save.";
     }
 
     // Opens on the playlist last picked on any page with a picker.
@@ -658,8 +662,8 @@ Page {
                 label: "need sync"
             }
             // With "Copy beat grids/waveforms from rekordbox to Engine" on:
-            // the tracks whose cues are in step that take rekordbox's
-            // analysis, staged with the ticked ones.
+            // how many of the tracks that need sync have their cues in step
+            // and get only rekordbox's analysis. Each is a row below.
             StatFigure {
                 objectName: "analysisOnlyFigure"
                 visible: syncController.analysisOnlyCount > 0
@@ -785,18 +789,14 @@ Page {
                 Button {
                     objectName: "stageSelectedButton"
                     highlighted: true
-                    // The tracks that need only rekordbox's analysis are not
-                    // rows, so they count only when no search narrows the list.
                     readonly property int stageable: root.searching
                         ? syncController.selectedVisibleCount
-                        : syncController.selectedCount + syncController.analysisOnlyPendingCount
+                        : syncController.selectedCount
                     text: "Stage " + stageable + " Selected"
                     enabled: !syncController.busy && !syncController.writing && stageable > 0
                     ToolTip.visible: hovered
                     ToolTip.text: root.searching
                         ? "Stage every ticked track the search shows; Save writes them"
-                        : syncController.analysisOnlyPendingCount > 0
-                        ? "Stage every ticked track, and the tracks that get only rekordbox's analysis; Save writes them"
                         : "Stage every ticked track; Save writes them"
                     onClicked: syncController.stageSelected(root.searching)
                 }
@@ -807,16 +807,6 @@ Page {
             visible: syncController.errorMessage.length > 0
             text: syncController.errorMessage
             color: Theme.danger
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-        }
-        // Beside a list: the tracks that need only rekordbox's analysis, which
-        // the list does not show. With no list the empty state says it.
-        Label {
-            objectName: "analysisOnlyLabel"
-            visible: syncController.analysisOnlyPendingCount > 0 && plansListView.count > 0
-            text: syncController.analysisOnlyText
-            color: Theme.textMuted
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
@@ -922,6 +912,8 @@ Page {
                         font.pointSize: Theme.fontSmall
                         text: sectionHeader.decisions
                             ? "Seabass cannot tell which side is right. Pick the side that should be on both."
+                            : syncController.analysisOnlyCount > 0
+                            ? "One side has cues, a beat grid or a waveform the other lacks. Staging copies them across."
                             : "One side has cues the other lacks. Staging copies them across."
                     }
                 }
@@ -945,6 +937,11 @@ Page {
                 required property bool included
                 required property bool staged
                 required property string stagedDescription
+                // Cues in step, only rekordbox's analysis to copy.
+                required property bool analysisOnly
+                // What the Engine copy gets of rekordbox's analysis, in
+                // words; empty for nothing.
+                required property string analysis
 
                 // The row is about the track, not one copy of it; the
                 // first copy stands for it.
@@ -957,7 +954,8 @@ Page {
                 // Narrow, the catalog and cue columns fold into this line.
                 artist: root.wide ? shown.artist : shown.artist + " · " + directionText + " · " + cueSummary
                 artworkUrl: shown.artworkPath
-                note: reason
+                // A decision's reason; a ready track's rekordbox analysis.
+                note: needsDecision ? reason : analysis
                 selectable: !needsDecision
                 reserveSelectionSpace: true
                 selected: included
@@ -1166,21 +1164,16 @@ Page {
 
             EmptyState {
                 objectName: "nothingToSyncLabel"
+                // No rows at all: a track that gets only rekordbox's
+                // analysis is a row, so it is never "nothing to sync".
                 visible: plansListView.count === 0 && !syncController.busy
-                // Cues in step, but tracks whose analysis Preferences has
-                // copied: not "nothing to sync", the analysis is still to go.
-                readonly property bool analysisOnly: !root.searching && syncController.analysisOnlyCount > 0
-                tone: root.searching || analysisOnly ? "info" : "good"
+                tone: root.searching ? "info" : "good"
                 iconName: root.searching ? "edit-find" : "checkmark"
                 // Names the playlist when one is picked: the result is about
                 // that playlist only, and the picker above is easy to forget
                 // -- "nothing to sync" is not true of the whole library.
                 text: root.searching
                     ? "No track needing sync matches “" + toolbar.searchText + "”."
-                    : analysisOnly
-                        ? (root.selectedPlaylistName.length > 0
-                           ? "No cues to sync in playlist “" + root.selectedPlaylistName + "”. "
-                           : "No cues to sync. ") + syncController.analysisOnlyText
                     : root.selectedPlaylistName.length > 0
                         ? "Nothing to sync in playlist “" + root.selectedPlaylistName
                           + "”. Its matched tracks' cues are already consistent."

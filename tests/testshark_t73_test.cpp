@@ -1440,15 +1440,44 @@ void analyze(SyncController &controller, const testing::EngineChangeStick &stick
     assert(controller.errorMessage().isEmpty());
 }
 
+// A plan's row as the page reads it: `role` of the row whose planIndex is
+// `planIndex`, invalid when the search hides it.
+QVariant rowRole(SyncController &controller, int planIndex, int role)
+{
+    auto *model = controller.plansModel();
+    for (int r = 0; r < model->rowCount(); ++r) {
+        const QModelIndex index = model->index(r);
+        if (model->data(index, seabass::gui::SyncPlanListModel::PlanIndexRole).toInt() == planIndex) {
+            return model->data(index, role);
+        }
+    }
+    return {};
+}
+
+QString analysisTextOf(SyncController &controller, int planIndex)
+{
+    return rowRole(controller, planIndex, seabass::gui::SyncPlanListModel::AnalysisRole).toString();
+}
+
 void printPlans(SyncController &controller)
 {
-    for (const auto &plan : controller.plansModel()->plans()) {
+    const auto &plans = controller.plansModel()->plans();
+    for (std::size_t i = 0; i < plans.size(); ++i) {
+        const auto &plan = plans[i];
         const bool toB = plan.direction == d::SyncPlan::Direction::ToB;
         const auto &src = toB ? plan.match.trackA : plan.match.trackB;
         const auto &tgt = toB ? plan.match.trackB : plan.match.trackA;
-        std::cout << "  plan: " << src.format << " " << src.filename << " -> " << tgt.format << " id=" << tgt.sourceId
-                  << " (" << plan.cuesToApply.size() << " cues)\n";
+        const int index = static_cast<int>(i);
+        std::cout << "  " << (controller.plansModel()->isAnalysisOnly(index) ? "analysis only" : "plan") << ": "
+                  << src.format << " " << src.filename << " -> " << tgt.format << " id=" << tgt.sourceId << " ("
+                  << plan.cuesToApply.size() << " cues) \""
+                  << analysisTextOf(controller, index).toStdString() << "\"\n";
     }
+}
+
+int cueRowCount(SyncController &controller)
+{
+    return controller.planCount() - controller.analysisOnlyCount();
 }
 
 // Engine's cues of `names` taken away (N3's cue list, which holds none of
@@ -1523,12 +1552,12 @@ std::string quickCuesOf(const testing::EngineChangeStick &stick, const std::stri
 
 // One Sync Cue Points run: B04 and B11 (analysed by the player) and B03
 // (not) lose their cues on Engine, so their rekordbox cues go to Engine;
-// N3 gains cues on Engine, so its row goes to rekordbox. `lockB11`: B11's
-// grid locked on the player. `experimental`: the gate, the switches as
-// `options` (none: never set). `asWithASearch`: staged as the page stages
-// with a search active, which stages the listed rows only and leaves out
-// the tracks that need only rekordbox's analysis (the rider cases here are
-// about the rows; testCueSyncAnalysisOnly is about those tracks).
+// N3 gains cues on Engine, so its row goes to rekordbox. B11's grid is
+// locked on the player. `experimental`: the gate, the switches as
+// `options` (none: never set). The rows of tracks that need only
+// rekordbox's analysis are unticked (the rider cases here are about the
+// cue rows; testCueSyncAnalysisOnly is about those), and so are the cue
+// rows named in `untick`; those in `unstage` are unstaged after staging.
 struct CueSyncRun
 {
     testing::EngineChangeStick stick;
@@ -1539,13 +1568,16 @@ struct CueSyncRun
     QString staged;
     QVariantMap summary;
     std::map<std::int64_t, std::vector<std::string>> after;
+    // What each cue row said of rekordbox's analysis (AnalysisRole), read
+    // before the save takes the rows away.
+    std::map<std::string, QString> rowAnalysis;
 };
 
 const std::vector<std::string> CueRowsToEngine = {"B03", "B04", "B11"};
 
 CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, bool>> options, bool experimental,
                       SyncController &controller, const std::vector<std::string> &unstage = {},
-                      bool asWithASearch = true)
+                      const std::vector<std::string> &untick = {})
 {
     CueSyncRun run;
     run.stick = makeStick(name, "m-after-R3c-save1.db", "rekordbox-baseline-export128.tsv.gz");
@@ -1566,8 +1598,8 @@ CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, boo
     SyncAnalysisPolicy::setExperimentalEnabled(experimental);
     analyze(controller, run.stick);
     printPlans(controller);
-    // B03, B04 and B11 to Engine, N3 to rekordbox, nothing else.
-    assert(controller.planCount() == 4 && controller.conflictCount() == 0);
+    // B03, B04 and B11 to Engine, N3 to rekordbox, no other cue row.
+    assert(cueRowCount(controller) == 4 && controller.conflictCount() == 0);
     for (const auto &track : CueRowsToEngine) {
         const int i = planIndexOf(controller, track);
         assert(i >= 0);
@@ -1579,35 +1611,51 @@ CueSyncRun runCueSync(const std::string &name, std::optional<std::pair<bool, boo
         const auto &target = plan.direction == d::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
         assert(target.format == "rekordbox" && "N3 goes the other way");
     }
-    for (const auto &track : controller.analysisOnlyTracks()) {
-        std::cout << "  analysis only: " << track.rekordbox.filename << " -> engine id=" << track.engineTrackId
-                  << (track.grid ? " grid" : "") << (track.waveform ? " waveform" : "")
-                  << (track.completes ? " completes" : "") << "\n";
-    }
-    // A row whose cues go to Engine carries its analysis as a rider, and
-    // is never offered for its analysis alone as well.
-    for (const auto &track : CueRowsToEngine) {
+    // One row per track: a row whose cues go to Engine carries its
+    // analysis as a rider and is never offered for its analysis alone as
+    // well, and N3, whose cues go the other way, is its cue row only.
+    for (const auto &track : {"B03", "B04", "B11", "N3"}) {
         const std::string id = std::to_string(trackIdOf(run.stick, track));
-        for (const auto &only : controller.analysisOnlyTracks()) {
-            assert(only.engineTrackId != id && "never both a rider and a change of its own");
+        int rows = 0;
+        for (const auto &plan : controller.plansModel()->plans()) {
+            // trackIdOf is Engine's id: compared with Engine copies only.
+            for (const auto *track : {&plan.match.trackA, &plan.match.trackB}) {
+                rows += track->format == "engine" && track->sourceId == id ? 1 : 0;
+            }
+        }
+        assert(rows == 1 && "never both a rider and a change of its own");
+    }
+    for (const char *track : {"B03", "B04", "B11", "N3"}) {
+        run.rowAnalysis[track] = analysisTextOf(controller, planIndexOf(controller, track));
+    }
+    assert(run.rowAnalysis.at("N3").isEmpty() && "N3's cues go to rekordbox");
+    for (int i = 0; i < controller.planCount(); ++i) {
+        if (controller.plansModel()->isAnalysisOnly(i)) {
+            controller.setIncluded(i, false);
         }
     }
-    controller.stageSelected(asWithASearch);
+    for (const auto &track : untick) {
+        controller.setIncluded(planIndexOf(controller, track), false);
+    }
+    assert(controller.selectedCount() == static_cast<int>(4 - untick.size()));
+    controller.stageSelected(false);
     assert(controller.errorMessage().isEmpty());
     run.staged = controller.statusMessage();
     std::cout << "  staged: \"" << run.staged.toStdString() << "\"\n";
-    assert(controller.stagedCount() == 4);
+    assert(controller.stagedCount() == static_cast<int>(4 - untick.size()) && "an unticked row is not staged");
     for (const auto &track : unstage) {
         controller.unstage(planIndexOf(controller, track));
     }
     LibraryEditSession *session = sessionOf(run.stick);
     run.pending = session->pendingDescriptions();
     // One staged change per row, rider or not.
-    assert(run.pending.size() == static_cast<int>(4 - unstage.size()));
+    const int rows = static_cast<int>(4 - unstage.size() - untick.size());
+    assert(run.pending.size() == rows);
     assert(ridersIn(run.pending) == 0 && "the analysis rides inside the row's own change");
     run.summary = waitForSyncSave(session, controller, false);
     // The rows' own count, whatever the switches.
-    assert(run.summary.value("written").toInt() == static_cast<int>(4 - unstage.size()));
+    assert(run.summary.value("written").toInt() == rows);
+    assert(run.summary.value("verb").toString() == QStringLiteral("synchronised"));
     assert(run.summary.value("unit").toString() == QStringLiteral("tracks"));
     run.after = analysisRows(run.stick.db);
     return run;
@@ -1625,6 +1673,15 @@ void testCueSyncBoth()
     SyncController controller;
     CueSyncRun run = runCueSync("t73_cuesync_both", std::make_pair(true, true), true, controller);
     const auto &stick = run.stick;
+    assert(run.staged == QStringLiteral("Staged 4 track(s). Press Save to write the cues to the stick. The tracks whose "
+                                        "cues go to Engine also get rekordbox's beat grids and waveforms, as set in "
+                                        "Preferences."));
+    // Each cue row says what its Engine copy gets, as the save then writes
+    // it: B11's locked grid is not among it.
+    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid and waveform from rekordbox"));
+    assert(run.rowAnalysis.at("B11") == QStringLiteral("Waveform from rekordbox"));
+    assert(run.rowAnalysis.at("B03")
+           == QStringLiteral("Beat grid and waveform from rekordbox, then loads without analysis on the player"));
     assert(run.staged.contains(QStringLiteral("The tracks whose cues go to Engine also get rekordbox's beat grids and "
                                               "waveforms, as set in Preferences.")));
     assertCuesLanded(run, CueRowsToEngine);
@@ -1709,12 +1766,35 @@ void testCueSyncUnstage()
     std::cout << "cue sync unstage: B04's analysis left with its row OK\n";
 }
 
+// A row unticked means "do not touch this track": B04 gets neither its
+// cues nor rekordbox's analysis, and is not offered for its analysis
+// alone either (one row per track). Its row is still listed afterwards.
+void testCueSyncUntick()
+{
+    SyncController controller;
+    CueSyncRun run = runCueSync("t73_cuesync_untick", std::make_pair(true, true), true, controller, {}, {"B04"});
+    const std::int64_t b04 = trackIdOf(run.stick, "B04");
+    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid and waveform from rekordbox"));
+    assert(run.after.at(b04) == run.before.at(b04) && "neither cues nor analysis for an unticked row");
+    assert(quickCuesOf(run.stick, "B04") == run.cuesBefore.at("B04"));
+    assertCuesLanded(run, {"B03", "B11"});
+    for (const auto &[path, bytes] : filesUnder(overviewDirOf(run.stick))) {
+        assert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())) != b04);
+    }
+    const int row = planIndexOf(controller, "B04");
+    assert(row >= 0 && !controller.plansModel()->isAnalysisOnly(row) && !controller.plansModel()->isStaged(row));
+    std::cout << "cue sync untick: B04 left whole, still listed OK\n";
+}
+
 // Grids only: B04's grid, B03 left for the player.
 void testCueSyncGridsOnly()
 {
     SyncController controller;
     CueSyncRun run = runCueSync("t73_cuesync_grids", std::make_pair(true, false), true, controller);
     assert(run.staged.contains(QStringLiteral("also get rekordbox's beat grids, as set in Preferences.")));
+    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid from rekordbox"));
+    assert(run.rowAnalysis.at("B11").isEmpty() && "a locked grid: nothing to say");
+    assert(run.rowAnalysis.at("B03").isEmpty() && "a row is completed with both or not at all");
     const std::int64_t b03 = trackIdOf(run.stick, "B03");
     assert(run.after.at(b03) == run.before.at(b03) && "a row is completed with both or not at all");
     assert(run.summary.value("notes").toString()
@@ -1733,9 +1813,11 @@ void testCueSyncOff()
           std::tuple{"t73_cuesync_off", std::optional<std::pair<bool, bool>>{std::make_pair(false, false)}, true},
           std::tuple{"t73_cuesync_gated", std::optional<std::pair<bool, bool>>{std::make_pair(true, true)}, false}}) {
         SyncController controller;
-        // Staged as without a search: everything the page would stage.
-        CueSyncRun run = runCueSync(name, options, experimental, controller, {}, false);
+        CueSyncRun run = runCueSync(name, options, experimental, controller);
         assert(controller.analysisOnlyCount() == 0 && "no track offered for its analysis alone");
+        for (const auto &[track, text] : run.rowAnalysis) {
+            assert(text.isEmpty() && "no row speaks of rekordbox's analysis");
+        }
         assert(!run.staged.contains(QStringLiteral("rekordbox's")) && "the staged line as it always was");
         assert(run.summary.value("notes").toString().isEmpty());
         assertCuesLanded(run, CueRowsToEngine);
@@ -1793,35 +1875,31 @@ InStepStick makeInStepStick(const std::string &name, const std::string &unanalys
     return out;
 }
 
-const seabass::gui::SyncAnalysisOnlyTrack *analysisOnlyOf(SyncController &controller, const testing::EngineChangeStick &stick,
-                                          const std::string &name)
+// The analysis-only row of `name`'s Engine copy: its plan index, -1 for
+// none.
+int analysisOnlyOf(SyncController &controller, const testing::EngineChangeStick &stick, const std::string &name)
 {
     const std::string id = std::to_string(trackIdOf(stick, name));
-    for (const auto &track : controller.analysisOnlyTracks()) {
-        if (track.engineTrackId == id) {
-            return &track;
+    const auto &plans = controller.plansModel()->plans();
+    for (std::size_t i = 0; i < plans.size(); ++i) {
+        if (controller.plansModel()->isAnalysisOnly(static_cast<int>(i)) && plans[i].match.trackB.sourceId == id) {
+            return static_cast<int>(i);
         }
     }
-    return nullptr;
-}
-
-void printAnalysisOnly(SyncController &controller)
-{
-    for (const auto &track : controller.analysisOnlyTracks()) {
-        std::cout << "  analysis only: " << track.rekordbox.filename << " -> engine id=" << track.engineTrackId
-                  << (track.grid ? " grid" : "") << (track.waveform ? " waveform" : "")
-                  << (track.completes ? " completes" : "") << "\n";
-    }
+    return -1;
 }
 
 // The owner's report: every track's cues in step, both switches on, an
 // Engine row the player has not analysed that rekordbox can complete. Sync
-// Cue Points offers it (and every other track whose analysis would
-// change), Stage stages it, Save completes the row, and Undo puts the
-// stick back. B11's locked grid is never replaced: it is offered for its
+// Cue Points lists it (and every other track whose analysis would change)
+// as a row of its own, ticked, rekordbox to Engine, saying what it gets;
+// the search narrows those rows as it narrows cue rows; an unticked one is
+// not written; Save counts them as synced tracks; Undo puts the stick
+// back. B11's locked grid is never replaced: it is offered for its
 // waveform only.
 void testCueSyncAnalysisOnly()
 {
+    using Model = seabass::gui::SyncPlanListModel;
     InStepStick in = makeInStepStick("t73_cuesync_analysis_only", "B03");
     const auto &stick = in.stick;
     SyncAnalysisPolicy::reset();
@@ -1830,72 +1908,115 @@ void testCueSyncAnalysisOnly()
     SyncController controller;
     analyze(controller, stick);
     printPlans(controller);
-    printAnalysisOnly(controller);
-    assert(controller.planCount() == 0 && controller.conflictCount() == 0 && "every track's cues in step");
+    assert(cueRowCount(controller) == 0 && controller.conflictCount() == 0 && "every track's cues in step");
     const int offered = controller.analysisOnlyCount();
-    assert(offered > 0 && controller.analysisOnlyPendingCount() == offered);
-    const auto *b03 = analysisOnlyOf(controller, stick, "B03");
-    assert(b03 && b03->grid && b03->waveform && b03->completes && "the unanalysed row is offered, completed");
-    const auto *b11 = analysisOnlyOf(controller, stick, "B11");
-    assert(b11 && !b11->grid && b11->waveform && "a locked grid is never offered, its waveform is");
-    std::cout << "  text: \"" << controller.analysisOnlyText().toStdString() << "\"\n";
     // Every Engine row of the fixture but B04 and B11 is one the player has
     // not analysed; B11 offers its waveform only.
     assert(offered == 11);
-    assert(controller.analysisOnlyText()
-           == QStringLiteral("11 tracks whose cues are already in step get rekordbox's analysis (10 beat grids and 11 "
-                             "waveforms), as set in Preferences. 9 of them then load without analysis."));
+    // Rows like the others: listed, ticked, counted, rekordbox to Engine.
+    assert(controller.planCount() == offered && controller.visiblePlanCount() == offered);
+    assert(controller.selectedCount() == offered && controller.plansModel()->rowCount() == offered);
+    const int b03 = analysisOnlyOf(controller, stick, "B03");
+    const int b04 = analysisOnlyOf(controller, stick, "B04");
+    const int b11 = analysisOnlyOf(controller, stick, "B11");
+    assert(b03 >= 0 && b04 >= 0 && b11 >= 0);
+    for (int i = 0; i < offered; ++i) {
+        assert(rowRole(controller, i, Model::AnalysisOnlyRole).toBool());
+        assert(rowRole(controller, i, Model::IncludedRole).toBool() && "ticked, as a cue row is");
+        assert(rowRole(controller, i, Model::SectionRole).toString() == QStringLiteral("ready"));
+        assert(rowRole(controller, i, Model::SourceFormatRole).toString() == QStringLiteral("rekordbox"));
+        assert(rowRole(controller, i, Model::TargetFormatRole).toString() == QStringLiteral("engine"));
+        assert(rowRole(controller, i, Model::CueSummaryRole).toString() == QStringLiteral("cues in step"));
+        const QVariantMap change = rowRole(controller, i, Model::CueChangeRole).toMap();
+        for (auto it = change.begin(); it != change.end(); ++it) {
+            assert(it.value().toInt() == 0 && "no cue counts invented");
+        }
+    }
+    assert(analysisTextOf(controller, b03)
+           == QStringLiteral("Beat grid and waveform from rekordbox, then loads without analysis on the player"));
+    assert(analysisTextOf(controller, b04) == QStringLiteral("Beat grid and waveform from rekordbox"));
+    assert(analysisTextOf(controller, b11) == QStringLiteral("Waveform from rekordbox") && "a locked grid: never");
 
+    // The search narrows them, and staging with it stages what it shows.
+    const auto &b03Track = controller.plansModel()->plans()[static_cast<std::size_t>(b03)].match.trackA;
+    controller.search(QString::fromStdString(b03Track.title));
+    const int shown = controller.visiblePlanCount();
+    std::cout << "  search \"" << b03Track.title << "\": " << shown << " row(s)\n";
+    assert(shown >= 1 && shown < offered && controller.selectedVisibleCount() == shown);
+    controller.stageSelected(true);
+    assert(controller.errorMessage().isEmpty());
+    assert(controller.stagedCount() == shown && controller.plansModel()->isStaged(b03));
+    assert(controller.plansModel()->isStaged(b03) && !controller.plansModel()->isStaged(b04));
+    for (int i = 0; i < offered; ++i) {
+        if (controller.plansModel()->isStaged(i)) {
+            controller.unstage(i);
+        }
+    }
+    assert(controller.stagedCount() == 0);
+    controller.search(QString());
+    assert(controller.visiblePlanCount() == offered);
+
+    // B04 unticked: everything else is staged, B04 is not.
+    controller.setIncluded(b04, false);
+    assert(controller.selectedCount() == offered - 1);
     controller.stageSelected();
     assert(controller.errorMessage().isEmpty());
     std::cout << "  staged: \"" << controller.statusMessage().toStdString() << "\"\n";
     assert(controller.statusMessage()
            == QStringLiteral("Staged rekordbox's beat grids and waveforms for %1 track(s) whose cues are already in "
                              "step. Press Save to write them to the stick.")
-                  .arg(offered));
-    assert(controller.stagedCount() == offered && controller.analysisOnlyPendingCount() == 0);
+                  .arg(offered - 1));
+    assert(controller.stagedCount() == offered - 1 && !controller.plansModel()->isStaged(b04));
+    assert(controller.selectedCount() == 0);
     // Staging again stages nothing twice.
     controller.stageSelected();
-    assert(controller.stagedCount() == offered);
+    assert(controller.stagedCount() == offered - 1);
     LibraryEditSession *session = sessionOf(stick);
     const QStringList pending = session->pendingDescriptions();
-    assert(pending.size() == offered && ridersIn(pending) == offered);
+    assert(pending.size() == offered - 1 && ridersIn(pending) == offered - 1);
 
     const QVariantMap summary = waitForSyncSave(session, controller, false);
-    assert(summary.value("written").toInt() == offered && summary.value("total").toInt() == offered);
+    // Synced tracks, in the page's own words.
+    assert(summary.value("written").toInt() == offered - 1 && summary.value("total").toInt() == offered - 1);
     assert(summary.value("skipped").toInt() == 0);
     assert(summary.value("unit").toString() == QStringLiteral("tracks"));
+    assert(summary.value("verb").toString() == QStringLiteral("synchronised"));
     assert(summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 10 beat grids and 11 waveforms copied, 9 tracks now load without "
-                             "analysis. Engine's own analysis of 2 tracks was kept on the stick first. Analysis left "
+           == QStringLiteral("From rekordbox, 9 beat grids and 10 waveforms copied, 9 tracks now load without "
+                             "analysis. Engine's own analysis of one track was kept on the stick first. Analysis left "
                              "alone: one beat grid locked or moved on the player."));
-    assert(controller.analysisOnlyCount() == 0 && controller.stagedCount() == 0);
+    // The written rows leave; B04's, unticked, stays.
+    assert(controller.planCount() == 1 && controller.stagedCount() == 0);
+    assert(analysisOnlyOf(controller, stick, "B04") == 0);
 
     const auto after = analysisRows(stick.db);
     const std::int64_t b03Id = trackIdOf(stick, "B03");
+    const std::int64_t b04Id = trackIdOf(stick, "B04");
     const std::int64_t b11Id = trackIdOf(stick, "B11");
     {
         const auto &row = after.at(b03Id);
         assert(row[IsAnalyzed] == "1" && row[TrackData] != "<null>" && row[BeatData] != "<null>"
                && row[Overview] != "<null>" && "B03 completed");
     }
+    assert(after.at(b04Id) == in.before.at(b04Id) && "B04, unticked, as it was");
     assert(after.at(b11Id)[BeatData] == in.before.at(b11Id)[BeatData] && "B11's locked grid left alone");
     assert(after.at(b11Id)[Overview] != in.before.at(b11Id)[Overview] && "B11's waveform copied");
-    // Every row not offered as it was.
-    std::set<std::int64_t> offeredIds;
+    // Every row not staged as it was.
+    std::set<std::int64_t> changedIds;
     for (const auto &[id, row] : in.before) {
         if (row != after.at(id)) {
-            offeredIds.insert(id);
+            changedIds.insert(id);
         }
     }
-    assert(static_cast<int>(offeredIds.size()) == offered && "exactly the offered rows changed");
+    assert(static_cast<int>(changedIds.size()) == offered - 1 && "exactly the staged rows changed");
 
-    // Read again: nothing left to offer, the cues still in step.
+    // Read again: B04 is all that is left, the cues still in step.
     analyze(controller, stick);
-    printAnalysisOnly(controller);
-    assert(controller.planCount() == 0 && controller.analysisOnlyCount() == 0);
+    printPlans(controller);
+    assert(controller.planCount() == 1 && analysisOnlyOf(controller, stick, "B04") == 0);
     std::cout << "cue sync analysis only: " << offered
-              << " track(s) offered with cues in step, B03 completed, B11's locked grid left alone OK\n";
+              << " row(s) with cues in step, the search narrows them, B04 unticked left alone, B03 completed, B11's "
+                 "locked grid left alone OK\n";
 
     // Undo: m.db, overview files, kept analyses and ledger as before.
     waitForSyncSave(session, controller, true);
@@ -1911,15 +2032,15 @@ void testCueSyncAnalysisOnly()
     assert(filesUnder(overviewDirOf(stick)).empty());
     assert(filesUnder(keptDirOf(stick)).empty());
     assert(!fs::exists(seabass::infrastructure::paths::stickBeatGridLedger(stick.root)));
-    // And offered again.
+    // And listed again.
     analyze(controller, stick);
-    assert(controller.analysisOnlyCount() == offered);
-    std::cout << "cue sync analysis only undo: the stick as before, the tracks offered again OK\n";
+    assert(controller.analysisOnlyCount() == offered && controller.planCount() == offered);
+    std::cout << "cue sync analysis only undo: the stick as before, the rows listed again OK\n";
 }
 
 // Grids only, B11's grid locked: B11 has nothing to offer, and B03 (not
 // analysed) is not completed with one part. Both off, and both on with
-// Experimental off: nothing offered at all, nothing staged.
+// Experimental off: no row at all, nothing staged.
 void testCueSyncAnalysisOnlyNotOffered()
 {
     {
@@ -1929,12 +2050,14 @@ void testCueSyncAnalysisOnlyNotOffered()
         SyncAnalysisPolicy::setExperimentalEnabled(true);
         SyncController controller;
         analyze(controller, in.stick);
-        printAnalysisOnly(controller);
-        assert(controller.planCount() == 0);
-        assert(!analysisOnlyOf(controller, in.stick, "B11") && "a locked grid is never offered");
-        assert(!analysisOnlyOf(controller, in.stick, "B03") && "a row is completed with both parts or not at all");
-        for (const auto &track : controller.analysisOnlyTracks()) {
-            assert(track.grid && !track.waveform);
+        printPlans(controller);
+        assert(cueRowCount(controller) == 0 && controller.analysisOnlyCount() > 0);
+        assert(analysisOnlyOf(controller, in.stick, "B11") < 0 && "a locked grid is never offered");
+        assert(analysisOnlyOf(controller, in.stick, "B03") < 0 && "a row is completed with both parts or not at all");
+        for (int i = 0; i < controller.planCount(); ++i) {
+            const auto parts = controller.plansModel()->analysis(i);
+            assert(parts.grid && !parts.waveform);
+            assert(analysisTextOf(controller, i) == QStringLiteral("Beat grid from rekordbox"));
         }
         std::cout << "cue sync analysis only, grids: B11 locked and B03 unanalysed not offered OK\n";
     }
@@ -1953,11 +2076,10 @@ void testCueSyncAnalysisOnlyNotOffered()
         SyncController controller;
         analyze(controller, in.stick);
         assert(controller.planCount() == 0 && controller.analysisOnlyCount() == 0);
-        assert(controller.analysisOnlyText().isEmpty());
         controller.stageSelected();
         assert(controller.stagedCount() == 0 && controller.statusMessage().isEmpty());
         assert(sessionOf(in.stick)->pendingDescriptions().isEmpty());
-        std::cout << "cue sync analysis only, " << name << ": nothing offered, nothing staged OK\n";
+        std::cout << "cue sync analysis only, " << name << ": no row, nothing staged OK\n";
     }
 }
 
@@ -1975,7 +2097,7 @@ void testCueSyncAnalysisOnlyChangedSincePreview()
     SyncController controller;
     analyze(controller, stick);
     const int offered = controller.analysisOnlyCount();
-    assert(offered > 1 && analysisOnlyOf(controller, stick, "B03"));
+    assert(offered > 1 && analysisOnlyOf(controller, stick, "B03") >= 0);
     controller.stageSelected();
     assert(controller.stagedCount() == offered);
     // B04's analysis files put where B03's are.
@@ -2010,6 +2132,7 @@ void testCueSync()
     testCueSyncAnalysisOnlyChangedSincePreview();
     testCueSyncBoth();
     testCueSyncUnstage();
+    testCueSyncUntick();
     testCueSyncGridsOnly();
     testCueSyncOff();
     SyncAnalysisPolicy::reset();

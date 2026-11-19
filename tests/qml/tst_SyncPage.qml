@@ -466,63 +466,109 @@ TestCase {
         }
     }
 
-    // With "Copy beat grids/waveforms" on, cues in step are not "nothing to
-    // sync" while tracks still take rekordbox's analysis: the empty state
-    // says how many, the figure counts them, and Stage stages them.
-    function test_cuesInStepButAnalysisToCopy() {
+    // With "Copy beat grids/waveforms" on, a track whose cues are in step
+    // but that gets rekordbox's analysis is a synced track: a row of the
+    // list like the others, ticked, counted, found by the search, saying
+    // what it gets. Cues in step everywhere is then not "nothing to sync".
+    function test_analysisOnlyTracksAreRows() {
         const page = openPage(1100, 720);
         const controller = findChild(page, "syncController");
         verify(syncPageFixture.fillEmpty(controller));
         const nothing = findChild(page, "nothingToSyncLabel");
         const figure = findChild(page, "analysisOnlyFigure");
         const stage = findChild(page, "stageSelectedButton");
+        const list = listOf(page);
         tryCompare(nothing, "visible", true, 2000);
         compare(figure.visible, false, "no figure without such tracks");
         compare(stage.enabled, false);
 
-        controller.setAnalysisOnlyForTesting(3, 3, 3, 1);
-        compare(nothing.visible, true);
-        compare(nothing.text, "No cues to sync. 3 tracks whose cues are already in step get rekordbox's beat grids "
-                + "and waveforms, as set in Preferences. One of them then loads without analysis.");
+        controller.setAnalysisOnlyForTesting(3, 2, 3, 1);
+        verify(waitForPolish(page.Window.window));
+        compare(list.count, 3, "each such track is a row");
+        compare(nothing.visible, false, "rows, so never \"nothing to sync\"");
         compare(figure.visible, true);
         compare(figure.value, "3");
-        compare(stage.text, "Stage 3 Selected", "the tracks are staged with the ticked ones");
+        compare(findChild(page, "needSyncFigure").value, "3", "counted with the tracks that need sync");
+        compare(controller.selectedCount, 3, "ticked, as a cue row is");
+        compare(stage.text, "Stage 3 Selected");
         compare(stage.enabled, true);
-        page.selectedPlaylistName = "Warmup";
-        compare(nothing.text, "No cues to sync in playlist “Warmup”. 3 tracks whose cues are already in step get "
-                + "rekordbox's beat grids and waveforms, as set in Preferences. One of them then loads without "
-                + "analysis.");
-        page.selectedPlaylistName = "";
 
-        controller.setAnalysisOnlyForTesting(1, 0, 1, 0);
-        compare(nothing.text, "No cues to sync. One track whose cues are already in step gets rekordbox's waveform, "
-                + "as set in Preferences.");
-        controller.setAnalysisOnlyForTesting(2, 1, 2, 0);
-        compare(nothing.text, "No cues to sync. 2 tracks whose cues are already in step get rekordbox's analysis "
-                + "(one beat grid and 2 waveforms), as set in Preferences.");
+        const notes = [
+            "Beat grid and waveform from rekordbox, then loads without analysis on the player",
+            "Beat grid and waveform from rekordbox",
+            "Waveform from rekordbox",
+        ];
+        for (let r = 0; r < 3; ++r) {
+            const row = list.itemAtIndex(r);
+            verify(row !== null, "row " + r + " was not built");
+            compare(row.title, "Analysis Only " + (r + 1));
+            verify(row.analysisOnly);
+            compare(row.directionText, "DeviceLibrary → Engine");
+            compare(row.cueSummary, "cues in step", "no cue counts invented");
+            compare(findChild(row, "rowNote").text, notes[r]);
+            compare(findChild(row, "rowNote").visible, true);
+            compare(findChild(row, "selectCheckBox").enabled, true, "tickable");
+            compare(findChild(row, "selectCheckBox").checked, true);
+        }
+        const first = list.itemAtIndex(0);
+        first.expanded = true;
+        waitForRendering(page);
+        compare(findChild(first, "panelSentence").text, "The cues are already in step. Beat grid and waveform from "
+                + "rekordbox, then loads without analysis on the player. Nothing is written until Save.");
+
+        // Unticked: not counted, not on Stage.
+        mouseClick(findChild(list.itemAtIndex(1), "selectCheckBox"));
+        compare(controller.selectedCount, 2);
+        compare(stage.text, "Stage 2 Selected");
+
+        // The search narrows them as it narrows cue rows.
+        findChild(page, "searchField").text = "Only 3";
+        tryCompare(list, "count", 1, 2000);
+        compare(controller.selectedVisibleCount, 1);
+        compare(stage.text, "Stage 1 Selected");
+        compare(list.itemAtIndex(0).title, "Analysis Only 3");
+        findChild(page, "searchField").text = "";
+        tryCompare(list, "count", 3, 2000);
         if (screenshotDir) {
             waitForRendering(page);
             grabImage(page).save(screenshotDir + "/SyncPage-analysis-only.png");
         }
+
         controller.setAnalysisOnlyForTesting(0, 0, 0, 0);
+        tryCompare(nothing, "visible", true, 2000);
         compare(nothing.text, "Nothing to sync. Matched tracks' cues are already consistent.");
+        compare(figure.visible, false);
     }
 
-    // Beside a list the tracks are said above it and counted on Stage, but
-    // a search, which narrows the rows, leaves them out.
-    function test_analysisToCopyBesideTheList() {
+    // Beside cue rows they come after them, in the same section, and the
+    // counts are the list's.
+    function test_analysisOnlyRowsFollowTheCueRows() {
         const page = openPage(1100, 720);
         const controller = findChild(page, "syncController");
+        const list = listOf(page);
         controller.setAnalysisOnlyForTesting(2, 2, 2, 0);
-        const label = findChild(page, "analysisOnlyLabel");
-        compare(label.visible, true);
-        compare(label.text, "2 tracks whose cues are already in step get rekordbox's beat grids and waveforms, as set "
-                + "in Preferences.");
-        verify(!findChild(page, "nothingToSyncLabel").visible);
-        const stage = findChild(page, "stageSelectedButton");
-        compare(stage.text, "Stage " + (controller.selectedCount + 2) + " Selected");
+        verify(waitForPolish(page.Window.window));
+        compare(list.count, 10, "two decisions, six cue rows, two analysis rows");
+        compare(controller.planCount, 8);
+        compare(controller.selectedCount, 8);
+        compare(findChild(page, "stageSelectedButton").text, "Stage 8 Selected");
+        list.positionViewAtIndex(list.count - 1, ListView.Contain);
+        tryVerify(() => list.itemAtIndex(list.count - 1) !== null, 2000, "the last row is on screen");
+        const last = list.itemAtIndex(list.count - 1);
+        verify(last.analysisOnly, "the analysis rows come last");
+        compare(last.section, "ready", "in the ready section, not one of their own");
+        const cueRow = list.itemAtIndex(2);
+        verify(!cueRow.analysisOnly);
+        compare(findChild(cueRow, "rowNote").visible, false, "a cue row carrying no analysis says none");
+        // Lined up with the cue rows.
+        const names = ["rowTitle", "directionColumn", "cueSummaryColumn", "statusColumn"];
+        for (let n = 0; n < names.length; ++n) {
+            compare(xIn(page, findChild(last, names[n])), xIn(page, findChild(cueRow, names[n])),
+                    names[n] + " is out of line on an analysis row");
+        }
         findChild(page, "searchField").text = "kollektiv";
-        compare(stage.text, "Stage " + controller.selectedVisibleCount + " Selected");
+        compare(findChild(page, "stageSelectedButton").text, "Stage " + controller.selectedVisibleCount + " Selected");
+        compare(controller.selectedVisibleCount, 1, "the search hides the analysis rows that do not match");
     }
 
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {

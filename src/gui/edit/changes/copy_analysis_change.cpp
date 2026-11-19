@@ -610,6 +610,11 @@ QString SyncAnalysisChange::unit() const
 
 QString SyncAnalysisChange::verb() const
 {
+    // A row of Sync Cue Points: a track that gets its analysis is a synced
+    // track, said as that page's cue rows say theirs.
+    if (m_countsAsUnit && m_carrierId.isEmpty()) {
+        return QStringLiteral("synchronised");
+    }
     return QStringLiteral("given rekordbox's analysis");
 }
 

@@ -152,13 +152,17 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
         case StagedRole:
             return false;
         case StagedDescriptionRole:
+        case AnalysisRole:
             return QString();
+        case AnalysisOnlyRole:
+            return false;
         default:
             return {};
         }
     }
 
     const auto &plan = m_plans[row.index];
+    const PlanAnalysis &analysis = m_analysis[row.index];
     switch (role) {
     case SectionRole:
         return QStringLiteral("ready");
@@ -178,9 +182,10 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
     case TracksRole:
         return QVariantList{trackToMap(sourceOf(plan)), trackToMap(targetOf(plan))};
     case CueSummaryRole:
-        return cueSummary(plan);
+        // Its cues are in step: no change to count, none invented.
+        return analysis.only ? analysisOnlyCueSummary() : cueSummary(plan);
     case CueChangeRole: {
-        const domain::CueChange change = cueChangeOf(plan);
+        const domain::CueChange change = analysis.only ? domain::CueChange{} : cueChangeOf(plan);
         return QVariantMap{
             {QStringLiteral("gainedHot"), change.gainedHot},
             {QStringLiteral("keptHot"), change.keptHot},
@@ -200,6 +205,10 @@ QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
         return !m_stagedDescriptions[row.index].isEmpty();
     case StagedDescriptionRole:
         return m_stagedDescriptions[row.index];
+    case AnalysisOnlyRole:
+        return analysis.only;
+    case AnalysisRole:
+        return analysisText(analysis.parts);
     default:
         return {};
     }
@@ -224,14 +233,40 @@ QHash<int, QByteArray> SyncPlanListModel::roleNames() const
         {IncludedRole, "included"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
+        {AnalysisOnlyRole, "analysisOnly"},
+        {AnalysisRole, "analysis"},
     };
 }
 
 void SyncPlanListModel::setAnalysis(std::vector<domain::SyncPlan> plans,
-                                    std::vector<domain::CrossSourceSyncConflict> conflicts)
+                                    std::vector<domain::CrossSourceSyncConflict> conflicts,
+                                    const std::vector<SyncAnalysisOnlyTrack> &analysisOnly,
+                                    const std::map<std::string, SyncRowAnalysis> &riders)
 {
     beginResetModel();
     m_plans = std::move(plans);
+    m_analysis.assign(m_plans.size(), PlanAnalysis{});
+    for (std::size_t i = 0; i < m_plans.size(); ++i) {
+        const domain::Track &target = targetOf(m_plans[i]);
+        if (target.format != "engine") {
+            continue;
+        }
+        if (const auto rider = riders.find(target.sourceId); rider != riders.end()) {
+            m_analysis[i].parts = rider->second;
+        }
+    }
+    // rekordbox to Engine, nothing in cuesToApply: never a SyncPlanChange
+    // (SyncController stages a SyncAnalysisChange for it), but a plan to
+    // every tick, search and count.
+    for (const SyncAnalysisOnlyTrack &track : analysisOnly) {
+        SyncPlan plan;
+        plan.kind = SyncPlan::Kind::AlreadyConsistent;
+        plan.direction = SyncPlan::Direction::ToB;
+        plan.match.trackA = track.rekordbox;
+        plan.match.trackB = track.engine;
+        m_plans.push_back(std::move(plan));
+        m_analysis.push_back({true, track.analysis, track.analysisDigest});
+    }
     m_stagedDescriptions.assign(m_plans.size(), QString());
     m_included.assign(m_plans.size(), true);
     m_conflicts = std::move(conflicts);
@@ -244,15 +279,20 @@ void SyncPlanListModel::addPlan(domain::SyncPlan plan)
 {
     const std::size_t planIndex = m_plans.size();
     const bool visible = planMatches(plan);
-    const int row = static_cast<int>(m_rows.size());
+    // A cue sync: listed with the others, before the analysis-only tracks.
+    const auto before = std::find_if(m_rows.begin(), m_rows.end(), [this](const Row &r) {
+        return !r.decision && m_analysis[r.index].only;
+    });
+    const int row = static_cast<int>(before - m_rows.begin());
     if (visible) {
         beginInsertRows(QModelIndex(), row, row);
     }
     m_plans.push_back(std::move(plan));
+    m_analysis.push_back(PlanAnalysis{});
     m_stagedDescriptions.push_back(QString());
     m_included.push_back(true);
     if (visible) {
-        m_rows.push_back({false, planIndex});
+        m_rows.insert(m_rows.begin() + row, Row{false, planIndex});
         endInsertRows();
     }
     emit countsChanged();
@@ -294,6 +334,7 @@ void SyncPlanListModel::removePlanAt(int index)
         m_rows.erase(m_rows.begin() + row);
     }
     m_plans.erase(m_plans.begin() + index);
+    m_analysis.erase(m_analysis.begin() + index);
     m_stagedDescriptions.erase(m_stagedDescriptions.begin() + index);
     m_included.erase(m_included.begin() + index);
     // Every row past the removed plan points one further than it should
@@ -357,6 +398,53 @@ bool SyncPlanListModel::included(int planIndex) const
 {
     return planIndex >= 0 && static_cast<std::size_t>(planIndex) < m_included.size()
         && m_included[static_cast<std::size_t>(planIndex)];
+}
+
+bool SyncPlanListModel::isAnalysisOnly(int planIndex) const
+{
+    return planIndex >= 0 && static_cast<std::size_t>(planIndex) < m_analysis.size()
+        && m_analysis[static_cast<std::size_t>(planIndex)].only;
+}
+
+SyncRowAnalysis SyncPlanListModel::analysis(int planIndex) const
+{
+    if (planIndex < 0 || static_cast<std::size_t>(planIndex) >= m_analysis.size()) {
+        return {};
+    }
+    return m_analysis[static_cast<std::size_t>(planIndex)].parts;
+}
+
+std::string SyncPlanListModel::analysisDigest(int planIndex) const
+{
+    if (planIndex < 0 || static_cast<std::size_t>(planIndex) >= m_analysis.size()) {
+        return {};
+    }
+    return m_analysis[static_cast<std::size_t>(planIndex)].digest;
+}
+
+int SyncPlanListModel::analysisOnlyCount() const
+{
+    return static_cast<int>(
+        std::count_if(m_analysis.begin(), m_analysis.end(), [](const PlanAnalysis &a) { return a.only; }));
+}
+
+QString SyncPlanListModel::analysisText(const SyncRowAnalysis &analysis)
+{
+    if (!analysis.any()) {
+        return {};
+    }
+    QString text = analysis.grid && analysis.waveform ? QStringLiteral("Beat grid and waveform from rekordbox")
+        : analysis.grid                               ? QStringLiteral("Beat grid from rekordbox")
+                                                      : QStringLiteral("Waveform from rekordbox");
+    if (analysis.completes) {
+        text += QStringLiteral(", then loads without analysis on the player");
+    }
+    return text;
+}
+
+QString SyncPlanListModel::analysisOnlyCueSummary()
+{
+    return QStringLiteral("cues in step");
 }
 
 bool SyncPlanListModel::isStaged(int planIndex) const
@@ -505,9 +593,11 @@ void SyncPlanListModel::rebuildRows()
             m_rows.push_back({true, i});
         }
     }
-    for (std::size_t i = 0; i < m_plans.size(); ++i) {
-        if (planMatches(m_plans[i])) {
-            m_rows.push_back({false, i});
+    for (const bool analysisOnly : {false, true}) {
+        for (std::size_t i = 0; i < m_plans.size(); ++i) {
+            if (m_analysis[i].only == analysisOnly && planMatches(m_plans[i])) {
+                m_rows.push_back({false, i});
+            }
         }
     }
 }

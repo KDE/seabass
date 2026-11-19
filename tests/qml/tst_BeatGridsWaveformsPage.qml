@@ -115,14 +115,20 @@ TestCase {
         const list = findChild(page, "playlistList");
         verify(list !== null);
         const wanted = name.length === 0 ? "All tracks" : name;
-        for (let i = 0; i < list.contentItem.children.length; ++i) {
-            const item = list.contentItem.children[i];
-            if (item.name === wanted) {
-                return item;
+        // The list builds its rows after the read lands and the page is
+        // laid out: on a loaded machine that is later than the caller.
+        let found = null;
+        tryVerify(() => {
+            for (let i = 0; i < list.contentItem.children.length; ++i) {
+                const item = list.contentItem.children[i];
+                if (item.name === wanted) {
+                    found = item;
+                    return true;
+                }
             }
-        }
-        fail("no playlist row " + wanted);
-        return null;
+            return false;
+        }, 30000, "no playlist row " + wanted);
+        return found;
     }
     function clickPlaylistBox(page, name) {
         const box = findChild(playlistRow(page, name), "playlistRowCheck");
