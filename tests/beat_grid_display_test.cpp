@@ -126,6 +126,54 @@ int main()
                 }
             }
         }
+        // One bad pair must not thin the whole track: a beat duplicated a
+        // millisecond after itself (a damaged grid), a downbeat among them,
+        // lays out exactly as the grid without it, at every width.
+        {
+            const auto sameLayout = [](const gui::BeatTickLayout &a, const gui::BeatTickLayout &b) {
+                if (a.ticks.size() != b.ticks.size() || a.everyBeat != b.everyBeat || a.barsPerTick != b.barsPerTick) {
+                    return false;
+                }
+                for (size_t i = 0; i < a.ticks.size(); ++i) {
+                    if (a.ticks[i].timeMs != b.ticks[i].timeMs || a.ticks[i].downbeat != b.ticks[i].downbeat) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            std::vector<domain::Beat> damaged = track;
+            damaged.insert(damaged.begin() + 501, {track[500].timeMs + 1.0, track[500].beatInBar});   // a downbeat
+            damaged.insert(damaged.begin() + 900, {track[898].timeMs + 1.0, track[898].beatInBar});   // an ordinary beat
+            for (double width : {300.0, 600.0, 1200.0, 2400.0, 5000.0}) {
+                const auto clean = gui::layoutBeatTicks(track, 600000.0, width);
+                const auto withPair = gui::layoutBeatTicks(damaged, 600000.0, width);
+                check(sameLayout(clean, withPair), "a duplicated beat changes nothing at " + std::to_string(width)
+                      + " px: " + std::to_string(withPair.ticks.size()) + " ticks, every " + std::to_string(withPair.barsPerTick)
+                      + " bars, against " + std::to_string(clean.ticks.size()) + ", every " + std::to_string(clean.barsPerTick));
+            }
+            // Out of order: laid out as in order, not as nonsense.
+            std::vector<domain::Beat> shuffled = track;
+            std::reverse(shuffled.begin() + 100, shuffled.begin() + 700);
+            std::swap(shuffled[3], shuffled[1000]);
+            for (double width : {600.0, 5000.0}) {
+                check(sameLayout(gui::layoutBeatTicks(track, 600000.0, width), gui::layoutBeatTicks(shuffled, 600000.0, width)),
+                      "unsorted beats lay out as sorted ones at " + std::to_string(width) + " px");
+            }
+            // A real tempo change, double time, still thins by its tight half.
+            std::vector<domain::Beat> doubled;
+            for (int i = 0; i < 120; ++i) {
+                doubled.push_back({i * 500.0, i % 4 + 1});
+            }
+            for (int i = 0; i < 240; ++i) {
+                doubled.push_back({60000.0 + i * 250.0, i % 4 + 1});
+            }
+            const auto atDouble = gui::layoutBeatTicks(doubled, 120000.0, 3840.0);   // 16 px, then 8 px a beat
+            check(atDouble.everyBeat && atDouble.ticks.size() == 360, "8 px at double time: every beat, none dropped");
+            const auto narrow = gui::layoutBeatTicks(doubled, 120000.0, 1920.0);   // 4 px at double time
+            check(!narrow.everyBeat && narrow.barsPerTick == 1 && narrow.ticks.size() == 90,
+                  "4 px at double time: the downbeats, all 90 of them, got " + std::to_string(narrow.ticks.size()));
+        }
+
         const gui::BeatTickLayout whole = gui::layoutBeatTicks(track, 600000.0, 600.0);
         check(!whole.everyBeat && whole.barsPerTick == 8 && whole.ticks.size() == 40,
               "a whole track at 600 px: every 8th downbeat, 40 ticks");

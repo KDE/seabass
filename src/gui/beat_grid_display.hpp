@@ -41,9 +41,13 @@ QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, double s
 //
 // "Closer than" is measured at the tightest place in the track, so a
 // tempo change can only ever thin the grid, never crowd part of it; the
-// ticks stay where the data puts them. A downbeat is a beat with
-// beatInBar 1. Beats before the start or after `spanMs` get no tick, and
-// without a length or a width there are none.
+// ticks stay where the data puts them. A pair of beats (or of downbeats)
+// closer than half the median gap is a damaged grid's, not the music's:
+// the second of it is left out, so one bad pair cannot thin the whole
+// track nor two ticks share a pixel. Beats come in any order and are laid
+// out in time order. A downbeat is a beat with beatInBar 1. Beats before
+// the start or after `spanMs` get no tick, and without a length or a
+// width there are none.
 //
 // WaveformView lays out its beatData with this (BeatGridTicks, the QML
 // face of it), and a list row is handed only the beats this keeps

@@ -39,6 +39,33 @@ double smallestGapMs(const std::vector<BeatTick> &ticks)
     return gap;
 }
 
+// The ticks with the second of every too-close pair taken out: a pair
+// less than half the median gap apart, which a damaged grid has (a beat
+// written twice a millisecond apart) and no music does -- a change to
+// double time is half the gap, and stays. Measured on what is left, the
+// tightest place is the music's, and two ticks never land on one pixel.
+std::vector<BeatTick> withoutNearDuplicates(std::vector<BeatTick> ticks)
+{
+    if (ticks.size() < 3) {
+        return ticks;
+    }
+    std::vector<double> gaps;
+    gaps.reserve(ticks.size() - 1);
+    for (size_t i = 1; i < ticks.size(); ++i) {
+        gaps.push_back(ticks[i].timeMs - ticks[i - 1].timeMs);
+    }
+    std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2), gaps.end());
+    const double tooClose = gaps[gaps.size() / 2] / 2.0;
+    std::vector<BeatTick> kept;
+    kept.reserve(ticks.size());
+    for (const BeatTick &tick : ticks) {
+        if (kept.empty() || tick.timeMs - kept.back().timeMs >= tooClose) {
+            kept.push_back(tick);
+        }
+    }
+    return kept;
+}
+
 }  // namespace
 
 BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double spanMs, double widthPx)
@@ -60,6 +87,11 @@ BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double sp
     if (inside.empty()) {
         return layout;
     }
+    // In time order whatever the source handed over, then without the
+    // near-duplicates of a damaged grid.
+    std::stable_sort(inside.begin(), inside.end(),
+                     [](const BeatTick &a, const BeatTick &b) { return a.timeMs < b.timeMs; });
+    inside = withoutNearDuplicates(std::move(inside));
     if (toPx(smallestGapMs(inside)) >= MinimumBeatSpacingPx) {
         layout.ticks = std::move(inside);
         layout.everyBeat = true;
@@ -75,6 +107,8 @@ BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double sp
     if (downbeats.empty()) {
         return layout;
     }
+    // The same for the bars, measured on their own.
+    downbeats = withoutNearDuplicates(std::move(downbeats));
     // N bars span at least N times the smallest bar, so N times it is a
     // spacing every Nth downbeat is sure to keep.
     const double bar = toPx(smallestGapMs(downbeats));
