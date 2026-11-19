@@ -18,6 +18,7 @@
 #include <memory>
 
 #include "domain/audio_levels.hpp"
+#include "domain/beat_grid.hpp"
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -65,6 +66,12 @@ class PlaybackController : public QObject
     // loud the music is, not when the beat is.
     Q_PROPERTY(QList<qreal> beatTimesMs READ beatTimesMs NOTIFY trackChanged)
     Q_PROPERTY(QList<int> beatNumbers READ beatNumbers NOTIFY trackChanged)
+    // The same grid as a waveform draws it (WaveformView.beatData,
+    // beat_grid_display.hpp): {timeMs, downbeat} per beat, on the
+    // timeline the player plays on. Empty where beatTimesMs is, and also
+    // for an Engine row that records no sample rate: the player keeps
+    // time by that grid, but nothing draws it as fact.
+    Q_PROPERTY(QVariantList beatGrid READ beatGrid NOTIFY trackChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
@@ -122,6 +129,7 @@ public:
     QVariantList cues() const { return m_cues; }
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
     QList<int> beatNumbers() const { return m_beatNumbers; }
+    QVariantList beatGrid() const { return m_beatGrid; }
     qint64 duration() const;
     qint64 position() const;
     bool playing() const;
@@ -180,6 +188,12 @@ public:
     // Cached (see m_waveformCache) since list views re-decode the same
     // few tracks' waveforms repeatedly as delegates scroll in and out.
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
+                                          const QString &sourceId) const;
+    // The same track's beat grid, as a waveform draws it (see beatGrid),
+    // from the same read and the same cache entry as waveformFor(): a
+    // preview that shows both reads the analysis once. On the library's
+    // own timeline, not the player's.
+    Q_INVOKABLE QVariantList beatGridFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
 
     // The list the player walks: next(), previous(), and on to the next
@@ -293,12 +307,25 @@ private:
     QString m_queueLibraryPath;
     QList<qreal> m_beatTimesMs;
     QList<int> m_beatNumbers;
+    QVariantList m_beatGrid;
     QString m_errorMessage;
+    // One read of a track's analysis, for waveformFor() and
+    // beatGridFor() alike. The beats are kept as they were read (16
+    // bytes a beat) and made into a list only when asked for: a list of
+    // maps is some 15 times that, and 300 tracks of 1300 beats each
+    // would hold on to about 100 MB.
+    struct CachedAnalysis
+    {
+        QVariantList waveform;
+        std::vector<domain::Beat> beats;
+        bool beatRateRecorded = true;
+    };
+    CachedAnalysis cachedAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId) const;
     // Keyed on format+libraryPath+sourceId (see waveformFor()'s own doc
     // comment) -- QCache owns the heap-allocated values it stores; 300
     // is comfortably more than a scrollable list ever has on screen or
     // recently scrolled past at once.
-    mutable QCache<QString, QVariantList> m_waveformCache{300};
+    mutable QCache<QString, CachedAnalysis> m_analysisCache{300};
 
     // Every track's analysis-file path on a stick, from one pass over its
     // export.pdb, for as long as that export.pdb is unchanged. Without it

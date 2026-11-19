@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include "beat_grid_display.hpp"
 #include "domain/beat_grid.hpp"
 #if defined(Q_OS_LINUX)
 #include "mpris_service.hpp"
@@ -105,12 +106,6 @@ QVariantList toVariantList(const std::vector<domain::WaveformColumn> &points)
         waveform.append(m);
     }
     return waveform;
-}
-
-QVariantList readWaveform(const QString &format, const QString &libraryPath, const QString &sourceId,
-                          const infrastructure::rekordbox::AnlzPathIndex *pathIndex)
-{
-    return toVariantList(readAnalysis(format, libraryPath, sourceId, pathIndex).waveform);
 }
 
 }  // namespace
@@ -223,6 +218,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
+    m_beatGrid.clear();
 
     m_currentFormat = format;
     m_currentSourceId = sourceId;
@@ -279,6 +275,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             m_beatTimesMs.append(beat.timeMs + shift.beatsMs);
             m_beatNumbers.append(beat.beatInBar);
         }
+        m_beatGrid = beatGridForDisplay(beats, analysis.beatRateRecorded, shift.beatsMs);
         player()->setSource(QUrl::fromLocalFile(filePath));
         m_player->play();
     }
@@ -300,6 +297,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
+    m_beatGrid.clear();
 
     m_currentFormat = format;
     m_currentSourceId = QStringLiteral("recording:") + filePath;
@@ -340,21 +338,36 @@ bool PlaybackController::takeCues(const QString &format, const QString &libraryP
     return true;
 }
 
-QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
-                                              const QString &sourceId) const
+PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QString &format,
+                                                                     const QString &libraryPath,
+                                                                     const QString &sourceId) const
 {
     // No library, no analysis: a stored backup row names none (see load()).
     if (libraryPath.isEmpty()) {
         return {};
     }
     const QString key = format + QLatin1Char('\x1f') + libraryPath + QLatin1Char('\x1f') + sourceId;
-    if (const QVariantList *cached = m_waveformCache.object(key)) {
+    if (const CachedAnalysis *cached = m_analysisCache.object(key)) {
         return *cached;
     }
     const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
-    QVariantList waveform = readWaveform(format, libraryPath, sourceId, index.get());
-    m_waveformCache.insert(key, new QVariantList(waveform));
-    return waveform;
+    domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
+    CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded};
+    m_analysisCache.insert(key, new CachedAnalysis(read));
+    return read;
+}
+
+QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
+                                              const QString &sourceId) const
+{
+    return cachedAnalysis(format, libraryPath, sourceId).waveform;
+}
+
+QVariantList PlaybackController::beatGridFor(const QString &format, const QString &libraryPath,
+                                              const QString &sourceId) const
+{
+    const CachedAnalysis analysis = cachedAnalysis(format, libraryPath, sourceId);
+    return beatGridForDisplay(analysis.beats, analysis.beatRateRecorded);
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from
@@ -623,6 +636,7 @@ void PlaybackController::stop()
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
+    m_beatGrid.clear();
     m_cues.clear();
     m_cueShiftMs = 0.0;
     emit trackChanged();

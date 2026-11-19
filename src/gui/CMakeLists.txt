@@ -284,6 +284,8 @@ set(SEABASS_GUI_SOURCES
     metadata_restore_controller.cpp
     metadata_restore_proposal_model.hpp
     metadata_restore_proposal_model.cpp
+    beat_grid_display.hpp
+    beat_grid_display.cpp
     playback_controller.hpp
     playback_controller.cpp
     cover_cache.hpp

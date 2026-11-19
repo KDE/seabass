@@ -2273,6 +2273,17 @@ target_link_libraries(beat_grid_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME beat_grid_test COMMAND beat_grid_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(beat_grid_test PROPERTIES LABELS "integration")
 
+# The grid a waveform draws (#40): what the views are handed, and none for
+# an Engine row that records no sample rate. QtCore for the QVariantList
+# the views take.
+if(TARGET Qt6::Core)
+    add_executable(beat_grid_display_test src/gui/beat_grid_display.cpp tests/beat_grid_display_test.cpp)
+    target_include_directories(beat_grid_display_test PRIVATE src tests)
+    target_link_libraries(beat_grid_display_test PRIVATE seabass_core Qt6::Core DjInterop)
+    target_compile_definitions(beat_grid_display_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME beat_grid_display_test COMMAND beat_grid_display_test)
+endif()
+
 add_executable(audio_levels_test
     src/domain/audio_levels.cpp
     tests/audio_levels_test.cpp
