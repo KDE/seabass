@@ -189,8 +189,18 @@ int main()
         const fs::path dat = seabass::pathFromUtf8(rekordbox::datAnlzPath(root, target.track.analysisFile));
         const std::string extBefore = bytesOf(ext);
         const std::string datBefore = bytesOf(dat);
+        // The fixture's exportLibrary.db has an empty -wal beside it, as
+        // rekordbox leaves one on a real export (TESTRIG_11). Reading the
+        // stick (findTarget above read both catalogs) must leave it, and
+        // the undo must put it back: the cue writer's close removes it.
+        const fs::path oneLibrary = pioneer / "rekordbox" / "exportLibrary.db";
+        const fs::path wal = seabass::pathFromUtf8(seabass::pathToUtf8(oneLibrary) + "-wal");
+        check(fs::is_regular_file(wal), "the fixture has its exportLibrary.db-wal, and reading left it");
+        const std::string oneLibraryBefore = bytesOf(oneLibrary);
+        const std::string walBefore = bytesOf(wal);
         const auto result = addCue(pioneer, target);
         check(result.error.isEmpty(), "the save succeeds: " + result.error.toStdString());
+        check(bytesOf(oneLibrary) != oneLibraryBefore, "the save wrote exportLibrary.db");
         rekordbox::FilesystemAnlzSource source(root);
         const auto cues = rekordbox::readAnalysisFileCues(source, target.track.analysisFile);
         bool found = false;
@@ -213,6 +223,9 @@ int main()
         }
         check(bytesOf(ext) == extBefore, "Undo Last Save put the .EXT back from the save's backup");
         check(bytesOf(dat) == datBefore, "Undo Last Save left the .DAT as it was before the save");
+        check(bytesOf(oneLibrary) == oneLibraryBefore, "Undo Last Save put exportLibrary.db back byte for byte");
+        check(fs::is_regular_file(wal) && bytesOf(wal) == walBefore,
+              "Undo Last Save put exportLibrary.db-wal back as it was, empty one included");
         seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(pioneer.parent_path()));
         std::cout << "a OneLibrary cue write lands in the analysis file, and its undo takes it back out\n";
     }

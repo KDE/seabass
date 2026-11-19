@@ -200,6 +200,14 @@ std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
 {
     // The same definition of "the database's set" Full Stick Backup
     // uses: the main file plus whichever of -wal / -journal exist.
+    //
+    // An empty one too. A save that writes the database closes it, and
+    // SQLite removes the -wal on that close (the OneLibrary cue writer
+    // folds and removes it on purpose); the restore removes every sidecar
+    // its archive does not hold. Leaving an empty -wal out of the record
+    // made Undo put exportLibrary.db back byte for byte with the -wal
+    // rekordbox left beside it gone (rig W10, Round 12). Empty is a state
+    // of the stick like any other, and the undo owes it back.
     std::vector<std::string> sidecars;
     const fs::path filePath = pathFromUtf8(file);
     if (filePath.extension() != ".db") {
@@ -207,7 +215,7 @@ std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
     }
     for (const fs::path &member : infrastructure::stick_backup::dbSetMembers(filePath)) {
         std::error_code ec;
-        if (member != filePath && fs::is_regular_file(member, ec) && fs::file_size(member, ec) > 0 && !ec) {
+        if (member != filePath && fs::is_regular_file(member, ec) && !ec) {
             sidecars.push_back(pathToUtf8(member));
         }
     }
