@@ -54,8 +54,11 @@ constexpr const char *DescriptionFileName = ".description";
 constexpr const char *OriginKey = "ORIGIN";
 // One line per file the record holds as absent; see recordAbsent().
 constexpr const char *AbsentKey = "ABSENT";
-// One line per file the save moved, "<from>\t<to>"; see recordMoved(). A
-// tab cannot be in a path on the sticks (FAT, exFAT and NTFS forbid it).
+// One line per file the save moved, "<from>\t<to>\t<size>"; see
+// recordMoved(). A tab cannot be in a path on the sticks (FAT, exFAT and
+// NTFS forbid it). The size, in bytes, is what tells the file the save
+// moved from another one put at <to> since; a line written before sizes
+// were recorded ("<from>\t<to>") is still read, and moves back as it did.
 constexpr const char *MovedKey = "MOVED";
 
 std::string timestampNow()
@@ -121,6 +124,16 @@ constexpr int ManifestFormatVersion = 4;
 constexpr const char *ManifestVersionKey = "MANIFEST-VERSION";
 constexpr const char *ArchiveFileName = "backup.zip";
 
+// A file the save moved, as recordMoved() notes it: recorded paths, and
+// the file's size when the note was written (none in a note from before
+// sizes were recorded).
+struct MovedNote
+{
+    std::string from;
+    std::string to;
+    std::optional<std::uintmax_t> sizeBytes;
+};
+
 struct Manifest
 {
     int version = 0;
@@ -129,9 +142,8 @@ struct Manifest
     // made and that the save would create (recordAbsent()): restore()
     // removes them, so it gives back a stick without them.
     std::vector<std::string> absent;
-    // Recorded paths of files the save moved, from and to (recordMoved()):
-    // restore() moves each back.
-    std::vector<std::pair<std::string, std::string>> moved;
+    // Files the save moved (recordMoved()): restore() moves each back.
+    std::vector<MovedNote> moved;
     std::optional<BackupOrigin> origin;
     // False when the manifest is there and could not be read to its end.
     // Everything above is then a guess, the origin worst of all: with no
@@ -193,7 +205,22 @@ Manifest readManifest(const fs::path &dir)
                 damaged = true;
                 continue;
             }
-            manifest.moved.emplace_back(value.substr(0, split), value.substr(split + 1));
+            MovedNote note{value.substr(0, split), value.substr(split + 1), std::nullopt};
+            if (const size_t sizeAt = note.to.find('\t'); sizeAt != std::string::npos) {
+                const std::string size = note.to.substr(sizeAt + 1);
+                note.to.resize(sizeAt);
+                if (size.empty() || size.find_first_not_of("0123456789") != std::string::npos) {
+                    damaged = true;
+                    continue;
+                }
+                try {
+                    note.sizeBytes = std::stoull(size);
+                } catch (const std::exception &) {
+                    damaged = true;
+                    continue;
+                }
+            }
+            manifest.moved.push_back(std::move(note));
         } else {
             manifest.entries.emplace_back(std::move(key), std::move(value));
         }
@@ -234,8 +261,12 @@ bool writeManifest(const fs::path &dir, const Manifest &manifest)
     for (const std::string &recorded : manifest.absent) {
         out << AbsentKey << '\t' << recorded << '\n';
     }
-    for (const auto &[from, to] : manifest.moved) {
-        out << MovedKey << '\t' << from << '\t' << to << '\n';
+    for (const MovedNote &note : manifest.moved) {
+        out << MovedKey << '\t' << note.from << '\t' << note.to;
+        if (note.sizeBytes) {
+            out << '\t' << *note.sizeBytes;
+        }
+        out << '\n';
     }
     return writeFileDurablyAtomic(pathToUtf8(dir / ManifestFileName), out.str());
 }
@@ -394,6 +425,23 @@ fs::path FilesystemBackupStore::resolveRecordedPath(const std::string &recorded)
 }
 
 FilesystemBackupStore::FilesystemBackupStore(std::string baseDirectory) : m_baseDirectory(pathFromUtf8(baseDirectory)) {}
+
+namespace
+{
+
+std::function<void(const std::string &, std::size_t)> &beforeRestoreMoveHook()
+{
+    static std::function<void(const std::string &, std::size_t)> hook;
+    return hook;
+}
+
+}  // namespace
+
+void FilesystemBackupStore::setBeforeRestoreMoveForTesting(
+    std::function<void(const std::string &recordDir, std::size_t index)> hook)
+{
+    beforeRestoreMoveHook() = std::move(hook);
+}
 
 BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &filePaths, const std::string &label,
                                           BackupOrigin origin)
@@ -662,7 +710,8 @@ void FilesystemBackupStore::recordAbsent(const std::string &id, const std::vecto
     }
 }
 
-void FilesystemBackupStore::recordMoved(const std::string &id, const std::string &from, const std::string &to)
+void FilesystemBackupStore::recordMoved(const std::string &id, const std::string &from, const std::string &to,
+                                        std::uintmax_t sizeBytes)
 {
     const fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
@@ -679,7 +728,7 @@ void FilesystemBackupStore::recordMoved(const std::string &id, const std::string
     if (from.empty() || to.empty() || from.find('\t') != std::string::npos || to.find('\t') != std::string::npos) {
         throw std::runtime_error("a moved file needs both of its paths, and neither may hold a tab");
     }
-    manifest.moved.emplace_back(recordedPathFor(pathFromUtf8(from)), recordedPathFor(pathFromUtf8(to)));
+    manifest.moved.push_back({recordedPathFor(pathFromUtf8(from)), recordedPathFor(pathFromUtf8(to)), sizeBytes});
     if (!writeManifest(dir, manifest)) {
         throw std::runtime_error("could not write the manifest of backup " + id);
     }
@@ -845,9 +894,9 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         for (const std::string &recorded : manifest.absent) {
             record.absentPaths.push_back(pathToUtf8(resolveRecordedPath(recorded)));
         }
-        for (const auto &[from, to] : manifest.moved) {
-            record.movedPaths.emplace_back(pathToUtf8(resolveRecordedPath(from)),
-                                           pathToUtf8(resolveRecordedPath(to)));
+        for (const MovedNote &note : manifest.moved) {
+            record.movedPaths.emplace_back(pathToUtf8(resolveRecordedPath(note.from)),
+                                           pathToUtf8(resolveRecordedPath(note.to)));
         }
         records.push_back(std::move(record));
     }
@@ -976,6 +1025,22 @@ bool FilesystemBackupStore::restore(const std::string &id)
 {
     m_lastRestoreError.clear();
     m_lastPreRestoreId.reset();
+    m_lastRestoreMoves.clear();
+    m_lastRestoreLeftMoves = false;
+    // An answer, never an exception: the callers decide on the bool and
+    // say lastRestoreError(). restoreUnguarded() catches what it can put
+    // right itself (a move note that cannot be written, below); this is
+    // for whatever else throws.
+    try {
+        return restoreUnguarded(id);
+    } catch (const std::exception &e) {
+        m_lastRestoreError = std::string("the restore stopped: ") + e.what();
+        return false;
+    }
+}
+
+bool FilesystemBackupStore::restoreUnguarded(const std::string &id)
+{
     fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
@@ -1008,6 +1073,60 @@ bool FilesystemBackupStore::restore(const std::string &id)
     OpenedArchive opened;
     if (!openArchive(dir, manifest.entries, &m_lastRestoreError, opened)) {
         return false;
+    }
+
+    // The files the save moved, each to go back to where it was, newest
+    // first: every one checked before anything is written, so a restore
+    // that cannot move one of them back moves none, and writes nothing
+    // else either. A move the save noted and never made (it failed right
+    // after the note), or one already undone, leaves the file where it
+    // was: nothing to do. A file at both ends, or at neither, is a stick
+    // someone else has changed since, and guessing which copy is the file
+    // is not a restore. Nor is moving a file of another size than the one
+    // the save moved: a rekordbox export or a person has put another file
+    // there since. A note from before sizes were recorded is taken as it
+    // stands, as it always was.
+    struct PendingMove
+    {
+        fs::path from;  // where the save found the file, where it goes back
+        fs::path to;    // where the save put it, where it is now
+        std::uintmax_t sizeBytes = 0;
+    };
+    std::vector<PendingMove> moves;
+    for (std::size_t i = manifest.moved.size(); i > 0; --i) {
+        const MovedNote &note = manifest.moved[i - 1];
+        const fs::path from = resolveRecordedPath(note.from);
+        const fs::path to = resolveRecordedPath(note.to);
+        std::error_code fromEc;
+        std::error_code toEc;
+        const bool atFrom = fs::exists(from, fromEc);
+        const bool atTo = fs::exists(to, toEc);
+        if (fromEc || toEc) {
+            m_lastRestoreError = "could not tell whether " + pathToUtf8(fromEc ? from : to) + " is there";
+            return false;
+        }
+        if (atFrom && !atTo) {
+            continue;  // never moved, or already back
+        }
+        if (atFrom == atTo) {
+            m_lastRestoreError = atFrom ? pathToUtf8(from) + " and " + pathToUtf8(to) + " are both there, so which "
+                                              "is the file the save moved cannot be told"
+                                        : pathToUtf8(to) + ", which the backed-up save moved there, is gone";
+            return false;
+        }
+        std::error_code sizeEc;
+        const std::uintmax_t size = fs::file_size(to, sizeEc);
+        if (sizeEc) {
+            m_lastRestoreError = "could not read the size of " + pathToUtf8(to) + ": " + sizeEc.message();
+            return false;
+        }
+        if (note.sizeBytes && size != *note.sizeBytes) {
+            m_lastRestoreError = pathToUtf8(to) + " is " + std::to_string(size) + " bytes, and the file the save moved "
+                                 "there was " + std::to_string(*note.sizeBytes)
+                                 + " bytes: another file has been put there since, so it is not moved away";
+            return false;
+        }
+        moves.push_back({from, to, size});
     }
 
     // Preserve the "always back up before writing" invariant for restore
@@ -1074,11 +1193,12 @@ bool FilesystemBackupStore::restore(const std::string &id)
     if (!verifyArchive(manifest.entries, &m_lastRestoreError, opened)) {
         return false;
     }
-    if (!currentPaths.empty() || !manifest.moved.empty()) {
+    if (!currentPaths.empty() || !moves.empty()) {
         // The user asked for this restore, so the copy of what it is
         // about to overwrite is theirs and Seabass never releases it. A
         // move it undoes is noted there the other way round, so the
-        // restore can itself be undone.
+        // restore can itself be undone. None when there is nothing to
+        // copy and nothing to move: an empty record nothing removes.
         try {
             m_lastPreRestoreId = backup(currentPaths, "pre-restore", BackupOrigin::UserRequested).id;
         } catch (const std::exception &e) {
@@ -1107,47 +1227,65 @@ bool FilesystemBackupStore::restore(const std::string &id)
         }
         ++filesWritten;
     }
-    // Then the files the save moved, each back to where it was, newest
-    // first. A move the save recorded and never made (it failed right
-    // after the note) leaves the file where it was, and is nothing to do;
-    // a file at both ends, or at neither, is a stick someone else has
-    // changed since, and guessing which copy is the file is not a restore.
-    for (std::size_t i = manifest.moved.size(); restored && i > 0; --i) {
-        const auto &[recordedFrom, recordedTo] = manifest.moved[i - 1];
-        const fs::path from = resolveRecordedPath(recordedFrom);
-        const fs::path to = resolveRecordedPath(recordedTo);
-        std::error_code fromEc;
-        std::error_code toEc;
-        const bool atFrom = fs::exists(from, fromEc);
-        const bool atTo = fs::exists(to, toEc);
-        if (fromEc || toEc) {
-            m_lastRestoreError = "could not tell whether " + pathToUtf8(atFrom ? to : from) + " is there";
-            restored = false;
+    // Then the moves checked above. Each noted in the pre-restore record
+    // BEFORE it is made, as a save notes its own (SaveContext::noteMoved),
+    // so a crash between the two leaves a note of a move that did not
+    // happen, which is nothing to do. All or nothing: a note that cannot
+    // be written or a rename that fails moves back what this restore had
+    // already moved, before it answers.
+    std::vector<const PendingMove *> made;
+    for (const PendingMove &move : moves) {
+        if (!restored) {
             break;
         }
-        if (atFrom && !atTo) {
-            continue;  // never moved, or already back
-        }
-        if (atFrom == atTo) {
-            m_lastRestoreError = atFrom ? pathToUtf8(from) + " and " + pathToUtf8(to) + " are both there, so which "
-                                              "is the file the save moved cannot be told"
-                                        : pathToUtf8(to) + ", which the backed-up save moved there, is gone";
+        try {
+            if (beforeRestoreMoveHook() && m_lastPreRestoreId) {
+                beforeRestoreMoveHook()(pathToUtf8(m_baseDirectory / pathFromUtf8(*m_lastPreRestoreId)), made.size());
+            }
+            if (m_lastPreRestoreId) {
+                recordMoved(*m_lastPreRestoreId, pathToUtf8(move.to), pathToUtf8(move.from), move.sizeBytes);
+            }
+        } catch (const std::exception &e) {
+            m_lastRestoreError = "could not note moving " + pathToUtf8(move.to) + " back, so it was not moved: " + e.what();
             restored = false;
             break;
         }
         std::error_code moveEc;
-        fs::create_directories(from.parent_path(), moveEc);
-        fs::rename(to, from, moveEc);
+        fs::create_directories(move.from.parent_path(), moveEc);
+        moveEc.clear();
+        fs::rename(move.to, move.from, moveEc);
         if (moveEc) {
-            m_lastRestoreError = "could not move " + pathToUtf8(to) + " back to " + pathToUtf8(from) + ": "
+            m_lastRestoreError = "could not move " + pathToUtf8(move.to) + " back to " + pathToUtf8(move.from) + ": "
                                  + moveEc.message();
             restored = false;
             break;
         }
-        ++filesWritten;
-        if (m_lastPreRestoreId) {
-            recordMoved(*m_lastPreRestoreId, pathToUtf8(to), pathToUtf8(from));
+        made.push_back(&move);
+    }
+    if (!restored && !made.empty()) {
+        std::vector<std::string> stuck;
+        for (auto it = made.rbegin(); it != made.rend(); ++it) {
+            std::error_code backEc;
+            fs::rename((*it)->from, (*it)->to, backEc);
+            if (backEc) {
+                stuck.push_back(pathToUtf8((*it)->from) + " (" + backEc.message() + ")");
+            }
         }
+        if (!stuck.empty()) {
+            // Said, not hidden: these files are where the half-done
+            // restore put them, and the record of this restore notes them.
+            m_lastRestoreLeftMoves = true;
+            filesWritten += stuck.size();
+            m_lastRestoreError += "; and " + std::to_string(stuck.size())
+                                  + " file(s) it had moved back could not be returned to where they were: ";
+            for (size_t i = 0; i < stuck.size(); ++i) {
+                m_lastRestoreError += (i == 0 ? "" : ", ") + stuck[i];
+            }
+        }
+        made.clear();
+    }
+    for (const PendingMove *move : made) {
+        m_lastRestoreMoves.push_back({pathToUtf8(move->to), pathToUtf8(move->from), move->sizeBytes});
     }
     if (!restored && filesWritten == 0 && m_lastPreRestoreId) {
         // Nothing was overwritten, so the copy protects nothing -- and on

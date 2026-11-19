@@ -494,6 +494,11 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
 
 void SaveContext::noteMoved(const std::string &from, const std::string &to, const std::string &label)
 {
+    std::error_code sizeEc;
+    const std::uintmax_t size = fs::file_size(pathFromUtf8(from), sizeEc);
+    if (sizeEc) {
+        throw std::runtime_error("could not read the size of " + from + ": " + sizeEc.message());
+    }
     auto existing = m_recordByLabel.find(label);
     std::string id;
     if (existing == m_recordByLabel.end()) {
@@ -508,12 +513,20 @@ void SaveContext::noteMoved(const std::string &from, const std::string &to, cons
     } else {
         id = existing->second;
     }
-    archiveStore().recordMoved(id, from, to);
+    archiveStore().recordMoved(id, from, to, size);
     if (m_inChange) {
-        m_movesThisChange.push_back({from, to});
+        m_movesThisChange.push_back({from, to, size});
     }
-    m_movesThisSave.push_back({from, to});
+    m_movesThisSave.push_back({from, to, size});
     log().record(label + ": moving " + from + " to " + to + "; undoing this save moves it back");
+}
+
+void SaveContext::noteMovedForRollback(const std::string &from, const std::string &to, std::uintmax_t sizeBytes)
+{
+    if (m_inChange) {
+        m_movesThisChange.push_back({from, to, sizeBytes});
+    }
+    m_movesThisSave.push_back({from, to, sizeBytes});
 }
 
 std::optional<QString> SaveContext::putBackMoves(std::vector<Move> &moves, int &putBack)
@@ -534,6 +547,16 @@ std::optional<QString> SaveContext::putBackMoves(std::vector<Move> &moves, int &
         } else if (atFrom == atTo) {
             error = atFrom ? QStringLiteral("%1 and %2 are both there").arg(pathToQString(from), pathToQString(to))
                            : QStringLiteral("%1 is gone").arg(pathToQString(to));
+        } else if (std::error_code sizeEc; fs::file_size(to, sizeEc) != it->sizeBytes || sizeEc) {
+            // Not the file this save moved there: something else put
+            // another one in its place since, and moving that away is not
+            // putting the stick back.
+            error = sizeEc ? QStringLiteral("could not read the size of %1").arg(pathToQString(to))
+                           : QStringLiteral("%1 is no longer the file this save moved there (%2 bytes, it moved %3), "
+                                            "so it is left where it is")
+                                 .arg(pathToQString(to))
+                                 .arg(static_cast<qulonglong>(fs::file_size(to, sizeEc)))
+                                 .arg(static_cast<qulonglong>(it->sizeBytes));
         } else {
             std::error_code moveEc;
             fs::rename(to, from, moveEc);

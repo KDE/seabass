@@ -186,9 +186,18 @@ public:
     // back (FilesystemBackupStore::recordMoved) and so that a change or a
     // save that fails after it moves it back too (rollBackChange(),
     // rollBackSave()). Called BEFORE the move: a note of a move that then
-    // did not happen is nothing to undo. Throws when the record cannot be
-    // written, which fails the change before it has moved anything.
+    // did not happen is nothing to undo. Notes the file's size too, so
+    // neither Undo nor a rollback moves another file put at `to` since.
+    // Throws when the file at `from` cannot be measured or the record
+    // cannot be written, which fails the change before it has moved
+    // anything.
     void noteMoved(const std::string &from, const std::string &to, const std::string &label);
+    // A file this change moved from `from` to `to` whose note is held
+    // elsewhere already (the pre-restore record of an Undo's own restore):
+    // moved back when the change or the save fails, like noteMoved()'s,
+    // with no record written. Called AFTER the move, by the change that
+    // made it.
+    void noteMovedForRollback(const std::string &from, const std::string &to, std::uintmax_t sizeBytes);
 
     template <class T>
     T &shared(const std::string &key, const std::function<std::unique_ptr<T>()> &make)
@@ -408,10 +417,13 @@ private:
     {
         std::string from;
         std::string to;
+        std::uintmax_t sizeBytes = 0;
     };
     // Moves each file in `moves` back, newest first, and empties the list;
     // counts in `putBack` the ones that went back and returns the first
-    // error. A file still at `from` and not at `to` was never moved.
+    // error. A file still at `from` and not at `to` was never moved; a
+    // file at `to` of another size is not the one moved there, and is
+    // left where it is, as an error.
     std::optional<QString> putBackMoves(std::vector<Move> &moves, int &putBack);
     std::vector<Move> m_movesThisChange;
     std::vector<Move> m_movesThisSave;

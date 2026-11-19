@@ -80,9 +80,21 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
             // The store says what went wrong -- a damaged archive and a
             // stick with no room for the files read the same "false" and
             // used to be reported alike, as an unreadable backup (#27).
+            // A restore that fails moves back the files it had moved
+            // (#103); only when it could not is the second sentence untrue,
+            // and then the store's own message names the files instead.
             return ChangeOutcome::failure(
-                QStringLiteral("Undo Last Save stopped at backup %1: %2. Nothing it had restored was kept.")
-                    .arg(it->id, QString::fromStdString(store.lastRestoreError())));
+                QStringLiteral("Undo Last Save stopped at backup %1: %2.%3")
+                    .arg(it->id, QString::fromStdString(store.lastRestoreError()),
+                         store.lastRestoreLeftFilesMoved() ? QString()
+                                                           : QStringLiteral(" Nothing it had restored was kept.")));
+        }
+        // The files this restore moved (#103) go back if a later restore
+        // of this undo fails, or the save does: an undo is all or nothing
+        // for moves as for files. Their notes are in the restore's own
+        // pre-restore record, so none is written here.
+        for (const auto &moved : store.lastRestoreMoves()) {
+            ctx.noteMovedForRollback(moved.from, moved.to, moved.sizeBytes);
         }
         restored++;
     }

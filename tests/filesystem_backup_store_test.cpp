@@ -1159,7 +1159,7 @@ int main()
         FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
         writeFile(from, "audio");
         auto record = store.backup({}, "moved-files");
-        store.recordMoved(record.id, pathToUtf8(from), pathToUtf8(to));
+        store.recordMoved(record.id, pathToUtf8(from), pathToUtf8(to), 5);
         assert(store.isRestorable(record.id) && "a record holding only a move is restorable");
         bool listed = false;
         for (const auto &r : store.list()) {
@@ -1174,7 +1174,7 @@ int main()
         assert(fs::file_size(pathFromUtf8(record.path) / "backup.zip") < 1024 && "a note, not a copy of the audio");
         bool refused = false;
         try {
-            store.recordMoved(record.id, "", pathToUtf8(to));
+            store.recordMoved(record.id, "", pathToUtf8(to), 5);
         } catch (const std::runtime_error &) {
             refused = true;
         }
@@ -1183,6 +1183,12 @@ int main()
         // Noted and never made: nothing to do, and no failure.
         assert(store.restore(record.id));
         assert(fs::exists(from) && !fs::exists(to));
+        // And a restore that moves nothing keeps no pre-restore record:
+        // it would be an empty record nothing ever removes.
+        assert(!store.lastPreRestoreId().has_value() && "nothing moved, so no pre-restore record");
+        for (const auto &r : store.list()) {
+            assert(r.label != "pre-restore" && "and none left on the stick");
+        }
 
         // Made: moved back, and the restore's own record says the reverse.
         fs::create_directories(to.parent_path());
@@ -1217,6 +1223,49 @@ int main()
         assert(!store.restore(record.id));
         assert(store.lastRestoreError().find("is gone") != std::string::npos);
         std::cout << "case: a record holds a file as moved and its restore moves it back OK\n";
+    }
+
+    // A note of a move holds the file's size (#103 review), and a restore
+    // refuses to move away a file of another size: another file has been
+    // put there since. A note written before sizes were (no size on the
+    // line) is still read, and moves the file back as it always did:
+    // records already on sticks stay restorable.
+    {
+        fs::path stick = root / "moved-size";
+        fs::path from = stick / "Contents" / "New" / "Track.mp3";
+        fs::path to = stick / "Contents" / "Old" / "Track.mp3";
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        writeFile(to, "audio");  // moved already, as the save left it
+        auto record = store.backup({}, "moved-files");
+        store.recordMoved(record.id, pathToUtf8(from), pathToUtf8(to), 5);
+        const fs::path manifest = pathFromUtf8(record.path) / ".manifest";
+        const std::string withSize = readFile(manifest);
+        assert(withSize.find("\t5\n") != std::string::npos && "the size is on the MOVED line");
+
+        writeFile(to, "another file, longer");
+        assert(!store.restore(record.id) && "another size is not the file the save moved");
+        assert(store.lastRestoreError().find("bytes") != std::string::npos);
+        assert(readFile(to) == "another file, longer" && !fs::exists(from) && "and it stays where it is");
+        assert(!store.lastPreRestoreId().has_value() && "nothing moved, so no pre-restore record kept");
+
+        writeFile(to, "audio");
+        assert(store.restore(record.id) && "the same size moves back");
+        assert(readFile(from) == "audio" && !fs::exists(to));
+
+        // The old form: the same line without its size.
+        std::string oldForm = withSize;
+        oldForm.replace(oldForm.find("\t5\n"), 3, "\n");
+        writeFile(manifest, oldForm);
+        fs::create_directories(to.parent_path());
+        fs::rename(from, to);
+        writeFile(to, "another file, longer");
+        assert(store.isRestorable(record.id) && "an old record is still restorable");
+        if (!store.restore(record.id)) {
+            std::cerr << "an old-form note: " << store.lastRestoreError() << "\n";
+            assert(false);
+        }
+        assert(readFile(from) == "another file, longer" && !fs::exists(to) && "moved back as before sizes");
+        std::cout << "case: a move note holds the size, and an old note without one still restores OK\n";
     }
 
     std::cout << "all cases passed\n";

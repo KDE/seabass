@@ -64,17 +64,19 @@ public:
     // after all (or cannot be examined): that one needs a copy.
     void recordAbsent(const std::string &id, const std::vector<std::string> &filePaths);
 
-    // Notes in record `id` that the save moves the file at `from` to `to`
-    // (#103: a moved audio file put back where the catalogs expect it),
-    // so restore() moves it back and gives back a stick with the file
-    // where it was. A note, not a copy: the file is not read, and the
-    // record stays the size of its other entries. Noted BEFORE the move,
-    // so a crash between the two leaves a note of a move that did not
-    // happen, which restore() reads as nothing to do.
+    // Notes in record `id` that the save moves the file at `from`, of
+    // `sizeBytes`, to `to` (#103: a moved audio file put back where the
+    // catalogs expect it), so restore() moves it back and gives back a
+    // stick with the file where it was. A note, not a copy: the file is
+    // not read, and the record stays the size of its other entries. Noted
+    // BEFORE the move, so a crash between the two leaves a note of a move
+    // that did not happen, which restore() reads as nothing to do. The
+    // size is how restore() tells the file from another one put at `to`
+    // since, which it refuses to move.
     //
-    // Throws if `id` is not a record this build wrote, or a path is
-    // empty or holds a tab.
-    void recordMoved(const std::string &id, const std::string &from, const std::string &to);
+    // Throws if `id` is not a record this build wrote, a path is empty or
+    // holds a tab, or the manifest cannot be written.
+    void recordMoved(const std::string &id, const std::string &from, const std::string &to, std::uintmax_t sizeBytes);
 
     // Called with the number of files a backup() or addToArchive() has
     // dealt with so far, before each file and once more at the end, on
@@ -129,6 +131,28 @@ public:
     // The pre-restore record the last restore() made, if it made one and
     // kept it.
     const std::optional<std::string> &lastPreRestoreId() const { return m_lastPreRestoreId; }
+    // The files the last restore() moved (#103), each from where it was
+    // to where it is now, when it returned true: a caller that may still
+    // have to roll the restore back moves them back (SaveContext::
+    // noteMovedForRollback). Empty after a false: a restore that fails
+    // moves back what it had moved before it answers.
+    struct Moved
+    {
+        std::string from;
+        std::string to;
+        std::uintmax_t sizeBytes = 0;
+    };
+    const std::vector<Moved> &lastRestoreMoves() const { return m_lastRestoreMoves; }
+    // True when the last restore() failed and could not move every file
+    // it had moved back where it was; lastRestoreError() names them.
+    bool lastRestoreLeftFilesMoved() const { return m_lastRestoreLeftMoves; }
+    // Test seam: called in restore() before each file it moves back
+    // (#103), with the directory of the pre-restore record the move is
+    // noted in and the move's place in the restore's order (0 first). A
+    // test makes the note fail there, as a full stick would. Empty (the
+    // default) does nothing.
+    static void setBeforeRestoreMoveForTesting(
+        std::function<void(const std::string &recordDir, std::size_t index)> hook);
     // The space a restore(id) needs on the stick (nullopt when its archive
     // cannot be opened), as an upper bound of
     // its peak: the copy of what is there now (the pre-restore record,
@@ -176,6 +200,10 @@ private:
     std::filesystem::path m_baseDirectory;
     std::string m_lastRestoreError;
     std::optional<std::string> m_lastPreRestoreId;
+    std::vector<Moved> m_lastRestoreMoves;
+    bool m_lastRestoreLeftMoves = false;
+    // restore() without its catch-all; see restore().
+    bool restoreUnguarded(const std::string &id);
 
     // Per backup directory: the names already taken in it, and the bytes
     // it holds. Both exist to keep a save linear in the number of files
