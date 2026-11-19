@@ -156,10 +156,12 @@ TestCase {
         compare(at(beatPx * 120 - 1).length, 31, "a pixel less: the downbeats");
         compare(at(barPx * 30).length, 31, "exactly the downbeat spacing: every downbeat");
         compare(at(barPx * 30 - 1).length, 16, "a pixel less: every second one");
+        const whole = player.beatGridFor("engine", lib.path, lib.id);
         for (const width of [beatPx * 120, beatPx * 120 - 1, barPx * 30, barPx * 30 - 1]) {
             const kept = at(width);
-            compare(BeatGridTicks.layout(kept, 60000, width).ticks.length, kept.length,
-                    "the view draws every beat it is handed at " + width);
+            compare(kept.map((beat) => beat.timeMs * width / 60000),
+                    BeatGridTicks.layout(whole, 60000, width).ticks.map((tick) => tick.x),
+                    "a row is handed the ticks of the whole grid at " + width);
         }
     }
 }

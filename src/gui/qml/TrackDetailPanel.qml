@@ -509,6 +509,7 @@ Pane {
             trackDurationMs: panel.trackDurationMs
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.
+            beatsSelected: true
             beatData: panel.trackSourceId.length > 0
                 ? panel.playbackController.beatTicksFor(panel.format, panel.libraryPath, panel.trackSourceId,
                                                         panel.trackDurationMs, width)

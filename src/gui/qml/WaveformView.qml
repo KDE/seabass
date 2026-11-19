@@ -107,9 +107,29 @@ Canvas {
     // Against the track's real length only, never the cues' own span: a
     // grid on a line with no length would be placed against nothing. Re-evaluated on every
     // change of the beats, the length or the width.
-    readonly property var beatGridLayout: BeatGridTicks.layout(
-        root.beatData, root.trackDurationMs, root.width)
+    readonly property var beatGridLayout: root.beatsSelected
+        ? root.placedBeats(root.beatData, root.trackDurationMs, root.width)
+        : BeatGridTicks.layout(root.beatData, root.trackDurationMs, root.width)
     readonly property var beatTicks: root.beatGridLayout.ticks
+    // True when beatData is already the beats to draw at this width and
+    // length (PlaybackController's beatTicksAt() and beatTicksFor(), which
+    // every view in the app binds to): the view only places them, and the
+    // density rule runs once per picture, in C++. False lays out a whole
+    // grid here.
+    property bool beatsSelected: false
+
+    // Selected beats at x = time * width / length, the same arithmetic
+    // layoutBeatTicks() places them by.
+    function placedBeats(beats, spanMs, widthPx) {
+        if (!beats || !(spanMs > 0) || !(widthPx > 0)) {
+            return {ticks: [], everyBeat: false, barsPerTick: 0};
+        }
+        const ticks = [];
+        for (let i = 0; i < beats.length; ++i) {
+            ticks.push({x: beats[i].timeMs * widthPx / spanMs, downbeat: beats[i].downbeat === true});
+        }
+        return {ticks: ticks, everyBeat: false, barsPerTick: 0};
+    }
 
     signal seekRequested(real ratio)
     // Fires on every plain click alongside seekRequested -- callers that

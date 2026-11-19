@@ -240,6 +240,7 @@ Frame {
                 // Only the beats drawn at this width, read with the
                 // waveform when the track was loaded; laid out again for a
                 // new track, a new length or a new width.
+                beatsSelected: true
                 beatData: {
                     root.controller.trackSerial;
                     return root.controller.beatTicksAt(root.controller.duration, width);

@@ -1395,6 +1395,7 @@ Page {
                                                     : []
                                                 // The same cached read as the waveform's,
                                                 // only the beats drawn at this width.
+                                                beatsSelected: true
                                                 beatData: root.playbackController
                                                     ? root.playbackController.beatTicksFor(strip.modelData.side,
                                                         root.pathForFormat(strip.modelData.side), strip.modelData.sourceId,

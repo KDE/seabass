@@ -38,6 +38,12 @@ TestCase {
         return ticks.map((tick) => tick.x);
     }
 
+    // Where a view handed already-selected beats (beatsSelected) puts
+    // them: no second pass of the rule, only time * width / span.
+    function placed(beats, spanMs, widthPx) {
+        return beats.map((beat) => beat.timeMs * widthPx / spanMs);
+    }
+
     // ---- The density rule, as a function ----------------------------
 
     // 120 BPM is a beat every 500 ms. A minute across 1200 px puts them
@@ -252,6 +258,17 @@ TestCase {
         verify(inkAt(host, 200, 2) > 0.3, "downbeat 40 stays");
     }
 
+    // A view handed beats already selected for its width (every view in
+    // the app is) places them and selects nothing again: the rule runs
+    // once per picture. A whole grid handed that way is drawn whole.
+    function test_selectedBeatsAreDrawnAsHanded() {
+        const host = makeView({trackDurationMs: 60000, beatsSelected: true, beatData: grid(500, 0, 60000)});
+        compare(host.view.beatTicks.length, 120, "all 120, though the rule would keep 30 at 600 px");
+        compare(xs(host.view.beatTicks), placed(grid(500, 0, 60000), 60000, 600));
+        host.view.beatsSelected = false;
+        compare(host.view.beatTicks.length, 30, "selected by the view itself otherwise");
+    }
+
     // A track without a grid, or one whose grid the app does not show
     // (an Engine row that records no sample rate hands an empty list,
     // see beat_grid_display_test), draws no ticks at all and says
@@ -433,12 +450,12 @@ TestCase {
             // time by are (a LAME MP3 plays earlier than rekordbox counts).
             const shiftMs = player.beatTimesMs[0] - whole[0].timeMs;
             const shifted = whole.map((beat) => ({timeMs: beat.timeMs + shiftMs, downbeat: beat.downbeat}));
-            const got = BeatGridTicks.layout(kept, durationMs, width).ticks;
+            const got = placed(kept, durationMs, width);
             const want = BeatGridTicks.layout(shifted, durationMs, width).ticks;
             compare(got.length, want.length, "as many ticks at " + width);
             for (let i = 0; i < want.length; ++i) {
-                fuzzyCompare(got[i].x, want[i].x, 1e-6, "tick " + i + " at " + width);
-                compare(got[i].downbeat, want[i].downbeat);
+                fuzzyCompare(got[i], want[i].x, 1e-6, "tick " + i + " at " + width);
+                compare(kept[i].downbeat, want[i].downbeat);
             }
         }
         compare(player.beatTicksAt(0, 600).length, 0, "no length, nothing");
@@ -490,7 +507,7 @@ TestCase {
             const whole = BeatGridTicks.layout(beats, durationMs, width).ticks;
             verify(kept.length > 0 && kept.length < beats.length || whole.length === beats.length,
                    "a row is handed fewer beats at " + width + " px: " + kept.length + " of " + beats.length);
-            compare(xs(BeatGridTicks.layout(kept, durationMs, width).ticks), xs(whole), "same ticks at " + width);
+            compare(placed(kept, durationMs, width), xs(whole), "same ticks at " + width);
         }
         compare(controller.beatTicksFor("rekordbox", pioneer, id, 0, 600).length, 0, "no length, nothing");
         compare(controller.beatTicksFor("rekordbox", pioneer, id, durationMs, 0).length, 0, "no width, nothing");

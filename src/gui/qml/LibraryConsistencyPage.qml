@@ -627,6 +627,7 @@ HealthCheckPage {
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
                                     // The same cached read as the waveform's, only
                                     // the beats drawn at this width.
+                                    beatsSelected: true
                                     beatData: root.playbackController.beatTicksFor(issueDelegate.format,
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
                                         modelData.durationMs, width)
