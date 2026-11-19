@@ -121,9 +121,6 @@ Pane {
         panel.pendingLoopEndMs = -1;
         waveformView.waveformData = playbackController.waveformFor(
             panel.format, panel.libraryPath, delegate.sourceId);
-        // The same read as the waveform's (one cache entry).
-        waveformView.beatData = playbackController.beatGridFor(
-            panel.format, panel.libraryPath, delegate.sourceId);
         waveformView.format = panel.format;
         // Last, once every field above is set.
         panel.refreshArtistTracks();
@@ -510,6 +507,12 @@ Pane {
             Layout.preferredHeight: 80
             cueData: panel.trackCues
             trackDurationMs: panel.trackDurationMs
+            // The same read as the waveform's (one cache entry), only the
+            // beats drawn at this width.
+            beatData: panel.trackSourceId.length > 0
+                ? panel.playbackController.beatTicksFor(panel.format, panel.libraryPath, panel.trackSourceId,
+                                                        panel.trackDurationMs, width)
+                : []
             progress: -1
             // Off with the rest of the feature: without this the waveform
             // still invites a click that now leads nowhere, which is

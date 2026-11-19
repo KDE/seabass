@@ -237,8 +237,13 @@ Frame {
                 Layout.preferredHeight: 48
                 waveformData: root.controller.waveform
                 cueData: root.controller.cues
-                // Read with the waveform when the track was loaded.
-                beatData: root.controller.beatGrid ?? []
+                // Only the beats drawn at this width, read with the
+                // waveform when the track was loaded; laid out again for a
+                // new track, a new length or a new width.
+                beatData: {
+                    root.controller.trackSerial;
+                    return root.controller.beatTicksAt(root.controller.duration, width);
+                }
                 trackDurationMs: root.controller.duration
                 progress: trackDurationMs > 0 ? root.controller.position / trackDurationMs : 0
                 onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)

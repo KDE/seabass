@@ -22,7 +22,8 @@ TestCase {
 
     function fakeController() {
         return {title: "Major Tom", artist: "DJ Amador", artworkPath: "", position: 0, duration: 372000,
-                playing: false, errorMessage: "", waveform: [], cues: [], calls: [],
+                playing: false, errorMessage: "", waveform: [], cues: [], calls: [], trackSerial: 1,
+                beatTicksAt: function(durationMs, widthPx) { return []; },
                 togglePlay: function() { this.calls.push("togglePlay"); },
                 seek: function(ms) { this.calls.push("seek"); },
                 stop: function() { this.calls.push("stop"); }};
@@ -122,7 +123,9 @@ TestCase {
             property string errorMessage: ""
             property var waveform: []
             property var cues: []
+            property int trackSerial: 1
             property var calls: []
+            function beatTicksAt(durationMs, widthPx) { return []; }
             function togglePlay() { playing = !playing; }
             function seek(ms) { calls.push("seek"); }
             function stop() { calls.push("stop"); }

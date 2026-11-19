@@ -22,10 +22,11 @@ Canvas {
     property var waveformData: []
     property var cueData: []
     // The track's beat grid as the library holds it (#40): one
-    // {timeMs, downbeat} per beat, in order -- PlaybackController's
-    // beatGrid for the loaded track, beatGridFor() for any other, and
-    // beatTicksFor() in a list row, which hands over only the beats drawn
-    // at the row's width. Empty
+    // {timeMs, downbeat} per beat, in order. Every view in the app binds
+    // it to PlaybackController's beatTicksAt() (the loaded track) or
+    // beatTicksFor() (any other), which hand over only the beats drawn at
+    // the view's width; a whole grid, as beatGridFor() gives it, is laid
+    // out the same. Empty
     // (the default) draws no grid: a track without one, and a track whose
     // grid would be placed by a sample rate the library does not record,
     // which the controller hands over as no grid. Seabass draws a grid

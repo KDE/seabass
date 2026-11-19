@@ -66,12 +66,10 @@ class PlaybackController : public QObject
     // loud the music is, not when the beat is.
     Q_PROPERTY(QList<qreal> beatTimesMs READ beatTimesMs NOTIFY trackChanged)
     Q_PROPERTY(QList<int> beatNumbers READ beatNumbers NOTIFY trackChanged)
-    // The same grid as a waveform draws it (WaveformView.beatData,
-    // beat_grid_display.hpp): {timeMs, downbeat} per beat, on the
-    // timeline the player plays on. Empty where beatTimesMs is, and also
-    // for an Engine row that records no sample rate: the player keeps
-    // time by that grid, but nothing draws it as fact.
-    Q_PROPERTY(QVariantList beatGrid READ beatGrid NOTIFY trackChanged)
+    // Goes up by one whenever the loaded track changes (load, loadFile,
+    // stop): what a binding on beatTicksAt() depends on to lay out the
+    // new track's grid, without reading a list of every beat to notice.
+    Q_PROPERTY(int trackSerial READ trackSerial NOTIFY trackChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
@@ -129,7 +127,7 @@ public:
     QVariantList cues() const { return m_cues; }
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
     QList<int> beatNumbers() const { return m_beatNumbers; }
-    QVariantList beatGrid() const { return m_beatGrid; }
+    int trackSerial() const { return m_trackSerial; }
     qint64 duration() const;
     qint64 position() const;
     bool playing() const;
@@ -189,20 +187,27 @@ public:
     // few tracks' waveforms repeatedly as delegates scroll in and out.
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
-    // The same track's beat grid, as a waveform draws it (see beatGrid),
-    // from the same read and the same cache entry as waveformFor(): a
+    // The same track's beat grid, as WaveformView.beatData takes it
+    // (beat_grid_display.hpp), from the same read and the same cache
+    // entry as waveformFor(): a
     // preview that shows both reads the analysis once. On the library's
     // own timeline, not the player's.
     Q_INVOKABLE QVariantList beatGridFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
-    // For a row of a list: only the beats of that grid a waveform
-    // `widthPx` wide showing `durationMs` will draw (layoutBeatTicks()),
-    // a few dozen where the whole grid is some 1300, so that a delegate
-    // does not turn every beat into a map and lay them all out again.
-    // Laid out by the view at that width they give the same ticks. Empty
-    // without a length or a width.
+    // What every view that draws a grid binds to: only the beats of that
+    // grid a waveform `widthPx` wide showing `durationMs` will draw
+    // (layoutBeatTicks()), a few dozen where the whole grid is some 1300,
+    // so that no view turns every beat into a map and lays them all out
+    // again, on load or at each width of a resize. Laid out by the view
+    // at that width they give the same ticks. Empty without a length or a
+    // width.
     Q_INVOKABLE QVariantList beatTicksFor(const QString &format, const QString &libraryPath,
                                            const QString &sourceId, double durationMs, double widthPx) const;
+    // The same for the loaded track's grid, on the timeline the player
+    // plays on; nothing for an Engine row that records no sample rate
+    // (the player keeps time by that grid, but nothing draws it as fact).
+    // Bind with trackSerial so a new track is laid out again.
+    Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
@@ -315,7 +320,11 @@ private:
     QString m_queueLibraryPath;
     QList<qreal> m_beatTimesMs;
     QList<int> m_beatNumbers;
-    QVariantList m_beatGrid;
+    // The loaded track's grid as beatTicksAt() draws it: shifted onto the
+    // playback timeline, and whether its rate is the library's.
+    std::vector<domain::Beat> m_drawnBeats;
+    bool m_drawnBeatsRateRecorded = true;
+    int m_trackSerial = 0;
     QString m_errorMessage;
     // One read of a track's analysis, for waveformFor() and
     // beatGridFor() alike. The beats are kept as they were read (16

@@ -218,7 +218,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
-    m_beatGrid.clear();
+    m_drawnBeats.clear();
+    ++m_trackSerial;
 
     m_currentFormat = format;
     m_currentSourceId = sourceId;
@@ -275,7 +276,11 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             m_beatTimesMs.append(beat.timeMs + shift.beatsMs);
             m_beatNumbers.append(beat.beatInBar);
         }
-        m_beatGrid = beatGridForDisplay(beats, analysis.beatRateRecorded, shift.beatsMs);
+        m_drawnBeats.reserve(beats.size());
+        for (const domain::Beat &beat : beats) {
+            m_drawnBeats.push_back({beat.timeMs + shift.beatsMs, beat.beatInBar});
+        }
+        m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
         player()->setSource(QUrl::fromLocalFile(filePath));
         m_player->play();
     }
@@ -297,7 +302,8 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
-    m_beatGrid.clear();
+    m_drawnBeats.clear();
+    ++m_trackSerial;
 
     m_currentFormat = format;
     m_currentSourceId = QStringLiteral("recording:") + filePath;
@@ -378,6 +384,11 @@ QVariantList PlaybackController::beatTicksFor(const QString &format, const QStri
     }
     const CachedAnalysis analysis = cachedAnalysis(format, libraryPath, sourceId);
     return beatTicksForDisplay(analysis.beats, analysis.beatRateRecorded, durationMs, widthPx);
+}
+
+QVariantList PlaybackController::beatTicksAt(double durationMs, double widthPx) const
+{
+    return beatTicksForDisplay(m_drawnBeats, m_drawnBeatsRateRecorded, durationMs, widthPx);
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from
@@ -646,7 +657,8 @@ void PlaybackController::stop()
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
-    m_beatGrid.clear();
+    m_drawnBeats.clear();
+    ++m_trackSerial;
     m_cues.clear();
     m_cueShiftMs = 0.0;
     emit trackChanged();

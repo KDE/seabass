@@ -22,7 +22,7 @@ TestCase {
     property int toggles: 0
     property var calls: []
     property var player: ({
-        beatGridFor: function() { return []; },
+        beatTicksFor: function() { return []; },
         waveformFor: function() {
             var columns = [];
             for (var i = 0; i < 400; ++i) columns.push({low: 0.8, mid: 0.4, high: 0.1});

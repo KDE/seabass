@@ -312,19 +312,73 @@ TestCase {
         PlayerBar { width: 1000 }
     }
 
-    // The player bar draws the loaded track's grid, which the controller
-    // already holds (the same read as the waveform).
+    // The player bar asks the controller for the loaded track's grid at
+    // its own width and length, and asks again when either changes.
     function test_thePlayerBarDrawsTheLoadedTracksGrid() {
+        const asked = [];
         const controller = {title: "Major Tom", artist: "DJ Amador", artworkPath: "", position: 0, duration: 60000,
-                            playing: false, errorMessage: "", waveform: [], cues: [],
-                            beatGrid: grid(500, 0, 60000),
+                            playing: false, errorMessage: "", waveform: [], cues: [], trackSerial: 1,
+                            beatTicksAt: function(durationMs, widthPx) {
+                                asked.push(widthPx);
+                                return durationMs === 60000 && widthPx > 0 ? testCase.grid(500, 0, 60000) : [];
+                            },
                             togglePlay: function() {}, seek: function(ms) {}, stop: function() {}};
         const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
         verify(bar !== null);
         const view = findChild(bar, "playerWaveform");
         verify(view !== null);
         tryVerify(() => view.beatTicks.length > 0, 2000, "the bar's waveform has a grid");
-        compare(view.beatData.length, 120);
+        compare(asked[asked.length - 1], view.width, "asked for at the waveform's width");
+        bar.width = 700;
+        tryVerify(() => asked[asked.length - 1] === view.width && view.width < 700, 2000, "and again at a new width");
+    }
+
+    Component {
+        id: liveTrack
+        PlaybackController {}
+    }
+
+    // The real controller with a track loaded: a fixture track's analysis,
+    // played from the click file. The bar's list is only the beats drawn
+    // at its width, laid out as the same ticks as the whole grid.
+    function test_theLoadedTracksTicksAreThinnedForTheWidth() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        const pioneer = stick + "/PIONEER";
+        const ids = stickFixture.rekordboxTrackIds(pioneer, 10);
+        const player = createTemporaryObject(liveTrack, testCase);
+        let id = "";
+        for (let i = 0; i < ids.length && id === ""; ++i) {
+            if (player.beatGridFor("rekordbox", pioneer, ids[i]).length > 100) {
+                id = ids[i];
+            }
+        }
+        verify(id !== "", "a fixture track with a grid");
+        const clickFile = Qt.resolvedUrl("../fixtures/mp3-click/click-D-lame-44100.mp3").toString()
+            .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1");
+        const serial = player.trackSerial;
+        player.load("rekordbox", pioneer, id, clickFile, "Click", "Artist", "", []);
+        verify(player.trackSerial !== serial, "a new track is a new serial");
+        const whole = player.beatGridFor("rekordbox", pioneer, id);
+        const durationMs = Math.ceil(whole[whole.length - 1].timeMs / 1000) * 1000 + 1000;
+        for (const width of [300, 600, 1200]) {
+            const kept = player.beatTicksAt(durationMs, width);
+            verify(kept.length > 0 && kept.length < whole.length, width + " px: " + kept.length + " of " + whole.length);
+            // On the playback timeline, moved as the beats the ring keeps
+            // time by are (a LAME MP3 plays earlier than rekordbox counts).
+            const shiftMs = player.beatTimesMs[0] - whole[0].timeMs;
+            const shifted = whole.map((beat) => ({timeMs: beat.timeMs + shiftMs, downbeat: beat.downbeat}));
+            const got = BeatGridTicks.layout(kept, durationMs, width).ticks;
+            const want = BeatGridTicks.layout(shifted, durationMs, width).ticks;
+            compare(got.length, want.length, "as many ticks at " + width);
+            for (let i = 0; i < want.length; ++i) {
+                fuzzyCompare(got[i].x, want[i].x, 1e-6, "tick " + i + " at " + width);
+                compare(got[i].downbeat, want[i].downbeat);
+            }
+        }
+        compare(player.beatTicksAt(0, 600).length, 0, "no length, nothing");
+        player.stop();
+        compare(player.beatTicksAt(durationMs, 600).length, 0, "nothing once stopped");
     }
 
     Component {
@@ -391,9 +445,12 @@ TestCase {
         verify(page !== null);
         const view = findChild(page, "trackDetailWaveform");
         verify(view !== null);
-        compare(view.beatData.length, beats.length, "the page hands the view the whole grid");
         waitForPolish(testCase.Window.window);
-        tryVerify(() => view.beatTicks.length > 0, 2000, "and it draws some of it");
+        tryVerify(() => view.beatTicks.length > 0, 2000, "the page draws the grid");
+        verify(view.beatData.length < beats.length, "handed only the beats drawn at its width, "
+               + view.beatData.length + " of " + beats.length);
+        compare(xs(view.beatTicks), xs(BeatGridTicks.layout(beats, track.durationSeconds * 1000, view.width).ticks),
+                "the same ticks as the whole grid");
         waitForRendering(page);
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(page).save(screenshotDir + "/track-detail-beat-grid.png");
