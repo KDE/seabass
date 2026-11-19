@@ -234,8 +234,9 @@ private:
 // track's rows by their keys (unitKeys) so a cancel never keeps a created
 // row and drops its analysis.
 //
-// It carries no unit of the save's count (unitsWritten() is 0): the sync's
-// own summary stays what it was, and what this did is said beside it, in
+// It carries no unit of the save's count (unitsWritten() is 0, unless it is
+// staged on its own with countAsUnit()): the sync's own summary stays what
+// it was, and what this did is said beside it, in
 // the save's summary notes (SaveContext::addSummaryNote, one sentence for
 // the batch from the tally, counting only changes that landed). The tally
 // is the save's own (SaveContext::sharedForWholeSave), so changes staged
@@ -243,7 +244,10 @@ private:
 // sentence, and nothing of an earlier save is counted again.
 //
 // Sync Cue Points carries one inside the SyncPlanChange of each row whose
-// cues go to Engine (rideIn()), so the row stays one staged change.
+// cues go to Engine (rideIn()), so the row stays one staged change, and
+// stages one on its own (countAsUnit()) for each track in scope whose cues
+// are already in step but whose analysis its preview found would change,
+// with that preview's digest (Track::analysisDigest).
 //
 // Failures. Reading rekordbox's analysis writes nothing, so a track whose
 // analysis cannot be read is left alone and counted, and the sync goes
@@ -273,6 +277,12 @@ public:
         // not export.pdb's ("/PIONEER/USBANLZ/.../ANLZ0000.DAT"). Empty
         // for a DeviceLibrary row.
         std::string analysisFile;
+        // The digest (rekordboxAnalysisDigest()) of the analysis a preview
+        // showed, for a track staged on that preview's word (Sync Cue
+        // Points' tracks whose cues are already in step): a track whose
+        // analysis changed in rekordbox since is left alone, never written
+        // with what the preview did not show. Empty for none.
+        std::string analysisDigest;
     };
 
     SyncAnalysisChange(QString owner, QString rekordboxPath, QString enginePath, std::string stickRoot, Track track,
@@ -291,12 +301,19 @@ public:
     // runs inside the carrier's, after the carrier's own write.
     void rideIn(const QString &carrierId) { m_carrierId = carrierId; }
 
+    // Staged on its own as a unit of the save (Sync Cue Points' tracks
+    // that need only their analysis): counted as one track, so a save of
+    // nothing else says it wrote them and a skip says so too. A rider or
+    // a change beside a sync's own (Sync after Rekordbox Export) counts
+    // nothing.
+    void countAsUnit() { m_countsAsUnit = true; }
+
     QString id() const override;
     QString owner() const override { return m_owner; }
     QString description() const override;
     QString subject() const override;
     QString unit() const override;
-    int unitsWritten() const override { return 0; }
+    int unitsWritten() const override { return m_countsAsUnit && m_carrierId.isEmpty() ? 1 : 0; }
     QString verb() const override;
     QStringList unitKeys() const override;
     QStringList formatsTouched() const override;
@@ -315,6 +332,7 @@ private:
     int m_itemCountHint = 1;
     bool m_declaresFiles = true;
     QString m_carrierId;
+    bool m_countsAsUnit = false;
 };
 
 // What a workflow that stages SyncAnalysisChange riders reads once when it

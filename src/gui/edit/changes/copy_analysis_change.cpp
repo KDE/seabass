@@ -709,6 +709,12 @@ ChangeOutcome SyncAnalysisChange::apply(SaveContext &ctx)
     } catch (const std::exception &e) {
         return leftAlone(QStringLiteral("rekordbox's analysis could not be read (%1)").arg(QString::fromUtf8(e.what())));
     }
+    // Staged on a preview's word: what is written is what it showed, or
+    // nothing.
+    if (!m_track.analysisDigest.empty()
+        && infrastructure::local::rekordboxAnalysisDigest(analysis) != m_track.analysisDigest) {
+        return leftAlone(QStringLiteral("rekordbox's analysis changed since it was checked"));
+    }
     const application::AnalysisFileFactsSource facts = [&sources](const application::BeatGridCopyItem &of) {
         if (!sources.rates) {
             return application::AnalysisFileFacts{};

@@ -466,6 +466,65 @@ TestCase {
         }
     }
 
+    // With "Copy beat grids/waveforms" on, cues in step are not "nothing to
+    // sync" while tracks still take rekordbox's analysis: the empty state
+    // says how many, the figure counts them, and Stage stages them.
+    function test_cuesInStepButAnalysisToCopy() {
+        const page = openPage(1100, 720);
+        const controller = findChild(page, "syncController");
+        verify(syncPageFixture.fillEmpty(controller));
+        const nothing = findChild(page, "nothingToSyncLabel");
+        const figure = findChild(page, "analysisOnlyFigure");
+        const stage = findChild(page, "stageSelectedButton");
+        tryCompare(nothing, "visible", true, 2000);
+        compare(figure.visible, false, "no figure without such tracks");
+        compare(stage.enabled, false);
+
+        controller.setAnalysisOnlyForTesting(3, 3, 3, 1);
+        compare(nothing.visible, true);
+        compare(nothing.text, "No cues to sync. 3 tracks whose cues are already in step get rekordbox's beat grids "
+                + "and waveforms, as set in Preferences. One of them then loads without analysis.");
+        compare(figure.visible, true);
+        compare(figure.value, "3");
+        compare(stage.text, "Stage 3 Selected", "the tracks are staged with the ticked ones");
+        compare(stage.enabled, true);
+        page.selectedPlaylistName = "Warmup";
+        compare(nothing.text, "No cues to sync in playlist “Warmup”. 3 tracks whose cues are already in step get "
+                + "rekordbox's beat grids and waveforms, as set in Preferences. One of them then loads without "
+                + "analysis.");
+        page.selectedPlaylistName = "";
+
+        controller.setAnalysisOnlyForTesting(1, 0, 1, 0);
+        compare(nothing.text, "No cues to sync. One track whose cues are already in step gets rekordbox's waveform, "
+                + "as set in Preferences.");
+        controller.setAnalysisOnlyForTesting(2, 1, 2, 0);
+        compare(nothing.text, "No cues to sync. 2 tracks whose cues are already in step get rekordbox's analysis "
+                + "(one beat grid and 2 waveforms), as set in Preferences.");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/SyncPage-analysis-only.png");
+        }
+        controller.setAnalysisOnlyForTesting(0, 0, 0, 0);
+        compare(nothing.text, "Nothing to sync. Matched tracks' cues are already consistent.");
+    }
+
+    // Beside a list the tracks are said above it and counted on Stage, but
+    // a search, which narrows the rows, leaves them out.
+    function test_analysisToCopyBesideTheList() {
+        const page = openPage(1100, 720);
+        const controller = findChild(page, "syncController");
+        controller.setAnalysisOnlyForTesting(2, 2, 2, 0);
+        const label = findChild(page, "analysisOnlyLabel");
+        compare(label.visible, true);
+        compare(label.text, "2 tracks whose cues are already in step get rekordbox's beat grids and waveforms, as set "
+                + "in Preferences.");
+        verify(!findChild(page, "nothingToSyncLabel").visible);
+        const stage = findChild(page, "stageSelectedButton");
+        compare(stage.text, "Stage " + (controller.selectedCount + 2) + " Selected");
+        findChild(page, "searchField").text = "kollektiv";
+        compare(stage.text, "Stage " + controller.selectedVisibleCount + " Selected");
+    }
+
     function test_theJunkCueNoteLinksToStrayCueCleanUp() {
         var page = openPage(1100, 720);
         var row = listOf(page).itemAtIndex(0);

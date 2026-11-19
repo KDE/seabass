@@ -97,14 +97,15 @@ Page {
         // A cancelled read takes the user back to where they came from.
         function onLoadCancelled() { root.StackView.view.pop(); }
     }
-    // An Undo Last Save is said in the summary's own words.
+    // An Undo Last Save says so: the summary's own words read "1 undo steps
+    // written".
     Connections {
         target: editHost.session
         ignoreUnknownSignals: true
         function onSaveFinished(summary) {
             if (summary && summary.unit === "undo steps" && !(summary.error && summary.error.length > 0)
                     && summary.written > 0) {
-                savedToast.show(summary.written + " " + summary.unit + " " + summary.verb);
+                savedToast.show("Last save undone");
             }
         }
     }

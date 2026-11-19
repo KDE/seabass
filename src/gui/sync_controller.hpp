@@ -13,6 +13,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "domain/cross_source_sync_conflict.hpp"
@@ -28,6 +29,24 @@ namespace seabass::gui
 
 class LibraryEditSession;
 struct SyncAnalysisStaging;
+
+// A track in scope whose cues need nothing but whose Engine row would take
+// rekordbox's analysis (Preferences' switches, application::
+// SyncAnalysisPolicy), as the analysis' preview found it: what Stage
+// stages for it as a SyncAnalysisChange of its own.
+struct SyncAnalysisOnlyTrack
+{
+    domain::Track rekordbox;
+    std::string engineTrackId;
+    std::string engineFilePath;
+    // rekordboxAnalysisDigest() of what the preview read: the save writes
+    // that, or nothing.
+    std::string analysisDigest;
+    bool grid = false;
+    bool waveform = false;
+    // A row the player has not analysed, completed by the copy.
+    bool completes = false;
+};
 
 // Result of a background analyze task, see SyncController::analyze().
 // Built entirely on a worker thread, with no access to the controller.
@@ -51,6 +70,9 @@ struct SyncTaskResult
     // over the Engine one (see engine_import_state.hpp), read with the
     // catalogs so the page can offer to settle it with the sync.
     infrastructure::engine::RekordboxImportState importState;
+    // With an analysis switch on only: the tracks in scope no plan or
+    // conflict carries to Engine whose analysis a copy would change.
+    std::vector<SyncAnalysisOnlyTrack> analysisOnly;
 };
 
 // Wraps SyncLibraries for QML: two-phase, non-destructive sync across
@@ -111,6 +133,17 @@ class SyncController : public StagedCueEditController
     Q_PROPERTY(int syncedCueCount READ syncedCueCount NOTIFY syncedChanged)
     Q_PROPERTY(bool playerWillOfferImport READ playerWillOfferImport NOTIFY importStateChanged)
     Q_PROPERTY(bool importMarkStaged READ importMarkStaged NOTIFY importStateChanged)
+    // With "Copy beat grids/waveforms from rekordbox to Engine" on
+    // (Preferences): the tracks in scope whose cues are already in step
+    // but whose Engine row takes rekordbox's analysis (SyncAnalysisOnlyTrack).
+    // Stage Selected stages them with the ticked tracks, each a
+    // SyncAnalysisChange of its own. analysisOnlyCount is every such track
+    // not yet saved, analysisOnlyPendingCount the ones not yet staged, and
+    // analysisOnlyText says so in a sentence (empty for none). All zero and
+    // empty with both switches off.
+    Q_PROPERTY(int analysisOnlyCount READ analysisOnlyCount NOTIFY analysisOnlyChanged)
+    Q_PROPERTY(int analysisOnlyPendingCount READ analysisOnlyPendingCount NOTIFY analysisOnlyChanged)
+    Q_PROPERTY(QString analysisOnlyText READ analysisOnlyText NOTIFY analysisOnlyChanged)
 
 public:
     explicit SyncController(QObject *parent = nullptr);
@@ -130,6 +163,10 @@ public:
     int syncedCueCount() const { return m_syncedCueCount; }
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
+    int analysisOnlyCount() const { return static_cast<int>(m_analysisOnly.size()); }
+    const std::vector<SyncAnalysisOnlyTrack> &analysisOnlyTracks() const { return m_analysisOnly; }
+    int analysisOnlyPendingCount() const;
+    QString analysisOnlyText() const;
 
     // Phase 1: read-only. rekordboxPath/enginePath are the stick's
     // DetectedStick.rekordboxPath / .enginePath (either may be empty if
@@ -177,6 +214,10 @@ public:
     Q_INVOKABLE void unstageRekordboxImportMark();
     // Test seam: the state as if read from a stick.
     Q_INVOKABLE void setImportStateForTesting(bool playerWillOfferImport);
+    // Test seam: as if the analysis had found `tracks` tracks needing only
+    // rekordbox's analysis, `grids` of them a beat grid, `waveforms` a
+    // waveform and `completed` completed (nothing to stage: no files).
+    Q_INVOKABLE void setAnalysisOnlyForTesting(int tracks, int grids, int waveforms, int completed);
     // Test seam: as if a save had brought this many cues across.
 
     // Picks one side of conflicts()[conflictIndex] (the row's
@@ -192,6 +233,7 @@ signals:
     void cuesLeftOutNoticed(const QVariantList &tracks);
     void importStateChanged();
     void syncedChanged();
+    void analysisOnlyChanged();
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
@@ -209,6 +251,9 @@ private:
     // switches, read once by a caller staging many; null reads them here.
     bool stagePlan(int index, const SyncAnalysisStaging *staging = nullptr);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
+    // Stages every analysis-only track not yet staged; how many it staged.
+    int stageAnalysisOnly(const SyncAnalysisStaging &staging);
+    static QString analysisOnlyChangeId(const SyncAnalysisOnlyTrack &track);
     void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
     static QString leftOutKeyFor(const domain::SyncPlan &plan);
     void onImportSessionChangeApplied(const QString &changeId);
@@ -238,6 +283,7 @@ private:
     // The session the two import connections below are made on, so a
     // repeat attachSession() on the same session does not double them.
     LibraryEditSession *m_importSession = nullptr;
+    std::vector<SyncAnalysisOnlyTrack> m_analysisOnly;
 };
 
 }  // namespace seabass::gui
