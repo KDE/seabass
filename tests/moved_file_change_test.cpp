@@ -925,6 +925,94 @@ int main(int argc, char **argv)
         std::cout << "case 12 (an undo of two saves that fails at the second puts the first one's move back) OK\n";
     }
 
+    // The pre-restore records a store holds, by id.
+    const auto preRestoreRecords = [](const TenMoved &t) {
+        std::vector<std::string> ids;
+        infrastructure::backup::FilesystemBackupStore store(t.result.backups[0].backupDir.toStdString());
+        for (const auto &record : store.list()) {
+            if (record.label == "pre-restore") {
+                ids.push_back(record.id);
+            }
+        }
+        return ids;
+    };
+
+    // 13. A rename that fails partway through an undo (a folder put where
+    //     the fifth file goes back to, after the check and before the
+    //     move): the four already moved go back, the undo fails saying
+    //     why, nothing it had restored was kept, and no pre-restore record
+    //     is left for a restore that wrote nothing.
+    if (runs(13)) {
+        TenMoved t = tenMovedBack("seabass_moved_file_undo_rename_fails");
+        fs::path planted;
+        infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting(
+            [&](const std::string &, std::size_t index) {
+                if (index == 4) {
+                    planted = t.moved[5];  // newest first: the fifth move is Track5
+                    write(planted / "in the way", "x");
+                }
+            });
+        const auto undone =
+            save({std::make_shared<RestoreBackupsChange>(t.result.backups)}, pathToQString(t.pioneer), {});
+        infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting({});
+        if (!undone.error.contains("could not move")) {
+            std::cerr << "undo error: " << undone.error.toStdString() << "\n";
+        }
+        assert(!planted.empty() && "the fifth move was reached");
+        assert(undone.error.contains("could not move") && "the failed rename is named");
+        assert(undone.error.contains("Nothing it had restored was kept") && "and it is true");
+        std::error_code ec;
+        fs::remove_all(planted, ec);
+        assert(allTenWhereTheSaveLeftThem(t) && "the four moved went back");
+        for (size_t i = 0; i < 10; ++i) {
+            assert(!fs::exists(t.moved[i]));
+        }
+        assert(preRestoreRecords(t).empty() && "a restore that wrote nothing keeps no record");
+        std::cout << "case 13 (a rename failing partway through an undo moves back what it had moved) OK\n";
+    }
+
+    // 14. The stuck path: the fifth rename fails and so do the moves back
+    //     (the folder they go back from cannot be written). The files that
+    //     could not be put back are named, the pre-restore record that
+    //     notes them is kept, and the message does NOT say nothing was
+    //     kept.
+    if (runs(14)) {
+        TenMoved t = tenMovedBack("seabass_moved_file_undo_stuck");
+        const fs::path newFolder = t.moved[0].parent_path();
+        bool locked = false;
+        infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting(
+            [&](const std::string &, std::size_t index) {
+                if (index == 4) {
+                    write(t.moved[5] / "in the way", "x");
+                    fs::permissions(newFolder, fs::perms::owner_read | fs::perms::owner_exec,
+                                    fs::perm_options::replace);
+                    locked = true;
+                }
+            });
+        const auto undone =
+            save({std::make_shared<RestoreBackupsChange>(t.result.backups)}, pathToQString(t.pioneer), {});
+        infrastructure::backup::FilesystemBackupStore::setBeforeRestoreMoveForTesting({});
+        std::error_code ec;
+        fs::permissions(newFolder, fs::perms::owner_all, fs::perm_options::replace, ec);
+        fs::remove_all(t.moved[5], ec);
+        std::cerr << "undo error: " << undone.error.toStdString() << "\n";
+        assert(locked && "the fifth move was reached");
+        assert(!undone.error.isEmpty());
+        assert(!undone.error.contains("Nothing it had restored was kept") && "not said when it is not true");
+        assert(undone.error.contains("could not be returned"));
+        // Track9 to Track6 were moved and are stuck where the undo put
+        // them: each named.
+        for (int i = 6; i < 10; ++i) {
+            assert(fs::is_regular_file(t.moved[i]) && !fs::exists(t.expected[i]));
+            assert(undone.error.contains(pathToQString(t.moved[i])) && "each stuck file is named");
+        }
+        for (int i = 0; i < 5; ++i) {
+            assert(fs::is_regular_file(t.expected[i]) && "the moves not reached were not made");
+        }
+        assert(preRestoreRecords(t).size() == 1 && "the record noting the stuck moves is kept");
+        std::cout << "case 14 (moves that cannot be put back are named and their record kept) OK\n";
+    }
+
     std::cout << "moved_file_change_test: all cases OK\n";
     return 0;
 }
