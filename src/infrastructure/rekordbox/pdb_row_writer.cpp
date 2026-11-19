@@ -1187,6 +1187,13 @@ std::optional<size_t> trackStringCapacity(const std::string &buffer, size_t rowB
 
 }  // namespace
 
+std::string trackPathLengthRefusal(const std::string &what, size_t length, size_t capacity)
+{
+    return "the new " + what + " is " + std::to_string(length) + " characters, and export.pdb stores this track's "
+           + what + " in exactly " + std::to_string(capacity)
+           + "; it can be pointed at a file only when the new " + what + " has that same length";
+}
+
 std::optional<PdbRowWriter::TrackPathCapacity> PdbRowWriter::trackPathCapacity(uint32_t trackId) const
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
@@ -1230,14 +1237,18 @@ bool PdbRowWriter::setTrackFilePath(uint32_t trackId, const std::string &filenam
     if (!capacity) {
         return refuse("this track's path fields in export.pdb cannot be written in place");
     }
-    if (filePath.size() > capacity->filePath) {
-        return refuse("the new path is " + std::to_string(filePath.size()) + " characters, and this track's path "
-                      "field in export.pdb holds " + std::to_string(capacity->filePath)
-                      + "; a row cannot grow without rewriting its page");
+    // Exactly the length the field holds, never shorter as well as never
+    // longer: the in-place write pads a shorter value with spaces to fill
+    // the span (fitAsciiToCapacity), and a path or a file name stored
+    // with trailing spaces names another file. The format has no way to
+    // store a shorter string in the span it leaves: its length is in its
+    // own header, and the bytes after it would be a gap inside the row
+    // that nothing documents a player accepting.
+    if (filePath.size() != capacity->filePath) {
+        return refuse(trackPathLengthRefusal("path", filePath.size(), capacity->filePath));
     }
-    if (filename.size() > capacity->filename) {
-        return refuse("the new filename is " + std::to_string(filename.size()) + " characters, and this track's "
-                      "filename field in export.pdb holds " + std::to_string(capacity->filename));
+    if (filename.size() != capacity->filename) {
+        return refuse(trackPathLengthRefusal("file name", filename.size(), capacity->filename));
     }
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilename, filename);
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath, filePath);

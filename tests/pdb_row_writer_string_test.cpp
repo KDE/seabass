@@ -690,9 +690,10 @@ int main()
     }
 
     // setTrackFilePath (#103): the row's path fields hold what they hold,
-    // and a path that does not fit is refused whole rather than cut
-    // short -- a path cut short names a file that is not there, which is
-    // the fault a relink exists to repair.
+    // and a value of any other length is refused whole: cut short, a path
+    // names a file that is not there; padded with spaces to fill the span,
+    // it names a file whose name ends in spaces. Seabass's own readers
+    // trim padding, so the stored bytes are read raw here.
     {
         writeFile(pdbPath, pristine);
         PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
@@ -702,27 +703,33 @@ int main()
         assert(capacity->filePath == 0 && "a file_path slot that holds nothing");
         assert(!writer.trackPathCapacity(999999).has_value());
         std::string refusal;
-        assert(!writer.setTrackFilePath(100, "ok.mp3", "/x", &refusal));
-        assert(refusal.find("holds 0") != std::string::npos && "refused for the path, with the capacity");
+        assert(!writer.setTrackFilePath(100, "ok12.mp3", "/x", &refusal));
+        assert(refusal.find("exactly 0") != std::string::npos && "refused for the path, with the length it takes");
         refusal.clear();
         assert(!writer.setTrackFilePath(100, "too-long.mp3", "", &refusal));
-        assert(refusal.find("filename") != std::string::npos);
+        assert(refusal.find("file name") != std::string::npos);
         refusal.clear();
-        assert(!writer.setTrackFilePath(100, "caf\xC3\xA9.mp3", "", &refusal));
+        // Shorter is refused too: the span would be filled with spaces.
+        assert(!writer.setTrackFilePath(100, "new.mp3", "", &refusal));
+        assert(refusal.find("file name") != std::string::npos && refusal.find("exactly 8") != std::string::npos);
+        refusal.clear();
+        assert(!writer.setTrackFilePath(100, "caf\xC3\xA9.mp", "", &refusal));
         assert(refusal.find("ASCII") != std::string::npos);
         refusal.clear();
-        assert(!writer.setTrackFilePath(999999, "ok.mp3", "", &refusal) && refusal.empty() && "no row, no refusal");
+        assert(!writer.setTrackFilePath(999999, "new1.mp3", "", &refusal) && refusal.empty() && "no row, no refusal");
         assert(!writer.commit() && "nothing was edited, so there is nothing to commit");
-        assert(readTrackTexts(pdbPath, 100).filename == "real.mp3" && "every refusal left the row untouched");
+        assert(readRawTrackTexts(pdbPath, 100).filename == "real.mp3" && "every refusal left the row untouched");
 
-        assert(writer.setTrackFilePath(100, "new.mp3", "", &refusal) && refusal.empty());
+        assert(writer.setTrackFilePath(100, "new1.mp3", "", &refusal) && refusal.empty());
         assert(writer.commit());
+        // Byte for byte, through the generated parser without trimming:
+        // exactly the name, nothing after it.
+        const auto raw = readRawTrackTexts(pdbPath, 100);
+        assert(raw.filename == "new1.mp3" && "stored exactly, in the same span");
+        assert(raw.filePath.empty());
         const auto after = readTrackTexts(pdbPath, 100);
-        // Padded to the span on disk; the helper reads the field as the
-        // reader does, so the padding may or may not come back.
-        assert((after.filename == "new.mp3 " || after.filename == "new.mp3") && "fits, in the same span");
         assert(after.title == "Real Title" && after.comment == "Hi" && "nothing else on the row changed");
-        std::cout << "case 11 (setTrackFilePath refuses what does not fit, writes what does) OK\n";
+        std::cout << "case 11 (setTrackFilePath writes a path of exactly the field's length, and refuses any other) OK\n";
     }
 
     std::cout << "all cases passed\n";

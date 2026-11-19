@@ -61,6 +61,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Why a track's `what` ("path" or "file name") of `length` characters
+// cannot replace one export.pdb stores in exactly `capacity`: the sentence
+// setTrackFilePath() refuses with, for a caller that asks first.
+std::string trackPathLengthRefusal(const std::string &what, size_t length, size_t capacity);
+
 class PdbRowWriter
 {
 public:
@@ -134,11 +139,11 @@ public:
     // to change. Returns false if no track with this id exists.
     bool overwriteTrackText(uint32_t trackId, const TrackTextOverride &text);
 
-    // How much text the row's filename and file_path fields can hold, in
-    // ASCII characters: what setTrackFilePath() may write without cutting
-    // it short, since a field keeps the span its current value takes.
-    // nullopt when there is no such row, or when either field cannot be
-    // written at all (its slot is unused, or its string leaves the page).
+    // How much text the row's filename and file_path fields hold, in
+    // ASCII characters: the only length setTrackFilePath() writes, since a
+    // field keeps the span its current value takes. nullopt when there is
+    // no such row, or when either field cannot be written at all (its slot
+    // is unused, or its string leaves the page).
     struct TrackPathCapacity
     {
         size_t filename = 0;
@@ -148,14 +153,18 @@ public:
 
     // Points the row at another file on the stick (#103): filename and
     // file_path overwritten in place, like overwriteTrackText(), and
-    // nothing else on the row. Unlike that call this never truncates: a
-    // path cut short names a file that is not there, which is the fault
-    // a relink exists to repair. Refused, with *refusal saying why and
-    // nothing written, when either value is not plain ASCII or is longer
-    // than its field's capacity. Returns false, and no refusal, when no
-    // track with this id exists.
+    // nothing else on the row. Unlike that call this writes each value
+    // EXACTLY or not at all. Cut short, a path names a file that is not
+    // there, which is the fault a relink exists to repair; padded with the
+    // spaces that call uses to fill a span, it names a file whose name
+    // ends in spaces, which a player or rekordbox may look for as spelled.
+    // Seabass's own readers trim the padding, so nothing here would show
+    // it. Refused, with *refusal saying why and nothing written, when
+    // either value is not plain ASCII or is not exactly as long as its
+    // field holds. Returns false, and no refusal, when no track with this
+    // id exists. `refusal` is required: the reason is what the page shows.
     bool setTrackFilePath(uint32_t trackId, const std::string &filename, const std::string &filePath,
-                          std::string *refusal = nullptr);
+                          std::string *refusal);
 
     // The track row's other free-text slots. Kept apart from
     // TrackTextOverride because those four are the ones a caller

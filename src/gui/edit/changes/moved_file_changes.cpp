@@ -107,14 +107,13 @@ std::string relinkRefusalFor(const QString &pioneerRoot, const domain::MovedFile
             if (!capacity) {
                 return "this track's path fields in export.pdb cannot be written in place";
             }
-            if (stored.size() > capacity->filePath) {
-                return "the new path is " + std::to_string(stored.size()) + " characters, and the track's path field "
-                       "in export.pdb holds " + std::to_string(capacity->filePath)
-                       + "; a row cannot grow without rewriting its page";
+            // Exactly, as setTrackFilePath() writes it: see its comment.
+            if (stored.size() != capacity->filePath) {
+                return infrastructure::rekordbox::trackPathLengthRefusal("path", stored.size(), capacity->filePath);
             }
-            if (name.size() > capacity->filename) {
-                return "the new filename is " + std::to_string(name.size()) + " characters, and the track's filename "
-                       "field in export.pdb holds " + std::to_string(capacity->filename);
+            if (name.size() != capacity->filename) {
+                return infrastructure::rekordbox::trackPathLengthRefusal("file name", name.size(),
+                                                                         capacity->filename);
             }
         }
     } catch (const std::exception &e) {
