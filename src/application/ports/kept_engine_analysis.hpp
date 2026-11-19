@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 // The player's own analysis of one Engine row, kept on the stick before
 // Seabass replaces any of it, so that it can be put back byte for byte
@@ -81,6 +82,16 @@ struct KeptEngineAnalysis
     // analysis changes both.
     std::string seabassState;
     std::string seabassAnalysis;
+    // The row in its two parts, before and after Seabass's last write to
+    // it: the columns (as the whole row, and as only the analysis), and the
+    // overview file, each a fingerprint, the after first. A write is cut
+    // short between its parts (the columns written, the file not), so a row
+    // whose every part is one of these, or the original's, is Seabass's
+    // own, finished or not, and never taken for the player's new analysis.
+    // Empty in an entry of format 1, which did not record them.
+    std::vector<std::string> seabassColumnStates;
+    std::vector<std::string> seabassColumnAnalyses;
+    std::vector<std::string> seabassFiles;
 
     friend bool operator==(const KeptEngineAnalysis &, const KeptEngineAnalysis &) = default;
 };

@@ -4,6 +4,9 @@
 
 #include "infrastructure/audio/exact_sample_count.hpp"
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -94,6 +97,78 @@ std::optional<std::string_view> child(std::string_view payload, std::string_view
     return std::nullopt;
 }
 
+// The audio rates a file is made at. A rate outside them read from a
+// header is taken for a header misread, not for a rate.
+bool standardRate(std::uint64_t rate)
+{
+    static constexpr std::uint64_t Rates[] = {8000,  11025, 12000, 16000, 22050,  24000,  32000,  44100,
+                                              48000, 64000, 88200, 96000, 176400, 192000, 352800, 384000};
+    return std::find(std::begin(Rates), std::end(Rates), rate) != std::end(Rates);
+}
+
+// What the first sample entry of a sound track says its rate is: the
+// 16.16 field of an ISO / QuickTime version 0 or 1 entry, or the float64 of
+// a QuickTime version 2 one. Nothing for no entry; 0 for an entry whose
+// rate cannot be read (a version 2 rate that is not a whole number, an
+// unknown version).
+struct SampleEntryRate
+{
+    std::uint64_t rate = 0;
+    // The 16.16 field, which cannot hold 65536 Hz or more.
+    bool sixteenDotSixteen = false;
+};
+
+std::optional<SampleEntryRate> sampleEntryOf(std::string_view mdia)
+{
+    const auto minf = child(mdia, "minf");
+    const auto stbl = minf ? child(*minf, "stbl") : std::nullopt;
+    const auto stsd = stbl ? child(*stbl, "stsd") : std::nullopt;
+    // Full box header (4), entry count (4), then the entry: its size and
+    // type (8), the SampleEntry's reserved bytes and data reference (8),
+    // and the sound entry: version (2), revision (2), vendor (4),
+    // channels (2), sample size (2), compression id (2), packet size (2),
+    // the 16.16 rate (4). Version 2 has after that the struct's size (4)
+    // and the rate as a float64.
+    if (!stsd || stsd->size() < 8 + 8 + 8 + 20) {
+        return std::nullopt;
+    }
+    SampleEntryRate entry;
+    const std::uint64_t version = bigEndian(*stsd, 8 + 8 + 8, 2);
+    if (version == 0 || version == 1) {
+        entry.rate = bigEndian(*stsd, 8 + 8 + 24, 4) >> 16;
+        entry.sixteenDotSixteen = true;
+    } else if (version == 2 && stsd->size() >= 8 + 8 + 32 + 8) {
+        const double rate = std::bit_cast<double>(bigEndian(*stsd, 8 + 8 + 32, 8));
+        if (std::isfinite(rate) && rate > 0.0 && rate <= 1e6 && rate == std::floor(rate)) {
+            entry.rate = static_cast<std::uint64_t>(rate);
+        }
+    }
+    return entry;
+}
+
+// The rate to count the track's samples at, from its media timescale and
+// its sample entry, or nothing when neither can be trusted:
+// - the entry and the timescale agree: that;
+// - a 16.16 entry rate that is the timescale cut to 16 bits (a 96 kHz
+//   file's entry holds 30464), or 0 (some writers put that above 65535
+//   Hz): the timescale, when it is a standard rate;
+// - otherwise the entry's rate, when it is a standard one (a QuickTime
+//   file's timescale of 600 or 1000 converts to it, if whole);
+// - no entry at all: the timescale, when it is a standard rate.
+std::optional<std::uint64_t> trustedRate(std::uint64_t timescale, const std::optional<SampleEntryRate> &entry)
+{
+    if (!entry) {
+        return standardRate(timescale) ? std::optional<std::uint64_t>(timescale) : std::nullopt;
+    }
+    if (entry->rate == timescale && entry->rate > 0) {
+        return timescale;
+    }
+    if (entry->sixteenDotSixteen && (entry->rate == 0 || (timescale > 0xFFFF && entry->rate == (timescale & 0xFFFF)))) {
+        return standardRate(timescale) ? std::optional<std::uint64_t>(timescale) : std::nullopt;
+    }
+    return standardRate(entry->rate) ? std::optional<std::uint64_t>(entry->rate) : std::nullopt;
+}
+
 // One trak: its handler, its media timescale and duration, and the sample
 // rate of its first sample entry.
 std::optional<ExactSampleCount> soundTrack(std::string_view trak)
@@ -128,28 +203,21 @@ std::optional<ExactSampleCount> soundTrack(std::string_view trak)
     if (timescale == 0 || duration == 0 || duration == 0xffffffffu) {
         return std::nullopt;
     }
-    // The sample entry's rate (16.16 fixed point): the timescale is the
-    // rate in every file seen, but not by rule.
-    std::uint64_t rate = timescale;
-    if (const auto minf = child(*mdia, "minf")) {
-        if (const auto stbl = child(*minf, "stbl")) {
-            if (const auto stsd = child(*stbl, "stsd"); stsd && stsd->size() >= 8 + 8 + 28) {
-                const std::uint64_t entryRate = bigEndian(*stsd, 8 + 8 + 24, 4) >> 16;
-                if (entryRate > 0) {
-                    rate = entryRate;
-                }
-            }
-        }
+    // The sample entry's rate: the timescale is the rate in every file
+    // seen, but not by rule. A rate that cannot be trusted gives no count.
+    const auto rate = trustedRate(timescale, sampleEntryOf(*mdia));
+    if (!rate) {
+        return std::nullopt;
     }
     std::uint64_t samples = duration;
-    if (rate != timescale) {
+    if (*rate != timescale) {
         // Only a count that comes out whole is a count.
-        if ((duration * rate) % timescale != 0) {
+        if ((duration * *rate) % timescale != 0) {
             return std::nullopt;
         }
-        samples = duration * rate / timescale;
+        samples = duration * *rate / timescale;
     }
-    return counted(samples, static_cast<int>(rate), Source::Mp4TrackDuration);
+    return counted(samples, static_cast<int>(*rate), Source::Mp4TrackDuration);
 }
 
 // The moov box of a file, found by walking the top-level boxes from disk

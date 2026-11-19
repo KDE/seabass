@@ -75,12 +75,6 @@ djinterop::pad_color padColor(const std::string &color, int slot)
     return defaultPadColor(slot);
 }
 
-// A blob as the value SQLite stores for it.
-application::EngineSqlValue blobValue(const std::vector<std::byte> &bytes)
-{
-    return application::EngineSqlValue::ofBlob(std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
-}
-
 }  // namespace
 
 LibdjinteropEngineCueWriter::LibdjinteropEngineCueWriter(std::string engineLibraryPath)
@@ -503,7 +497,214 @@ AnalysedGridPlan planAnalysedGrid(const BeatDataBlob &existing, bool locked, con
     return plan;
 }
 
+
+using TrackDataBlob = djinterop::engine::v3::track_data_blob;
+using OverviewBlob = djinterop::engine::v3::overview_waveform_data_blob;
+using application::EngineAnalysisColumns;
+using application::EngineSqlValue;
+
+std::vector<std::byte> bytesOf(const std::string &text)
+{
+    std::vector<std::byte> bytes(text.size());
+    std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+    return bytes;
+}
+
+std::string textOf(const std::vector<std::byte> &bytes)
+{
+    return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+}
+
+// A column's blob through libdjinterop's decoder, nothing when it is not a
+// blob or does not decode: no analysis to keep or compare.
+template<typename Blob>
+std::optional<Blob> decoded(const EngineSqlValue &value)
+{
+    if (value.type != EngineSqlValue::Type::Blob) {
+        return std::nullopt;
+    }
+    try {
+        return Blob::from_blob(bytesOf(value.bytes));
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+// A flag as the player reads it; nothing when the column holds no number
+// (NULL, text, a blob), which is not knowing.
+std::optional<bool> flagOf(const EngineSqlValue &v)
+{
+    switch (v.type) {
+    case EngineSqlValue::Type::Integer:
+        return v.integer != 0;
+    case EngineSqlValue::Type::Real:
+        return v.real != 0.0;
+    default:
+        return std::nullopt;
+    }
+}
+
+bool usable(double sampleRate, double samples)
+{
+    return sampleRate > 0.0 && samples > 0.0 && std::isfinite(sampleRate) && std::isfinite(samples);
+}
+
+// What the row's flags say, read the way the player reads them.
+struct RowFlags
+{
+    // The row has the player's analysis: the flag up and a beat data blob
+    // with a usable rate and length. Meaningless when unreadable.
+    bool analysed = false;
+    // Unsure whether the player has analysed the row: its flag is not a
+    // number, or it is up over beat data that does not decode or has no
+    // usable rate and length. Such a row is left alone, never filled as
+    // one the player is still to analyse.
+    bool unreadable = false;
+    // A lock that cannot be read counts as a lock.
+    bool locked = true;
+};
+
+RowFlags flagsOf(const EngineAnalysisColumns &c, const std::optional<BeatDataBlob> &existing)
+{
+    RowFlags flags;
+    flags.locked = flagOf(c.isBeatGridLocked).value_or(true);
+    const std::optional<bool> analysed = flagOf(c.isAnalyzed);
+    if (!analysed) {
+        flags.unreadable = true;
+        return flags;
+    }
+    const bool usableGrid = existing && usable(existing->sample_rate, existing->samples);
+    flags.unreadable = *analysed && !usableGrid;
+    flags.analysed = *analysed && usableGrid;
+    return flags;
+}
+
 }  // namespace
+
+// The row's analysis as stored, and, read only where it is wanted, its
+// overview file.
+struct LibdjinteropEngineCueWriter::RowNow
+{
+    EngineAnalysisColumns columns;
+    std::string trackFile;
+    std::string libraryUuid;
+};
+
+std::string LibdjinteropEngineCueWriter::databaseFile() const
+{
+    return pathToUtf8(pathFromUtf8(m_engineLibraryPath) / "Database2" / "m.db");
+}
+
+std::string LibdjinteropEngineCueWriter::overviewFileRoot() const
+{
+    return m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot;
+}
+
+EngineAnalysisRowAccess &LibdjinteropEngineCueWriter::rowAccess()
+{
+    if (!m_rows) {
+        m_rows = std::make_shared<EngineAnalysisRowAccess>(databaseFile());
+    }
+    return *m_rows;
+}
+
+namespace
+{
+
+std::optional<std::string> readFileBytes(const std::filesystem::path &path)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        return std::nullopt;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("cannot open " + pathToUtf8(path));
+    }
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) {
+        throw std::runtime_error("cannot read " + pathToUtf8(path));
+    }
+    return text;
+}
+
+// The file's place under the Engine Library folder. The uuid comes out of
+// the database and goes into a path, so it is held to what a uuid is.
+std::string overviewFileRelativePath(const std::string &uuid, std::int64_t trackId)
+{
+    const bool plain = !uuid.empty() && std::all_of(uuid.begin(), uuid.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
+    });
+    if (!plain) {
+        throw std::runtime_error("the Engine library's Information.uuid \"" + uuid
+                                 + "\" cannot name its overview folder");
+    }
+    return "Database2/OverviewData/" + uuid + "/" + std::to_string(trackId) + ".rgb";
+}
+
+}  // namespace
+
+LibdjinteropEngineCueWriter::RowNow LibdjinteropEngineCueWriter::readRowNow(std::int64_t id, bool withOverviewFile)
+{
+    std::string error;
+    auto row = rowAccess().read(id, &error);
+    if (!row) {
+        throw std::runtime_error(error);
+    }
+    RowNow now{std::move(row->columns), std::move(row->trackFile), std::move(row->libraryUuid)};
+    if (withOverviewFile) {
+        now.columns.overviewFileRelativePath = overviewFileRelativePath(now.libraryUuid, id);
+        now.columns.overviewFile =
+            readFileBytes(pathFromUtf8(overviewFileRoot()) / pathFromUtf8(now.columns.overviewFileRelativePath));
+    }
+    return now;
+}
+
+void LibdjinteropEngineCueWriter::writeColumns(std::int64_t id, const EngineAnalysisColumns &before,
+                                               const EngineAnalysisColumns &after)
+{
+    if (before.isAnalyzed == after.isAnalyzed && before.isBeatGridLocked == after.isBeatGridLocked
+        && before.bpm == after.bpm && before.bpmAnalyzed == after.bpmAnalyzed && before.key == after.key
+        && before.trackData == after.trackData && before.overviewWaveFormData == after.overviewWaveFormData
+        && before.beatData == after.beatData) {
+        return;
+    }
+    std::string error;
+    if (!rowAccess().write(id, after, &error)) {
+        throw std::runtime_error("could not write the row's analysis: " + error);
+    }
+}
+
+void LibdjinteropEngineCueWriter::putOverviewFile(const std::string &relative, const std::optional<std::string> &bytes)
+{
+    const std::filesystem::path path = pathFromUtf8(overviewFileRoot()) / pathFromUtf8(relative);
+    if (bytes) {
+        if (m_overviewFileSink) {
+            m_overviewFileSink(relative, *bytes);
+            return;
+        }
+        std::filesystem::create_directories(path.parent_path());
+        if (!writeFileDurablyAtomic(pathToUtf8(path), *bytes)) {
+            throw std::runtime_error("could not write the overview file " + pathToUtf8(path));
+        }
+        return;
+    }
+    if (m_overviewFileRemover) {
+        m_overviewFileRemover(relative);
+        return;
+    }
+    std::string failure;
+    if (!removeEntry(path, failure)) {
+        throw std::runtime_error("could not remove the overview file " + pathToUtf8(path) + ": " + failure);
+    }
+}
+
+void LibdjinteropEngineCueWriter::beforeWrite()
+{
+    if (m_beforeBeatGridWrite) {
+        m_beforeBeatGridWrite();
+    }
+}
 
 BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string &trackSourceId,
                                                                const std::vector<domain::Beat> &rekordboxBeats,
@@ -520,40 +721,6 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     }
     const std::int64_t id = track->id();
 
-    // Each step below reads or writes one column through libdjinterop,
-    // each in its own statement, the way writeCues() does: the save that
-    // owns this writer works on a copy it backs up first.
-    const auto readBeatData = [&]() -> std::optional<BeatDataBlob> {
-        try {
-            return m_tables->v3 ? m_tables->v3->performance_data().get_beat_data(id)
-                                : m_tables->v2->track().get_beat_data(id);
-        } catch (const std::exception &) {
-            // A blob that does not decode is no grid to keep or compare.
-            return std::nullopt;
-        }
-    };
-    const auto writeBeatData = [&](const BeatDataBlob &blob) {
-        if (m_tables->v3) {
-            m_tables->v3->performance_data().set_beat_data(id, blob);
-        } else {
-            m_tables->v2->track().set_beat_data(id, blob);
-        }
-    };
-    // A flag that cannot be read is taken as `unreadable`.
-    const auto flag = [&](bool (djinterop::engine::v2::track_table::*v2)(std::int64_t),
-                          bool (djinterop::engine::v3::track_table::*v3)(std::int64_t), bool unreadable) {
-        try {
-            if (m_tables->v3) {
-                auto table = m_tables->v3->track();
-                return (table.*v3)(id);
-            }
-            auto table = m_tables->v2->track();
-            return (table.*v2)(id);
-        } catch (const std::exception &) {
-            return unreadable;
-        }
-    };
-
     // The grid comes on rekordbox's timeline, as the cues do, and moves
     // onto Engine's by the same shift. A beat the shift puts before the
     // start is dropped; the line through the others still reaches back
@@ -569,37 +736,41 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
 
     const auto converted = [&](double sampleRate, double samples) { return convertedGrid(beats, sampleRate, samples); };
 
-    // Analysed is what the player reads off the flag, with the blob to
-    // say what rate and length the audio has. A row with a grid but the
-    // flag down is one the player will analyse again, so it counts as
-    // not analysed.
-    const std::optional<BeatDataBlob> existing = readBeatData();
-    // An analysed flag that cannot be read leaves the row alone (Skip) or
-    // filled as a row the player is still to analyse. A lock that cannot
-    // be read counts as a lock: unsure is a refusal, never a write over
-    // what the user may have pinned on the player.
-    const bool analysed = flag(&djinterop::engine::v2::track_table::get_is_analyzed,
-                               &djinterop::engine::v3::track_table::get_is_analyzed, false)
-        && existing && existing->sample_rate > 0.0 && existing->samples > 0.0 && std::isfinite(existing->sample_rate)
-        && std::isfinite(existing->samples);
-    const bool locked = flag(&djinterop::engine::v2::track_table::get_is_beat_grid_locked,
-                             &djinterop::engine::v3::track_table::get_is_beat_grid_locked, true);
+    // The row as stored, read once: its flags and its beat data. Analysed
+    // is what the player reads off the flag, with the blob to say what rate
+    // and length the audio has. A row with a grid but the flag down is one
+    // the player will analyse again, so it counts as not analysed. Every
+    // write below is one transaction over the row's columns.
+    const RowNow now = readRowNow(id, false);
+    const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(now.columns.beatData);
+    const RowFlags flags = flagsOf(now.columns, existing);
+    if (flags.unreadable) {
+        return {Outcome::RowUnreadable};
+    }
+    const bool locked = flags.locked;
 
-    if (analysed) {
+    if (flags.analysed) {
         const auto [grid, barBreaks] = converted(existing->sample_rate, existing->samples);
         AnalysedGridPlan plan =
             planAnalysedGrid(*existing, locked, grid, barBreaks, options.overwriteEngineEdits, options.ownGridFingerprint);
-        if (!plan.write || options.previewOnly) {
+        if (!plan.write) {
             return plan.result;
         }
-        if (m_beforeBeatGridWrite) {
-            m_beforeBeatGridWrite();
+        if (m_keptStore && options.keepKey.empty()) {
+            return {Outcome::CannotKeepEngines};
         }
-        const BeatDataBlob written = *plan.write;
+        if (options.previewOnly) {
+            return plan.result;
+        }
+        beforeWrite();
+        const std::string written = textOf(plan.write->to_blob());
+        const auto apply = [&](EngineAnalysisColumns &after) { after.beatData = EngineSqlValue::ofBlob(written); };
         keepBeforeWrite(id, options.keepKey, true,
-                        options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing),
-                        [&](application::EngineAnalysisColumns &after) { after.beatData = blobValue(written.to_blob()); });
-        writeBeatData(*plan.write);
+                        options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing), now,
+                        apply);
+        EngineAnalysisColumns after = now.columns;
+        apply(after);
+        writeColumns(id, now.columns, after);
         return plan.result;
     }
 
@@ -640,124 +811,28 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     blob.default_beat_grid = grid;
     blob.adjusted_beat_grid = grid;
     blob.extra_data = std::vector<std::byte>(9, std::byte{0});
+    result.gridFingerprint = gridFingerprint(blob);
     if (options.previewOnly) {
-        result.gridFingerprint = gridFingerprint(blob);
         return result;
     }
-    if (m_beforeBeatGridWrite) {
-        m_beforeBeatGridWrite();
-    }
-    keepBeforeWrite(id, options.keepKey, false, false, [&](application::EngineAnalysisColumns &after) {
-        after.beatData = blobValue(blob.to_blob());
-        if (lock) {
-            after.isBeatGridLocked = application::EngineSqlValue::ofInteger(1);
+    beforeWrite();
+    // The grid and the lock in one transaction: never a lock on no grid.
+    const std::string written = textOf(blob.to_blob());
+    const auto apply = [&](EngineAnalysisColumns &after) {
+        after.beatData = EngineSqlValue::ofBlob(written);
+        if (lock && !locked) {
+            after.isBeatGridLocked = EngineSqlValue::ofInteger(1);
         }
-    });
-    writeBeatData(blob);
-    result.gridFingerprint = gridFingerprint(blob);
-    if (lock && !locked) {
-        // After the grid: should this fail, the row has a grid the player
-        // may replace, not a lock on no grid at all.
-        if (m_tables->v3) {
-            m_tables->v3->track().set_is_beat_grid_locked(id, true);
-        } else {
-            m_tables->v2->track().set_is_beat_grid_locked(id, true);
-        }
-    }
+    };
+    keepBeforeWrite(id, options.keepKey, false, false, now, apply);
+    EngineAnalysisColumns after = now.columns;
+    apply(after);
+    writeColumns(id, now.columns, after);
     return result;
 }
 
 namespace
 {
-
-using TrackDataBlob = djinterop::engine::v3::track_data_blob;
-using OverviewBlob = djinterop::engine::v3::overview_waveform_data_blob;
-
-// One row's analysis columns, wherever its schema keeps them: 3.x in
-// PerformanceData, 2.x in Track. Each read or write is one statement
-// through libdjinterop, as in writeBeatGrid().
-class RowColumns
-{
-public:
-    RowColumns(std::optional<djinterop::engine::v2::engine_library> &v2,
-               std::optional<djinterop::engine::v3::engine_library> &v3, std::int64_t id)
-        : m_v2(v2)
-        , m_v3(v3)
-        , m_id(id)
-    {
-    }
-
-    bool isV3() const { return m_v3.has_value(); }
-
-    // A blob that does not decode is none to keep or compare.
-    std::optional<BeatDataBlob> beatData() const
-    {
-        try {
-            return m_v3 ? m_v3->performance_data().get_beat_data(m_id) : m_v2->track().get_beat_data(m_id);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-    }
-    std::optional<TrackDataBlob> trackData() const
-    {
-        try {
-            return m_v3 ? m_v3->performance_data().get_track_data(m_id) : m_v2->track().get_track_data(m_id);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-    }
-    std::optional<OverviewBlob> overview() const
-    {
-        try {
-            return m_v3 ? m_v3->performance_data().get_overview_waveform_data(m_id)
-                        : m_v2->track().get_overview_waveform_data(m_id);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-    }
-
-    void setBeatData(const BeatDataBlob &blob)
-    {
-        m_v3 ? m_v3->performance_data().set_beat_data(m_id, blob) : m_v2->track().set_beat_data(m_id, blob);
-    }
-    void setTrackData(const TrackDataBlob &blob)
-    {
-        m_v3 ? m_v3->performance_data().set_track_data(m_id, blob) : m_v2->track().set_track_data(m_id, blob);
-    }
-    void setOverview(const OverviewBlob &blob)
-    {
-        m_v3 ? m_v3->performance_data().set_overview_waveform_data(m_id, blob)
-             : m_v2->track().set_overview_waveform_data(m_id, blob);
-    }
-    // Track.bpmAnalyzed as given, Track.bpm (an integer column) rounded,
-    // as the player leaves both after its analysis.
-    void setBpm(double bpm)
-    {
-        const auto rounded = static_cast<std::int64_t>(std::llround(bpm));
-        if (m_v3) {
-            m_v3->track().set_bpm_analyzed(m_id, bpm);
-            m_v3->track().set_bpm(m_id, rounded);
-        } else {
-            m_v2->track().set_bpm_analyzed(m_id, bpm);
-            m_v2->track().set_bpm(m_id, rounded);
-        }
-    }
-    void setKey(int key) { m_v3 ? m_v3->track().set_key(m_id, key) : m_v2->track().set_key(m_id, key); }
-    void setIsAnalyzed(bool analysed)
-    {
-        m_v3 ? m_v3->track().set_is_analyzed(m_id, analysed) : m_v2->track().set_is_analyzed(m_id, analysed);
-    }
-
-    // Information.uuid of this database: the name of its folder under
-    // Database2/OverviewData. Read from the one row the table has,
-    // whatever its id.
-    std::string uuid() const { return m_v3 ? m_v3->information().get().uuid : m_v2->information().get().uuid; }
-
-private:
-    std::optional<djinterop::engine::v2::engine_library> &m_v2;
-    std::optional<djinterop::engine::v3::engine_library> &m_v3;
-    std::int64_t m_id;
-};
 
 // The overview as the player stores it: 1024 points, then the last triple,
 // with how many samples each point covers.
@@ -779,8 +854,7 @@ OverviewBlob overviewBlob(const domain::EngineOverview &overview, double samples
 // decoder reads one back.
 std::string fileBytesOf(const OverviewBlob &blob)
 {
-    const std::vector<std::byte> bytes = blob.to_blob();
-    return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    return textOf(blob.to_blob());
 }
 
 // What the overview file at `path` holds, or nothing when there is none
@@ -795,32 +869,11 @@ std::optional<OverviewBlob> readOverviewFile(const std::filesystem::path &path)
     if (in.bad()) {
         return std::nullopt;
     }
-    std::vector<std::byte> bytes(text.size());
-    std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
     try {
-        return OverviewBlob::from_blob(bytes);
+        return OverviewBlob::from_blob(bytesOf(text));
     } catch (const std::exception &) {
         return std::nullopt;
     }
-}
-
-// The file's place under the Engine Library folder. The uuid comes out of
-// the database and goes into a path, so it is held to what a uuid is.
-std::string overviewFileRelativePath(const std::string &uuid, std::int64_t trackId)
-{
-    const bool plain = !uuid.empty() && std::all_of(uuid.begin(), uuid.end(), [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
-    });
-    if (!plain) {
-        throw std::runtime_error("the Engine library's Information.uuid \"" + uuid
-                                 + "\" cannot name its overview folder");
-    }
-    return "Database2/OverviewData/" + uuid + "/" + std::to_string(trackId) + ".rgb";
-}
-
-bool usable(double sampleRate, double samples)
-{
-    return sampleRate > 0.0 && samples > 0.0 && std::isfinite(sampleRate) && std::isfinite(samples);
 }
 
 }  // namespace
@@ -850,7 +903,6 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         return result;
     }
     const std::int64_t id = track->id();
-    RowColumns row(m_tables->v2, m_tables->v3, id);
 
     // The grid on Engine's timeline, as writeBeatGrid() puts it. The shift
     // can mean reading the file's start, so only when a grid is wanted.
@@ -878,47 +930,23 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         return static_cast<double>(*analysis.scrollEntries) / 150.0;
     };
 
-    // As in writeBeatGrid(): the flag with a usable grid blob is analysed,
-    // and a lock that cannot be read is a lock.
-    const auto flag = [&](bool (djinterop::engine::v2::track_table::*v2)(std::int64_t),
-                          bool (djinterop::engine::v3::track_table::*v3)(std::int64_t), bool unreadable) {
-        try {
-            if (m_tables->v3) {
-                auto table = m_tables->v3->track();
-                return (table.*v3)(id);
-            }
-            auto table = m_tables->v2->track();
-            return (table.*v2)(id);
-        } catch (const std::exception &) {
-            return unreadable;
+    // The row as stored, read once, flags as writeBeatGrid() reads them.
+    const RowNow now = readRowNow(id, false);
+    const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(now.columns.beatData);
+    const RowFlags flags = flagsOf(now.columns, existing);
+    if (flags.unreadable) {
+        if (options.grids) {
+            result.grid.outcome = Outcome::RowUnreadable;
         }
-    };
-    const std::optional<BeatDataBlob> existing = row.beatData();
-    const bool analysed = flag(&djinterop::engine::v2::track_table::get_is_analyzed,
-                               &djinterop::engine::v3::track_table::get_is_analyzed, false)
-        && existing && usable(existing->sample_rate, existing->samples);
-    const bool locked = flag(&djinterop::engine::v2::track_table::get_is_beat_grid_locked,
-                             &djinterop::engine::v3::track_table::get_is_beat_grid_locked, true);
+        if (options.waveforms) {
+            result.waveform = Waveform::RowUnreadable;
+        }
+        return result;
+    }
+    const bool locked = flags.locked;
+    const std::filesystem::path fileRoot = pathFromUtf8(overviewFileRoot());
 
-    const std::filesystem::path fileRoot = pathFromUtf8(m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot);
-    const auto writeFile = [&](const std::string &relative, const std::string &bytes) {
-        if (m_overviewFileSink) {
-            m_overviewFileSink(relative, bytes);
-            return;
-        }
-        const std::filesystem::path path = fileRoot / pathFromUtf8(relative);
-        std::filesystem::create_directories(path.parent_path());
-        if (!writeFileDurablyAtomic(pathToUtf8(path), bytes)) {
-            throw std::runtime_error("could not write the overview file " + pathToUtf8(path));
-        }
-    };
-    const auto beforeWrite = [&] {
-        if (m_beforeBeatGridWrite) {
-            m_beforeBeatGridWrite();
-        }
-    };
-
-    if (analysed) {
+    if (flags.analysed) {
         std::optional<BeatDataBlob> gridWrite;
         if (options.grids) {
             if (!hasGrid) {
@@ -939,7 +967,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
             // data's where the record says nothing usable.
             double rate = existing->sample_rate;
             double samples = existing->samples;
-            if (const auto record = row.trackData();
+            if (const auto record = decoded<TrackDataBlob>(now.columns.trackData);
                 record && usable(record->sample_rate, static_cast<double>(record->samples))) {
                 rate = record->sample_rate;
                 samples = static_cast<double>(record->samples);
@@ -952,11 +980,12 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 result.waveform = Waveform::NoSourceWaveform;
             } else {
                 const OverviewBlob blob = overviewBlob(overview, samples);
-                if (const auto current = row.overview(); !current || *current != blob) {
+                if (const auto current = decoded<OverviewBlob>(now.columns.overviewWaveFormData);
+                    !current || *current != blob) {
                     overviewWrite = blob;
                 }
                 if (!options.skipOverviewFile) {
-                    const std::string relative = overviewFileRelativePath(row.uuid(), id);
+                    const std::string relative = overviewFileRelativePath(now.libraryUuid, id);
                     const OverviewBlob second = overviewBlob(domain::secondWaveformFromOverview(overview), samples);
                     if (const auto current = readOverviewFile(fileRoot / pathFromUtf8(relative));
                         !current || *current != second) {
@@ -968,31 +997,48 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
             }
         }
 
-        if (options.previewOnly || (!gridWrite && !overviewWrite && !fileWrite)) {
+        if (!gridWrite && !overviewWrite && !fileWrite) {
+            return result;
+        }
+        // The player's analysis of a row whose file is not under the stick
+        // root has no key to be kept by: it is not replaced, in a preview
+        // as in a write, and the parts that would have been say why.
+        if (m_keptStore && options.keepKey.empty()) {
+            if (gridWrite) {
+                result.grid = {Outcome::CannotKeepEngines};
+            }
+            if (overviewWrite || fileWrite) {
+                result.waveform = Waveform::CannotKeepEngines;
+            }
+            result.overviewFileRelativePath.clear();
+            return result;
+        }
+        if (options.previewOnly) {
             return result;
         }
         beforeWrite();
+        const auto apply = [&](EngineAnalysisColumns &after) {
+            if (gridWrite) {
+                after.beatData = EngineSqlValue::ofBlob(textOf(gridWrite->to_blob()));
+            }
+            if (overviewWrite) {
+                after.overviewWaveFormData = EngineSqlValue::ofBlob(textOf(overviewWrite->to_blob()));
+            }
+            if (fileWrite) {
+                after.overviewFile = *fileWrite;
+            }
+        };
         result.keptEngineAnalysis = keepBeforeWrite(
             id, options.keepKey, true, options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing),
-            [&](application::EngineAnalysisColumns &after) {
-                if (gridWrite) {
-                    after.beatData = blobValue(gridWrite->to_blob());
-                }
-                if (overviewWrite) {
-                    after.overviewWaveFormData = blobValue(overviewWrite->to_blob());
-                }
-                if (fileWrite) {
-                    after.overviewFile = *fileWrite;
-                }
-            });
-        if (gridWrite) {
-            row.setBeatData(*gridWrite);
-        }
-        if (overviewWrite) {
-            row.setOverview(*overviewWrite);
-        }
+            now, apply);
+        // The columns in one transaction, then the file: a failure between
+        // the two leaves a mix of the row before and after, which the kept
+        // entry recognises as Seabass's own (keepBeforeWrite()).
+        EngineAnalysisColumns after = now.columns;
+        apply(after);
+        writeColumns(id, now.columns, after);
         if (fileWrite) {
-            writeFile(result.overviewFileRelativePath, *fileWrite);
+            putOverviewFile(result.overviewFileRelativePath, *fileWrite);
         }
         return result;
     }
@@ -1072,7 +1118,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     record.average_loudness_low = loudness[0];
     record.average_loudness_mid = loudness[1];
     record.average_loudness_high = loudness[2];
-    if (row.isV3()) {
+    if (m_tables->v3) {
         record.extra_data = std::vector<std::byte>(24, std::byte{0});
     }
 
@@ -1088,7 +1134,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     const OverviewBlob overviewData = overviewBlob(overview, samples);
     std::string file;
     if (!options.skipOverviewFile) {
-        result.overviewFileRelativePath = overviewFileRelativePath(row.uuid(), id);
+        result.overviewFileRelativePath = overviewFileRelativePath(now.libraryUuid, id);
         file = fileBytesOf(overviewBlob(domain::secondWaveformFromOverview(overview), samples));
     }
 
@@ -1099,38 +1145,33 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         return result;
     }
     beforeWrite();
-    keepBeforeWrite(id, options.keepKey, false, false, [&](application::EngineAnalysisColumns &after) {
-        after.trackData = blobValue(record.to_blob());
-        after.overviewWaveFormData = blobValue(overviewData.to_blob());
-        after.beatData = blobValue(beatData.to_blob());
+    const auto apply = [&](EngineAnalysisColumns &after) {
+        after.trackData = EngineSqlValue::ofBlob(textOf(record.to_blob()));
+        after.overviewWaveFormData = EngineSqlValue::ofBlob(textOf(overviewData.to_blob()));
+        after.beatData = EngineSqlValue::ofBlob(textOf(beatData.to_blob()));
         if (!options.skipOverviewFile) {
             after.overviewFile = file;
         }
         if (analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
-            after.bpm = application::EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
-            after.bpmAnalyzed = application::EngineSqlValue::ofReal(*analysis.bpm);
+            after.bpm = EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
+            after.bpmAnalyzed = EngineSqlValue::ofReal(*analysis.bpm);
         }
         if (analysis.key) {
-            after.key = application::EngineSqlValue::ofInteger(*analysis.key);
+            after.key = EngineSqlValue::ofInteger(*analysis.key);
         }
-        after.isAnalyzed = application::EngineSqlValue::ofInteger(1);
-    });
-    // The flag last: until it is up the player takes the row for one it is
-    // still to analyse and analyses it, so a failure anywhere before leaves
-    // a row that plays, never one flagged analysed with a piece missing.
-    row.setTrackData(record);
-    row.setOverview(overviewData);
-    row.setBeatData(beatData);
+        after.isAnalyzed = EngineSqlValue::ofInteger(1);
+    };
+    keepBeforeWrite(id, options.keepKey, false, false, now, apply);
+    // The file first, then every column and the analysed flag in one
+    // transaction: until the flag is up the player takes the row for one
+    // it is still to analyse, so a failure anywhere leaves a row that
+    // plays, never one flagged analysed with a piece missing.
     if (!options.skipOverviewFile) {
-        writeFile(result.overviewFileRelativePath, file);
+        putOverviewFile(result.overviewFileRelativePath, file);
     }
-    if (analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
-        row.setBpm(*analysis.bpm);
-    }
-    if (analysis.key) {
-        row.setKey(*analysis.key);
-    }
-    row.setIsAnalyzed(true);
+    EngineAnalysisColumns after = now.columns;
+    apply(after);
+    writeColumns(id, now.columns, after);
     return result;
 }
 
@@ -1138,21 +1179,6 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
 
 namespace
 {
-
-using application::EngineAnalysisColumns;
-using application::EngineSqlValue;
-
-std::vector<std::byte> bytesOf(const std::string &text)
-{
-    std::vector<std::byte> bytes(text.size());
-    std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
-    return bytes;
-}
-
-std::string textOf(const std::vector<std::byte> &bytes)
-{
-    return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
-}
 
 // A value for a fingerprint: a number as a number whatever its storage
 // class (libdjinterop and the player may bind one column differently), a
@@ -1213,96 +1239,146 @@ std::string fingerprintOf(const std::vector<std::string> &parts)
     return hashing::toHex(hash.finish());
 }
 
+// Every column, as the parts of a fingerprint.
+std::vector<std::string> stateColumnParts(const EngineAnalysisColumns &c)
+{
+    return {canonical(c.isAnalyzed),
+            canonical(c.isBeatGridLocked),
+            canonical(c.bpm),
+            canonical(c.bpmAnalyzed),
+            canonical(c.key),
+            canonical(c.trackData, BlobKind::TrackData),
+            canonical(c.overviewWaveFormData, BlobKind::Overview),
+            canonical(c.beatData, BlobKind::BeatData)};
+}
+
+// What only an analysis writes of the columns: the record, the overview,
+// Engine's own grid with the rate and length it is in, and the flag. Not
+// the adjusted grid, the lock, the key or the tempo, which the DJ sets on
+// the player.
+std::vector<std::string> analysisColumnParts(const EngineAnalysisColumns &c)
+{
+    std::string beats = canonical(c.beatData);
+    if (const auto blob = decoded<BeatDataBlob>(c.beatData)) {
+        BeatDataBlob own = *blob;
+        own.adjusted_beat_grid.clear();
+        own.is_beatgrid_set = 0;
+        beats = "d" + textOf(own.to_blob());
+    }
+    return {flagOf(c.isAnalyzed).value_or(false) ? "1" : "0", canonical(c.trackData, BlobKind::TrackData),
+            canonical(c.overviewWaveFormData, BlobKind::Overview), beats};
+}
+
 // The whole row: everything kept.
 std::string stateFingerprint(const EngineAnalysisColumns &c)
 {
-    return fingerprintOf({"state 1", canonical(c.isAnalyzed), canonical(c.isBeatGridLocked), canonical(c.bpm),
-                          canonical(c.bpmAnalyzed), canonical(c.key), canonical(c.trackData, BlobKind::TrackData),
-                          canonical(c.overviewWaveFormData, BlobKind::Overview), canonical(c.beatData, BlobKind::BeatData),
-                          canonicalFile(c.overviewFile)});
+    std::vector<std::string> parts{"state 1"};
+    const auto columns = stateColumnParts(c);
+    parts.insert(parts.end(), columns.begin(), columns.end());
+    parts.push_back(canonicalFile(c.overviewFile));
+    return fingerprintOf(parts);
 }
 
-// What only an analysis writes: the record, the overview, Engine's own
-// grid with the rate and length it is in, the flag and the overview file.
-// Not the adjusted grid, the lock, the key or the tempo, which the DJ
-// sets on the player.
+// What only an analysis writes, the overview file with it.
 std::string analysisFingerprint(const EngineAnalysisColumns &c)
 {
-    std::string beats = canonical(c.beatData);
-    if (c.beatData.type == EngineSqlValue::Type::Blob) {
-        try {
-            BeatDataBlob blob = BeatDataBlob::from_blob(bytesOf(c.beatData.bytes));
-            blob.adjusted_beat_grid.clear();
-            blob.is_beatgrid_set = 0;
-            beats = "d" + textOf(blob.to_blob());
-        } catch (const std::exception &) {
-        }
-    }
-    const bool analysed = (c.isAnalyzed.type == EngineSqlValue::Type::Integer && c.isAnalyzed.integer != 0)
-        || (c.isAnalyzed.type == EngineSqlValue::Type::Real && c.isAnalyzed.real != 0.0);
-    return fingerprintOf({"analysis 1", analysed ? "1" : "0", canonical(c.trackData, BlobKind::TrackData),
-                          canonical(c.overviewWaveFormData, BlobKind::Overview), beats, canonicalFile(c.overviewFile)});
+    std::vector<std::string> parts{"analysis 1"};
+    const auto columns = analysisColumnParts(c);
+    parts.insert(parts.end(), columns.begin(), columns.end());
+    parts.push_back(canonicalFile(c.overviewFile));
+    return fingerprintOf(parts);
 }
 
-bool flagSet(const EngineSqlValue &v)
+// The same, in the row's two parts, which a write cut short can leave out
+// of step: the columns (one transaction), and the overview file.
+std::string columnStateFingerprint(const EngineAnalysisColumns &c)
 {
-    return (v.type == EngineSqlValue::Type::Integer && v.integer != 0)
-        || (v.type == EngineSqlValue::Type::Real && v.real != 0.0);
+    std::vector<std::string> parts{"columns 1"};
+    const auto columns = stateColumnParts(c);
+    parts.insert(parts.end(), columns.begin(), columns.end());
+    return fingerprintOf(parts);
+}
+
+std::string columnAnalysisFingerprint(const EngineAnalysisColumns &c)
+{
+    std::vector<std::string> parts{"analysis columns 1"};
+    const auto columns = analysisColumnParts(c);
+    parts.insert(parts.end(), columns.begin(), columns.end());
+    return fingerprintOf(parts);
+}
+
+std::string fileFingerprint(const EngineAnalysisColumns &c)
+{
+    return fingerprintOf({"file 1", canonicalFile(c.overviewFile)});
+}
+
+bool contains(const std::vector<std::string> &list, const std::string &fingerprint)
+{
+    return std::find(list.begin(), list.end(), fingerprint) != list.end();
+}
+
+// The analysis in the row's columns is one Seabass knows: the kept
+// original's, or the row's before or after Seabass's last write. Anything
+// else is the player's new analysis, the only thing that takes the
+// original's place. The overview file plays no part: Seabass's write of it
+// can be cut short, and a player's analysis writes the columns either way.
+// An entry of format 1 records no parts, and is judged as it was then, by
+// the whole analysis.
+bool analysisIsKnown(const application::KeptEngineAnalysis &kept, const EngineAnalysisColumns &now)
+{
+    const std::string columns = columnAnalysisFingerprint(now);
+    if (columns == columnAnalysisFingerprint(kept.original) || contains(kept.seabassColumnAnalyses, columns)) {
+        return true;
+    }
+    const std::string whole = analysisFingerprint(now);
+    return whole == analysisFingerprint(kept.original) || (!kept.seabassAnalysis.empty() && whole == kept.seabassAnalysis);
+}
+
+// The row is as Seabass left it, its last write finished or cut short, or
+// as the original with one part of Seabass's (a restore cut short): each
+// part, the columns and the file, one Seabass wrote or kept.
+bool rowIsSeabassOrKept(const application::KeptEngineAnalysis &kept, const EngineAnalysisColumns &now)
+{
+    if (!kept.seabassState.empty() && stateFingerprint(now) == kept.seabassState) {
+        return true;
+    }
+    if (kept.seabassColumnStates.empty()) {
+        return false;
+    }
+    const std::string columns = columnStateFingerprint(now);
+    const std::string file = fileFingerprint(now);
+    return (columns == columnStateFingerprint(kept.original) || contains(kept.seabassColumnStates, columns))
+        && (file == fileFingerprint(kept.original) || contains(kept.seabassFiles, file));
+}
+
+// The after first, then the before, once each.
+std::vector<std::string> beforeAndAfter(std::string after, std::string before)
+{
+    std::vector<std::string> out{std::move(after)};
+    if (before != out.front()) {
+        out.push_back(std::move(before));
+    }
+    return out;
+}
+
+void addOnce(std::vector<std::string> &list, const std::string &fingerprint)
+{
+    if (!contains(list, fingerprint)) {
+        list.push_back(fingerprint);
+    }
 }
 
 // A row waiting for the player's analysis (markForDeviceAnalysis's state).
 bool waitingForAnalysis(const EngineAnalysisColumns &c)
 {
-    return !flagSet(c.isAnalyzed) && c.trackData.isNull() && c.overviewWaveFormData.isNull() && c.beatData.isNull();
-}
-
-std::optional<std::string> readFileBytes(const std::filesystem::path &path)
-{
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) {
-        return std::nullopt;
-    }
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("cannot open " + pathToUtf8(path));
-    }
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        throw std::runtime_error("cannot read " + pathToUtf8(path));
-    }
-    return text;
+    return !flagOf(c.isAnalyzed).value_or(false) && c.trackData.isNull() && c.overviewWaveFormData.isNull()
+        && c.beatData.isNull();
 }
 
 }  // namespace
 
-struct LibdjinteropEngineCueWriter::RowNow
-{
-    EngineAnalysisColumns columns;
-    std::string trackFile;
-    std::string libraryUuid;
-};
-
-std::string LibdjinteropEngineCueWriter::databaseFile() const
-{
-    return pathToUtf8(pathFromUtf8(m_engineLibraryPath) / "Database2" / "m.db");
-}
-
-LibdjinteropEngineCueWriter::RowNow LibdjinteropEngineCueWriter::readRowNow(std::int64_t id)
-{
-    std::string error;
-    auto row = readEngineAnalysisRow(databaseFile(), id, &error);
-    if (!row) {
-        throw std::runtime_error(error);
-    }
-    RowNow now{std::move(row->columns), std::move(row->trackFile), std::move(row->libraryUuid)};
-    now.columns.overviewFileRelativePath = overviewFileRelativePath(now.libraryUuid, id);
-    const std::filesystem::path fileRoot = pathFromUtf8(m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot);
-    now.columns.overviewFile = readFileBytes(fileRoot / pathFromUtf8(now.columns.overviewFileRelativePath));
-    return now;
-}
-
 bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::string &keepKey, bool playerAnalysed,
-                                                  bool rowIsSeabass,
+                                                  bool rowIsSeabass, const RowNow &row,
                                                   const std::function<void(EngineAnalysisColumns &)> &apply)
 {
     if (!m_keptStore) {
@@ -1314,9 +1390,13 @@ bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::st
             if (!playerAnalysed) {
                 return false;
             }
+            // The callers refuse such a row first (CannotKeepEngines).
             throw std::runtime_error("its file is not under the stick root, so there is no key to keep it by");
         }
-        const RowNow now = readRowNow(id);
+        RowNow now = row;
+        now.columns.overviewFileRelativePath = overviewFileRelativePath(now.libraryUuid, id);
+        now.columns.overviewFile =
+            readFileBytes(pathFromUtf8(overviewFileRoot()) / pathFromUtf8(now.columns.overviewFileRelativePath));
         EngineAnalysisColumns after = now.columns;
         apply(after);
         const application::KeptEngineAnalysisLookup found = m_keptStore->find(keepKey);
@@ -1333,14 +1413,16 @@ bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::st
         bool newOriginal = false;
         if (valid) {
             next = found.entry;
-            if (playerAnalysed && !next.seabassAnalysis.empty()) {
-                const std::string analysis = analysisFingerprint(now.columns);
-                if (analysis != analysisFingerprint(next.original) && analysis != next.seabassAnalysis) {
-                    // The player analysed the row anew since Seabass wrote it:
-                    // that analysis is the one to go back to now.
-                    next.original = now.columns;
-                    newOriginal = true;
-                }
+            // The kept original is replaced only on positive evidence that
+            // the player analysed the row anew since Seabass wrote it: an
+            // analysis in its columns that is neither the original's nor
+            // one Seabass's last write left or found there. A write of
+            // Seabass's cut short, the columns written and the overview file
+            // not (or a restore cut short the other way round), is known by
+            // its parts and costs the original nothing.
+            if (playerAnalysed && !next.seabassAnalysis.empty() && !analysisIsKnown(next, now.columns)) {
+                next.original = now.columns;
+                newOriginal = true;
             }
         } else {
             // Nothing kept, or a stale entry of another row: a row the
@@ -1355,8 +1437,14 @@ bool LibdjinteropEngineCueWriter::keepBeforeWrite(std::int64_t id, const std::st
             next.original = now.columns;
             newOriginal = true;
         }
+        // Before the row's first byte changes, the row as it is and as this
+        // write will leave it: any mix of the two is Seabass's.
         next.seabassState = stateFingerprint(after);
         next.seabassAnalysis = analysisFingerprint(after);
+        next.seabassColumnStates = beforeAndAfter(columnStateFingerprint(after), columnStateFingerprint(now.columns));
+        next.seabassColumnAnalyses =
+            beforeAndAfter(columnAnalysisFingerprint(after), columnAnalysisFingerprint(now.columns));
+        next.seabassFiles = beforeAndAfter(fileFingerprint(after), fileFingerprint(now.columns));
         if (valid && next == found.entry) {
             return false;
         }
@@ -1400,7 +1488,7 @@ EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(c
         return result;
     }
     const application::KeptEngineAnalysis &kept = found.entry;
-    const RowNow now = readRowNow(id);
+    const RowNow now = readRowNow(id, true);
     if (kept.trackId != id || kept.trackFile != now.trackFile || kept.libraryUuid != now.libraryUuid) {
         result.outcome = Outcome::Stale;
         result.reason = kept.libraryUuid != now.libraryUuid ? "it was kept from another Engine library"
@@ -1408,28 +1496,28 @@ EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(c
                                                            : "it was kept for another row of this file";
         return result;
     }
-    const std::string current = stateFingerprint(now.columns);
     const auto dropKept = [&]() {
         if (!options.previewOnly) {
             m_keptStore->drop(keepKey);
         }
     };
-    if (current == stateFingerprint(kept.original)) {
+    if (stateFingerprint(now.columns) == stateFingerprint(kept.original)) {
         // The kept analysis is what the row holds: nothing to put back,
         // and the entry has done its work.
         result.outcome = Outcome::AlreadyEngines;
         if (!options.previewOnly) {
-            if (m_beforeBeatGridWrite) {
-                m_beforeBeatGridWrite();
-            }
+            beforeWrite();
             dropKept();
         }
         return result;
     }
-    const bool asSeabassLeftIt = !kept.seabassState.empty() && current == kept.seabassState;
+    // As Seabass left it, its own write or an earlier restore cut short
+    // included; or waiting for the player's analysis, which nothing was
+    // done to since.
+    const bool asSeabassLeftIt = rowIsSeabassOrKept(kept, now.columns);
     if (!asSeabassLeftIt && !waitingForAnalysis(now.columns) && !options.force) {
         result.outcome = Outcome::ChangedSince;
-        result.reason = analysisFingerprint(now.columns) != kept.seabassAnalysis
+        result.reason = !analysisIsKnown(kept, now.columns)
             ? "the player analysed it again since Seabass wrote it"
             : "its beat grid, key or tempo was changed on the player since Seabass wrote it";
         return result;
@@ -1444,36 +1532,25 @@ EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(c
     if (options.previewOnly) {
         return result;
     }
-    if (m_beforeBeatGridWrite) {
-        m_beforeBeatGridWrite();
+    beforeWrite();
+    if (!asSeabassLeftIt) {
+        // The row as it is now (waiting, or forced over) becomes one of
+        // the states the entry knows first, so that this restore cut short
+        // between the columns and the file is still put back by the next.
+        application::KeptEngineAnalysis next = kept;
+        addOnce(next.seabassColumnStates, columnStateFingerprint(now.columns));
+        addOnce(next.seabassColumnAnalyses, columnAnalysisFingerprint(now.columns));
+        addOnce(next.seabassFiles, fileFingerprint(now.columns));
+        if (!(next == kept)) {
+            m_keptStore->keep(next);
+        }
     }
     std::string error;
-    if (!writeEngineAnalysisColumns(databaseFile(), id, kept.original, &error)) {
+    if (!rowAccess().write(id, kept.original, &error)) {
         throw std::runtime_error("could not put Engine's analysis back: " + error);
     }
     if (fileChanges) {
-        if (kept.original.overviewFile) {
-            if (m_overviewFileSink) {
-                m_overviewFileSink(relative, *kept.original.overviewFile);
-            } else {
-                const std::filesystem::path path =
-                    pathFromUtf8(m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot)
-                    / pathFromUtf8(relative);
-                std::filesystem::create_directories(path.parent_path());
-                if (!writeFileDurablyAtomic(pathToUtf8(path), *kept.original.overviewFile)) {
-                    throw std::runtime_error("could not write the overview file " + pathToUtf8(path));
-                }
-            }
-        } else if (m_overviewFileRemover) {
-            m_overviewFileRemover(relative);
-        } else {
-            const std::filesystem::path path =
-                pathFromUtf8(m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot) / pathFromUtf8(relative);
-            std::string failure;
-            if (!removeEntry(path, failure)) {
-                throw std::runtime_error("could not remove the overview file " + pathToUtf8(path) + ": " + failure);
-            }
-        }
+        putOverviewFile(relative, kept.original.overviewFile);
     }
     dropKept();
     return result;
@@ -1493,8 +1570,8 @@ LetPlayerAnalyseResult LibdjinteropEngineCueWriter::letPlayerAnalyseAgain(const 
         return result;
     }
     const std::int64_t id = track->id();
-    const RowNow now = readRowNow(id);
-    if (!flagSet(now.columns.isAnalyzed)) {
+    const RowNow now = readRowNow(id, false);
+    if (!flagOf(now.columns.isAnalyzed).value_or(false)) {
         result.outcome = Outcome::NotAnalysed;
         return result;
     }
@@ -1502,9 +1579,7 @@ LetPlayerAnalyseResult LibdjinteropEngineCueWriter::letPlayerAnalyseAgain(const 
     if (previewOnly) {
         return result;
     }
-    if (m_beforeBeatGridWrite) {
-        m_beforeBeatGridWrite();
-    }
+    beforeWrite();
     std::string error;
     if (markForDeviceAnalysis(databaseFile(), {id}, &error) != 1) {
         throw std::runtime_error("could not mark the track for the player's analysis: " + error);
@@ -1528,12 +1603,9 @@ EngineAnalysisFacts LibdjinteropEngineCueWriter::engineAnalysisFacts(const std::
         return facts;
     }
     const std::int64_t id = track->id();
-    try {
-        facts.rowAnalysed = m_tables->v3 ? m_tables->v3->track().get_is_analyzed(id)
-                                         : m_tables->v2->track().get_is_analyzed(id);
-    } catch (const std::exception &) {
-        facts.rowAnalysed = false;
-    }
+    std::string error;
+    const auto row = rowAccess().read(id, &error);
+    facts.rowAnalysed = row && flagOf(row->columns.isAnalyzed).value_or(false);
     if (!m_keptStore || keepKey.empty()) {
         return facts;
     }
@@ -1541,8 +1613,6 @@ EngineAnalysisFacts LibdjinteropEngineCueWriter::engineAnalysisFacts(const std::
     if (found.status == Status::Damaged) {
         facts.kept = EngineAnalysisFacts::Kept::Damaged;
     } else if (found.status == Status::Found) {
-        std::string error;
-        const auto row = readEngineAnalysisRow(databaseFile(), id, &error);
         facts.kept = row && found.entry.trackId == id && found.entry.trackFile == row->trackFile
                 && found.entry.libraryUuid == row->libraryUuid
             ? EngineAnalysisFacts::Kept::Kept

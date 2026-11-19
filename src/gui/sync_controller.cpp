@@ -403,11 +403,13 @@ void SyncController::stageSelected(bool matchingSearchOnly)
     std::vector<int> staged;
     int withAnalysis = 0;
     const int count = m_model.planCount();
+    // Preferences read once for the batch, not once a track.
+    const SyncAnalysisStaging staging = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
     for (int i = 0; i < count; ++i) {
         if (!wouldStage(i, matchingSearchOnly)) {
             continue;
         }
-        withAnalysis += stagePlan(i) ? 1 : 0;
+        withAnalysis += stagePlan(i, &staging) ? 1 : 0;
         staged.push_back(i);
         if (session() && !session()->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
@@ -420,7 +422,7 @@ void SyncController::stageSelected(bool matchingSearchOnly)
         if (withAnalysis > 0) {
             analysis = QStringLiteral(" The tracks whose cues go to Engine also get rekordbox's %1, as set in "
                                       "Preferences.")
-                           .arg(SyncAnalysisStaging::fromPreferences(m_rekordboxPath).partsInWords());
+                           .arg(staging.partsInWords());
         }
         setStagedStatusMessage(
             QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged.size())
@@ -637,7 +639,7 @@ void SyncController::attachSession()
     }
 }
 
-bool SyncController::stagePlan(int index)
+bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging)
 {
     const auto &plans = m_model.plans();
     if (index < 0 || static_cast<size_t>(index) >= plans.size()) {
@@ -677,8 +679,12 @@ bool SyncController::stagePlan(int index)
     const domain::Track &target = change->target();
     if (target.format == "engine" && (source.format == "rekordbox" || source.format == "onelibrary")
         && !m_rekordboxPath.isEmpty()) {
-        const SyncAnalysisStaging staging = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
-        if (staging.any()) {
+        std::optional<SyncAnalysisStaging> own;
+        if (!staging) {
+            own = SyncAnalysisStaging::fromPreferences(m_rekordboxPath);
+            staging = &*own;
+        }
+        if (staging->any()) {
             SyncAnalysisChange::Track track;
             track.rekordbox = source;
             track.engineTrackId = target.sourceId;
@@ -692,8 +698,8 @@ bool SyncController::stagePlan(int index)
                 }
             }
             auto rider = std::make_unique<SyncAnalysisChange>(QStringLiteral("sync"), m_rekordboxPath, m_enginePath,
-                                                              staging.stickRoot, std::move(track), staging.options,
-                                                              staging.probe, itemCountHint, true);
+                                                              staging->stickRoot, std::move(track), staging->options,
+                                                              staging->probe, itemCountHint, true);
             rider->rideIn(change->id());
             change->setAnalysisRider(std::move(rider));
         }

@@ -43,6 +43,7 @@
 #include "domain/engine_update_planning.hpp"
 #include "domain/fuzzy_matcher.hpp"
 #include "domain/track_queries.hpp"
+#include "infrastructure/backup/cover_file_late.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
@@ -58,7 +59,7 @@
 #include "infrastructure/media/media_factory.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
-#include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
+#include "infrastructure/local/rekordbox_analysis_source.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
@@ -1970,19 +1971,16 @@ int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan,
             seabass::pathToUtf8(paths::stickBackupsDir(root)));
         seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(paths::stickOperationLog(root)));
 
-        // Everything the run may change, backed up once before its first
-        // byte: m.db, the ledger, the overview files the check named and the
-        // kept entries of the tracks. What is not there is noted absent, so
-        // that restoring the backup takes away what the run made.
+        // What the run may change, backed up once before its first byte:
+        // m.db, the ledger and the overview files the check named. What is
+        // not there is noted absent, so that restoring the backup takes away
+        // what the run made. A kept entry, or another file, is added to the
+        // same backup before it is first changed (coverLate below): only the
+        // entries the run touches, not every ticked track's.
         std::set<std::string> covered;
         covered.insert(seabass::pathToUtf8(paths::stickBeatGridLedger(root)));
         for (const std::string &relative : preview.restore.overviewFiles) {
             covered.insert(overviewFileOf(relative));
-        }
-        for (const auto &item : plan.items) {
-            if (!item.ledgerKey.empty()) {
-                covered.insert(seabass::pathToUtf8(local::keptEngineAnalysisFile(root, item.ledgerKey)));
-            }
         }
         std::string recordId;
         std::string backupPath;
@@ -2013,17 +2011,14 @@ int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan,
                 throw std::runtime_error("not written, Engine could not be backed up: " + *backupFailure);
             }
         });
-        // A file the backup did not foresee, on its own first.
+        // A file the backup did not foresee, into it before its first
+        // change (or noted absent there); one that cannot be looked at is
+        // not changed.
         const auto coverLate = [&](const std::string &file) {
             if (covered.contains(file)) {
                 return;
             }
-            std::error_code ec;
-            if (std::filesystem::exists(seabass::pathFromUtf8(file), ec)) {
-                backupStore.backup({file}, "copy-beatgrids");
-            } else if (!recordId.empty()) {
-                backupStore.recordAbsent(recordId, {file});
-            }
+            seabass::infrastructure::backup::coverFileLate(backupStore, recordId, file, "copy-beatgrids");
             covered.insert(file);
         };
         store.setBeforeChange(coverLate);
@@ -2236,8 +2231,18 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     // and the file's rate and length for a row the player has not
     // analysed. The rates are probed into memory only: as in
     // scanEnginePath, the stick's metadata cache is the app's to keep.
-    const app::BeatGridSource source = [&rekordboxPath](const app::BeatGridCopyItem &item) {
-        return seabass::infrastructure::rekordbox::readBeatGrid(rekordboxPath, item.rekordboxTrackId);
+    // Which analysis file is a track's, from one pass over export.pdb rather
+    // than one per track.
+    std::optional<seabass::infrastructure::rekordbox::AnlzPathIndex> anlzIndex;
+    try {
+        anlzIndex.emplace(rekordboxPath);
+    } catch (const std::exception &) {
+        // Each track then finds its file the slow way.
+    }
+    const app::BeatGridSource source = [&](const app::BeatGridCopyItem &item) {
+        return seabass::infrastructure::rekordbox::readTrackAnalysis(rekordboxPath, item.rekordboxTrackId, nullptr,
+                                                                     anlzIndex ? &*anlzIndex : nullptr)
+            .beats;
     };
 #ifdef SEABASS_HAVE_TAGLIB
     seabass::infrastructure::audio::TagLibMetadataProbe probe;
@@ -2255,38 +2260,11 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         }
         return f;
     };
-    // The whole analysis, with --waveforms: the analysis files' waveform
-    // sections found through one pass over export.pdb rather than one per
-    // track, the key as rekordbox spells it (a note name, or Camelot).
-    std::optional<seabass::infrastructure::rekordbox::AnlzPathIndex> anlzIndex;
-    if (waveforms) {
-        try {
-            anlzIndex.emplace(rekordboxPath);
-        } catch (const std::exception &) {
-            // Each track then finds its file the slow way.
-        }
-    }
+    // The whole analysis, with --waveforms, as the page reads it: the key as
+    // rekordbox spells it (a note name, or Camelot), in Engine's numbering.
     const app::AnalysisSource analysisSource = [&](const app::BeatGridCopyItem &item) {
-        app::RekordboxAnalysis analysis;
-        analysis.beats = seabass::infrastructure::rekordbox::readBeatGrid(rekordboxPath, item.rekordboxTrackId);
-        const auto sections = seabass::infrastructure::rekordbox::readWaveformSections(
-            rekordboxPath, item.rekordboxTrackId, nullptr, anlzIndex ? &*anlzIndex : nullptr);
-        analysis.threeBandPreview = sections.threeBandPreview;
-        analysis.colourPreview = sections.colourPreview;
-        analysis.scrollEntries = sections.scrollEntries;
-        if (!item.key.empty()) {
-            auto key = seabass::infrastructure::engine::parseRekordboxKey(item.key);
-            if (!key) {
-                key = seabass::infrastructure::engine::parseCamelotKey(item.key);
-            }
-            if (key) {
-                analysis.key = static_cast<int>(*key);
-            }
-        }
-        if (item.bpm > 0.0) {
-            analysis.bpm = item.bpm;
-        }
-        return analysis;
+        return seabass::infrastructure::local::rekordboxAnalysisOf(rekordboxPath, item,
+                                                                   anlzIndex ? &*anlzIndex : nullptr);
     };
     const app::AnalysisFileFactsSource analysisFacts = [&rates](const app::BeatGridCopyItem &item) {
         return seabass::infrastructure::local::analysisFileFactsOf(item, rates);
@@ -2344,6 +2322,8 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         line("edited on Engine:", r.editedOnEngine);
         line("no sample rate for the file:", r.noSampleRate);
         line("Engine library too old:", r.unsupportedLibrary);
+        line("Engine's analysis cannot be kept:", r.cannotKeep);
+        line("analysed or not cannot be read:", r.rowUnreadable);
         line("failed:", r.failed);
         line("not reached:", r.notReached);
         line("total:", r.total(), true);
@@ -2365,6 +2345,8 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
             line("waveform, track not completed:", w.notAnalysed);
             line("no length for the file:", w.noSampleCount);
             line("waveform, Engine too old:", w.unsupportedLibrary);
+            line("waveform, cannot be kept:", w.cannotKeep);
+            line("waveform, row unreadable:", w.rowUnreadable);
             line("waveforms failed:", w.failed);
             line("waveforms not reached:", w.notReached);
             line("waveforms total:", w.total(), true);
@@ -2491,32 +2473,30 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         // (after the backup above): an entry already there backed up on its
         // own, a new one noted absent in the backup, so that restoring the
         // backup takes it away again.
+        // One the run did not foresee goes into the same backup first, or
+        // is noted absent there (coverFileLate); one that cannot be looked
+        // at is not changed.
+        const auto coverLate = [&](const std::string &file) {
+            if (const auto record = seabass::infrastructure::backup::coverFileLate(backupStore, backupRecordId, file,
+                                                                                  "copy-beatgrids")) {
+                log.record("copy-beatgrids: backed up " + file + " -> " + record->path);
+            }
+        };
         std::set<std::string> keptCovered;
         writer.setKeptAnalysisStore(&keptStore);
         keptStore.setBeforeChange([&](const std::string &file) {
-            if (!keptCovered.insert(file).second) {
+            if (keptCovered.contains(file)) {
                 return;
             }
-            std::error_code ec;
-            if (std::filesystem::exists(seabass::pathFromUtf8(file), ec) || ec) {
-                const auto record = backupStore.backup({file}, "copy-beatgrids");
-                log.record("copy-beatgrids: backed up " + file + " -> " + record.path);
-            } else if (!backupRecordId.empty()) {
-                backupStore.recordAbsent(backupRecordId, {file});
-            } else {
-                throw std::runtime_error("not kept: Engine was not backed up first");
-            }
+            coverLate(file);
+            keptCovered.insert(file);
         });
         // Each overview file durably, as the writer would itself; one the
-        // check did not foresee is backed up on its own first.
+        // check did not foresee is covered first.
         writer.setOverviewFileSink([&](const std::string &relative, const std::string &bytes) {
             const std::string file = overviewFileOf(relative);
             if (!coveredFiles.contains(relative)) {
-                std::error_code ec;
-                if (std::filesystem::exists(seabass::pathFromUtf8(file), ec)) {
-                    const auto record = backupStore.backup({file}, "copy-beatgrids");
-                    log.record("copy-beatgrids: backed up " + relative + " -> " + record.path);
-                }
+                coverLate(file);
                 coveredFiles.insert(relative);
             }
             std::filesystem::create_directories(seabass::pathFromUtf8(file).parent_path());

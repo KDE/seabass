@@ -112,8 +112,16 @@ Item {
     // is empty and says how many cues were synced) sets this, and a save
     // that landed whole then opens no summary. Anything short of that, an
     // error, a warning, a skip, a cancel or a part left pending, still
-    // gets the dialog: that is news the page does not carry.
+    // gets the dialog: that is news the page does not carry. So does a
+    // save with notes (summary.notes, SaveContext::addSummaryNote: what
+    // copying rekordbox's analysis along with a sync did), which a toast
+    // has no room for. landsQuietly(summary) says which it is, for a page
+    // that shows its own toast only when the dialog stays shut.
     property bool quietCleanSaves: false
+    function landsQuietly(summary) {
+        return host.quietCleanSaves && internal.landedWhole(summary)
+            && !(summary.notes && summary.notes.length > 0);
+    }
     // The save summary has been read and dismissed. For a page that wants
     // to step back once its one job is done -- after the save the user
     // asked for, never instead of it.
@@ -479,7 +487,7 @@ Item {
             if (host.registry && host.registry.quitAfterSave === true) {
                 return;
             }
-            if (host.quietCleanSaves && internal.landedWhole(summary)) {
+            if (host.landsQuietly(summary)) {
                 internal.afterSummary();
                 return;
             }

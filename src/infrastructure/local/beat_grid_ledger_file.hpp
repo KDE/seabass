@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 
 // The beat grids Seabass wrote to Engine, on the stick:
 // <stick>/Seabass/beat-grids.tsv (paths::stickBeatGridLedger). For each
@@ -62,5 +63,9 @@ bool writeBeatGridLedger(const std::filesystem::path &stickRoot, const BeatGridL
 // The file's text for `ledger`, as writeBeatGridLedger() writes it, for
 // a caller that wants to know whether anything would change.
 std::string serializeBeatGridLedger(const BeatGridLedger &ledger);
+
+// 64 lowercase hex digits: a SHA-256 as the ledger and the kept analyses
+// (kept_engine_analysis_file.hpp) write one.
+bool isSha256Hex(std::string_view text);
 
 }  // namespace seabass::infrastructure::local

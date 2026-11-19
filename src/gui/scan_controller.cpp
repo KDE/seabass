@@ -1147,8 +1147,7 @@ QVariantList ScanController::findCompatibleTracks(const QString &anchorSourceId,
         // members -- finding a track to reorder within it, never one to
         // pull in from elsewhere. Only with "All tracks" selected
         // (targetPlaylist empty) does the search range over the whole
-        // library, but Before/After also has nowhere real to write in
-        // that case (see MatchingPage.qml's hasTarget).
+        // library.
         if (!targetPlaylist.empty() && !playlistPosition(track, targetPlaylist).has_value()) {
             continue;
         }

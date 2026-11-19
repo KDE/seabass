@@ -65,6 +65,15 @@ struct BeatGridWriteResult
         // The caller asked for no grid (AnalysisImportOptions::grids off);
         // writeBeatGrid() itself never gives it.
         NotRequested,
+        // A row the player has analysed whose analysis would have to be
+        // kept first (the writer has a KeptEngineAnalysisStore) and cannot
+        // be: the track has no key (its file is not under the stick root).
+        // Not replaced.
+        CannotKeepEngines,
+        // Whether the player has analysed the row cannot be told: its
+        // analysed flag is not a number, or it is up over beat data that
+        // does not decode or has no rate and length. Left alone.
+        RowUnreadable,
     };
     Outcome outcome = Outcome::NoSourceGrid;
     int markers = 0;

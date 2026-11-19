@@ -90,6 +90,10 @@ struct AnalysisImportResult
         // length: no scrolling waveform entry count or no file sample rate.
         NoSampleCount,
         UnsupportedSchema,
+        // As BeatGridWriteResult's: the player's waveform would have to be
+        // kept first and cannot be, or the row's flags cannot be read.
+        CannotKeepEngines,
+        RowUnreadable,
     };
     Waveform waveform = Waveform::NotRequested;
 

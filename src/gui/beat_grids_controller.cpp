@@ -424,7 +424,7 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
             state.result = outcome.result;
             state.options = outcome.options;
             if (state.wouldWrite()) {
-                state.analysis = std::move(analysis);
+                state.analysisDigest = infrastructure::local::rekordboxAnalysisDigest(analysis);
             }
             state.facts = writer.engineAnalysisFacts(item.engineTrackId, item.ledgerKey);
             if (state.facts.kept == application::EngineAnalysisFacts::Kept::Kept) {
@@ -488,6 +488,18 @@ struct Words
     QString tip;
 };
 
+QString cannotKeepTip()
+{
+    return QStringLiteral("Its file is not under the stick's root, so Engine's own analysis of it cannot be kept on "
+                          "the stick first, and it is not replaced.");
+}
+
+QString unreadableTip()
+{
+    return QStringLiteral("Whether the player has analysed this track cannot be read from the Engine library, so "
+                          "it is left alone.");
+}
+
 Words gridWords(const BeatGridTrackState &s)
 {
     switch (s.result.grid.outcome) {
@@ -522,6 +534,10 @@ Words gridWords(const BeatGridTrackState &s)
     case Outcome::NotRequested:
         return {QStringLiteral("Not chosen"), QStringLiteral("muted"),
                 QStringLiteral("Beat grids are not chosen above.")};
+    case Outcome::CannotKeepEngines:
+        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip()};
+    case Outcome::RowUnreadable:
+        return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     }
     return {};
 }
@@ -551,6 +567,10 @@ Words waveformWords(const BeatGridTrackState &s)
     case Waveform::NotRequested:
         return {QStringLiteral("Not chosen"), QStringLiteral("muted"),
                 QStringLiteral("Waveforms are not chosen above.")};
+    case Waveform::CannotKeepEngines:
+        return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip()};
+    case Waveform::RowUnreadable:
+        return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     }
     return {};
 }
@@ -596,6 +616,12 @@ QString leftAloneReason(const BeatGridTrackState &s)
     if (s.result.grid.outcome == Outcome::UnsupportedSchema || s.result.waveform == Waveform::UnsupportedSchema) {
         return QStringLiteral("Engine library too old");
     }
+    if (s.result.grid.outcome == Outcome::CannotKeepEngines || s.result.waveform == Waveform::CannotKeepEngines) {
+        return QStringLiteral("Engine's analysis cannot be kept");
+    }
+    if (s.result.grid.outcome == Outcome::RowUnreadable || s.result.waveform == Waveform::RowUnreadable) {
+        return QStringLiteral("analysed or not cannot be read");
+    }
     if (notAnalysed(s)) {
         return QStringLiteral("left for the player");
     }
@@ -632,7 +658,8 @@ QString BeatGridsController::ledgerWarning() const
     }
     return QStringLiteral("Seabass's record of the beat grids it copied before cannot be read (%1). Until it can, "
                           "every grid Seabass copied counts as changed on the player and is left alone. The next "
-                          "copy writes a new record.")
+                          "copy writes a new record, of the tracks it copies and of the ticked ones already the "
+                          "same.")
         .arg(m_ledgerError);
 }
 
@@ -690,6 +717,15 @@ void BeatGridsController::load(const QString &rekordboxPath, const QString &engi
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     attachSession();
+    startLoad();
+}
+
+void BeatGridsController::reloadIfStale()
+{
+    if (!m_libraryStale || m_rekordboxPath.isEmpty() || m_enginePath.isEmpty()) {
+        return;
+    }
+    m_libraryStale = false;
     startLoad();
 }
 
@@ -772,6 +808,18 @@ void BeatGridsController::adoptLibrary(std::shared_ptr<BeatGridLibrary> library)
     if (!m_shownPlaylist.isEmpty() && !m_library->playlists.contains(m_shownPlaylist.toStdString())) {
         m_shownPlaylist.clear();
         emit shownPlaylistChanged();
+    }
+    // Ticks of tracks that can no longer be ticked go (a library read
+    // again after another page's save); the others stay.
+    QSet<QString> tickable;
+    for (const std::string &id : tickableIn(QString())) {
+        tickable.insert(QString::fromStdString(id));
+    }
+    const QSet<QString> ticked = m_ticked;
+    m_ticked.intersect(tickable);
+    if (m_ticked != ticked) {
+        ++m_tickRevision;
+        emit ticksChanged();
     }
     m_states.clear();
     ++m_generation;
@@ -1127,7 +1175,7 @@ void BeatGridsController::runPreview()
         QPointer<BeatGridsController> self(this);
         m_previewSink = makeMainThreadShared<PreviewSink>([self](std::uint64_t made, PreviewRows rows) {
             if (self) {
-                self->takePreviewRows(made, std::move(rows), QString());
+                self->takePreviewRows(made, std::move(rows));
             }
         });
     }
@@ -1159,8 +1207,7 @@ void BeatGridsController::runPreview()
     m_preview.restart(key, stickRootOf(m_rekordboxPath), std::move(work), std::move(ending));
 }
 
-void BeatGridsController::takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows,
-                                          const QString &)
+void BeatGridsController::takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows)
 {
     if (generation != m_generation) {
         return;
@@ -1366,8 +1413,14 @@ void BeatGridsController::onSaveFinished(const QVariantMap &summary)
         emit lastSaveChanged();
     }
     // Whatever the save was (this page's copies, an undo), the rows may
-    // have changed: every state is worked out again.
+    // have changed: every state is worked out again. Another page's save
+    // (Sync after Rekordbox Export adds Engine rows) may also have changed
+    // which tracks are in both libraries: the library is read again when
+    // the page is in front again (reloadIfStale()).
     if (m_library) {
+        if (!ours) {
+            m_libraryStale = true;
+        }
         invalidateStates();
     }
     if (ours) {
@@ -1392,13 +1445,25 @@ void BeatGridsController::stage()
     }
     m_session->setLibraryPaths(m_rekordboxPath, m_enginePath);
     std::vector<std::pair<const application::BeatGridCopyItem *, const BeatGridTrackState *>> chosen;
+    std::vector<std::pair<std::string, std::string>> riders;
     QStringList ticked(m_ticked.begin(), m_ticked.end());
     ticked.sort();
     for (const QString &id : std::as_const(ticked)) {
         const auto state = m_states.find(id.toStdString());
         const auto at = m_library->trackIndex.find(id.toStdString());
-        if (state == m_states.end() || !state->second.wouldWrite() || !state->second.analysis
-            || at == m_library->trackIndex.end() || m_library->tracks[at->second].item < 0) {
+        if (state == m_states.end() || at == m_library->trackIndex.end() || m_library->tracks[at->second].item < 0) {
+            continue;
+        }
+        const BeatGridTrackState &t = state->second;
+        // A ticked row already the same: no change of its own, but its grid
+        // goes into the ledger with the batch, as the command line records
+        // it, so a ledger that was lost does not leave it taken for the
+        // player's own.
+        if (!t.failed && t.result.grid.outcome == Outcome::AlreadySame && !t.result.grid.gridFingerprint.empty()
+            && !t.options.keepKey.empty()) {
+            riders.emplace_back(t.options.keepKey, t.result.grid.gridFingerprint);
+        }
+        if (!t.wouldWrite() || t.analysisDigest.empty()) {
             continue;
         }
         chosen.emplace_back(&m_library->plan.items[static_cast<size_t>(m_library->tracks[at->second].item)],
@@ -1413,9 +1478,13 @@ void BeatGridsController::stage()
     changes.reserve(chosen.size());
     QStringList ids;
     for (const auto &[item, state] : chosen) {
-        changes.push_back(std::make_unique<CopyAnalysisChange>(
-            m_library->enginePath, m_library->stickRoot, *item, *state->analysis, state->options,
-            state->result.overviewFileRelativePath, count, changes.empty(), tally));
+        auto change = std::make_unique<CopyAnalysisChange>(
+            m_library->enginePath, m_library->rekordboxPath, m_library->stickRoot, *item, state->analysisDigest,
+            state->options, state->result.overviewFileRelativePath, count, changes.empty(), tally);
+        if (changes.empty()) {
+            change->setLedgerRiders(std::move(riders));
+        }
+        changes.push_back(std::move(change));
         ids << CopyAnalysisChange::idFor(item->engineTrackId);
     }
     if (!m_session->stageAll(std::move(changes))) {

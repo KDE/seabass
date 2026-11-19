@@ -696,8 +696,9 @@ int main(int argc, char **argv)
             sunkBytes = bytes;
             check(column(copy.mdb, "Track", "id", kUnanalysed, "isAnalyzed") == "0",
                   "at the sink the flag is still down");
-            check(column(copy.mdb, "PerformanceData", "trackId", kUnanalysed, "trackData") != "NULL",
-                  "and the record already written");
+            // The file first, then every column in one transaction.
+            check(column(copy.mdb, "PerformanceData", "trackId", kUnanalysed, "trackData") == "NULL",
+                  "and the record not written yet");
         });
         const auto result = writer.importAnalysis(std::to_string(kUnanalysed), analysis, options);
         check((events == std::vector<std::string>{"hook", "sink"}), "the hook, then the sink, once each");
@@ -723,8 +724,9 @@ int main(int argc, char **argv)
             threw = true;
         }
         check(threw, "a sink that throws fails the call");
-        check(column(copy.mdb, "Track", "id", kUnanalysedToo, "isAnalyzed") == "0",
-              "and leaves the row unanalysed, not half analysed");
+        check(column(copy.mdb, "Track", "id", kUnanalysedToo, "isAnalyzed") == "0"
+                  && column(copy.mdb, "PerformanceData", "trackId", kUnanalysedToo, "trackData") == "NULL",
+              "and leaves the row as it was, not half analysed");
         std::cout << "case 7 (sink and hook) done\n";
     }
 

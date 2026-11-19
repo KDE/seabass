@@ -157,15 +157,17 @@ struct BeatGridLibrary
 };
 
 // What one track's preview found: importAnalysis() with previewOnly, the
-// options it ran with, and rekordbox's analysis it read (kept only where
-// something would be written, for the change that writes it).
+// options it ran with, and, where something would be written, the digest of
+// rekordbox's analysis it read (rekordboxAnalysisDigest()): the change that
+// writes it reads the analysis again and writes only that one. The
+// analysis itself is not held: a few hundred kB a track, for thousands.
 struct BeatGridTrackState
 {
     bool failed = false;
     QString failure;
     application::AnalysisImportResult result;
     application::AnalysisImportOptions options;
-    std::optional<application::RekordboxAnalysis> analysis;
+    std::string analysisDigest;
     // Whether the row is analysed and the player's own analysis is kept on
     // the stick, and for a kept one what restoring it would do (with the
     // overview file it would put back or take away).
@@ -342,6 +344,11 @@ public:
     // paths while one runs is served by it.
     Q_INVOKABLE void load(const QString &rekordboxPath, const QString &enginePath);
     Q_INVOKABLE void cancelLoad();
+    // Reads the stick again when another page saved to it meanwhile (Sync
+    // after Rekordbox Export, which the page links to, adds Engine rows):
+    // for the page to call when it is in front again. The ticks of tracks
+    // that can still be ticked stay. Nothing when no other save came.
+    Q_INVOKABLE void reloadIfStale();
 
     // PlaylistListView asks for a playlist's hover summary; this page
     // shows none.
@@ -423,8 +430,7 @@ private:
     void refreshRows();
     void schedulePreview();
     void runPreview();
-    void takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows,
-                         const QString &ledgerError);
+    void takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows);
     void invalidateStates();
     void recount();
     void ticksMoved();
@@ -449,6 +455,8 @@ private:
     QString m_errorMessage;
     QString m_ledgerError;
     std::shared_ptr<const BeatGridLibrary> m_library;
+    // Another page saved to this library since it was read.
+    bool m_libraryStale = false;
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
     QString m_shownPlaylist;

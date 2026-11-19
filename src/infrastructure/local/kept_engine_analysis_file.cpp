@@ -20,6 +20,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
@@ -114,19 +115,6 @@ std::optional<std::string> unbase64(std::string_view text)
     return out;
 }
 
-bool isFingerprint(std::string_view text)
-{
-    if (text.size() != 64) {
-        return false;
-    }
-    for (char c : text) {
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 std::string valueText(const EngineSqlValue &v)
 {
     switch (v.type) {
@@ -192,17 +180,56 @@ std::optional<EngineSqlValue> parseValue(std::string_view text)
     return std::nullopt;
 }
 
-// The body's lines in their order, field name and value.
-std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalysis &e)
+// Fingerprints as one field: "-" for none, else comma-separated.
+std::string fingerprintList(const std::vector<std::string> &list)
+{
+    std::string out;
+    for (const std::string &fingerprint : list) {
+        out += (out.empty() ? "" : ",") + fingerprint;
+    }
+    return out.empty() ? std::string("-") : out;
+}
+
+std::optional<std::vector<std::string>> parseFingerprintList(std::string_view text)
+{
+    std::vector<std::string> out;
+    if (text == "-") {
+        return out;
+    }
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t comma = text.find(',', start);
+        const std::string_view one = text.substr(start, comma == std::string_view::npos ? text.npos : comma - start);
+        if (!isSha256Hex(one)) {
+            return std::nullopt;
+        }
+        out.emplace_back(one);
+        if (comma == std::string_view::npos) {
+            return out;
+        }
+        start = comma + 1;
+    }
+}
+
+// The body's lines in their order, field name and value. Format 1 had no
+// seabassColumnStates, seabassColumnAnalyses or seabassFiles.
+std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalysis &e, int version)
 {
     const auto &o = e.original;
-    return {
+    std::vector<std::pair<std::string, std::string>> fields{
         {"pathKey", escapeManifestField(e.pathKey)},
         {"trackFile", escapeManifestField(e.trackFile)},
         {"trackId", std::to_string(e.trackId)},
         {"library", escapeManifestField(e.libraryUuid)},
         {"seabassState", e.seabassState.empty() ? "-" : e.seabassState},
         {"seabassAnalysis", e.seabassAnalysis.empty() ? "-" : e.seabassAnalysis},
+    };
+    if (version >= 2) {
+        fields.push_back({"seabassColumnStates", fingerprintList(e.seabassColumnStates)});
+        fields.push_back({"seabassColumnAnalyses", fingerprintList(e.seabassColumnAnalyses)});
+        fields.push_back({"seabassFiles", fingerprintList(e.seabassFiles)});
+    }
+    const std::vector<std::pair<std::string, std::string>> columns{
         {"isAnalyzed", valueText(o.isAnalyzed)},
         {"isBeatGridLocked", valueText(o.isBeatGridLocked)},
         {"bpm", valueText(o.bpm)},
@@ -214,6 +241,8 @@ std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalys
         {"overviewFilePath", escapeManifestField(o.overviewFileRelativePath)},
         {"overviewFile", o.overviewFile ? "blob:" + base64(*o.overviewFile) : std::string("none")},
     };
+    fields.insert(fields.end(), columns.begin(), columns.end());
+    return fields;
 }
 
 }  // namespace
@@ -227,7 +256,7 @@ fs::path keptEngineAnalysisFile(const fs::path &stickRoot, const std::string &pa
 std::string serializeKeptEngineAnalysis(const KeptEngineAnalysis &entry)
 {
     std::string text = std::string(Magic) + "\t" + std::to_string(KeptEngineAnalysisFormatVersion) + "\n";
-    for (const auto &[name, value] : fieldsOf(entry)) {
+    for (const auto &[name, value] : fieldsOf(entry, KeptEngineAnalysisFormatVersion)) {
         text += name;
         text += '\t';
         text += value;
@@ -248,6 +277,11 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
     };
     if (text.empty() || text.back() != '\n') {
         return refuse("does not end with a newline: it was cut short");
+    }
+    // At least one line before the checksum's: a lone newline is no entry,
+    // and the search below starts a byte before the last newline.
+    if (text.size() < 2) {
+        return refuse("is empty but for a newline");
     }
     // The checksum line first: nothing else is believed without it.
     const std::size_t lastLine = text.rfind('\n', text.size() - 2);
@@ -277,11 +311,19 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
     if (lines.empty() || lines[0].first != Magic) {
         return refuse("not a Seabass kept Engine analysis");
     }
-    if (lines[0].second != std::to_string(KeptEngineAnalysisFormatVersion)) {
-        return refuse("format version " + std::string(lines[0].second) + ", this Seabass reads "
+    // Format 1 is read as well: an entry it wrote holds the player's
+    // analysis as surely as one of today's, and is rewritten as format 2
+    // by the next write to its row.
+    int version = 0;
+    if (lines[0].second == "1") {
+        version = 1;
+    } else if (lines[0].second == std::to_string(KeptEngineAnalysisFormatVersion)) {
+        version = KeptEngineAnalysisFormatVersion;
+    } else {
+        return refuse("format version " + std::string(lines[0].second) + ", this Seabass reads 1 to "
                       + std::to_string(KeptEngineAnalysisFormatVersion));
     }
-    const std::vector<std::pair<std::string, std::string>> names = fieldsOf({});
+    const std::vector<std::pair<std::string, std::string>> names = fieldsOf({}, version);
     if (lines.size() != names.size() + 1) {
         return refuse(std::to_string(lines.size() - 1) + " fields, not " + std::to_string(names.size()));
     }
@@ -307,10 +349,18 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
                 into.clear();
                 return true;
             }
-            if (!isFingerprint(value)) {
+            if (!isSha256Hex(value)) {
                 return false;
             }
             into = std::string(value);
+            return true;
+        };
+        const auto fingerprints = [&](std::vector<std::string> &into) {
+            auto list = parseFingerprintList(value);
+            if (!list) {
+                return false;
+            }
+            into = std::move(*list);
             return true;
         };
         const auto column = [&](EngineSqlValue &into) {
@@ -322,55 +372,44 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
             return true;
         };
         bool ok = true;
-        switch (i) {
-        case 0:
+        if (wanted == "pathKey") {
             ok = text(e.pathKey) && !e.pathKey.empty();
-            break;
-        case 1:
+        } else if (wanted == "trackFile") {
             ok = text(e.trackFile);
-            break;
-        case 2: {
+        } else if (wanted == "trackId") {
             const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), e.trackId);
             ok = ec == std::errc() && end == value.data() + value.size() && !value.empty();
-            break;
-        }
-        case 3:
+        } else if (wanted == "library") {
             ok = text(e.libraryUuid);
-            break;
-        case 4:
+        } else if (wanted == "seabassState") {
             ok = fingerprint(e.seabassState);
-            break;
-        case 5:
+        } else if (wanted == "seabassAnalysis") {
             ok = fingerprint(e.seabassAnalysis);
-            break;
-        case 6:
+        } else if (wanted == "seabassColumnStates") {
+            ok = fingerprints(e.seabassColumnStates);
+        } else if (wanted == "seabassColumnAnalyses") {
+            ok = fingerprints(e.seabassColumnAnalyses);
+        } else if (wanted == "seabassFiles") {
+            ok = fingerprints(e.seabassFiles);
+        } else if (wanted == "isAnalyzed") {
             ok = column(o.isAnalyzed);
-            break;
-        case 7:
+        } else if (wanted == "isBeatGridLocked") {
             ok = column(o.isBeatGridLocked);
-            break;
-        case 8:
+        } else if (wanted == "bpm") {
             ok = column(o.bpm);
-            break;
-        case 9:
+        } else if (wanted == "bpmAnalyzed") {
             ok = column(o.bpmAnalyzed);
-            break;
-        case 10:
+        } else if (wanted == "key") {
             ok = column(o.key);
-            break;
-        case 11:
+        } else if (wanted == "trackData") {
             ok = column(o.trackData);
-            break;
-        case 12:
+        } else if (wanted == "overviewWaveFormData") {
             ok = column(o.overviewWaveFormData);
-            break;
-        case 13:
+        } else if (wanted == "beatData") {
             ok = column(o.beatData);
-            break;
-        case 14:
+        } else if (wanted == "overviewFilePath") {
             ok = text(o.overviewFileRelativePath);
-            break;
-        case 15:
+        } else if (wanted == "overviewFile") {
             if (value == "none") {
                 o.overviewFile.reset();
             } else if (value.substr(0, 5) == "blob:") {
@@ -382,8 +421,7 @@ KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text)
             } else {
                 ok = false;
             }
-            break;
-        default:
+        } else {
             ok = false;
         }
         if (!ok) {

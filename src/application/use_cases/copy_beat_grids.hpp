@@ -136,6 +136,11 @@ struct BeatGridCopyResult
     int unsupportedLibrary = 0;
     // Grids not asked for (copyRekordboxAnalysis() with grids off).
     int notRequested = 0;
+    // The player's analysis could not be kept first (the file is not under
+    // the stick root), so it was not replaced.
+    int cannotKeep = 0;
+    // Whether the player has analysed the row cannot be read: left alone.
+    int rowUnreadable = 0;
     int failed = 0;
     // Not reached: the run was cancelled first.
     int notReached = 0;
@@ -160,7 +165,7 @@ struct BeatGridCopyResult
     int total() const
     {
         return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + lockedOnEngine + editedOnEngine + noSampleRate
-            + unsupportedLibrary + notRequested + failed + notReached;
+            + unsupportedLibrary + notRequested + cannotKeep + rowUnreadable + failed + notReached;
     }
 };
 
@@ -232,13 +237,16 @@ struct WaveformCopyCounts
     int notAnalysed = 0;
     int noSampleCount = 0;
     int unsupportedLibrary = 0;
+    // As BeatGridCopyResult's.
+    int cannotKeep = 0;
+    int rowUnreadable = 0;
     int failed = 0;
     int notReached = 0;
 
     int total() const
     {
         return written + wouldWrite + alreadySame + notRequested + noRekordboxWaveform + notAnalysed + noSampleCount
-            + unsupportedLibrary + failed + notReached;
+            + unsupportedLibrary + cannotKeep + rowUnreadable + failed + notReached;
     }
 };
 

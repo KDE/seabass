@@ -2717,6 +2717,13 @@ target_include_directories(filesystem_backup_store_error_paths_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE ZLIB::ZLIB)
 add_test(NAME filesystem_backup_store_error_paths_test COMMAND filesystem_backup_store_error_paths_test)
 
+# copy-beatgrids covers a file it did not foresee before changing it: into
+# the run's backup, noted absent there, or refused when it cannot be looked at.
+add_executable(cover_file_late_test tests/cover_file_late_test.cpp)
+target_link_libraries(cover_file_late_test PRIVATE seabass_core_testing)
+target_include_directories(cover_file_late_test PRIVATE src tests)
+add_test(NAME cover_file_late_test COMMAND cover_file_late_test)
+
 add_executable(stick_write_lock_test
     tests/stick_write_lock_test.cpp
 )
@@ -3442,6 +3449,13 @@ if(TARGET seabass_edit)
     target_link_libraries(metadata_backup_select_all_test PRIVATE seabass_edit Qt6::Core Qt6::Gui Qt6::Qml)
     add_test(NAME metadata_backup_select_all_test COMMAND metadata_backup_select_all_test)
     set_tests_properties(metadata_backup_select_all_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # What a sync's summary says of the analysis it copied: one bucket per
+    # track, the refusals in words.
+    add_executable(analysis_summary_note_test tests/analysis_summary_note_test.cpp)
+    target_include_directories(analysis_summary_note_test PRIVATE src tests)
+    target_link_libraries(analysis_summary_note_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME analysis_summary_note_test COMMAND analysis_summary_note_test)
 
     # Metadata Backup plays a stored row from a stick that has its file:
     # the stick it came from first, then any other.

@@ -33,7 +33,14 @@ constexpr std::string_view Magic = "seabass-beat-grids";
 // a damaged file from taking the machine's memory with it.
 constexpr std::uintmax_t MaxBytes = 64u * 1024u * 1024u;
 
-bool isFingerprint(std::string_view text)
+std::string header()
+{
+    return std::string(Magic) + "\t" + std::to_string(BeatGridLedgerFormatVersion) + "\n";
+}
+
+}  // namespace
+
+bool isSha256Hex(std::string_view text)
 {
     if (text.size() != 64) {
         return false;
@@ -45,13 +52,6 @@ bool isFingerprint(std::string_view text)
     }
     return true;
 }
-
-std::string header()
-{
-    return std::string(Magic) + "\t" + std::to_string(BeatGridLedgerFormatVersion) + "\n";
-}
-
-}  // namespace
 
 std::string serializeBeatGridLedger(const BeatGridLedger &ledger)
 {
@@ -135,7 +135,7 @@ BeatGridLedger readBeatGridLedger(const fs::path &stickRoot, std::string *error)
         if (!key || key->empty()) {
             return refuse(where + "no key, or a key with a bad escape");
         }
-        if (!isFingerprint(second)) {
+        if (!isSha256Hex(second)) {
             return refuse(where + "the fingerprint is not 64 lowercase hex digits");
         }
         if (previousKey && !(*previousKey < *key)) {
@@ -161,7 +161,7 @@ bool writeBeatGridLedger(const fs::path &stickRoot, const BeatGridLedger &ledger
             *error = "the beat grid ledger has an entry with no key";
             return false;
         }
-        if (!isFingerprint(fingerprint)) {
+        if (!isSha256Hex(fingerprint)) {
             *error = "the beat grid ledger's entry for " + key + " has no proper fingerprint";
             return false;
         }

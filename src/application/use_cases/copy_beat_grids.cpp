@@ -94,6 +94,93 @@ int keepBeatGridItemsWithIds(BeatGridCopyPlan &plan, const std::set<std::string>
     return static_cast<int>(before - plan.items.size());
 }
 
+namespace
+{
+
+// One grid outcome into its bucket, for copyBeatGrids() and
+// copyRekordboxAnalysis() alike.
+void countGrid(BeatGridCopyResult &result, const BeatGridWriteResult &grid, const BeatGridCopyItem &item, bool preview)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    switch (grid.outcome) {
+    case Outcome::Written:
+        if (preview) {
+            ++result.wouldWrite;
+            result.wouldWriteItems.push_back(item);
+        } else {
+            ++result.written;
+        }
+        result.barBreaks += grid.barBreaks;
+        break;
+    case Outcome::AlreadySame:
+        ++result.alreadySame;
+        break;
+    case Outcome::NoSourceGrid:
+        ++result.noRekordboxGrid;
+        break;
+    case Outcome::RowNotAnalysed:
+        ++result.notAnalysed;
+        break;
+    case Outcome::RowLocked:
+        ++result.lockedOnEngine;
+        break;
+    case Outcome::RowEditedOnEngine:
+        ++result.editedOnEngine;
+        break;
+    case Outcome::NoSampleRate:
+        ++result.noSampleRate;
+        break;
+    case Outcome::UnsupportedSchema:
+        ++result.unsupportedLibrary;
+        break;
+    case Outcome::NotRequested:
+        ++result.notRequested;
+        break;
+    case Outcome::CannotKeepEngines:
+        ++result.cannotKeep;
+        break;
+    case Outcome::RowUnreadable:
+        ++result.rowUnreadable;
+        break;
+    }
+}
+
+void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform waveform, bool preview)
+{
+    using Waveform = AnalysisImportResult::Waveform;
+    switch (waveform) {
+    case Waveform::Written:
+        ++(preview ? counts.wouldWrite : counts.written);
+        break;
+    case Waveform::AlreadySame:
+        ++counts.alreadySame;
+        break;
+    case Waveform::NotRequested:
+        ++counts.notRequested;
+        break;
+    case Waveform::NoSourceWaveform:
+        ++counts.noRekordboxWaveform;
+        break;
+    case Waveform::RowNotAnalysed:
+        ++counts.notAnalysed;
+        break;
+    case Waveform::NoSampleCount:
+        ++counts.noSampleCount;
+        break;
+    case Waveform::UnsupportedSchema:
+        ++counts.unsupportedLibrary;
+        break;
+    case Waveform::CannotKeepEngines:
+        ++counts.cannotKeep;
+        break;
+    case Waveform::RowUnreadable:
+        ++counts.rowUnreadable;
+        break;
+    }
+}
+
+}  // namespace
+
 BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSource &source, BeatGridWriter &writer,
                                  const std::map<std::string, std::string> &ledger, const BeatGridCopyOptions &options,
                                  const BeatGridFileFactsSource &fileFacts, const CancellationToken &cancel,
@@ -134,42 +221,12 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
                     written = writer.writeBeatGrid(item.engineTrackId, beats, write);
                 }
             }
-            switch (written.outcome) {
-            case Outcome::Written:
-                if (options.previewOnly) {
-                    ++result.wouldWrite;
-                    result.wouldWriteItems.push_back(item);
-                } else {
-                    ++result.written;
-                }
-                result.barBreaks += written.barBreaks;
-                break;
-            case Outcome::AlreadySame:
-                ++result.alreadySame;
-                break;
-            case Outcome::NoSourceGrid:
-                ++result.noRekordboxGrid;
-                break;
-            case Outcome::RowNotAnalysed:
-                ++result.notAnalysed;
-                break;
-            case Outcome::RowLocked:
-                ++result.lockedOnEngine;
-                break;
-            case Outcome::RowEditedOnEngine:
-                ++result.editedOnEngine;
-                break;
-            case Outcome::NoSampleRate:
-                ++result.noSampleRate;
-                break;
-            case Outcome::UnsupportedSchema:
-                ++result.unsupportedLibrary;
-                break;
-            case Outcome::NotRequested:
+            if (written.outcome == Outcome::NotRequested) {
                 // writeBeatGrid() never answers it; thrown, the item counts
                 // as failed rather than in no bucket at all.
                 throw std::logic_error("the writer answered \"not requested\" to a grid it was asked for");
             }
+            countGrid(result, written, item, options.previewOnly);
             if (!options.previewOnly
                 && (written.outcome == Outcome::Written || written.outcome == Outcome::AlreadySame)) {
                 // A fingerprint is what the writer promises for these two;
@@ -196,80 +253,6 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
     }
     return result;
 }
-
-namespace
-{
-
-// One grid outcome into its bucket, as copyBeatGrids() counts it.
-void countGrid(BeatGridCopyResult &result, const BeatGridWriteResult &grid, const BeatGridCopyItem &item, bool preview)
-{
-    using Outcome = BeatGridWriteResult::Outcome;
-    switch (grid.outcome) {
-    case Outcome::Written:
-        if (preview) {
-            ++result.wouldWrite;
-            result.wouldWriteItems.push_back(item);
-        } else {
-            ++result.written;
-        }
-        result.barBreaks += grid.barBreaks;
-        break;
-    case Outcome::AlreadySame:
-        ++result.alreadySame;
-        break;
-    case Outcome::NoSourceGrid:
-        ++result.noRekordboxGrid;
-        break;
-    case Outcome::RowNotAnalysed:
-        ++result.notAnalysed;
-        break;
-    case Outcome::RowLocked:
-        ++result.lockedOnEngine;
-        break;
-    case Outcome::RowEditedOnEngine:
-        ++result.editedOnEngine;
-        break;
-    case Outcome::NoSampleRate:
-        ++result.noSampleRate;
-        break;
-    case Outcome::UnsupportedSchema:
-        ++result.unsupportedLibrary;
-        break;
-    case Outcome::NotRequested:
-        ++result.notRequested;
-        break;
-    }
-}
-
-void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform waveform, bool preview)
-{
-    using Waveform = AnalysisImportResult::Waveform;
-    switch (waveform) {
-    case Waveform::Written:
-        ++(preview ? counts.wouldWrite : counts.written);
-        break;
-    case Waveform::AlreadySame:
-        ++counts.alreadySame;
-        break;
-    case Waveform::NotRequested:
-        ++counts.notRequested;
-        break;
-    case Waveform::NoSourceWaveform:
-        ++counts.noRekordboxWaveform;
-        break;
-    case Waveform::RowNotAnalysed:
-        ++counts.notAnalysed;
-        break;
-    case Waveform::NoSampleCount:
-        ++counts.noSampleCount;
-        break;
-    case Waveform::UnsupportedSchema:
-        ++counts.unsupportedLibrary;
-        break;
-    }
-}
-
-}  // namespace
 
 AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
                                                const std::map<std::string, std::string> &ledger,

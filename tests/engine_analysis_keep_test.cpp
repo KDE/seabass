@@ -26,11 +26,20 @@
 //    NoSampleCount, nothing written). A later copy over it keeps nothing
 //    either: the analysis there is Seabass's.
 // 7. An entry kept for another row is Stale; writeBeatGrid() keeps too.
+// 8. A write cut short never costs the kept original: the overview file's
+//    write failing after the columns (copy), the columns' transaction
+//    failing after the entry was written (copy again), the file failing
+//    after the columns are put back (restore). Each time the next run takes
+//    the row for Seabass's own: the original stays byte for byte, and a
+//    restore gives the player's analysis back.
+// 9. A flag that is not a number, or up over beat data that does not
+//    decode: RowUnreadable, the row left alone, never filled.
 //
 // usage: engine_analysis_keep_test <tests/fixtures>
 
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -282,7 +291,22 @@ int main(int argc, char **argv)
         store.setBeforeChange([](const std::string &) { throw std::runtime_error("the stick refused"); });
         refused(keyed("k13"), "the store refuses");
         store.setBeforeChange({});
-        refused(keyed(""), "no key");
+        // No key (the file is not under the stick root): a refusal of its
+        // own, in a preview as in a write, never a throw.
+        for (const bool preview : {true, false}) {
+            AnalysisImportOptions noKey = keyed("");
+            noKey.previewOnly = preview;
+            const auto r = writer.importAnalysis("13", first, noKey);
+            check(r.grid.outcome == Outcome::CannotKeepEngines && r.waveform == Waveform::CannotKeepEngines
+                      && r.grid.gridFingerprint.empty() && r.overviewFileRelativePath.empty(),
+                  std::string("no key: cannot be kept, so not replaced") + (preview ? " (preview)" : ""));
+            check(snapshot(stick, 13) == before, "no key: the row is untouched");
+            BeatGridWriteOptions grid;
+            grid.previewOnly = preview;
+            check(writer.writeBeatGrid("13", first.beats, grid).outcome == Outcome::CannotKeepEngines,
+                  "no key: writeBeatGrid() refuses the same way");
+            check(snapshot(stick, 13) == before, "no key: the row is still untouched");
+        }
         const fs::path file = infrastructure::local::keptEngineAnalysisFile(stick.root, "k13");
         fs::create_directories(file.parent_path());
         std::ofstream(file, std::ios::binary) << "seabass-engine-analysis\t1\ndamaged";
@@ -364,6 +388,140 @@ int main(int argc, char **argv)
         check(writer.writeBeatGrid("14", analysisOf(240.0, 128.0, 5).beats, grid).outcome == Outcome::Written,
               "a grid written to row 14");
         check(store.find("k14").entry.original == before, "writeBeatGrid() kept the player's analysis first");
+    }
+
+    // 8. Cut short.
+    for (const bool hadFile : {false, true}) {
+        const std::string tag = hadFile ? " (the player had an overview file)" : " (no overview file)";
+        const Stick stick = freshStick(hadFile ? "cut-short-with-file" : "cut-short");
+        if (hadFile) {
+            const fs::path file = stick.library / pathFromUtf8(overviewPath(13));
+            fs::create_directories(file.parent_path());
+            std::ofstream(file, std::ios::binary) << synthetic(3000, 11);
+        }
+        StickKeptEngineAnalysisStore store(stick.root);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        const auto keptOriginal = [&]() { return store.find("k13").entry.original; };
+        const auto throws = [&](const std::function<void()> &run) {
+            try {
+                run();
+            } catch (const std::exception &) {
+                return true;
+            }
+            return false;
+        };
+        const auto failingSink = [](const std::string &, const std::string &) {
+            throw std::runtime_error("the stick is gone");
+        };
+
+        // a. The first copy: the columns written, the overview file not.
+        {
+            auto writer = writerFor(stick, store);
+            writer.setOverviewFileSink(failingSink);
+            check(throws([&] { writer.importAnalysis("13", first, keyed("k13")); }), "a. the file fails the copy" + tag);
+        }
+        const auto half = snapshot(stick, 13);
+        check(!(half.trackData == before.trackData) || !(half.beatData == before.beatData)
+                  || !(half.overviewWaveFormData == before.overviewWaveFormData),
+              "a. the columns were written" + tag);
+        check(half.overviewFile == before.overviewFile, "a. the file was not" + tag);
+        check(keptOriginal() == before, "a. the player's analysis was kept first" + tag);
+        {
+            // The rerun redoes the write and keeps nothing new.
+            auto writer = writerFor(stick, store);
+            const auto again = writer.importAnalysis("13", first, keyed("k13"));
+            check(again.waveform == Waveform::Written && !again.keptEngineAnalysis,
+                  "a. the rerun writes the file, keeping nothing new" + tag);
+            check(keptOriginal() == before, "a. the kept original is the player's, byte for byte" + tag);
+        }
+        const auto copied = snapshot(stick, 13);
+
+        // b. A copy of another analysis: the entry written, then the
+        // columns' transaction refused (the database read-only).
+        {
+            auto writer = writerFor(stick, store);
+            store.setBeforeChange([&](const std::string &) {
+                fs::permissions(pathFromUtf8(stick.mdb), fs::perms::owner_read | fs::perms::group_read,
+                                fs::perm_options::replace);
+            });
+            check(throws([&] { writer.importAnalysis("13", second, keyed("k13")); }),
+                  "b. the columns' transaction fails the copy" + tag);
+            store.setBeforeChange({});
+            fs::permissions(pathFromUtf8(stick.mdb), fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read,
+                            fs::perm_options::replace);
+        }
+        check(snapshot(stick, 13) == copied, "b. the row is the first copy's still" + tag);
+        {
+            auto writer = writerFor(stick, store);
+            const auto again = writer.importAnalysis("13", second, keyed("k13"));
+            check(again.waveform == Waveform::Written && !again.keptEngineAnalysis,
+                  "b. the rerun writes it, keeping nothing new" + tag);
+            check(keptOriginal() == before, "b. the kept original is still the player's" + tag);
+        }
+
+        // c. A restore: the columns put back, the file step failing.
+        {
+            auto writer = writerFor(stick, store);
+            writer.setOverviewFileSink(failingSink);
+            writer.setOverviewFileRemover([](const std::string &) { throw std::runtime_error("the stick is gone"); });
+            check(throws([&] { writer.restoreEngineAnalysis("13", "k13", {}); }), "c. the file fails the restore" + tag);
+        }
+        const auto halfBack = snapshot(stick, 13);
+        check(halfBack.trackData == before.trackData && halfBack.beatData == before.beatData
+                  && !(halfBack.overviewFile == before.overviewFile),
+              "c. the columns are back, the file is Seabass's" + tag);
+        check(keptOriginal() == before, "c. the entry stays" + tag);
+        {
+            // A copy now takes the row for Seabass's own, not the player's.
+            auto writer = writerFor(stick, store);
+            const auto over = writer.importAnalysis("13", first, keyed("k13"));
+            check(!over.keptEngineAnalysis && keptOriginal() == before,
+                  "c. a copy over the half restore keeps the original" + tag);
+        }
+        {
+            auto writer = writerFor(stick, store);
+            writer.setOverviewFileSink(failingSink);
+            writer.setOverviewFileRemover([](const std::string &) { throw std::runtime_error("the stick is gone"); });
+            check(throws([&] { writer.restoreEngineAnalysis("13", "k13", {}); }), "c. a second restore cut short" + tag);
+        }
+        {
+            auto writer = writerFor(stick, store);
+            const auto preview = writer.restoreEngineAnalysis("13", "k13", {false, true});
+            check(preview.outcome == Restore::Restored, "c. the rerun of the restore is not refused: " + preview.reason + tag);
+            check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::Restored, "c. restored" + tag);
+        }
+        check(snapshot(stick, 13) == before, "c. the player's analysis is back, byte for byte" + tag);
+        check(store.find("k13").status == Status::None, "c. and the entry is used up" + tag);
+    }
+
+    // 9. Unsure whether the player analysed the row: left alone.
+    {
+        const Stick stick = freshStick("unreadable-flag");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = NULL WHERE id IN (9, 13)");
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1 WHERE id = 14");
+        exec(stick.mdb, "UPDATE PerformanceData SET beatData = x'00010203' WHERE trackId = 14");
+        for (const std::int64_t id : {9, 13, 14}) {
+            const std::string name = "row " + std::to_string(id);
+            const EngineAnalysisColumns before = snapshot(stick, id);
+            AnalysisImportOptions options = keyed("k" + std::to_string(id));
+            options.fileSampleRateHz = 44100.0;
+            options.fileSampleCount = 7938000;
+            const auto r = writer.importAnalysis(std::to_string(id), analysisOf(180.0, 102.0, 3), options);
+            check(r.grid.outcome == Outcome::RowUnreadable && r.waveform == Waveform::RowUnreadable && !r.completedRow,
+                  name + ": the analysis is not written");
+            BeatGridWriteOptions grid;
+            grid.unanalysed = UnanalysedRowGrid::Fill;
+            grid.fileSampleRateHz = 44100.0;
+            grid.fileDurationMs = 180000.0;
+            grid.keepKey = options.keepKey;
+            check(writer.writeBeatGrid(std::to_string(id), analysisOf(180.0, 102.0, 3).beats, grid).outcome
+                      == Outcome::RowUnreadable,
+                  name + ": nor the grid alone");
+            check(snapshot(stick, id) == before, name + ": the row is untouched");
+            check(store.find(options.keepKey).status == Status::None, name + ": nothing kept");
+        }
     }
 
     if (failures > 0) {

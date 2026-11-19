@@ -139,7 +139,6 @@ ColumnLayout {
     }
 
     readonly property bool hasAnchor: root.anchorSourceId.length > 0
-    readonly property bool hasTarget: root.targetPlaylistName.length > 0
 
     // One-decimal BPM, only when there actually is a fraction -- mirrors
     // ScanPage.qml's own formatBpm(); no shared utils module exists to

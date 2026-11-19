@@ -955,6 +955,14 @@ public:
         return !ec;
     }
 
+    Q_INVOKABLE bool copyFile(const QString &from, const QString &to)
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(seabass::gui::pathFromQString(from), seabass::gui::pathFromQString(to),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        return !ec;
+    }
+
     // Takes a rekordbox track's .DAT analysis file (its beat grid) off a
     // stick copy, as an export that never analysed its grid leaves it; the
     // .EXT, with the waveform, stays. False when there was none to take.

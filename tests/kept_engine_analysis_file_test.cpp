@@ -16,6 +16,9 @@
 // 4. keep() and drop() call the hook first; a hook that throws leaves the
 //    file as it was. drop() of nothing is not an error.
 // 5. Nothing kept: None.
+// 6. Format 1 (no seabassColumnStates, seabassColumnAnalyses or
+//    seabassFiles) is read, with those empty; files of 0, 1 and 2 bytes are
+//    Damaged, never a crash.
 
 #include <filesystem>
 #include <fstream>
@@ -70,6 +73,9 @@ KeptEngineAnalysis sample(const std::string &key)
     e.libraryUuid = "f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926";
     e.seabassState = std::string(64, 'a');
     e.seabassAnalysis.clear();
+    e.seabassColumnStates = {std::string(64, 'b'), std::string(64, 'c')};
+    e.seabassColumnAnalyses = {std::string(64, 'd')};
+    e.seabassFiles.clear();
     e.original.isAnalyzed = EngineSqlValue::ofInteger(1);
     e.original.isBeatGridLocked = EngineSqlValue::null();
     e.original.bpm = EngineSqlValue::ofInteger(-7);
@@ -133,7 +139,7 @@ int main()
     store.keep(noFile);
     check(store.find(key + "2").entry.original.overviewFile == std::nullopt, "no overview file stays none");
     const std::string text = readAll(file);
-    check(text.rfind("seabass-engine-analysis\t1\n", 0) == 0, "versioned header");
+    check(text.rfind("seabass-engine-analysis\t2\n", 0) == 0, "versioned header");
 
     // 3. Damaged files are not believed.
     const auto damaged = [&](const std::string &body, const std::string &why) {
@@ -147,7 +153,7 @@ int main()
     flipped[text.find("trackId\t42") + 8] = '3';
     damaged(flipped, "one byte changed: the checksum");
     std::string version = text;
-    version.replace(version.find("\t1\n"), 3, "\t2\n");
+    version.replace(version.find("\t2\n"), 3, "\t3\n");
     damaged(version, "another version");
     damaged("", "empty");
     // A file whose checksum holds but which belongs to another key.
@@ -161,6 +167,32 @@ int main()
         body += "#sha256\t" + infrastructure::hashing::toHex(infrastructure::hashing::Sha256::of(std::string_view(body)))
             + "\n";
         damaged(body, "a field missing");
+    }
+    // 6. Tiny files: Damaged, each with its reason.
+    damaged("\n", "one byte, a newline");
+    writeAll(file, "\n");
+    check(store.find(key).error.find("empty but for a newline") != std::string::npos,
+          "a lone newline is refused before the checksum is looked for");
+    damaged("x", "one byte");
+    damaged("\n\n", "two bytes");
+    damaged("x\n", "two bytes, one line");
+    // Format 1: the same lines but the three lists, read with them empty.
+    {
+        std::string body = text.substr(0, text.find("#sha256"));
+        body.replace(body.find("\t2\n"), 3, "\t1\n");
+        for (const std::string name : {"seabassColumnStates", "seabassColumnAnalyses", "seabassFiles"}) {
+            const auto at = body.find("\n" + name + "\t") + 1;
+            body.erase(at, body.find('\n', at) - at + 1);
+        }
+        body += "#sha256\t" + infrastructure::hashing::toHex(infrastructure::hashing::Sha256::of(std::string_view(body)))
+            + "\n";
+        writeAll(file, body);
+        const auto v1 = store.find(key);
+        KeptEngineAnalysis expected = kept;
+        expected.seabassColumnStates.clear();
+        expected.seabassColumnAnalyses.clear();
+        expected.seabassFiles.clear();
+        check(v1.status == Status::Found && v1.entry == expected, "format 1 is read, without the lists: " + v1.error);
     }
     writeAll(file, text);
     check(store.find(key).status == Status::Found, "the good file again");

@@ -465,17 +465,21 @@ std::vector<SyncAnalysisChange::Track> tracksForAnalysis(const std::vector<Row> 
     }
     std::map<std::string, int> perEngineRow;
     std::map<std::string, int> perFile;
+    // Each track's ledger key worked out once.
+    std::vector<std::string> ledgerKeys;
+    ledgerKeys.reserve(tracks.size());
     for (const auto &track : tracks) {
         if (!track.engineTrackId.empty()) {
             ++perEngineRow[track.engineTrackId];
         }
-        const std::string ledgerKey = application::beatGridCopyItemFor(track.rekordbox, {}, stickRoot).ledgerKey;
-        if (!ledgerKey.empty()) {
-            ++perFile[ledgerKey];
+        ledgerKeys.push_back(application::beatGridCopyItemFor(track.rekordbox, {}, stickRoot).ledgerKey);
+        if (!ledgerKeys.back().empty()) {
+            ++perFile[ledgerKeys.back()];
         }
     }
-    for (auto &track : tracks) {
-        const std::string ledgerKey = application::beatGridCopyItemFor(track.rekordbox, {}, stickRoot).ledgerKey;
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        auto &track = tracks[i];
+        const std::string &ledgerKey = ledgerKeys[i];
         if ((!track.engineTrackId.empty() && perEngineRow[track.engineTrackId] > 1)
             || (!ledgerKey.empty() && perFile[ledgerKey] > 1)) {
             track.leaveAloneBecause = QStringLiteral("two rekordbox tracks for one Engine row");

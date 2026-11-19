@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -224,6 +225,29 @@ struct EngineAnalysisRow
 };
 [[nodiscard]] std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile,
                                                                      std::int64_t trackId, std::string *error);
+
+// readEngineAnalysisRow() and writeEngineAnalysisColumns() for many rows
+// of one database, each over a connection opened on first use and held
+// (read-only for the reads, read-write for the writes), not one per call.
+// The library's Information.uuid is read once. Not thread-safe; for one
+// writer or one preview at a time.
+class EngineAnalysisRowAccess
+{
+public:
+    explicit EngineAnalysisRowAccess(std::string databaseFile);
+    ~EngineAnalysisRowAccess();
+    EngineAnalysisRowAccess(const EngineAnalysisRowAccess &) = delete;
+    EngineAnalysisRowAccess &operator=(const EngineAnalysisRowAccess &) = delete;
+
+    [[nodiscard]] std::optional<EngineAnalysisRow> read(std::int64_t trackId, std::string *error);
+    [[nodiscard]] bool write(std::int64_t trackId, const application::EngineAnalysisColumns &columns,
+                             std::string *error);
+
+private:
+    struct Connections;
+    std::string m_file;
+    std::unique_ptr<Connections> m_connections;
+};
 
 // Puts `columns` (not the overview file) into the row, each value with its
 // own SQLite type, in one transaction: the blobs, then the flags and

@@ -60,6 +60,10 @@ Page {
     }
 
     Component.onCompleted: root.controller.load(root.rekordboxPath, root.enginePath)
+    // Back in front after another page saved to this stick (the link below
+    // goes to Sync after Rekordbox Export, which adds Engine rows): the
+    // libraries are read again, the ticks that still apply kept.
+    StackView.onActivated: root.controller.reloadIfStale()
 
     EditSessionHost {
         id: editHost

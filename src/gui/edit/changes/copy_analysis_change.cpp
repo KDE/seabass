@@ -48,7 +48,7 @@ constexpr const char *Label = "beat-grid-copy";
 // rolled-back change fails the save, and then nothing is recorded at all.
 struct LedgerRecord
 {
-    std::map<QString, std::pair<std::string, std::optional<std::string>>> byChange;
+    std::map<QString, std::vector<std::pair<std::string, std::optional<std::string>>>> byChange;
 };
 
 std::string ledgerKeyFor(const std::string &stickRoot)
@@ -90,6 +90,10 @@ QString gridWords(application::BeatGridWriteResult::Outcome outcome)
         return QStringLiteral("Engine library too old");
     case Outcome::NotRequested:
         return QStringLiteral("not asked for");
+    case Outcome::CannotKeepEngines:
+        return QStringLiteral("Engine's analysis cannot be kept");
+    case Outcome::RowUnreadable:
+        return QStringLiteral("analysed or not cannot be read");
     }
     return QStringLiteral("unknown");
 }
@@ -112,6 +116,10 @@ QString waveformWords(application::AnalysisImportResult::Waveform waveform)
         return QStringLiteral("no length for the file");
     case Waveform::UnsupportedSchema:
         return QStringLiteral("Engine library too old");
+    case Waveform::CannotKeepEngines:
+        return QStringLiteral("Engine's analysis cannot be kept");
+    case Waveform::RowUnreadable:
+        return QStringLiteral("analysed or not cannot be read");
     }
     return QStringLiteral("unknown");
 }
@@ -137,9 +145,11 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
             return;
         }
         std::map<std::string, std::optional<std::string>> landed;
-        for (const auto &[changeId, entry] : record->byChange) {
+        for (const auto &[changeId, entries] : record->byChange) {
             if (after.appliedIds.contains(changeId)) {
-                landed[entry.first] = entry.second;
+                for (const auto &[ledgerKey, fingerprint] : entries) {
+                    landed[ledgerKey] = fingerprint;
+                }
             }
         }
         if (landed.empty()) {
@@ -268,7 +278,7 @@ ChangeOutcome landImport(SaveContext &ctx, FormatWriteSession &session, const QS
     if ((gridWritten || result.grid.outcome == Outcome::AlreadySame) && !item.ledgerKey.empty()
         && !result.grid.gridFingerprint.empty()) {
         if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(stickRoot))) {
-            record->byChange[changeId] = {item.ledgerKey, std::optional<std::string>(result.grid.gridFingerprint)};
+            record->byChange[changeId].emplace_back(item.ledgerKey, std::optional<std::string>(result.grid.gridFingerprint));
         }
     }
     if (tally) {
@@ -302,7 +312,11 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
     row.completed = result.completedRow;
     row.keptEngineAnalysis = result.keptEngineAnalysis;
     row.gridSetOnPlayer = result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine;
-    row.leftForPlayer = !result.completedRow
+    row.cannotKeep = result.grid.outcome == Outcome::CannotKeepEngines || result.waveform == Waveform::CannotKeepEngines;
+    // One track, one bucket: a row the player has not analysed whose grid
+    // is locked is left alone for the lock (the DJ's word), not counted
+    // again as left for the player.
+    row.leftForPlayer = !result.completedRow && !row.gridSetOnPlayer
         && (result.grid.outcome == Outcome::RowNotAnalysed || result.grid.outcome == Outcome::NoSampleRate
             || result.waveform == Waveform::RowNotAnalysed || result.waveform == Waveform::NoSampleCount);
     if (row.leftForPlayer) {
@@ -316,7 +330,11 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
             row.leftForPlayerBecause = waveformWords(result.waveform);
         }
     }
-    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer) {
+    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer || row.cannotKeep) {
+        return row;
+    }
+    if (result.grid.outcome == Outcome::RowUnreadable || result.waveform == Waveform::RowUnreadable) {
+        row.otherReason = QStringLiteral("whether the player analysed it cannot be read");
         return row;
     }
     const bool gridNone = result.grid.outcome == Outcome::NoSourceGrid || result.grid.outcome == Outcome::NotRequested;
@@ -348,19 +366,21 @@ void AnalysisNoteCounts::add(const AnalysisSaveTally::Row &row)
     }
     noAnalysis += row.noRekordboxAnalysis ? 1 : 0;
     same += row.alreadySame ? 1 : 0;
+    cannotKeep += row.cannotKeep && !row.grid && !row.waveform ? 1 : 0;
     if (!row.otherReason.isEmpty()) {
         ++other[row.otherReason];
     }
 }
 
-CopyAnalysisChange::CopyAnalysisChange(QString enginePath, std::string stickRoot, application::BeatGridCopyItem item,
-                                       application::RekordboxAnalysis analysis,
+CopyAnalysisChange::CopyAnalysisChange(QString enginePath, QString rekordboxPath, std::string stickRoot,
+                                       application::BeatGridCopyItem item, std::string analysisDigest,
                                        application::AnalysisImportOptions options, std::string overviewFile,
                                        int itemCountHint, bool declaresFiles, std::shared_ptr<AnalysisSaveTally> tally)
     : m_enginePath(std::move(enginePath))
+    , m_rekordboxPath(std::move(rekordboxPath))
     , m_stickRoot(std::move(stickRoot))
     , m_item(std::move(item))
-    , m_analysis(std::move(analysis))
+    , m_analysisDigest(std::move(analysisDigest))
     , m_options(std::move(options))
     , m_overviewFile(std::move(overviewFile))
     , m_itemCountHint(itemCountHint)
@@ -432,7 +452,7 @@ std::vector<BackupTarget> CopyAnalysisChange::filesToBackup(SaveContext &) const
     }
     // The kept analysis of the row: backed up, or noted absent, so that
     // Undo takes away an entry this save made.
-    if (const std::string kept = keptFileOf(m_stickRoot, m_item); !kept.empty() && !m_options.previewOnly) {
+    if (const std::string kept = keptFileOf(m_stickRoot, m_item); !kept.empty()) {
         targets.push_back({kept, Label, true});
     }
     // Once for the batch, by its first change (FillSampleRateChange's
@@ -451,16 +471,6 @@ std::vector<BackupTarget> CopyAnalysisChange::filesToBackup(SaveContext &) const
 void CopyAnalysisChange::beforeSave(SaveContext &ctx)
 {
     recordLedgerAfterCommit(ctx, m_stickRoot);
-}
-
-ChangeOutcome CopyAnalysisChange::apply(SaveContext &ctx)
-{
-    FormatWriteSession &session = sharedFormatWriteSession(ctx, Format, m_enginePath.toStdString(), m_itemCountHint,
-                                                           Label);
-    Writer &writer = analysisWriterFor(ctx, session, m_stickRoot);
-
-    const application::AnalysisImportResult result = writer.importAnalysis(m_item.engineTrackId, m_analysis, m_options);
-    return landImport(ctx, session, id(), m_item, m_stickRoot, result, m_tally.get());
 }
 
 namespace
@@ -507,6 +517,43 @@ AnalysisSaveTally &saveTallyOf(SaveContext &ctx, const QString &owner)
 }
 
 }  // namespace
+
+ChangeOutcome CopyAnalysisChange::apply(SaveContext &ctx)
+{
+    FormatWriteSession &session = sharedFormatWriteSession(ctx, Format, m_enginePath.toStdString(), m_itemCountHint,
+                                                           Label);
+    // rekordbox's analysis read again, through the save's one index of the
+    // export: what is written is what the preview showed, or nothing.
+    // The ticked rows already the same that this change carries for the
+    // ledger, recorded with it when it lands, as the command line records
+    // them: a ledger that was lost learns their grids again.
+    if (!m_ledgerRiders.empty()) {
+        if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(m_stickRoot))) {
+            for (const auto &[ledgerKey, fingerprint] : m_ledgerRiders) {
+                record->byChange[id()].emplace_back(ledgerKey, std::optional<std::string>(fingerprint));
+            }
+        }
+    }
+    const std::string pioneer = m_rekordboxPath.toStdString();
+    auto &sources = ctx.shared<SyncAnalysisSources>(
+        "beat-grids:sources:" + application::normalizedPathKey(pioneer),
+        [&]() { return std::make_unique<SyncAnalysisSources>(pioneer, m_stickRoot, nullptr); });
+    const application::RekordboxAnalysis analysis =
+        infrastructure::local::rekordboxAnalysisOf(pioneer, m_item, sources.index.get());
+    if (infrastructure::local::rekordboxAnalysisDigest(analysis) != m_analysisDigest) {
+        if (m_tally) {
+            AnalysisSaveTally::Row row;
+            row.otherReason = QStringLiteral("rekordbox's analysis changed since it was checked");
+            m_tally->record(id(), row);
+        }
+        ctx.log().record("beat grids: left Engine track id=" + m_item.engineTrackId
+                         + " alone: rekordbox's analysis of it changed since the preview");
+        return ChangeOutcome::skip();
+    }
+    Writer &writer = analysisWriterFor(ctx, session, m_stickRoot);
+    const application::AnalysisImportResult result = writer.importAnalysis(m_item.engineTrackId, analysis, m_options);
+    return landImport(ctx, session, id(), m_item, m_stickRoot, result, m_tally.get());
+}
 
 SyncAnalysisChange::SyncAnalysisChange(QString owner, QString rekordboxPath, QString enginePath, std::string stickRoot,
                                        Track track, application::AnalysisCopyOptions options,
@@ -773,6 +820,13 @@ QString analysisSummaryNote(const AnalysisNoteCounts &c)
     if (c.same > 0) {
         alone << counted(c.same, QStringLiteral("one track already the same"), QStringLiteral("tracks already the same"));
     }
+    if (c.cannotKeep > 0) {
+        alone << counted(c.cannotKeep,
+                         QStringLiteral("one track whose own Engine analysis could not be kept first, its file not "
+                                        "being under the stick's root"),
+                         QStringLiteral("tracks whose own Engine analysis could not be kept first, their files not "
+                                        "being under the stick's root"));
+    }
     for (const auto &[why, n] : c.other) {
         alone << counted(n, QStringLiteral("one track"), QStringLiteral("tracks")) + QStringLiteral(" (") + why
                 + QLatin1Char(')');
@@ -880,7 +934,7 @@ ChangeOutcome EngineAnalysisChange::apply(SaveContext &ctx)
     }
     if (!m_item.ledgerKey.empty()) {
         if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(m_stickRoot))) {
-            record->byChange[id()] = {m_item.ledgerKey, std::nullopt};
+            record->byChange[id()].emplace_back(m_item.ledgerKey, std::nullopt);
         }
     }
     if (m_tally) {

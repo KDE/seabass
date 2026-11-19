@@ -20,6 +20,8 @@
 //
 // usage: exact_sample_count_test <tests/fixtures> [folder to print counts of]
 
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -139,6 +141,20 @@ std::string mp4Trak(const std::string &handler, std::uint32_t timescale, std::ui
     return box("trak", box("mdia", hdlr + mdhd + box("minf", box("stbl", stsd))));
 }
 
+// A sound trak whose sample entry is QuickTime's version 2, its rate a
+// float64 after the 16.16 field (which holds 1.0 there).
+std::string qtV2Trak(std::uint32_t timescale, std::uint64_t duration, double rate)
+{
+    const std::string hdlr = box("hdlr", be(0, 4) + be(0, 4) + "soun" + std::string(12, '\0') + std::string(1, '\0'));
+    const std::string mdhd = box("mdhd", be(0, 4) + be(0, 4) + be(0, 4) + be(timescale, 4) + be(duration, 4) + be(0, 4));
+    const std::string entry = box("lpcm", std::string(6, '\0') + be(1, 2) + be(2, 2) + be(0, 2) + be(0, 4) + be(3, 2)
+                                              + be(16, 2) + be(0xfffe, 2) + be(0, 2) + be(0x00010000, 4) + be(72, 4)
+                                              + be(std::bit_cast<std::uint64_t>(rate), 8) + be(2, 4)
+                                              + std::string(20, '\0'));
+    const std::string stsd = box("stsd", be(0, 4) + be(1, 4) + entry);
+    return box("trak", box("mdia", hdlr + mdhd + box("minf", box("stbl", stsd))));
+}
+
 std::string m4a(const std::string &traks, std::size_t mdatBytes)
 {
     return box("ftyp", "M4A " + be(0, 4) + "M4A isom") + box("mdat", std::string(mdatBytes, '\x03'))
@@ -211,7 +227,25 @@ int main(int argc, char **argv)
     // A timescale other than the rate: the count only where it is whole.
     expect("h.mp4", m4a(mp4Trak("soun", 1000, 3000, 44100, false), 8), 132300, 44100.0, Source::Mp4TrackDuration);
 
+    // Rates of 65536 Hz and more: the 16.16 field cannot hold them and is
+    // the timescale cut to 16 bits (96000 & 0xFFFF = 30464); the timescale
+    // is the rate. A QuickTime version 2 entry says it as a float64.
+    expect("i96.m4a", m4a(mp4Trak("soun", 96000, 288001, 96000, false), 8), 288001, 96000.0,
+           Source::Mp4TrackDuration);
+    expect("i192.m4a", m4a(mp4Trak("soun", 192000, 576003, 192000, true), 8), 576003, 192000.0,
+           Source::Mp4TrackDuration);
+    expect("i0.m4a", m4a(mp4Trak("soun", 88200, 264601, 0, false), 8), 264601, 88200.0, Source::Mp4TrackDuration);
+    expect("v2.m4a", m4a(qtV2Trak(96000, 288001, 96000.0), 8), 288001, 96000.0, Source::Mp4TrackDuration);
+    expect("v2-600.m4a", m4a(qtV2Trak(600, 1800, 96000.0), 8), 288000, 96000.0, Source::Mp4TrackDuration);
+
     // 2. Nothing.
+    // A rate that cannot be trusted: no count rather than a wrong one. A
+    // 96 kHz 16.16 field over a timescale that is not the rate (30464 Hz,
+    // no rate files are made at); a version 2 rate that is no number.
+    check(!counted("t1.m4a", m4a(mp4Trak("soun", 1000, 3000, 96000, false), 8)), "a cut 16.16 rate over a timescale of 1000");
+    check(!counted("t2.m4a", m4a(qtV2Trak(96000, 288001, std::nan("")), 8)), "a version 2 rate that is not a number");
+    check(!counted("t3.m4a", m4a(qtV2Trak(96000, 288001, 95999.5), 8)), "a version 2 rate that is not whole");
+    check(!counted("t4.m4a", m4a(mp4Trak("soun", 1234, 3000, 0, false), 8)), "no entry rate and no rate for a timescale");
     check(!readExactSampleCount(pathToUtf8(dir / "none.flac")), "a file that is not there");
     check(!counted("x.ogg", "OggS"), "another kind");
     check(!counted("x.flac", flacStreamInfoOnly(44100, 0)), "STREAMINFO's 0 means not known");

@@ -115,6 +115,18 @@ TestCase {
         summary.close();
         tryCompare(summary, "opened", false, 2000);
 
+        // Whole, but with notes (what copying rekordbox's analysis along
+        // with a sync did): the dialog says them, a toast has no room.
+        const noted = {written: 12, total: 12, unit: "tracks", cancelled: false, error: "",
+                       notes: "From rekordbox, 12 beat grids copied."};
+        compare(t.host.landsQuietly(noted), false, "a save with notes does not land quietly");
+        t.session.saveFinished(noted);
+        tryCompare(summary, "opened", true, 2000);
+        summary.close();
+        tryCompare(summary, "opened", false, 2000);
+        compare(t.host.landsQuietly({written: 12, total: 12, unit: "tracks", cancelled: false, error: "", notes: ""}),
+                true, "empty notes are none");
+
         // Without the flag every save gets its summary, as before.
         t.host.quietCleanSaves = false;
         t.session.saveFinished({written: 12, total: 12, unit: "tracks", cancelled: false, error: ""});

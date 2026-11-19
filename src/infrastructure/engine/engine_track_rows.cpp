@@ -6,6 +6,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -762,41 +764,78 @@ std::optional<bool> blobsInTrack(const Connection &db, std::string *error)
 
 }  // namespace
 
-std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile, std::int64_t trackId,
-                                                       std::string *error)
+// The two connections an EngineAnalysisRowAccess holds, each opened on
+// first use and kept: one read-only for the reads (a preview on a
+// read-only stick reads too), one for the writes.
+struct EngineAnalysisRowAccess::Connections
+{
+    ~Connections()
+    {
+        sqlite3_finalize(rowQuery);
+    }
+    std::unique_ptr<Connection> reader;
+    std::unique_ptr<Connection> writer;
+    std::optional<bool> readerBlobsInTrack;
+    std::optional<bool> writerBlobsInTrack;
+    // The reader's row query, prepared once; the library's uuid, read once.
+    sqlite3_stmt *rowQuery = nullptr;
+    std::optional<std::string> libraryUuid;
+};
+
+EngineAnalysisRowAccess::EngineAnalysisRowAccess(std::string databaseFile)
+    : m_file(std::move(databaseFile))
+    , m_connections(std::make_unique<Connections>())
+{
+}
+
+EngineAnalysisRowAccess::~EngineAnalysisRowAccess() = default;
+
+std::optional<EngineAnalysisRow> EngineAnalysisRowAccess::read(std::int64_t trackId, std::string *error)
 {
     if (error == nullptr) {
         throw std::invalid_argument("readEngineAnalysisRow: the error out-parameter is required");
     }
     error->clear();
-    Connection db(databaseFile, SQLITE_OPEN_READONLY);
-    if (!db.ok()) {
-        *error = "could not open " + databaseFile + ": " + db.why();
-        return std::nullopt;
+    auto &c = *m_connections;
+    if (!c.reader) {
+        auto opened = std::make_unique<Connection>(m_file, SQLITE_OPEN_READONLY);
+        if (!opened->ok()) {
+            *error = "could not open " + m_file + ": " + opened->why();
+            return std::nullopt;
+        }
+        c.reader = std::move(opened);
     }
-    const auto inTrack = blobsInTrack(db, error);
-    if (!inTrack) {
-        return std::nullopt;
+    const Connection &db = *c.reader;
+    if (!c.readerBlobsInTrack) {
+        c.readerBlobsInTrack = blobsInTrack(db, error);
+        if (!c.readerBlobsInTrack) {
+            return std::nullopt;
+        }
     }
-    const std::string sql = *inTrack
-        ? "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, t.trackData, "
-          "t.overviewWaveFormData, t.beatData FROM Track t WHERE t.id = ?1;"
-        : "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, p.trackData, "
-          "p.overviewWaveFormData, p.beatData FROM Track t LEFT JOIN PerformanceData p ON p.trackId = t.id "
-          "WHERE t.id = ?1;";
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(db.handle(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        *error = "could not read track id=" + std::to_string(trackId) + ": " + sqlite3_errmsg(db.handle());
-        sqlite3_finalize(stmt);
-        return std::nullopt;
+    if (c.rowQuery == nullptr) {
+        const std::string sql = *c.readerBlobsInTrack
+            ? "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, t.trackData, "
+              "t.overviewWaveFormData, t.beatData FROM Track t WHERE t.id = ?1;"
+            : "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, p.trackData, "
+              "p.overviewWaveFormData, p.beatData FROM Track t LEFT JOIN PerformanceData p ON p.trackId = t.id "
+              "WHERE t.id = ?1;";
+        if (sqlite3_prepare_v2(db.handle(), sql.c_str(), -1, &c.rowQuery, nullptr) != SQLITE_OK) {
+            *error = "could not read track id=" + std::to_string(trackId) + ": " + sqlite3_errmsg(db.handle());
+            sqlite3_finalize(c.rowQuery);
+            c.rowQuery = nullptr;
+            return std::nullopt;
+        }
     }
+    sqlite3_stmt *stmt = c.rowQuery;
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
     sqlite3_bind_int64(stmt, 1, trackId);
     const int step = sqlite3_step(stmt);
     if (step != SQLITE_ROW) {
-        *error = step == SQLITE_DONE ? "no track id=" + std::to_string(trackId) + " in " + databaseFile
+        *error = step == SQLITE_DONE ? "no track id=" + std::to_string(trackId) + " in " + m_file
                                      : "could not read track id=" + std::to_string(trackId) + ": "
                 + sqlite3_errmsg(db.handle());
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return std::nullopt;
     }
     EngineAnalysisRow row;
@@ -810,35 +849,47 @@ std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databa
     row.columns.trackData = columnValue(stmt, 6);
     row.columns.overviewWaveFormData = columnValue(stmt, 7);
     row.columns.beatData = columnValue(stmt, 8);
-    sqlite3_finalize(stmt);
+    // Reset, so the read holds no lock on the database between calls.
+    sqlite3_reset(stmt);
 
-    if (sqlite3_prepare_v2(db.handle(), "SELECT uuid FROM Information ORDER BY id LIMIT 1;", -1, &stmt, nullptr)
-            != SQLITE_OK
-        || sqlite3_step(stmt) != SQLITE_ROW) {
-        *error = std::string("could not read the library's uuid: ") + sqlite3_errmsg(db.handle());
-        sqlite3_finalize(stmt);
-        return std::nullopt;
+    if (!c.libraryUuid) {
+        sqlite3_stmt *uuid = nullptr;
+        if (sqlite3_prepare_v2(db.handle(), "SELECT uuid FROM Information ORDER BY id LIMIT 1;", -1, &uuid, nullptr)
+                != SQLITE_OK
+            || sqlite3_step(uuid) != SQLITE_ROW) {
+            *error = std::string("could not read the library's uuid: ") + sqlite3_errmsg(db.handle());
+            sqlite3_finalize(uuid);
+            return std::nullopt;
+        }
+        c.libraryUuid = columnValue(uuid, 0).bytes;
+        sqlite3_finalize(uuid);
     }
-    row.libraryUuid = columnValue(stmt, 0).bytes;
-    sqlite3_finalize(stmt);
+    row.libraryUuid = *c.libraryUuid;
     return row;
 }
 
-bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t trackId,
-                                const application::EngineAnalysisColumns &columns, std::string *error)
+bool EngineAnalysisRowAccess::write(std::int64_t trackId, const application::EngineAnalysisColumns &columns,
+                                    std::string *error)
 {
     if (error == nullptr) {
         throw std::invalid_argument("writeEngineAnalysisColumns: the error out-parameter is required");
     }
     error->clear();
-    Connection db(databaseFile, SQLITE_OPEN_READWRITE);
-    if (!db.ok()) {
-        *error = "could not open " + databaseFile + ": " + db.why();
-        return false;
+    auto &c = *m_connections;
+    if (!c.writer) {
+        auto opened = std::make_unique<Connection>(m_file, SQLITE_OPEN_READWRITE);
+        if (!opened->ok()) {
+            *error = "could not open " + m_file + ": " + opened->why();
+            return false;
+        }
+        c.writer = std::move(opened);
     }
-    const auto inTrack = blobsInTrack(db, error);
-    if (!inTrack) {
-        return false;
+    const Connection &db = *c.writer;
+    if (!c.writerBlobsInTrack) {
+        c.writerBlobsInTrack = blobsInTrack(db, error);
+        if (!c.writerBlobsInTrack) {
+            return false;
+        }
     }
     if (!db.exec("BEGIN IMMEDIATE;", error)) {
         return false;
@@ -874,7 +925,7 @@ bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t tr
     };
     // The blobs first, then the flags, in one transaction: a row is never
     // seen flagged analysed with the blobs of another analysis.
-    const std::string blobs = *inTrack
+    const std::string blobs = *c.writerBlobsInTrack
         ? "UPDATE Track SET trackData = ?1, overviewWaveFormData = ?2, beatData = ?3 WHERE id = ?4;"
         : "UPDATE PerformanceData SET trackData = ?1, overviewWaveFormData = ?2, beatData = ?3 WHERE trackId = ?4;";
     if (!run(blobs, {&columns.trackData, &columns.overviewWaveFormData, &columns.beatData})) {
@@ -889,6 +940,18 @@ bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t tr
         return fail();
     }
     return true;
+}
+
+std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile, std::int64_t trackId,
+                                                       std::string *error)
+{
+    return EngineAnalysisRowAccess(databaseFile).read(trackId, error);
+}
+
+bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t trackId,
+                                const application::EngineAnalysisColumns &columns, std::string *error)
+{
+    return EngineAnalysisRowAccess(databaseFile).write(trackId, columns, error);
 }
 
 }  // namespace seabass::infrastructure::engine

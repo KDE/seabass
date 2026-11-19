@@ -21,6 +21,8 @@
 namespace seabass::infrastructure::engine
 {
 
+class EngineAnalysisRowAccess;
+
 // The beat grid write's options and outcomes are the application's
 // port (application/ports/beat_grid_writer.hpp), named here as well for
 // the callers that always used them from this header.
@@ -149,14 +151,24 @@ public:
     // flagged analysed with a piece missing does not play on a Prime 4 (no
     // waveform drawn, the track never starts). Only when both parts are
     // asked for, the grid converts, a preview is there and the length can
-    // be worked out (scrollEntries and fileSampleRateHz): then the analysis
-    // record, the overview, the beat data (both grids rekordbox's), the
-    // overview file, the tempo and key, and last the analysed flag, so a
-    // failure part way leaves a row the player will still analyse. Missing
-    // anything, nothing is written and the outcomes say why.
+    // be worked out (scrollEntries and fileSampleRateHz): then the overview
+    // file, and after it in one transaction the analysis record, the
+    // overview, the beat data (both grids rekordbox's), the tempo and key
+    // and the analysed flag, so a failure part way leaves a row the player
+    // will still analyse. Missing anything, nothing is written and the
+    // outcomes say why.
     //
-    // Engine 2.x keeps these columns in Track, 3.x in PerformanceData; both
-    // are written. Engine 1.x is UnsupportedSchema.
+    // A row whose analysed flag is not a number, or is up over beat data
+    // that does not decode, is RowUnreadable in both parts: unsure whether
+    // the player analysed it, it is neither replaced nor filled. With a
+    // kept-analysis store, a row the player analysed whose track has no
+    // key (keepKey empty: its file is not under the stick root) is
+    // CannotKeepEngines in the parts that would be written, in a preview
+    // too: the player's analysis is never replaced unkept.
+    //
+    // Every write of a row's columns is one transaction (writeBeatGrid()'s
+    // too). Engine 2.x keeps these columns in Track, 3.x in
+    // PerformanceData; both are written. Engine 1.x is UnsupportedSchema.
     AnalysisImportResult importAnalysis(const std::string &trackSourceId, const RekordboxAnalysis &analysis,
                                         const AnalysisImportOptions &options = {}) override;
 
@@ -178,23 +190,33 @@ public:
     // Without one nothing is kept, which only a test wants.
     //
     // Kept after every check and the hook, before the row's first byte
-    // changes. A failure to keep it (no key: the file is not under the
-    // stick root; a kept entry that cannot be read; a write that fails)
-    // throws, and the row is not changed.
+    // changes. A row with no key is refused before that
+    // (CannotKeepEngines). A failure to keep it (a kept entry that cannot
+    // be read; a write that fails) throws, and the row is not changed.
+    //
+    // A write has two parts that can come apart: the row's columns (one
+    // transaction) and the overview file. So the entry records, before the
+    // first byte changes, the row both as it is and as the write will leave
+    // it, each part on its own (KeptEngineAnalysis::seabassColumnStates,
+    // seabassColumnAnalyses, seabassFiles, with seabassState and
+    // seabassAnalysis for the whole). A row whose every part is one of
+    // those, or the kept original's, is Seabass's own, its write finished or
+    // cut short (or a restore cut short): it is written again, and restored
+    // without being taken for a change on the player.
     //
     // Which analysis is kept:
     // - nothing kept yet: the row as it is, unless it is Seabass's own (the
     //   ledger's fingerprint is the row's grid: a row Seabass completed,
     //   which the player never analysed);
-    // - kept already: the kept one stays (first kept wins), unless the
-    //   analysis now in the row (analysis record, overview, Engine's own
-    //   grid, overview file) is neither the kept one's nor the one Seabass
-    //   last left there: then the player analysed the row anew, and that
-    //   newer analysis is kept instead. A grid the DJ moved or locked on
-    //   the player is not an analysis and changes nothing here;
-    // - either way the entry records the row as this write leaves it
-    //   (KeptEngineAnalysis::seabassState and seabassAnalysis), written
-    //   only when that changes.
+    // - kept already: the kept one stays (first kept wins). It is replaced
+    //   only on positive evidence of the player's new analysis: the
+    //   analysis in the row's columns (analysis record, overview, Engine's
+    //   own grid, the flag) is neither the kept one's nor one Seabass's last
+    //   write found or left there. Then that newer analysis is kept instead.
+    //   The overview file alone is no evidence (Seabass's write of it can be
+    //   cut short), nor is a grid the DJ moved or locked on the player;
+    // - either way the entry records the row as this write leaves it,
+    //   written only when that changes.
     // A row the player has not analysed keeps nothing; when it has a kept
     // entry (the player was asked to analyse it again), the entry records
     // the row as Seabass completes it.
@@ -213,9 +235,11 @@ public:
     // setOverviewFileRoot() names. A save that writes the database through
     // a scratch copy routes it through its own protection and backup
     // instead; a sink that throws fails the call. The file sits outside the
-    // database, so it is written after the database's columns: a failure
-    // there leaves a row whose file is stale, and players leave stale ones
-    // themselves, so that is a state they already handle.
+    // database: on a row the player analysed it is written after the
+    // columns, and a failure there leaves a row whose file is stale (players
+    // leave stale ones themselves, and the kept entry knows the row for
+    // Seabass's own); on a row being completed it is written before the
+    // columns and the analysed flag.
     using OverviewFileSink = std::function<void(const std::string &relativePath, const std::string &bytes)>;
     void setOverviewFileSink(OverviewFileSink sink) { m_overviewFileSink = std::move(sink); }
 
@@ -237,13 +261,27 @@ public:
 private:
     double shiftMsOf(djinterop::track &track);
     std::string databaseFile() const;
-    // The row's analysis as stored, its overview file included.
+    // setOverviewFileRoot()'s folder, else the library's.
+    std::string overviewFileRoot() const;
+    // The row reads and writes of the analysis, over connections held for
+    // the writer's life (one per call cost a full SQLite open each).
+    EngineAnalysisRowAccess &rowAccess();
+    // The row's analysis as stored; with its overview file when asked.
     struct RowNow;
-    RowNow readRowNow(std::int64_t id);
-    // See setKeptAnalysisStore(). `apply` turns the row as it is into the
-    // row as the write will leave it.
+    RowNow readRowNow(std::int64_t id, bool withOverviewFile);
+    // The columns of `after` into the row in one transaction, when any
+    // differs from `before`. Throws when it cannot.
+    void writeColumns(std::int64_t id, const application::EngineAnalysisColumns &before,
+                      const application::EngineAnalysisColumns &after);
+    // The overview file written (bytes) or taken away (none), through the
+    // sink or the remover where there is one.
+    void putOverviewFile(const std::string &relativePath, const std::optional<std::string> &bytes);
+    // The hook, setBeforeBeatGridWrite().
+    void beforeWrite();
+    // See setKeptAnalysisStore(). `row` is the row as read before the
+    // write; `apply` turns it into the row as the write will leave it.
     bool keepBeforeWrite(std::int64_t id, const std::string &keepKey, bool playerAnalysed, bool rowIsSeabass,
-                         const std::function<void(application::EngineAnalysisColumns &)> &apply);
+                         const RowNow &row, const std::function<void(application::EngineAnalysisColumns &)> &apply);
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
                    std::optional<double> knownSampleRate);
 
@@ -266,6 +304,7 @@ private:
     // Engine 1.x. Opened by database(), on one connection with it.
     struct Tables;
     std::shared_ptr<Tables> m_tables;
+    std::shared_ptr<EngineAnalysisRowAccess> m_rows;
 
     std::string m_engineLibraryPath;
     std::string m_audioRoot;

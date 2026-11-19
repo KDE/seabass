@@ -650,6 +650,89 @@ TestCase {
         compare(o.c.notInEngineText, "");
     }
 
+    // What is staged holds no copy of rekordbox's analysis: the save reads
+    // it again, and a track whose analysis changed in rekordbox since the
+    // preview is skipped, saying so, never written with what the page did
+    // not show.
+    function test_aSaveWritesOnlyWhatThePreviewShowed() {
+        const stick = t73();
+        const o = openOn(stick);
+        clickPlaylistBox(o.page, "T73 Folder/T73 New");
+        waitSettled(o.c);
+        compare(o.c.tracksToWrite, 3);
+        mouseClick(findChild(o.page, "stageButton"));
+        compare(o.c.stagedCount, 3);
+        verify(stickFixture.removeRekordboxBeatGridFile(stick, n1), "N1's beat grid leaves rekordbox's export");
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        const saved = finished(session, () => session.save(), "the copy");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.skipped, 1, "N1 is skipped: " + JSON.stringify(saved));
+        compare(stickFixture.keptEngineAnalyses(stick), 2, "and its row untouched, nothing kept of it");
+        compare(o.c.lastSaveTracks, 2);
+    }
+
+    // Back from Sync after Rekordbox Export, whose save put the missing
+    // tracks into the Engine library: the page reads the libraries again
+    // when it is in front again (reloadIfStale(), StackView.onActivated),
+    // and keeps the ticks of the tracks that can still be ticked. Without
+    // another page's save it reads nothing again.
+    function test_backFromAnotherPagesSaveReadsAgain() {
+        const stick = t73();
+        const db = stick + "/Engine Library/Database2/m.db";
+        verify(stickFixture.copyFile(db, db + ".all"));
+        compare(stickFixture.removeEngineTracks(stick, [1, 2]), 2, "B07 and B08 leave the Engine library");
+        const o = openOn(stick);
+        waitSettled(o.c);
+        compare(o.c.notInEngineShown, 2);
+        o.c.setTicked(b04, true);
+        o.c.setTicked(b12, true);
+        compare(o.c.tickedCount, 2);
+        o.c.reloadIfStale();
+        compare(o.c.loading, false, "nothing saved meanwhile: nothing read again");
+
+        // Another page's save: the rows are back in the Engine library.
+        verify(stickFixture.moveFile(db + ".all", db));
+        verify(stickFixture.touch(db));
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        session.saveFinished({written: 2, total: 2, unit: "tracks", verb: "synced", cancelled: false, error: "",
+                              skipped: 0});
+        waitSettled(o.c);
+        compare(o.c.notInEngineShown, 2, "not read again behind another page");
+        o.c.reloadIfStale();
+        tryVerify(() => o.c.loaded && !o.c.loading && o.c.notInEngineShown === 0, 120000,
+                  "read again: every track is in both libraries " + o.c.notInEngineShown);
+        compare(o.c.matchedCount, 11);
+        compare(row(o.c, b07).matched, true);
+        compare(o.c.tickedCount, 2, "the ticks stay");
+        verify(o.c.isTicked(b04) && o.c.isTicked(b12));
+        waitSettled(o.c);
+        compare(findChild(o.page, "notInEngineLabel").visible, false);
+    }
+
+    // A lost ledger: the ticked tracks already the same go into the next
+    // copy's record with the ones it copies, as the command line records
+    // them, so the grids Seabass wrote are not taken for the player's.
+    function test_aLostLedgerLearnsTheTracksAlreadyTheSame() {
+        const stick = t73();
+        const o = openOn(stick);
+        copyT73New(o);
+        const ledgerFile = stick + "/Seabass/beat-grids.tsv";
+        const ledgerLines = () => stickFixture.readText(ledgerFile).split("\n").filter(line => line.length > 0);
+        compare(ledgerLines().length, 1 + 3);
+        verify(stickFixture.moveFile(ledgerFile, ledgerFile + ".lost"));
+        verify(o.c.ledgerWarning.length === 0, "a missing ledger is no warning");
+        clickPlaylistBox(o.page, "");
+        waitSettled(o.c);
+        compare(o.c.tickedCount, 11);
+        compare(o.c.tracksToWrite, 8, "the 3 copied before are already the same");
+        mouseClick(findChild(o.page, "stageButton"));
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        const saved = finished(session, () => session.save(), "the copy");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.written, 8);
+        compare(ledgerLines().length, 1 + 11, "the record has the 8 copied and the 3 already the same");
+    }
+
     // One left line at the narrowest width the page is laid out for, the
     // title and the row's marks never on top of each other, and a picture
     // of it with a playlist shown and some tracks ticked.

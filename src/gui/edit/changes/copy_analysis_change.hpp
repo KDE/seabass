@@ -9,6 +9,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <QString>
 #include <QStringList>
@@ -51,6 +53,9 @@ public:
         bool leftForPlayer = false;
         bool noRekordboxAnalysis = false;
         bool alreadySame = false;
+        // The player's analysis could not be kept first (the file is not
+        // under the stick root), so it was not replaced.
+        bool cannotKeep = false;
         QString otherReason;
         // With leftForPlayer, what kept the row from being completed, in
         // words ("no rekordbox waveform", "no length for the file"); empty
@@ -90,6 +95,7 @@ struct AnalysisNoteCounts
     int forPlayer = 0;
     int noAnalysis = 0;
     int same = 0;
+    int cannotKeep = 0;
     // Left for the player, by what kept the row from being completed.
     std::map<QString, int> forPlayerBecause;
     std::map<QString, int> other;
@@ -159,17 +165,30 @@ class CopyAnalysisChange : public PendingChange
 {
 public:
     // stickRoot: the stick's root (UTF-8), where the ledger lives.
-    // `analysis` is rekordbox's, as the preview read it; `options` the
-    // writer options the preview ran with (previewOnly is cleared here).
-    // `overviewFile`: the overview file the preview said would be written,
-    // from the Engine Library folder; empty for none.
-    CopyAnalysisChange(QString enginePath, std::string stickRoot, application::BeatGridCopyItem item,
-                       application::RekordboxAnalysis analysis, application::AnalysisImportOptions options,
-                       std::string overviewFile, int itemCountHint, bool declaresFiles,
-                       std::shared_ptr<AnalysisSaveTally> tally = {});
+    // rekordbox's analysis is read again from `rekordboxPath` when the save
+    // reaches the change (one track's at a time, not every staged track's
+    // held in memory), and written only when its digest
+    // (rekordboxAnalysisDigest()) is `analysisDigest`, the preview's: a
+    // track whose analysis changed in rekordbox meanwhile is skipped,
+    // saying so, never written with what the preview did not show.
+    // `options` the writer options the preview ran with (previewOnly is
+    // cleared here). `overviewFile`: the overview file the preview said
+    // would be written, from the Engine Library folder; empty for none.
+    CopyAnalysisChange(QString enginePath, QString rekordboxPath, std::string stickRoot,
+                       application::BeatGridCopyItem item, std::string analysisDigest,
+                       application::AnalysisImportOptions options, std::string overviewFile, int itemCountHint,
+                       bool declaresFiles, std::shared_ptr<AnalysisSaveTally> tally = {});
 
     static QString idFor(const std::string &engineTrackId);
     static QString backupLabel();
+
+    // Ledger lines (ledger key, grid fingerprint) of other ticked rows the
+    // preview found already the same, recorded in the ledger with this
+    // change when it lands. The first change of a batch carries them.
+    void setLedgerRiders(std::vector<std::pair<std::string, std::string>> riders)
+    {
+        m_ledgerRiders = std::move(riders);
+    }
 
     QString id() const override;
     QString description() const override;
@@ -183,14 +202,16 @@ public:
 
 private:
     QString m_enginePath;
+    QString m_rekordboxPath;
     std::string m_stickRoot;
     application::BeatGridCopyItem m_item;
-    application::RekordboxAnalysis m_analysis;
+    std::string m_analysisDigest;
     application::AnalysisImportOptions m_options;
     std::string m_overviewFile;
     int m_itemCountHint = 1;
     bool m_declaresFiles = true;
     std::shared_ptr<AnalysisSaveTally> m_tally;
+    std::vector<std::pair<std::string, std::string>> m_ledgerRiders;
 };
 
 // Sync after Rekordbox Export with "Copy beat grids/waveforms from

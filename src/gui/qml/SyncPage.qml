@@ -115,7 +115,9 @@ Page {
         if (!whole) {
             console.info(syncLog, "Sync Cue Points: no toast, the save was not whole: " + JSON.stringify(summary));
         }
-        if (whole) {
+        // A save with notes (what copying rekordbox's analysis did) opens the
+        // summary dialog instead, which says them (EditSessionHost).
+        if (whole && editHost.landsQuietly(summary)) {
             // An Undo Last Save comes through here too, and it synced no
             // cues: in this page's words it read "Marked as already
             // imported". It says what every page says after an undo.

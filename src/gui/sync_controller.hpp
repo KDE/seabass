@@ -27,6 +27,7 @@ namespace seabass::gui
 {
 
 class LibraryEditSession;
+struct SyncAnalysisStaging;
 
 // Result of a background analyze task, see SyncController::analyze().
 // Built entirely on a worker thread, with no access to the controller.
@@ -204,8 +205,9 @@ private:
     void attachSession();
     // Stages the plan at `index`; true when its change also carries
     // rekordbox's analysis for the Engine row (Preferences, see
-    // SyncPlanChange::setAnalysisRider()).
-    bool stagePlan(int index);
+    // SyncPlanChange::setAnalysisRider()). `staging`: Preferences' analysis
+    // switches, read once by a caller staging many; null reads them here.
+    bool stagePlan(int index, const SyncAnalysisStaging *staging = nullptr);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
     void noticeCuesLeftOut(const std::vector<int> &stagedIndices);
     static QString leftOutKeyFor(const domain::SyncPlan &plan);
