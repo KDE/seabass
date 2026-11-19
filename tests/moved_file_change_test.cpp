@@ -625,6 +625,30 @@ int main(int argc, char **argv)
             assert(r.filePath == spelled && "each catalog its own spelling");
         }
         write(newFile, "audio bytes");
+        // The folder is on disk now, in the stick's own spelling, as it is
+        // on a real stick: the new file is in it. A FAT or exFAT stick, and
+        // macOS's own disk, find it by any spelling, and asking the
+        // filesystem for the path answers in the disk's spelling, not the
+        // row's. On a filesystem that tells case apart a link per other
+        // spelling stands in for that, so the lookup meets it here too.
+        const fs::path folder = pathFromUtf8(rekordboxSpelling).parent_path();
+        assert(fs::is_directory(folder) && "the old file's folder is on disk");
+        for (const std::string &other : {oneLibrarySpelling, engineSpelling}) {
+            const fs::path otherFolder = pathFromUtf8(other).parent_path();
+            if (!fs::exists(otherFolder)) {
+                fs::create_directory_symlink(folder.filename(), otherFolder);
+            }
+            assert(fs::equivalent(otherFolder, folder) && "every spelling of the folder finds it");
+        }
+        // export.pdb's lookup spells a row's path as the row does too.
+        const std::string engineOnStick = rekordboxPathOnStick(pathToUtf8(f.pioneer), engineSpelling);
+        if (key(engineOnStick) != key(rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling))
+            || engineOnStick == rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling)) {
+            std::cerr << "export.pdb would look \"" << engineSpelling << "\" up as \"" << engineOnStick << "\"\n";
+        }
+        assert(engineOnStick != rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling)
+               && key(engineOnStick) == key(rekordboxPathOnStick(pathToUtf8(f.pioneer), rekordboxSpelling))
+               && "a path on the stick keeps its own spelling");
         finding.candidates.push_back({fileAt(newFile), domain::MovedFileCandidate::Confidence::High, "the same"});
         assert(relinkRefusalFor(pathToQString(f.pioneer), finding, pathToUtf8(newFile)).empty());
         auto change = std::make_shared<RelinkMovedFileChange>(pathToQString(f.pioneer), pathToQString(f.engine),

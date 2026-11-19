@@ -20,6 +20,7 @@
 #include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
@@ -75,11 +76,16 @@ QString movedFileChangeId(const std::string &expectedPath)
     return "moved-file:" + QString::fromStdString(application::normalizedPathKey(expectedPath));
 }
 
+// Lexically, as the readers joined the stick and the row's path to make
+// `filePath`: fs::relative() asks the filesystem, and one that does not
+// tell case apart (macOS's own disk, and FAT and exFAT on macOS and
+// Windows) answers with the disk's spelling of every folder there,
+// not the row's, and export.pdb is looked up byte for byte (#103).
 std::string rekordboxPathOnStick(const std::string &pioneerRoot, const std::string &filePath)
 {
-    std::error_code ec;
-    const auto relative = fs::relative(pathFromUtf8(filePath), pathFromUtf8(pioneerRoot).parent_path(), ec);
-    return ec || relative.empty() ? filePath : "/" + pathToGenericUtf8(relative);
+    const auto relative = pathFromUtf8(filePath).lexically_normal().lexically_relative(
+        pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(pioneerRoot)));
+    return relative.empty() ? filePath : "/" + pathToGenericUtf8(relative);
 }
 
 std::string relinkRefusalFor(const QString &pioneerRoot, const domain::MovedFileFinding &finding,

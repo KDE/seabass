@@ -19,6 +19,7 @@
 #include <sqlite3.h>
 
 #include "infrastructure/engine/engine_track_rows.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/utc_timestamp.hpp"
 
@@ -127,17 +128,38 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
     }
 }
 
+namespace
+{
+
+// The relative path a Track row keeps for `filePath`, spelled as the row
+// spells it: the reader made `filePath` by joining the library folder and
+// the row's path lexically, so this undoes that join lexically too.
+// fs::relative() would ask the filesystem, and a filesystem that does not
+// tell case apart (APFS on macOS, FAT and exFAT through macOS and Windows)
+// answers with the disk's spelling of every folder that exists: a row
+// spelling "../contents/x.mp3" for a folder the disk calls "Contents" was
+// looked up as "../Contents/x.mp3" and not found (#103). Rows that differ
+// only in case are still told apart: the lookup stays byte for byte.
+// Empty when the two share no root.
+std::string rowSpelling(const std::string &filePath, const std::string &realLibraryPath)
+{
+    const auto relative = pathFromUtf8(filePath).lexically_normal().lexically_relative(
+        pathFromUtf8(paths::normalStickRoot(realLibraryPath)));
+    return relative.empty() ? std::string() : pathToGenericUtf8(relative);
+}
+
+}  // namespace
+
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
                                                 const std::string &filePath)
 {
     auto db = djinterop::engine::load_database(databaseRoot);
-    std::error_code ec;
-    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(realLibraryPath), ec);
+    const std::string relative = rowSpelling(filePath, realLibraryPath);
     std::vector<std::int64_t> ids;
-    if (ec) {
+    if (relative.empty()) {
         return ids;
     }
-    for (const auto &t : db.tracks_by_relative_path(pathToGenericUtf8(relative))) {
+    for (const auto &t : db.tracks_by_relative_path(relative)) {
         ids.push_back(t.id());
     }
     return ids;
@@ -146,11 +168,11 @@ std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot,
 int setEngineTrackPath(const std::string &databaseRoot, const std::string &realLibraryPath,
                        const std::string &filePath, const std::string &newFilePath)
 {
-    std::error_code ec;
-    const auto oldRelative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(realLibraryPath), ec);
-    if (ec || oldRelative.empty()) {
+    const std::string oldRelative = rowSpelling(filePath, realLibraryPath);
+    if (oldRelative.empty()) {
         return 0;
     }
+    std::error_code ec;
     const auto newRelative = std::filesystem::relative(pathFromUtf8(newFilePath), pathFromUtf8(realLibraryPath), ec);
     if (ec || newRelative.empty()) {
         throw std::runtime_error("engine: " + newFilePath + " cannot be spelled relative to " + realLibraryPath);
@@ -160,7 +182,7 @@ int setEngineTrackPath(const std::string &databaseRoot, const std::string &realL
     std::vector<std::int64_t> ids;
     {
         auto db = djinterop::engine::load_database(databaseRoot);
-        for (auto t : db.tracks_by_relative_path(pathToGenericUtf8(oldRelative))) {
+        for (auto t : db.tracks_by_relative_path(oldRelative)) {
             t.set_relative_path(newPath);
             ids.push_back(t.id());
         }
