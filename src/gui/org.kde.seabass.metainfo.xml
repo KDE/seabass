@@ -11,6 +11,7 @@ SPDX-License-Identifier: CC0-1.0
   <name>Seabass</name>
   <name xml:lang="ca">Seabass</name>
   <name xml:lang="ca-valencia">Seabass</name>
+  <name xml:lang="es">Seabass</name>
   <name xml:lang="nl">Seabass</name>
   <name xml:lang="pt-BR">Seabass</name>
   <name xml:lang="tr">Seabass</name>
@@ -39,8 +40,10 @@ SPDX-License-Identifier: CC0-1.0
     <p xml:lang="tr">Seabass, DJ USB bellekleri için bir araç kutusudur. Hem Pioneer hem de Denon donanımı için hazırlanan bir bellek, aynı kitaplığın iki veya üç bağımsız kopyasını taşır ve birbirleriyle konuşmazlar: Birine anlık bir işaret noktası koyduğunuzda normalde diğerleri bunu asla bilmezler. Seabass, bu kopyaları birden fazla kez yazılmış bir kitaplık gibi ele alır ve onları birbirlerinden haberdar tutar.</p>
     <p xml:lang="uk">Seabass — це набір інструментів для USB-накопичувачів, що використовуються ді-джеями. Накопичувач, підготовлений для роботи з обладнанням Pioneer і Denon, містить дві або три незалежні копії однієї і тієї ж бібліотеки, які ніяк не взаємодіють між собою: якщо ви встановите «гарячу мітку» в одній із них, інші про це навіть «не дізнаються». Seabass розглядає ці копії як єдину бібліотеку, записану кілька разів, і стежить за тим, щоб усі вони залишалися узгодженими.</p>
     <p>Features:</p>
+    <p xml:lang="ar">الميزات:</p>
     <p xml:lang="ca">Característiques:</p>
     <p xml:lang="ca-valencia">Característiques:</p>
+    <p xml:lang="es">Funciones:</p>
     <p xml:lang="nl">Mogelijkheden:</p>
     <p xml:lang="pt-BR">Funcionalidades:</p>
     <p xml:lang="tr">Özellikler:</p>
