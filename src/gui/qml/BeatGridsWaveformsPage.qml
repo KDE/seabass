@@ -158,13 +158,17 @@ Page {
                 }
 
                 // What to copy. The boxes themselves on the page's left line.
+                // A box that does not fit beside the others goes onto a line
+                // of its own, and one wider than the page wraps its words.
                 Flow {
+                    id: optionsRow
                     objectName: "optionsRow"
                     Layout.fillWidth: true
                     visible: root.usable
                     spacing: Theme.rowSpacing
                     SeabassCheckBox {
                         objectName: "gridsCheckBox"
+                        width: Math.min(implicitWidth, optionsRow.width)
                         leftPadding: 0
                         text: "Beat grids"
                         checked: root.controller.grids
@@ -180,6 +184,7 @@ Page {
                     }
                     SeabassCheckBox {
                         objectName: "waveformsCheckBox"
+                        width: Math.min(implicitWidth, optionsRow.width)
                         text: "Waveforms"
                         checked: root.controller.waveforms
                         enabled: root.ticksEnabled
@@ -194,6 +199,7 @@ Page {
                     }
                     SeabassCheckBox {
                         objectName: "replaceEditsCheckBox"
+                        width: Math.min(implicitWidth, optionsRow.width)
                         text: "Also replace grids locked or changed on the player"
                         checked: root.controller.replaceEngineEdits
                         enabled: root.ticksEnabled
@@ -396,30 +402,33 @@ Page {
                     noteColor: root.toneColor(trackRow.model.noteTone)
                     onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
 
+                    // Two lines, the same on every row: the grid's state over
+                    // the waveform's, each badge after a caption column as
+                    // wide as the wider caption, so the badges line up from
+                    // row to row whatever they say. A row with no state yet
+                    // (Checking) or none at all (not in Engine) keeps them,
+                    // and the note under them is always one line.
+                    noteOnOneLine: true
                     detailItems: [
-                        Label {
-                            objectName: "pendingLabel"
-                            visible: trackRow.pending
-                            text: "Checking"
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontTiny
-                            font.italic: true
-                        },
-                        StateMark {
-                            objectName: "gridMark"
-                            visible: !trackRow.pending && trackRow.model.gridState.length > 0
-                            caption: "Beat grid"
-                            value: trackRow.model.gridState
-                            tone: trackRow.model.gridTone
-                            tip: trackRow.model.gridTip
-                        },
-                        StateMark {
-                            objectName: "waveformMark"
-                            visible: !trackRow.pending && trackRow.model.waveformState.length > 0
-                            caption: "Waveform"
-                            value: trackRow.model.waveformState
-                            tone: trackRow.model.waveformTone
-                            tip: trackRow.model.waveformTip
+                        Column {
+                            objectName: "stateMarks"
+                            spacing: Theme.tightSpacing / 2
+                            StateMark {
+                                objectName: "gridMark"
+                                caption: "Beat grid"
+                                pending: trackRow.pending
+                                value: trackRow.model.gridState
+                                tone: trackRow.model.gridTone
+                                tip: trackRow.model.gridTip
+                            }
+                            StateMark {
+                                objectName: "waveformMark"
+                                caption: "Waveform"
+                                pending: trackRow.pending
+                                value: trackRow.model.waveformState
+                                tone: trackRow.model.waveformTone
+                                tip: trackRow.model.waveformTip
+                            }
                         }
                     ]
                     actionItems: [
@@ -444,28 +453,67 @@ Page {
     }
 
     // A part's state on a row: what it is, and the badge saying what
-    // copying does to it.
+    // copying does to it. As tall as a badge even without one, and its
+    // caption as wide as the wider of the two, so the badge's x is the same
+    // on every row.
     component StateMark: Row {
         id: mark
         property string caption: ""
+        property bool pending: false
         property string value: ""
         property string tone: ""
         property string tip: ""
-        spacing: Theme.tightSpacing / 2
+        readonly property bool shown: mark.pending || mark.value.length > 0
+        height: badgeMetric.implicitHeight
+        spacing: Theme.tightSpacing
         Label {
+            objectName: "stateCaption"
             anchors.verticalCenter: parent.verticalCenter
+            width: root.stateCaptionWidth
+            visible: mark.shown
             text: mark.caption
             color: Theme.textMuted
             font.pointSize: Theme.fontTiny
         }
+        Label {
+            objectName: "pendingLabel"
+            anchors.verticalCenter: parent.verticalCenter
+            visible: mark.pending
+            text: "Checking"
+            color: Theme.textMuted
+            font.pointSize: Theme.fontTiny
+            font.italic: true
+        }
         StatusBadge {
             objectName: "stateBadge"
             anchors.verticalCenter: parent.verticalCenter
+            visible: !mark.pending && mark.value.length > 0
             label: mark.value
             badgeColor: root.toneColor(mark.tone)
             tooltipText: mark.tip
         }
     }
+    // What StateMark measures itself by: never shown.
+    Label {
+        id: gridCaptionMetric
+        visible: false
+        text: "Beat grid"
+        font.pointSize: Theme.fontTiny
+    }
+    Label {
+        id: waveformCaptionMetric
+        visible: false
+        text: "Waveform"
+        font.pointSize: Theme.fontTiny
+    }
+    StatusBadge {
+        id: badgeMetric
+        visible: false
+        label: "New"
+        badgeColor: Theme.good
+    }
+    readonly property real stateCaptionWidth: Math.ceil(Math.max(gridCaptionMetric.implicitWidth,
+                                                                 waveformCaptionMetric.implicitWidth))
 
     BusyOverlay {
         anchors.fill: parent

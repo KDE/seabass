@@ -147,10 +147,52 @@ TestCase {
     function shownBadges(delegate) {
         const shown = [];
         for (const name of ["gridMark", "waveformMark"]) {
-            const mark = findChild(delegate, name);
-            shown.push(mark !== null && mark.visible ? findChild(mark, "stateBadge").label : null);
+            const badge = findChild(findChild(delegate, name), "stateBadge");
+            shown.push(badge !== null && badge.visible ? badge.label : null);
         }
         return shown;
+    }
+    // Every row one shape, whatever its states say: the same height, the
+    // beat grid's badge over the waveform's on two lines, both badges at
+    // one x on every row, and the badges clear of the tempo.
+    function verifyRowsAlike(page, ids, why) {
+        let height = -1;
+        let badgeX = -1;
+        for (const id of ids) {
+            const delegate = trackDelegate(page, id);
+            verify(delegate !== null, why + ": " + id + " is in view");
+            if (height < 0) {
+                height = delegate.height;
+            }
+            compare(delegate.height, height, why + ": " + id + " is as tall as the first row");
+            const grid = findChild(findChild(delegate, "gridMark"), "stateBadge");
+            const waveform = findChild(findChild(delegate, "waveformMark"), "stateBadge");
+            verify(grid.visible && waveform.visible, why + ": " + id + " shows both badges");
+            const gridX = grid.mapToItem(delegate, 0, 0).x;
+            if (badgeX < 0) {
+                badgeX = gridX;
+            }
+            compare(gridX, badgeX, why + ": " + id + "'s grid badge (" + grid.label + ") lines up with the first row's");
+            compare(waveform.mapToItem(delegate, 0, 0).x, badgeX,
+                    why + ": " + id + "'s waveform badge (" + waveform.label + ") too");
+            verify(waveform.mapToItem(delegate, 0, 0).y >= grid.mapToItem(delegate, 0, grid.height).y,
+                   why + ": " + id + ": the waveform's line is under the grid's");
+            const bpm = findChild(delegate, "bpmLabel");
+            for (const badge of [grid, waveform]) {
+                verify(badge.mapToItem(delegate, badge.width, 0).x <= bpm.mapToItem(delegate, 0, 0).x,
+                       why + ": " + id + "'s " + badge.label + " stops before the tempo");
+            }
+        }
+    }
+    // A box's words a gap from Theme's scale off the box itself.
+    function verifyBoxLabelGap(page, name) {
+        const box = findChild(page, name);
+        const indicator = findChild(box, "seabassCheckIndicator");
+        const label = box.contentItem;
+        const boxRight = indicator.mapToItem(page, indicator.width, 0).x;
+        const textLeft = label.mapToItem(page, label.leftPadding, 0).x;
+        verify(textLeft - boxRight >= Theme.tightSpacing,
+               name + ": its words start " + (textLeft - boxRight) + " px after the box, under " + Theme.tightSpacing);
     }
 
     function finished(session, run, what) {
@@ -289,6 +331,14 @@ TestCase {
         compare(JSON.stringify(shownBadges(trackDelegate(o.page, b02))),
                 JSON.stringify(["No beat grid in rekordbox", "Left for the player"]));
         compare(findChild(trackDelegate(o.page, b04), "bpmLabel").text, "108 BPM");
+        // The longest states the page shows, beside the shortest, at its
+        // widest and at its narrowest: one shape, the badges in one column.
+        verifyRowsAlike(o.page, [b01, b02, b04, b12], "wide");
+        o.page.width = 720;
+        verify(waitForPolish(o.page.Window.window));
+        verifyRowsAlike(o.page, [b01, b02, b04, b12], "720 px");
+        o.page.width = 1080;
+        verify(waitForPolish(o.page.Window.window));
 
         // Ticked, the ones that would change nothing are said and grouped.
         clickPlaylistBox(o.page, "T73 Renamed");
@@ -469,6 +519,10 @@ TestCase {
         }
         const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
         compare(box.mapToItem(o.page, 0, 0).x, left, "the first box itself is on the left line");
+        for (const name of ["gridsCheckBox", "waveformsCheckBox", "replaceEditsCheckBox"]) {
+            verifyBoxLabelGap(o.page, name);
+        }
+        verifyRowsAlike(o.page, [b01, b02, b04, b12], "720 px, three ticked");
 
         const list = findChild(o.page, "trackList");
         for (const id of [b01, b02, b04, b12]) {
@@ -488,6 +542,18 @@ TestCase {
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage.png");
         }
+
+        // Narrower than the boxes fit on one line: the last goes onto a
+        // line of its own, whole, rather than squeezing beside the others.
+        o.page.width = 480;
+        verify(waitForPolish(o.page.Window.window));
+        const options = findChild(o.page, "optionsRow");
+        const first = findChild(o.page, "gridsCheckBox");
+        const last = findChild(o.page, "replaceEditsCheckBox");
+        verify(last.y >= first.y + first.height, "the third box is on a line of its own");
+        compare(last.x, first.x, "and starts it on the left line");
+        verify(last.x + last.width <= options.width, "and fits the page");
+        verifyBoxLabelGap(o.page, "replaceEditsCheckBox");
     }
 
     // The anonymized library: its export has no waveform for the analysed

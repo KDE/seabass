@@ -27,6 +27,30 @@ CheckBox {
     // as the ticked box with a bar for its mark.
     readonly property bool partial: control.checkState === Qt.PartiallyChecked
 
+    // Between the box and its words, like RadioButton's.
+    spacing: Theme.tightSpacing
+
+    // The words, drawn here too. KDE's style sets them off by its own
+    // indicator's pixel metric plus the spacing, and for any other
+    // indicator by the indicator's width alone: no gap, so every label sat
+    // hard against the box drawn above.
+    contentItem: Label {
+        objectName: "seabassCheckLabel"
+        // The box's room, and the gap only with words to keep apart: some
+        // styles size the control by this item alone, so a box without
+        // words still needs its own width here.
+        readonly property real indicatorRoom: control.indicator
+            ? control.indicator.width + (control.text.length > 0 ? control.spacing : 0) : 0
+        leftPadding: control.mirrored ? 0 : indicatorRoom
+        rightPadding: control.mirrored ? indicatorRoom : 0
+        visible: control.text.length > 0
+        text: control.text
+        font: control.font
+        opacity: control.enabled ? 1 : 0.6
+        verticalAlignment: Text.AlignVCenter
+        wrapMode: Text.Wrap
+    }
+
     indicator: Rectangle {
         objectName: "seabassCheckIndicator"
         readonly property real side: Theme.scaled(18)

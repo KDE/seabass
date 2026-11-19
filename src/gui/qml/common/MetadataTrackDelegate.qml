@@ -74,6 +74,10 @@ Rectangle {
     // The note's colour, for a page whose note says how a row stands (Beat
     // Grids & Waveforms: "Loads without analysis").
     property color noteColor: Theme.textMuted
+    // The note on exactly one line: kept on a row without one, and a long
+    // one elided, the whole of it on hover. For a list whose rows mostly
+    // have one (Beat Grids & Waveforms), so every row has one shape.
+    property bool noteOnOneLine: false
     property string playlistNames: ""
 
     // ---- where it came from ------------------------------------------
@@ -367,12 +371,18 @@ Rectangle {
                 Label {
                     objectName: "rowNote"
                     Layout.fillWidth: true
-                    visible: delegate.note.length > 0
-                    text: delegate.note
+                    visible: delegate.note.length > 0 || delegate.noteOnOneLine
+                    // A space on a row without one, so the kept line is a
+                    // line of text tall.
+                    text: delegate.note.length > 0 ? delegate.note : " "
                     color: delegate.noteColor
                     font.pointSize: Theme.fontSmall
                     wrapMode: Text.Wrap
-                    maximumLineCount: 2
+                    maximumLineCount: delegate.noteOnOneLine ? 1 : 2
+                    HoverHandler { id: noteHover }
+                    ToolTip.visible: noteHover.hovered && truncated
+                    ToolTip.delay: 400
+                    ToolTip.text: delegate.note
                     elide: Text.ElideRight
                 }
             }
