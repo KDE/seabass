@@ -1017,6 +1017,17 @@ int LibraryConsistencyController::runningScanTasksForTesting()
     return runningScanTasks().load();
 }
 
+void LibraryConsistencyController::setMovedFilesForTesting(const QString &rekordboxPath, const QString &enginePath,
+                                                           std::vector<MovedFileEntry> entries)
+{
+    m_rekordboxPath = rekordboxPath;
+    m_enginePath = enginePath;
+    m_movedFiles = std::move(entries);
+    m_movedFilesChecked = true;
+    m_movedFilesError.clear();
+    emit movedFilesChanged();
+}
+
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
 {
     // Speaks only for the leg started right after it, while that leg is
@@ -2912,6 +2923,30 @@ bool LibraryConsistencyController::stageMovedFile(const MovedFileEntry &entry, b
         setErrorMessage(QStringLiteral("The library cannot be pointed at %1: %2")
                             .arg(QString::fromStdString(one->file.filePath),
                                  QString::fromStdString(entry.relinkRefusal)));
+        return false;
+    }
+    // One file goes back to one place: a file staged for another finding
+    // is refused for this one, whichever repair either is. Two findings
+    // share a file only when it needs confirming for both
+    // (domain::findMovedFiles), and confirming both would move it twice,
+    // or point two tracks at one file.
+    const std::string fileKey = application::normalizedPathKey(one->file.filePath);
+    const std::string thisKey = application::normalizedPathKey(entry.finding.expectedPath);
+    const auto nameOf = [](const domain::MovedFileFinding &finding) {
+        const std::string title = finding.title();
+        return QString::fromStdString(title.empty() ? pathToUtf8(pathFromUtf8(finding.expectedPath).filename())
+                                                    : title);
+    };
+    for (const auto &other : m_movedFiles) {
+        const auto *theirs = other.finding.only();
+        if (theirs == nullptr || application::normalizedPathKey(other.finding.expectedPath) == thisKey
+            || application::normalizedPathKey(theirs->file.filePath) != fileKey || !movedFileStaged(other)) {
+            continue;
+        }
+        setErrorMessage(QStringLiteral("%1 is already staged for \"%2\", so it cannot be used for \"%3\" too. "
+                                       "Unstage it there first.")
+                            .arg(QString::fromStdString(one->file.filePath), nameOf(other.finding),
+                                 nameOf(entry.finding)));
         return false;
     }
     if (!ensureSessionForStaging()) {

@@ -1682,6 +1682,43 @@ public:
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
     }
 
+    // Two moved-file findings on the stick at `stick` whose one candidate
+    // is the same file (#103), "Alpha" and "Bravo": what findMovedFiles()
+    // gives when one stray file looks like two missing tracks. Each needs
+    // confirming, and the file can go to one of them only.
+    Q_INVOKABLE void plantTwoMovedFilesSharingAFile(QObject *controller, const QString &stick)
+    {
+        auto *consistency = qobject_cast<seabass::gui::LibraryConsistencyController *>(controller);
+        if (consistency == nullptr) {
+            return;
+        }
+        const std::filesystem::path root = seabass::gui::pathFromQString(stick);
+        const std::string shared = seabass::pathToUtf8(root / "Contents" / "New" / "Shared.mp3");
+        std::vector<seabass::gui::MovedFileEntry> entries;
+        int id = 1;
+        for (const std::string title : {"Alpha", "Bravo"}) {
+            seabass::domain::Track row;
+            row.format = "rekordbox";
+            row.sourceId = std::to_string(id++);
+            row.title = title;
+            row.filePath = seabass::pathToUtf8(root / "Contents" / "Old" / (title + ".mp3"));
+            seabass::domain::Track file;
+            file.format = "disk";
+            file.isUnreferenced = true;
+            file.sourceId = shared;
+            file.filePath = shared;
+            file.filename = "Shared.mp3";
+            file.fileSizeBytes = 1000;
+            seabass::gui::MovedFileEntry entry;
+            entry.finding.expectedPath = row.filePath;
+            entry.finding.rows = {row};
+            entry.finding.candidates.push_back(
+                {file, seabass::domain::MovedFileCandidate::Confidence::NeedsConfirming, "the same tags and length"});
+            entries.push_back(std::move(entry));
+        }
+        consistency->setMovedFilesForTesting(stick + QStringLiteral("/PIONEER"), {}, std::move(entries));
+    }
+
     // A value put straight into the settings store (the sandbox this
     // binary made), past every setter's validation: what a settings file
     // edited by hand, or written by another build, can hold. An invalid

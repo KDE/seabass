@@ -516,6 +516,12 @@ public:
     ~LibraryConsistencyController() override;
     // Scan tasks running right now, across every controller.
     static int runningScanTasksForTesting();
+    // The moved-file findings a scan of the library at these paths would
+    // have listed (#103), put in place without one: a test of what the
+    // page may stage needs findings no fixture produces, such as two that
+    // share their one file.
+    void setMovedFilesForTesting(const QString &rekordboxPath, const QString &enginePath,
+                                 std::vector<MovedFileEntry> entries);
 
     LibraryConsistencyIssueListModel *issuesModel() { return &m_model; }
     JunkCueIssueListModel *junkCuesModel() { return &m_junkCueModel; }
