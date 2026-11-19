@@ -237,10 +237,9 @@ Item {
     // Experimental (see docs/experimental-features.md).
     readonly property bool showBeatGrids: root.writable && root.hasRekordbox && root.hasEngine
         && root.appSettingsController.experimentalFeaturesEnabled === true
-    // Experimental (see docs/experimental-features.md), and hidden once
-    // the stick has an Engine Library rather than shown disabled.
+    // Hidden once the stick has an Engine Library rather than shown
+    // disabled. Out of the experimental setting since 2026-11-19.
     readonly property bool showCreateEngine: root.writable && !root.hasEngine
-        && root.appSettingsController.experimentalFeaturesEnabled === true
     // The four cards the stick's Backups page used to hold, with its
     // rules: offered wherever that page's card was (`writable`).
     readonly property bool showFullStickBackup: root.writable
@@ -546,9 +545,9 @@ Item {
                 cardSubtitle: "Copy rekordbox's beat grids and waveforms into the Engine library"
                 cardIcon: "view-media-visualization"
                 // Experimental (docs/experimental-features.md): it replaces
-                // analysis a player made, and has not met one yet. As for
-                // Create Engine Library, the visible binding replaces
-                // ActionCard's, so showBeatGrids restates the gate.
+                // analysis a player made, and has not met one yet. The
+                // visible binding replaces ActionCard's, which is where
+                // the gate lives, so showBeatGrids restates it.
                 experimental: true
                 experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                 visible: root.group === "sync" && root.showBeatGrids
@@ -603,13 +602,7 @@ Item {
                 onReadOnlyClicked: root.explainWriteBlock()
                 cardSubtitle: "Build a new Engine Library from this stick's DeviceLibrary export"
                 cardIcon: "server-database"
-                // The first feature here that fabricates a whole new
-                // database from scratch, and the one card still behind
-                // the experimental setting. A visible binding of our own
-                // replaces ActionCard's default, which is where the gate
-                // lives, so showCreateEngine restates it.
-                experimental: true
-                experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                // Graduated 2026-11-19 (docs/experimental-features.md).
                 visible: root.group === "sync" && root.showCreateEngine
                 enabled: root.hasRekordbox
                 disabledReason: root.hasRekordbox ? "" : "No rekordbox library on this stick to create it from"

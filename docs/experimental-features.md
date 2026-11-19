@@ -7,10 +7,16 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # Experimental features
 
 Features gated behind `AppSettingsController::experimentalFeaturesEnabled`
-(Settings → Experimental features), off by default. See that property's own
-doc comment and `ActionCard.qml`'s `experimental` property for how the gate
-works, and the `SEABASS_EXPERIMENTAL` CMake option for the build-time
-opt-in-mechanism switch.
+(Preferences → More settings → "Enable experimental features"). On by
+default on master, the development line, so what is being built is what
+gets used; the release train (`Seabass/X.Y`) keeps it off until a feature
+graduates (Sebastian, 2026-10-16). See that property's own doc comment and
+`ActionCard.qml`'s `experimental` property for how the gate works, and the
+`SEABASS_EXPERIMENTAL` CMake option for the build-time switch: with it off
+the toggle is compiled out and `experimentalFeaturesEnabled` is a constant
+false, so every experimental feature is hidden. It compiles out nothing
+else (QML has no conditional compilation), so a graduated feature is in
+such a build like any other.
 
 New non-trivial features default to this list. Move an entry to "Graduated
 to stable" (and drop `experimental: true` from its `ActionCard` and the
@@ -27,28 +33,6 @@ They exist to keep the user's data safe, so they are on for everyone
 from day one.
 
 ## Currently experimental
-
-- **Create Engine Library** (added 2026-08-30) — builds a brand-new
-  Engine Library database from scratch out of an existing rekordbox
-  export, for a stick/SD card that has never been prepared for Engine OS
-  hardware. The first feature in this app that fabricates an entire new
-  database rather than modifying one Engine itself already created.
-  Deliberately narrow: title/artist/BPM/key/duration/bitrate/rating/
-  comment/hot+memory cues plus a simple two-point approximate beatgrid;
-  no cover art (libdjinterop's own album_art API is unfinished), no real
-  per-beat grid, no waveform, no playlists. (Since 2026-11-19: with
-  both "Copy beat grids/waveforms from rekordbox to Engine" switches on
-  in Preferences, itself experimental, see below, every track it creates
-  that can be completed gets rekordbox's real grid and waveform; with
-  them off, or only one on, it is still as described here, every track
-  left for the player to analyse.) Verified by creating a
-  library and reading it back correctly with this app's own reader
-  (`libdjinterop_engine_library_creator_test`); never tested against
-  real Denon hardware. Exposes the Engine schema generation (1.x/2.x/3.x)
-  as a user choice specifically because real firmware compatibility per
-  generation is unverified. Promote to stable once Sebas has confirmed a
-  created library works correctly on real Denon hardware (he has a Prime
-  GO+ to test against).
 
 - **Moved files: Point Library at File** (added 2026-11-19, #103) — the
   second repair on Library Health's Moved files page (`MovedFilesPage.qml`,
@@ -98,12 +82,70 @@ from day one.
 
 ## Graduated to stable
 
-All of these graduated together on 2026-09-17, on Sebastian's call: the
+- **Create Engine Library** (added 2026-08-30, graduated 2026-11-19, on
+  Sebastian's call) — builds a brand-new Engine Library database from
+  scratch out of an existing rekordbox export, for a stick/SD card that
+  has never been prepared for Engine OS hardware. The first feature in
+  this app that fabricates an entire new database rather than modifying
+  one Engine itself already created. Carried over: title, artist, BPM,
+  key, duration, bitrate, rating, comment, hot and memory cues, the
+  playlists with their folders and order, and cover art (written the way
+  Engine stores it, under `Artwork/`, since libdjinterop's own album_art
+  API is unfinished). Every track is handed to the player unanalysed, as
+  Engine's own rekordbox import hands them over, so the player analyses
+  it on load; with both "Copy beat grids/waveforms from rekordbox to
+  Engine" switches on in Preferences (experimental, see above) every
+  track that can be completed gets rekordbox's grid and waveform instead.
+  The card is in the Sync group of a writable stick without an Engine
+  Library (`StickToolCards.qml`, `showCreateEngine`). On hardware: the
+  first round (2026-09-17, Prime 4) failed, the player calling the
+  library corrupt; the cause was libdjinterop's 3.0.2 Information row
+  landing at id 2 and every track flagged analysed with nothing in it,
+  both fixed in the creator. On 2026-11-08 a Prime 4 on current firmware
+  took a created 3.x (schema 3.0.2) library, analysed every track on load
+  and played the cues; 3.x has been the default generation since.
+  `libdjinterop_engine_library_creator_test` reads a created library
+  back at all three generations (and checks the Information row at
+  each); `tools/make_engine_library.cpp` builds one headless. Still owed:
+  a created 1.x or 2.x library on hardware (no unit on Engine Prime 1.x
+  or Engine OS 2.x has seen one), a 3.x one on a Prime GO+ or any unit
+  but the Prime 4, and a created library with the beat grid and waveform
+  copy on (owed under that feature above).
+
+- **Browse playlist editing** (added 2026-10-05, graduated 2026-11-19,
+  on Sebastian's call) — in Browse Library: creating, renaming and
+  deleting a playlist (the sidebar's last row and a playlist's menu),
+  adding a track to a playlist ("Add to" in a row's menu), taking one out
+  ("Remove from" the playlist shown), dragging a track onto a playlist,
+  and dragging one within the playlist shown to reorder it
+  (`ScanPage.qml`, `PlaylistEditController`, `PlaylistListView`,
+  `TrackDragItem`, `PlaylistDropGap`). The Matching panel's results have
+  the same row menu and drag. Every edit is staged into the stick's edit
+  session, shown at once (greyed and italic) and written by Save into
+  every library on the stick that has the playlist; a staged batch
+  survives a crash (`docs/edit-mode-and-cancel.md`). The QML tests in
+  `tst_ScanPage` run with the setting off. Still owed: nothing in the
+  docs or tests records a player (Pioneer or Denon) loading a playlist
+  Seabass created, renamed, reordered or changed; that check on each.
+
+- **Anonymize Library** (graduated 2026-11-19, on Sebastian's call) —
+  writes a de-identified copy of a stick's rekordbox and Engine libraries
+  into one zip on this computer, for the project's test fixture or for a
+  bug report (`AnonymizeLibraryPage.qml`, the same code as
+  `seabass-cli anonymize`, which never had a gate). A maintainer tool,
+  not a per-stick card: "Export Anonymized Library for Testing…" at the
+  end of Preferences → More settings, under the experimental toggle, in
+  every build (the section used to be compiled out with the toggle).
+  Still owed: nothing records the page itself run against a real stick;
+  the committed fixture (`tests/fixtures/anonymized_library/`) was made
+  with `seabass-cli anonymize`.
+
+All of the following graduated together on 2026-09-17, on Sebastian's call: the
 write paths they add have been exercised on real sticks through this
 project's live tests and everyday use, and keeping them behind a setting
-was hiding work that is done. Create Engine Library is the one feature
-still gated, because it fabricates a whole database and has never met
-real Denon hardware.
+was hiding work that is done. Create Engine Library stayed gated then,
+because it fabricates a whole database and had never met real Denon
+hardware; it graduated on 2026-11-19 (above).
 
 - **USB Stick Performance** (added 2026-09-11, graduated 2026-09-17) — its
   own page from the stick's card grid: reads real files on the stick the
@@ -168,22 +210,27 @@ real Denon hardware.
   owed: a restore onto a fresh exFAT stick that Engine DJ or a player then
   reads without complaint.
 
-- **Matching** (added 2026-09-04, graduated 2026-09-17) — a panel on the
-  Library page (`MatchingPage.qml`) that finds tracks compatible in key
-  (Camelot-wheel Harmonic/Nearby matching, or Ignore Key) and BPM with
-  whichever Browse row you've marked as the one you're editing, to help
-  build out a playlist around it. Unlike every other entry on this list it
-  was never an `ActionCard`: the panel, and the playlist drawer it moves
-  the old always-on playlist pane into, are the Library page's own layout
-  (`ScanPage.qml`'s `matchingEnabled`). It carries its own `PREVIEW`
-  badge, because the search/filter side is real but the write side isn't:
-  no format (rekordbox, Engine, OneLibrary) has a playlist-mutation writer
-  yet, so Before/After and the row reorder arrows just report a "preview,
-  not saved" status instead of touching anything on disk. The Genre filter
-  is present but disabled for the same reason one level down —
-  `domain::Track` has no genre field at all yet. Out of the experimental
-  setting, but the PREVIEW badge stays until a real per-format playlist
-  writer exists and Before/After actually writes.
+- **Matching** (added 2026-09-04, graduated 2026-09-17, PREVIEW badge
+  removed 2026-11-19 on Sebastian's call) — a panel on the Library page
+  (`MatchingPage.qml`) that finds tracks compatible in key
+  (Camelot-wheel Harmonic/Nearby matching, or Ignore Key), BPM and
+  rating with whichever Browse row you've marked as the one you're
+  editing, scoped to This Playlist, to help build out a playlist around
+  it. It was never an `ActionCard`: the panel and the playlist drawer are
+  the Library page's own layout. It wore a `PREVIEW` badge because its
+  Before/After buttons and row reorder arrows only reported "preview, not
+  saved". Those controls are gone (2026-10-16, with Browse's playlist
+  editing): a result now has Browse's row menu ("Add to", and "Remove
+  from" when it is in the playlist shown) and drags onto a playlist like
+  a Browse row, all staged into the edit session and written by Save, so
+  the panel writes for real through Browse playlist editing (above).
+  Placing a result at a position, as Before/After meant to, is done by
+  dragging it into the playlist shown. Still not there: the Genre filter
+  is a disabled "Genre: Ignore" button ("Genre isn't read from your
+  library yet"; `domain::Track` has no genre field), and the hint under
+  the panel's title before a track is picked still reads "Search This
+  Playlist, then Before/After the track you're editing in Browse",
+  naming buttons that no longer exist.
 
 - **Full Stick Backup** (added 2026-09-05, graduated 2026-09-17) — backs a
   whole stick up into one browsable `.zip` on this computer

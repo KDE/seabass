@@ -114,8 +114,9 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
     // Awake while the library is written: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Creating an Engine library on a USB stick"));
     // Preferences' copy of rekordbox's analysis, read here on the GUI
-    // thread like the syncs read it when they stage (experimental: off
-    // while experimental features are, see SyncAnalysisPolicy).
+    // thread like the syncs read it when they stage (the copy is
+    // experimental: off while experimental features are, see
+    // SyncAnalysisPolicy; creating the library itself is not).
     application::AnalysisCopyOptions analysis;
     analysis.grids = application::SyncAnalysisPolicy::copyBeatGrids();
     analysis.waveforms = application::SyncAnalysisPolicy::copyWaveforms();

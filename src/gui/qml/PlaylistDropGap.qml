@@ -6,7 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Browse's drop to reorder (Experimental): a track of the playlist shown,
+// Browse's drop to reorder: a track of the playlist shown,
 // dragged over the track list and held over the gap between two rows for
 // hoverDelay, opens that gap. The rows below it move down by a row
 // (shiftFor), a faded copy of the dragged row sits in it saying "Move

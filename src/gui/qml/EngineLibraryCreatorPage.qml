@@ -10,10 +10,10 @@ import SeabassGui
 // Creates a brand-new Engine Library from this stick's existing rekordbox
 // export -- for a stick (or SD card) that only has a rekordbox Device
 // Library and no Engine Library at all, so Denon Engine OS hardware
-// (e.g. Prime GO+) has something native to browse. Experimental: this is
-// the first feature in this app that fabricates an entire new database
-// from scratch rather than modifying an existing, already-recognized
-// one -- see docs/experimental-features.md.
+// (e.g. Prime GO+) has something native to browse. The first feature in
+// this app that fabricates an entire new database from scratch rather
+// than modifying an existing, already-recognized one; out of the
+// experimental setting since 2026-11-19, see docs/experimental-features.md.
 Page {
     id: root
     required property string stickLabel
@@ -75,20 +75,10 @@ Page {
         title: "Create Engine Library?"
         headline: "This creates a brand new \"Engine Library\" folder on this stick from the current "
             + "DeviceLibrary export."
-        detailText: "It does not touch DeviceLibrary's own data at all."
+        detailText: "It does not touch DeviceLibrary's own data at all. The player analyses every "
+            + "track that comes without rekordbox's beat grid and waveform the first time it loads it."
         acceptText: "Create"
         onAccepted: controller.create(root.rekordboxPath, root.schemaGeneration, root.stickLabel)
-
-        Label {
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.conflictText
-            text: "Experimental: this is the first feature in Seabass that builds a whole new database "
-                + "from scratch rather than editing one Engine itself already created. It has been "
-                + "verified by creating a library and reading it back with this app's own reader, but "
-                + "never tested on real Denon hardware. Verify carefully on your unit before trusting it "
-                + "for a gig."
-        }
     }
 
     // Write mode: the lock refusal and the summary. OK on the summary

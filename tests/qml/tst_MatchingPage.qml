@@ -55,6 +55,25 @@ TestCase {
         return found;
     }
 
+    // The PREVIEW badge came off on 2026-11-19 (docs/experimental-features.md):
+    // no text in the panel says PREVIEW or "preview, not saved" any more.
+    function test_thePanelWearsNoPreviewBadge() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        verify(page !== null);
+        waitForRendering(page);
+        const texts = [];
+        function walk(item) {
+            if (item.text !== undefined && typeof item.text === "string") texts.push(item.text);
+            if (item.ToolTip && typeof item.ToolTip.text === "string") texts.push(item.ToolTip.text);
+            for (let i = 0; i < item.children.length; ++i) walk(item.children[i]);
+        }
+        walk(page);
+        verify(texts.indexOf("Matching Tracks") >= 0, "the walk reaches the title: " + texts.join(" | "));
+        for (const text of texts) {
+            verify(text.indexOf("PREVIEW") < 0 && text.toLowerCase().indexOf("preview:") < 0, text);
+        }
+    }
+
     // The edit mode's Save button floats over the list's bottom corner:
     // the list scrolls two rows past its last one, clear of it.
     function test_theListScrollsClearOfTheSaveButton() {

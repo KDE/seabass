@@ -8,7 +8,7 @@ import QtQuick.Layouts
 import SeabassGui
 
 // A track being dragged out of Browse or the Matching panel (playlist
-// editing, Experimental): a card with the track's cover, title, artist,
+// editing): a card with the track's cover, title, artist,
 // key, BPM and length in Browse's row styling, under the pointer. One per
 // page, placed over the page's content: a row's own delegate is clipped
 // by its list and can be recycled while the pointer is far away, so the

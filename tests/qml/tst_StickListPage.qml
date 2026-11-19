@@ -515,22 +515,22 @@ TestCase {
         saveScreenshot(page, "stick-list-no-library");
     }
 
-    // Graduated on 2026-09-17: the card is there with the experimental
-    // setting off, and so is every other card that used to be gated. Only
-    // Create Engine Library still answers to the setting.
-    function test_onlyCreateEngineLibraryAnswersToTheExperimentalSetting() {
+    // Graduated: the cards are there with the experimental setting off,
+    // Create Engine Library since 2026-11-19 and the rest since 2026-09-17.
+    // Only Beat Grids & Waveforms still answers to the setting, and this
+    // stick (no Engine library) would not offer it anyway; tst_StickToolCards
+    // checks its gate.
+    function test_promotedCardsNeedNoExperimentalSetting() {
         var settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         var page = makePage([makeStick({hasEngine: false, enginePath: ""})], {},
                             {appSettingsController: settings});
-        var shown = ["USB Stick Performance", "Format USB Stick", "Metadata"];
+        var shown = ["USB Stick Performance", "Format USB Stick", "Metadata", "Create Engine Library"];
         for (var i = 0; i < shown.length; ++i) {
             var card = findCard(page, "/media/MAIN", shown[i]);
             verify(card !== null && card.visible, shown[i] + " must not be behind the experimental setting");
             compare(card.experimental, false, shown[i] + " must not be marked experimental");
         }
-        var engine = findCard(page, "/media/MAIN", "Create Engine Library");
-        verify(engine === null || !engine.visible, "Create Engine Library must stay behind the setting");
     }
 
     function test_emptyStickOffersCloneFromThePeer() {

@@ -30,8 +30,8 @@ struct AnonymizeLibraryTaskResult
 // Wraps application::AnonymizeLibrary for QML -- see that use case's own
 // doc comment, and infrastructure::rekordbox::anonymizeRekordboxLibrary /
 // infrastructure::engine::anonymizeEngineLibrary for exactly what gets
-// kept/replaced/removed. Reachable from Settings (App Settings ->
-// Experimental features), not an ActionCard: this is a maintainer/
+// kept/replaced/removed. Reachable from Preferences -> More settings
+// (for everyone since 2026-11-19), not an ActionCard: this is a maintainer/
 // power-user tool (regenerating the project's own test fixture, or
 // submitting a library to help test hardware Sebas doesn't have), not
 // a per-stick everyday action.

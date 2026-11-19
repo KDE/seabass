@@ -473,16 +473,16 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
-    // Two cards answer to the experimental setting, Create Engine Library
-    // and Beat Grids & Waveforms (since 2026-11-19); every card that used to
-    // be gated is there with it off, Sync after Rekordbox Export since
-    // 2026-10-10.
+    // One card answers to the experimental setting, Beat Grids & Waveforms
+    // (since 2026-11-19); every card that used to be gated is there with it
+    // off, Sync after Rekordbox Export since 2026-10-10 and Create Engine
+    // Library since 2026-11-19.
     function test_onlyTheExperimentalCardsAnswerToTheSetting() {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
         const shown = {"explore": ["USB Stick Performance"],
-                       "sync": ["Metadata", "Restore Metadata"],
+                       "sync": ["Metadata", "Restore Metadata", "Create Engine Library"],
                        "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups",
                                   "Format USB Stick"]};
         const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
@@ -495,13 +495,14 @@ TestCase {
             }
         }
         const off = makeCards(stick, "sync", {}, {appSettingsController: settings});
-        compare(card(off, "Create Engine Library").visible, false, "Create Engine Library stays behind the setting");
+        compare(card(off, "Create Engine Library").visible, true, "Create Engine Library is out of the setting");
         // No Engine library on this stick: no Sync after Rekordbox Export.
-        compare(JSON.stringify(shownTitles(off)), JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata"]));
+        compare(JSON.stringify(shownTitles(off)),
+                JSON.stringify(["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"]));
 
         const on = makeCards(stick, "sync", {});
         compare(card(on, "Create Engine Library").visible, true);
-        compare(card(on, "Create Engine Library").experimental, true);
+        compare(card(on, "Create Engine Library").experimental, false);
         // And never once the stick has an Engine Library to overwrite.
         const withEngine = makeCards(makeStick({}), "sync", {});
         compare(card(withEngine, "Create Engine Library").visible, false);

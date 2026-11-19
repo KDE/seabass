@@ -7,16 +7,15 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// The Matching panel (PREVIEW, see docs/experimental-features.md):
+// The Matching panel (see docs/experimental-features.md for its history):
 // finds tracks compatible in key/BPM/
 // rating with whichever Browse row was last marked as the anchor (via
 // that row's own edit button), scoped to This Playlist -- a filter here
 // just like key/rating/BPM, not a separate write-target concept (see
 // findCompatibleTracks()'s own doc comment). Each result has Browse's
 // row menu (menuRequested), so a match is added to a playlist from here
-// the way a Browse row is. The PREVIEW badge below is deliberately
-// separate from the page-level EXPERIMENTAL gate this whole panel
-// already sits behind.
+// the way a Browse row is, or dragged to one. Its PREVIEW badge came off
+// on 2026-11-19.
 ColumnLayout {
     id: root
     required property var scanController
@@ -66,9 +65,8 @@ ColumnLayout {
     onAnchorSourceIdChanged: root.targetPlaylistIndex = root.browseSelectedPlaylistIndex
     onBrowseSelectedPlaylistIndexChanged: root.targetPlaylistIndex = root.browseSelectedPlaylistIndex
 
-    // "" if "All tracks" is the target -- there's no real playlist to
-    // write into, so Before/After stay disabled until a real one is
-    // picked.
+    // "" if "All tracks" is the target: there's no real playlist to
+    // write into.
     readonly property string targetPlaylistName: root.targetPlaylistIndex === 0
         ? "" : (root.scanController.playlistNames[root.targetPlaylistIndex - 1] ?? "")
 
@@ -239,30 +237,7 @@ ColumnLayout {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 1
-                RowLayout {
-                    spacing: 6
-                    PageTitle { text: "Matching Tracks"; level: "section" }
-                    Rectangle {
-                        radius: 3
-                        color: Theme.warnBg
-                        border.color: Theme.warnBorder
-                        implicitWidth: previewBadgeText.implicitWidth + 8
-                        implicitHeight: previewBadgeText.implicitHeight + 4
-                        Label {
-                            id: previewBadgeText
-                            anchors.centerIn: parent
-                            text: "PREVIEW"
-                            font.pointSize: Theme.fontTiny
-                            font.bold: true
-                            color: Theme.warnText
-                        }
-                        HoverHandler { id: previewBadgeHover }
-                        ToolTip.visible: previewBadgeHover.hovered
-                        ToolTip.text: "Preview: finds compatible tracks for real; ordering them in the "
-                            + "playlist is still to come."
-                        ToolTip.delay: 300
-                    }
-                }
+                PageTitle { text: "Matching Tracks"; level: "section" }
                 // The track this panel is actually matching against, right
                 // under the title where it's immediately visible -- the
                 // instructional placeholder only shows before one's picked.
@@ -317,7 +292,7 @@ ColumnLayout {
                 }
                 Label {
                     visible: !root.hasAnchor
-                    text: "Search This Playlist, then Before/After the track you're editing in Browse."
+                    text: "Pick a track in Browse to find tracks that match it in key and tempo."
                     color: Theme.textMuted
                     font.pointSize: Theme.fontSmall
                     wrapMode: Text.WordWrap

@@ -79,10 +79,11 @@ Page {
         id: addCueController
     }
 
-    // Deleting a playlist and taking a track out of one (Experimental):
-    // staged into the same session as an added cue, written by the same
-    // Save into every library on the stick that has the playlist.
-    readonly property bool playlistEditing: root.appSettingsController.experimentalFeaturesEnabled === true
+    // Playlist editing (out of the experimental setting since 2026-11-19):
+    // creating and deleting a playlist, adding a track to one and taking it
+    // out, staged into the same session as an added cue, written by the
+    // same Save into every library on the stick that has the playlist.
+
     // The playlist the list is showing, by name: set where the selection
     // is made, since the row number is the FILTERED list's when the
     // playlist search is in use.
@@ -349,18 +350,13 @@ Page {
     // anything is staged into the session or a save is writing: the
     // question waits until the session is clean (the Connections below),
     // so another page's batch saved from here does not leave this one to
-    // be overwritten by the first new edit. Not without Experimental
-    // (playlist editing is): the batch stays for next time. Nothing is
-    // staged until it is answered.
+    // be overwritten by the first new edit. Nothing is staged until it is
+    // answered.
     property bool leftOverEditsChecked: false
     function offerLeftOverEdits() {
         const controller = root.playlistEditController;
         const session = editHost.session;
         if (session === null || typeof controller.leftOverEdits !== "function") {
-            return;
-        }
-        if (!root.playlistEditing) {
-            root.leftOverEditsChecked = true;
             return;
         }
         if (session.dirty || session.writing) {
@@ -464,9 +460,7 @@ Page {
     }
 
     function openCreatePlaylistDialog() {
-        if (root.playlistEditing) {
-            createPlaylistDialog.open();
-        }
+        createPlaylistDialog.open();
     }
 
     Menu {
@@ -480,7 +474,7 @@ Page {
         readonly property bool streaming: row ? row.streamingSource.length > 0 : false
         // Only for a track in the playlist shown: a Matching result opens
         // this menu too, and need not be in it.
-        readonly property bool canRemove: root.playlistEditing && root.shownPlaylist.length > 0 && filePath.length > 0
+        readonly property bool canRemove: root.shownPlaylist.length > 0 && filePath.length > 0
             && (!row || !row.playlistNames || row.playlistNames.indexOf(root.shownPlaylist) >= 0)
         readonly property bool staged: canRemove && root.playlistEditController.pendingRevision >= 0
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
@@ -488,10 +482,10 @@ Page {
         readonly property bool pendingAddition: canRemove && row !== null && row.pendingAddition === true
         // At a place in the playlist shown that a staged move gives it.
         readonly property bool pendingMove: canRemove && row !== null && row.pendingMove === true
-        // Adding to a playlist (Experimental): the playlists this stick
+        // Adding to a playlist: the playlists this stick
         // has and the ones staged to be created, but not the one shown,
         // which already holds the track.
-        readonly property bool canAdd: root.playlistEditing && filePath.length > 0 && !streaming
+        readonly property bool canAdd: filePath.length > 0 && !streaming
         readonly property var addTargets: canAdd
             ? root.addTargetsFor(scanController.playlistNames, root.newPlaylistNames,
                                  row && row.playlistNames ? row.playlistNames : [], root.shownPlaylist) : []
@@ -721,9 +715,6 @@ Page {
     onPendingRenamesChanged: scanController.setPlaylistAliases(root.pendingRenames)
 
     function openPlaylistMenu(name, row) {
-        if (!root.playlistEditing) {
-            return;
-        }
         playlistMenu.playlist = name;
         playlistMenu.popup(row);
     }
@@ -735,10 +726,9 @@ Page {
         trackMenu.popup(at);
     }
 
-    // ---- Dragging a track to a playlist (Experimental) ----
-    // The drag card Browse's rows and the Matching panel's results share;
-    // null with playlist editing off, and then nothing drags.
-    readonly property var trackDragCard: root.playlistEditing ? trackDrag : null
+    // ---- Dragging a track to a playlist ----
+    // The drag card Browse's rows and the Matching panel's results share.
+    readonly property var trackDragCard: trackDrag
     // The page's half of the drag contract (TrackDragItem has the rest):
     // whether a track is being dragged, and which, as TrackDragItem.
     // asMap() gives it, null when none is.
@@ -866,17 +856,17 @@ Page {
         root.selectPlaylist(idx >= 0 ? idx + 1 : 0, wanted, false);
     }
 
-    // ---- Matching (Experimental, see docs/experimental-
-    // features.md) -- the playlist selection above is shared between the
+    // ---- Matching (see docs/experimental-features.md for its history)
+    // -- the playlist selection above is shared between the
     // always-on left Pane (when this is off) and the off-canvas Drawer +
     // the panel's own "This Playlist" chip (when it's on); the anchor
     // properties below track whichever Browse row's edit button was last
     // clicked, read by MatchingPage to find compatible tracks. ----
     // Matching graduated from experimental on 2026-09-17, so this page has
     // one layout: the playlists sidebar and the panel, no classic playlist
-    // column behind a setting. The panel still wears its own PREVIEW badge,
-    // because the search side is real and the write side is not (no format
-    // has a playlist writer yet). See docs/experimental-features.md.
+    // column behind a setting. Its PREVIEW badge came off on 2026-11-19: a
+    // result is added to a playlist through Browse's row menu or a drag,
+    // staged and saved like any playlist edit here.
     //
     // Closed by default -- only the edit button (or the panel's own close
     // button) toggles it, so arriving in Browse doesn't open it until a
@@ -1480,7 +1470,7 @@ Page {
                     ? root.playlistEditController.trackCountChange(name) : 0
                 pendingRevision: root.playlistEditController.pendingRevision
                 onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
-                canCreate: root.playlistEditing
+                canCreate: true
                 newPlaylists: root.newPlaylistNames
                 shownPlaylist: root.shownPlaylist
                 keyNotation: root.appSettingsController.keyNotation
@@ -1488,7 +1478,7 @@ Page {
                 onCreateRequested: root.openCreatePlaylistDialog()
                 // A dragged track is dropped on a playlist row; the card
                 // then asks what to do (TrackDragItem).
-                trackDropsEnabled: root.playlistEditing
+                trackDropsEnabled: true
                 // The playlist shown takes no drop of a track that is in it
                 // (a Browse row of it), and is a target like any other for
                 // one that is not (a Matching result).
@@ -1722,8 +1712,8 @@ Page {
                     // first). Streaming tracks are fine here: the column
                     // still shows their cues and playlists, only Play
                     // itself (on the artwork) is unavailable for those.
-                    // Press and move drags the track to a playlist
-                    // (Experimental, see TrackDragArea).
+                    // Press and move drags the track to a playlist (see
+                    // TrackDragArea).
                     TrackDragArea {
                         id: rowMouseArea
                         objectName: "rowMouseArea"
@@ -1841,7 +1831,7 @@ Page {
                                     color: trackDelegate.pendingAddition || trackDelegate.pendingMove
                                         ? Theme.textMuted : Theme.text
                                     // Staged to come out of the playlist shown.
-                                    font.strikeout: root.playlistEditing && root.shownPlaylist.length > 0
+                                    font.strikeout: root.shownPlaylist.length > 0
                                         && root.playlistEditController.pendingRevision >= 0
                                         && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
                                     elide: Text.ElideRight
@@ -1916,8 +1906,8 @@ Page {
                             Layout.fillWidth: true
                         }
                         // The row's actions in one menu: merging, finding
-                        // matches, and (Experimental, a playlist shown)
-                        // taking the track out of that playlist. A right
+                        // matches, and (a playlist shown) taking the
+                        // track out of that playlist. A right
                         // click on the row opens the same menu.
                         IconToolButton {
                             id: rowMenuButton
@@ -1926,7 +1916,7 @@ Page {
                             iconName: "application-menu"
                             Layout.preferredWidth: root.actionsColumnWidth
                             ToolTip.visible: hovered
-                            ToolTip.text: "Merge, find matching tracks" + (root.playlistEditing && root.shownPlaylist.length > 0
+                            ToolTip.text: "Merge, find matching tracks" + (root.shownPlaylist.length > 0
                                 ? ", remove from this playlist" : "")
                             onClicked: root.openTrackMenu(trackDelegate, rowMenuButton)
                         }
@@ -1940,7 +1930,7 @@ Page {
                 }
 
                 // Dropping a track of the playlist shown between two rows
-                // moves it there (Experimental): the drag item carries the
+                // moves it there: the drag item carries the
                 // row's roles (Drag.keys ["seabass/track"]). Over the list
                 // itself, not its content, so they stay put as it scrolls.
                 DropArea {
@@ -1963,7 +1953,7 @@ Page {
                     draggedTrack: trackDropArea.containsDrag ? trackDropArea.drag.source : null
                     draggedIndex: draggedTrack && draggedTrack.sourceId !== undefined
                         ? scanController.tracks.indexOfSourceId(draggedTrack.sourceId) : -1
-                    playlist: root.playlistEditing ? root.shownPlaylist : ""
+                    playlist: root.shownPlaylist
                     // The playlist whole, in its own order: sorted, searched
                     // or with rows hidden, a row's place is not its place in
                     // the playlist.

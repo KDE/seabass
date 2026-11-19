@@ -191,8 +191,8 @@ keeps its batch on this machine while it is staged
   the stick has, so a second rename (which replaces the first in place)
   is made again from it.
 - **Kept through the front door.** When Browse opens a stick and the
-  file has entries, the session is clean (nothing staged by any page, not
-  writing) and Experimental is on, the page asks "Seabass last ran with
+  file has entries and the session is clean (nothing staged by any page,
+  not writing), the page asks "Seabass last ran with
   9 playlist edits staged for WHALESHARK3 and had not saved them. Keep
   editing them?" Keep (`keepLeftOverEdits`) makes the same calls in the
   same order, one at a time (each waits for its lookup, `busy`
@@ -204,8 +204,9 @@ keeps its batch on this machine while it is staged
   its new name. Discard removes the file. Until it is answered nothing is
   staged. While another page's batch is in the session, or a save is
   writing, the question waits until the session is clean (otherwise the
-  first new Browse edit would overwrite the file unasked); with
-  Experimental off it is not offered and the file stays for next time.
+  first new Browse edit would overwrite the file unasked). (Until
+  2026-11-19 playlist editing was experimental, and with Experimental off
+  the batch was not offered; it is for everyone now.)
 
 The other editors (Add Cue, Sync, Library Health, ...) do not keep their
 batches: those are made in seconds from a page that can make them again.

@@ -21,13 +21,11 @@ namespace seabass::gui
 
 // Wraps infrastructure::engine::EngineLibraryCreator for QML. See that
 // class's own doc comment for exactly what is and isn't carried over
-// from the rekordbox source, and docs/experimental-features.md for why
-// this whole feature is gated as experimental: it's the first thing in
-// this codebase that fabricates an entire new database from scratch
-// rather than modifying an existing, already-recognized one, and real
-// Denon hardware's tolerance for a library this project created (as
-// opposed to one Engine DJ or a player itself created) is genuinely
-// unverified until tested against real units.
+// from the rekordbox source, and docs/experimental-features.md for its
+// history: it's the first thing in this codebase that fabricates an
+// entire new database from scratch rather than modifying an existing,
+// already-recognized one, so it stayed experimental until a Prime 4
+// took a created 3.x library (2026-11-08); it graduated on 2026-11-19.
 class EngineLibraryCreatorController : public QObject
 {
     Q_OBJECT

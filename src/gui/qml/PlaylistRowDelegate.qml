@@ -20,7 +20,7 @@ Rectangle {
     required property string name
     property int count: 0
     property bool isCurrent: false
-    // Staged for deletion (Browse's playlist editing, Experimental): the
+    // Staged for deletion (Browse's playlist editing): the
     // name is struck through until Save deletes it or Keep takes it back.
     property bool pendingDelete: false
     // Staged to be created: in italics, "new" for a count, until Save

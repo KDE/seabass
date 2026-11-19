@@ -60,8 +60,8 @@ struct EngineLibraryCreationResult
 // already-scanned track list, typically read from a rekordbox export on
 // the same stick. This is the first feature in this codebase that
 // fabricates an entire new database + directory structure rather than
-// modifying an existing, already-recognized one -- see
-// docs/experimental-features.md for why it's gated as experimental.
+// modifying an existing, already-recognized one. It was gated as
+// experimental until 2026-11-19, see docs/experimental-features.md.
 //
 // Deliberately narrow for this first version. Carried over: title,
 // artist, BPM, key (parsed via rekordbox_key_parser.hpp), duration,

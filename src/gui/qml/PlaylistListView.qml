@@ -11,7 +11,7 @@ import SeabassGui
 // second one), delegated to PlaylistRowDelegate.qml (also used by the
 // "This Playlist" ComboBox's own popup, so both pickers render
 // identically). Used in two places in ScanPage.qml: always in the left
-// Pane when the Matching panel (Experimental) is off, or inside
+// Pane when the Matching panel is off, or inside
 // a Drawer when it's on -- both instances share this one definition and
 // both write to the same root.selectedPlaylistIndex, so switching
 // playlists from either place stays in sync.
@@ -24,13 +24,13 @@ ListView {
     property int selectedIndex: 0
     signal playlistPicked(int index, string name)
     // A playlist row's context menu was asked for ("All tracks" never
-    // asks). Browse answers it only with Experimental on.
+    // asks). Browse answers it with the playlist's menu.
     signal playlistContextRequested(string name, Item row)
     // Whether a playlist is staged for deletion; re-read when
     // pendingRevision moves.
     property var isPendingDelete: name => false
     property int pendingRevision: 0
-    // Creating a playlist (Browse, Experimental): the playlists staged to
+    // Creating a playlist (Browse): the playlists staged to
     // be created, shown after the stick's, and a last row that asks for a
     // new one. Off, the list ends with the stick's playlists.
     property bool canCreate: false
@@ -42,7 +42,7 @@ ListView {
     property var trackCountChange: name => 0
     // The playlist the page shows, so a new one picked is marked current.
     property string shownPlaylist: ""
-    // Dropping a dragged track on a playlist (Browse, Experimental): the
+    // Dropping a dragged track on a playlist (Browse): the
     // rows that take one are every playlist but "All tracks", the one
     // shown and one staged for deletion. heldDropTarget stays marked while
     // the drag card asks what the drop should do.

@@ -817,24 +817,26 @@ Page {
 
             // ---- More settings ----------------------------------------
             //
-            // Absent entirely in a build compiled with SEABASS_EXPERIMENTAL
-            // off -- see docs/experimental-features.md and
-            // AppSettingsController::experimentalBuildSupported()'s own doc
-            // comment for why that's a real "stable-only build" rather than
-            // just a hidden toggle. The section heading goes with it: an
-            // empty "More settings" rule would be the only thing left.
+            // The page's last section: the experimental toggle and the
+            // maintainer tools, the things most people never need.
             SectionHeader {
                 text: "More settings"
-                visible: root.appSettingsController.experimentalBuildSupported
             }
 
             ColumnLayout {
-                visible: root.appSettingsController.experimentalBuildSupported
                 spacing: Theme.scaled(6)
+                // Absent entirely in a build compiled with
+                // SEABASS_EXPERIMENTAL off -- see docs/experimental-features.md
+                // and AppSettingsController::experimentalBuildSupported()'s
+                // own doc comment for why that's a real "stable-only build"
+                // rather than just a hidden toggle.
+                //
                 // No Subtitle of its own: it used to read "Experimental
                 // features" above a checkbox saying "Enable experimental
                 // features", which is the same words twice.
                 SeabassCheckBox {
+                    objectName: "experimentalFeaturesCheck"
+                    visible: root.appSettingsController.experimentalBuildSupported
                     Layout.leftMargin: root.settingIndent
                     text: "Enable experimental features"
                     checked: root.appSettingsController.experimentalFeaturesEnabled
@@ -844,18 +846,16 @@ Page {
                         + "unstable, incomplete, or change without notice."
                 }
 
-                // Same gating ActionCard.qml uses for an experimental feature
-                // (visible: !experimental || experimentalFeaturesEnabled) --
-                // hidden unless the toggle above is actually on, not just
-                // whether this is an experimental-capable build. A plain
-                // option here rather than an ActionCard on the main screen:
-                // this is a maintainer/power-user tool (regenerating the
-                // project's own test fixture, or submitting a library to
+                // A plain option here rather than an ActionCard on the main
+                // screen: this is a maintainer/power-user tool (regenerating
+                // the project's own test fixture, or submitting a library to
                 // help test hardware Sebas doesn't have), not a per-stick
-                // everyday action -- see docs/testing.md.
+                // everyday action -- see docs/testing.md. Out of the
+                // experimental setting since 2026-11-19, so here in every
+                // build, under the toggle as the last thing on the page.
                 Button {
+                    objectName: "anonymizeLibraryButton"
                     Layout.leftMargin: root.settingIndent
-                    visible: root.appSettingsController.experimentalFeaturesEnabled
                     text: "Export Anonymized Library for Testing…"
                     onClicked: root.anonymizeLibraryRequested()
                 }

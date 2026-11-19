@@ -40,8 +40,9 @@ TestCase {
         return page;
     }
 
-    // ---- Playlist editing (Experimental): a stand-in controller records
-    // what the menus stage. ----
+    // ---- Playlist editing: a stand-in controller records what the menus
+    // stage. Out of the experimental setting since 2026-11-19, so every
+    // page here is made with it off: the tests prove nothing needs it. ----
 
     Component {
         id: fakePlaylistEditComponent
@@ -203,9 +204,8 @@ TestCase {
         }
     }
 
-    function makeEditingPage(experimental) {
-        verify(realAppSettings.experimentalBuildSupported, "an experimental build");
-        realAppSettings.experimentalFeaturesEnabled = experimental;
+    function makeEditingPage() {
+        realAppSettings.experimentalFeaturesEnabled = false;
         // A library that reads, with nothing in it: the page's own read
         // of a path that is not there fails, and its error dialog is
         // modal over everything these tests click.
@@ -257,7 +257,7 @@ TestCase {
     // The playlist menu renames: the dialog opens on the current name (a
     // playlist's own, not its folder's), and OK asks the controller.
     function test_renamingAPlaylistAsksForTheNewName() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const menu = findChild(page, "playlistMenu");
         const dialog = findChild(page, "renamePlaylistDialog");
         const field = findChild(page, "renamePlaylistNameField");
@@ -283,7 +283,7 @@ TestCase {
     // controller (no rescan), and the renamed playlist's menu offers to
     // keep the old name.
     function test_aStagedRenameOffersToKeepTheOldName() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const fake = page.playlistEditController;
         fake.pendingRenames = {"Peak": "Summit"};
         fake.pendingRevision++;
@@ -349,7 +349,7 @@ TestCase {
     // Add to included; no "Remove from" for a track not in the playlist
     // shown.
     function test_aMatchingResultHasTheRowMenu() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         // "Peak" is shown and is a target too: the match is not in it.
         page.playlistEditController.newPlaylists = ["Chill", "Peak"];
         page.shownPlaylist = "Peak";
@@ -384,7 +384,7 @@ TestCase {
     // A row shown in the playlist only because it is staged to be added:
     // its menu takes the add back instead of offering a removal.
     function test_aTrackStagedIntoThePlaylistShownCanBeTakenBack() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const menu = findChild(page, "trackMenu");
         const item = findChild(page, "removeFromPlaylistItem");
         const row = createTemporaryObject(fakeRowComponent, testCase, {pendingAddition: true});
@@ -404,7 +404,7 @@ TestCase {
     // keep it at its place, which takes the move back; a row not moved
     // has no such entry.
     function test_aTrackMovedWithinThePlaylistShownCanBeKeptAtItsPlace() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const menu = findChild(page, "trackMenu");
         const item = findChild(page, "keepPositionItem");
         page.shownPlaylist = "Peak";
@@ -587,7 +587,7 @@ TestCase {
     // drop at an open gap stages the move with the controller. Nothing is
     // scanned here, so the list's rows are given to the gap by hand.
     function test_theTrackListStagesAMoveDroppedOnIt() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         realAppSettings.hideStreamingTracks = false;
         page.shownPlaylist = "Peak";
         const list = findChild(page, "trackListView");
@@ -622,7 +622,7 @@ TestCase {
     // add and asks for Sync after Rekordbox Export.
     Component { id: openSyncSpyComponent; SignalSpy { signalName: "openRekordboxExportSyncRequested" } }
     function test_anAddTheControllerAsksAboutOpensTheDialog() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const fake = page.playlistEditController;
         const dialog = findChild(page, "missingLibrariesDialog");
         const text = findChild(page, "missingLibrariesText");
@@ -703,26 +703,28 @@ TestCase {
         cleanupExperimental();
     }
 
-    // Without Experimental: no playlist menu, and the row menu (Merge,
-    // Find) has no "Remove from".
-    function test_withoutExperimentalThereIsNoPlaylistEditing() {
-        const page = makeEditingPage(false);
+    // Graduated 2026-11-19: with Experimental off a playlist has its menu,
+    // and the row menu (Merge, Find) offers "Remove from" the one shown.
+    function test_playlistEditingNeedsNoExperimentalSetting() {
+        const page = makeEditingPage();
+        compare(realAppSettings.experimentalFeaturesEnabled, false);
         page.shownPlaylist = "Peak";
         page.openPlaylistMenu("Peak", page);
-        compare(findChild(page, "playlistMenu").opened, false);
+        const playlistMenu = findChild(page, "playlistMenu");
+        tryCompare(playlistMenu, "opened", true);
+        playlistMenu.close();
         const menu = findChild(page, "trackMenu");
         page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase), page);
         tryCompare(menu, "opened", true);
         verify(findChild(page, "mergeTrackItem").visible && findChild(page, "findMatchingItem").visible);
-        compare(findChild(page, "removeFromPlaylistItem").visible, false);
-        compare(page.playlistEditController.calls.length, 0);
+        compare(findChild(page, "removeFromPlaylistItem").visible, true);
         menu.close();
         cleanupExperimental();
     }
 
     // A streaming track has no file to merge: the item says so, disabled.
     function test_aStreamingRowCannotBeMerged() {
-        const page = makeEditingPage(false);
+        const page = makeEditingPage();
         const menu = findChild(page, "trackMenu");
         page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase, {streamingSource: "TIDAL"}), page);
         tryCompare(menu, "opened", true);
@@ -736,7 +738,7 @@ TestCase {
     // Delete asks first, in the page; only OK stages, and the menu then
     // offers Keep, which takes it back.
     function test_deletingAPlaylistAsksThenStagesAndKeepTakesItBack() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const menu = findChild(page, "playlistMenu");
         const dialog = findChild(page, "deletePlaylistDialog");
         page.openPlaylistMenu("Peak", page);
@@ -766,7 +768,7 @@ TestCase {
     // Remove from the playlist shown, and Keep, in the row menu; with "All
     // tracks" shown there is no playlist to take a track out of.
     function test_removingATrackFromThePlaylistShownStagesAndKeeps() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const menu = findChild(page, "trackMenu");
         const item = findChild(page, "removeFromPlaylistItem");
         const row = createTemporaryObject(fakeRowComponent, testCase);
@@ -800,7 +802,7 @@ TestCase {
     // The playlist shown is the one picked, by name, not by its row: with
     // the playlist search in use the row number is the filtered list's.
     function test_theShownPlaylistIsThePickedName() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         page.selectPlaylist(2, "Tech House", false);
         compare(page.shownPlaylist, "Tech House");
         page.selectPlaylist(0, "", false);
@@ -808,12 +810,12 @@ TestCase {
         cleanupExperimental();
     }
 
-    // The list's last row, with Experimental on: it asks for a name, OK
+    // The list's last row: it asks for a name, OK
     // only once there is one, and stages the create; the new playlist is
     // listed until Save, shows its staged tracks when clicked, and its
     // menu takes it back.
     function test_theLastRowCreatesAPlaylist() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const list = findChild(page, "playlistList");
         const row = findChild(page, "createPlaylistRow");
         verify(row !== null);
@@ -889,7 +891,7 @@ TestCase {
     // shown, a tick on the ones the track is staged into; once a track was
     // added somewhere, "Add to <that one>" stands above it.
     function test_aTrackIsAddedToAPlaylistFromItsMenu() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const fake = page.playlistEditController;
         fake.newPlaylists = ["Peak", "Chill"];  // the targets, with no stick scanned
         const menu = findChild(page, "trackMenu");
@@ -946,7 +948,7 @@ TestCase {
     // its class had seen 255 such changes, and the collector crashed on
     // what it overwrote (tst_ScanPageStorm's Add To round, 2026-11-10).
     function test_theAddToEntriesSurviveTheRowMenuOpenedAndClosedOften() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         const names = [];
         for (let i = 0; i < 40; ++i) {
             names.push("Set " + (i < 10 ? "0" : "") + i);
@@ -989,7 +991,7 @@ TestCase {
     // edits, the save's own otherwise; one that fell short is not (its
     // summary dialog is).
     function test_aCleanSaveIsSaidOverTheList() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         compare(findChild(page, "editHost").quietCleanSaves, true, "no summary dialog over the toast");
         const toast = findChild(page, "savedToast");
         const label = findChild(page, "confirmationToastLabel");
@@ -1019,31 +1021,42 @@ TestCase {
         cleanupExperimental();
     }
 
-    function test_withoutExperimentalTracksHaveNoAddTo() {
-        const page = makeEditingPage(false);
+    // Graduated 2026-11-19: Add to is in the row menu with Experimental off.
+    function test_withoutExperimentalTracksHaveAddTo() {
+        const page = makeEditingPage();
+        compare(realAppSettings.experimentalFeaturesEnabled, false);
         page.playlistEditController.newPlaylists = ["Chill"];
         const menu = findChild(page, "trackMenu");
         page.openTrackMenu(createTemporaryObject(fakeRowComponent, testCase), page);
         tryCompare(menu, "opened", true);
+        const addTo = findChild(page, "addToMenu");
+        let found = false;
         for (let i = 0; i < menu.count; ++i) {
-            verify(!menu.itemAt(i).subMenu, "no submenu");
+            found = found || (menu.itemAt(i) && menu.itemAt(i).subMenu === addTo);
         }
-        compare(findChild(page, "addToLastPlaylistItem").visible, false);
+        verify(found, "Add to is a submenu of the row menu");
         menu.close();
         cleanupExperimental();
     }
 
-    function test_withoutExperimentalTheListHasNoCreateRow() {
-        const page = makeEditingPage(false);
+    // Graduated 2026-11-19: the list ends with the create row, and it asks
+    // for a name, with Experimental off.
+    function test_withoutExperimentalTheListHasTheCreateRow() {
+        const page = makeEditingPage();
+        compare(realAppSettings.experimentalFeaturesEnabled, false);
         const row = findChild(page, "createPlaylistRow");
-        verify(row === null || !row.visible);
+        verify(row !== null);
+        tryCompare(row, "visible", true);
         page.openCreatePlaylistDialog();
-        compare(findChild(page, "createPlaylistDialog").opened, false);
+        const dialog = findChild(page, "createPlaylistDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.reject();
+        compare(page.playlistEditController.calls.length, 0);
         cleanupExperimental();
     }
 
     function test_cancellingTheDeleteDialogStagesNothing() {
-        const page = makeEditingPage(true);
+        const page = makeEditingPage();
         page.openPlaylistMenu("Peak", page);
         findChild(page, "deletePlaylistItem").triggered();
         const dialog = findChild(page, "deletePlaylistDialog");
@@ -1158,7 +1171,7 @@ TestCase {
     // new one staged to be created, a renamed one by its new name, and
     // "All tracks" for the whole library.
     function test_theSidebarPillNamesThePlaylistShown() {
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const t = makeHeldPage(3);
         const fake = createTemporaryObject(fakePlaylistEditComponent, testCase);
         t.page.playlistEditController = fake;
@@ -1184,7 +1197,7 @@ TestCase {
     // the rows naming it anew; taken back, the old name, still picked.
     // From the controller's renames alone: nothing is scanned again.
     function test_thePlaylistShownStaysShownAcrossARenameAndItsTakeBack() {
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const t = makeHeldPage(3);
         const fake = createTemporaryObject(fakePlaylistEditComponent, testCase);
         t.page.playlistEditController = fake;
@@ -1279,15 +1292,14 @@ TestCase {
         saveScreenshot(held.page, "browse-cues-settled");
     }
 
-    // ---- Dragging a track to a playlist (Experimental) ----
+    // ---- Dragging a track to a playlist (made with Experimental off) ----
 
     // Browse on six held tracks with files, in "Held Playlist" and "Held
     // Reversed", with the stand-in playlist controller.
-    function makeDragPage(experimental, withFiles, trackCount) {
+    function makeDragPage(withFiles, trackCount) {
         const rows = trackCount === undefined ? 6 : trackCount;
         browseFixture.holdCues(rows, true, withFiles !== false);
-        verify(realAppSettings.experimentalBuildSupported, "an experimental build");
-        realAppSettings.experimentalFeaturesEnabled = experimental;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const page = makePage();
         page.playlistEditController = createTemporaryObject(fakePlaylistEditComponent, testCase);
         const controller = findChild(page, "scanController");
@@ -1325,7 +1337,7 @@ TestCase {
     // so the track is known to be one that can be picked up; a click
     // (shorter) and a release do not.
     function test_aHeldPressShowsTheClosedHand() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         const row = t.list.itemAtIndex(1);
         const area = findChild(row, "rowMouseArea");
         verify(area !== null);
@@ -1347,7 +1359,7 @@ TestCase {
     // rebuilt by a scan.
     function test_theSidebarMarksTheRememberedPlaylistOnOpen() {
         realAppSettings.lastPlaylistName = "Held Playlist";
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         tryCompare(t.page, "shownPlaylist", "Held Playlist");
         compare(playlistRow(t, "Held Playlist").isCurrent, true, "the remembered playlist is marked");
         compare(playlistRow(t, "All tracks").isCurrent, false, "and the first row is not");
@@ -1361,7 +1373,7 @@ TestCase {
     // takes the drop like any other row: the accent outline while the
     // track hovers it, and the card says what the drop does.
     function test_aNewPlaylistShowsItTakesTheDrop() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.fake.newPlaylists = ["Fresh"];
         const target = playlistRow(t, "Fresh");
         const row = t.list.itemAtIndex(1);
@@ -1379,7 +1391,7 @@ TestCase {
     // already (a Browse row of it): a track from elsewhere (a Matching
     // result found while looking at it) lands in it like in any other.
     function test_aPlaylistTakesADropUnlessTheTrackIsInIt() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.page.selectPlaylist(1, "Held Playlist");
         compare(t.page.shownPlaylist, "Held Playlist");
         t.sidebar.droppedTrackPlaylists = ["Held Reversed"];
@@ -1426,7 +1438,7 @@ TestCase {
     // summary stays shut however long the drag hovers it, and while the
     // card asks what the drop should do.
     function test_noSummaryWhileATrackIsDraggedOverAPlaylist() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.sidebar.summaryDelay = 300;
         const row = t.list.itemAtIndex(0);
         const target = playlistRow(t, "Held Playlist");
@@ -1558,7 +1570,7 @@ TestCase {
     // stages, as the row menu's Add to does. With no playlist shown there
     // is nothing to move the track out of, so no Move.
     function test_aTrackDroppedOnAPlaylistAsksBeforeAnythingIsStaged() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         // A playlist the track is not in yet.
         t.fake.newPlaylists = ["Fresh"];
         waitForRendering(t.page);
@@ -1629,7 +1641,7 @@ TestCase {
     // Move: the add to the target and the removal from the shown one, in
     // that order. The shown playlist itself is no target.
     function test_aTrackInThePlaylistShownCanBeMoved() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.fake.newPlaylists = ["Fresh"];
         const reversed = t.controller.playlistNames.indexOf("Held Reversed");
         t.page.selectPlaylist(reversed + 1, "Held Reversed", false);
@@ -1673,7 +1685,7 @@ TestCase {
     // the default, so Return or a stray click leaves the playlist as it
     // was.
     function test_aTrackAlreadyInThePlaylistAsksToMoveIt() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         const row = t.list.itemAtIndex(0);
         compare(row.title, "Held Track 1000");
         const target = playlistRow(t, "Held Reversed");
@@ -1725,7 +1737,7 @@ TestCase {
     // anywhere else (which does nothing else), and on a press on the row
     // it came from.
     function test_aDropIsCancelledByEscapeOrAClickElsewhere() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         const row = t.list.itemAtIndex(1);
         const target = playlistRow(t, "Held Playlist");
         const confirmDrop = () => {
@@ -1763,7 +1775,7 @@ TestCase {
     // A playlist staged for deletion takes no drop; one staged to be
     // created does, from the end of the list.
     function test_aDeletedPlaylistTakesNoDropANewOneDoes() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.fake.staged["p:Held Playlist"] = true;
         t.fake.pendingRevision++;
         t.fake.newPlaylists = ["Fresh"];
@@ -1793,7 +1805,7 @@ TestCase {
     // nothing: the next click on a cover, on the same page, plays it (the
     // card's carrier gives its mouse grab back).
     function test_aCoverPlaysAfterTheCardIsSentAway() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.fake.newPlaylists = ["Fresh"];
         waitForRendering(t.page);
         const row = t.list.itemAtIndex(0);
@@ -1832,7 +1844,7 @@ TestCase {
     // With drags on, a row still opens the details pane on a click and its
     // menu on a right click or a press and hold, and its cover still plays.
     function test_aDraggableRowStillClicks() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         const row = t.list.itemAtIndex(2);
         const at = grabPoint(row);
         mouseClick(row, at.x, at.y);
@@ -1857,19 +1869,14 @@ TestCase {
         cleanupExperimental();
     }
 
-    // Without Experimental nothing drags, and a track without a file (here
-    // the held rows without one, or a streaming one) cannot be dragged.
-    function test_nothingDragsWithoutExperimentalOrAFile() {
-        let t = makeDragPage(false);
-        let row = t.list.itemAtIndex(0);
-        dragOnto(row, playlistRow(t, "Held Playlist"));
-        compare(t.page.dragging, false, "Experimental off");
-        compare(t.card.visible, false);
-        dropOnto(row, playlistRow(t, "Held Playlist"));
-        compare(t.card.confirming, false);
-
-        t = makeDragPage(true, false);
-        row = t.list.itemAtIndex(0);
+    // A track without a file (here the held rows without one, or a
+    // streaming one) cannot be dragged. (Experimental off, as every drag
+    // page here: graduated 2026-11-19, the other drag tests prove a track
+    // with a file drags without it.)
+    function test_nothingDragsWithoutAFile() {
+        const t = makeDragPage(false);
+        compare(t.page.trackDragCard, t.card, "the drag card is there with Experimental off");
+        const row = t.list.itemAtIndex(0);
         compare(row.filePath, "");
         dragOnto(row, playlistRow(t, "Held Playlist"));
         compare(t.page.dragging, false, "no file");
@@ -1889,7 +1896,7 @@ TestCase {
     // that is not on a playlist: no question asked. Over a playlist row the
     // gap never opens, however long the pointer waits.
     function test_theRealDragReordersThePlaylistShown() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         t.page.selectPlaylist(t.controller.playlistNames.indexOf("Held Playlist") + 1, "Held Playlist", false);
         waitForRendering(t.page);
@@ -1975,7 +1982,7 @@ TestCase {
     // card with Add and Move, Move taking the track out of the playlist it
     // was picked up in, not the one opened.
     function test_holdingATrackOverAPlaylistOpensIt() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         t.fake.newPlaylists = ["Fresh"];
         showPlaylist(t, "Held Playlist");
@@ -2070,7 +2077,7 @@ TestCase {
     // from no playlist shown); Add stages one add, at that place. Escape
     // lets it go instead, nothing staged.
     function test_aTrackFromElsewhereIsAddedAtItsPlace() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         showPlaylist(t, "Held Playlist");
         const matching = showResults(t, [{title: "Stranger", filePath: "/nonexistent/x.mp3", playlistNames: ["Other"]}]);
@@ -2135,7 +2142,7 @@ TestCase {
     // into another it is not in: the gap there adds it, and Move takes it
     // out of the one it came from.
     function test_aTrackCarriedToAnotherPlaylistCanBeMovedThere() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         showPlaylist(t, "Held Playlist");
         t.sidebar.springLoadDelay = 300;
@@ -2200,7 +2207,7 @@ TestCase {
     // place; then the rows slide into the new order, the moved row where
     // the gap was.
     function test_aDroppedMoveSettlesWithoutJumpingBack() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         t.fake.asyncStaging = true;
         showPlaylist(t, "Held Playlist");
@@ -2255,7 +2262,7 @@ TestCase {
     // A track from elsewhere added at a place: after Add, until the add is
     // staged, the place stays open and the rows below it stay down.
     function test_aPlacedAddHoldsItsPlaceUntilStaged() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         realAppSettings.hideStreamingTracks = false;
         t.fake.asyncStaging = true;
         showPlaylist(t, "Held Playlist");
@@ -2291,7 +2298,7 @@ TestCase {
     // the list scrolls down, steadily, and stops at its end; held in the
     // middle it stays; at the top edge it scrolls back up.
     function test_theTrackListScrollsAtItsEdgeDuringADrag() {
-        const t = makeDragPage(true, true, 30);
+        const t = makeDragPage(true, 30);
         const scroller = findChild(t.page, "trackListAutoScroller");
         const row = t.list.itemAtIndex(0);
         verify(t.list.contentHeight > t.list.height, "more rows than fit");
@@ -2331,7 +2338,7 @@ TestCase {
 
     // The sidebar too: many playlists, the pointer held at its bottom edge.
     function test_theSidebarScrollsAtItsEdgeDuringADrag() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         const names = [];
         for (let i = 0; i < 30; ++i) {
             names.push("New " + (100 + i));
@@ -2366,7 +2373,7 @@ TestCase {
     // A Matching result drags to a playlist as a Browse row does; a
     // streaming one does not.
     function test_aMatchingResultDragsToAPlaylist() {
-        const t = makeDragPage(true);
+        const t = makeDragPage();
         t.page.matchingPanelOpen = true;
         const matching = findChild(t.page, "matchingPage");
         waitForRendering(t.page);
@@ -3250,7 +3257,7 @@ TestCase {
 
     function test_stagedPlaylistEditsSurviveACrashAndAreKept() {
         const t = leftOverCopy();
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const page1 = leftOverPage(t);
         verify(!findChild(page1, "leftOverEditsDialog").opened, "nothing was left over");
         const browse1 = page1.playlistEditController;
@@ -3320,7 +3327,7 @@ TestCase {
 
     function test_aSaveThatWritesEverythingLeavesNoBatch() {
         const t = leftOverCopy();
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const page = leftOverPage(t);
         const browse = page.playlistEditController;
         const file = browse.leftOverEditsFile(t.pioneer, t.engine);
@@ -3342,7 +3349,7 @@ TestCase {
 
     function test_anEditTheStickNoLongerAllowsIsReportedAndTheRestKept() {
         const t = leftOverCopy();
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const page1 = leftOverPage(t);
         const browse1 = page1.playlistEditController;
         const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
@@ -3378,7 +3385,9 @@ TestCase {
         compare(browse2.leftOverEdits(t.pioneer, t.engine).count, 2, "and the batch is what was kept");
     }
 
-    function test_withoutExperimentalLeftOverEditsAreNotOfferedButKept() {
+    // Graduated 2026-11-19: a batch staged with Experimental on is offered
+    // back with it off, like any other.
+    function test_withoutExperimentalLeftOverEditsAreOffered() {
         const t = leftOverCopy();
         realAppSettings.experimentalFeaturesEnabled = true;
         const page1 = leftOverPage(t);
@@ -3388,15 +3397,14 @@ TestCase {
         crash(page1, t, file);
         realAppSettings.experimentalFeaturesEnabled = false;
         const page2 = leftOverPage(t);
-        verify(!findChild(page2, "leftOverEditsDialog").opened, "not offered");
-        compare(leftOverSession(t).pendingCount, 0);
-        verify(stickFixture.fileExists(file), "kept for next time");
-        compare(page2.playlistEditController.leftOverEdits(t.pioneer, t.engine).count, 1);
+        tryCompare(findChild(page2, "leftOverEditsDialog"), "opened", true);
+        compare(leftOverSession(t).pendingCount, 0, "nothing staged until it is answered");
+        verify(stickFixture.fileExists(file), "kept until answered");
     }
 
     function test_leftOverEditsAreNotOfferedIntoASessionInUse() {
         const t = leftOverCopy();
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         const page1 = leftOverPage(t);
         const browse1 = page1.playlistEditController;
         const file = browse1.leftOverEditsFile(t.pioneer, t.engine);

@@ -307,7 +307,7 @@ public:
     // search is narrowing the view.
     Q_INVOKABLE QVariantList tracksByArtist(const QString &artist, const QString &excludeSourceId) const;
 
-    // For the Matching panel (Experimental): searches the full
+    // For the Matching panel: searches the full
     // last-scanned track list (same m_allTracks findMergeCandidates()
     // already searches, not the page's filtered/sorted `tracks` model) for
     // tracks compatible with anchorSourceId's key/BPM, excluding streaming

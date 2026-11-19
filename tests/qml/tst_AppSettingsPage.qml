@@ -216,6 +216,26 @@ TestCase {
         settings.experimentalFeaturesEnabled = false;
     }
 
+    // Anonymize Library graduated on 2026-11-19: its button is there with
+    // Experimental off (init() turns it off), and asks for the page.
+    function test_anonymize_library_needs_no_experimental_setting() {
+        compare(settings.experimentalFeaturesEnabled, false);
+        const page = make(900, 700);
+        const button = findChild(page, "anonymizeLibraryButton");
+        verify(button !== null);
+        compare(button.visible, true, "shown with Experimental off");
+        const toggle = findChild(page, "experimentalFeaturesCheck");
+        verify(toggle !== null);
+        compare(toggle.visible, settings.experimentalBuildSupported, "the toggle only where it is compiled in");
+        const spy = createTemporaryObject(anonymizeSpyComponent, testCase, {target: page});
+        button.clicked();
+        compare(spy.count, 1);
+    }
+    Component {
+        id: anonymizeSpyComponent
+        SignalSpy { signalName: "anonymizeLibraryRequested" }
+    }
+
     function test_content_never_exceeds_the_window_width() {
         var page = make(700, 700);
         var scroll = findChild(page, "settingsScroll");

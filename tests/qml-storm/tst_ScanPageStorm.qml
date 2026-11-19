@@ -9,7 +9,8 @@ import SeabassGui
 
 // Browse's track list scrolled with the wheel while staged playlist edits
 // change its rows: the real page on a copy of the anonymized fixture, the
-// real controllers, Experimental on, and a seeded walk (mulberry32, as the
+// real controllers, Experimental off (playlist editing needs it no longer),
+// and a seeded walk (mulberry32, as the
 // storm runner) of wheel bursts, edits, playlist switches and rescans.
 // In the storm lane (docs/testing.md "The storm"): its walks are a
 // quarter of a hunt's by default, which still finds the 2026-10-17 crash
@@ -86,7 +87,7 @@ TestCase {
         verify(root.length > 0, "the fixture must copy");
         const t = {pioneer: root + "/PIONEER", engine: root + "/Engine Library"};
         testCase.stick = t;
-        realAppSettings.experimentalFeaturesEnabled = true;
+        realAppSettings.experimentalFeaturesEnabled = false;
         realAppSettings.lastPlaylistName = "";
         const page = createTemporaryObject(pageComponent, testCase, {
             width: 880, height: 660, stickLabel: "TESTSTICK", rekordboxPath: t.pioneer, enginePath: t.engine,

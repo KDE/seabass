@@ -30,7 +30,7 @@ namespace seabass::gui
 
 class LibraryEditSession;
 
-// Browse's playlist editing (Experimental): creating a playlist, deleting
+// Browse's playlist editing (for everyone since 2026-11-19): creating a playlist, deleting
 // one, adding a track to one, taking it out or moving it within one,
 // staged into the stick's edit session like an added cue, so the page's
 // Save writes them into every library on the stick (CreatePlaylistChange;
