@@ -31,6 +31,7 @@ int main()
     assert(stickOperationLog(stick) == stick / "Seabass" / "seabass.log");
     assert(stickPendingDeletions(stick) == stick / "Seabass" / "orphaned" / "pending-deletions.jsonl");
     assert(stickMetadataCache(stick) == stick / "Seabass" / "caches" / "metadata.jsonl");
+    assert(stickBeatGridLedger(stick) == stick / "Seabass" / "beat-grids.tsv");
     assert(stickDurationCache(stick) == stick / "Seabass" / "caches" / "durations.jsonl");
     std::cout << "case 1 (the on-stick layout) OK\n";
 

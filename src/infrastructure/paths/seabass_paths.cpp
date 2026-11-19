@@ -148,6 +148,11 @@ fs::path stickRekordboxBaseline(const fs::path &stickRoot)
     return stickDir(stickRoot) / "rekordbox-baseline.tsv.gz";
 }
 
+fs::path stickBeatGridLedger(const fs::path &stickRoot)
+{
+    return stickDir(stickRoot) / "beat-grids.tsv";
+}
+
 fs::path stickDurationCache(const fs::path &stickRoot)
 {
     return stickCachesDir(stickRoot) / "durations.jsonl";

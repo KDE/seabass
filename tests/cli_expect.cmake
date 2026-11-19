@@ -21,6 +21,8 @@
 #       made a fresh copy of COPY_FROM before the run, for a command pointed
 #       at a fixture it must not be pointed at in place
 #   -DUNCHANGED_TREE=<directory: no file under it may appear, go or change>
+#   -DEXISTS=<glob patterns, separated by |: each must name at least one
+#       file afterwards>
 #
 # stdout and stderr are checked together, as a person reads them. stdin
 # is empty, so any confirmation prompt is answered "no".
@@ -43,6 +45,7 @@ string(REPLACE "|" ";" forbid "${FORBID}")
 string(REPLACE "\\n" "\n" forbid "${forbid}")
 string(REPLACE "|" ";" unchanged "${UNCHANGED}")
 string(REPLACE "|" ";" counts "${COUNT}")
+string(REPLACE "|" ";" exists "${EXISTS}")
 string(REPLACE "\\n" "\n" counts "${counts}")
 
 if(DEFINED COPY_FROM AND NOT COPY_FROM STREQUAL "")
@@ -114,6 +117,12 @@ foreach(pair IN LISTS counts)
     list(LENGTH found times)
     if(NOT times EQUAL wanted)
         string(APPEND failures "output matches ${times} times, expected ${wanted}: ${pattern}\n")
+    endif()
+endforeach()
+foreach(pattern IN LISTS exists)
+    file(GLOB found LIST_DIRECTORIES false "${pattern}")
+    if(NOT found)
+        string(APPEND failures "no file matches ${pattern}\n")
     endif()
 endforeach()
 if(DEFINED UNCHANGED_TREE AND NOT UNCHANGED_TREE STREQUAL "")

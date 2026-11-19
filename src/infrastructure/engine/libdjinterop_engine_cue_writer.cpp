@@ -5,14 +5,20 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 
 #include <djinterop/djinterop.hpp>
+#include <djinterop/engine/v2/engine_library.hpp>
+#include <djinterop/engine/v3/engine_library.hpp>
 
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
@@ -68,11 +74,40 @@ LibdjinteropEngineCueWriter::LibdjinteropEngineCueWriter(std::string engineLibra
 {
 }
 
+// One of the two, by the library's schema: 2.x keeps beat data in the
+// Track table, 3.x in PerformanceData.
+struct LibdjinteropEngineCueWriter::Tables
+{
+    std::optional<djinterop::engine::v2::engine_library> v2;
+    std::optional<djinterop::engine::v3::engine_library> v3;
+};
+
 djinterop::database &LibdjinteropEngineCueWriter::database()
 {
     if (!m_database) {
         WorkCounters::instance().noteEngineDatabaseOpen();
-        m_database = djinterop::engine::load_database(m_engineLibraryPath);
+        // What load_database() does, with the library kept: its tables
+        // and the database below then share one connection, so a beat
+        // grid written through one is what the other reads. Engine 1.x
+        // has no such library and is opened as before.
+        namespace dje = djinterop::engine;
+        if (dje::v3::engine_library::exists(m_engineLibraryPath)) {
+            auto library = dje::v3::engine_library::load(m_engineLibraryPath);
+            if (library.schema() >= dje::engine_schema::schema_3_0_0) {
+                m_database = library.database();
+                m_tables = std::make_shared<Tables>();
+                m_tables->v3 = std::move(library);
+            } else if (library.schema() >= dje::engine_schema::schema_2_18_0) {
+                // Opened again as what it is. Only on 2.x, once per writer.
+                auto v2 = dje::v2::engine_library::load(m_engineLibraryPath);
+                m_database = v2.database();
+                m_tables = std::make_shared<Tables>();
+                m_tables->v2 = std::move(v2);
+            }
+        }
+        if (!m_database) {
+            m_database = djinterop::engine::load_database(m_engineLibraryPath);
+        }
     }
     return *m_database;
 }
@@ -333,6 +368,246 @@ void LibdjinteropEngineCueWriter::propagateMissingFields(const std::string &trac
             track->set_key(*parsed);
         }
     }
+}
+
+namespace
+{
+
+using BeatDataBlob = djinterop::engine::v3::beat_data_blob;
+using GridMarkerBlob = djinterop::engine::v3::beat_grid_marker_blob;
+
+// Engine's markers in samples, numbered and counted the way Denon writes
+// its own: each says how many beats on the next one is, the last 0.
+std::vector<GridMarkerBlob> markerBlobs(const std::vector<domain::BeatGridMarker> &markers, double sampleRate,
+                                        double samples)
+{
+    std::vector<GridMarkerBlob> blobs;
+    for (std::size_t i = 0; i < markers.size(); ++i) {
+        const int toNext = i + 1 < markers.size() ? markers[i + 1].index - markers[i].index : 0;
+        blobs.push_back({markers[i].timeMs / 1000.0 * sampleRate, markers[i].index, toNext, 0});
+    }
+    // The last marker is the first beat at or after the end. It was put
+    // there in milliseconds; the way back to samples can leave it a
+    // fraction of a sample short, which a player could take for a grid
+    // that stops before the track does.
+    if (!blobs.empty() && blobs.back().sample_offset < samples && samples - blobs.back().sample_offset < 0.5) {
+        blobs.back().sample_offset = samples;
+    }
+    return blobs;
+}
+
+// The same grid: the same beats numbered the same, each within half a
+// sample. Closer than that is the same moment in the audio.
+bool sameGrid(const std::vector<GridMarkerBlob> &a, const std::vector<GridMarkerBlob> &b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].beat_number != b[i].beat_number || !(std::abs(a[i].sample_offset - b[i].sample_offset) <= 0.5)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The row's adjusted grid as it stands, to the whole sample: the same
+// stored grid always gives the same text, and an edit on the player that
+// moves the grid by a sample or more gives another. The rate and length
+// are in it too, since a grid in samples means nothing without them.
+std::string gridFingerprint(const BeatDataBlob &blob)
+{
+    std::string text = "seabass-beat-grid 1\n";
+    char line[128];
+    std::snprintf(line, sizeof line, "rate %.3f\nsamples %lld\n", blob.sample_rate,
+                  static_cast<long long>(std::llround(blob.samples)));
+    text += line;
+    for (const GridMarkerBlob &marker : blob.adjusted_beat_grid) {
+        std::snprintf(line, sizeof line, "%lld %lld\n", static_cast<long long>(marker.beat_number),
+                      static_cast<long long>(std::llround(marker.sample_offset)));
+        text += line;
+    }
+    return hashing::toHex(hashing::Sha256::of(std::string_view(text)));
+}
+
+}  // namespace
+
+BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string &trackSourceId,
+                                                               const std::vector<domain::Beat> &rekordboxBeats,
+                                                               const BeatGridWriteOptions &options)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    auto &db = database();
+    auto track = db.track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    if (!m_tables) {
+        return {Outcome::UnsupportedSchema};
+    }
+    const std::int64_t id = track->id();
+
+    // Each step below reads or writes one column through libdjinterop,
+    // each in its own statement, the way writeCues() does: the save that
+    // owns this writer works on a copy it backs up first.
+    const auto readBeatData = [&]() -> std::optional<BeatDataBlob> {
+        try {
+            return m_tables->v3 ? m_tables->v3->performance_data().get_beat_data(id)
+                                : m_tables->v2->track().get_beat_data(id);
+        } catch (const std::exception &) {
+            // A blob that does not decode is no grid to keep or compare.
+            return std::nullopt;
+        }
+    };
+    const auto writeBeatData = [&](const BeatDataBlob &blob) {
+        if (m_tables->v3) {
+            m_tables->v3->performance_data().set_beat_data(id, blob);
+        } else {
+            m_tables->v2->track().set_beat_data(id, blob);
+        }
+    };
+    // A flag that cannot be read is taken as `unreadable`.
+    const auto flag = [&](bool (djinterop::engine::v2::track_table::*v2)(std::int64_t),
+                          bool (djinterop::engine::v3::track_table::*v3)(std::int64_t), bool unreadable) {
+        try {
+            if (m_tables->v3) {
+                auto table = m_tables->v3->track();
+                return (table.*v3)(id);
+            }
+            auto table = m_tables->v2->track();
+            return (table.*v2)(id);
+        } catch (const std::exception &) {
+            return unreadable;
+        }
+    };
+
+    // The grid comes on rekordbox's timeline, as the cues do, and moves
+    // onto Engine's by the same shift. A beat the shift puts before the
+    // start is dropped; the line through the others still reaches back
+    // past it.
+    const double shiftMs = shiftMsOf(*track);
+    std::vector<domain::Beat> beats = rekordboxBeats;
+    for (domain::Beat &beat : beats) {
+        beat.timeMs -= shiftMs;
+    }
+    if (domain::markersFromBeats(beats, 0.0).markers.size() < 2) {
+        return {Outcome::NoSourceGrid};
+    }
+
+    const auto converted = [&](double sampleRate, double samples) {
+        const domain::MarkersFromBeats fromBeats = domain::markersFromBeats(beats, samples / sampleRate * 1000.0);
+        const auto markers = domain::engineNumbered(fromBeats.markers);
+        return std::make_pair(markerBlobs(markers, sampleRate, samples), fromBeats.barBreaks);
+    };
+
+    // Analysed is what the player reads off the flag, with the blob to
+    // say what rate and length the audio has. A row with a grid but the
+    // flag down is one the player will analyse again, so it counts as
+    // not analysed.
+    const std::optional<BeatDataBlob> existing = readBeatData();
+    // An analysed flag that cannot be read leaves the row alone (Skip) or
+    // filled as a row the player is still to analyse. A lock that cannot
+    // be read counts as a lock: unsure is a refusal, never a write over
+    // what the user may have pinned on the player.
+    const bool analysed = flag(&djinterop::engine::v2::track_table::get_is_analyzed,
+                               &djinterop::engine::v3::track_table::get_is_analyzed, false)
+        && existing && existing->sample_rate > 0.0 && existing->samples > 0.0 && std::isfinite(existing->sample_rate)
+        && std::isfinite(existing->samples);
+    const bool locked = flag(&djinterop::engine::v2::track_table::get_is_beat_grid_locked,
+                             &djinterop::engine::v3::track_table::get_is_beat_grid_locked, true);
+
+    if (analysed) {
+        const auto [grid, barBreaks] = converted(existing->sample_rate, existing->samples);
+        BeatGridWriteResult result{Outcome::Written, static_cast<int>(grid.size()), barBreaks};
+        // Before the checks for the user's own edits: a grid written here
+        // before is not the default one either, and writing it again
+        // would change nothing but the row's edit time.
+        if (existing->is_beatgrid_set == 1 && sameGrid(existing->adjusted_beat_grid, grid)) {
+            result.outcome = Outcome::AlreadySame;
+            result.gridFingerprint = gridFingerprint(*existing);
+            return result;
+        }
+        if (!options.overwriteEngineEdits) {
+            if (locked) {
+                result.outcome = Outcome::RowLocked;
+                return result;
+            }
+            // An adjusted grid that is not Engine's own was set on the
+            // player, unless it is the one Seabass wrote last time: then
+            // the DJ corrected the grid in rekordbox and this carries the
+            // correction over, which is what the conversion is for.
+            const bool ours = options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing);
+            if (existing->adjusted_beat_grid != existing->default_beat_grid && !ours) {
+                result.outcome = Outcome::RowEditedOnEngine;
+                return result;
+            }
+        }
+        // Only the adjusted grid: the default one is Engine's analysis,
+        // which the player offers to go back to. Rate, length and the
+        // bytes after the grids are the row's and stay as they are.
+        BeatDataBlob blob = *existing;
+        blob.is_beatgrid_set = 1;
+        blob.adjusted_beat_grid = grid;
+        if (m_beforeBeatGridWrite) {
+            m_beforeBeatGridWrite();
+        }
+        writeBeatData(blob);
+        result.gridFingerprint = gridFingerprint(blob);
+        return result;
+    }
+
+    if (options.unanalysed == UnanalysedRowGrid::Skip) {
+        return {Outcome::RowNotAnalysed};
+    }
+    const double rate = options.fileSampleRateHz.value_or(0.0);
+    const double durationMs = options.fileDurationMs.value_or(0.0);
+    if (!(rate > 0.0) || !(durationMs > 0.0) || !std::isfinite(rate) || !std::isfinite(durationMs)) {
+        return {Outcome::NoSampleRate};
+    }
+    // A row the player has not analysed: the whole blob is made here, at
+    // the file's rate and length, both grids the converted one, and the
+    // nine trailing bytes Denon writes as zeros. The analysed flag and
+    // the waveform stay as they are: the player is still to analyse it.
+    const double samples = std::round(durationMs / 1000.0 * rate);
+    const auto [grid, barBreaks] = converted(rate, samples);
+    BeatGridWriteResult result{Outcome::Written, static_cast<int>(grid.size()), barBreaks};
+    const bool lock = options.unanalysed == UnanalysedRowGrid::FillAndLock;
+    if (existing && existing->sample_rate == rate && existing->samples == samples && existing->is_beatgrid_set == 1
+        && sameGrid(existing->adjusted_beat_grid, grid) && sameGrid(existing->default_beat_grid, grid)
+        && (!lock || locked)) {
+        result.outcome = Outcome::AlreadySame;
+        result.gridFingerprint = gridFingerprint(*existing);
+        return result;
+    }
+    // A lock is the user's word whether or not the player has analysed
+    // the row. After the check above: a row FillAndLock filled before is
+    // locked by this very writer, and is the same, not refused.
+    if (locked && !options.overwriteEngineEdits) {
+        result.outcome = Outcome::RowLocked;
+        return result;
+    }
+    BeatDataBlob blob;
+    blob.sample_rate = rate;
+    blob.samples = samples;
+    blob.is_beatgrid_set = 1;
+    blob.default_beat_grid = grid;
+    blob.adjusted_beat_grid = grid;
+    blob.extra_data = std::vector<std::byte>(9, std::byte{0});
+    if (m_beforeBeatGridWrite) {
+        m_beforeBeatGridWrite();
+    }
+    writeBeatData(blob);
+    result.gridFingerprint = gridFingerprint(blob);
+    if (lock && !locked) {
+        // After the grid: should this fail, the row has a grid the player
+        // may replace, not a lock on no grid at all.
+        if (m_tables->v3) {
+            m_tables->v3->track().set_is_beat_grid_locked(id, true);
+        } else {
+            m_tables->v2->track().set_is_beat_grid_locked(id, true);
+        }
+    }
+    return result;
 }
 
 }  // namespace seabass::infrastructure::engine

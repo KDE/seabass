@@ -80,6 +80,11 @@ fs::path stickMetadataCache(const fs::path &stickRoot);
 // directory: it cannot be rebuilt from the stick, and it is a backup
 // target of the save, so Undo rolls it back with the catalogs.
 fs::path stickRekordboxBaseline(const fs::path &stickRoot);
+// <stick>/Seabass/beat-grids.tsv -- per track, the beat grid Copy Beat
+// Grids last wrote to Engine, so a later copy can tell its own grid from
+// one the DJ set on the player. Not in the caches directory either: it
+// cannot be rebuilt from the stick.
+fs::path stickBeatGridLedger(const fs::path &stickRoot);
 fs::path stickDurationCache(const fs::path &stickRoot);
 // Where the music starts and stops inside each file, once measured.
 // Separate from the duration cache because it costs a full decode to

@@ -583,6 +583,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/local_cue_store.cpp
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
+    src/infrastructure/local/beat_grid_ledger_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/utc_timestamp.cpp
@@ -631,6 +632,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_layout.cpp
     src/application/use_cases/unreferenced_tracks.cpp
     src/application/use_cases/plan_engine_update.cpp
+    src/application/use_cases/copy_beat_grids.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/infrastructure/local/engine_update_stick_facts.cpp
     src/infrastructure/cleanup/audio_file_walk.cpp
@@ -691,12 +693,14 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
     src/application/use_cases/plan_engine_update.cpp
+    src/application/use_cases/copy_beat_grids.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
+    src/domain/beat_grid.cpp
     src/infrastructure/audio/playback_timeline.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
@@ -722,6 +726,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
+    src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/engine_track_rows.cpp
@@ -737,6 +742,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/browsed_backup_root.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
+    src/infrastructure/local/beat_grid_ledger_file.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
@@ -2741,8 +2747,9 @@ set(_cli_catalogs
 set(_cli_rekordbox_counts "tracks:           1161\\n|tracks with cues: 222\\n|total cues:       317\\n")
 set(_cli_engine_counts "tracks:           1564\\n|tracks with cues: 125\\n|total cues:       219\\n")
 function(seabass_cli_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;COPY_FROM;COPY_TO;UNCHANGED_TREE" "ARGS;EXPECT;FORBID;COUNT")
+    cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;COPY_FROM;COPY_TO;UNCHANGED_TREE" "ARGS;EXPECT;FORBID;COUNT;EXISTS")
     list(JOIN cli_ARGS "|" _args)
+    list(JOIN cli_EXISTS "|" _exists)
     list(JOIN cli_EXPECT "|" _expect)
     list(JOIN cli_FORBID "|" _forbid)
     list(JOIN cli_COUNT "|" _count)
@@ -2750,7 +2757,7 @@ function(seabass_cli_test name)
         COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>" "-DARGS=${_args}" "-DEXIT=${cli_EXIT}"
                 "-DEXPECT=${_expect}" "-DFORBID=${_forbid}" "-DUNCHANGED=${_cli_catalogs}" "-DCOUNT=${_count}"
                 "-DCOPY_FROM=${cli_COPY_FROM}" "-DCOPY_TO=${cli_COPY_TO}" "-DUNCHANGED_TREE=${cli_UNCHANGED_TREE}"
-                -P ${CMAKE_SOURCE_DIR}/tests/cli_expect.cmake)
+                "-DEXISTS=${_exists}" -P ${CMAKE_SOURCE_DIR}/tests/cli_expect.cmake)
     # A bare flag with no PATH would look for a real stick.
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 endfunction()
@@ -2859,6 +2866,48 @@ seabass_cli_test(cli_sync_after_export EXIT 1
            "nothing to do")
 seabass_cli_test(cli_sync_after_export_one_catalog EXIT 2 ARGS sync-after-export --engine ${_cli_engine}
     EXPECT "sync-after-export needs a stick with both a rekordbox export and an Engine library")
+
+# Copy Beat Grids over fresh copies of the fixture. Its Engine library has
+# 1564 rows, 95 of them streaming; the 1161 rekordbox tracks all pair by
+# filename (the fixture has no audio). 188 of the pairs are rows the
+# player analysed, each with a rekordbox grid in its analysis file: those
+# are written; the other 973 are rows the player has not analysed, left
+# alone by default. The dry run and the declined prompt (stdin is empty,
+# so the question is answered no) change no file of their copy. The real run backs Engine up and records the 188 grids in
+# the ledger; run again on the same copy, every grid is already there and
+# no file changes, a backup included.
+set(_cli_bg_dry "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_dry_run")
+seabass_cli_test(cli_copy_beatgrids_dry_run EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_dry} UNCHANGED_TREE ${_cli_bg_dry}
+    ARGS copy-beatgrids --dry-run --rekordbox ${_cli_bg_dry}/rekordbox --engine ${_cli_bg_dry}/engine
+    EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469 \\(95 streaming, left out\\)\\n"
+           "matched tracks:    1161\\n" "rekordbox only:    0\\n"
+           "Would copy rekordbox's beat grid to 1161 Engine track\\(s\\)"
+           "--dry-run: no changes made."
+    FORBID "backed up" "copy-beatgrids summary" "Copy beat grids to the")
+set(_cli_bg_declined "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids_declined")
+seabass_cli_test(cli_copy_beatgrids_declined EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_declined} UNCHANGED_TREE ${_cli_bg_declined}
+    ARGS copy-beatgrids --rekordbox ${_cli_bg_declined}/rekordbox --engine ${_cli_bg_declined}/engine
+    EXPECT "Would copy rekordbox's beat grid to 1161 Engine track\\(s\\)" "skipped: no changes made."
+    FORBID "backed up" "copy-beatgrids summary")
+set(_cli_bg_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids")
+seabass_cli_test(cli_copy_beatgrids_run EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_copy}
+    ARGS copy-beatgrids --auto --rekordbox ${_cli_bg_copy}/rekordbox --engine ${_cli_bg_copy}/engine
+    EXPECT "matched tracks:    1161\\n"
+           "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
+           "\\n  written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
+    FORBID "already the same" "failed" "edited on Engine" "locked on Engine"
+    EXISTS "${_cli_bg_copy}/Seabass/beat-grids.tsv" "${_cli_bg_copy}/Seabass/backups/*-copy-beatgrids/*")
+set_tests_properties(cli_copy_beatgrids_run PROPERTIES FIXTURES_SETUP cli_copy_beatgrids_copy)
+seabass_cli_test(cli_copy_beatgrids_again EXIT 0 UNCHANGED_TREE ${_cli_bg_copy}
+    ARGS copy-beatgrids --auto --rekordbox ${_cli_bg_copy}/rekordbox --engine ${_cli_bg_copy}/engine
+    EXPECT "\\n  written: +0\\n  already the same: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
+    FORBID "backed up" "failed")
+set_tests_properties(cli_copy_beatgrids_again PROPERTIES FIXTURES_REQUIRED cli_copy_beatgrids_copy)
+seabass_cli_test(cli_copy_beatgrids_bad_unanalysed EXIT 1 ARGS copy-beatgrids --unanalysed maybe
+    EXPECT "--unanalysed takes skip, fill or fill-lock, got \"maybe\"")
 
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).
@@ -3883,6 +3932,32 @@ target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE seaba
 target_include_directories(libdjinterop_engine_cue_writer_main_cue_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cue_writer_main_cue_test COMMAND libdjinterop_engine_cue_writer_main_cue_test)
+
+# writeBeatGrid() over scratch copies of the fixture's Engine library: the
+# adjusted grid only, Denon's numbering, the refusals, and the same time
+# base as the cues (with the LAME file from mp3-lead-in for the shift).
+add_executable(libdjinterop_engine_beat_grid_writer_test
+    tests/libdjinterop_engine_beat_grid_writer_test.cpp
+)
+target_link_libraries(libdjinterop_engine_beat_grid_writer_test PRIVATE seabass_core_testing)
+target_include_directories(libdjinterop_engine_beat_grid_writer_test PRIVATE src)
+target_link_libraries(libdjinterop_engine_beat_grid_writer_test PRIVATE DjInterop SQLite::SQLite3)
+add_test(NAME libdjinterop_engine_beat_grid_writer_test COMMAND libdjinterop_engine_beat_grid_writer_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures)
+
+# Copy Beat Grids' plan and run, with a fake writer: every outcome in
+# its own bucket, the buckets adding up, the ledger in and out.
+add_executable(copy_beat_grids_test tests/copy_beat_grids_test.cpp)
+target_link_libraries(copy_beat_grids_test PRIVATE seabass_core_testing)
+target_include_directories(copy_beat_grids_test PRIVATE src)
+add_test(NAME copy_beat_grids_test COMMAND copy_beat_grids_test)
+
+# The beat grid ledger on the stick: round trip, a missing file, and
+# every malformed one read as empty with an error.
+add_executable(beat_grid_ledger_file_test tests/beat_grid_ledger_file_test.cpp)
+target_link_libraries(beat_grid_ledger_file_test PRIVATE seabass_core_testing)
+target_include_directories(beat_grid_ledger_file_test PRIVATE src)
+add_test(NAME beat_grid_ledger_file_test COMMAND beat_grid_ledger_file_test)
 
 add_executable(pending_deletion_manifest_test
     tests/pending_deletion_manifest_test.cpp

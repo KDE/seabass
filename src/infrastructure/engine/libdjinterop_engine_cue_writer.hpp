@@ -12,17 +12,26 @@
 
 #include <djinterop/database.hpp>
 
+#include "application/ports/beat_grid_writer.hpp"
 #include "application/ports/cue_writer.hpp"
+#include "domain/beat_grid.hpp"
 #include "domain/mp3_lead_in.hpp"
 
 namespace seabass::infrastructure::engine
 {
 
+// The beat grid write's options and outcomes are the application's
+// port (application/ports/beat_grid_writer.hpp), named here as well for
+// the callers that always used them from this header.
+using application::BeatGridWriteOptions;
+using application::BeatGridWriteResult;
+using application::UnanalysedRowGrid;
+
 // Writes hot cues back into an existing Engine Library track using
 // libdjinterop's track::set_hot_cues(). The caller (cli/) is responsible
 // for backing up the library's files before constructing this -- this
 // class only performs the write itself.
-class LibdjinteropEngineCueWriter : public application::CueWriter
+class LibdjinteropEngineCueWriter : public application::CueWriter, public application::BeatGridWriter
 {
 public:
     explicit LibdjinteropEngineCueWriter(std::string engineLibraryPath);
@@ -107,6 +116,23 @@ public:
     // of its duplicate copies' times; Engine keeps no play count, only this.
     void setLastPlayedAt(const std::string &trackSourceId, std::chrono::system_clock::time_point when);
 
+    // Puts a rekordbox beat grid (every beat, on rekordbox's timeline, as
+    // the rekordbox reader gives it) into the row's adjusted grid, the one
+    // the player plays by. Engine's own analysis, the default grid, stays
+    // as it is, so the player can still go back to it. The grid is moved
+    // onto Engine's timeline by the same lead-in shift as the cues, and
+    // put in samples at the row's own rate. Throws if the track does not
+    // exist; every refusal is an outcome, with nothing written.
+    BeatGridWriteResult writeBeatGrid(const std::string &trackSourceId, const std::vector<domain::Beat> &rekordboxBeats,
+                                      const BeatGridWriteOptions &options = {}) override;
+
+    // Called once before each beat grid write, after every check has
+    // passed and before a byte of the row changes; never for a refusal or
+    // a grid that is already there. For a caller that backs the library
+    // up only when something is about to be written. If it throws, the
+    // write does not happen and the exception leaves writeBeatGrid().
+    void setBeforeBeatGridWrite(std::function<void()> hook) { m_beforeBeatGridWrite = std::move(hook); }
+
 private:
     double shiftMsOf(djinterop::track &track);
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
@@ -126,6 +152,12 @@ private:
     // while a save owns the writer.
     djinterop::database &database();
 
+    // The same open library, at the level of its tables: beat data has
+    // two grids and the high-level track API writes both. Absent on
+    // Engine 1.x. Opened by database(), on one connection with it.
+    struct Tables;
+    std::shared_ptr<Tables> m_tables;
+
     std::string m_engineLibraryPath;
     std::string m_audioRoot;
     int m_memoryCuesDroppedByLeadInShift = 0;
@@ -133,6 +165,7 @@ private:
     std::shared_ptr<LeadInShiftDrops> m_drops;
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
+    std::function<void()> m_beforeBeatGridWrite;
 };
 
 }  // namespace seabass::infrastructure::engine
