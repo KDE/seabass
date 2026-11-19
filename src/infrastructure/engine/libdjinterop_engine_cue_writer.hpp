@@ -30,6 +30,10 @@ using application::UnanalysedRowGrid;
 using application::AnalysisImportOptions;
 using application::AnalysisImportResult;
 using application::RekordboxAnalysis;
+using application::EngineAnalysisFacts;
+using application::EngineAnalysisRestoreOptions;
+using application::EngineAnalysisRestoreResult;
+using application::LetPlayerAnalyseResult;
 
 // Writes hot cues back into an existing Engine Library track using
 // libdjinterop's track::set_hot_cues(). The caller (cli/) is responsible
@@ -156,6 +160,53 @@ public:
     AnalysisImportResult importAnalysis(const std::string &trackSourceId, const RekordboxAnalysis &analysis,
                                         const AnalysisImportOptions &options = {}) override;
 
+    // Puts the player's kept analysis back (see AnalysisWriter). The
+    // columns through writeEngineAnalysisColumns() (engine_track_rows.hpp),
+    // in one transaction; the overview file through the sink when the kept
+    // analysis had one, else removed through the remover when there is
+    // one now. Refuses without a kept-analysis store (NothingKept). The
+    // hook (setBeforeBeatGridWrite) is called before the first byte.
+    EngineAnalysisRestoreResult restoreEngineAnalysis(const std::string &trackSourceId, const std::string &keepKey,
+                                                      const EngineAnalysisRestoreOptions &options = {}) override;
+    LetPlayerAnalyseResult letPlayerAnalyseAgain(const std::string &trackSourceId, const std::string &keepKey,
+                                                 bool previewOnly = false) override;
+    EngineAnalysisFacts engineAnalysisFacts(const std::string &trackSourceId, const std::string &keepKey) override;
+
+    // Where the player's own analysis of a row is kept before Seabass first
+    // replaces any of it (importAnalysis() and writeBeatGrid() on a row the
+    // player has analysed; options' keepKey names the track). Not owned.
+    // Without one nothing is kept, which only a test wants.
+    //
+    // Kept after every check and the hook, before the row's first byte
+    // changes. A failure to keep it (no key: the file is not under the
+    // stick root; a kept entry that cannot be read; a write that fails)
+    // throws, and the row is not changed.
+    //
+    // Which analysis is kept:
+    // - nothing kept yet: the row as it is, unless it is Seabass's own (the
+    //   ledger's fingerprint is the row's grid: a row Seabass completed,
+    //   which the player never analysed);
+    // - kept already: the kept one stays (first kept wins), unless the
+    //   analysis now in the row (analysis record, overview, Engine's own
+    //   grid, overview file) is neither the kept one's nor the one Seabass
+    //   last left there: then the player analysed the row anew, and that
+    //   newer analysis is kept instead. A grid the DJ moved or locked on
+    //   the player is not an analysis and changes nothing here;
+    // - either way the entry records the row as this write leaves it
+    //   (KeptEngineAnalysis::seabassState and seabassAnalysis), written
+    //   only when that changes.
+    // A row the player has not analysed keeps nothing; when it has a kept
+    // entry (the player was asked to analyse it again), the entry records
+    // the row as Seabass completes it.
+    void setKeptAnalysisStore(application::KeptEngineAnalysisStore *store) { m_keptStore = store; }
+
+    // Takes an overview file away (a restore where the kept analysis had
+    // none), by its path from the Engine Library folder. By default it is
+    // removed under setOverviewFileRoot()'s folder; a save routes it
+    // through its own protection. A remover that throws fails the call.
+    using OverviewFileRemover = std::function<void(const std::string &relativePath)>;
+    void setOverviewFileRemover(OverviewFileRemover remover) { m_overviewFileRemover = std::move(remover); }
+
     // Where the overview file of a track goes: its bytes and its path from
     // the Engine Library folder ("Database2/OverviewData/<uuid>/<id>.rgb",
     // '/'-separated). By default it is written durably under the folder
@@ -185,6 +236,14 @@ public:
 
 private:
     double shiftMsOf(djinterop::track &track);
+    std::string databaseFile() const;
+    // The row's analysis as stored, its overview file included.
+    struct RowNow;
+    RowNow readRowNow(std::int64_t id);
+    // See setKeptAnalysisStore(). `apply` turns the row as it is into the
+    // row as the write will leave it.
+    bool keepBeforeWrite(std::int64_t id, const std::string &keepKey, bool playerAnalysed, bool rowIsSeabass,
+                         const std::function<void(application::EngineAnalysisColumns &)> &apply);
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
                    std::optional<double> knownSampleRate);
 
@@ -217,7 +276,9 @@ private:
     LeadInSource m_leadInSource;
     std::function<void()> m_beforeBeatGridWrite;
     OverviewFileSink m_overviewFileSink;
+    OverviewFileRemover m_overviewFileRemover;
     std::string m_overviewFileRoot;
+    application::KeptEngineAnalysisStore *m_keptStore = nullptr;
 };
 
 }  // namespace seabass::infrastructure::engine

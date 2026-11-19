@@ -24,6 +24,16 @@ import SeabassGui
 // says "Checking" until its answer comes. "Stage Selected" stages one
 // change per ticked track that would change; Save writes them, backed up
 // first, with the usual floating Save, Cancel and summary.
+//
+// The way back, as two secondary actions under it: the player's own
+// analysis of a row is kept on the stick before a copy replaces it, and
+// "Restore Engine's Analysis" puts it back; "Let the Player Analyse Again"
+// has the player analyse the ticked rows anew. Each stages one change per
+// track into the same session. A track row says when its analysis is kept.
+//
+// A rekordbox track with no Engine row cannot be ticked; when the list
+// shows such tracks the page says how many and asks for the libraries to
+// be synced first, with a link to Sync after Rekordbox Export.
 Page {
     id: root
     required property string stickLabel
@@ -34,6 +44,9 @@ Page {
 
     // Overridable so a test can hand in its own; the app never sets it.
     property var controller: realController
+
+    // The link in the sentence about tracks not in the Engine library.
+    signal rekordboxExportSyncRequested(string stickLabel, string rekordboxPath, string enginePath)
     // The stick is mounted read-only (its filesystem needs checking).
     // Overridable for a test, which has no read-only stick to hand.
     property bool stickReadOnly: root.controller.stickReadOnly
@@ -262,9 +275,46 @@ Page {
                         enabled: root.staged ? !root.controller.writing
                             : root.controller.canStage && !root.stickReadOnly && !editHost.blockedByOtherPage
                         ToolTip.visible: hovered
-                        ToolTip.text: root.staged ? "Take these copies back out of the changes to save"
+                        ToolTip.text: root.staged ? "Take these changes back out of the changes to save"
                             : "Stage a copy for every ticked track that would change; Save writes them"
                         onClicked: root.staged ? root.controller.unstage() : root.controller.stage()
+                    }
+                }
+
+                // The way back from a copy, for the ticked tracks: two
+                // secondary actions, on the summary's left line.
+                RowLayout {
+                    objectName: "engineAnalysisRow"
+                    Layout.fillWidth: true
+                    visible: root.usable && root.controller.tickedCount > 0
+                    spacing: Theme.rowSpacing
+                    Label {
+                        objectName: "engineAnalysisLabel"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        text: root.controller.engineAnalysisText
+                    }
+                    Button {
+                        objectName: "restoreButton"
+                        text: "Restore Engine's Analysis"
+                        enabled: !root.staged && root.controller.canRestore && !root.stickReadOnly
+                            && !editHost.blockedByOtherPage
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Stage putting back the player's own analysis, kept on the stick when a "
+                            + "copy replaced it, for every ticked track that has it; Save writes it"
+                        onClicked: root.controller.stageRestore()
+                    }
+                    Button {
+                        objectName: "letPlayerAnalyseButton"
+                        text: "Let the Player Analyse Again"
+                        enabled: !root.staged && root.controller.canLetPlayerAnalyse && !root.stickReadOnly
+                            && !editHost.blockedByOtherPage
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Stage marking every ticked track the player has analysed so that it "
+                            + "analyses it anew when it is next loaded; Save writes it"
+                        onClicked: root.controller.stageLetPlayerAnalyse()
                     }
                 }
             }
@@ -311,6 +361,23 @@ Page {
             wrapMode: Text.WordWrap
             color: Theme.warnText
             text: root.controller.ledgerWarning
+        }
+        // Tracks listed that have no Engine row: sync first.
+        Label {
+            id: notInEngineLabel
+            objectName: "notInEngineLabel"
+            Layout.fillWidth: true
+            visible: root.usable && root.controller.notInEngineShown > 0
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            textFormat: Text.StyledText
+            linkColor: Theme.accent
+            text: root.controller.notInEngineText
+            onLinkActivated: editHost.requestLeave(() => root.rekordboxExportSyncRequested(
+                root.stickLabel, root.rekordboxPath, root.enginePath))
+            HoverHandler {
+                cursorShape: notInEngineLabel.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+            }
         }
         Label {
             objectName: "nothingMatchedLabel"
@@ -397,7 +464,7 @@ Page {
                     reserveSelectionSpace: true
                     selected: trackRow.model.ticked
                     selectTooltip: trackRow.matched ? "Copy this track's beat grid and waveform"
-                        : "Not in the Engine library: nothing to copy to"
+                        : "Not in the Engine library yet: sync the libraries first"
                     note: trackRow.model.note
                     noteColor: root.toneColor(trackRow.model.noteTone)
                     onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)

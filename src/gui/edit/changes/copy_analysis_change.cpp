@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -16,7 +17,9 @@
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/fs_remove.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -32,11 +35,12 @@ constexpr const char *Format = "engine";
 constexpr const char *Label = "beat-grid-copy";
 
 // What this save's changes left on their rows, for the ledger: change id
-// to (ledger key, fingerprint). For the whole save: a rolled-back change
-// fails the save, and then nothing is recorded at all.
+// to (ledger key, fingerprint), no fingerprint for a line to take out (a
+// row whose analysis is the player's again). For the whole save: a
+// rolled-back change fails the save, and then nothing is recorded at all.
 struct LedgerRecord
 {
-    std::map<QString, std::pair<std::string, std::string>> byChange;
+    std::map<QString, std::pair<std::string, std::optional<std::string>>> byChange;
 };
 
 std::string ledgerKeyFor(const std::string &stickRoot)
@@ -102,6 +106,142 @@ QString waveformWords(application::AnalysisImportResult::Waveform waveform)
         return QStringLiteral("Engine library too old");
     }
     return QStringLiteral("unknown");
+}
+
+// Registers, once per save, the ledger's update after the commit from the
+// changes that landed.
+void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
+{
+    const std::string key = ledgerKeyFor(stickRoot);
+    bool created = false;
+    ctx.sharedForWholeSave<LedgerRecord>(key, [&created]() {
+        created = true;
+        return std::make_unique<LedgerRecord>();
+    });
+    if (!created) {
+        return;
+    }
+    // One record per save, made after the commit from what landed: a save
+    // stopped by a cancel still records the rows it wrote.
+    ctx.onAfterCommit([&ctx, key, stickRoot](const SaveContext::AfterCommit &after) {
+        const LedgerRecord *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(key);
+        if (record == nullptr || after.appliedIds.isEmpty()) {
+            return;
+        }
+        std::map<std::string, std::optional<std::string>> landed;
+        for (const auto &[changeId, entry] : record->byChange) {
+            if (after.appliedIds.contains(changeId)) {
+                landed[entry.first] = entry.second;
+            }
+        }
+        if (landed.empty()) {
+            return;
+        }
+        std::string error;
+        const auto root = pathFromUtf8(stickRoot);
+        const infrastructure::local::BeatGridLedger previous = infrastructure::local::readBeatGridLedger(root, &error);
+        // A ledger that cannot be read is replaced, as the command line
+        // does: nothing in it was believed anyway.
+        const bool unreadable = !error.empty();
+        infrastructure::local::BeatGridLedger next = previous;
+        int recorded = 0;
+        int dropped = 0;
+        for (const auto &[ledgerKey, fingerprint] : landed) {
+            if (fingerprint) {
+                next[ledgerKey] = *fingerprint;
+                ++recorded;
+            } else if (next.erase(ledgerKey) > 0) {
+                ++dropped;
+            }
+        }
+        if (next == previous && !unreadable) {
+            return;
+        }
+        ctx.backupOnce(ledgerFileOf(stickRoot), Label);
+        std::string writeError;
+        if (!infrastructure::local::writeBeatGridLedger(root, next, &writeError)) {
+            throw std::runtime_error("The beat grids were copied, but Seabass could not record which ones it wrote ("
+                                     + writeError + "), so the next copy takes them for grids set on the player "
+                                       "and leaves them alone.");
+        }
+        ctx.log().record("beat grids: recorded " + std::to_string(recorded) + " grid(s) in the ledger, took "
+                         + std::to_string(dropped) + " out"
+                         + (unreadable ? ", replacing one that could not be read (" + error + ")" : std::string()));
+    });
+}
+
+// A file of the real stick about to be written or removed by this save:
+// backed up first (or noted absent, so that Undo takes it away again),
+// then protected for the change, so a change or save that fails puts it
+// back as it was.
+void protectStickFile(SaveContext &ctx, const std::string &file)
+{
+    BackupTarget target;
+    target.file = file;
+    target.label = Label;
+    target.removeOnRestoreIfAbsent = true;
+    ctx.backupAllNow({target});
+    ctx.protectForThisChange(file);
+}
+
+using Writer = infrastructure::engine::LibdjinteropEngineCueWriter;
+
+// The save's one writer for the stick's Engine library, with the kept
+// analyses' store, both shared by every change of the page in the save.
+Writer &analysisWriterFor(SaveContext &ctx, FormatWriteSession &session, const std::string &stickRoot)
+{
+    auto &store = ctx.shared<infrastructure::local::StickKeptEngineAnalysisStore>(
+        "beat-grids:kept:" + application::normalizedPathKey(stickRoot), [&]() {
+            auto made = std::make_unique<infrastructure::local::StickKeptEngineAnalysisStore>(pathFromUtf8(stickRoot));
+            made->setBeforeChange([&ctx](const std::string &file) { protectStickFile(ctx, file); });
+            return made;
+        });
+    return ctx.shared<Writer>("beat-grids:writer:" + application::normalizedPathKey(session.writeRoot()), [&]() {
+        auto made = std::make_unique<Writer>(session.writeRoot());
+        // The scratch copy holds the database, not the audio: the MP3
+        // lead-in that moves the grid onto Engine's timeline, as it moves
+        // the cues, is read from the real library (#50).
+        made->setAudioRoot(session.realRoot());
+        useSaveLeadIns(ctx, *made, session.realRoot());
+        // Nor the overview files: they are read (to see whether one is
+        // already what would be written) and written in the real library.
+        made->setOverviewFileRoot(session.realRoot());
+        // Each one backed up before it is written, through this save: one
+        // the preview named was declared, and backupAllNow() finds it done
+        // already; one it did not is backed up (or noted absent) now. Then
+        // protected for the change, so a change that fails, or a save that
+        // fails, takes it back out. Written durably, as the writer's own
+        // default would.
+        made->setOverviewFileSink([&ctx, realRoot = session.realRoot()](const std::string &relative,
+                                                                         const std::string &bytes) {
+            const std::string file = overviewFileIn(realRoot, relative);
+            protectStickFile(ctx, file);
+            fs::create_directories(pathFromUtf8(file).parent_path());
+            if (!infrastructure::writeFileDurablyAtomic(file, bytes)) {
+                throw std::runtime_error("could not write the overview file " + file);
+            }
+        });
+        made->setOverviewFileRemover([&ctx, realRoot = session.realRoot()](const std::string &relative) {
+            const std::string file = overviewFileIn(realRoot, relative);
+            protectStickFile(ctx, file);
+            std::string failure;
+            if (!infrastructure::removeEntry(pathFromUtf8(file), failure)) {
+                throw std::runtime_error("could not remove the overview file " + file + ": " + failure);
+            }
+        });
+        // The player's own analysis is kept on the real stick, in this
+        // save's protection, before a row it would be lost from changes.
+        made->setKeptAnalysisStore(&store);
+        return made;
+    });
+}
+
+// The kept analysis' file of an item, on the stick; empty without a key.
+std::string keptFileOf(const std::string &stickRoot, const application::BeatGridCopyItem &item)
+{
+    return item.ledgerKey.empty()
+        ? std::string()
+        : pathToUtf8(infrastructure::local::keptEngineAnalysisFile(pathFromUtf8(stickRoot), item.ledgerKey));
 }
 
 }  // namespace
@@ -183,6 +323,11 @@ std::vector<BackupTarget> CopyAnalysisChange::filesToBackup(SaveContext &) const
         file.removeOnRestoreIfAbsent = true;
         targets.push_back(std::move(file));
     }
+    // The kept analysis of the row: backed up, or noted absent, so that
+    // Undo takes away an entry this save made.
+    if (const std::string kept = keptFileOf(m_stickRoot, m_item); !kept.empty() && !m_options.previewOnly) {
+        targets.push_back({kept, Label, true});
+    }
     // Once for the batch, by its first change (FillSampleRateChange's
     // reason): one copy of m.db per save, not one per track.
     if (m_declaresFiles) {
@@ -198,93 +343,14 @@ std::vector<BackupTarget> CopyAnalysisChange::filesToBackup(SaveContext &) const
 
 void CopyAnalysisChange::beforeSave(SaveContext &ctx)
 {
-    const std::string key = ledgerKeyFor(m_stickRoot);
-    bool created = false;
-    ctx.sharedForWholeSave<LedgerRecord>(key, [&created]() {
-        created = true;
-        return std::make_unique<LedgerRecord>();
-    });
-    if (!created) {
-        return;
-    }
-    // One record per save, made after the commit from what landed: a save
-    // stopped by a cancel still records the rows it wrote.
-    ctx.onAfterCommit([&ctx, key, stickRoot = m_stickRoot](const SaveContext::AfterCommit &after) {
-        const LedgerRecord *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(key);
-        if (record == nullptr || after.appliedIds.isEmpty()) {
-            return;
-        }
-        std::map<std::string, std::string> landed;
-        for (const auto &[changeId, entry] : record->byChange) {
-            if (after.appliedIds.contains(changeId)) {
-                landed[entry.first] = entry.second;
-            }
-        }
-        if (landed.empty()) {
-            return;
-        }
-        std::string error;
-        const auto root = pathFromUtf8(stickRoot);
-        const infrastructure::local::BeatGridLedger previous = infrastructure::local::readBeatGridLedger(root, &error);
-        // A ledger that cannot be read is replaced, as the command line
-        // does: nothing in it was believed anyway.
-        const bool unreadable = !error.empty();
-        infrastructure::local::BeatGridLedger next = previous;
-        for (const auto &[ledgerKey, fingerprint] : landed) {
-            next[ledgerKey] = fingerprint;
-        }
-        if (next == previous && !unreadable) {
-            return;
-        }
-        ctx.backupOnce(ledgerFileOf(stickRoot), Label);
-        std::string writeError;
-        if (!infrastructure::local::writeBeatGridLedger(root, next, &writeError)) {
-            throw std::runtime_error("The beat grids were copied, but Seabass could not record which ones it wrote ("
-                                     + writeError + "), so the next copy takes them for grids set on the player "
-                                       "and leaves them alone.");
-        }
-        ctx.log().record("beat grids: recorded " + std::to_string(landed.size()) + " grid(s) in the ledger"
-                         + (unreadable ? ", replacing one that could not be read (" + error + ")" : std::string()));
-    });
+    recordLedgerAfterCommit(ctx, m_stickRoot);
 }
 
 ChangeOutcome CopyAnalysisChange::apply(SaveContext &ctx)
 {
     FormatWriteSession &session = sharedFormatWriteSession(ctx, Format, m_enginePath.toStdString(), m_itemCountHint,
                                                            Label);
-    using Writer = infrastructure::engine::LibdjinteropEngineCueWriter;
-    Writer &writer = ctx.shared<Writer>("beat-grids:writer:" + application::normalizedPathKey(session.writeRoot()), [&]() {
-        auto made = std::make_unique<Writer>(session.writeRoot());
-        // The scratch copy holds the database, not the audio: the MP3
-        // lead-in that moves the grid onto Engine's timeline, as it moves
-        // the cues, is read from the real library (#50).
-        made->setAudioRoot(session.realRoot());
-        useSaveLeadIns(ctx, *made, session.realRoot());
-        // Nor the overview files: they are read (to see whether one is
-        // already what would be written) and written in the real library.
-        made->setOverviewFileRoot(session.realRoot());
-        // Each one backed up before it is written, through this save: one
-        // the preview named was declared, and backupAllNow() finds it done
-        // already; one it did not is backed up (or noted absent) now. Then
-        // protected for the change, so a change that fails, or a save that
-        // fails, takes it back out. Written durably, as the writer's own
-        // default would.
-        made->setOverviewFileSink([&ctx, realRoot = session.realRoot()](const std::string &relative,
-                                                                         const std::string &bytes) {
-            const std::string file = overviewFileIn(realRoot, relative);
-            BackupTarget target;
-            target.file = file;
-            target.label = Label;
-            target.removeOnRestoreIfAbsent = true;
-            ctx.backupAllNow({target});
-            ctx.protectForThisChange(file);
-            fs::create_directories(pathFromUtf8(file).parent_path());
-            if (!infrastructure::writeFileDurablyAtomic(file, bytes)) {
-                throw std::runtime_error("could not write the overview file " + file);
-            }
-        });
-        return made;
-    });
+    Writer &writer = analysisWriterFor(ctx, session, m_stickRoot);
 
     const application::AnalysisImportResult result = writer.importAnalysis(m_item.engineTrackId, m_analysis, m_options);
     using Outcome = application::BeatGridWriteResult::Outcome;
@@ -295,11 +361,12 @@ ChangeOutcome CopyAnalysisChange::apply(SaveContext &ctx)
     if ((gridWritten || result.grid.outcome == Outcome::AlreadySame) && !m_item.ledgerKey.empty()
         && !result.grid.gridFingerprint.empty()) {
         if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(m_stickRoot))) {
-            record->byChange[id()] = {m_item.ledgerKey, result.grid.gridFingerprint};
+            record->byChange[id()] = {m_item.ledgerKey, std::optional<std::string>(result.grid.gridFingerprint)};
         }
     }
     if (m_tally) {
-        m_tally->record(id(), {gridWritten, waveformWritten, result.completedRow});
+        m_tally->record(id(), {gridWritten, waveformWritten, result.completedRow, false, false,
+                               result.keptEngineAnalysis});
     }
     if (gridWritten || waveformWritten) {
         session.noteItemApplied();
@@ -315,6 +382,117 @@ ChangeOutcome CopyAnalysisChange::apply(SaveContext &ctx)
                      + gridWords(result.grid.outcome).toStdString() + ", waveform "
                      + waveformWords(result.waveform).toStdString());
     return ChangeOutcome::skip();
+}
+
+EngineAnalysisChange::EngineAnalysisChange(Kind kind, QString enginePath, std::string stickRoot,
+                                           application::BeatGridCopyItem item, std::string overviewFile,
+                                           int itemCountHint, bool declaresFiles,
+                                           std::shared_ptr<AnalysisSaveTally> tally)
+    : m_kind(kind)
+    , m_enginePath(std::move(enginePath))
+    , m_stickRoot(std::move(stickRoot))
+    , m_item(std::move(item))
+    , m_overviewFile(std::move(overviewFile))
+    , m_itemCountHint(itemCountHint)
+    , m_declaresFiles(declaresFiles)
+    , m_tally(std::move(tally))
+{
+}
+
+QString EngineAnalysisChange::id() const
+{
+    return CopyAnalysisChange::idFor(m_item.engineTrackId);
+}
+
+QString EngineAnalysisChange::subject() const
+{
+    const QString title = QString::fromStdString(m_item.title);
+    return title.isEmpty() ? QStringLiteral("Engine track %1").arg(QString::fromStdString(m_item.engineTrackId))
+                           : QStringLiteral("\"%1\"").arg(title);
+}
+
+QString EngineAnalysisChange::description() const
+{
+    return m_kind == Kind::Restore ? QStringLiteral("Restore Engine's analysis of %1").arg(subject())
+                                   : QStringLiteral("Let the player analyse %1 again").arg(subject());
+}
+
+QString EngineAnalysisChange::unit() const
+{
+    return QStringLiteral("tracks");
+}
+
+QString EngineAnalysisChange::verb() const
+{
+    return m_kind == Kind::Restore ? QStringLiteral("given back Engine's analysis")
+                                   : QStringLiteral("left for the player to analyse");
+}
+
+QStringList EngineAnalysisChange::formatsTouched() const
+{
+    return {QString::fromLatin1(Format)};
+}
+
+std::vector<BackupTarget> EngineAnalysisChange::filesToBackup(SaveContext &) const
+{
+    std::vector<BackupTarget> targets;
+    if (!m_overviewFile.empty()) {
+        targets.push_back({overviewFileIn(m_enginePath.toStdString(), m_overviewFile), Label, true});
+    }
+    // A restore takes the kept entry away; Undo puts it back. (Letting the
+    // player analyse leaves it, unless it is damaged.)
+    if (const std::string kept = keptFileOf(m_stickRoot, m_item); !kept.empty()) {
+        targets.push_back({kept, Label, true});
+    }
+    if (m_declaresFiles) {
+        targets.push_back({FormatWriteSession::databaseFileFor(Format, m_enginePath.toStdString()), Label});
+        targets.push_back({ledgerFileOf(m_stickRoot), Label, true});
+    }
+    return targets;
+}
+
+void EngineAnalysisChange::beforeSave(SaveContext &ctx)
+{
+    recordLedgerAfterCommit(ctx, m_stickRoot);
+}
+
+ChangeOutcome EngineAnalysisChange::apply(SaveContext &ctx)
+{
+    FormatWriteSession &session = sharedFormatWriteSession(ctx, Format, m_enginePath.toStdString(), m_itemCountHint,
+                                                           Label);
+    Writer &writer = analysisWriterFor(ctx, session, m_stickRoot);
+    bool done = false;
+    std::string why;
+    if (m_kind == Kind::Restore) {
+        using Outcome = application::EngineAnalysisRestoreResult::Outcome;
+        const auto result = writer.restoreEngineAnalysis(m_item.engineTrackId, m_item.ledgerKey, {});
+        done = result.outcome == Outcome::Restored || result.outcome == Outcome::AlreadyEngines;
+        why = result.reason.empty() ? std::string("nothing kept to put back") : result.reason;
+    } else {
+        using Outcome = application::LetPlayerAnalyseResult::Outcome;
+        const auto result = writer.letPlayerAnalyseAgain(m_item.engineTrackId, m_item.ledgerKey, false);
+        done = result.outcome == Outcome::Marked;
+        why = result.outcome == Outcome::NotAnalysed ? "the row is not analysed" : "the Engine library is too old";
+    }
+    const std::string what = m_kind == Kind::Restore ? "restored Engine's analysis of" : "marked for the player's analysis";
+    if (!done) {
+        ctx.log().record("beat grids: left Engine track id=" + m_item.engineTrackId + " alone: " + why);
+        return ChangeOutcome::skip();
+    }
+    if (!m_item.ledgerKey.empty()) {
+        if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(m_stickRoot))) {
+            record->byChange[id()] = {m_item.ledgerKey, std::nullopt};
+        }
+    }
+    if (m_tally) {
+        AnalysisSaveTally::Row row;
+        row.restored = m_kind == Kind::Restore;
+        row.markedForPlayer = m_kind == Kind::LetPlayerAnalyse;
+        m_tally->record(id(), row);
+    }
+    session.noteItemApplied();
+    ctx.log().record("beat grids: " + what + " Engine track id=" + m_item.engineTrackId);
+    return ChangeOutcome::success();
 }
 
 }  // namespace seabass::gui

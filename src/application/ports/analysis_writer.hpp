@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "application/ports/beat_grid_writer.hpp"
+#include "application/ports/kept_engine_analysis.hpp"
 #include "domain/beat_grid.hpp"
 
 namespace seabass::application
@@ -46,6 +47,20 @@ struct AnalysisImportOptions
     // its own, and whether it is an MP3 (the player counts whole frames).
     std::optional<double> fileSampleRateHz;
     bool fileIsMp3 = false;
+    // The file's own sample count, read from its container where that is
+    // exact (infrastructure/audio/exact_sample_count.hpp: FLAC, WAV, AIFF,
+    // M4A, and an MP3's frames), and whether the file is of a kind whose
+    // count must come from it (FLAC, WAV, AIFF, M4A): such a file without
+    // its count is not completed from an estimate (NoSampleCount). Measured
+    // on a Prime 4: what it stores is the container's count to the sample
+    // for FLAC, AIFF and M4A, the frames times 1152 for an MP3. Where both
+    // are there, the file's count wins over rekordbox's scrolling waveform.
+    std::optional<std::uint64_t> fileSampleCount;
+    bool fileCountRequired = false;
+    // The track's ledger key (BeatGridCopyItem::ledgerKey): where the
+    // player's own analysis of the row is kept before Seabass replaces any
+    // of it, when the writer has a KeptEngineAnalysisStore.
+    std::string keepKey;
     // Every check, no write, no file and no hook; the result is the one the
     // same call would give without it.
     bool previewOnly = false;
@@ -85,6 +100,70 @@ struct AnalysisImportResult
     // The overview file's path from the Engine Library folder, '/'-separated,
     // when one was (in a preview: would be) written.
     std::string overviewFileRelativePath;
+
+    // NoSampleCount: why the row's length is not known, in plain words.
+    std::string noSampleCountReason;
+
+    // The player's own analysis of the row was kept on the stick before
+    // this write replaced it: the first time, or again because the player
+    // had analysed the row anew since. Never in a preview.
+    bool keptEngineAnalysis = false;
+};
+
+// Putting the player's own analysis back (KeptEngineAnalysis).
+struct EngineAnalysisRestoreOptions
+{
+    // Also over a row that has changed since Seabass wrote it.
+    bool force = false;
+    bool previewOnly = false;
+};
+
+struct EngineAnalysisRestoreResult
+{
+    enum class Outcome {
+        // Put back, the kept entry dropped (in a preview: would be).
+        Restored,
+        // The row holds the kept analysis already: the entry is dropped,
+        // nothing else written.
+        AlreadyEngines,
+        // Nothing is kept for the track.
+        NothingKept,
+        // The kept entry cannot be read.
+        KeptDamaged,
+        // The kept entry is of another row, file or library.
+        Stale,
+        // The row changed since Seabass wrote it (the player analysed it
+        // again, or the DJ moved or locked the grid): newer work, left
+        // alone unless forced.
+        ChangedSince,
+        UnsupportedSchema,
+    };
+    Outcome outcome = Outcome::NothingKept;
+    std::string reason;
+    // The overview file put back or taken away, from the Engine Library
+    // folder; empty when it was left as it is.
+    std::string overviewFileRelativePath;
+};
+
+struct LetPlayerAnalyseResult
+{
+    enum class Outcome {
+        // Marked for the player's analysis (in a preview: would be).
+        Marked,
+        // The row is not analysed: nothing to do.
+        NotAnalysed,
+        UnsupportedSchema,
+    };
+    Outcome outcome = Outcome::NotAnalysed;
+};
+
+// What a row's analysis is, for the page: whether the player (or Seabass)
+// has analysed it, and whether the player's own analysis is kept.
+struct EngineAnalysisFacts
+{
+    bool rowAnalysed = false;
+    enum class Kept { None, Kept, Stale, Damaged };
+    Kept kept = Kept::None;
 };
 
 // Puts rekordbox's analysis into one Engine row. The Engine writer
@@ -98,6 +177,21 @@ public:
     // cannot be read or written past throws.
     virtual AnalysisImportResult importAnalysis(const std::string &engineTrackId, const RekordboxAnalysis &analysis,
                                                 const AnalysisImportOptions &options) = 0;
+
+    // The player's own analysis kept for `keepKey`, back into the row byte
+    // for byte (columns and overview file, or no file where there was
+    // none), then the kept entry dropped. The ledger line is the caller's.
+    virtual EngineAnalysisRestoreResult restoreEngineAnalysis(const std::string &engineTrackId,
+                                                              const std::string &keepKey,
+                                                              const EngineAnalysisRestoreOptions &options) = 0;
+
+    // The row marked for the player's analysis (markForDeviceAnalysis),
+    // keeping what is kept of it. A damaged kept entry, which can never be
+    // put back, is dropped. The ledger line is the caller's.
+    virtual LetPlayerAnalyseResult letPlayerAnalyseAgain(const std::string &engineTrackId, const std::string &keepKey,
+                                                         bool previewOnly) = 0;
+
+    virtual EngineAnalysisFacts engineAnalysisFacts(const std::string &engineTrackId, const std::string &keepKey) = 0;
 };
 
 }  // namespace seabass::application

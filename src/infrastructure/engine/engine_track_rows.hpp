@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "application/ports/kept_engine_analysis.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::infrastructure::engine
@@ -208,5 +209,27 @@ struct EngineInformationRows
 };
 [[nodiscard]] std::optional<EngineInformationRows> readEngineInformation(const std::string &databaseFile,
                                                                          std::string *error);
+
+// One row's analysis exactly as the m.db at `databaseFile` stores it (every
+// column with its SQLite type and bytes; the overview file is not read
+// here), with the row's Track.path and the library's Information.uuid:
+// what Beat Grids & Waveforms keeps before replacing it. 2.x keeps the
+// blobs in Track, 3.x in PerformanceData (NULL when the row has none).
+// nullopt with *error when the database or the row cannot be read.
+struct EngineAnalysisRow
+{
+    application::EngineAnalysisColumns columns;
+    std::string trackFile;
+    std::string libraryUuid;
+};
+[[nodiscard]] std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile,
+                                                                     std::int64_t trackId, std::string *error);
+
+// Puts `columns` (not the overview file) into the row, each value with its
+// own SQLite type, in one transaction: the blobs, then the flags and
+// numbers. False with *error, and nothing changed, when the database
+// cannot be written or the row (or its PerformanceData row) is not there.
+[[nodiscard]] bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t trackId,
+                                              const application::EngineAnalysisColumns &columns, std::string *error);
 
 }  // namespace seabass::infrastructure::engine

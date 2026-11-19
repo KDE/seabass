@@ -41,6 +41,8 @@ struct BeatGridWriteOptions
     // before a write is not called. For a page that says what a copy
     // would do before the user asks for it.
     bool previewOnly = false;
+    // As AnalysisImportOptions::keepKey.
+    std::string keepKey;
 };
 
 struct BeatGridWriteResult

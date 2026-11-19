@@ -34,6 +34,12 @@ public:
         bool grid = false;
         bool waveform = false;
         bool completed = false;
+        // EngineAnalysisChange: the player's analysis put back, or the row
+        // marked for the player to analyse.
+        bool restored = false;
+        bool markedForPlayer = false;
+        // The player's own analysis was kept on the stick first.
+        bool keptEngineAnalysis = false;
     };
     void record(const QString &changeId, Row row)
     {
@@ -87,6 +93,15 @@ private:
 // outlives a failed save. A cancelled save keeps the rows that landed, and
 // their files with them, as it keeps their database rows.
 //
+// The player's own analysis of a row it had analysed is kept on the stick
+// before the row changes (<stick>/Seabass/engine-analysis/, see
+// LibdjinteropEngineCueWriter::setKeptAnalysisStore()), in this save's
+// protection like the overview file: the track's entry is declared in
+// filesToBackup() (absent when there is none yet, so Undo takes a new one
+// away), and the store backs it up and protects it for the change before
+// writing it. A failure to keep it fails the change, with the row as it
+// was.
+//
 // The ledger (<stick>/Seabass/beat-grids.tsv, the record of the grids
 // Seabass wrote) is written once per save, after the commit, with the
 // fingerprint of every row whose change landed with its grid written or
@@ -126,6 +141,53 @@ private:
     application::BeatGridCopyItem m_item;
     application::RekordboxAnalysis m_analysis;
     application::AnalysisImportOptions m_options;
+    std::string m_overviewFile;
+    int m_itemCountHint = 1;
+    bool m_declaresFiles = true;
+    std::shared_ptr<AnalysisSaveTally> m_tally;
+};
+
+// Beat Grids & Waveforms, one Engine row, the two ways back from a copy:
+//
+// - Restore: the player's own analysis kept on the stick, put back byte
+//   for byte (LibdjinteropEngineCueWriter::restoreEngineAnalysis()): the
+//   columns into the save's database, the overview file put back or taken
+//   away in the real library, the kept entry removed, and after the commit
+//   the track's ledger line taken out. A row changed on the player since
+//   Seabass wrote it is left alone (a skip).
+// - LetPlayerAnalyse: the row marked for the player's analysis
+//   (markForDeviceAnalysis), the kept entry left so it can still be put
+//   back, the ledger line taken out after the commit.
+//
+// One change per track, in the same save and protection as
+// CopyAnalysisChange: every stick file is backed up (or noted absent)
+// before it changes and protected for the change; the first change of the
+// batch declares m.db and the ledger.
+class EngineAnalysisChange : public PendingChange
+{
+public:
+    enum class Kind { Restore, LetPlayerAnalyse };
+    // `overviewFile`: the overview file the preview said a restore puts
+    // back or takes away, from the Engine Library folder; empty for none.
+    EngineAnalysisChange(Kind kind, QString enginePath, std::string stickRoot, application::BeatGridCopyItem item,
+                         std::string overviewFile, int itemCountHint, bool declaresFiles,
+                         std::shared_ptr<AnalysisSaveTally> tally = {});
+
+    QString id() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    void beforeSave(SaveContext &ctx) override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+private:
+    Kind m_kind;
+    QString m_enginePath;
+    std::string m_stickRoot;
+    application::BeatGridCopyItem m_item;
     std::string m_overviewFile;
     int m_itemCountHint = 1;
     bool m_declaresFiles = true;

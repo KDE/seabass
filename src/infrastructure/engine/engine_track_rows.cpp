@@ -694,4 +694,201 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
     return id;
 }
 
+namespace
+{
+
+application::EngineSqlValue columnValue(sqlite3_stmt *stmt, int c)
+{
+    using V = application::EngineSqlValue;
+    switch (sqlite3_column_type(stmt, c)) {
+    case SQLITE_INTEGER:
+        return V::ofInteger(sqlite3_column_int64(stmt, c));
+    case SQLITE_FLOAT:
+        return V::ofReal(sqlite3_column_double(stmt, c));
+    case SQLITE_TEXT: {
+        const auto *text = reinterpret_cast<const char *>(sqlite3_column_text(stmt, c));
+        return V::ofText(std::string(text ? text : "", static_cast<size_t>(sqlite3_column_bytes(stmt, c))));
+    }
+    case SQLITE_BLOB: {
+        const auto *bytes = static_cast<const char *>(sqlite3_column_blob(stmt, c));
+        return V::ofBlob(std::string(bytes ? bytes : "", static_cast<size_t>(sqlite3_column_bytes(stmt, c))));
+    }
+    default:
+        return V::null();
+    }
+}
+
+void bindValue(sqlite3_stmt *stmt, int at, const application::EngineSqlValue &v)
+{
+    using T = application::EngineSqlValue::Type;
+    switch (v.type) {
+    case T::Null:
+        sqlite3_bind_null(stmt, at);
+        break;
+    case T::Integer:
+        sqlite3_bind_int64(stmt, at, v.integer);
+        break;
+    case T::Real:
+        sqlite3_bind_double(stmt, at, v.real);
+        break;
+    case T::Text:
+        sqlite3_bind_text(stmt, at, v.bytes.data(), static_cast<int>(v.bytes.size()), SQLITE_TRANSIENT);
+        break;
+    case T::Blob:
+        // A zero-length blob stays a blob, not a NULL.
+        sqlite3_bind_blob(stmt, at, v.bytes.empty() ? "" : v.bytes.data(), static_cast<int>(v.bytes.size()),
+                          SQLITE_TRANSIENT);
+        break;
+    }
+}
+
+// Where this schema keeps the three blobs: Track on 2.x (PerformanceData is
+// a view over it before 2.20), PerformanceData on 3.x.
+std::optional<bool> blobsInTrack(const Connection &db, std::string *error)
+{
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db.handle(), "SELECT count(*) FROM pragma_table_info('Track') WHERE name = 'trackData';", -1,
+                           &stmt, nullptr)
+            != SQLITE_OK
+        || sqlite3_step(stmt) != SQLITE_ROW) {
+        *error = std::string("could not read the schema: ") + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    const bool inTrack = sqlite3_column_int(stmt, 0) == 1;
+    sqlite3_finalize(stmt);
+    return inTrack;
+}
+
+}  // namespace
+
+std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile, std::int64_t trackId,
+                                                       std::string *error)
+{
+    if (error == nullptr) {
+        throw std::invalid_argument("readEngineAnalysisRow: the error out-parameter is required");
+    }
+    error->clear();
+    Connection db(databaseFile, SQLITE_OPEN_READONLY);
+    if (!db.ok()) {
+        *error = "could not open " + databaseFile + ": " + db.why();
+        return std::nullopt;
+    }
+    const auto inTrack = blobsInTrack(db, error);
+    if (!inTrack) {
+        return std::nullopt;
+    }
+    const std::string sql = *inTrack
+        ? "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, t.trackData, "
+          "t.overviewWaveFormData, t.beatData FROM Track t WHERE t.id = ?1;"
+        : "SELECT t.path, t.isAnalyzed, t.isBeatGridLocked, t.bpm, t.bpmAnalyzed, t.key, p.trackData, "
+          "p.overviewWaveFormData, p.beatData FROM Track t LEFT JOIN PerformanceData p ON p.trackId = t.id "
+          "WHERE t.id = ?1;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db.handle(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        *error = "could not read track id=" + std::to_string(trackId) + ": " + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    sqlite3_bind_int64(stmt, 1, trackId);
+    const int step = sqlite3_step(stmt);
+    if (step != SQLITE_ROW) {
+        *error = step == SQLITE_DONE ? "no track id=" + std::to_string(trackId) + " in " + databaseFile
+                                     : "could not read track id=" + std::to_string(trackId) + ": "
+                + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    EngineAnalysisRow row;
+    const auto path = columnValue(stmt, 0);
+    row.trackFile = path.bytes;
+    row.columns.isAnalyzed = columnValue(stmt, 1);
+    row.columns.isBeatGridLocked = columnValue(stmt, 2);
+    row.columns.bpm = columnValue(stmt, 3);
+    row.columns.bpmAnalyzed = columnValue(stmt, 4);
+    row.columns.key = columnValue(stmt, 5);
+    row.columns.trackData = columnValue(stmt, 6);
+    row.columns.overviewWaveFormData = columnValue(stmt, 7);
+    row.columns.beatData = columnValue(stmt, 8);
+    sqlite3_finalize(stmt);
+
+    if (sqlite3_prepare_v2(db.handle(), "SELECT uuid FROM Information ORDER BY id LIMIT 1;", -1, &stmt, nullptr)
+            != SQLITE_OK
+        || sqlite3_step(stmt) != SQLITE_ROW) {
+        *error = std::string("could not read the library's uuid: ") + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    row.libraryUuid = columnValue(stmt, 0).bytes;
+    sqlite3_finalize(stmt);
+    return row;
+}
+
+bool writeEngineAnalysisColumns(const std::string &databaseFile, std::int64_t trackId,
+                                const application::EngineAnalysisColumns &columns, std::string *error)
+{
+    if (error == nullptr) {
+        throw std::invalid_argument("writeEngineAnalysisColumns: the error out-parameter is required");
+    }
+    error->clear();
+    Connection db(databaseFile, SQLITE_OPEN_READWRITE);
+    if (!db.ok()) {
+        *error = "could not open " + databaseFile + ": " + db.why();
+        return false;
+    }
+    const auto inTrack = blobsInTrack(db, error);
+    if (!inTrack) {
+        return false;
+    }
+    if (!db.exec("BEGIN IMMEDIATE;", error)) {
+        return false;
+    }
+    const auto fail = [&]() {
+        std::string ignored;
+        db.exec("ROLLBACK;", &ignored);
+        return false;
+    };
+    const auto run = [&](const std::string &sql, const std::vector<const application::EngineSqlValue *> &values) {
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db.handle(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            *error = sql + ": " + sqlite3_errmsg(db.handle());
+            sqlite3_finalize(stmt);
+            return false;
+        }
+        int at = 1;
+        for (const auto *v : values) {
+            bindValue(stmt, at++, *v);
+        }
+        sqlite3_bind_int64(stmt, at, trackId);
+        const bool done = sqlite3_step(stmt) == SQLITE_DONE;
+        if (!done) {
+            *error = sql + ": " + sqlite3_errmsg(db.handle());
+        }
+        sqlite3_finalize(stmt);
+        if (done && sqlite3_changes(db.handle()) != 1) {
+            *error = sql + ": changed " + std::to_string(sqlite3_changes(db.handle())) + " rows for track id="
+                + std::to_string(trackId);
+            return false;
+        }
+        return done;
+    };
+    // The blobs first, then the flags, in one transaction: a row is never
+    // seen flagged analysed with the blobs of another analysis.
+    const std::string blobs = *inTrack
+        ? "UPDATE Track SET trackData = ?1, overviewWaveFormData = ?2, beatData = ?3 WHERE id = ?4;"
+        : "UPDATE PerformanceData SET trackData = ?1, overviewWaveFormData = ?2, beatData = ?3 WHERE trackId = ?4;";
+    if (!run(blobs, {&columns.trackData, &columns.overviewWaveFormData, &columns.beatData})) {
+        return fail();
+    }
+    if (!run("UPDATE Track SET isAnalyzed = ?1, isBeatGridLocked = ?2, bpm = ?3, bpmAnalyzed = ?4, key = ?5 "
+             "WHERE id = ?6;",
+             {&columns.isAnalyzed, &columns.isBeatGridLocked, &columns.bpm, &columns.bpmAnalyzed, &columns.key})) {
+        return fail();
+    }
+    if (!db.exec("COMMIT;", error)) {
+        return fail();
+    }
+    return true;
+}
+
 }  // namespace seabass::infrastructure::engine

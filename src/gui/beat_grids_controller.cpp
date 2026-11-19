@@ -27,7 +27,9 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/analysis_file_facts.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -179,6 +181,13 @@ int BeatGridTrackListModel::indexOf(const QString &rekordboxId) const
         }
     }
     return -1;
+}
+
+bool BeatGridTrackState::canRestore() const
+{
+    using Outcome = application::EngineAnalysisRestoreResult::Outcome;
+    return !failed && facts.kept == application::EngineAnalysisFacts::Kept::Kept && restore
+        && (restore->outcome == Outcome::Restored || restore->outcome == Outcome::AlreadyEngines);
 }
 
 bool BeatGridTrackState::wouldWrite() const
@@ -399,6 +408,9 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
     std::string ledgerError;
     const auto ledger = infrastructure::local::readBeatGridLedger(pathFromUtf8(library.stickRoot), &ledgerError);
     infrastructure::engine::LibdjinteropEngineCueWriter writer(library.enginePath.toStdString());
+    // Read only: a preview finds what is kept and never writes it.
+    infrastructure::local::StickKeptEngineAnalysisStore kept(pathFromUtf8(library.stickRoot));
+    writer.setKeptAnalysisStore(&kept);
 #ifdef SEABASS_HAVE_TAGLIB
     infrastructure::audio::TagLibMetadataProbe probe;
 #else
@@ -406,15 +418,7 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
 #endif
     infrastructure::local::CachedSampleRates rates(library.stickRoot, probe);
     const application::AnalysisFileFactsSource facts = [&rates](const application::BeatGridCopyItem &item) {
-        application::AnalysisFileFacts f;
-        if (!item.filePath.empty()) {
-            f.sampleRateHz = rates.rateOf(item.filePath);
-            std::string extension = pathToUtf8(pathFromUtf8(item.filePath).extension());
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            f.isMp3 = extension == ".mp3";
-        }
-        return f;
+        return infrastructure::local::analysisFileFactsOf(item, rates);
     };
     application::AnalysisCopyOptions options = in.options;
     options.previewOnly = true;
@@ -439,6 +443,10 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
             state.options = outcome.options;
             if (state.wouldWrite()) {
                 state.analysis = std::move(analysis);
+            }
+            state.facts = writer.engineAnalysisFacts(item.engineTrackId, item.ledgerKey);
+            if (state.facts.kept == application::EngineAnalysisFacts::Kept::Kept) {
+                state.restore = writer.restoreEngineAnalysis(item.engineTrackId, item.ledgerKey, {false, true});
             }
         } catch (const std::exception &e) {
             state.failed = true;
@@ -656,10 +664,41 @@ bool BeatGridsController::writing() const
     return m_session && m_session->writing();
 }
 
-bool BeatGridsController::canStage() const
+bool BeatGridsController::canStageAnything() const
 {
     return m_library && !m_library->engineTooOld && !m_library->stickReadOnly && m_stagedIds.isEmpty() && !writing()
-        && (m_options.grids || m_options.waveforms) && m_summary.pending == 0 && m_summary.rows > 0;
+        && (m_options.grids || m_options.waveforms) && m_summary.pending == 0;
+}
+
+bool BeatGridsController::canStage() const
+{
+    return canStageAnything() && m_summary.rows > 0;
+}
+
+bool BeatGridsController::canRestore() const
+{
+    return canStageAnything() && m_summary.restorable > 0;
+}
+
+bool BeatGridsController::canLetPlayerAnalyse() const
+{
+    return canStageAnything() && m_summary.analysed > 0;
+}
+
+QString BeatGridsController::notInEngineText() const
+{
+    if (m_notInEngineShown == 0) {
+        return {};
+    }
+    // True now and once Preferences has its switches for Sync to copy beat
+    // grids and waveforms (sync/copyBeatGridsToEngine and
+    // sync/copyWaveformsToEngine), which say "when ... switched on".
+    return plural(m_notInEngineShown, QStringLiteral("One track here is"), QStringLiteral("tracks here are"))
+        + QStringLiteral(" not in the Engine library yet, so nothing can be copied to ")
+        + (m_notInEngineShown == 1 ? QStringLiteral("it") : QStringLiteral("them"))
+        + QStringLiteral(". Sync the libraries first with <a href=\"sync\">Sync after Rekordbox Export</a>, which "
+                         "also copies beat grids and waveforms as it goes when that is switched on in Preferences, "
+                         "or come back here once the libraries are in step.");
 }
 
 void BeatGridsController::load(const QString &rekordboxPath, const QString &enginePath)
@@ -824,7 +863,15 @@ void BeatGridsController::rebuildRows()
             }
         }
     }
+    int notInEngine = 0;
+    for (const auto &row : rows) {
+        notInEngine += row.matched ? 0 : 1;
+    }
     m_tracks.setRows(std::move(rows));
+    if (notInEngine != m_notInEngineShown) {
+        m_notInEngineShown = notInEngine;
+        emit notInEngineChanged();
+    }
 }
 
 void BeatGridsController::describe(BeatGridTrackListModel::Row &row) const
@@ -840,7 +887,7 @@ void BeatGridsController::describe(BeatGridTrackListModel::Row &row) const
     row.note.clear();
     row.noteTone.clear();
     if (!row.matched) {
-        row.note = QStringLiteral("Not in the Engine library");
+        row.note = QStringLiteral("Not in the Engine library yet: sync the libraries first");
         row.noteTone = QStringLiteral("muted");
         return;
     }
@@ -875,6 +922,16 @@ void BeatGridsController::describe(BeatGridTrackListModel::Row &row) const
     } else if (notAnalysed(s)) {
         row.note = whyLeftForThePlayer(s);
         row.noteTone = QStringLiteral("warn");
+    }
+    // The way back, said quietly on the row whatever else it says.
+    if (s.facts.kept == application::EngineAnalysisFacts::Kept::Kept) {
+        const QString kept = QStringLiteral("Engine's analysis kept");
+        if (row.note.isEmpty()) {
+            row.note = kept;
+            row.noteTone = QStringLiteral("muted");
+        } else {
+            row.note += QStringLiteral(". ") + kept;
+        }
     }
 }
 
@@ -1142,6 +1199,11 @@ void BeatGridsController::recount()
             continue;
         }
         const BeatGridTrackState &t = state->second;
+        if (!t.failed) {
+            s.kept += t.facts.kept == application::EngineAnalysisFacts::Kept::Kept ? 1 : 0;
+            s.restorable += t.canRestore() ? 1 : 0;
+            s.analysed += t.facts.rowAnalysed ? 1 : 0;
+        }
         if (t.wouldWrite()) {
             ++s.rows;
             s.grids += t.result.grid.outcome == Outcome::Written ? 1 : 0;
@@ -1198,6 +1260,16 @@ void BeatGridsController::recount()
             s.text = text;
         }
     }
+    if (s.kept > 0) {
+        s.engineAnalysisText = QStringLiteral("Engine's own analysis is kept for ")
+            + plural(s.kept, QStringLiteral("one ticked track"), QStringLiteral("ticked tracks"));
+        if (s.restorable == s.kept) {
+            s.engineAnalysisText += QStringLiteral(", ready to be put back.");
+        } else {
+            s.engineAnalysisText += QStringLiteral("; ") + QString::number(s.restorable)
+                + QStringLiteral(" can be put back, the rest changed on the player since.");
+        }
+    }
     m_summary = std::move(s);
     emit summaryChanged();
 }
@@ -1245,6 +1317,8 @@ void BeatGridsController::onSaveFinished(const QVariantMap &summary)
                 continue;
             }
             ours = true;
+            counted.restored += row->restored ? 1 : 0;
+            counted.marked += row->markedForPlayer ? 1 : 0;
             counted.grids += row->grid ? 1 : 0;
             counted.waveforms += row->waveform ? 1 : 0;
             counted.completed += row->completed ? 1 : 0;
@@ -1264,7 +1338,26 @@ void BeatGridsController::onSaveFinished(const QVariantMap &summary)
     if (m_stagedIds.isEmpty()) {
         m_tally.reset();
     }
-    if (ours) {
+    if (ours && (counted.restored > 0 || counted.marked > 0)) {
+        QStringList parts;
+        if (counted.restored > 0) {
+            parts << QStringLiteral("Engine's analysis restored for ")
+                    + plural(counted.restored, QStringLiteral("one track"), QStringLiteral("tracks"));
+        }
+        if (counted.marked > 0) {
+            parts << plural(counted.marked, QStringLiteral("One track"), QStringLiteral("tracks"))
+                    + QStringLiteral(" left for the player to analyse");
+        }
+        QString text = parts.join(QStringLiteral(", "));
+        const int skipped = summary.value(QStringLiteral("skipped")).toInt();
+        if (skipped > 0) {
+            text += QStringLiteral(", ") + plural(skipped, QStringLiteral("one track skipped"),
+                                                  QStringLiteral("tracks skipped"));
+        }
+        counted.text = text;
+        m_lastSave = counted;
+        emit lastSaveChanged();
+    } else if (ours) {
         QStringList parts;
         if (counted.grids > 0 || counted.waveforms == 0) {
             parts << plural(counted.grids, QStringLiteral("One beat grid"), QStringLiteral("beat grids"));
@@ -1346,6 +1439,71 @@ void BeatGridsController::stage()
     }
     m_tally = tally;
     m_stagedIds = ids;
+    m_stagedAction = QStringLiteral("copy");
+    emit stagedChanged();
+    emit summaryChanged();
+}
+
+void BeatGridsController::stageRestore()
+{
+    if (canRestore()) {
+        stageEngineAnalysisChanges(true);
+    }
+}
+
+void BeatGridsController::stageLetPlayerAnalyse()
+{
+    if (canLetPlayerAnalyse()) {
+        stageEngineAnalysisChanges(false);
+    }
+}
+
+void BeatGridsController::stageEngineAnalysisChanges(bool restore)
+{
+    setErrorMessage({});
+    attachSession();
+    if (!m_session) {
+        setErrorMessage(QStringLiteral("This stick's library could not be identified; nothing was changed."));
+        return;
+    }
+    m_session->setLibraryPaths(m_rekordboxPath, m_enginePath);
+    std::vector<std::pair<const application::BeatGridCopyItem *, const BeatGridTrackState *>> chosen;
+    QStringList ticked(m_ticked.begin(), m_ticked.end());
+    ticked.sort();
+    for (const QString &id : std::as_const(ticked)) {
+        const auto state = m_states.find(id.toStdString());
+        const auto at = m_library->trackIndex.find(id.toStdString());
+        if (state == m_states.end() || at == m_library->trackIndex.end() || m_library->tracks[at->second].item < 0) {
+            continue;
+        }
+        const BeatGridTrackState &t = state->second;
+        if (restore ? !t.canRestore() : (t.failed || !t.facts.rowAnalysed)) {
+            continue;
+        }
+        chosen.emplace_back(&m_library->plan.items[static_cast<size_t>(m_library->tracks[at->second].item)], &t);
+    }
+    if (chosen.empty()) {
+        return;
+    }
+    auto tally = std::make_shared<AnalysisSaveTally>();
+    const int count = static_cast<int>(chosen.size());
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    changes.reserve(chosen.size());
+    QStringList ids;
+    using Kind = EngineAnalysisChange::Kind;
+    for (const auto &[item, state] : chosen) {
+        const std::string overview = restore && state->restore ? state->restore->overviewFileRelativePath : std::string();
+        changes.push_back(std::make_unique<EngineAnalysisChange>(restore ? Kind::Restore : Kind::LetPlayerAnalyse,
+                                                                 m_library->enginePath, m_library->stickRoot, *item,
+                                                                 overview, count, changes.empty(), tally));
+        ids << CopyAnalysisChange::idFor(item->engineTrackId);
+    }
+    if (!m_session->stageAll(std::move(changes))) {
+        return;  // the session said why (another page's edits, or the lock)
+    }
+    m_tally = tally;
+    m_stagedIds = ids;
+    m_stagedAction = restore ? QStringLiteral("restore") : QStringLiteral("letPlayerAnalyse");
     emit stagedChanged();
     emit summaryChanged();
 }

@@ -49,7 +49,9 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/analysis_file_facts.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/engine_update_stick_facts.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
@@ -61,6 +63,7 @@
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/fs_remove.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "application/catalog_digest.hpp"
 #include "cli/damage_filesystem.hpp"
@@ -122,6 +125,7 @@ void printUsage()
     Console::info("                 [--unanalysed skip|fill|fill-lock] [--overwrite-engine-edits]");
     Console::info("                 [--track NAME] [--playlist NAME] [--waveforms]");
     Console::info("                 [--no-overview-file] [--zero-loudness]");
+    Console::info("                 [--restore-engine-analysis | --let-player-analyse]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
@@ -261,6 +265,13 @@ void printUsage()
     Console::info("                      its database (Database2/OverviewData).");
     Console::info("  --zero-loudness     copy-beatgrids --waveforms, for testing on hardware:");
     Console::info("                      write zero loudness into the tracks it completes.");
+    Console::info("  --restore-engine-analysis  copy-beatgrids: put back the player's own");
+    Console::info("                      analysis, kept on the stick when a copy replaced it, and");
+    Console::info("                      copy nothing. A track changed on the player since is");
+    Console::info("                      left alone unless --overwrite-engine-edits is given.");
+    Console::info("  --let-player-analyse  copy-beatgrids: mark the analysed tracks for the");
+    Console::info("                      player to analyse again, and copy nothing. What is kept");
+    Console::info("                      of the player's analysis stays, so it can be put back.");
     Console::info("  --verbose           Print extra detail (resolved paths, per-item");
     Console::info("                      diagnostics). Default output is already");
     Console::info("                      informational, not silent. This adds more on top.");
@@ -1825,7 +1836,246 @@ struct AnalysisImportArgs
     // rekordbox playlists by name, case ignored: the whole path
     // ("Folder/List") or its last part.
     std::vector<std::string> playlists;
+    // The ways back instead of a copy.
+    bool restoreEngineAnalysis = false;
+    bool letPlayerAnalyse = false;
 };
+
+// copy-beatgrids --restore-engine-analysis / --let-player-analyse: the
+// player's kept analysis put back, or the rows marked for its analysis,
+// over the plan's tracks. Checked first and printed, then (unless
+// --dry-run) confirmed and written: Engine's m.db, the overview files a
+// restore changes, the ledger and the kept entries backed up (those not
+// there noted absent) before the first byte changes. The ledger lines of
+// the tracks whose analysis is the player's again are taken out.
+int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan, const std::string &stickRoot,
+                             const std::string &enginePath, bool restore, bool dryRun, bool autoMode, bool force,
+                             bool overwrite, const seabass::infrastructure::local::BeatGridLedger &ledger,
+                             const std::string &ledgerError)
+{
+    namespace app = seabass::application;
+    namespace paths = seabass::infrastructure::paths;
+    namespace local = seabass::infrastructure::local;
+    const auto root = seabass::pathFromUtf8(stickRoot);
+    const std::string engineDbFile = seabass::pathToUtf8(seabass::pathFromUtf8(enginePath) / "Database2" / "m.db");
+    const auto overviewFileOf = [&enginePath](const std::string &relative) {
+        return seabass::pathToUtf8(seabass::pathFromUtf8(enginePath) / seabass::pathFromUtf8(relative));
+    };
+    const std::string what = restore ? "restore-engine-analysis" : "let-player-analyse";
+
+    struct Counts
+    {
+        app::EngineAnalysisRestoreCounts restore;
+        app::LetPlayerAnalyseCounts mark;
+    };
+    const auto runAll = [&](seabass::infrastructure::engine::LibdjinteropEngineCueWriter &writer, bool preview) {
+        seabass::cli::TerminalProgressReporter progress;
+        Counts c;
+        if (restore) {
+            c.restore = app::restoreEngineAnalysis(plan, writer, {overwrite, preview}, app::CancellationToken::none(),
+                                                   progress);
+        } else {
+            c.mark = app::letPlayerAnalyseAgain(plan, writer, preview, app::CancellationToken::none(), progress);
+        }
+        return c;
+    };
+    const auto line = [](const std::string &label, int count, bool always = false) {
+        if (count > 0 || always) {
+            Console::info("  " + label + std::string(label.size() < 32 ? 32 - label.size() : 1, ' ')
+                          + std::to_string(count));
+        }
+    };
+    const auto print = [&](const std::string &heading, const Counts &c, bool preview) {
+        const auto &failures = restore ? c.restore.failures : c.mark.failures;
+        for (const auto &failure : failures) {
+            Console::warn("  \"" + failure.item.title + "\" (Engine id " + failure.item.engineTrackId + "): "
+                          + failure.message);
+        }
+        if (restore) {
+            for (const auto &refusal : c.restore.refusals) {
+                Console::info("  \"" + refusal.item.title + "\" (Engine id " + refusal.item.engineTrackId
+                              + ") left alone: " + refusal.message);
+            }
+        }
+        Console::info("");
+        Console::heading(heading);
+        if (restore) {
+            const auto &r = c.restore;
+            line(preview ? "would be restored:" : "restored:", preview ? r.wouldRestore : r.restored, true);
+            line("already Engine's own:", r.alreadyEngines);
+            line("nothing kept:", r.nothingKept);
+            line("kept analysis unreadable:", r.keptDamaged);
+            line("kept for another row:", r.stale);
+            line("changed on the player since:", r.changedSince);
+            line("Engine library too old:", r.unsupportedLibrary);
+            line("failed:", r.failed);
+            line("not reached:", r.notReached);
+            line("total:", r.total(), true);
+        } else {
+            const auto &m = c.mark;
+            line(preview ? "would be marked for analysis:" : "marked for analysis:", preview ? m.wouldMark : m.marked,
+                 true);
+            line("not analysed:", m.notAnalysed);
+            line("Engine library too old:", m.unsupportedLibrary);
+            line("failed:", m.failed);
+            line("not reached:", m.notReached);
+            line("total:", m.total(), true);
+        }
+    };
+
+    Console::info("");
+    Console::info(restore ? "Puts back the player's own analysis, kept on the stick when a copy replaced it."
+                          : "Marks the tracks the player has analysed for it to analyse again; what is kept of its "
+                            "analysis stays.");
+    local::StickKeptEngineAnalysisStore store(root);
+    Counts preview;
+    try {
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(enginePath);
+        checker.setKeptAnalysisStore(&store);
+        preview = runAll(checker, true);
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return 1;
+    }
+    print("copy-beatgrids " + what + " preview", preview, true);
+    const int previewFailed = restore ? preview.restore.failed : preview.mark.failed;
+    if (dryRun) {
+        Console::info("");
+        Console::info("--dry-run: no changes made.");
+        return previewFailed > 0 ? 1 : 0;
+    }
+    const int toDo = restore ? preview.restore.wouldRestore + preview.restore.alreadyEngines : preview.mark.wouldMark;
+    if (toDo == 0) {
+        Console::info("");
+        Console::info("nothing would be changed: no changes made.");
+        return previewFailed > 0 ? 1 : 0;
+    }
+    if (!autoMode
+        && !Console::confirm(std::string(restore ? "\nPut Engine's analysis back for the "
+                                                 : "\nMark for the player's analysis the ")
+                             + std::to_string(toDo) + " track(s)?")) {
+        Console::info("skipped: no changes made.");
+        return 0;
+    }
+    if (refuseIfLockedByGui(enginePath, force)) {
+        return 1;
+    }
+
+    Counts result;
+    bool ledgerWriteFailed = false;
+    try {
+        auto stickLocks = seabass::infrastructure::backup::acquireStickLocks(
+            {seabass::infrastructure::backup::backupDirForCatalogPath(enginePath)});
+        seabass::infrastructure::backup::FilesystemBackupStore backupStore(
+            seabass::pathToUtf8(paths::stickBackupsDir(root)));
+        seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(paths::stickOperationLog(root)));
+
+        // Everything the run may change, backed up once before its first
+        // byte: m.db, the ledger, the overview files the check named and the
+        // kept entries of the tracks. What is not there is noted absent, so
+        // that restoring the backup takes away what the run made.
+        std::set<std::string> covered;
+        covered.insert(seabass::pathToUtf8(paths::stickBeatGridLedger(root)));
+        for (const std::string &relative : preview.restore.overviewFiles) {
+            covered.insert(overviewFileOf(relative));
+        }
+        for (const auto &item : plan.items) {
+            if (!item.ledgerKey.empty()) {
+                covered.insert(seabass::pathToUtf8(local::keptEngineAnalysisFile(root, item.ledgerKey)));
+            }
+        }
+        std::string recordId;
+        std::string backupPath;
+        std::optional<std::string> backupFailure;
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(enginePath);
+        writer.setKeptAnalysisStore(&store);
+        writer.setBeforeBeatGridWrite([&] {
+            if (!recordId.empty()) {
+                return;
+            }
+            if (backupFailure) {
+                throw std::runtime_error("not written, Engine could not be backed up: " + *backupFailure);
+            }
+            try {
+                std::vector<std::string> present{engineDbFile};
+                std::vector<std::string> absent;
+                for (const std::string &file : covered) {
+                    std::error_code ec;
+                    (std::filesystem::exists(seabass::pathFromUtf8(file), ec) || ec ? present : absent).push_back(file);
+                }
+                const auto record = backupStore.backup(present, "copy-beatgrids");
+                backupStore.recordAbsent(record.id, absent);
+                recordId = record.id;
+                backupPath = record.path;
+                log.record("copy-beatgrids: backed up before " + what + ": " + record.path);
+            } catch (const std::exception &e) {
+                backupFailure = e.what();
+                throw std::runtime_error("not written, Engine could not be backed up: " + *backupFailure);
+            }
+        });
+        // A file the backup did not foresee, on its own first.
+        const auto coverLate = [&](const std::string &file) {
+            if (covered.contains(file)) {
+                return;
+            }
+            std::error_code ec;
+            if (std::filesystem::exists(seabass::pathFromUtf8(file), ec)) {
+                backupStore.backup({file}, "copy-beatgrids");
+            } else if (!recordId.empty()) {
+                backupStore.recordAbsent(recordId, {file});
+            }
+            covered.insert(file);
+        };
+        store.setBeforeChange(coverLate);
+        writer.setOverviewFileSink([&](const std::string &relative, const std::string &bytes) {
+            const std::string file = overviewFileOf(relative);
+            coverLate(file);
+            std::filesystem::create_directories(seabass::pathFromUtf8(file).parent_path());
+            if (!seabass::infrastructure::writeFileDurablyAtomic(file, bytes)) {
+                throw std::runtime_error("could not write the overview file " + file);
+            }
+        });
+        writer.setOverviewFileRemover([&](const std::string &relative) {
+            const std::string file = overviewFileOf(relative);
+            coverLate(file);
+            std::string failure;
+            if (!seabass::infrastructure::removeEntry(seabass::pathFromUtf8(file), failure)) {
+                throw std::runtime_error("could not remove the overview file " + file + ": " + failure);
+            }
+        });
+
+        result = runAll(writer, false);
+        if (!backupPath.empty()) {
+            Console::info("backed up Engine to " + backupPath);
+        }
+        const auto &drop = restore ? result.restore.ledgerKeysToDrop : result.mark.ledgerKeysToDrop;
+        local::BeatGridLedger next = ledger;
+        for (const std::string &key : drop) {
+            next.erase(key);
+        }
+        if (next != ledger || (!ledgerError.empty() && !drop.empty())) {
+            std::string error;
+            if (!local::writeBeatGridLedger(root, next, &error)) {
+                Console::error("the tracks were changed, but not the record of the grids Seabass wrote: " + error);
+                ledgerWriteFailed = true;
+            }
+        }
+        if (restore && (result.restore.restored + result.restore.alreadyEngines) > 0) {
+            log.record("copy-beatgrids: put Engine's own analysis back for "
+                       + std::to_string(result.restore.restored + result.restore.alreadyEngines) + " track(s)");
+        }
+        if (!restore && result.mark.marked > 0) {
+            log.record("copy-beatgrids: marked " + std::to_string(result.mark.marked)
+                       + " track(s) for the player's analysis");
+        }
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return 1;
+    }
+    print("copy-beatgrids " + what + " summary", result, false);
+    const int failed = restore ? result.restore.failed : result.mark.failed;
+    return failed > 0 || ledgerWriteFailed ? 1 : 0;
+}
 
 // "copy-beatgrids": rekordbox's beat grid onto the matching Engine rows
 // of one stick, into each row's adjusted grid (Engine's own analysis, the
@@ -1956,6 +2206,10 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         }
         return 0;
     }
+    if (analysisArgs.restoreEngineAnalysis || analysisArgs.letPlayerAnalyse) {
+        return runEngineAnalysisWayBack(plan, stickRoot, enginePath, analysisArgs.restoreEngineAnalysis, dryRun, autoMode,
+                                        force, overwriteEngineEdits, ledger, ledgerError);
+    }
     Console::info("");
     Console::info("Copies rekordbox's beat grid into the grid the player plays by; Engine's own analysis is kept.");
     if (waveforms) {
@@ -2035,16 +2289,11 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         return analysis;
     };
     const app::AnalysisFileFactsSource analysisFacts = [&rates](const app::BeatGridCopyItem &item) {
-        app::AnalysisFileFacts f;
-        if (!item.filePath.empty()) {
-            f.sampleRateHz = rates.rateOf(item.filePath);
-            std::string extension = seabass::pathToUtf8(seabass::pathFromUtf8(item.filePath).extension());
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            f.isMp3 = extension == ".mp3";
-        }
-        return f;
+        return seabass::infrastructure::local::analysisFileFactsOf(item, rates);
     };
+    // Where the player's own analysis of a row is kept before a copy
+    // replaces it; the check only reads it.
+    seabass::infrastructure::local::StickKeptEngineAnalysisStore keptStore(seabass::pathFromUtf8(stickRoot));
     app::BeatGridCopyOptions options;
     options.unanalysed = unanalysed;
     options.overwriteEngineEdits = overwriteEngineEdits;
@@ -2123,6 +2372,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
                 line("rows that would be completed:", all.wouldCompleteRows, true);
             } else {
                 line("rows completed:", all.completedRows, true);
+                line("Engine's own analysis kept:", all.keptEngineAnalyses);
             }
         }
         if (r.barBreaks > 0) {
@@ -2144,6 +2394,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     app::AnalysisCopyResult preview;
     try {
         seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(enginePath);
+        checker.setKeptAnalysisStore(&keptStore);
         preview = runAll(checker, true);
     } catch (const std::exception &e) {
         Console::error(e.what());
@@ -2207,6 +2458,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         bool backedUp = false;
         std::optional<std::string> backupFailure;
         std::string backupPath;
+        std::string backupRecordId;
         writer.setBeforeBeatGridWrite([&] {
             if (backedUp) {
                 return;
@@ -2224,6 +2476,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
                 }
                 const auto record = backupStore.backup(present, "copy-beatgrids");
                 backupStore.recordAbsent(record.id, absent);
+                backupRecordId = record.id;
                 // Said once the progress bar is done with the line.
                 backupPath = record.path;
                 log.record("copy-beatgrids: backed up before copying "
@@ -2232,6 +2485,26 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
             } catch (const std::exception &e) {
                 backupFailure = e.what();
                 throw std::runtime_error("not written, Engine could not be backed up: " + *backupFailure);
+            }
+        });
+        // The player's own analysis of a row, kept before the row changes
+        // (after the backup above): an entry already there backed up on its
+        // own, a new one noted absent in the backup, so that restoring the
+        // backup takes it away again.
+        std::set<std::string> keptCovered;
+        writer.setKeptAnalysisStore(&keptStore);
+        keptStore.setBeforeChange([&](const std::string &file) {
+            if (!keptCovered.insert(file).second) {
+                return;
+            }
+            std::error_code ec;
+            if (std::filesystem::exists(seabass::pathFromUtf8(file), ec) || ec) {
+                const auto record = backupStore.backup({file}, "copy-beatgrids");
+                log.record("copy-beatgrids: backed up " + file + " -> " + record.path);
+            } else if (!backupRecordId.empty()) {
+                backupStore.recordAbsent(backupRecordId, {file});
+            } else {
+                throw std::runtime_error("not kept: Engine was not backed up first");
             }
         });
         // Each overview file durably, as the writer would itself; one the
@@ -2668,6 +2941,10 @@ int main(int argc, char **argv)
             overwriteEngineEdits = true;
         } else if (arg == "--waveforms") {
             analysisArgs.waveforms = true;
+        } else if (arg == "--restore-engine-analysis") {
+            analysisArgs.restoreEngineAnalysis = true;
+        } else if (arg == "--let-player-analyse") {
+            analysisArgs.letPlayerAnalyse = true;
         } else if (arg == "--no-overview-file") {
             analysisArgs.skipOverviewFile = true;
         } else if (arg == "--zero-loudness") {
@@ -2735,6 +3012,17 @@ int main(int argc, char **argv)
         if (analysisArgs.waveforms && unanalysedGiven && unanalysed != seabass::application::UnanalysedRowGrid::Skip) {
             Console::error("--waveforms completes the tracks the player has not analysed itself; it does not go with"
                            " --unanalysed fill or fill-lock");
+            return 1;
+        }
+        if (analysisArgs.restoreEngineAnalysis && analysisArgs.letPlayerAnalyse) {
+            Console::error("--restore-engine-analysis and --let-player-analyse are two different ways back: one at a"
+                           " time");
+            return 1;
+        }
+        if ((analysisArgs.restoreEngineAnalysis || analysisArgs.letPlayerAnalyse)
+            && (analysisArgs.waveforms || unanalysedGiven)) {
+            Console::error("--restore-engine-analysis and --let-player-analyse copy nothing: they do not go with"
+                           " --waveforms or --unanalysed");
             return 1;
         }
         if (!analysisArgs.waveforms && (analysisArgs.skipOverviewFile || analysisArgs.zeroLoudness)) {

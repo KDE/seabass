@@ -22,6 +22,7 @@
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/engine/engine_track_rows.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/work_counters.hpp"
@@ -911,6 +912,37 @@ public:
         }
         m_roots.append(seabass::gui::pathToQString(root));
         return m_roots.last();
+    }
+
+    // Takes Engine rows off a stick copy (removeEngineTrackRows), as a
+    // stick whose libraries are not in step has them: their rekordbox
+    // tracks are then in no Engine row. How many went, -1 on failure.
+    Q_INVOKABLE int removeEngineTracks(const QString &stickRoot, const QVariantList &ids)
+    {
+        std::vector<std::int64_t> rows;
+        for (const QVariant &id : ids) {
+            rows.push_back(id.toLongLong());
+        }
+        std::string error;
+        return seabass::infrastructure::engine::removeEngineTrackRows(
+            stickRoot.toStdString() + "/Engine Library/Database2/m.db", rows, &error);
+    }
+
+    // How many analyses of the player are kept on a stick copy
+    // (Seabass/engine-analysis/*.tsv).
+    Q_INVOKABLE int keptEngineAnalyses(const QString &stickRoot) const
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path dir = seabass::infrastructure::paths::stickKeptEngineAnalysisDir(
+            seabass::pathFromUtf8(stickRoot.toStdString()));
+        int n = 0;
+        if (fs::is_directory(dir, ec)) {
+            for (const auto &entry : fs::directory_iterator(dir, ec)) {
+                n += entry.path().extension() == ".tsv" ? 1 : 0;
+            }
+        }
+        return n;
     }
 
     // Moves a file inside a stick copy (an Engine 1.x layout made from a

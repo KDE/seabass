@@ -585,6 +585,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/local/beat_grid_ledger_file.cpp
+    src/infrastructure/local/kept_engine_analysis_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/utc_timestamp.cpp
@@ -746,6 +747,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/local/browsed_backup_root.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/local/beat_grid_ledger_file.cpp
+    src/infrastructure/local/kept_engine_analysis_file.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
@@ -1002,6 +1004,7 @@ find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLay
 if(TAGLIB_FOUND OR TARGET TagLib::tag)
     add_library(seabass_taglib STATIC
         src/infrastructure/audio/taglib_metadata_probe.cpp
+        src/infrastructure/audio/exact_sample_count.cpp
         src/infrastructure/audio/taglib_duration_probe.cpp
         src/infrastructure/audio/embedded_artwork.cpp)
     target_include_directories(seabass_taglib PUBLIC src)
@@ -2049,6 +2052,13 @@ if(TARGET seabass_taglib)
     target_link_libraries(taglib_metadata_probe_test PRIVATE seabass_taglib)
     add_test(NAME taglib_metadata_probe_test COMMAND taglib_metadata_probe_test)
 
+    # A file's own sample count (FLAC, WAV, AIFF, M4A, MP3 frames), on files
+    # made by the test and against a Prime 4's own counts (testshark_t73).
+    add_executable(exact_sample_count_test tests/exact_sample_count_test.cpp)
+    target_include_directories(exact_sample_count_test PRIVATE src)
+    target_link_libraries(exact_sample_count_test PRIVATE seabass_taglib seabass_core_testing DjInterop SQLite::SQLite3)
+    add_test(NAME exact_sample_count_test COMMAND exact_sample_count_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+
     add_executable(taglib_duration_probe_test tests/taglib_duration_probe_test.cpp)
     target_link_libraries(taglib_duration_probe_test PRIVATE seabass_taglib)
     add_test(NAME taglib_duration_probe_test COMMAND taglib_duration_probe_test)
@@ -3025,7 +3035,7 @@ if(TARGET seabass_taglib)
         ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
         EXPECT "rows that would be completed: +6\\n"
                "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
-               "\\ncopy-beatgrids summary\\n  written: +11\\n  total: +11\\n  waveforms written: +11\\n  waveforms total: +11\\n  rows completed: +6\\n"
+               "\\ncopy-beatgrids summary\\n  written: +11\\n  total: +11\\n  waveforms written: +11\\n  waveforms total: +11\\n  rows completed: +6\\n  Engine's own analysis kept: +5\\n"
         FORBID "failed" "would be written: +0"
         EXISTS "${_cli_an_run}/Seabass/beat-grids.tsv" "${_cli_an_run}/Seabass/backups/*-copy-beatgrids/backup.zip"
                "${_cli_an_run}/Engine Library/Database2/OverviewData/f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926/1.rgb")
@@ -3037,8 +3047,11 @@ if(TARGET seabass_taglib)
         COMMAND ${CMAKE_COMMAND} -DDIR=${_cli_an_run}/Seabass/backups -P ${CMAKE_SOURCE_DIR}/tests/print_backup_manifests.cmake)
     # (CMake's regular expressions have no {11}.)
     string(REPEAT "ABSENT\t[^\n]*/OverviewData/f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926/[0-9]+\\.rgb\n" 11 _cli_an_absent)
+    # And the 5 rows the Prime 4 had analysed got their analysis kept, each
+    # entry new, so noted absent too.
+    string(REPEAT "ABSENT\tSeabass/engine-analysis/[0-9a-f]+\\.tsv\n" 5 _cli_an_kept)
     set_tests_properties(cli_copy_analysis_backup_manifest PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_copy
-        PASS_REGULAR_EXPRESSION "Database2/m.db\t[^\n]*\n${_cli_an_absent}$")
+        PASS_REGULAR_EXPRESSION "Database2/m.db\t[^\n]*\n${_cli_an_absent}${_cli_an_kept}$")
     seabass_cli_test(cli_copy_analysis_again EXIT 0 UNCHANGED_TREE ${_cli_an_run}
         ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
         EXPECT "\\n  would be written: +0\\n  already the same: +11\\n  total: +11\\n  waveforms that would be written: 0\\n  waveforms already the same: +11\\n  waveforms total: +11\\n  rows that would be completed: +0\\n"
@@ -3064,6 +3077,69 @@ if(TARGET seabass_taglib)
     set_tests_properties(cli_copy_analysis_playlist_rows PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_playlist_copy
         PASS_REGULAR_EXPRESSION "^rows: 11\nanalysed: 9\nrecords of 68 bytes: 9\nrecords with zero loudness: 4\noverviews of 1024 points: 9\nbeat grids set: 9\noverview files: 0\n")
 
+    # The ways back. On a copy of its own: copied (5 analyses kept), then
+    # --restore-engine-analysis checked (--dry-run, nothing changes), run
+    # (the 5 put back, their overview files gone again since the player had
+    # none, the 6 completed rows left as they are: nothing kept for them),
+    # and run again (nothing left to put back). The rows, read back: 11
+    # analysed, 6 overview files.
+    set(_cli_rs "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_restore_analysis")
+    seabass_cli_test(cli_restore_analysis_copy EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_rs}
+        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_rs}/PIONEER --engine "${_cli_rs}/Engine Library"
+        EXPECT "Engine's own analysis kept: +5\\n")
+    seabass_cli_test(cli_restore_analysis_dry_run EXIT 0 UNCHANGED_TREE ${_cli_rs}
+        ARGS copy-beatgrids --restore-engine-analysis --dry-run --rekordbox ${_cli_rs}/PIONEER
+             --engine "${_cli_rs}/Engine Library"
+        EXPECT "\\ncopy-beatgrids restore-engine-analysis preview\\n  would be restored: +5\\n  nothing kept: +6\\n  total: +11\\n"
+               "--dry-run: no changes made."
+        FORBID "backed up")
+    seabass_cli_test(cli_restore_analysis_run EXIT 0
+        ARGS copy-beatgrids --restore-engine-analysis --auto --rekordbox ${_cli_rs}/PIONEER
+             --engine "${_cli_rs}/Engine Library"
+        EXPECT "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids(-[0-9]+)?\\n"
+               "\\ncopy-beatgrids restore-engine-analysis summary\\n  restored: +5\\n  nothing kept: +6\\n  total: +11\\n"
+        FORBID "failed")
+    add_test(NAME cli_restore_analysis_rows COMMAND engine_analysis_rows "${_cli_rs}/Engine Library")
+    seabass_cli_test(cli_restore_analysis_again EXIT 0 UNCHANGED_TREE ${_cli_rs}
+        ARGS copy-beatgrids --restore-engine-analysis --auto --rekordbox ${_cli_rs}/PIONEER
+             --engine "${_cli_rs}/Engine Library"
+        EXPECT "  would be restored: +0\\n  nothing kept: +11\\n" "nothing would be changed: no changes made."
+        FORBID "backed up")
+    set_tests_properties(cli_restore_analysis_copy PROPERTIES FIXTURES_REQUIRED cli_t73_stick
+        FIXTURES_SETUP cli_restore_analysis_copied)
+    set_tests_properties(cli_restore_analysis_dry_run PROPERTIES FIXTURES_REQUIRED cli_restore_analysis_copied
+        FIXTURES_SETUP cli_restore_analysis_checked)
+    set_tests_properties(cli_restore_analysis_run PROPERTIES FIXTURES_REQUIRED "cli_restore_analysis_copied;cli_restore_analysis_checked"
+        FIXTURES_SETUP cli_restore_analysis_restored)
+    set_tests_properties(cli_restore_analysis_rows PROPERTIES FIXTURES_REQUIRED cli_restore_analysis_restored
+        PASS_REGULAR_EXPRESSION "^rows: 11\nanalysed: 11\n.*overview files: 6\n")
+    set_tests_properties(cli_restore_analysis_again PROPERTIES FIXTURES_REQUIRED cli_restore_analysis_restored
+        DEPENDS cli_restore_analysis_rows)
+
+    # --let-player-analyse with --playlist and --track, on the fixture as the
+    # players left it: T73 New's three rows (all analysed) marked; a --track
+    # dry run names one and changes nothing.
+    set(_cli_lp "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_let_player_analyse")
+    seabass_cli_test(cli_let_player_analyse_track EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_lp} UNCHANGED_TREE ${_cli_lp}
+        ARGS copy-beatgrids --let-player-analyse --dry-run --track N1 --rekordbox ${_cli_lp}/PIONEER
+             --engine "${_cli_lp}/Engine Library"
+        EXPECT "\\ncopy-beatgrids let-player-analyse preview\\n  would be marked for analysis: +1\\n  total: +1\\n"
+               "--dry-run: no changes made.")
+    seabass_cli_test(cli_let_player_analyse_run EXIT 0
+        ARGS copy-beatgrids --let-player-analyse --auto --playlist "T73 New" --rekordbox ${_cli_lp}/PIONEER
+             --engine "${_cli_lp}/Engine Library"
+        EXPECT "\\ncopy-beatgrids let-player-analyse summary\\n  marked for analysis: +3\\n  total: +3\\n"
+        FORBID "failed")
+    add_test(NAME cli_let_player_analyse_rows COMMAND engine_analysis_rows "${_cli_lp}/Engine Library")
+    set_tests_properties(cli_let_player_analyse_track PROPERTIES FIXTURES_REQUIRED cli_t73_stick
+        FIXTURES_SETUP cli_let_player_analyse_checked)
+    set_tests_properties(cli_let_player_analyse_run PROPERTIES FIXTURES_REQUIRED cli_let_player_analyse_checked
+        FIXTURES_SETUP cli_let_player_analyse_marked)
+    set_tests_properties(cli_let_player_analyse_rows PROPERTIES FIXTURES_REQUIRED cli_let_player_analyse_marked
+        PASS_REGULAR_EXPRESSION "^rows: 11\nanalysed: 2\n")
+
     seabass_cli_test(cli_copy_analysis_no_playlist EXIT 1
         COPY_FROM ${_cli_t73} COPY_TO "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist"
         UNCHANGED_TREE "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist"
@@ -3075,6 +3151,10 @@ if(TARGET seabass_taglib)
 endif()
 seabass_cli_test(cli_copy_analysis_with_fill EXIT 1 ARGS copy-beatgrids --waveforms --unanalysed fill
     EXPECT "--waveforms completes the tracks the player has not analysed itself")
+seabass_cli_test(cli_restore_and_let_player EXIT 1 ARGS copy-beatgrids --restore-engine-analysis --let-player-analyse
+    EXPECT "two different ways back: one at a time")
+seabass_cli_test(cli_restore_with_waveforms EXIT 1 ARGS copy-beatgrids --restore-engine-analysis --waveforms
+    EXPECT "copy nothing: they do not go with --waveforms")
 seabass_cli_test(cli_copy_analysis_options_alone EXIT 1 ARGS copy-beatgrids --zero-loudness
     EXPECT "--no-overview-file and --zero-loudness only go with --waveforms")
 
@@ -4125,6 +4205,13 @@ add_executable(libdjinterop_engine_analysis_import_test
 target_link_libraries(libdjinterop_engine_analysis_import_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_analysis_import_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_analysis_import_test PRIVATE DjInterop SQLite::SQLite3 ZLIB::ZLIB)
+# The player's own analysis kept before a copy replaces it, and put back,
+# on scratch copies of testshark_t73's Engine database.
+add_executable(engine_analysis_keep_test tests/engine_analysis_keep_test.cpp)
+target_link_libraries(engine_analysis_keep_test PRIVATE seabass_core_testing DjInterop SQLite::SQLite3)
+target_include_directories(engine_analysis_keep_test PRIVATE src)
+add_test(NAME engine_analysis_keep_test COMMAND engine_analysis_keep_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+
 add_test(NAME libdjinterop_engine_analysis_import_test COMMAND libdjinterop_engine_analysis_import_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures)
 
@@ -4141,6 +4228,13 @@ add_executable(beat_grid_ledger_file_test tests/beat_grid_ledger_file_test.cpp)
 target_link_libraries(beat_grid_ledger_file_test PRIVATE seabass_core_testing)
 target_include_directories(beat_grid_ledger_file_test PRIVATE src)
 add_test(NAME beat_grid_ledger_file_test COMMAND beat_grid_ledger_file_test)
+
+# The player's own analyses kept on the stick: round trip of every SQLite
+# value, damaged files refused, the hook before each change.
+add_executable(kept_engine_analysis_file_test tests/kept_engine_analysis_file_test.cpp)
+target_link_libraries(kept_engine_analysis_file_test PRIVATE seabass_core_testing)
+target_include_directories(kept_engine_analysis_file_test PRIVATE src)
+add_test(NAME kept_engine_analysis_file_test COMMAND kept_engine_analysis_file_test)
 
 add_executable(pending_deletion_manifest_test
     tests/pending_deletion_manifest_test.cpp

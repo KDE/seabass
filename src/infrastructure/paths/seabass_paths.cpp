@@ -153,6 +153,11 @@ fs::path stickBeatGridLedger(const fs::path &stickRoot)
     return stickDir(stickRoot) / "beat-grids.tsv";
 }
 
+fs::path stickKeptEngineAnalysisDir(const fs::path &stickRoot)
+{
+    return stickDir(stickRoot) / "engine-analysis";
+}
+
 fs::path stickDurationCache(const fs::path &stickRoot)
 {
     return stickCachesDir(stickRoot) / "durations.jsonl";

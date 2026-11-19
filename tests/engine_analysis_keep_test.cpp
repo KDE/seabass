@@ -1,0 +1,375 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// The player's own analysis kept before Seabass replaces it, and put back
+// (LibdjinteropEngineCueWriter with a KeptEngineAnalysisStore), on scratch
+// copies of tests/fixtures/testshark_t73's m-after-R1b.db: rows a Prime 4
+// analysed (13: N1, FLAC 48 kHz; 14: N3, FLAC 44.1 kHz) and one it did
+// not (9: B01, FLAC 44.1 kHz).
+//
+// 1. A copy over an analysed row keeps it first, exactly; a second copy
+//    keeps nothing new (first kept wins); restore puts every column and
+//    the overview file back byte for byte (an overview file the player had
+//    comes back, one it did not have goes), and drops the entry.
+// 2. Restore refuses a row changed since Seabass wrote it (the grid locked
+//    on the player; the player's new analysis), each with its reason, and
+//    writes it with force.
+// 3. After the player analysed the row anew, the next copy keeps that
+//    newer analysis in place of the first one.
+// 4. A failure to keep (the store refuses, no key, a damaged entry) leaves
+//    the row untouched and throws.
+// 5. Let the player analyse again: the row waits for the player's analysis,
+//    the entry stays, and restore still puts it back.
+// 6. A row the player never analysed keeps nothing when completed, and its
+//    length is the file's own count (a lossless file without one is
+//    NoSampleCount, nothing written). A later copy over it keeps nothing
+//    either: the analysis there is Seabass's.
+// 7. An entry kept for another row is Stale; writeBeatGrid() keeps too.
+//
+// usage: engine_analysis_keep_test <tests/fixtures>
+
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <djinterop/engine/v3/track_data_blob.hpp>
+#include <sqlite3.h>
+
+#include "infrastructure/engine/engine_track_rows.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "scratch_path.hpp"
+
+namespace fs = std::filesystem;
+using namespace seabass;
+using namespace seabass::infrastructure::engine;
+using application::EngineAnalysisColumns;
+using Restore = application::EngineAnalysisRestoreResult::Outcome;
+using Status = application::KeptEngineAnalysisLookup::Status;
+using Outcome = BeatGridWriteResult::Outcome;
+using Waveform = AnalysisImportResult::Waveform;
+using infrastructure::local::StickKeptEngineAnalysisStore;
+
+namespace
+{
+
+fs::path g_fixtures;
+int failures = 0;
+const std::string kUuid = "f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926";
+
+void check(bool ok, const std::string &what)
+{
+    if (!ok) {
+        std::cerr << "FAILED: " << what << "\n";
+        ++failures;
+    }
+}
+
+struct Stick
+{
+    fs::path root;     // the stick
+    fs::path library;  // its Engine Library
+    std::string mdb;
+};
+
+Stick freshStick(const std::string &name)
+{
+    const fs::path root = testing::scratchRoot() / "engine_analysis_keep_test" / name;
+    fs::remove_all(root);
+    fs::create_directories(root / "Engine Library" / "Database2");
+    const fs::path mdb = root / "Engine Library" / "Database2" / "m.db";
+    fs::copy_file(g_fixtures / "testshark_t73" / "engine" / "m-after-R1b.db", mdb);
+    return {root, root / "Engine Library", pathToUtf8(mdb)};
+}
+
+void exec(const std::string &mdb, const std::string &sql)
+{
+    sqlite3 *db = nullptr;
+    sqlite3_open_v2(mdb.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+    char *message = nullptr;
+    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &message) != SQLITE_OK) {
+        std::cerr << "SQL failed: " << sql << ": " << (message ? message : "") << "\n";
+        ++failures;
+    }
+    sqlite3_free(message);
+    sqlite3_close(db);
+}
+
+std::string overviewPath(std::int64_t id)
+{
+    return "Database2/OverviewData/" + kUuid + "/" + std::to_string(id) + ".rgb";
+}
+
+// The row as stored, and its overview file.
+EngineAnalysisColumns snapshot(const Stick &stick, std::int64_t id)
+{
+    std::string error;
+    auto row = readEngineAnalysisRow(stick.mdb, id, &error);
+    if (!row) {
+        throw std::runtime_error(error);
+    }
+    EngineAnalysisColumns c = row->columns;
+    c.overviewFileRelativePath = overviewPath(id);
+    const fs::path file = stick.library / pathFromUtf8(c.overviewFileRelativePath);
+    if (fs::exists(file)) {
+        std::ifstream in(file, std::ios::binary);
+        c.overviewFile = std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    return c;
+}
+
+std::string synthetic(std::size_t bytes, unsigned seed)
+{
+    std::string out(bytes, '\0');
+    unsigned state = seed;
+    for (char &c : out) {
+        state = state * 1103515245u + 12345u;
+        c = static_cast<char>((state >> 16) & 0x1f);
+    }
+    return out;
+}
+
+RekordboxAnalysis analysisOf(double seconds, double bpm, unsigned seed)
+{
+    RekordboxAnalysis a;
+    const double beatMs = 60000.0 / bpm;
+    for (int i = 0; i * beatMs < seconds * 1000.0; ++i) {
+        a.beats.push_back({std::round(37.0 + i * beatMs), i % 4 + 1});
+    }
+    a.threeBandPreview = synthetic(1200 * 3, seed);
+    a.scrollEntries = static_cast<std::uint32_t>(std::ceil(seconds * 150.0));
+    a.bpm = bpm;
+    a.key = 5;
+    return a;
+}
+
+LibdjinteropEngineCueWriter writerFor(const Stick &stick, StickKeptEngineAnalysisStore &store)
+{
+    LibdjinteropEngineCueWriter writer(pathToUtf8(stick.library));
+    writer.setLeadInSource([](const std::string &) { return std::optional<domain::Mp3LeadIn>(); });
+    writer.setKeptAnalysisStore(&store);
+    return writer;
+}
+
+AnalysisImportOptions keyed(const std::string &key)
+{
+    AnalysisImportOptions o;
+    o.keepKey = key;
+    return o;
+}
+
+}  // namespace
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        std::cerr << "usage: engine_analysis_keep_test <tests/fixtures>\n";
+        return 2;
+    }
+    g_fixtures = pathFromUtf8(argv[1]);
+    const RekordboxAnalysis first = analysisOf(240.0, 120.0, 1);
+    const RekordboxAnalysis second = analysisOf(240.0, 121.0, 2);
+
+    // 1. Kept first, exactly; first kept wins; put back byte for byte.
+    for (const bool hadFile : {false, true}) {
+        const Stick stick = freshStick(hadFile ? "restore-with-file" : "restore");
+        if (hadFile) {
+            // An overview file the player wrote (any bytes will do: they
+            // must come back as they were).
+            const fs::path file = stick.library / pathFromUtf8(overviewPath(13));
+            fs::create_directories(file.parent_path());
+            std::ofstream(file, std::ios::binary) << synthetic(3000, 9);
+        }
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        check(before.isAnalyzed.integer == 1 && !before.trackData.isNull(), "row 13 is the player's analysis");
+        const auto copied = writer.importAnalysis("13", first, keyed("k13"));
+        check(copied.grid.outcome == Outcome::Written && copied.waveform == Waveform::Written, "the copy writes");
+        check(copied.keptEngineAnalysis, "and keeps the player's analysis first");
+        auto kept = store.find("k13");
+        check(kept.status == Status::Found && kept.entry.original == before,
+              "the kept analysis is the row before the copy, every column and the file");
+        check(kept.entry.trackId == 13 && kept.entry.libraryUuid == kUuid
+                  && kept.entry.trackFile == "../Contents/Seabass Test/T73/T73-N1-click-48k-120bpm.flac",
+              "with what it belongs to");
+        check(!(snapshot(stick, 13) == before), "the row changed");
+        AnalysisImportOptions ours = keyed("k13");
+        ours.ownGridFingerprint = copied.grid.gridFingerprint;  // as the ledger says
+        const auto again = writer.importAnalysis("13", second, ours);
+        check(again.grid.outcome == Outcome::Written && !again.keptEngineAnalysis, "a second copy keeps nothing new");
+        check(store.find("k13").entry.original == before, "first kept wins");
+        const auto restored = writer.restoreEngineAnalysis("13", "k13", {});
+        check(restored.outcome == Restore::Restored, "restored");
+        check(snapshot(stick, 13) == before, std::string("the row is as it was, byte for byte")
+                                                 + (hadFile ? ", its overview file too" : ", with no overview file"));
+        check(store.find("k13").status == Status::None, "the entry is dropped");
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::NothingKept, "nothing left to restore");
+    }
+
+    // 2. Changed since Seabass wrote it: refused, unless forced.
+    {
+        const Stick stick = freshStick("changed-since");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        writer.importAnalysis("13", first, keyed("k13"));
+        exec(stick.mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = 13");
+        const auto preview = writer.restoreEngineAnalysis("13", "k13", {false, true});
+        check(preview.outcome == Restore::ChangedSince && preview.reason.find("changed on the player") != std::string::npos,
+              "a grid locked on the player since: " + preview.reason);
+        const auto locked = snapshot(stick, 13);
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::ChangedSince && snapshot(stick, 13) == locked,
+              "refused, nothing written");
+        exec(stick.mdb, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE trackId = 5)"
+                        " WHERE trackId = 13");
+        const auto reanalysed = writer.restoreEngineAnalysis("13", "k13", {});
+        check(reanalysed.outcome == Restore::ChangedSince && reanalysed.reason.find("analysed it again") != std::string::npos,
+              "the player's new analysis since: " + reanalysed.reason);
+        check(writer.restoreEngineAnalysis("13", "k13", {true, false}).outcome == Restore::Restored, "forced");
+        check(snapshot(stick, 13) == before, "and then the row is as it was");
+    }
+
+    // 3. The player analysed the row anew: the next copy keeps that.
+    {
+        const Stick stick = freshStick("reanalysed");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        writer.importAnalysis("13", first, keyed("k13"));
+        // A new analysis by the player: other blobs (row 15's: 48 kHz,
+        // 240 s, like this one).
+        exec(stick.mdb, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE trackId = 15),"
+                        " overviewWaveFormData = (SELECT overviewWaveFormData FROM PerformanceData WHERE trackId = 15),"
+                        " beatData = (SELECT beatData FROM PerformanceData WHERE trackId = 15) WHERE trackId = 13");
+        const EngineAnalysisColumns newer = snapshot(stick, 13);
+        const auto copied = writer.importAnalysis("13", second, keyed("k13"));
+        check(copied.waveform == Waveform::Written && copied.keptEngineAnalysis, "the newer analysis is kept");
+        check(store.find("k13").entry.original == newer && !(newer == before), "in place of the first");
+        // A grid the DJ moved is not an analysis: nothing new is kept.
+        exec(stick.mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = 13");
+        AnalysisImportOptions force = keyed("k13");
+        force.overwriteEngineEdits = true;
+        const auto over = writer.importAnalysis("13", first, force);
+        check(over.grid.outcome == Outcome::Written && !over.keptEngineAnalysis
+                  && store.find("k13").entry.original == newer,
+              "a lock set on the player keeps nothing new");
+    }
+
+    // 4. No keep, no write.
+    {
+        const Stick stick = freshStick("keep-fails");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        const auto refused = [&](const AnalysisImportOptions &options, const std::string &why) {
+            bool threw = false;
+            try {
+                writer.importAnalysis("13", first, options);
+            } catch (const std::runtime_error &e) {
+                threw = std::string(e.what()).find("could not be kept") != std::string::npos;
+            }
+            check(threw, why + ": a failure to keep fails the write, saying so");
+            check(snapshot(stick, 13) == before, why + ": the row is untouched");
+        };
+        store.setBeforeChange([](const std::string &) { throw std::runtime_error("the stick refused"); });
+        refused(keyed("k13"), "the store refuses");
+        store.setBeforeChange({});
+        refused(keyed(""), "no key");
+        const fs::path file = infrastructure::local::keptEngineAnalysisFile(stick.root, "k13");
+        fs::create_directories(file.parent_path());
+        std::ofstream(file, std::ios::binary) << "seabass-engine-analysis\t1\ndamaged";
+        refused(keyed("k13"), "a damaged entry");
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::KeptDamaged, "restore says damaged");
+        check(writer.engineAnalysisFacts("13", "k13").kept == EngineAnalysisFacts::Kept::Damaged, "facts say damaged");
+    }
+
+    // 5. Let the player analyse again, then put it back all the same.
+    {
+        const Stick stick = freshStick("let-player");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        writer.importAnalysis("13", first, keyed("k13"));
+        check(writer.letPlayerAnalyseAgain("13", "k13", true).outcome == LetPlayerAnalyseResult::Outcome::Marked,
+              "a preview says it would mark");
+        check(writer.letPlayerAnalyseAgain("13", "k13", false).outcome == LetPlayerAnalyseResult::Outcome::Marked,
+              "marked");
+        const auto waiting = snapshot(stick, 13);
+        check(waiting.isAnalyzed.integer == 0 && waiting.trackData.isNull() && waiting.overviewWaveFormData.isNull()
+                  && waiting.beatData.isNull(),
+              "the row waits for the player's analysis");
+        const auto facts = writer.engineAnalysisFacts("13", "k13");
+        check(!facts.rowAnalysed && facts.kept == EngineAnalysisFacts::Kept::Kept, "not analysed, the analysis kept");
+        check(writer.letPlayerAnalyseAgain("13", "k13", false).outcome == LetPlayerAnalyseResult::Outcome::NotAnalysed,
+              "marking it again does nothing");
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::Restored, "restored from waiting");
+        // Seabass's overview file goes; the player had none.
+        check(snapshot(stick, 13) == before, "and the row is as it was");
+    }
+
+    // 6. A row the player never analysed keeps nothing; the file's count.
+    {
+        const Stick stick = freshStick("completed");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const RekordboxAnalysis b01 = analysisOf(180.0, 102.0, 3);
+        AnalysisImportOptions options = keyed("k9");
+        options.fileSampleRateHz = 44100.0;
+        options.fileCountRequired = true;
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        const auto noCount = writer.importAnalysis("9", b01, options);
+        check(noCount.waveform == Waveform::NoSampleCount && !noCount.noSampleCountReason.empty()
+                  && snapshot(stick, 9) == before,
+              "a lossless file without its own count is not completed: " + noCount.noSampleCountReason);
+        options.fileSampleCount = 7938000;
+        const auto done = writer.importAnalysis("9", b01, options);
+        check(done.completedRow && !done.keptEngineAnalysis, "completed, nothing kept");
+        check(store.find("k9").status == Status::None, "no entry for a row the player never analysed");
+        const std::string bytes = snapshot(stick, 9).trackData.bytes;
+        const auto *start = reinterpret_cast<const std::byte *>(bytes.data());
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            std::vector<std::byte>(start, start + bytes.size()));
+        check(record.samples == 7938000 && record.sample_rate == 44100.0, "the length is the file's own count");
+        AnalysisImportOptions again = keyed("k9");
+        again.ownGridFingerprint = done.grid.gridFingerprint;
+        const auto over = writer.importAnalysis("9", analysisOf(180.0, 103.0, 4), again);
+        check(over.grid.outcome == Outcome::Written && store.find("k9").status == Status::None,
+              "a copy over Seabass's own completion keeps nothing");
+        check(writer.engineAnalysisFacts("9", "k9").rowAnalysed, "the completed row reads as analysed");
+    }
+
+    // 7. Stale entries; writeBeatGrid() keeps too.
+    {
+        const Stick stick = freshStick("stale");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        writer.importAnalysis("13", first, keyed("k13"));
+        auto entry = store.find("k13").entry;
+        entry.trackId = 99;
+        store.keep(entry);
+        check(writer.restoreEngineAnalysis("13", "k13", {}).outcome == Restore::Stale, "an entry of another row is stale");
+        check(writer.engineAnalysisFacts("13", "k13").kept == EngineAnalysisFacts::Kept::Stale, "facts say stale");
+
+        const EngineAnalysisColumns before = snapshot(stick, 14);
+        BeatGridWriteOptions grid;
+        grid.keepKey = "k14";
+        check(writer.writeBeatGrid("14", analysisOf(240.0, 128.0, 5).beats, grid).outcome == Outcome::Written,
+              "a grid written to row 14");
+        check(store.find("k14").entry.original == before, "writeBeatGrid() kept the player's analysis first");
+    }
+
+    if (failures > 0) {
+        std::cerr << failures << " check(s) failed\n";
+        return 1;
+    }
+    std::cout << "engine_analysis_keep_test: all checks passed\n";
+    return 0;
+}

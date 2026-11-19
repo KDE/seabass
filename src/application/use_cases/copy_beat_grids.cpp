@@ -4,6 +4,8 @@
 
 #include "application/use_cases/copy_beat_grids.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <exception>
 #include <stdexcept>
 #include <vector>
@@ -107,6 +109,7 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
             write.unanalysed = options.unanalysed;
             write.overwriteEngineEdits = options.overwriteEngineEdits;
             write.previewOnly = options.previewOnly;
+            write.keepKey = item.ledgerKey;
             if (!item.ledgerKey.empty()) {
                 if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
                     write.ownGridFingerprint = own->second;
@@ -271,6 +274,7 @@ AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
     write.previewOnly = options.previewOnly;
     write.skipOverviewFile = options.skipOverviewFile;
     write.zeroLoudness = options.zeroLoudness;
+    write.keepKey = item.ledgerKey;
     if (!item.ledgerKey.empty()) {
         if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
             write.ownGridFingerprint = own->second;
@@ -290,9 +294,13 @@ AnalysisItemOutcome importAnalysisItem(const BeatGridCopyItem &item, const Rekor
     // reading the file.
     if (out.result.waveform == AnalysisImportResult::Waveform::NoSampleCount && fileFacts) {
         const AnalysisFileFacts facts = fileFacts(item);
+        out.options.fileIsMp3 = facts.isMp3;
+        out.options.fileCountRequired = facts.countRequired;
+        out.options.fileSampleCount = facts.sampleCount;
         if (facts.sampleRateHz) {
             out.options.fileSampleRateHz = facts.sampleRateHz;
-            out.options.fileIsMp3 = facts.isMp3;
+        }
+        if (facts.sampleRateHz || facts.countRequired || facts.sampleCount) {
             out.result = writer.importAnalysis(item.engineTrackId, analysis, out.options);
         }
     }
@@ -330,6 +338,9 @@ AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const Ana
             if (imported.completedRow) {
                 ++(options.previewOnly ? result.wouldCompleteRows : result.completedRows);
             }
+            if (imported.keptEngineAnalysis) {
+                ++result.keptEngineAnalyses;
+            }
             if (!imported.overviewFileRelativePath.empty()) {
                 result.overviewFiles.push_back(imported.overviewFileRelativePath);
             }
@@ -359,6 +370,144 @@ AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const Ana
                                + std::to_string(items) + " rows");
     }
     return result;
+}
+
+namespace
+{
+
+std::string lowerExtension(const std::string &path)
+{
+    const auto slash = path.find_last_of("/\\");
+    const auto dot = path.rfind('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+        return {};
+    }
+    std::string extension = path.substr(dot);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension;
+}
+
+}  // namespace
+
+bool isMp3File(const std::string &path)
+{
+    return lowerExtension(path) == ".mp3";
+}
+
+bool requiresOwnSampleCount(const std::string &path)
+{
+    const std::string extension = lowerExtension(path);
+    return extension == ".flac" || extension == ".wav" || extension == ".aif" || extension == ".aiff"
+        || extension == ".m4a" || extension == ".mp4";
+}
+
+EngineAnalysisRestoreCounts restoreEngineAnalysis(const BeatGridCopyPlan &plan, AnalysisWriter &writer,
+                                                  const EngineAnalysisRestoreOptions &options,
+                                                  const CancellationToken &cancel, ProgressReporter &progress)
+{
+    using Outcome = EngineAnalysisRestoreResult::Outcome;
+    EngineAnalysisRestoreCounts counts;
+    progress.start(options.previewOnly ? "Checking Engine's analysis" : "Restoring Engine's analysis", plan.items.size());
+    std::size_t done = 0;
+    for (const BeatGridCopyItem &item : plan.items) {
+        if (cancel.cancelled()) {
+            counts.notReached = static_cast<int>(plan.items.size() - done);
+            counts.cancelled = true;
+            break;
+        }
+        try {
+            const EngineAnalysisRestoreResult r = writer.restoreEngineAnalysis(item.engineTrackId, item.ledgerKey, options);
+            switch (r.outcome) {
+            case Outcome::Restored:
+                ++(options.previewOnly ? counts.wouldRestore : counts.restored);
+                break;
+            case Outcome::AlreadyEngines:
+                ++counts.alreadyEngines;
+                break;
+            case Outcome::NothingKept:
+                ++counts.nothingKept;
+                break;
+            case Outcome::KeptDamaged:
+                ++counts.keptDamaged;
+                break;
+            case Outcome::Stale:
+                ++counts.stale;
+                break;
+            case Outcome::ChangedSince:
+                ++counts.changedSince;
+                break;
+            case Outcome::UnsupportedSchema:
+                ++counts.unsupportedLibrary;
+                break;
+            }
+            if (!r.reason.empty()) {
+                counts.refusals.push_back({item, r.reason});
+            }
+            if (!r.overviewFileRelativePath.empty()) {
+                counts.overviewFiles.push_back(r.overviewFileRelativePath);
+            }
+            if (!options.previewOnly && (r.outcome == Outcome::Restored || r.outcome == Outcome::AlreadyEngines)
+                && !item.ledgerKey.empty()) {
+                counts.ledgerKeysToDrop.push_back(item.ledgerKey);
+            }
+        } catch (const std::exception &e) {
+            ++counts.failed;
+            counts.failures.push_back({item, e.what()});
+        }
+        ++done;
+        progress.tick(done);
+    }
+    progress.finish();
+    if (counts.total() != static_cast<int>(plan.items.size())) {
+        throw std::logic_error("restore Engine's analysis: " + std::to_string(counts.total()) + " outcomes counted for "
+                               + std::to_string(plan.items.size()) + " rows");
+    }
+    return counts;
+}
+
+LetPlayerAnalyseCounts letPlayerAnalyseAgain(const BeatGridCopyPlan &plan, AnalysisWriter &writer, bool previewOnly,
+                                             const CancellationToken &cancel, ProgressReporter &progress)
+{
+    using Outcome = LetPlayerAnalyseResult::Outcome;
+    LetPlayerAnalyseCounts counts;
+    progress.start(previewOnly ? "Checking tracks" : "Marking tracks for analysis", plan.items.size());
+    std::size_t done = 0;
+    for (const BeatGridCopyItem &item : plan.items) {
+        if (cancel.cancelled()) {
+            counts.notReached = static_cast<int>(plan.items.size() - done);
+            counts.cancelled = true;
+            break;
+        }
+        try {
+            const LetPlayerAnalyseResult r = writer.letPlayerAnalyseAgain(item.engineTrackId, item.ledgerKey, previewOnly);
+            switch (r.outcome) {
+            case Outcome::Marked:
+                ++(previewOnly ? counts.wouldMark : counts.marked);
+                if (!previewOnly && !item.ledgerKey.empty()) {
+                    counts.ledgerKeysToDrop.push_back(item.ledgerKey);
+                }
+                break;
+            case Outcome::NotAnalysed:
+                ++counts.notAnalysed;
+                break;
+            case Outcome::UnsupportedSchema:
+                ++counts.unsupportedLibrary;
+                break;
+            }
+        } catch (const std::exception &e) {
+            ++counts.failed;
+            counts.failures.push_back({item, e.what()});
+        }
+        ++done;
+        progress.tick(done);
+    }
+    progress.finish();
+    if (counts.total() != static_cast<int>(plan.items.size())) {
+        throw std::logic_error("let the player analyse again: " + std::to_string(counts.total())
+                               + " outcomes counted for " + std::to_string(plan.items.size()) + " rows");
+    }
+    return counts;
 }
 
 }  // namespace seabass::application

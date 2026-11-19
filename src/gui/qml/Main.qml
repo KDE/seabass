@@ -870,6 +870,12 @@ ApplicationWindow {
         BeatGridsWaveformsPage {
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
+            onRekordboxExportSyncRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(
+                rekordboxExportSyncPageComponent, {
+                    stickLabel: stickLabel,
+                    rekordboxPath: rekordboxPath,
+                    enginePath: enginePath,
+                })
         }
     }
 

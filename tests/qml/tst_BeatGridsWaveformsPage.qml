@@ -232,7 +232,7 @@ TestCase {
         compare(playlistRow(o.page, "T73 Renamed").checkState, Qt.Unchecked);
         compare(playlistRow(o.page, "").checkState, Qt.Unchecked);
         for (const name of ["errorLabel", "engineTooOldLabel", "readOnlyLabel", "ledgerWarningLabel",
-                            "nothingMatchedLabel", "noPlaylistsLabel"]) {
+                            "nothingMatchedLabel", "noPlaylistsLabel", "notInEngineLabel"]) {
             compare(findChild(o.page, name).visible, false, name + " says nothing here");
         }
     }
@@ -453,6 +453,7 @@ TestCase {
         compare(after.overviews, 11);
         compare(after.overviewFiles, 11, "an overview file for every row");
         compare(after.matchingFiles, 11, "each over its row's own length");
+        compare(stickFixture.keptEngineAnalyses(stick), 5, "the 5 analyses of the player kept first");
         const ledger = stickFixture.readText(stick + "/Seabass/beat-grids.tsv");
         const lines = ledger.split("\n").filter(line => line.length > 0);
         compare(lines[0], "seabass-beat-grids\t1");
@@ -495,9 +496,158 @@ TestCase {
         compare(restored.analysed, 5);
         compare(restored.overviewFiles, 0, "the overview files the save made are gone");
         compare(stickFixture.fileExists(stick + "/Seabass/beat-grids.tsv"), false, "and the ledger it made");
+        compare(stickFixture.keptEngineAnalyses(stick), 0, "and the kept analyses it made");
         waitSettled(o.c, "worked out again after the undo");
         compare(o.c.tracksToWrite, 11);
         compare(row(o.c, b01).gridState, "New");
+    }
+
+    // Copies T73 New's three rows (all analysed by a player), so their
+    // analysis is kept, and leaves them ticked.
+    function copyT73New(o) {
+        clickPlaylistBox(o.page, "T73 Folder/T73 New");
+        waitSettled(o.c);
+        compare(o.c.tracksToWrite, 3);
+        compare(o.c.keptTickedCount, 0, "nothing kept before a copy");
+        compare(findChild(o.page, "restoreButton").enabled, false, "nothing to restore yet");
+        compare(findChild(o.page, "letPlayerAnalyseButton").enabled, true, "three analysed rows");
+        mouseClick(findChild(o.page, "stageButton"));
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        const saved = finished(session, () => session.save(), "the copy");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.written, 3);
+        waitSettled(o.c, "worked out again after the copy");
+        tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
+        return session;
+    }
+
+    // Restore Engine's Analysis: the kept note on each row, the count, one
+    // change per track, the analysis back and the entries gone; Undo puts
+    // the copy back, entries and all.
+    function test_restoreEngineAnalysisThenUndo() {
+        const stick = t73();
+        const db = stick + "/Engine Library/Database2/m.db";
+        const original = stickFixture.sha256(db);
+        const o = openOn(stick);
+        const session = copyT73New(o);
+        compare(stickFixture.keptEngineAnalyses(stick), 3);
+        const copied = stickFixture.sha256(db);
+        verify(copied !== original);
+        compare(row(o.c, n1).note, "Engine's analysis kept", "the row says its analysis is kept");
+        compare(o.c.keptTickedCount, 3);
+        compare(o.c.restorableCount, 3);
+        compare(findChild(o.page, "engineAnalysisLabel").text,
+                "Engine's own analysis is kept for 3 ticked tracks, ready to be put back.");
+        showPlaylist(o.page, "T73 Folder/T73 New");
+        tryVerify(() => trackDelegate(o.page, n1) !== null
+                  && findChild(trackDelegate(o.page, n1), "rowNote").text === "Engine's analysis kept", 5000,
+                  "and on screen");
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-kept.png");
+        }
+
+        const restore = findChild(o.page, "restoreButton");
+        compare(restore.text, "Restore Engine's Analysis");
+        verify(restore.enabled);
+        mouseClick(restore);
+        compare(o.c.stagedCount, 3, "one change per track");
+        compare(o.c.stagedAction, "restore");
+        compare(session.pendingCount, 3);
+        compare(restore.enabled, false, "staged: the actions wait");
+        compare(findChild(o.page, "letPlayerAnalyseButton").enabled, false);
+        compare(findChild(o.page, "stageButton").text, "Unstage");
+        compare(stickFixture.sha256(db), copied, "staging wrote nothing");
+        const saved = finished(session, () => session.save(), "the restore");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.written, 3);
+        compare(o.c.lastSaveRestored, 3);
+        const toast = findChild(o.page, "savedToast");
+        tryVerify(() => toast.showing && toast.text === "Engine's analysis restored for 3 tracks", 5000, toast.text);
+        compare(stickFixture.keptEngineAnalyses(stick), 0, "the kept entries are used up");
+        compare(stickFixture.engineAnalysisRows(stick).overviewFiles, 0, "the player had no overview files");
+        waitSettled(o.c, "worked out again after the restore");
+        compare(row(o.c, n1).note, "", "nothing kept any more");
+        compare(row(o.c, n1).gridState, "Replaces Engine's", "the player's own grid again");
+        compare(o.c.keptTickedCount, 0);
+
+        // Undo: the copy as it was, the kept entries back.
+        const undo = findChild(o.page, "undoLastSaveButton");
+        tryVerify(() => undo.visible && undo.enabled, 5000);
+        tryVerify(() => !findChild(o.page, "writeProgressDialog").visible, 10000, "the save's progress is gone");
+        const undone = finished(session, () => mouseClick(undo), "the undo");
+        compare(undone.error, "", JSON.stringify(undone));
+        compare(stickFixture.sha256(db), copied, "m.db is the copy's again");
+        compare(stickFixture.keptEngineAnalyses(stick), 3, "the kept analyses are back");
+        waitSettled(o.c, "worked out again after the undo");
+        compare(row(o.c, n1).note, "Engine's analysis kept");
+        compare(o.c.restorableCount, 3);
+    }
+
+    // Let the Player Analyse Again: the rows read as unanalysed after it,
+    // their kept analysis stays.
+    function test_letThePlayerAnalyseAgain() {
+        const stick = t73();
+        const o = openOn(stick);
+        const session = copyT73New(o);
+        const button = findChild(o.page, "letPlayerAnalyseButton");
+        compare(button.text, "Let the Player Analyse Again");
+        compare(o.c.analysedTickedCount, 3);
+        mouseClick(button);
+        compare(o.c.stagedCount, 3);
+        compare(o.c.stagedAction, "letPlayerAnalyse");
+        const saved = finished(session, () => session.save(), "marking");
+        compare(saved.error, "", JSON.stringify(saved));
+        compare(saved.written, 3);
+        compare(o.c.lastSaveMarked, 3);
+        const toast = findChild(o.page, "savedToast");
+        tryVerify(() => toast.showing && toast.text === "3 tracks left for the player to analyse", 5000, toast.text);
+        compare(stickFixture.engineAnalysisRows(stick).analysed, 2, "B04 and B11 only");
+        compare(stickFixture.keptEngineAnalyses(stick), 3, "what is kept stays");
+        waitSettled(o.c, "worked out again");
+        // As for a track the player has not analysed: completed from rekordbox.
+        compare(row(o.c, n1).gridState, "New");
+        compare(row(o.c, n1).waveformState, "New");
+        compare(row(o.c, n1).note, "Loads without analysis. Engine's analysis kept");
+        compare(o.c.analysedTickedCount, 0);
+        compare(button.enabled, false, "nothing analysed left to mark");
+        compare(o.c.restorableCount, 3, "and it can still be put back");
+    }
+
+    // A rekordbox track with no Engine row: the row says so, and the page
+    // asks for the libraries to be synced first, with a link to Sync.
+    function test_tracksNotInTheEngineLibrary() {
+        const stick = t73();
+        compare(stickFixture.removeEngineTracks(stick, [1, 2]), 2, "B07 and B08 leave the Engine library");
+        const o = openOn(stick);
+        waitSettled(o.c);
+        compare(o.c.matchedCount, 9);
+        compare(o.c.notInEngineShown, 2);
+        const label = findChild(o.page, "notInEngineLabel");
+        compare(label.visible, true);
+        compare(label.text, "2 tracks here are not in the Engine library yet, so nothing can be copied to them. "
+                + "Sync the libraries first with <a href=\"sync\">Sync after Rekordbox Export</a>, which also copies "
+                + "beat grids and waveforms as it goes when that is switched on in Preferences, or come back here "
+                + "once the libraries are in step.");
+        compare(row(o.c, b07).matched, false);
+        compare(row(o.c, b07).note, "Not in the Engine library yet: sync the libraries first");
+        o.c.setTicked(b07, true);
+        compare(o.c.tickedCount, 0, "it cannot be ticked");
+        let asked = null;
+        o.page.rekordboxExportSyncRequested.connect((stickLabel, rekordboxPath) => { asked = [stickLabel, rekordboxPath]; });
+        label.linkActivated("sync");
+        compare(JSON.stringify(asked), JSON.stringify(["TESTSHARK", stick + "/PIONEER"]), "the link asks for Sync");
+        verify(waitForPolish(o.page.Window.window));
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-not-in-engine.png");
+        }
+        showPlaylist(o.page, "T73 Order");
+        compare(o.c.notInEngineShown, 2, "B07 and B08 are in T73 Order");
+        showPlaylist(o.page, "T73 Folder/T73 New");
+        compare(o.c.notInEngineShown, 0);
+        compare(label.visible, false, "a list with none says nothing");
+        showPlaylist(o.page, "T73 Renamed");
+        verify(waitForPolish(o.page.Window.window));
+        compare(o.c.notInEngineText, "");
     }
 
     // One left line at the narrowest width the page is laid out for, the

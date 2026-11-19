@@ -151,6 +151,41 @@ public:
         }
         return result;
     }
+
+    // The ways back, answered per row; NothingKept and NotAnalysed when
+    // not set.
+    std::map<std::string, EngineAnalysisRestoreResult::Outcome> restoreAnswers;
+    std::map<std::string, LetPlayerAnalyseResult::Outcome> markAnswers;
+    std::vector<std::pair<std::string, EngineAnalysisRestoreOptions>> restoreCalls;
+
+    EngineAnalysisRestoreResult restoreEngineAnalysis(const std::string &id, const std::string &,
+                                                      const EngineAnalysisRestoreOptions &options) override
+    {
+        restoreCalls.push_back({id, options});
+        if (const auto t = throwing.find(id); t != throwing.end()) {
+            throw std::runtime_error(t->second);
+        }
+        EngineAnalysisRestoreResult result;
+        result.outcome = restoreAnswers.contains(id) ? restoreAnswers.at(id)
+                                                     : EngineAnalysisRestoreResult::Outcome::NothingKept;
+        if (result.outcome == EngineAnalysisRestoreResult::Outcome::ChangedSince) {
+            result.reason = "changed on the player";
+        }
+        if (result.outcome == EngineAnalysisRestoreResult::Outcome::Restored) {
+            result.overviewFileRelativePath = "Database2/OverviewData/u/" + id + ".rgb";
+        }
+        return result;
+    }
+    LetPlayerAnalyseResult letPlayerAnalyseAgain(const std::string &id, const std::string &, bool) override
+    {
+        if (const auto t = throwing.find(id); t != throwing.end()) {
+            throw std::runtime_error(t->second);
+        }
+        LetPlayerAnalyseResult result;
+        result.outcome = markAnswers.contains(id) ? markAnswers.at(id) : LetPlayerAnalyseResult::Outcome::NotAnalysed;
+        return result;
+    }
+    EngineAnalysisFacts engineAnalysisFacts(const std::string &, const std::string &) override { return {}; }
 };
 
 std::vector<domain::Beat> twoBeats(const BeatGridCopyItem &)
@@ -578,6 +613,74 @@ int main()
         check(result.failed == 1 && result.notRequested == 0 && result.total() == 1,
               "a grid write that says it was not asked for fails its row");
         std::cout << "case 9 (an answer with no bucket) done\n";
+    }
+
+    // 10. The ways back, counted exactly; each item's key handed on; the
+    // ledger lines to drop are the rows whose analysis is the player's
+    // again; a preview drops none.
+    {
+        using R = EngineAnalysisRestoreResult::Outcome;
+        using M = LetPlayerAnalyseResult::Outcome;
+        BeatGridCopyPlan plan;
+        for (const char *id : {"1", "2", "3", "4", "5", "6", "7", "8"}) {
+            BeatGridCopyItem item;
+            item.engineTrackId = id;
+            item.ledgerKey = std::string("k") + id;
+            plan.items.push_back(item);
+        }
+        FakeAnalysisWriter writer;
+        writer.restoreAnswers = {{"1", R::Restored},    {"2", R::Restored},   {"3", R::AlreadyEngines},
+                                 {"4", R::ChangedSince}, {"5", R::KeptDamaged}, {"6", R::Stale}};
+        writer.throwing["8"] = "the stick went away";
+        const EngineAnalysisRestoreCounts done = restoreEngineAnalysis(plan, writer, {});
+        check(done.restored == 2 && done.alreadyEngines == 1 && done.changedSince == 1 && done.keptDamaged == 1
+                  && done.stale == 1 && done.nothingKept == 1 && done.failed == 1 && done.total() == 8,
+              "every restore outcome in its bucket");
+        check(done.ledgerKeysToDrop == std::vector<std::string>{"k1", "k2", "k3"}, "ledger lines of the rows put back");
+        check(done.refusals.size() == 1 && done.refusals[0].item.engineTrackId == "4", "the refusal with its reason");
+        check(done.overviewFiles.size() == 2, "the overview files a restore changes");
+        const EngineAnalysisRestoreCounts preview = restoreEngineAnalysis(plan, writer, {false, true});
+        check(preview.wouldRestore == 2 && preview.restored == 0 && preview.ledgerKeysToDrop.empty(),
+              "a preview restores nothing and drops nothing");
+        check(writer.restoreCalls.back().second.previewOnly, "the preview asked the writer for one");
+
+        writer.markAnswers = {{"1", M::Marked}, {"2", M::Marked}, {"3", M::UnsupportedSchema}};
+        const LetPlayerAnalyseCounts marked = letPlayerAnalyseAgain(plan, writer, false);
+        check(marked.marked == 2 && marked.unsupportedLibrary == 1 && marked.notAnalysed == 4 && marked.failed == 1
+                  && marked.total() == 8,
+              "every mark outcome in its bucket");
+        check(marked.ledgerKeysToDrop == std::vector<std::string>{"k1", "k2"}, "the marked rows' ledger lines");
+        std::cout << "case 10 (restore and let the player analyse, counted) done\n";
+    }
+
+    // 11. The file's own count reaches the writer, and the copy's options
+    // carry the item's key for keeping the player's analysis.
+    {
+        BeatGridCopyPlan plan;
+        BeatGridCopyItem item;
+        item.engineTrackId = "1";
+        item.ledgerKey = "k1";
+        item.filePath = "/stick/a.flac";
+        plan.items.push_back(item);
+        FakeAnalysisWriter writer;
+        writer.answers["1"].needsRate = true;
+        const AnalysisFileFactsSource facts = [](const BeatGridCopyItem &) {
+            AnalysisFileFacts f;
+            f.sampleRateHz = 48000.0;
+            f.sampleCount = 11520000;
+            f.countRequired = true;
+            return f;
+        };
+        copyRekordboxAnalysis(plan, [](const BeatGridCopyItem &) { return RekordboxAnalysis{}; }, writer, {}, {}, facts);
+        const AnalysisImportOptions &last = writer.calls.back().second;
+        check(last.fileSampleCount == std::optional<std::uint64_t>(11520000) && last.fileCountRequired
+                  && last.fileSampleRateHz == std::optional<double>(48000.0),
+              "the file's count and rate are handed on");
+        check(writer.calls.front().second.keepKey == "k1", "the key to keep by is the item's ledger key");
+        check(requiresOwnSampleCount("/x/A.FLAC") && requiresOwnSampleCount("b.m4a") && !requiresOwnSampleCount("c.mp3")
+                  && isMp3File("C.MP3") && !requiresOwnSampleCount("d.ogg"),
+              "the kinds whose count must come from the file");
+        std::cout << "case 11 (the file's own count) done\n";
     }
 
     if (failures == 0) {

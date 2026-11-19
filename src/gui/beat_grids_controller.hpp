@@ -166,8 +166,14 @@ struct BeatGridTrackState
     application::AnalysisImportResult result;
     application::AnalysisImportOptions options;
     std::optional<application::RekordboxAnalysis> analysis;
+    // Whether the row is analysed and the player's own analysis is kept on
+    // the stick, and for a kept one what restoring it would do (with the
+    // overview file it would put back or take away).
+    application::EngineAnalysisFacts facts;
+    std::optional<application::EngineAnalysisRestoreResult> restore;
 
     bool wouldWrite() const;
+    bool canRestore() const;
 };
 
 // The Beat Grids & Waveforms page (Sync): rekordbox's beat grids and
@@ -241,7 +247,24 @@ class BeatGridsController : public QObject
     Q_PROPERTY(QString leftAloneText READ leftAloneText NOTIFY summaryChanged)
     Q_PROPERTY(bool canStage READ canStage NOTIFY summaryChanged)
 
+    // The two ways back, over the ticked tracks: the player's own analysis
+    // kept on the stick (and how many of those can be put back now), and
+    // the analysed rows the player can be asked to analyse again.
+    Q_PROPERTY(int keptTickedCount READ keptTickedCount NOTIFY summaryChanged)
+    Q_PROPERTY(int restorableCount READ restorableCount NOTIFY summaryChanged)
+    Q_PROPERTY(int analysedTickedCount READ analysedTickedCount NOTIFY summaryChanged)
+    Q_PROPERTY(QString engineAnalysisText READ engineAnalysisText NOTIFY summaryChanged)
+    Q_PROPERTY(bool canRestore READ canRestore NOTIFY summaryChanged)
+    Q_PROPERTY(bool canLetPlayerAnalyse READ canLetPlayerAnalyse NOTIFY summaryChanged)
+    // rekordbox tracks of the list shown with no Engine row, and the
+    // sentence that says so ("" for none), with a link ("sync") to Sync
+    // after Rekordbox Export.
+    Q_PROPERTY(int notInEngineShown READ notInEngineShown NOTIFY notInEngineChanged)
+    Q_PROPERTY(QString notInEngineText READ notInEngineText NOTIFY notInEngineChanged)
+
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY stagedChanged)
+    // What is staged: "copy", "restore", "letPlayerAnalyse", or "".
+    Q_PROPERTY(QString stagedAction READ stagedAction NOTIFY stagedChanged)
     Q_PROPERTY(bool writing READ writing NOTIFY writingChanged)
 
     // The last save, counted from the changes that landed.
@@ -249,6 +272,8 @@ class BeatGridsController : public QObject
     Q_PROPERTY(int lastSaveWaveforms READ lastSaveWaveforms NOTIFY lastSaveChanged)
     Q_PROPERTY(int lastSaveCompleted READ lastSaveCompleted NOTIFY lastSaveChanged)
     Q_PROPERTY(int lastSaveTracks READ lastSaveTracks NOTIFY lastSaveChanged)
+    Q_PROPERTY(int lastSaveRestored READ lastSaveRestored NOTIFY lastSaveChanged)
+    Q_PROPERTY(int lastSaveMarked READ lastSaveMarked NOTIFY lastSaveChanged)
     Q_PROPERTY(QString lastSaveText READ lastSaveText NOTIFY lastSaveChanged)
 
 public:
@@ -294,12 +319,23 @@ public:
     QString summaryText() const { return m_summary.text; }
     QString leftAloneText() const { return m_summary.leftAloneText; }
     bool canStage() const;
+    int keptTickedCount() const { return m_summary.kept; }
+    int restorableCount() const { return m_summary.restorable; }
+    int analysedTickedCount() const { return m_summary.analysed; }
+    QString engineAnalysisText() const { return m_summary.engineAnalysisText; }
+    bool canRestore() const;
+    bool canLetPlayerAnalyse() const;
+    int notInEngineShown() const { return m_notInEngineShown; }
+    QString notInEngineText() const;
     int stagedCount() const { return static_cast<int>(m_stagedIds.size()); }
+    QString stagedAction() const { return m_stagedIds.isEmpty() ? QString() : m_stagedAction; }
     bool writing() const;
     int lastSaveGrids() const { return m_lastSave.grids; }
     int lastSaveWaveforms() const { return m_lastSave.waveforms; }
     int lastSaveCompleted() const { return m_lastSave.completed; }
     int lastSaveTracks() const { return m_lastSave.tracks; }
+    int lastSaveRestored() const { return m_lastSave.restored; }
+    int lastSaveMarked() const { return m_lastSave.marked; }
     QString lastSaveText() const { return m_lastSave.text; }
 
     // Reads the stick holding these two catalogs. A request for the same
@@ -325,6 +361,11 @@ public:
     // One change per ticked track that would change, into the library's
     // edit session, which Save writes. Refused unless canStage.
     Q_INVOKABLE void stage();
+    // One change per ticked track whose kept analysis can be put back, or
+    // per ticked track with an analysed row, into the same session.
+    // Refused unless canRestore / canLetPlayerAnalyse.
+    Q_INVOKABLE void stageRestore();
+    Q_INVOKABLE void stageLetPlayerAnalyse();
     Q_INVOKABLE void unstage();
 
 signals:
@@ -343,6 +384,7 @@ signals:
     void stagedChanged();
     void writingChanged();
     void lastSaveChanged();
+    void notInEngineChanged();
     // A save of this page's changes finished; `whole` when every change
     // landed and nothing went wrong. The page's toast says lastSaveText.
     void saveCounted(bool whole);
@@ -356,6 +398,10 @@ private:
         int completed = 0;
         int rows = 0;
         int leftAlone = 0;
+        int kept = 0;
+        int restorable = 0;
+        int analysed = 0;
+        QString engineAnalysisText;
         QVariantList groups;
         QString text;
         QString leftAloneText;
@@ -366,6 +412,8 @@ private:
         int waveforms = 0;
         int completed = 0;
         int tracks = 0;
+        int restored = 0;
+        int marked = 0;
         QString text;
     };
 
@@ -390,6 +438,8 @@ private:
     std::vector<std::string> tickableIn(const QString &name) const;
     const std::vector<std::string> *playlistIds(const QString &name) const;
     void describe(BeatGridTrackListModel::Row &row) const;
+    bool canStageAnything() const;
+    void stageEngineAnalysisChanges(bool restore);
 
     QString m_rekordboxPath;
     QString m_enginePath;
@@ -415,6 +465,8 @@ private:
     int m_previewTotal = 0;
     Summary m_summary;
     QStringList m_stagedIds;
+    QString m_stagedAction;
+    int m_notInEngineShown = 0;
     std::shared_ptr<AnalysisSaveTally> m_tally;
     QStringList m_appliedThisSave;
     LastSave m_lastSave;

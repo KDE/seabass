@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -195,12 +196,23 @@ struct AnalysisCopyOptions
 };
 
 // The audio file's rate, for a row the player has not analysed, and whether
-// it is an MP3.
+// it is an MP3. Its own sample count where the container says it exactly,
+// and the rate read with it; for the kinds whose count must come from the
+// file (countRequired: FLAC, WAV, AIFF, M4A) a row is not completed without
+// it (AnalysisImportOptions::fileSampleCount).
 struct AnalysisFileFacts
 {
     std::optional<double> sampleRateHz;
     bool isMp3 = false;
+    bool countRequired = false;
+    std::optional<std::uint64_t> sampleCount;
 };
+
+// What a file's name says of it: an MP3; a kind whose container says its
+// sample count exactly and whose row is completed only from that (.flac,
+// .wav, .aif, .aiff, .m4a, .mp4); or another, completed from an estimate.
+bool isMp3File(const std::string &path);
+bool requiresOwnSampleCount(const std::string &path);
 
 // One bucket per waveform outcome, every item in exactly one.
 struct WaveformCopyCounts
@@ -241,6 +253,9 @@ struct AnalysisCopyResult
     // path from the Engine Library folder: what a backup before the run
     // must cover besides the database.
     std::vector<std::string> overviewFiles;
+    // Rows whose own analysis by the player was kept on the stick before
+    // it was replaced (never in a preview).
+    int keptEngineAnalyses = 0;
 };
 
 // rekordbox's analysis of an item; throwing counts the item as failed.
@@ -282,5 +297,67 @@ AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const Ana
                                          const AnalysisFileFactsSource &fileFacts = {},
                                          const CancellationToken &cancel = CancellationToken::none(),
                                          ProgressReporter &progress = NullProgressReporter::instance());
+
+// Restore Engine's Analysis: for each item, the player's analysis kept on
+// the stick put back (AnalysisWriter::restoreEngineAnalysis()), counted by
+// outcome; every item in exactly one bucket. An exception counts the item
+// as failed and the run goes on; cancelled between items, the rest are
+// notReached. One progress phase, "Restoring Engine's analysis" ("Checking
+// Engine's analysis" for a preview).
+struct EngineAnalysisRestoreCounts
+{
+    int restored = 0;
+    int wouldRestore = 0;
+    int alreadyEngines = 0;
+    int nothingKept = 0;
+    int keptDamaged = 0;
+    int stale = 0;
+    int changedSince = 0;
+    int unsupportedLibrary = 0;
+    int failed = 0;
+    int notReached = 0;
+    bool cancelled = false;
+    // Failures, and refusals with a reason (damaged, stale, changed since).
+    std::vector<BeatGridCopyFailure> failures;
+    std::vector<BeatGridCopyFailure> refusals;
+    // The ledger lines to drop: the rows whose analysis is the player's
+    // again (restored, or already so). Never in a preview.
+    std::vector<std::string> ledgerKeysToDrop;
+    // The overview files put back or taken away (in a preview: would be).
+    std::vector<std::string> overviewFiles;
+
+    int total() const
+    {
+        return restored + wouldRestore + alreadyEngines + nothingKept + keptDamaged + stale + changedSince
+            + unsupportedLibrary + failed + notReached;
+    }
+};
+EngineAnalysisRestoreCounts restoreEngineAnalysis(const BeatGridCopyPlan &plan, AnalysisWriter &writer,
+                                                  const EngineAnalysisRestoreOptions &options,
+                                                  const CancellationToken &cancel = CancellationToken::none(),
+                                                  ProgressReporter &progress = NullProgressReporter::instance());
+
+// Let the Player Analyse Again: each item's row marked for the player's
+// analysis (AnalysisWriter::letPlayerAnalyseAgain()); the analysis kept on
+// the stick stays, so it can still be put back, and the ledger line goes.
+// Counted and run as restoreEngineAnalysis() (progress: "Marking tracks
+// for analysis", "Checking tracks" for a preview).
+struct LetPlayerAnalyseCounts
+{
+    int marked = 0;
+    int wouldMark = 0;
+    int notAnalysed = 0;
+    int unsupportedLibrary = 0;
+    int failed = 0;
+    int notReached = 0;
+    bool cancelled = false;
+    std::vector<BeatGridCopyFailure> failures;
+    std::vector<std::string> ledgerKeysToDrop;
+
+    int total() const { return marked + wouldMark + notAnalysed + unsupportedLibrary + failed + notReached; }
+};
+LetPlayerAnalyseCounts letPlayerAnalyseAgain(const BeatGridCopyPlan &plan, AnalysisWriter &writer, bool previewOnly,
+                                             const CancellationToken &cancel = CancellationToken::none(),
+                                             ProgressReporter &progress = NullProgressReporter::instance());
 
 }  // namespace seabass::application
