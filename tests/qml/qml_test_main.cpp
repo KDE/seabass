@@ -756,6 +756,25 @@ public:
         return count;
     }
 
+    // A property of the object's first child that inherits `className`,
+    // or an invalid value when there is no such child: for a test that
+    // what a controller caches before making something reaches it once
+    // it is made (tst_PlaybackLazyPlayer: the volume set before the
+    // first track is the QAudioOutput's volume afterwards, gh#96).
+    Q_INVOKABLE QVariant childProperty(QObject *object, const QString &className, const QString &property) const
+    {
+        if (object == nullptr) {
+            return {};
+        }
+        const QByteArray name = className.toLatin1();
+        for (const QObject *child : object->children()) {
+            if (child->inherits(name.constData())) {
+                return child->property(property.toLatin1().constData());
+            }
+        }
+        return {};
+    }
+
     // The file's sha256 in hex, or empty when it cannot be read: for a
     // check that a save and its undo left a catalog byte for byte as it
     // was (tst_CueTableRoundTrip, tst_LiveEditMode's W11).

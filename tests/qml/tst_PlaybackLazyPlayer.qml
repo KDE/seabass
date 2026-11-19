@@ -87,8 +87,16 @@ TestCase {
         controller.loadFile("engine", "/stick/Engine Library", aFile, "Session-0001.wav", "Sessions");
         compare(players(controller), 1);
         fuzzyCompare(controller.volume, 0.3, 0.001);
+        // The controller remembering 0.3 is not the output playing at
+        // 0.3: the number has to reach the QAudioOutput made just now.
+        fuzzyCompare(outputVolume(controller), 0.3, 0.001, "the volume set before the player was not handed to its output");
         controller.volume = 0.6;
         fuzzyCompare(controller.volume, 0.6, 0.001);
+        fuzzyCompare(outputVolume(controller), 0.6, 0.001, "a volume set with a player did not reach its output");
+    }
+
+    function outputVolume(controller) {
+        return stickFixture.childProperty(controller, "QAudioOutput", "volume");
     }
 
     function test_loadingMakesOnePlayerAndKeepsIt_data() {
