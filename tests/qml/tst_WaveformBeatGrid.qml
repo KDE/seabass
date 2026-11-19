@@ -305,6 +305,71 @@ TestCase {
         SignalSpy {}
     }
 
+    // The overlay is repainted for everything it draws: a highlighted
+    // cue, new cues, and the loop being dragged out.
+    function test_theOverlayRepaintsForWhatItDraws() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), cueEditable: true,
+                               cueData: [{kind: "hot", hotCueNumber: 1, positionMs: 20000, color: "#ff0000", isLoop: false}]});
+        const overlay = findChild(host.view, "waveformOverlay");
+        const gridLayer = findChild(host.view, "beatGridLayer");
+        const paints = createTemporaryObject(spyComponent, testCase, {target: overlay, signalName: "paint"});
+        const gridPaints = createTemporaryObject(spyComponent, testCase, {target: gridLayer, signalName: "paint"});
+
+        host.view.highlightCuePositionMs = 20000;
+        tryVerify(() => paints.count > 0, 2000, "a highlighted cue repaints the overlay");
+        paints.clear();
+        host.view.cueData = [{kind: "memory", positionMs: 30000, isLoop: false}];
+        tryVerify(() => paints.count > 0, 2000, "new cues repaint it");
+        paints.clear();
+        mousePress(host.view, 100, 40);
+        mouseMove(host.view, 160, 40);
+        tryVerify(() => paints.count > 0, 2000, "dragging out a loop repaints it");
+        mouseRelease(host.view, 160, 40);
+        compare(gridPaints.count, 0, "none of it repaints the grid");
+    }
+
+    Component {
+        id: fadedComponent
+        Rectangle {
+            property alias view: fadedView
+            width: 600
+            height: 80
+            color: Theme.background
+            WaveformView {
+                id: fadedView
+                anchors.fill: parent
+            }
+        }
+    }
+
+    // A faded waveform (a row backdrop, a dimmed card) is faded as one
+    // picture, as the single canvas it was: a cue line over a bar shows
+    // the cue's colour faded over the ground, not over the bar.
+    function test_aFadedViewFadesAsOnePicture() {
+        const columns = [];
+        for (let i = 0; i < 400; ++i) {
+            columns.push({low: 1, mid: 1, high: 1});
+        }
+        const host = createTemporaryObject(fadedComponent, testCase);
+        host.view.waveformData = columns;
+        host.view.trackDurationMs = 60000;
+        host.view.cueData = [{kind: "hot", hotCueNumber: 1, positionMs: 30000, color: "#ff0000", isLoop: false}];
+        host.view.opacity = 0.5;
+        waitForPolish(testCase.Window.window);
+        waitForRendering(host);
+        const image = grabImage(host);
+        // x 300 is the cue line, two pixels wide over a full-height bar.
+        const got = PixelScale.pixel(image, host, 300, host.height / 2);
+        const ground = Theme.background;
+        const expected = {r: 0.5 * 1 + 0.5 * ground.r, g: 0.5 * ground.g, b: 0.5 * ground.b};
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-faded.png");
+        }
+        verify(Math.abs(got.r - expected.r) < 0.02 && Math.abs(got.g - expected.g) < 0.02
+               && Math.abs(got.b - expected.b) < 0.02,
+               "the cue line at half opacity is " + JSON.stringify(expected) + ", got " + got);
+    }
+
     // ---- Where the grid comes from -----------------------------------
 
     Component {

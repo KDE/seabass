@@ -19,6 +19,11 @@ import SeabassGui
 // change, never per frame of playback.
 Canvas {
     id: root
+    // Faded by its caller (a row backdrop at 0.35, a dimmed card at 0.75),
+    // the three layers are drawn as one picture and faded together, as the
+    // single canvas this once was: faded one by one, the bars would show
+    // through the cue lines and the playhead.
+    layer.enabled: root.opacity < 1
     property var waveformData: []
     property var cueData: []
     // The track's beat grid as the library holds it (#40): one
