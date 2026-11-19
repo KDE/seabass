@@ -40,6 +40,7 @@
 #include <zlib.h>
 
 #include "domain/engine_overview.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using seabass::domain::BandTriple;
@@ -172,7 +173,7 @@ int main(int argc, char **argv)
         const auto predictedBytes = readFile(dir / "predicted_overview_raw.bin");
         const auto denonBytes = readFile(dir / "denon_overview_raw.bin");
         if (!pwv6 || !metaText || !predictedBytes || !denonBytes) {
-            std::cout << dir.filename().string() << ": FAIL, a reference file is missing\n";
+            std::cout << seabass::pathToUtf8(dir.filename()) << ": FAIL, a reference file is missing\n";
             ++failures;
             continue;
         }
@@ -187,12 +188,12 @@ int main(int argc, char **argv)
         const auto predicted = parseRaw(*predictedBytes);
         const auto denon = parseRaw(*denonBytes);
         if (!predicted || !denon || ours.points.size() != EngineOverview::PointCount) {
-            std::cout << dir.filename().string() << ": FAIL, could not read or convert\n";
+            std::cout << seabass::pathToUtf8(dir.filename()) << ": FAIL, could not read or convert\n";
             ++failures;
             continue;
         }
 
-        std::cout << dir.filename().string() << " (" << (isMp3 ? "mp3" : "not mp3") << ", " << pwv6->size() / 3
+        std::cout << seabass::pathToUtf8(dir.filename()) << " (" << (isMp3 ? "mp3" : "not mp3") << ", " << pwv6->size() / 3
                   << " PWV6 entries, " << scrollEntries << " PWV7 entries)\n";
 
         // Against the scripts' prediction: every byte.

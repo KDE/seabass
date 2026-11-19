@@ -39,6 +39,8 @@ BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
         item.ledgerKey = item.stickRelativePath.empty() ? std::string() : normalizedPathKey(item.stickRelativePath);
         item.filePath = rekordboxTrack->filePath;
         item.durationMs = rekordboxTrack->durationSeconds > 0.0 ? rekordboxTrack->durationSeconds * 1000.0 : 0.0;
+        item.key = rekordboxTrack->key;
+        item.bpm = rekordboxTrack->bpm > 0.0 ? rekordboxTrack->bpm : 0.0;
         if (!item.ledgerKey.empty()) {
             ++timesKeyed[item.ledgerKey];
         }
@@ -69,6 +71,15 @@ int keepBeatGridItemsMatching(BeatGridCopyPlan &plan, const std::string &needle)
     // "artist - title" holds the title, so one search covers both.
     std::erase_if(plan.items, [&folded](const BeatGridCopyItem &item) {
         return foldedText(item.artist + " - " + item.title).find(folded) == std::string::npos;
+    });
+    return static_cast<int>(before - plan.items.size());
+}
+
+int keepBeatGridItemsWithIds(BeatGridCopyPlan &plan, const std::set<std::string> &rekordboxTrackIds)
+{
+    const auto before = plan.items.size();
+    std::erase_if(plan.items, [&rekordboxTrackIds](const BeatGridCopyItem &item) {
+        return !rekordboxTrackIds.contains(item.rekordboxTrackId);
     });
     return static_cast<int>(before - plan.items.size());
 }
@@ -143,6 +154,10 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
             case Outcome::UnsupportedSchema:
                 ++result.unsupportedLibrary;
                 break;
+            case Outcome::NotRequested:
+                // writeBeatGrid() never answers it; thrown, the item counts
+                // as failed rather than in no bucket at all.
+                throw std::logic_error("the writer answered \"not requested\" to a grid it was asked for");
             }
             if (!options.previewOnly
                 && (written.outcome == Outcome::Written || written.outcome == Outcome::AlreadySame)) {
@@ -167,6 +182,163 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
     if (result.total() != static_cast<int>(plan.items.size())) {
         throw std::logic_error("copy beat grids: " + std::to_string(result.total()) + " outcomes counted for "
                                + std::to_string(plan.items.size()) + " rows");
+    }
+    return result;
+}
+
+namespace
+{
+
+// One grid outcome into its bucket, as copyBeatGrids() counts it.
+void countGrid(BeatGridCopyResult &result, const BeatGridWriteResult &grid, const BeatGridCopyItem &item, bool preview)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    switch (grid.outcome) {
+    case Outcome::Written:
+        if (preview) {
+            ++result.wouldWrite;
+            result.wouldWriteItems.push_back(item);
+        } else {
+            ++result.written;
+        }
+        result.barBreaks += grid.barBreaks;
+        break;
+    case Outcome::AlreadySame:
+        ++result.alreadySame;
+        break;
+    case Outcome::NoSourceGrid:
+        ++result.noRekordboxGrid;
+        break;
+    case Outcome::RowNotAnalysed:
+        ++result.notAnalysed;
+        break;
+    case Outcome::RowLocked:
+        ++result.lockedOnEngine;
+        break;
+    case Outcome::RowEditedOnEngine:
+        ++result.editedOnEngine;
+        break;
+    case Outcome::NoSampleRate:
+        ++result.noSampleRate;
+        break;
+    case Outcome::UnsupportedSchema:
+        ++result.unsupportedLibrary;
+        break;
+    case Outcome::NotRequested:
+        ++result.notRequested;
+        break;
+    }
+}
+
+void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform waveform, bool preview)
+{
+    using Waveform = AnalysisImportResult::Waveform;
+    switch (waveform) {
+    case Waveform::Written:
+        ++(preview ? counts.wouldWrite : counts.written);
+        break;
+    case Waveform::AlreadySame:
+        ++counts.alreadySame;
+        break;
+    case Waveform::NotRequested:
+        ++counts.notRequested;
+        break;
+    case Waveform::NoSourceWaveform:
+        ++counts.noRekordboxWaveform;
+        break;
+    case Waveform::RowNotAnalysed:
+        ++counts.notAnalysed;
+        break;
+    case Waveform::NoSampleCount:
+        ++counts.noSampleCount;
+        break;
+    case Waveform::UnsupportedSchema:
+        ++counts.unsupportedLibrary;
+        break;
+    }
+}
+
+}  // namespace
+
+AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const AnalysisSource &source,
+                                         AnalysisWriter &writer, const std::map<std::string, std::string> &ledger,
+                                         const AnalysisCopyOptions &options, const AnalysisFileFactsSource &fileFacts,
+                                         const CancellationToken &cancel, ProgressReporter &progress)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    using Waveform = AnalysisImportResult::Waveform;
+    AnalysisCopyResult result;
+    progress.start(options.previewOnly ? "Checking analysis" : "Copying analysis", plan.items.size());
+    std::size_t done = 0;
+    for (const BeatGridCopyItem &item : plan.items) {
+        // Between rows, never inside one: the row in flight finishes.
+        if (cancel.cancelled()) {
+            const int rest = static_cast<int>(plan.items.size() - done);
+            result.grids.notReached = rest;
+            result.waveforms.notReached = rest;
+            result.grids.cancelled = true;
+            break;
+        }
+        try {
+            const RekordboxAnalysis analysis = source(item);
+            AnalysisImportOptions write;
+            write.grids = options.grids;
+            write.waveforms = options.waveforms;
+            write.overwriteEngineEdits = options.overwriteEngineEdits;
+            write.previewOnly = options.previewOnly;
+            write.skipOverviewFile = options.skipOverviewFile;
+            write.zeroLoudness = options.zeroLoudness;
+            if (!item.ledgerKey.empty()) {
+                if (const auto own = ledger.find(item.ledgerKey); own != ledger.end()) {
+                    write.ownGridFingerprint = own->second;
+                }
+            }
+            AnalysisImportResult imported = writer.importAnalysis(item.engineTrackId, analysis, write);
+            // The file's rate only when the row needs it: finding it can
+            // mean reading the file.
+            if (imported.waveform == Waveform::NoSampleCount && fileFacts) {
+                const AnalysisFileFacts facts = fileFacts(item);
+                if (facts.sampleRateHz) {
+                    write.fileSampleRateHz = facts.sampleRateHz;
+                    write.fileIsMp3 = facts.isMp3;
+                    imported = writer.importAnalysis(item.engineTrackId, analysis, write);
+                }
+            }
+            countGrid(result.grids, imported.grid, item, options.previewOnly);
+            countWaveform(result.waveforms, imported.waveform, options.previewOnly);
+            if (imported.grid.outcome == Outcome::Written || imported.waveform == Waveform::Written) {
+                ++(options.previewOnly ? result.rowsWouldWrite : result.rowsWritten);
+            }
+            if (imported.completedRow) {
+                ++(options.previewOnly ? result.wouldCompleteRows : result.completedRows);
+            }
+            if (!imported.overviewFileRelativePath.empty()) {
+                result.overviewFiles.push_back(imported.overviewFileRelativePath);
+            }
+            if (!options.previewOnly
+                && (imported.grid.outcome == Outcome::Written || imported.grid.outcome == Outcome::AlreadySame)) {
+                if (item.ledgerKey.empty() || imported.grid.gridFingerprint.empty()) {
+                    ++result.grids.notRecorded;
+                } else {
+                    result.grids.ledgerEntries[item.ledgerKey] = imported.grid.gridFingerprint;
+                }
+            }
+        } catch (const std::exception &e) {
+            ++result.grids.failed;
+            ++result.waveforms.failed;
+            result.grids.failures.push_back({item, e.what()});
+        }
+        ++done;
+        progress.tick(done);
+    }
+    progress.finish();
+
+    // Every item counted exactly once in each part.
+    const auto items = static_cast<int>(plan.items.size());
+    if (result.grids.total() != items || result.waveforms.total() != items) {
+        throw std::logic_error("copy analysis: " + std::to_string(result.grids.total()) + " grid and "
+                               + std::to_string(result.waveforms.total()) + " waveform outcomes counted for "
+                               + std::to_string(items) + " rows");
     }
     return result;
 }

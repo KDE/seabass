@@ -5,17 +5,24 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include <djinterop/djinterop.hpp>
 #include <djinterop/engine/v2/engine_library.hpp>
 #include <djinterop/engine/v3/engine_library.hpp>
 
+#include "domain/engine_overview.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/hashing/sha256.hpp"
@@ -430,6 +437,64 @@ std::string gridFingerprint(const BeatDataBlob &blob)
     return hashing::toHex(hashing::Sha256::of(std::string_view(text)));
 }
 
+// rekordbox's beats (already on Engine's timeline) as Engine's markers at
+// a rate and length, with the bars rekordbox breaks and Engine cannot.
+std::pair<std::vector<GridMarkerBlob>, int> convertedGrid(const std::vector<domain::Beat> &beats, double sampleRate,
+                                                          double samples)
+{
+    const domain::MarkersFromBeats fromBeats = domain::markersFromBeats(beats, samples / sampleRate * 1000.0);
+    const auto markers = domain::engineNumbered(fromBeats.markers);
+    return {markerBlobs(markers, sampleRate, samples), fromBeats.barBreaks};
+}
+
+// What a grid write does to a row the player has analysed: the outcome,
+// and the blob to write when there is one to write.
+struct AnalysedGridPlan
+{
+    BeatGridWriteResult result;
+    std::optional<BeatDataBlob> write;
+};
+
+AnalysedGridPlan planAnalysedGrid(const BeatDataBlob &existing, bool locked, const std::vector<GridMarkerBlob> &grid,
+                                  int barBreaks, bool overwriteEngineEdits,
+                                  const std::optional<std::string> &ownGridFingerprint)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    AnalysedGridPlan plan{{Outcome::Written, static_cast<int>(grid.size()), barBreaks}, std::nullopt};
+    // Before the checks for the user's own edits: a grid written here
+    // before is not the default one either, and writing it again
+    // would change nothing but the row's edit time.
+    if (existing.is_beatgrid_set == 1 && sameGrid(existing.adjusted_beat_grid, grid)) {
+        plan.result.outcome = Outcome::AlreadySame;
+        plan.result.gridFingerprint = gridFingerprint(existing);
+        return plan;
+    }
+    if (!overwriteEngineEdits) {
+        if (locked) {
+            plan.result.outcome = Outcome::RowLocked;
+            return plan;
+        }
+        // An adjusted grid that is not Engine's own was set on the
+        // player, unless it is the one Seabass wrote last time: then
+        // the DJ corrected the grid in rekordbox and this carries the
+        // correction over, which is what the conversion is for.
+        const bool ours = ownGridFingerprint && *ownGridFingerprint == gridFingerprint(existing);
+        if (existing.adjusted_beat_grid != existing.default_beat_grid && !ours) {
+            plan.result.outcome = Outcome::RowEditedOnEngine;
+            return plan;
+        }
+    }
+    // Only the adjusted grid: the default one is Engine's analysis,
+    // which the player offers to go back to. Rate, length and the
+    // bytes after the grids are the row's and stay as they are.
+    BeatDataBlob blob = existing;
+    blob.is_beatgrid_set = 1;
+    blob.adjusted_beat_grid = grid;
+    plan.result.gridFingerprint = gridFingerprint(blob);
+    plan.write = std::move(blob);
+    return plan;
+}
+
 }  // namespace
 
 BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string &trackSourceId,
@@ -494,11 +559,7 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
         return {Outcome::NoSourceGrid};
     }
 
-    const auto converted = [&](double sampleRate, double samples) {
-        const domain::MarkersFromBeats fromBeats = domain::markersFromBeats(beats, samples / sampleRate * 1000.0);
-        const auto markers = domain::engineNumbered(fromBeats.markers);
-        return std::make_pair(markerBlobs(markers, sampleRate, samples), fromBeats.barBreaks);
-    };
+    const auto converted = [&](double sampleRate, double samples) { return convertedGrid(beats, sampleRate, samples); };
 
     // Analysed is what the player reads off the flag, with the blob to
     // say what rate and length the audio has. A row with a grid but the
@@ -518,46 +579,16 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
 
     if (analysed) {
         const auto [grid, barBreaks] = converted(existing->sample_rate, existing->samples);
-        BeatGridWriteResult result{Outcome::Written, static_cast<int>(grid.size()), barBreaks};
-        // Before the checks for the user's own edits: a grid written here
-        // before is not the default one either, and writing it again
-        // would change nothing but the row's edit time.
-        if (existing->is_beatgrid_set == 1 && sameGrid(existing->adjusted_beat_grid, grid)) {
-            result.outcome = Outcome::AlreadySame;
-            result.gridFingerprint = gridFingerprint(*existing);
-            return result;
-        }
-        if (!options.overwriteEngineEdits) {
-            if (locked) {
-                result.outcome = Outcome::RowLocked;
-                return result;
-            }
-            // An adjusted grid that is not Engine's own was set on the
-            // player, unless it is the one Seabass wrote last time: then
-            // the DJ corrected the grid in rekordbox and this carries the
-            // correction over, which is what the conversion is for.
-            const bool ours = options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing);
-            if (existing->adjusted_beat_grid != existing->default_beat_grid && !ours) {
-                result.outcome = Outcome::RowEditedOnEngine;
-                return result;
-            }
-        }
-        // Only the adjusted grid: the default one is Engine's analysis,
-        // which the player offers to go back to. Rate, length and the
-        // bytes after the grids are the row's and stay as they are.
-        BeatDataBlob blob = *existing;
-        blob.is_beatgrid_set = 1;
-        blob.adjusted_beat_grid = grid;
-        if (options.previewOnly) {
-            result.gridFingerprint = gridFingerprint(blob);
-            return result;
+        AnalysedGridPlan plan =
+            planAnalysedGrid(*existing, locked, grid, barBreaks, options.overwriteEngineEdits, options.ownGridFingerprint);
+        if (!plan.write || options.previewOnly) {
+            return plan.result;
         }
         if (m_beforeBeatGridWrite) {
             m_beforeBeatGridWrite();
         }
-        writeBeatData(blob);
-        result.gridFingerprint = gridFingerprint(blob);
-        return result;
+        writeBeatData(*plan.write);
+        return plan.result;
     }
 
     if (options.unanalysed == UnanalysedRowGrid::Skip) {
@@ -615,6 +646,415 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
             m_tables->v2->track().set_is_beat_grid_locked(id, true);
         }
     }
+    return result;
+}
+
+namespace
+{
+
+using TrackDataBlob = djinterop::engine::v3::track_data_blob;
+using OverviewBlob = djinterop::engine::v3::overview_waveform_data_blob;
+
+// One row's analysis columns, wherever its schema keeps them: 3.x in
+// PerformanceData, 2.x in Track. Each read or write is one statement
+// through libdjinterop, as in writeBeatGrid().
+class RowColumns
+{
+public:
+    RowColumns(std::optional<djinterop::engine::v2::engine_library> &v2,
+               std::optional<djinterop::engine::v3::engine_library> &v3, std::int64_t id)
+        : m_v2(v2)
+        , m_v3(v3)
+        , m_id(id)
+    {
+    }
+
+    bool isV3() const { return m_v3.has_value(); }
+
+    // A blob that does not decode is none to keep or compare.
+    std::optional<BeatDataBlob> beatData() const
+    {
+        try {
+            return m_v3 ? m_v3->performance_data().get_beat_data(m_id) : m_v2->track().get_beat_data(m_id);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+    }
+    std::optional<TrackDataBlob> trackData() const
+    {
+        try {
+            return m_v3 ? m_v3->performance_data().get_track_data(m_id) : m_v2->track().get_track_data(m_id);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+    }
+    std::optional<OverviewBlob> overview() const
+    {
+        try {
+            return m_v3 ? m_v3->performance_data().get_overview_waveform_data(m_id)
+                        : m_v2->track().get_overview_waveform_data(m_id);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+    }
+
+    void setBeatData(const BeatDataBlob &blob)
+    {
+        m_v3 ? m_v3->performance_data().set_beat_data(m_id, blob) : m_v2->track().set_beat_data(m_id, blob);
+    }
+    void setTrackData(const TrackDataBlob &blob)
+    {
+        m_v3 ? m_v3->performance_data().set_track_data(m_id, blob) : m_v2->track().set_track_data(m_id, blob);
+    }
+    void setOverview(const OverviewBlob &blob)
+    {
+        m_v3 ? m_v3->performance_data().set_overview_waveform_data(m_id, blob)
+             : m_v2->track().set_overview_waveform_data(m_id, blob);
+    }
+    // Track.bpmAnalyzed as given, Track.bpm (an integer column) rounded,
+    // as the player leaves both after its analysis.
+    void setBpm(double bpm)
+    {
+        const auto rounded = static_cast<std::int64_t>(std::llround(bpm));
+        if (m_v3) {
+            m_v3->track().set_bpm_analyzed(m_id, bpm);
+            m_v3->track().set_bpm(m_id, rounded);
+        } else {
+            m_v2->track().set_bpm_analyzed(m_id, bpm);
+            m_v2->track().set_bpm(m_id, rounded);
+        }
+    }
+    void setKey(int key) { m_v3 ? m_v3->track().set_key(m_id, key) : m_v2->track().set_key(m_id, key); }
+    void setIsAnalyzed(bool analysed)
+    {
+        m_v3 ? m_v3->track().set_is_analyzed(m_id, analysed) : m_v2->track().set_is_analyzed(m_id, analysed);
+    }
+
+    // Information.uuid of this database: the name of its folder under
+    // Database2/OverviewData. Read from the one row the table has,
+    // whatever its id.
+    std::string uuid() const { return m_v3 ? m_v3->information().get().uuid : m_v2->information().get().uuid; }
+
+private:
+    std::optional<djinterop::engine::v2::engine_library> &m_v2;
+    std::optional<djinterop::engine::v3::engine_library> &m_v3;
+    std::int64_t m_id;
+};
+
+// The overview as the player stores it: 1024 points, then the last triple,
+// with how many samples each point covers.
+OverviewBlob overviewBlob(const domain::EngineOverview &overview, double samples)
+{
+    OverviewBlob blob;
+    blob.samples_per_waveform_point = samples / static_cast<double>(domain::EngineOverview::PointCount);
+    blob.waveform_points.reserve(overview.points.size());
+    for (const domain::BandTriple &point : overview.points) {
+        blob.waveform_points.push_back({point.low, point.mid, point.high});
+    }
+    blob.maximum_point = {overview.finalTriple.low, overview.finalTriple.mid, overview.finalTriple.high};
+    return blob;
+}
+
+// The overview file holds the same container as the overview column (a
+// four-byte big-endian length, then the zlib'd layout; measured on a
+// Prime 4's own files), so libdjinterop's encoder writes it and its
+// decoder reads one back.
+std::string fileBytesOf(const OverviewBlob &blob)
+{
+    const std::vector<std::byte> bytes = blob.to_blob();
+    return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+}
+
+// What the overview file at `path` holds, or nothing when there is none
+// or it does not decode (a player can leave a truncated one behind).
+std::optional<OverviewBlob> readOverviewFile(const std::filesystem::path &path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) {
+        return std::nullopt;
+    }
+    std::vector<std::byte> bytes(text.size());
+    std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+    try {
+        return OverviewBlob::from_blob(bytes);
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+// The file's place under the Engine Library folder. The uuid comes out of
+// the database and goes into a path, so it is held to what a uuid is.
+std::string overviewFileRelativePath(const std::string &uuid, std::int64_t trackId)
+{
+    const bool plain = !uuid.empty() && std::all_of(uuid.begin(), uuid.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
+    });
+    if (!plain) {
+        throw std::runtime_error("the Engine library's Information.uuid \"" + uuid
+                                 + "\" cannot name its overview folder");
+    }
+    return "Database2/OverviewData/" + uuid + "/" + std::to_string(trackId) + ".rgb";
+}
+
+bool usable(double sampleRate, double samples)
+{
+    return sampleRate > 0.0 && samples > 0.0 && std::isfinite(sampleRate) && std::isfinite(samples);
+}
+
+}  // namespace
+
+AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::string &trackSourceId,
+                                                                 const RekordboxAnalysis &analysis,
+                                                                 const AnalysisImportOptions &options)
+{
+    using Outcome = BeatGridWriteResult::Outcome;
+    using Waveform = AnalysisImportResult::Waveform;
+    AnalysisImportResult result;
+    result.grid.outcome = Outcome::NotRequested;
+    result.waveform = Waveform::NotRequested;
+
+    auto &db = database();
+    auto track = db.track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    if (!m_tables) {
+        if (options.grids) {
+            result.grid.outcome = Outcome::UnsupportedSchema;
+        }
+        if (options.waveforms) {
+            result.waveform = Waveform::UnsupportedSchema;
+        }
+        return result;
+    }
+    const std::int64_t id = track->id();
+    RowColumns row(m_tables->v2, m_tables->v3, id);
+
+    // The grid on Engine's timeline, as writeBeatGrid() puts it. The shift
+    // can mean reading the file's start, so only when a grid is wanted.
+    std::vector<domain::Beat> beats = analysis.beats;
+    if (options.grids) {
+        const double shiftMs = shiftMsOf(*track);
+        for (domain::Beat &beat : beats) {
+            beat.timeMs -= shiftMs;
+        }
+    }
+    const bool hasGrid = domain::markersFromBeats(beats, 0.0).markers.size() >= 2;
+
+    // The three-band preview fits the player's overview better; the colour
+    // one is there for an export without a .2EX.
+    const bool threeBand = analysis.threeBandPreview && !analysis.threeBandPreview->empty();
+    const bool hasPreview = threeBand || (analysis.colourPreview && !analysis.colourPreview->empty());
+    const auto overviewOver = [&](double sourceSeconds, double targetSeconds) {
+        return threeBand ? domain::overviewFromThreeBandPreview(*analysis.threeBandPreview, sourceSeconds, targetSeconds)
+                         : domain::overviewFromColourPreview(*analysis.colourPreview, sourceSeconds, targetSeconds);
+    };
+    const auto scrollSeconds = [&]() -> std::optional<double> {
+        if (!analysis.scrollEntries || *analysis.scrollEntries == 0) {
+            return std::nullopt;
+        }
+        return static_cast<double>(*analysis.scrollEntries) / 150.0;
+    };
+
+    // As in writeBeatGrid(): the flag with a usable grid blob is analysed,
+    // and a lock that cannot be read is a lock.
+    const auto flag = [&](bool (djinterop::engine::v2::track_table::*v2)(std::int64_t),
+                          bool (djinterop::engine::v3::track_table::*v3)(std::int64_t), bool unreadable) {
+        try {
+            if (m_tables->v3) {
+                auto table = m_tables->v3->track();
+                return (table.*v3)(id);
+            }
+            auto table = m_tables->v2->track();
+            return (table.*v2)(id);
+        } catch (const std::exception &) {
+            return unreadable;
+        }
+    };
+    const std::optional<BeatDataBlob> existing = row.beatData();
+    const bool analysed = flag(&djinterop::engine::v2::track_table::get_is_analyzed,
+                               &djinterop::engine::v3::track_table::get_is_analyzed, false)
+        && existing && usable(existing->sample_rate, existing->samples);
+    const bool locked = flag(&djinterop::engine::v2::track_table::get_is_beat_grid_locked,
+                             &djinterop::engine::v3::track_table::get_is_beat_grid_locked, true);
+
+    const std::filesystem::path fileRoot = pathFromUtf8(m_overviewFileRoot.empty() ? m_engineLibraryPath : m_overviewFileRoot);
+    const auto writeFile = [&](const std::string &relative, const std::string &bytes) {
+        if (m_overviewFileSink) {
+            m_overviewFileSink(relative, bytes);
+            return;
+        }
+        const std::filesystem::path path = fileRoot / pathFromUtf8(relative);
+        std::filesystem::create_directories(path.parent_path());
+        if (!writeFileDurablyAtomic(pathToUtf8(path), bytes)) {
+            throw std::runtime_error("could not write the overview file " + pathToUtf8(path));
+        }
+    };
+    const auto beforeWrite = [&] {
+        if (m_beforeBeatGridWrite) {
+            m_beforeBeatGridWrite();
+        }
+    };
+
+    if (analysed) {
+        std::optional<BeatDataBlob> gridWrite;
+        if (options.grids) {
+            if (!hasGrid) {
+                result.grid.outcome = Outcome::NoSourceGrid;
+            } else {
+                const auto [grid, barBreaks] = convertedGrid(beats, existing->sample_rate, existing->samples);
+                AnalysedGridPlan plan = planAnalysedGrid(*existing, locked, grid, barBreaks, options.overwriteEngineEdits,
+                                                         options.ownGridFingerprint);
+                result.grid = plan.result;
+                gridWrite = std::move(plan.write);
+            }
+        }
+
+        std::optional<OverviewBlob> overviewWrite;
+        std::optional<std::string> fileWrite;
+        if (options.waveforms) {
+            // The row's own length: its analysis record's, or the beat
+            // data's where the record says nothing usable.
+            double rate = existing->sample_rate;
+            double samples = existing->samples;
+            if (const auto record = row.trackData();
+                record && usable(record->sample_rate, static_cast<double>(record->samples))) {
+                rate = record->sample_rate;
+                samples = static_cast<double>(record->samples);
+            }
+            const double targetSeconds = samples / rate;
+            const domain::EngineOverview overview =
+                hasPreview ? overviewOver(scrollSeconds().value_or(targetSeconds), targetSeconds) : domain::EngineOverview{};
+            if (overview.empty()) {
+                // No preview, or one that is not whole entries.
+                result.waveform = Waveform::NoSourceWaveform;
+            } else {
+                const OverviewBlob blob = overviewBlob(overview, samples);
+                if (const auto current = row.overview(); !current || *current != blob) {
+                    overviewWrite = blob;
+                }
+                if (!options.skipOverviewFile) {
+                    const std::string relative = overviewFileRelativePath(row.uuid(), id);
+                    const OverviewBlob second = overviewBlob(domain::secondWaveformFromOverview(overview), samples);
+                    if (const auto current = readOverviewFile(fileRoot / pathFromUtf8(relative));
+                        !current || *current != second) {
+                        fileWrite = fileBytesOf(second);
+                        result.overviewFileRelativePath = relative;
+                    }
+                }
+                result.waveform = overviewWrite || fileWrite ? Waveform::Written : Waveform::AlreadySame;
+            }
+        }
+
+        if (options.previewOnly || (!gridWrite && !overviewWrite && !fileWrite)) {
+            return result;
+        }
+        beforeWrite();
+        if (gridWrite) {
+            row.setBeatData(*gridWrite);
+        }
+        if (overviewWrite) {
+            row.setOverview(*overviewWrite);
+        }
+        if (fileWrite) {
+            writeFile(result.overviewFileRelativePath, *fileWrite);
+        }
+        return result;
+    }
+
+    // A row the player has not analysed. Each part says what it lacks;
+    // a part that lacks nothing is RowNotAnalysed when the other part
+    // keeps the row from being completed.
+    const double rate = options.fileSampleRateHz.value_or(0.0);
+    const std::uint64_t sampleCount =
+        analysis.scrollEntries && rate > 0.0 && std::isfinite(rate)
+            ? domain::engineSampleCount(*analysis.scrollEntries, rate, options.fileIsMp3)
+            : 0;
+    if (options.grids) {
+        result.grid.outcome = hasGrid ? Outcome::RowNotAnalysed : Outcome::NoSourceGrid;
+    }
+    if (options.waveforms) {
+        result.waveform = !hasPreview ? Waveform::NoSourceWaveform
+                          : sampleCount == 0 ? Waveform::NoSampleCount
+                                             : Waveform::RowNotAnalysed;
+    }
+    if (!options.grids || !options.waveforms || !hasGrid || !hasPreview || sampleCount == 0) {
+        return result;
+    }
+    // A lock is the user's word whether or not the player has analysed
+    // the row.
+    if (locked && !options.overwriteEngineEdits) {
+        result.grid.outcome = Outcome::RowLocked;
+        return result;
+    }
+    const auto samples = static_cast<double>(sampleCount);
+    const domain::EngineOverview overview = overviewOver(*scrollSeconds(), samples / rate);
+    if (overview.empty()) {
+        result.waveform = Waveform::NoSourceWaveform;
+        return result;
+    }
+    const auto [grid, barBreaks] = convertedGrid(beats, rate, samples);
+
+    // The analysis record as the player writes it: rate, length, key (0
+    // for none, as libdjinterop writes no key) and the three loudness
+    // values; on 3.x 24 zero bytes follow, as on every row a Prime 4
+    // analysed (68 bytes in all). 2.x records end after the loudness.
+    TrackDataBlob record{};
+    record.sample_rate = rate;
+    record.samples = static_cast<std::int64_t>(sampleCount);
+    record.key = analysis.key.value_or(0);
+    const std::array<double, 3> loudness =
+        options.zeroLoudness ? std::array<double, 3>{0.0, 0.0, 0.0} : domain::loudnessFromOverview(overview);
+    record.average_loudness_low = loudness[0];
+    record.average_loudness_mid = loudness[1];
+    record.average_loudness_high = loudness[2];
+    if (row.isV3()) {
+        record.extra_data = std::vector<std::byte>(24, std::byte{0});
+    }
+
+    // Both grids rekordbox's: there is no analysis of Engine's own to keep.
+    BeatDataBlob beatData;
+    beatData.sample_rate = rate;
+    beatData.samples = samples;
+    beatData.is_beatgrid_set = 1;
+    beatData.default_beat_grid = grid;
+    beatData.adjusted_beat_grid = grid;
+    beatData.extra_data = std::vector<std::byte>(9, std::byte{0});
+
+    const OverviewBlob overviewData = overviewBlob(overview, samples);
+    std::string file;
+    if (!options.skipOverviewFile) {
+        result.overviewFileRelativePath = overviewFileRelativePath(row.uuid(), id);
+        file = fileBytesOf(overviewBlob(domain::secondWaveformFromOverview(overview), samples));
+    }
+
+    result.grid = {Outcome::Written, static_cast<int>(grid.size()), barBreaks, gridFingerprint(beatData)};
+    result.waveform = Waveform::Written;
+    result.completedRow = true;
+    if (options.previewOnly) {
+        return result;
+    }
+    beforeWrite();
+    // The flag last: until it is up the player takes the row for one it is
+    // still to analyse and analyses it, so a failure anywhere before leaves
+    // a row that plays, never one flagged analysed with a piece missing.
+    row.setTrackData(record);
+    row.setOverview(overviewData);
+    row.setBeatData(beatData);
+    if (!options.skipOverviewFile) {
+        writeFile(result.overviewFileRelativePath, file);
+    }
+    if (analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
+        row.setBpm(*analysis.bpm);
+    }
+    if (analysis.key) {
+        row.setKey(*analysis.key);
+    }
+    row.setIsAnalyzed(true);
     return result;
 }
 

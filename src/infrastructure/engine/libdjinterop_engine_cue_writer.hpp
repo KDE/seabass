@@ -12,6 +12,7 @@
 
 #include <djinterop/database.hpp>
 
+#include "application/ports/analysis_writer.hpp"
 #include "application/ports/beat_grid_writer.hpp"
 #include "application/ports/cue_writer.hpp"
 #include "domain/beat_grid.hpp"
@@ -26,12 +27,17 @@ namespace seabass::infrastructure::engine
 using application::BeatGridWriteOptions;
 using application::BeatGridWriteResult;
 using application::UnanalysedRowGrid;
+using application::AnalysisImportOptions;
+using application::AnalysisImportResult;
+using application::RekordboxAnalysis;
 
 // Writes hot cues back into an existing Engine Library track using
 // libdjinterop's track::set_hot_cues(). The caller (cli/) is responsible
 // for backing up the library's files before constructing this -- this
 // class only performs the write itself.
-class LibdjinteropEngineCueWriter : public application::CueWriter, public application::BeatGridWriter
+class LibdjinteropEngineCueWriter : public application::CueWriter,
+                                    public application::BeatGridWriter,
+                                    public application::AnalysisWriter
 {
 public:
     explicit LibdjinteropEngineCueWriter(std::string engineLibraryPath);
@@ -126,12 +132,55 @@ public:
     BeatGridWriteResult writeBeatGrid(const std::string &trackSourceId, const std::vector<domain::Beat> &rekordboxBeats,
                                       const BeatGridWriteOptions &options = {}) override;
 
-    // Called once before each beat grid write, after every check has
-    // passed and before a byte of the row changes; never for a refusal or
-    // a grid that is already there, nor for a preview (previewOnly). For
-    // a caller that backs the library
-    // up only when something is about to be written. If it throws, the
-    // write does not happen and the exception leaves writeBeatGrid().
+    // Puts rekordbox's analysis into one row (see application/ports/analysis_writer.hpp).
+    //
+    // A row the player has analysed: the grid part is writeBeatGrid()'s
+    // for such a row (the adjusted grid only, the same refusals and
+    // fingerprint). The waveform part replaces the overview in the
+    // database and the overview file with ones converted from rekordbox's
+    // preview (three-band, else colour) over the row's own length. The
+    // analysis record, the analysed flag and the tempo stay.
+    //
+    // A row the player has not analysed is completed all or nothing: a row
+    // flagged analysed with a piece missing does not play on a Prime 4 (no
+    // waveform drawn, the track never starts). Only when both parts are
+    // asked for, the grid converts, a preview is there and the length can
+    // be worked out (scrollEntries and fileSampleRateHz): then the analysis
+    // record, the overview, the beat data (both grids rekordbox's), the
+    // overview file, the tempo and key, and last the analysed flag, so a
+    // failure part way leaves a row the player will still analyse. Missing
+    // anything, nothing is written and the outcomes say why.
+    //
+    // Engine 2.x keeps these columns in Track, 3.x in PerformanceData; both
+    // are written. Engine 1.x is UnsupportedSchema.
+    AnalysisImportResult importAnalysis(const std::string &trackSourceId, const RekordboxAnalysis &analysis,
+                                        const AnalysisImportOptions &options = {}) override;
+
+    // Where the overview file of a track goes: its bytes and its path from
+    // the Engine Library folder ("Database2/OverviewData/<uuid>/<id>.rgb",
+    // '/'-separated). By default it is written durably under the folder
+    // setOverviewFileRoot() names. A save that writes the database through
+    // a scratch copy routes it through its own protection and backup
+    // instead; a sink that throws fails the call. The file sits outside the
+    // database, so it is written after the database's columns: a failure
+    // there leaves a row whose file is stale, and players leave stale ones
+    // themselves, so that is a state they already handle.
+    using OverviewFileSink = std::function<void(const std::string &relativePath, const std::string &bytes)>;
+    void setOverviewFileSink(OverviewFileSink sink) { m_overviewFileSink = std::move(sink); }
+
+    // The Engine Library folder the overview files are read from, to see
+    // whether one is already what would be written, and written to by the
+    // default sink. The library path by default; a save writing through
+    // FormatWriteSession's scratch copy passes realRoot() here, since the
+    // files are not part of that copy.
+    void setOverviewFileRoot(std::string root) { m_overviewFileRoot = std::move(root); }
+
+    // Called once before each write of writeBeatGrid() or importAnalysis(),
+    // after every check has passed and before a byte of the row or of an
+    // overview file changes; never for a refusal or what is already
+    // there, nor for a preview (previewOnly). For a caller that backs the
+    // library up only when something is about to be written. If it
+    // throws, the write does not happen and the exception leaves the call.
     void setBeforeBeatGridWrite(std::function<void()> hook) { m_beforeBeatGridWrite = std::move(hook); }
 
 private:
@@ -167,6 +216,8 @@ private:
     std::optional<djinterop::database> m_database;
     LeadInSource m_leadInSource;
     std::function<void()> m_beforeBeatGridWrite;
+    OverviewFileSink m_overviewFileSink;
+    std::string m_overviewFileRoot;
 };
 
 }  // namespace seabass::infrastructure::engine

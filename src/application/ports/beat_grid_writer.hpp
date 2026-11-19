@@ -60,6 +60,9 @@ struct BeatGridWriteResult
         NoSampleRate,
         // Engine 1.x, whose beat grids this does not write.
         UnsupportedSchema,
+        // The caller asked for no grid (AnalysisImportOptions::grids off);
+        // writeBeatGrid() itself never gives it.
+        NotRequested,
     };
     Outcome outcome = Outcome::NoSourceGrid;
     int markers = 0;

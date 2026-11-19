@@ -8,9 +8,11 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "application/ports/analysis_writer.hpp"
 #include "application/ports/beat_grid_writer.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
@@ -43,6 +45,10 @@ struct BeatGridCopyItem
     // analysed.
     std::string filePath;
     double durationMs = 0.0;
+    // rekordbox's key as it writes it ("Fm", "8A"; empty: none) and its
+    // tempo (0: none), for a row the player has not analysed.
+    std::string key;
+    double bpm = 0.0;
 };
 
 struct BeatGridCopyPlan
@@ -70,6 +76,11 @@ BeatGridCopyPlan planBeatGridCopy(const std::vector<domain::Track> &rekordbox,
 // it took out. An empty needle keeps every item. For trying one named
 // track's grid on the player before the whole stick's.
 int keepBeatGridItemsMatching(BeatGridCopyPlan &plan, const std::string &needle);
+
+// Keeps the plan's items whose rekordbox track id is in `rekordboxTrackIds`
+// and returns how many it took out: the tracks of a playlist, or the ones
+// a user picked.
+int keepBeatGridItemsWithIds(BeatGridCopyPlan &plan, const std::set<std::string> &rekordboxTrackIds);
 
 struct BeatGridCopyOptions
 {
@@ -115,6 +126,8 @@ struct BeatGridCopyResult
     int editedOnEngine = 0;
     int noSampleRate = 0;
     int unsupportedLibrary = 0;
+    // Grids not asked for (copyRekordboxAnalysis() with grids off).
+    int notRequested = 0;
     int failed = 0;
     // Not reached: the run was cancelled first.
     int notReached = 0;
@@ -139,7 +152,7 @@ struct BeatGridCopyResult
     int total() const
     {
         return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + lockedOnEngine + editedOnEngine + noSampleRate
-            + unsupportedLibrary + failed + notReached;
+            + unsupportedLibrary + notRequested + failed + notReached;
     }
 };
 
@@ -163,5 +176,89 @@ BeatGridCopyResult copyBeatGrids(const BeatGridCopyPlan &plan, const BeatGridSou
                                  const BeatGridFileFactsSource &fileFacts = {},
                                  const CancellationToken &cancel = CancellationToken::none(),
                                  ProgressReporter &progress = NullProgressReporter::instance());
+
+// Copying the whole of rekordbox's analysis (grid, waveform, key, tempo)
+// through an AnalysisWriter, which can also complete a row the player has
+// not analysed (see AnalysisWriter::importAnalysis()).
+
+struct AnalysisCopyOptions
+{
+    bool grids = true;
+    bool waveforms = true;
+    bool overwriteEngineEdits = false;
+    // As BeatGridCopyOptions::previewOnly, for both parts: what would be
+    // written or completed is counted apart from what was.
+    bool previewOnly = false;
+    // For testing on hardware only (AnalysisImportOptions).
+    bool skipOverviewFile = false;
+    bool zeroLoudness = false;
+};
+
+// The audio file's rate, for a row the player has not analysed, and whether
+// it is an MP3.
+struct AnalysisFileFacts
+{
+    std::optional<double> sampleRateHz;
+    bool isMp3 = false;
+};
+
+// One bucket per waveform outcome, every item in exactly one.
+struct WaveformCopyCounts
+{
+    int written = 0;
+    int wouldWrite = 0;
+    int alreadySame = 0;
+    int notRequested = 0;
+    int noRekordboxWaveform = 0;
+    int notAnalysed = 0;
+    int noSampleCount = 0;
+    int unsupportedLibrary = 0;
+    int failed = 0;
+    int notReached = 0;
+
+    int total() const
+    {
+        return written + wouldWrite + alreadySame + notRequested + noRekordboxWaveform + notAnalysed + noSampleCount
+            + unsupportedLibrary + failed + notReached;
+    }
+};
+
+struct AnalysisCopyResult
+{
+    // The grid part, bucket for bucket as copyBeatGrids() counts it, with
+    // the failures, ledger entries and items that would be written. An item
+    // that failed or was not reached is counted in both parts.
+    BeatGridCopyResult grids;
+    WaveformCopyCounts waveforms;
+    // Rows the player had not analysed that were completed, and in a
+    // preview the ones that would be. Never both.
+    int completedRows = 0;
+    int wouldCompleteRows = 0;
+    // Rows where either part was (in a preview: would be) written.
+    int rowsWritten = 0;
+    int rowsWouldWrite = 0;
+    // The overview files written, or in a preview to be written, each a
+    // path from the Engine Library folder: what a backup before the run
+    // must cover besides the database.
+    std::vector<std::string> overviewFiles;
+};
+
+// rekordbox's analysis of an item; throwing counts the item as failed.
+using AnalysisSource = std::function<RekordboxAnalysis(const BeatGridCopyItem &)>;
+// Asked only for a row the writer found no length for (a row the player
+// has not analysed). May be empty.
+using AnalysisFileFactsSource = std::function<AnalysisFileFacts(const BeatGridCopyItem &)>;
+
+// copyBeatGrids() for the whole analysis: each item through
+// AnalysisWriter::importAnalysis(), in order, with the ledger as there and
+// the same handling of failures, cancelling and progress ("Copying
+// analysis", "Checking analysis" for a preview). Throws std::logic_error
+// if either part's buckets do not add up to the plan's items.
+AnalysisCopyResult copyRekordboxAnalysis(const BeatGridCopyPlan &plan, const AnalysisSource &source,
+                                         AnalysisWriter &writer, const std::map<std::string, std::string> &ledger,
+                                         const AnalysisCopyOptions &options,
+                                         const AnalysisFileFactsSource &fileFacts = {},
+                                         const CancellationToken &cancel = CancellationToken::none(),
+                                         ProgressReporter &progress = NullProgressReporter::instance());
 
 }  // namespace seabass::application

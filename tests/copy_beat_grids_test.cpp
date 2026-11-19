@@ -18,9 +18,17 @@
 //   turned down for want of them, and write it again with them;
 // - cancelled midway, the run stops between rows and says how many it
 //   did not reach, still adding up.
+// - the whole analysis (copyRekordboxAnalysis): the plan kept to a set of
+//   rekordbox ids; every waveform outcome in its own bucket and every grid
+//   outcome in its, both adding up; completed rows and the overview files
+//   counted; the file's facts asked only for a row without a length; a
+//   preview's counts kept apart from work done; and a writer that loses
+//   an item in either part is caught.
 
+#include <functional>
 #include <iostream>
 #include <map>
+#include <set>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -97,6 +105,49 @@ public:
         }
         if (result.outcome == Outcome::Written || result.outcome == Outcome::AlreadySame) {
             result.gridFingerprint = std::string(64, id.back());
+        }
+        return result;
+    }
+};
+
+// Answers importAnalysis() with the outcomes set for each row.
+class FakeAnalysisWriter : public AnalysisWriter
+{
+public:
+    struct Answer
+    {
+        Outcome grid = Outcome::Written;
+        AnalysisImportResult::Waveform waveform = AnalysisImportResult::Waveform::Written;
+        bool completes = false;
+        // Answered only once the file's rate is given; NoSampleCount until.
+        bool needsRate = false;
+    };
+    std::map<std::string, Answer> answers;
+    std::map<std::string, std::string> throwing;
+    std::vector<std::pair<std::string, AnalysisImportOptions>> calls;
+
+    AnalysisImportResult importAnalysis(const std::string &id, const RekordboxAnalysis &,
+                                        const AnalysisImportOptions &options) override
+    {
+        calls.push_back({id, options});
+        if (const auto t = throwing.find(id); t != throwing.end()) {
+            throw std::runtime_error(t->second);
+        }
+        const Answer answer = answers.contains(id) ? answers.at(id) : Answer{};
+        AnalysisImportResult result;
+        if (answer.needsRate && !options.fileSampleRateHz) {
+            result.grid.outcome = Outcome::RowNotAnalysed;
+            result.waveform = AnalysisImportResult::Waveform::NoSampleCount;
+            return result;
+        }
+        result.grid.outcome = options.grids ? answer.grid : Outcome::NotRequested;
+        result.waveform = options.waveforms ? answer.waveform : AnalysisImportResult::Waveform::NotRequested;
+        result.completedRow = answer.completes;
+        if (result.grid.outcome == Outcome::Written || result.grid.outcome == Outcome::AlreadySame) {
+            result.grid.gridFingerprint = std::string(64, id.back());
+        }
+        if (result.waveform == AnalysisImportResult::Waveform::Written) {
+            result.overviewFileRelativePath = "Database2/OverviewData/u/" + id + ".rgb";
         }
         return result;
     }
@@ -364,6 +415,169 @@ int main()
         check(result.ledgerEntries.empty() && result.notRecorded == 0, "nothing is recorded for the ledger");
         check(result.total() == 4, "the buckets add up to the plan");
         std::cout << "case 5 (preview) done\n";
+    }
+
+    // 6. The plan kept to a set of rekordbox ids.
+    {
+        BeatGridCopyPlan plan;
+        for (const char *id : {"1", "2", "3"}) {
+            BeatGridCopyItem item;
+            item.rekordboxTrackId = std::string("r") + id;
+            item.engineTrackId = id;
+            plan.items.push_back(item);
+        }
+        BeatGridCopyPlan kept = plan;
+        check(keepBeatGridItemsWithIds(kept, {"r1", "r3", "r9"}) == 1 && kept.items.size() == 2
+                  && kept.items[0].engineTrackId == "1" && kept.items[1].engineTrackId == "3",
+              "the ids named are kept, in plan order");
+        kept = plan;
+        check(keepBeatGridItemsWithIds(kept, {}) == 3 && kept.items.empty(), "no ids keep nothing");
+        std::cout << "case 6 (selection by ids) done\n";
+    }
+
+    // 7. The whole analysis: every outcome of each part in its bucket.
+    {
+        using Waveform = AnalysisImportResult::Waveform;
+        using Answer = FakeAnalysisWriter::Answer;
+        BeatGridCopyPlan plan;
+        for (const std::string id : {"1", "2", "3", "4", "5", "6", "7", "8", "9"}) {
+            BeatGridCopyItem item;
+            item.rekordboxTrackId = "r" + id;
+            item.engineTrackId = id;
+            item.ledgerKey = "contents/" + id;
+            item.filePath = "/stick/Contents/" + id + (id == "7" ? ".MP3" : ".flac");
+            plan.items.push_back(item);
+        }
+        FakeAnalysisWriter writer;
+        writer.answers = {
+            {"1", {Outcome::Written, Waveform::Written, false, false}},
+            {"2", {Outcome::AlreadySame, Waveform::AlreadySame, false, false}},
+            {"3", {Outcome::RowLocked, Waveform::Written, false, false}},
+            {"4", {Outcome::Written, Waveform::NoSourceWaveform, false, false}},
+            {"5", {Outcome::NoSourceGrid, Waveform::RowNotAnalysed, false, false}},
+            {"6", {Outcome::UnsupportedSchema, Waveform::UnsupportedSchema, false, false}},
+            {"7", {Outcome::Written, Waveform::Written, true, true}},
+            {"8", {Outcome::Written, Waveform::Written, false, true}},
+        };
+        writer.throwing = {{"9", "the row is gone"}};
+        std::vector<std::string> asked;
+        const AnalysisFileFactsSource facts = [&](const BeatGridCopyItem &item) {
+            asked.push_back(item.engineTrackId);
+            AnalysisFileFacts f;
+            if (item.engineTrackId == "7") {
+                f.sampleRateHz = 44100.0;
+                f.isMp3 = true;
+            }
+            return f;
+        };
+        const AnalysisSource source = [](const BeatGridCopyItem &) { return RekordboxAnalysis{}; };
+        AnalysisCopyOptions options;
+        options.skipOverviewFile = true;
+        options.zeroLoudness = true;
+        const AnalysisCopyResult result = copyRekordboxAnalysis(plan, source, writer, {}, options, facts);
+        const BeatGridCopyResult &g = result.grids;
+        const WaveformCopyCounts &w = result.waveforms;
+        check(g.written == 3 && g.alreadySame == 1 && g.lockedOnEngine == 1 && g.noRekordboxGrid == 1
+                  && g.unsupportedLibrary == 1 && g.notAnalysed == 1 && g.failed == 1 && g.total() == 9,
+              "every grid outcome in its bucket: written " + std::to_string(g.written) + ", not analysed "
+                  + std::to_string(g.notAnalysed));
+        check(w.written == 3 && w.alreadySame == 1 && w.noRekordboxWaveform == 1 && w.notAnalysed == 1
+                  && w.unsupportedLibrary == 1 && w.noSampleCount == 1 && w.failed == 1 && w.total() == 9,
+              "every waveform outcome in its bucket: written " + std::to_string(w.written) + ", no length "
+                  + std::to_string(w.noSampleCount));
+        check(w.wouldWrite == 0 && g.wouldWrite == 0 && result.wouldCompleteRows == 0, "nothing counted as a preview");
+        check(result.completedRows == 1, "one row completed (7, once its rate was known)");
+        check(result.rowsWritten == 4, "four rows with something written (1, 3, 4 and 7), got "
+                                           + std::to_string(result.rowsWritten));
+        check((asked == std::vector<std::string>{"7", "8"}), "the file's facts asked only for the rows without a length");
+        check(writer.calls.size() == 10, "7 asked again with its rate, 8 not: 10 calls, got "
+                                             + std::to_string(writer.calls.size()));
+        bool sawRate = false;
+        for (const auto &[id, call] : writer.calls) {
+            check(call.grids && call.waveforms && call.skipOverviewFile && call.zeroLoudness && !call.previewOnly,
+                  "the options passed on to row " + id);
+            if (id == "7" && call.fileSampleRateHz) {
+                sawRate = *call.fileSampleRateHz == 44100.0 && call.fileIsMp3;
+            }
+        }
+        check(sawRate, "7's second try carries the file's rate and that it is an MP3");
+        check((result.overviewFiles
+               == std::vector<std::string>{"Database2/OverviewData/u/1.rgb", "Database2/OverviewData/u/3.rgb",
+                                           "Database2/OverviewData/u/7.rgb"}),
+              "the overview files written, in plan order");
+        check(g.ledgerEntries.size() == 4 && !g.ledgerEntries.contains("contents/3"),
+              "ledger entries for the grids written or already there");
+        check(g.failures.size() == 1 && g.failures[0].message == "the row is gone", "the failure with its message");
+
+        // Waveforms only: every grid is NotRequested, still adding up.
+        AnalysisCopyOptions waveformsOnly;
+        waveformsOnly.grids = false;
+        FakeAnalysisWriter second;
+        const AnalysisCopyResult onlyWaveforms = copyRekordboxAnalysis(plan, source, second, {}, waveformsOnly);
+        check(onlyWaveforms.grids.notRequested == 9 && onlyWaveforms.grids.total() == 9
+                  && onlyWaveforms.grids.ledgerEntries.empty(),
+              "grids not asked for are their own bucket, and nothing for the ledger");
+        std::cout << "case 7 (whole analysis) done\n";
+    }
+
+    // 8. A preview of the whole analysis, and a cancelled run.
+    {
+        BeatGridCopyPlan plan;
+        for (const char *id : {"1", "2", "3", "4"}) {
+            BeatGridCopyItem item;
+            item.engineTrackId = id;
+            item.ledgerKey = std::string("contents/") + id;
+            plan.items.push_back(item);
+        }
+        FakeAnalysisWriter writer;
+        writer.answers["2"] = {Outcome::Written, AnalysisImportResult::Waveform::Written, true, false};
+        writer.answers["3"] = {Outcome::AlreadySame, AnalysisImportResult::Waveform::AlreadySame, false, false};
+        const AnalysisSource source = [](const BeatGridCopyItem &) { return RekordboxAnalysis{}; };
+        AnalysisCopyOptions options;
+        options.previewOnly = true;
+        const AnalysisCopyResult preview = copyRekordboxAnalysis(plan, source, writer, {}, options);
+        check(preview.grids.written == 0 && preview.waveforms.written == 0 && preview.completedRows == 0
+                  && preview.rowsWritten == 0,
+              "a preview counts nothing as done");
+        check(preview.grids.wouldWrite == 3 && preview.waveforms.wouldWrite == 3 && preview.wouldCompleteRows == 1
+                  && preview.rowsWouldWrite == 3,
+              "and what would be done in buckets of its own");
+        check(preview.overviewFiles.size() == 3, "with the overview files that would be written");
+        check(preview.grids.ledgerEntries.empty(), "nothing for the ledger");
+        bool allPreviews = true;
+        for (const auto &[id, call] : writer.calls) {
+            allPreviews = allPreviews && call.previewOnly;
+        }
+        check(allPreviews, "every row asked as a preview");
+
+        FakeAnalysisWriter cancelled;
+        CancellationToken cancel;
+        const AnalysisSource cancelling = [&](const BeatGridCopyItem &item) {
+            if (item.engineTrackId == "2") {
+                cancel.cancel();
+            }
+            return RekordboxAnalysis{};
+        };
+        const AnalysisCopyResult stopped = copyRekordboxAnalysis(plan, cancelling, cancelled, {}, {}, {}, cancel);
+        check(stopped.grids.cancelled && stopped.grids.notReached == 2 && stopped.waveforms.notReached == 2,
+              "cancelled after the row in flight: two not reached in each part");
+        check(stopped.grids.total() == 4 && stopped.waveforms.total() == 4, "both parts still adding up");
+        std::cout << "case 8 (analysis preview, cancelled) done\n";
+    }
+
+    // 9. A writer whose answer has no bucket is caught, not miscounted:
+    // writeBeatGrid() answering NotRequested is a failure of that row.
+    {
+        BeatGridCopyPlan plan;
+        BeatGridCopyItem item;
+        item.engineTrackId = "1";
+        plan.items.push_back(item);
+        FakeWriter writer;
+        writer.outcomes["1"] = Outcome::NotRequested;
+        const BeatGridCopyResult result = copyBeatGrids(plan, twoBeats, writer, {}, {});
+        check(result.failed == 1 && result.notRequested == 0 && result.total() == 1,
+              "a grid write that says it was not asked for fails its row");
+        std::cout << "case 9 (an answer with no bucket) done\n";
     }
 
     if (failures == 0) {

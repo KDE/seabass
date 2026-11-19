@@ -65,6 +65,8 @@ QString outcomeWords(application::BeatGridWriteResult::Outcome outcome)
         return QStringLiteral("no sample rate");
     case Outcome::UnsupportedSchema:
         return QStringLiteral("Engine library too old");
+    case Outcome::NotRequested:
+        return QStringLiteral("not asked for");
     }
     return QStringLiteral("unknown");
 }

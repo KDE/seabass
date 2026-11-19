@@ -52,6 +52,8 @@ const char *words(application::BeatGridWriteResult::Outcome outcome)
         return "no sample rate";
     case Outcome::UnsupportedSchema:
         return "unsupported schema";
+    case Outcome::NotRequested:
+        return "not requested";
     }
     return "unknown";
 }

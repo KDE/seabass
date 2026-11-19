@@ -696,6 +696,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/plan_engine_update.cpp
     src/application/use_cases/copy_beat_grids.cpp
     src/application/use_cases/summarize_engine_update.cpp
+    src/domain/engine_overview.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
@@ -728,6 +729,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
+    src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/engine_track_rows.cpp
@@ -2981,6 +2983,101 @@ seabass_cli_test(cli_copy_beatgrids_nothing EXIT 0
 seabass_cli_test(cli_copy_beatgrids_bad_unanalysed EXIT 1 ARGS copy-beatgrids --unanalysed maybe
     EXPECT "--unanalysed takes skip, fill or fill-lock, got \"maybe\"")
 
+# copy-beatgrids --waveforms (an experiment): rekordbox's whole analysis.
+# On TESTSHARK as it was after the Prime Go+ (tests/fixtures/testshark_t73,
+# m-after-R1b.db): 11 rows, 5 analysed by a player, 6 not; the rekordbox
+# export has the colour preview and the scrolling waveform (.EXT) for all
+# 11 and no .2EX, and the audio heads give TagLib the files' rates. So the
+# check finds all 11 grids and waveforms to write and the 6 unanalysed rows
+# to complete. The dry run changes nothing. The run backs Engine up (the
+# overview files it creates noted absent in that backup, so a restore
+# takes them away), writes, and engine_analysis_rows then decodes what it
+# left: 11 rows analysed, each record 68 bytes, each overview 1024 points,
+# each grid set, and an overview file for each row over that row's own
+# length. Run again it finds everything already there and writes nothing.
+# --playlist keeps one rekordbox playlist (by its own name, case ignored);
+# --no-overview-file and --zero-loudness complete that playlist's 4
+# unanalysed rows with no file and zero loudness. A name no playlist has
+# is an error, and so are the options --waveforms does not go with.
+# Needs TagLib: without it no file has a rate and no row is completed.
+if(TARGET seabass_taglib)
+    add_executable(engine_analysis_rows tests/engine_analysis_rows.cpp)
+    target_link_libraries(engine_analysis_rows PRIVATE seabass_core_testing SQLite::SQLite3 ZLIB::ZLIB)
+    target_include_directories(engine_analysis_rows PRIVATE src)
+    set(_cli_t73 "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_t73_stick")
+    add_test(NAME cli_copy_analysis_setup
+        COMMAND ${CMAKE_COMMAND} -DFIXTURE=${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73 -DDB=m-after-R1b.db
+                -DOUT=${_cli_t73} -P ${CMAKE_SOURCE_DIR}/tests/assemble_t73_stick.cmake)
+    set_tests_properties(cli_copy_analysis_setup PROPERTIES FIXTURES_SETUP cli_t73_stick)
+
+    set(_cli_an_dry "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_dry_run")
+    seabass_cli_test(cli_copy_analysis_dry_run EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_dry} UNCHANGED_TREE ${_cli_an_dry}
+        ARGS copy-beatgrids --dry-run --waveforms --rekordbox ${_cli_an_dry}/PIONEER --engine "${_cli_an_dry}/Engine Library"
+        EXPECT "matched tracks:    11\\n"
+               "\\ncopy-beatgrids preview\\n  would be written: +11\\n  total: +11\\n  waveforms that would be written: 11\\n  waveforms total: +11\\n  rows that would be completed: +6\\n"
+               "--dry-run: no changes made."
+        FORBID "backed up" "copy-beatgrids summary" "rows completed:" "\\n  written:")
+
+    set(_cli_an_run "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis")
+    seabass_cli_test(cli_copy_analysis_run EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_run}
+        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
+        EXPECT "rows that would be completed: +6\\n"
+               "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
+               "\\ncopy-beatgrids summary\\n  written: +11\\n  total: +11\\n  waveforms written: +11\\n  waveforms total: +11\\n  rows completed: +6\\n"
+        FORBID "failed" "would be written: +0"
+        EXISTS "${_cli_an_run}/Seabass/beat-grids.tsv" "${_cli_an_run}/Seabass/backups/*-copy-beatgrids/backup.zip"
+               "${_cli_an_run}/Engine Library/Database2/OverviewData/f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926/1.rgb")
+    add_test(NAME cli_copy_analysis_rows COMMAND engine_analysis_rows "${_cli_an_run}/Engine Library")
+    set_tests_properties(cli_copy_analysis_rows PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_copy
+        PASS_REGULAR_EXPRESSION "^rows: 11\nanalysed: 11\nrecords of 68 bytes: 11\nrecords with zero loudness: 0\noverviews of 1024 points: 11\nbeat grids set: 11\noverview files: 11\noverview files matching their row: 11\n$")
+    # The backup holds m.db and notes the 11 overview files as absent.
+    add_test(NAME cli_copy_analysis_backup_manifest
+        COMMAND ${CMAKE_COMMAND} -DDIR=${_cli_an_run}/Seabass/backups -P ${CMAKE_SOURCE_DIR}/tests/print_backup_manifests.cmake)
+    # (CMake's regular expressions have no {11}.)
+    string(REPEAT "ABSENT\t[^\n]*/OverviewData/f5d66faf-8dac-4d2d-bd45-b9bf7ff7f926/[0-9]+\\.rgb\n" 11 _cli_an_absent)
+    set_tests_properties(cli_copy_analysis_backup_manifest PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_copy
+        PASS_REGULAR_EXPRESSION "Database2/m.db\t[^\n]*\n${_cli_an_absent}$")
+    seabass_cli_test(cli_copy_analysis_again EXIT 0 UNCHANGED_TREE ${_cli_an_run}
+        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
+        EXPECT "\\n  would be written: +0\\n  already the same: +11\\n  total: +11\\n  waveforms that would be written: 0\\n  waveforms already the same: +11\\n  waveforms total: +11\\n  rows that would be completed: +0\\n"
+               "nothing would be written: no changes made."
+        FORBID "backed up" "failed" "copy-beatgrids summary")
+    set_tests_properties(cli_copy_analysis_run PROPERTIES FIXTURES_REQUIRED cli_t73_stick
+        FIXTURES_SETUP cli_copy_analysis_copy)
+    set_tests_properties(cli_copy_analysis_again PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_copy)
+    set_tests_properties(cli_copy_analysis_dry_run PROPERTIES FIXTURES_REQUIRED cli_t73_stick)
+
+    set(_cli_an_pl "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_playlist")
+    seabass_cli_test(cli_copy_analysis_playlist EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_pl}
+        ARGS copy-beatgrids --auto --waveforms --no-overview-file --zero-loudness --playlist "t73 renamed"
+             --rekordbox ${_cli_an_pl}/PIONEER --engine "${_cli_an_pl}/Engine Library"
+        EXPECT "--playlist: 5 track\\(s\\) kept, 6 left out\\n"
+               "overview files: left out \\(for testing on hardware\\)"
+               "\\ncopy-beatgrids summary\\n  written: +5\\n  total: +5\\n  left out by --playlist: +6\\n  waveforms written: +5\\n  waveforms total: +5\\n  rows completed: +4\\n"
+        FORBID "failed")
+    set_tests_properties(cli_copy_analysis_playlist PROPERTIES FIXTURES_REQUIRED cli_t73_stick
+        FIXTURES_SETUP cli_copy_analysis_playlist_copy)
+    add_test(NAME cli_copy_analysis_playlist_rows COMMAND engine_analysis_rows "${_cli_an_pl}/Engine Library")
+    set_tests_properties(cli_copy_analysis_playlist_rows PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_playlist_copy
+        PASS_REGULAR_EXPRESSION "^rows: 11\nanalysed: 9\nrecords of 68 bytes: 9\nrecords with zero loudness: 4\noverviews of 1024 points: 9\nbeat grids set: 9\noverview files: 0\n")
+
+    seabass_cli_test(cli_copy_analysis_no_playlist EXIT 1
+        COPY_FROM ${_cli_t73} COPY_TO "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist"
+        UNCHANGED_TREE "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist"
+        ARGS copy-beatgrids --waveforms --playlist "No Such List"
+             --rekordbox "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist/PIONEER"
+             --engine "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_no_playlist/Engine Library"
+        EXPECT "no rekordbox playlist named \"No Such List\" holds a track")
+    set_tests_properties(cli_copy_analysis_no_playlist PROPERTIES FIXTURES_REQUIRED cli_t73_stick)
+endif()
+seabass_cli_test(cli_copy_analysis_with_fill EXIT 1 ARGS copy-beatgrids --waveforms --unanalysed fill
+    EXPECT "--waveforms completes the tracks the player has not analysed itself")
+seabass_cli_test(cli_copy_analysis_options_alone EXIT 1 ARGS copy-beatgrids --zero-loudness
+    EXPECT "--no-overview-file and --zero-loudness only go with --waveforms")
+
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).
 add_executable(sqlite_pending_journal_test tests/sqlite_pending_journal_test.cpp)
@@ -4015,6 +4112,20 @@ target_link_libraries(libdjinterop_engine_beat_grid_writer_test PRIVATE seabass_
 target_include_directories(libdjinterop_engine_beat_grid_writer_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_beat_grid_writer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_beat_grid_writer_test COMMAND libdjinterop_engine_beat_grid_writer_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures)
+
+# importAnalysis() over scratch copies of the fixture's Engine library
+# with synthetic rekordbox previews: an analysed row's waveform replaced,
+# an unanalysed row completed all or nothing, the overview file and its
+# sink, the hook's order, a preview, 2.18 and 1.x, and a Denon overview
+# file decoded by the code that encodes ours.
+add_executable(libdjinterop_engine_analysis_import_test
+    tests/libdjinterop_engine_analysis_import_test.cpp
+)
+target_link_libraries(libdjinterop_engine_analysis_import_test PRIVATE seabass_core_testing)
+target_include_directories(libdjinterop_engine_analysis_import_test PRIVATE src)
+target_link_libraries(libdjinterop_engine_analysis_import_test PRIVATE DjInterop SQLite::SQLite3 ZLIB::ZLIB)
+add_test(NAME libdjinterop_engine_analysis_import_test COMMAND libdjinterop_engine_analysis_import_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures)
 
 # Copy Beat Grids' plan and run, with a fake writer: every outcome in
