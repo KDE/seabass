@@ -20,6 +20,19 @@ namespace
 
 constexpr size_t TargetPoints = 400;
 
+// Whether the row records the sample rate its beat markers count in:
+// the same blob field the catalog reader turns cues into times with,
+// where an unrecorded rate is Track::cueRateUnverified. A record
+// libdjinterop cannot read records nothing either.
+bool sampleRateRecorded(const djinterop::track &track)
+{
+    try {
+        const std::optional<double> rate = track.sample_rate();
+        return rate && *rate > 0.0;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
 
 }  // namespace
 
@@ -80,6 +93,7 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
         } catch (const std::exception &) {
             analysis.beats.clear();
         }
+        analysis.beatRateRecorded = sampleRateRecorded(*track);
     } catch (const std::exception &) {
         return {};
     }

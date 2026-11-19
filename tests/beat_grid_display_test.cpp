@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 // The beat grid a waveform draws (#40), from the read the waveform comes
-// from: every beat with its time and whether it starts a bar. Engine
-// stores beats as sample offsets: a grid is drawn at the rate the row
-// records, or the rate its own markers give against its tempo when the
-// row records none or it cannot be read; with no rate that can be known
-// there is no grid at all, never one placed by a default rate.
+// from: every beat with its time and whether it starts a bar, and none at
+// all for an Engine row that records no sample rate. Engine stores beats
+// as sample offsets; without the rate they count in, the times are worked
+// out, and a grid drawn from a working-out is a grid presented as fact
+// that may not be one. The player still keeps time by it; the display
+// shows nothing.
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -45,7 +45,7 @@ int failures = 0;
 // What a waveform is handed for a track's analysis.
 QVariantList drawnGrid(const domain::TrackAnalysis &analysis)
 {
-    return gui::beatGridForDisplay(analysis.beats);
+    return gui::beatGridForDisplay(analysis.beats, analysis.beatRateRecorded);
 }
 
 void check(bool ok, const std::string &what)
@@ -71,7 +71,7 @@ int main()
     {
         const std::vector<domain::Beat> beats = {{100.0, 1}, {600.0, 2}, {1100.0, 3}, {1600.0, 4},
                                                  {2100.0, 1}, {2600.0, 0}};
-        const QVariantList grid = gui::beatGridForDisplay(beats, 0.0);
+        const QVariantList grid = gui::beatGridForDisplay(beats, true, 0.0);
         check(grid.size() == 6, "every beat is handed over");
         const bool expected[] = {true, false, false, false, true, false};
         for (qsizetype i = 0; i < grid.size(); ++i) {
@@ -79,10 +79,11 @@ int main()
             check(entry.value("timeMs").toDouble() == beats[static_cast<size_t>(i)].timeMs, "time of beat " + std::to_string(i));
             check(entry.value("downbeat").toBool() == expected[i], "downbeat of beat " + std::to_string(i));
         }
-        const QVariantList shifted = gui::beatGridForDisplay(beats, -51.0);
+        const QVariantList shifted = gui::beatGridForDisplay(beats, true, -51.0);
         check(shifted.size() == 6 && shifted[0].toMap().value("timeMs").toDouble() == 49.0,
               "the player's timeline shift moves every beat");
-        check(gui::beatGridForDisplay({}, 0.0).isEmpty(), "no grid, no ticks");
+        check(gui::beatGridForDisplay(beats, false, 0.0).isEmpty(), "a grid at an unrecorded rate is not drawn");
+        check(gui::beatGridForDisplay({}, true, 0.0).isEmpty(), "no grid, no ticks");
     }
 
     // ---- The density rule, in C++ ------------------------------------
@@ -106,7 +107,7 @@ int main()
         for (const Case &c : {Case{&track, 600000.0}, Case{&change, 120000.0}}) {
             for (double width : {150.0, 300.0, 600.0, 960.0, 1200.0, 1920.0, 5000.0}) {
                 const gui::BeatTickLayout whole = gui::layoutBeatTicks(*c.beats, c.spanMs, width);
-                const QVariantList kept = gui::beatTicksForDisplay(*c.beats, c.spanMs, width);
+                const QVariantList kept = gui::beatTicksForDisplay(*c.beats, true, c.spanMs, width);
                 check(kept.size() == static_cast<qsizetype>(whole.ticks.size()), "a row keeps the beats drawn");
                 std::vector<domain::Beat> again;
                 for (const QVariant &entry : kept) {
@@ -177,6 +178,7 @@ int main()
         const gui::BeatTickLayout whole = gui::layoutBeatTicks(track, 600000.0, 600.0);
         check(!whole.everyBeat && whole.barsPerTick == 8 && whole.ticks.size() == 40,
               "a whole track at 600 px: every 8th downbeat, 40 ticks");
+        check(gui::beatTicksForDisplay(track, false, 600000.0, 600.0).isEmpty(), "an unrecorded rate keeps none");
         check(gui::layoutBeatTicks(track, 0.0, 600.0).ticks.empty(), "no length, no ticks");
         check(gui::layoutBeatTicks(track, 600000.0, 0.0).ticks.empty(), "no width, no ticks");
     }
@@ -191,7 +193,7 @@ int main()
         const fs::path libraryPath = infrastructure::engine::engineLibraryPath(root);
 
         std::vector<domain::Track> tracks;
-        for (const char *id : {"1", "2", "3", "4"}) {
+        for (const char *id : {"1", "2", "3", "4", "5"}) {
             domain::Track track;
             track.sourceId = id;
             track.title = std::string("Track ") + id;
@@ -203,26 +205,31 @@ int main()
         }
         const auto created = infrastructure::engine::EngineLibraryCreator::create(
             pathToUtf8(libraryPath), tracks, infrastructure::engine::EngineSchemaGeneration::V2);
-        check(created.errorMessage.empty() && created.tracksCreated == 4, "the scratch library is created");
+        check(created.errorMessage.empty() && created.tracksCreated == 5, "the scratch library is created");
 
-        // Four rows, as Engine libraries have them:
+        // Five rows, as Engine libraries have them:
         //   0: analysed at 48 kHz, the rate recorded;
         //   1: markers, no rate recorded: 22050 samples a beat at 120 BPM
-        //      is 44.1 kHz, which the beat reader reads off the markers;
+        //      is 44.1 kHz, which the beat reader works out from them;
         //   2: the same, its data record damaged so that libdjinterop
-        //      throws reading the rate (a fifth of a real fixture once);
-        //   3: markers, no rate, and a tempo they do not fit: no rate can
-        //      be known, and a grid placed by a default one would be a
-        //      guess.
+        //      throws reading the rate;
+        //   3: markers, no rate, and a tempo they do not fit at all;
+        //   4: markers, no rate, and the tempo stored at double the grid's
+        //      (240 against 120, as drum and bass is stored at 174 against
+        //      a grid at 87): the reader takes the double rate, 88.2 kHz,
+        //      and would put the grid in the first half of the track.
+        // Only a rate the row itself gives is drawn; a worked-out one is
+        // not, however likely it looks. The player keeps time by what the
+        // reader gives either way.
         std::vector<std::string> ids;
         {
             auto db = djinterop::engine::load_database(pathToUtf8(libraryPath));
             auto rows = db.tracks();
-            check(rows.size() == 4, "four rows");
+            check(rows.size() == 5, "five rows");
             const struct { std::optional<double> rate; double samplesPerBeat; double bpm; } shapes[] = {
                 {48000.0, 24000.0, 120.0}, {std::nullopt, 22050.0, 120.0}, {std::nullopt, 22050.0, 120.0},
-                {std::nullopt, 22050.0, 100.0}};
-            for (size_t i = 0; i < rows.size() && i < 4; ++i) {
+                {std::nullopt, 22050.0, 100.0}, {std::nullopt, 22050.0, 240.0}};
+            for (size_t i = 0; i < rows.size() && i < 5; ++i) {
                 auto snapshot = rows[i].snapshot();
                 snapshot.bpm = shapes[i].bpm;
                 snapshot.sample_rate = shapes[i].rate;
@@ -235,8 +242,8 @@ int main()
                 ids.push_back(std::to_string(rows[i].id()));
             }
         }
-        check(ids.size() == 4, "four ids");
-        if (ids.size() == 4) {
+        check(ids.size() == 5, "five ids");
+        if (ids.size() == 5) {
             // Damage row 2's data record, wherever this schema keeps it.
             sqlite3 *handle = nullptr;
             check(sqlite3_open(pathToUtf8(libraryPath / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK,
@@ -257,31 +264,48 @@ int main()
             check(throws, "libdjinterop throws reading row 2's rate");
 
             const auto beatAt = [](const QVariantList &grid, int i) { return grid[i].toMap().value("timeMs").toDouble(); };
-            const struct { const char *what; double secondBeatMs; } drawnRows[] = {
-                {"recorded 48 kHz", 1000.0}, {"rate from the markers", 1000.0}, {"rate unreadable, from the markers", 1000.0}};
-            for (int i = 0; i < 3; ++i) {
-                const auto analysis = infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[i]);
-                const QVariantList drawn = drawnGrid(analysis);
-                check(drawn.size() >= 119 && drawn.size() == static_cast<qsizetype>(analysis.beats.size()),
-                      std::string(drawnRows[i].what) + ": the whole grid is drawn, got " + std::to_string(drawn.size()));
-                if (drawn.size() > 4) {
-                    check(std::abs(beatAt(drawn, 2) - drawnRows[i].secondBeatMs) < 0.01,
-                          std::string(drawnRows[i].what) + ": beat 2 at 1 s, got " + std::to_string(beatAt(drawn, 2)));
-                    check(std::abs(beatAt(drawn, 4) - 2000.0) < 0.01, std::string(drawnRows[i].what) + ": beat 4 at 2 s");
-                    check(drawn[0].toMap().value("downbeat").toBool() && !drawn[1].toMap().value("downbeat").toBool(),
-                          "beat 0 starts a bar, beat 1 does not");
-                }
+            const auto recorded = infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[0]);
+            check(recorded.beatRateRecorded, "row 0: the rate is the row's");
+            const QVariantList drawn = drawnGrid(recorded);
+            check(drawn.size() >= 119 && drawn.size() == static_cast<qsizetype>(recorded.beats.size()),
+                  "row 0: the whole grid is drawn, got " + std::to_string(drawn.size()));
+            if (drawn.size() > 4) {
+                check(std::abs(beatAt(drawn, 2) - 1000.0) < 0.01, "row 0: beat 2 at 1 s at 48 kHz");
+                check(std::abs(beatAt(drawn, 4) - 2000.0) < 0.01, "row 0: beat 4 at 2 s");
+                check(drawn[0].toMap().value("downbeat").toBool() && !drawn[1].toMap().value("downbeat").toBool(),
+                      "beat 0 starts a bar, beat 1 does not");
             }
-            const auto guessed = infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[3]);
-            check(drawnGrid(guessed).isEmpty(), "no rate that can be known: no grid drawn");
+            const char *withheld[] = {nullptr, "row 1, a rate worked out from the markers",
+                                      "row 2, its rate unreadable and worked out", "row 3, no rate that fits",
+                                      "row 4, the tempo stored at double the grid's"};
+            for (int i = 1; i < 5; ++i) {
+                const auto analysis = infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[i]);
+                check(!analysis.beatRateRecorded, std::string(withheld[i]) + ": not the row's rate");
+                check(drawnGrid(analysis).isEmpty(), std::string(withheld[i]) + ": no grid drawn");
+                check(gui::beatTicksForDisplay(analysis.beats, analysis.beatRateRecorded, 60000.0, 1200.0).isEmpty(),
+                      std::string(withheld[i]) + ": no ticks for a row either");
+            }
+            // What the player keeps time by is the reader's, as before.
+            check(!infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[1]).beats.empty(),
+                  "row 1 still gives the player its beats");
+            const auto halved = infrastructure::engine::readTrackAnalysis(pathToUtf8(libraryPath), ids[4]);
+            check(!halved.beats.empty() && halved.beats.back().timeMs <= 31000.5,
+                  "row 4: the reader's beats are squeezed into the first half, which is why none is drawn");
         }
 
-        // The committed fixture: how many analysed tracks get a grid drawn.
+        // The committed fixture, on a copy (opening a fixture database in
+        // place can rewrite or delete its files): every analysed track's
+        // rate is read off its row now, so every grid it has is drawn.
         {
-            const std::string enginePath = std::string(SEABASS_SOURCE_DIR) + "/tests/fixtures/anonymized_library/engine";
+            const fs::path copy = root / "fixture-engine";
+            fs::copy(pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine", copy,
+                     fs::copy_options::recursive, ec);
+            check(!ec, "the fixture's Engine library is copied");
+            const std::string enginePath = pathToUtf8(copy);
             auto db = djinterop::engine::load_database(enginePath);
             int analysed = 0;
             int withBeats = 0;
+            int rateRecorded = 0;
             int drawn = 0;
             for (const auto &track : db.tracks()) {
                 if (track.beatgrid().size() < 2) {
@@ -290,11 +314,14 @@ int main()
                 ++analysed;
                 const auto analysis = infrastructure::engine::readTrackAnalysis(enginePath, std::to_string(track.id()));
                 withBeats += analysis.beats.empty() ? 0 : 1;
+                rateRecorded += analysis.beatRateRecorded ? 1 : 0;
                 drawn += drawnGrid(analysis).isEmpty() ? 0 : 1;
             }
-            std::cout << "fixture Engine library: " << analysed << " analysed tracks, " << withBeats
-                      << " with beats, " << drawn << " with a grid drawn\n";
-            check(drawn == withBeats, "every fixture track with beats has its grid drawn");
+            std::cout << "fixture Engine library: " << analysed << " analysed tracks, " << withBeats << " with beats, "
+                      << rateRecorded << " with the rate on the row, " << drawn << " with a grid drawn\n";
+            check(analysed > 300 && drawn == withBeats,
+                  "every analysed fixture track with beats has its rate on the row and its grid drawn, got "
+                      + std::to_string(drawn) + " of " + std::to_string(withBeats));
         }
 
         fs::remove_all(root, ec);
@@ -315,7 +342,8 @@ int main()
                 continue;
             }
             ++withGrid;
-            const QVariantList drawn = gui::beatGridForDisplay(analysis.beats);
+            check(analysis.beatRateRecorded, "a rekordbox grid is in milliseconds already");
+            const QVariantList drawn = gui::beatGridForDisplay(analysis.beats, analysis.beatRateRecorded);
             check(drawn.size() == static_cast<qsizetype>(analysis.beats.size()), "every rekordbox beat is drawn");
         }
         check(withGrid > 0, "the fixture has rekordbox tracks with a grid");

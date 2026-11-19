@@ -42,12 +42,11 @@ TestCase {
         };
     }
 
-    // No rate recorded, but the markers give one (22050 samples a beat at
-    // 120 BPM is 44.1 kHz): drawn, a beat every 500 ms, on every path.
+    // A rate the row records: drawn, a beat every 500 ms, on every path.
     // A minute holds 121 of them: the one at 1:00 is inside the track.
-    function test_aRateFromTheMarkersIsDrawn() {
+    function test_aRecordedRateIsDrawn() {
         const lib = library();
-        verify(engineGridFixture.setRow(lib.path, 0, 120));
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
         const player = createTemporaryObject(playerComponent, testCase);
         const got = grids(player, lib);
         compare(got.whole.length, 121);
@@ -55,6 +54,25 @@ TestCase {
         compare(got.row.length, 121, "1200 px: every beat");
         // On the playback timeline: an Engine grid is on it already.
         compare(got.loaded.length, 121);
+        player.stop();
+    }
+
+    // No rate recorded: the beat reader works one out from the markers and
+    // the tempo, for the player to keep time by, but a worked-out rate is
+    // not drawn as fact -- with the tempo stored at double the grid's it is
+    // twice the true one. Withheld on every path a view takes.
+    function test_aWorkedOutRateIsNotDrawn_data() {
+        return [{tag: "the tempo fits the markers", bpm: 120}, {tag: "the tempo stored at double", bpm: 240}];
+    }
+    function test_aWorkedOutRateIsNotDrawn(data) {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 0, data.bpm));
+        const player = createTemporaryObject(playerComponent, testCase);
+        const got = grids(player, lib);
+        compare(got.whole.length, 0, "beatGridFor");
+        compare(got.row.length, 0, "beatTicksFor");
+        compare(got.loaded.length, 0, "beatTicksAt, the loaded track");
+        verify(player.beatTimesMs.length > 0, "while the player still keeps time by the reader's beats");
         player.stop();
     }
 

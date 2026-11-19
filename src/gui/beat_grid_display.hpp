@@ -19,13 +19,11 @@ namespace seabass::gui
 // downbeat is true for the first beat of a bar and false for every other
 // beat, including one whose place in the bar the library does not say.
 //
-// Every grid a reader gives is drawn. An Engine grid's times rest on the
-// rate the row records or, where it records none or libdjinterop cannot
-// read it, on the rate the markers themselves give against the tempo;
-// where neither gives one, the reader gives no beats at all
-// (libdjinterop_beat_grid_reader.cpp). No grid is ever placed by a
-// default rate, which is what would make it a guess shown as fact.
-QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, double shiftMs = 0.0);
+// Empty when `rateRecorded` is false (domain::TrackAnalysis::
+// beatRateRecorded): a grid placed by a sample rate the library does not
+// record is not drawn at all. A wrong grid shown as fact is worse than
+// none.
+QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double shiftMs = 0.0);
 
 // Which beats of a grid get a tick on a waveform this wide: the one
 // density rule (#40), decided by pixels, not by which page the waveform is
@@ -72,7 +70,9 @@ struct BeatTickLayout
 
 BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double spanMs, double widthPx);
 
-// The beats layoutBeatTicks() keeps, as beatGridForDisplay() hands them.
-QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, double spanMs, double widthPx);
+// The beats layoutBeatTicks() keeps, as beatGridForDisplay() hands them
+// (and as empty, for a rate not recorded).
+QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double spanMs,
+                                 double widthPx);
 
 }  // namespace seabass::gui

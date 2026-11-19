@@ -31,10 +31,11 @@ Canvas {
     // it to PlaybackController's beatTicksAt() (the loaded track) or
     // beatTicksFor() (any other), which hand over only the beats drawn at
     // the view's width; a whole grid, as beatGridFor() gives it, is laid
-    // out the same. Empty (the default) draws no grid: a track without
-    // one, including an Engine row whose markers no known sample rate can
-    // be put to (beat_grid_display.hpp). Seabass draws a grid here and
-    // never makes one up.
+    // out the same. Empty
+    // (the default) draws no grid: a track without one, and a track whose
+    // grid would be placed by a sample rate the library does not record,
+    // which the controller hands over as no grid. Seabass draws a grid
+    // here and never makes one up.
     property var beatData: []
     property real trackDurationMs: 0
     // -1 disables the played/unplayed color split (a static preview).

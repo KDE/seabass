@@ -13,9 +13,12 @@
 namespace seabass::gui
 {
 
-QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, double shiftMs)
+QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double shiftMs)
 {
     QVariantList grid;
+    if (!rateRecorded) {
+        return grid;
+    }
     grid.reserve(static_cast<qsizetype>(beats.size()));
     for (const domain::Beat &beat : beats) {
         QVariantMap entry;
@@ -123,9 +126,13 @@ BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double sp
     return layout;
 }
 
-QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, double spanMs, double widthPx)
+QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double spanMs,
+                                 double widthPx)
 {
     QVariantList kept;
+    if (!rateRecorded) {
+        return kept;
+    }
     const BeatTickLayout layout = layoutBeatTicks(beats, spanMs, widthPx);
     kept.reserve(static_cast<qsizetype>(layout.ticks.size()));
     for (const BeatTick &tick : layout.ticks) {

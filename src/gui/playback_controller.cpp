@@ -280,6 +280,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         for (const domain::Beat &beat : beats) {
             m_drawnBeats.push_back({beat.timeMs + shift.beatsMs, beat.beatInBar});
         }
+        m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
         player()->setSource(QUrl::fromLocalFile(filePath));
         m_player->play();
     }
@@ -357,7 +358,7 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
     }
     const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
     domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
-    CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats)};
+    CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded};
     m_analysisCache.insert(key, new CachedAnalysis(read));
     return read;
 }
@@ -377,7 +378,7 @@ QVariantList PlaybackController::beatGridFor(const QString &format, const QStrin
                                               const QString &sourceId) const
 {
     const CachedAnalysis analysis = cachedAnalysis(format, libraryPath, sourceId);
-    return beatGridForDisplay(analysis.beats);
+    return beatGridForDisplay(analysis.beats, analysis.beatRateRecorded);
 }
 
 QVariantList PlaybackController::beatTicksFor(const QString &format, const QString &libraryPath,
@@ -387,12 +388,12 @@ QVariantList PlaybackController::beatTicksFor(const QString &format, const QStri
         return {};
     }
     const CachedAnalysis analysis = cachedAnalysis(format, libraryPath, sourceId);
-    return beatTicksForDisplay(analysis.beats, durationMs, widthPx);
+    return beatTicksForDisplay(analysis.beats, analysis.beatRateRecorded, durationMs, widthPx);
 }
 
 QVariantList PlaybackController::beatTicksAt(double durationMs, double widthPx) const
 {
-    return beatTicksForDisplay(m_drawnBeats, durationMs, widthPx);
+    return beatTicksForDisplay(m_drawnBeats, m_drawnBeatsRateRecorded, durationMs, widthPx);
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from
