@@ -128,8 +128,14 @@ SeabassDialog {
     property real localZoomBars: root.openingBars
     readonly property real shownSpanMs: root.clampSpan(root.spanBars * root.barMs)
     readonly property real pxPerMs: area.width > 0 ? area.width / root.shownSpanMs : 0
-    // One press of a zoom key or button, and one notch of the wheel.
+    // One press of a zoom key, and one notch of the wheel.
     readonly property real zoomStep: 1.5
+    // The zoom as the slider shows it: 0 is the whole track, 1 is four
+    // bars across. Even on a log scale, so equal moves of the handle are
+    // equal zoom factors wherever on the slider they are made.
+    readonly property real zoomLevel: root.maximumSpanMs > root.minimumSpanMs
+        ? Math.log(root.maximumSpanMs / root.shownSpanMs) / Math.log(root.maximumSpanMs / root.minimumSpanMs)
+        : 1
 
     function clampSpan(span) {
         return Math.max(root.minimumSpanMs, Math.min(root.maximumSpanMs, span));
@@ -176,6 +182,11 @@ SeabassDialog {
     }
     function zoomOut() {
         root.zoomBy(1 / root.zoomStep, root.lineX);
+    }
+    // The slider's zoom: as a key does it, around the line.
+    function zoomToLevel(level) {
+        const span = root.maximumSpanMs * Math.pow(root.minimumSpanMs / root.maximumSpanMs, level);
+        root.zoomBy(root.shownSpanMs / span, root.lineX);
     }
 
     // ---- Position --------------------------------------------------
@@ -365,21 +376,26 @@ SeabassDialog {
                 iconName: root.playing ? "media-playback-pause" : "media-playback-start"
                 onClicked: root.controller.togglePlay()
             }
-            IconToolButton {
-                objectName: "zoomOutButton"
+            // Left is the whole track, right four bars across. No focus,
+            // as the buttons beside it: the arrow keys stay the waveform's.
+            Slider {
+                id: zoomSlider
+                objectName: "zoomSlider"
+                Layout.preferredWidth: Theme.scaled(140)
                 focusPolicy: Qt.NoFocus
-                text: "Zoom out"
-                iconName: "zoom-out"
-                enabled: root.shownSpanMs < root.maximumSpanMs
-                onClicked: root.zoomOut()
-            }
-            IconToolButton {
-                objectName: "zoomInButton"
-                focusPolicy: Qt.NoFocus
-                text: "Zoom in"
-                iconName: "zoom-in"
-                enabled: root.shownSpanMs > root.minimumSpanMs
-                onClicked: root.zoomIn()
+                from: 0
+                to: 1
+                enabled: root.maximumSpanMs > root.minimumSpanMs
+                value: root.zoomLevel
+                Accessible.name: "Zoom"
+                ToolTip.visible: hovered && !pressed
+                ToolTip.delay: 600
+                ToolTip.text: "Zoom"
+                // The handle moves through the slider's own C++ setter,
+                // which leaves the binding to zoomLevel in place: keys and
+                // the wheel go on moving the handle after a drag
+                // (tst_WaveformZoomPopup::test_theSliderZooms).
+                onMoved: root.zoomToLevel(value)
             }
             IconToolButton {
                 objectName: "followButton"
