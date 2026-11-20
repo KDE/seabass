@@ -187,4 +187,29 @@ TestCase {
         compare(player.detailWaveform.columns.byteLength, 0, "nor for the popup");
         player.stop();
     }
+
+    // trackData, where the sample rate and count are, unchecked was the
+    // same hang (#104, second review): a three-byte and a cut-short
+    // trackData. The waveform still shows; there is no grid and no
+    // recorded rate; the popup's detail has no spacing of its own.
+    function test_anUndecodableTrackDataIsNotDecoded_data() {
+        return [{tag: "three bytes", hex: "000102"},
+                {tag: "a stream cut short", hex: "00000040789c4b4c4a"}];
+    }
+    function test_anUndecodableTrackDataIsNotDecoded(data) {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        verify(engineGridFixture.setBlob(lib.path, "trackData", data.hex), "planted");
+        const player = createTemporaryObject(playerComponent, testCase);
+        verify(player.waveformFor("engine", lib.path, lib.id).length > 0, "the waveform still shows");
+        compare(player.beatGridFor("engine", lib.path, lib.id).length, 0, "no grid");
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        verify(player.waveform.length > 0, "on load too");
+        compare(player.beatTicksAt(60000, 1200).length, 0, "and no grid there");
+        player.requestDetailWaveform();
+        compare(player.detailWaveform.columns.byteLength, 1024 * 3, "the popup's detail");
+        compare(player.detailWaveform.msPerColumn, 0, "without a spacing of its own");
+        player.stop();
+    }
 }

@@ -34,12 +34,15 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 // 1.x libraries the high-resolution waveform as well. Its spacing comes
 // from the row's sample count and rate, 0 where either is missing.
 //
-// A 2.x or 3.x row's waveform and beat blobs are checked before
-// libdjinterop decodes them (engineBlobDecodable(), as the cue writer
-// does since 347a95da): one too short or with a stream cut short, which
-// its decoder would read past or loop on for ever, gives no waveform, or
-// no grid, and the other half is read all the same. A 1.x library keeps
-// its waveform in another database this check does not read.
+// A 2.x or 3.x row's waveform, beat and track data blobs are checked
+// before libdjinterop decodes them (engineBlobDecodable(), as the cue
+// writer does since 347a95da): one too short or with a stream cut short,
+// which its decoder would read past or loop on for ever, is not handed
+// over. A waveform that does not decode gives no waveform; beat data or
+// track data (where the sample rate and count are) that does not gives
+// no grid and no recorded rate; whatever does decode is read all the
+// same. A 1.x library keeps these blobs in p.db, which this check does
+// not read: there the decoder is still handed them unchecked.
 domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
                                         bool withDetail = false);
 

@@ -138,6 +138,13 @@ public:
     // column on PerformanceData or, in a newer schema, on Track.
     Q_INVOKABLE bool setOverviewBlob(const QString &library, const QString &hex)
     {
+        return setBlob(library, QStringLiteral("overviewWaveFormData"), hex);
+    }
+
+    // The same for any of the row's blobs: overviewWaveFormData,
+    // trackData, beatData.
+    Q_INVOKABLE bool setBlob(const QString &library, const QString &column, const QString &hex)
+    {
         const QByteArray bytes = QByteArray::fromHex(hex.toLatin1());
         const std::string file = library.toStdString() + "/Database2/m.db";
         sqlite3 *db = nullptr;
@@ -146,10 +153,10 @@ public:
             return false;
         }
         bool done = false;
-        for (const char *sql : {"UPDATE PerformanceData SET overviewWaveFormData = ?1;",
-                                "UPDATE Track SET overviewWaveFormData = ?1;"}) {
+        for (const QString &table : {QStringLiteral("PerformanceData"), QStringLiteral("Track")}) {
+            const QByteArray sql = QStringLiteral("UPDATE %1 SET %2 = ?1;").arg(table, column).toUtf8();
             sqlite3_stmt *stmt = nullptr;
-            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            if (sqlite3_prepare_v2(db, sql.constData(), -1, &stmt, nullptr) == SQLITE_OK) {
                 sqlite3_bind_blob(stmt, 1, bytes.constData(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
                 done = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0;
             }
