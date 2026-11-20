@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -104,8 +105,25 @@ private:
     std::shared_ptr<const Data> m_data;
 };
 
-// Reads the stick: off the GUI thread. Throws when a catalog that is
-// there cannot be read. An Engine 1.x library is looked for at
+// A catalog of the stick that could not be read: `catalog` names it the
+// way the pane says it ("export.pdb", "OneLibrary database", "Engine
+// library"), what() is the technical detail, for the log.
+class StickReadError : public std::runtime_error
+{
+public:
+    StickReadError(std::string catalog, const std::string &detail)
+        : std::runtime_error(detail), m_catalog(std::move(catalog))
+    {
+    }
+    const std::string &catalog() const { return m_catalog; }
+
+private:
+    std::string m_catalog;
+};
+
+// Reads the stick: off the GUI thread. Throws StickReadError when a
+// catalog that is there cannot be read. A WAL-mode database is read from
+// a copy, so the stick is left byte for byte as it was. An Engine 1.x library is looked for at
 // `enginePath` and, since the stick scan reports none for it, beside the
 // PIONEER folder.
 StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &enginePath);

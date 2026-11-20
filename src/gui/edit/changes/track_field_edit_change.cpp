@@ -16,6 +16,7 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -117,6 +118,20 @@ std::function<std::string(const std::string &)> engineJoin(const std::string &en
     return [engine](const std::string &stored) {
         return pathToUtf8((pathFromUtf8(engine) / pathFromUtf8(stored)).lexically_normal());
     };
+}
+
+// Engine's track paths, read without touching the stick: from a copy
+// when m.db is in WAL mode (its -shm would be written otherwise), straight
+// from the file, read-only, when it keeps a rollback journal (measured:
+// unchanged).
+std::vector<std::pair<std::int64_t, std::string>> enginePathsUntouched(const std::string &engineRoot)
+{
+    const fs::path db = pathFromUtf8(engineRoot) / "Database2" / "m.db";
+    if (infrastructure::isWalModeSqlite(db)) {
+        const infrastructure::DatabaseReadCopy copy(db, fs::path("Database2") / "m.db");
+        return infrastructure::engine::engineTrackPaths(pathToUtf8(copy.root()));
+    }
+    return infrastructure::engine::engineTrackPaths(engineRoot);
 }
 
 std::vector<std::pair<std::int64_t, std::string>> pdbPaths(const infrastructure::rekordbox::PdbRowWriter &pdb)
@@ -293,26 +308,44 @@ StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &en
     auto built = std::make_shared<StickPathIndex::Data>();
     auto &data = *built;
     const auto join = rekordboxJoin(pioneer);
-    if (hasPdb(pioneer)) {
-        data.rekordbox.present = true;
-        const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(pioneer));
-        for (const auto &row : pdb.trackPathRows()) {
-            data.rekordbox.add(row.id, row.filePath, join);
-            data.comments[row.id] = row.comment;
+    // Each catalog's failure says which catalog it was.
+    const auto reading = [](const char *catalog, const std::function<void()> &read) {
+        try {
+            read();
+        } catch (const std::exception &e) {
+            throw StickReadError(catalog, e.what());
+        } catch (...) {
+            throw StickReadError(catalog, "unknown error");
         }
+    };
+    // Copies a crashed run left behind, before this read makes its own.
+    infrastructure::removeStaleReadCopies();
+    if (hasPdb(pioneer)) {
+        reading("export.pdb", [&] {
+            data.rekordbox.present = true;
+            const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(pioneer));
+            for (const auto &row : pdb.trackPathRows()) {
+                data.rekordbox.add(row.id, row.filePath, join);
+                data.comments[row.id] = row.comment;
+            }
+        });
     }
     if (hasOneLibrary(pioneer)) {
-        data.oneLibrary.present = true;
-        for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pioneer)) {
-            data.oneLibrary.add(id, path, join);
-        }
+        reading("OneLibrary database", [&] {
+            data.oneLibrary.present = true;
+            for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pioneer)) {
+                data.oneLibrary.add(id, path, join);
+            }
+        });
     }
     if (hasEngine(engine)) {
-        data.engine.present = true;
-        const auto engineJoined = engineJoin(engine);
-        for (const auto &[id, path] : infrastructure::engine::engineTrackPaths(engine)) {
-            data.engine.add(id, path, engineJoined);
-        }
+        reading("Engine library", [&] {
+            data.engine.present = true;
+            const auto engineJoined = engineJoin(engine);
+            for (const auto &[id, path] : enginePathsUntouched(engine)) {
+                data.engine.add(id, path, engineJoined);
+            }
+        });
     }
     data.engineUnwritable = hasEngine1x(pioneer, engine);
     index.m_data = std::move(built);
@@ -482,6 +515,11 @@ struct TrackEditCount
     int edits = 0;
 };
 constexpr const char *CountKey = "track-edit:count";
+struct OneLibraryPathsRead
+{
+    std::vector<std::pair<int64_t, std::string>> rows;
+};
+constexpr const char *OneLibraryPathsKey = "track-edit:onelibrary-paths";
 }  // namespace
 
 void TrackFieldEditChange::beforeSave(SaveContext &ctx)
@@ -543,8 +581,14 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             }
             written << QStringLiteral("OneLibrary");
         } else if (hasOneLibrary(pioneer)) {
-            const CatalogRows now =
-                match(infrastructure::onelibrary::oneLibraryContentPaths(pioneer), keyOf(m_filePath), rekordboxJoin(pioneer));
+            // Read once for the whole save, however many tracks it edits:
+            // each read is a copy of the database (see oneLibraryContentPaths).
+            const auto &paths = ctx.sharedForWholeSave<OneLibraryPathsRead>(OneLibraryPathsKey, [&] {
+                auto read = std::make_unique<OneLibraryPathsRead>();
+                read->rows = infrastructure::onelibrary::oneLibraryContentPaths(pioneer);
+                return read;
+            });
+            const CatalogRows now = match(paths.rows, keyOf(m_filePath), rekordboxJoin(pioneer));
             if (const QString why = drifted("OneLibrary", m_rows.oneLibrary, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
             }
@@ -572,7 +616,7 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             written << QStringLiteral("Engine");
         } else if (hasEngine(engine)) {
             const FormatWriteSession *existing = existingFormatWriteSession(ctx, "engine", engine);
-            const CatalogRows now = match(infrastructure::engine::engineTrackPaths(existing ? existing->writeRoot() : engine),
+            const CatalogRows now = match(enginePathsUntouched(existing ? existing->writeRoot() : engine),
                                           keyOf(m_filePath), engineJoin(engine));
             if (const QString why = drifted("Engine", m_rows.engine, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
@@ -676,10 +720,10 @@ TrackLookup lookUpTrack(const QString &pioneerRoot, const QString &enginePath, c
         lookup.rows = index.rowsFor(filePath);
         lookup.limit = index.limitFor(lookup.rows);
         lookup.error = lookup.rows.refusal();
-    } catch (const std::exception &e) {
-        lookup.error = std::string("the stick's catalogs could not be read: ") + e.what();
+    } catch (const StickReadError &e) {
+        lookup.error = "Seabass could not read the " + e.catalog() + " on this stick";
     } catch (...) {
-        lookup.error = "the stick's catalogs could not be read";
+        lookup.error = "Seabass could not read this stick";
     }
     return lookup;
 }

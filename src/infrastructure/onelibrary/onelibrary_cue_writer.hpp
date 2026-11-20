@@ -125,10 +125,11 @@ private:
 };
 
 // Every content row's id and path in the stick's exportLibrary.db, read
-// from a copy of it and its -wal in the temporary folder, so the stick is
-// left byte for byte as it was (a read-only connection still writes the
-// WAL's -shm): for a caller off the GUI thread that does not hold a
-// writer. Throws when the database cannot be read.
+// from a copy of it and its -wal (infrastructure::DatabaseReadCopy), so
+// the stick is left byte for byte as it was: a read-only connection to a
+// WAL-mode database still writes its -shm. For a caller off the GUI
+// thread that does not hold a writer. Throws when the database cannot be
+// read.
 std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot);
 
 class OneLibraryCueWriter
