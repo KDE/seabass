@@ -5,6 +5,7 @@
 #include "rekordbox_process_detector.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -57,7 +58,7 @@ bool isAllDigits(const std::string &s)
 // here (a process exiting mid-scan, a permission-denied /proc entry) just
 // means "couldn't confirm," which this function already treats the same
 // as "not found" -- see the header's doc comment.
-bool isProcessRunning(const std::string &name)
+static bool scanProcesses(const std::string &name)
 {
     std::string wanted = toLower(name);
     try {
@@ -103,7 +104,7 @@ std::string toLower(std::string s)
 // each one's executable name (szExeFile, e.g. "rekordbox.exe") against
 // name + ".exe", case-insensitively -- Windows process names always
 // include the extension, unlike Linux's /proc/<pid>/comm.
-bool isProcessRunning(const std::string &name)
+static bool scanProcesses(const std::string &name)
 {
     std::string wanted = toLower(name) + ".exe";
 
@@ -144,7 +145,7 @@ std::string toLower(std::string s)
 // proc_name() takes from the executable (up to 32 bytes, e.g. "rekordbox",
 // "Engine DJ"), case-insensitively. Processes owned by other users are
 // listed too; a pid that exits mid-scan just yields no name.
-bool isProcessRunning(const std::string &name)
+static bool scanProcesses(const std::string &name)
 {
     std::string wanted = toLower(name);
 
@@ -178,12 +179,32 @@ bool isProcessRunning(const std::string &name)
 // No detector implemented for this platform yet. Always reports "not
 // running": never treat that as a guarantee either way, per the header's
 // doc comment.
-bool isProcessRunning(const std::string &)
+static bool scanProcesses(const std::string &)
 {
     return false;
 }
 
 #endif
+
+namespace
+{
+// Null means the real scan. Atomic because the writes it guards run on
+// worker threads while a test's main thread may set it.
+std::atomic<ProcessScanForTesting> g_processScanForTesting{nullptr};
+}  // namespace
+
+void setProcessScanForTesting(ProcessScanForTesting scan)
+{
+    g_processScanForTesting.store(scan);
+}
+
+bool isProcessRunning(const std::string &name)
+{
+    if (ProcessScanForTesting scan = g_processScanForTesting.load()) {
+        return scan(name);
+    }
+    return scanProcesses(name);
+}
 
 bool isRekordboxRunning()
 {

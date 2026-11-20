@@ -97,6 +97,7 @@
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
 using seabass::pathFromUtf8;
@@ -2691,6 +2692,7 @@ void testCreate()
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
         std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis\n";
         return 2;

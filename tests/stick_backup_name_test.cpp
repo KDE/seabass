@@ -25,6 +25,7 @@
 #include "gui/qt_path.hpp"
 #include "gui/stick_backup_controller.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::application;
@@ -76,6 +77,7 @@ bool endsWith(const QString &path, const char *fileName)
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
     const fs::path scratch = seabass::testing::scratchRoot() / "stick_backup_name_test";
     std::error_code ec;

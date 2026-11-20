@@ -70,6 +70,7 @@
 #include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
 using seabass::application::BackupOrigin;
@@ -206,6 +207,7 @@ void expectList(const CleanupController &controller, const std::vector<std::stri
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
     const fs::path scratch = seabass::testing::scratchRoot() / "cleanup_prune_stale_backups_test";
     fs::remove_all(scratch);

@@ -28,6 +28,7 @@
 #include "gui/recordings_controller.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
 using seabass::gui::RecordingsController;
@@ -88,6 +89,7 @@ bool waitFor(QSignalSpy &spy, int count)
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
     const fs::path scratch = seabass::testing::scratchRoot() / "recordings_controller_test";
     fs::remove_all(scratch);

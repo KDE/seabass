@@ -78,6 +78,7 @@
 #include "gui/rekordbox_export_sync_controller.hpp"
 #include "gui/rekordbox_export_sync_list_model.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "nothing_else_running.hpp"
 #include "rekordbox_baseline_fixture.hpp"
 #include "scratch_path.hpp"
 
@@ -1548,6 +1549,7 @@ void testEmptyAnswerWithARecord(const fs::path &fixture)
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     if (argc < 2) {
         std::cerr << "usage: rekordbox_export_sync_controller_test <tests/fixtures/anonymized_library>\n";
         return 2;

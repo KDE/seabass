@@ -37,6 +37,7 @@
 #include "gui/qt_path.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "../fixture_copy.hpp"
+#include "../nothing_else_running.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -3462,8 +3463,37 @@ int runStormQuitLeg(int argc, char **argv, const char *driver)
     return seabass::gui::endProcess(result);
 }
 
+// Whether this run is one of tests/qml-live/'s: run-live.sh and the rig
+// scripts all start this binary with -input pointing at that directory
+// (or at a file in it). Those test the DJ-software guard against the
+// rig's fake rekordbox and must see the real process list; every other
+// lane (tests/qml, qml-shader, qml-storm, and a run with no -input, which
+// is tests/qml) must not depend on what else runs on the machine.
+bool runsLiveTests(int argc, char **argv)
+{
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "-input") != 0) {
+            continue;
+        }
+        std::error_code ec;
+        std::filesystem::path input = std::filesystem::weakly_canonical(seabass::pathFromUtf8(argv[i + 1]), ec);
+        if (ec) {
+            input = seabass::pathFromUtf8(argv[i + 1]);
+        }
+        for (const std::filesystem::path &part : input) {
+            if (part == "qml-live") {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 int main(int argc, char **argv)
 {
+    if (!runsLiveTests(argc, argv)) {
+        seabass::tests::assumeNothingElseRunning();
+    }
     if (argc >= 3 && std::strcmp(argv[1], "--storm-quit") == 0) {
         return runStormQuitLeg(1, argv, argv[2]);
     }

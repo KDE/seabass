@@ -18,6 +18,17 @@ namespace seabass::infrastructure::system
 // the app's own write-locking (see infrastructure::backup::StickWriteLock).
 bool isProcessRunning(const std::string &name);
 
+// Test seam: replaces the scan behind isProcessRunning(), and so behind
+// every check below, for the whole process; nullptr puts the real scan
+// back. Called only by test code -- the non-live test binaries install
+// tests/nothing_else_running.hpp's "nothing running" scan, so a suite
+// run cannot be refused because rekordbox, or the release rig's fake
+// one, happens to be running on the machine. Nothing in the shipped app
+// or CLI calls it, and there is deliberately no environment variable
+// or setting that reaches it: the guard it feeds is a data-safety check.
+using ProcessScanForTesting = bool (*)(const std::string &name);
+void setProcessScanForTesting(ProcessScanForTesting scan);
+
 // Convenience wrapper for the one process this app actually cares about:
 // writing to a stick's files while rekordbox itself might also have them
 // open is a real corruption risk.

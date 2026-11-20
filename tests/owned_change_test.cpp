@@ -36,6 +36,7 @@
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "engine_change_fixture.hpp"
+#include "nothing_else_running.hpp"
 
 using namespace seabass;
 using namespace seabass::gui;
@@ -130,6 +131,7 @@ std::unique_ptr<PendingChange> deleteChange(const testing::EngineChangeStick &st
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     if (argc < 2) {
         std::cerr << "usage: owned_change_test <tests/fixtures/anonymized_library>\n";
         return 2;

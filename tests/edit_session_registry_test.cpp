@@ -35,6 +35,7 @@
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
 using seabass::gui::EditSessionRegistry;
@@ -87,6 +88,7 @@ void flushDeferredDeletes()
 
 int main(int argc, char **argv)
 {
+    seabass::tests::assumeNothingElseRunning();
     // No real stick may reach the MediaController this test builds, and
     // no setting it writes may reach the developer's own.
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
