@@ -216,6 +216,21 @@ Frame {
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
+                // The waveform zoomed in, the way a player shows it (#104):
+                // the bar's own waveform keeps its click for seeking.
+                IconToolButton {
+                    objectName: "openWaveformPopupButton"
+                    implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
+                    implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
+                    padding: 0
+                    flat: true
+                    text: "Zoom into the waveform"
+                    iconName: "waveform"
+                    iconSize: Theme.iconSizeSmall * 0.5
+                    ToolTip.visible: hovered
+                    ToolTip.text: text
+                    onClicked: zoomPopup.openLoaded()
+                }
                 Label {
                     objectName: "playerTime"
                     text: Theme.trackTime(root.controller.position) + " / " + Theme.trackTime(root.controller.duration)
@@ -275,6 +290,11 @@ Frame {
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
         onClicked: root.controller.stop()
+    }
+
+    WaveformZoomPopup {
+        id: zoomPopup
+        playbackController: root.controller
     }
 
     TrackRingFullscreen {

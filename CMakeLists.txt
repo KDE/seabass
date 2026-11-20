@@ -2276,6 +2276,13 @@ target_link_libraries(beat_grid_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME beat_grid_test COMMAND beat_grid_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(beat_grid_test PROPERTIES LABELS "integration")
 
+# The scrolling waveform the zoomed popup draws (#104), from analysis
+# files made byte by byte: the fixtures carry no waveform sections.
+add_executable(detail_waveform_test tests/detail_waveform_test.cpp)
+target_include_directories(detail_waveform_test PRIVATE src)
+target_link_libraries(detail_waveform_test PRIVATE seabass_core)
+add_test(NAME detail_waveform_test COMMAND detail_waveform_test)
+
 # The grid a waveform draws (#40): what the views are handed, and none for
 # an Engine row that records no sample rate. QtCore for the QVariantList
 # the views take.

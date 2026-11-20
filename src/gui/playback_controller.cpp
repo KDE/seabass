@@ -204,7 +204,7 @@ void PlaybackController::setVolume(qreal volume)
 void PlaybackController::load(const QString &format, const QString &libraryPath, const QString &sourceId,
                                const QString &filePath, const QString &title, const QString &artist,
                                const QString &artworkPath, const QVariantList &cues,
-                               const QString &fallbackArtworkPath)
+                               const QString &fallbackArtworkPath, bool startPlaying)
 {
     if (m_player) {
         m_player->stop();
@@ -228,6 +228,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_artist = artist;
     m_artworkPath = artworkPath;
     m_cueShiftMs = 0.0;
+    m_beatShiftMs = 0.0;
     m_cues = cues;
     m_hasTrack = true;
     m_fallbackArtworkPath = fallbackArtworkPath.isEmpty()
@@ -268,6 +269,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             filePath.toStdString(), format == QLatin1String("rekordbox")
                 ? infrastructure::audio::GridTimeline::Rekordbox : infrastructure::audio::GridTimeline::Engine);
         m_cueShiftMs = shift.cuesMs;
+        m_beatShiftMs = shift.beatsMs;
         m_cues = shiftedCues(cues, m_cueShiftMs);
         const std::vector<domain::Beat> &beats = analysis.beats;
         m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
@@ -282,7 +284,11 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         }
         m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
         player()->setSource(QUrl::fromLocalFile(filePath));
-        m_player->play();
+        if (startPlaying) {
+            m_player->play();
+        } else {
+            m_player->pause();
+        }
     }
 
     emit trackChanged();
@@ -394,6 +400,47 @@ QVariantList PlaybackController::beatTicksFor(const QString &format, const QStri
 QVariantList PlaybackController::beatTicksAt(double durationMs, double widthPx) const
 {
     return beatTicksForDisplay(m_drawnBeats, m_drawnBeatsRateRecorded, durationMs, widthPx);
+}
+
+QVariantMap PlaybackController::detailWaveform() const
+{
+    if (m_detailSerial == m_trackSerial) {
+        return m_detailWaveform;
+    }
+    domain::DetailWaveform detail;
+    // Only a catalog's track has one: a recording (loadFile()) and a
+    // stored backup row (no library path) have no analysis to read.
+    if (m_hasTrack && !m_currentLibraryPath.isEmpty() && !m_currentSourceId.startsWith(QLatin1String("recording:"))) {
+        try {
+            if (m_currentFormat == QLatin1String("rekordbox")) {
+                const auto index = anlzIndexFor(m_currentLibraryPath);
+                detail = infrastructure::rekordbox::readDetailWaveform(
+                    m_currentLibraryPath.toStdString(), m_currentSourceId.toStdString(), nullptr, index.get());
+            } else if (m_currentFormat == QLatin1String("engine")) {
+                detail = infrastructure::engine::readDetailWaveform(m_currentLibraryPath.toStdString(),
+                                                                    m_currentSourceId.toStdString());
+            }
+        } catch (const std::exception &) {
+            // On the UI thread, like readAnalysis(): no finer waveform,
+            // never a crash.
+            detail = {};
+        }
+    }
+    QByteArray columns;
+    columns.reserve(static_cast<qsizetype>(detail.columns.size() * 3));
+    const auto toByte = [](double v) {
+        return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
+    };
+    for (const domain::WaveformColumn &column : detail.columns) {
+        columns.append(toByte(column.low));
+        columns.append(toByte(column.mid));
+        columns.append(toByte(column.high));
+    }
+    m_detailWaveform = {{QStringLiteral("columns"), columns},
+                        {QStringLiteral("msPerColumn"), detail.msPerColumn},
+                        {QStringLiteral("startMs"), m_beatShiftMs}};
+    m_detailSerial = m_trackSerial;
+    return m_detailWaveform;
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from

@@ -98,4 +98,8 @@ actions/22/arrow-right.svg
 actions/22/checkmark.svg
 actions/22/list-add.svg
 status/22/dialog-warning.svg
+actions/22/waveform.svg
+actions/22/zoom-in.svg
+actions/22/zoom-out.svg
+actions/22/go-jump.svg
 LIST
