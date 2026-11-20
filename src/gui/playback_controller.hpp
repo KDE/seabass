@@ -73,6 +73,12 @@ class PlaybackController : public QObject
     // new track's grid, without reading a list of every beat to notice.
     Q_PROPERTY(int trackSerial READ trackSerial NOTIFY trackChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
+    // The trackSerial whose length has been reported: equal to
+    // trackSerial once the loaded track's duration is known, or known
+    // never to come (a missing file, one that does not decode, stop()).
+    // Until then `duration` may still be the old track's: a display that
+    // waits for the new length waits for this, not for duration > 0.
+    Q_PROPERTY(int durationSerial READ durationSerial NOTIFY durationSerialChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
@@ -141,6 +147,7 @@ public:
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
     QList<int> beatNumbers() const { return m_beatNumbers; }
     int trackSerial() const { return m_trackSerial; }
+    int durationSerial() const { return m_durationSerial; }
     qint64 duration() const;
     qint64 position() const;
     bool playing() const;
@@ -237,6 +244,9 @@ public:
     // written (asked again once the write is over), and dropped if
     // another track has been loaded by the time it arrives.
     Q_INVOKABLE void requestDetailWaveform();
+    // The popup has closed: what it asked for is no longer wanted, and a
+    // write ending does not read it again for nobody.
+    Q_INVOKABLE void releaseDetailWaveform();
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
@@ -299,6 +309,7 @@ signals:
     void advanced(const QString &previousSourceId);
     void beatCountChanged();
     void detailWaveformChanged();
+    void durationSerialChanged();
 
 private:
     void setErrorMessage(const QString &message);
@@ -368,6 +379,10 @@ private:
     int m_detailSerial = -1;
     bool m_detailWanted = false;
     domain::DetailWaveform m_loadedDetail;
+    bool m_loadedDetailKept = false;
+    static constexpr size_t MaximumKeptDetailColumns = 4096;
+    int m_durationSerial = -1;
+    void markDurationKnown();
     void setDetailWaveform(const domain::DetailWaveform &detail, int serial);
     void dropDetailWaveform();
     AsyncRequest<domain::DetailWaveform> m_detailRequest{this, nullptr};

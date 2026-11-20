@@ -126,6 +126,18 @@ QMediaPlayer *PlaybackController::player()
     m_player->setAudioOutput(m_audioOutput);
 
     connect(m_player, &QMediaPlayer::durationChanged, this, &PlaybackController::durationChanged);
+    // The loaded track's length has been reported: a length, or a file
+    // that will not give one.
+    connect(m_player, &QMediaPlayer::durationChanged, this, [this](qint64 duration) {
+        if (duration > 0) {
+            markDurationKnown();
+        }
+    });
+    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::InvalidMedia || status == QMediaPlayer::LoadedMedia) {
+            markDurationKnown();
+        }
+    });
     connect(m_player, &QMediaPlayer::positionChanged, this, &PlaybackController::positionChanged);
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, &PlaybackController::playingChanged);
     // Paused or stopped, no more audio arrives to bring the levels down:
@@ -259,6 +271,14 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
 
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
+        // Nothing left of the old track: stopped is not enough, its
+        // source would still give the old length, and play() would play
+        // the old file under the new title.
+        if (m_player) {
+            m_player->setSource(QUrl());
+        }
+        // No length will come: that is this track's answer.
+        markDurationKnown();
     } else {
         // No library path, no analysis to read: a stored backup row plays
         // a file no catalog row stands behind, and an empty path would
@@ -268,7 +288,12 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         const domain::TrackAnalysis analysis = libraryPath.isEmpty()
             ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), true);
         m_waveform = toVariantList(analysis.waveform);
-        m_loadedDetail = analysis.detail;
+        // Kept for the popup only where it is overview-sized (Engine 2.x
+        // and 3.x, about a thousand entries); a 1.x high-resolution
+        // waveform (ten megabytes for an hour) is read again off the GUI
+        // thread if the popup asks.
+        m_loadedDetailKept = analysis.detail.columns.size() <= MaximumKeptDetailColumns;
+        m_loadedDetail = m_loadedDetailKept ? std::move(analysis.detail) : domain::DetailWaveform{};
         // An MP3 is played on Engine's timeline; the cues and a rekordbox
         // grid are not on it (#50).
         const auto shift = infrastructure::audio::playbackShiftFor(
@@ -290,6 +315,13 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         }
         m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
         player()->setSource(QUrl::fromLocalFile(filePath));
+        // The same file again: setSource() changes nothing and no length
+        // is reported again; the one it has is this track's.
+        const auto status = m_player->mediaStatus();
+        if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia
+            || status == QMediaPlayer::BufferingMedia || status == QMediaPlayer::EndOfMedia) {
+            markDurationKnown();
+        }
         if (startPlaying) {
             m_player->play();
         } else {
@@ -333,6 +365,10 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     // Never readAnalysis(): no catalog knows this file.
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
+        if (m_player) {
+            m_player->setSource(QUrl());
+        }
+        markDurationKnown();
     } else {
         player()->setSource(QUrl::fromLocalFile(filePath));
         m_player->play();
@@ -410,6 +446,14 @@ QVariantList PlaybackController::beatTicksAt(double durationMs, double widthPx) 
     return beatTicksForDisplay(m_drawnBeats, m_drawnBeatsRateRecorded, durationMs, widthPx);
 }
 
+void PlaybackController::markDurationKnown()
+{
+    if (m_durationSerial != m_trackSerial) {
+        m_durationSerial = m_trackSerial;
+        emit durationSerialChanged();
+    }
+}
+
 QVariantMap PlaybackController::detailWaveform() const
 {
     if (m_detailSerial == m_trackSerial) {
@@ -425,6 +469,7 @@ void PlaybackController::dropDetailWaveform()
     m_detailRequest.cancel();
     m_detailWanted = false;
     m_loadedDetail = {};
+    m_loadedDetailKept = false;
     const bool had = m_detailSerial >= 0;
     m_detailSerial = -1;
     m_detailWaveform.clear();
@@ -462,31 +507,47 @@ void PlaybackController::requestDetailWaveform()
     }
     m_detailWanted = true;
     const int serial = m_trackSerial;
-    // Engine: nothing finer than what load() read can come back, so no
-    // second opening of the database.
-    if (m_currentFormat != QLatin1String("rekordbox") || m_currentLibraryPath.isEmpty()
+    const bool engine = m_currentFormat == QLatin1String("engine");
+    if ((!engine && m_currentFormat != QLatin1String("rekordbox")) || m_currentLibraryPath.isEmpty()
         || m_currentSourceId.startsWith(QLatin1String("recording:"))) {
-        setDetailWaveform(m_currentFormat == QLatin1String("engine") ? m_loadedDetail : domain::DetailWaveform{},
-                          serial);
+        setDetailWaveform({}, serial);
         return;
     }
-    // Not while a library is being written: an analysis file can be
-    // half rewritten. setLibraryBusy(false) asks again.
+    // Engine 2.x and 3.x: nothing finer than the overview load() read
+    // can come back, and load() kept it; no second opening.
+    if (engine && m_loadedDetailKept) {
+        setDetailWaveform(m_loadedDetail, serial);
+        return;
+    }
+    // Not while a library is being written: an analysis file or the
+    // database can be half rewritten. setLibraryBusy(false) asks again.
     if (m_libraryBusy) {
         return;
     }
-    // The index is load()'s, kept: no export.pdb parse here.
-    const auto index = anlzIndexFor(m_currentLibraryPath);
-    const std::string pioneer = m_currentLibraryPath.toStdString();
+    // Everything else is read off the GUI thread, export.pdb's analysis
+    // paths included: no library read here (#104).
+    const std::string path = m_currentLibraryPath.toStdString();
     const std::string sourceId = m_currentSourceId.toStdString();
     const QString stickRoot = QFileInfo(m_currentLibraryPath).absolutePath();
     m_detailRequest.start(
         QString::number(serial), stickRoot,
-        [pioneer, sourceId, index](application::CancellationToken) {
-            return infrastructure::rekordbox::readDetailWaveform(pioneer, sourceId, nullptr, index.get());
+        [path, sourceId, engine](application::CancellationToken cancel) {
+            if (cancel.cancelled()) {
+                return domain::DetailWaveform{};
+            }
+            domain::DetailWaveform detail = engine
+                ? infrastructure::engine::readTrackAnalysis(path, sourceId, true).detail
+                : infrastructure::rekordbox::readDetailWaveform(path, sourceId);
+            return cancel.cancelled() ? domain::DetailWaveform{} : detail;
         },
         {[this, serial](domain::DetailWaveform &&detail) { setDetailWaveform(detail, serial); },
          [](const QString &) {}, [] {}});
+}
+
+void PlaybackController::releaseDetailWaveform()
+{
+    m_detailWanted = false;
+    m_detailRequest.cancel();
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from
@@ -577,7 +638,14 @@ void PlaybackController::setLibraryBusy(bool busy)
         // A write has just finished, and any library may now say something
         // else about any track: a sample rate recorded, a grid replaced.
         forgetAnalyses();
-        if (m_detailWanted && m_detailSerial != m_trackSerial) {
+        // What was delivered may be what the write replaced: dropped, and
+        // read again if the popup still wants it.
+        if (m_detailSerial >= 0) {
+            m_detailSerial = -1;
+            m_detailWaveform.clear();
+            emit detailWaveformChanged();
+        }
+        if (m_detailWanted) {
             requestDetailWaveform();
         }
     }
@@ -775,6 +843,7 @@ void PlaybackController::stop()
     m_cues.clear();
     m_cueShiftMs = 0.0;
     emit trackChanged();
+    markDurationKnown();
     emit cuesChanged();
     emit queueChanged();
 }
