@@ -1077,10 +1077,11 @@ int main(int argc, char **argv)
         assert(!undone.error.contains("Nothing it had restored was kept") && "not said when it is not true");
         assert(undone.error.contains("could not be returned"));
         // Track9 to Track6 were moved and are stuck where the undo put
-        // them: each named.
+        // them: each named, as the store spells a path (the platform's
+        // own separators: backslashes on Windows).
         for (int i = 6; i < 10; ++i) {
             assert(fs::is_regular_file(t.moved[i]) && !fs::exists(t.expected[i]));
-            assert(undone.error.contains(pathToQString(t.moved[i])) && "each stuck file is named");
+            assert(undone.error.contains(QString::fromStdString(pathToUtf8(t.moved[i]))) && "each stuck file is named");
         }
         for (int i = 0; i < 5; ++i) {
             assert(fs::is_regular_file(t.expected[i]) && "the moves not reached were not made");
