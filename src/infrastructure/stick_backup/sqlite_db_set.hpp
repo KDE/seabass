@@ -59,8 +59,16 @@ struct DbSetFingerprint
 std::vector<std::filesystem::path> dbSetMembers(const std::filesystem::path &mainDb,
                                                 bool *presenceKnown = nullptr);
 
+// Whether the file starts as a SQLite database does. fingerprintDbSet()
+// has nothing to give for a file that does not, and nothing to give for
+// a database whose sidecars it could not see either; this tells the two
+// apart.
+bool hasSqliteHeader(const std::filesystem::path &file);
+
 // nullopt when `mainDb` is not a SQLite file (wrong magic) or cannot be
-// read -- callers then treat it as an ordinary file.
+// read -- callers then treat it as an ordinary file. Also nullopt for a
+// database whose -wal or -journal could not be looked at: ask
+// hasSqliteHeader() before calling such a file ordinary.
 std::optional<DbSetFingerprint> fingerprintDbSet(const std::filesystem::path &mainDb);
 
 // A SHA-256 over the whole set as it is on disk: each member's name

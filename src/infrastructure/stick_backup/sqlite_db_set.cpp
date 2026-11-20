@@ -177,27 +177,60 @@ std::uintmax_t sidecarSize(const fs::path &sidecar, std::error_code &ec)
     return askSidecar(ec, [&sidecar](std::error_code &asked) { return fs::file_size(sidecar, asked); });
 }
 
-}  // namespace
-
-std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
+// What listing a set learned about its sidecars.
+//
+// Refused is "access denied" that outlasted askSidecar's waiting. On
+// Windows that is still a file on its way out, held open a little longer
+// by whoever else has a handle on it -- a virus scanner, an indexer, a
+// slow machine -- and so still the writer. It is not a set that cannot
+// be read, and it is told apart from one here: any other failure of the
+// stat is Unknown, and stays a read error.
+enum class SidecarPresence
 {
-    if (presenceKnown != nullptr) {
-        *presenceKnown = true;
-    }
+    Known,
+    Refused,
+    Unknown,
+};
+
+std::vector<fs::path> listDbSet(const fs::path &mainDb, SidecarPresence &presence)
+{
+    presence = SidecarPresence::Known;
     std::vector<fs::path> members{mainDb};
     for (const char *suffix : {"-wal", "-journal"}) {
         fs::path sidecar = mainDb;
         sidecar += suffix;
         std::error_code ec;
         const bool there = sidecarIsThere(sidecar, ec);
-        if (!absenceIsCertain(ec) && presenceKnown != nullptr) {
-            *presenceKnown = false;
+        if (!absenceIsCertain(ec)) {
+            if (ec != std::errc::permission_denied) {
+                presence = SidecarPresence::Unknown;
+            } else if (presence == SidecarPresence::Known) {
+                presence = SidecarPresence::Refused;
+            }
         }
         if (there) {
             members.push_back(sidecar);
         }
     }
     return members;
+}
+
+}  // namespace
+
+std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
+{
+    SidecarPresence presence = SidecarPresence::Known;
+    std::vector<fs::path> members = listDbSet(mainDb, presence);
+    if (presenceKnown != nullptr) {
+        *presenceKnown = presence == SidecarPresence::Known;
+    }
+    return members;
+}
+
+bool hasSqliteHeader(const fs::path &file)
+{
+    unsigned char header[sizeof SqliteMagic];
+    return readPrefix(file, header, sizeof header) && std::memcmp(header, SqliteMagic, sizeof SqliteMagic) == 0;
 }
 
 std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
@@ -281,20 +314,30 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         return relativeMainDb + pathToGenericUtf8(member.filename()).substr(pathToGenericUtf8(mainDb.filename()).size());
     };
     std::error_code ec;
-    bool presenceKnown = true;
-    const std::vector<fs::path> declared = dbSetMembers(mainDb, &presenceKnown);
-    if (!presenceKnown) {
+    const std::string membershipUnknown = relativeMainDb + ": could not tell whether its -wal or -journal is there";
+    SidecarPresence declaredPresence = SidecarPresence::Known;
+    const std::vector<fs::path> declared = listDbSet(mainDb, declaredPresence);
+    if (declaredPresence == SidecarPresence::Unknown) {
         // A set whose membership could not be established is not one to
         // capture: the WAL may be there and unseen, and a main file
         // taken alone restores against a WAL whose salts do not match.
         capture.status = DbSetCapture::Status::ReadError;
-        capture.detail = relativeMainDb + ": could not tell whether its -wal or -journal is there";
+        capture.detail = membershipUnknown;
         return capture;
     }
+    // A sidecar that is refused is not captured either, and for the same
+    // reason. But it is the writer, so the attempts below are what it is
+    // owed: each lists the set afresh, and one that is still refused is
+    // an attempt that tore. Returned from here as a read error, the
+    // database was left out of the backup with nothing tried again -- 3
+    // of 400 captures of a set being written, on a machine slowed to a
+    // third of its speed with six other tests running (Windows Round 13,
+    // 2026-11-20).
     for (const fs::path &member : declared) {
         std::error_code sizeEc;
         const std::uint64_t size = member == mainDb ? fs::file_size(member, sizeEc) : sidecarSize(member, sizeEc);
-        if (member != mainDb && sizeEc == std::errc::no_such_file_or_directory) {
+        if (member != mainDb
+            && (sizeEc == std::errc::no_such_file_or_directory || sizeEc == std::errc::permission_denied)) {
             // A sidecar that was listed and is gone is a rollback journal
             // deleted by a commit: the writer the attempts below exist
             // for, not a set that could not be read. It has
@@ -302,6 +345,9 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             // lists the set afresh. Refused here, one capture in twenty
             // of a database being written left it out of the backup
             // with nothing tried (71 of 1500, measured 2026-11-13).
+            //
+            // One that is refused instead is the same journal, deleted
+            // in this gap with somebody else's handle still on it.
             continue;
         }
         if (sizeEc) {
@@ -319,17 +365,31 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         }
     }
 
+    bool sidecarRefused = false;  // the last attempt's listing, for what an unstable set says
     for (int attempt = 0; attempt <= retries; ++attempt) {
         if (attempt > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200 * attempt));
         }
         std::optional<DbSetFingerprint> before = fingerprintDbSet(mainDb);
-        std::vector<fs::path> members = dbSetMembers(mainDb);
+        SidecarPresence presence = SidecarPresence::Known;
+        std::vector<fs::path> members = listDbSet(mainDb, presence);
         capture.entries.clear();
         capture.memberRelativePaths.clear();
         capture.memberMtimes.clear();
         capture.memberSalvagedFromSizes.clear();
         capture.detail.clear();
+        // Established once before the first attempt, so a listing that
+        // is unsure of a sidecar now is a set that moved: the attempt
+        // tore, whatever the stat said.
+        const bool sidecarUnlisted = presence != SidecarPresence::Known;
+        sidecarRefused = presence == SidecarPresence::Refused;
+        if (sidecarUnlisted && !(salvage && attempt == retries)) {
+            // Nothing is read for an attempt that cannot be kept: the
+            // set as listed may lack a WAL that is there. A salvage
+            // run's last attempt reads what it can all the same, and is
+            // kept as what it is.
+            continue;
+        }
         // Each member that went wrong adds its line rather than replacing
         // the one before: a truncated m.db followed by a torn sidecar
         // must still say that m.db is truncated.
@@ -487,6 +547,9 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             std::optional<DbSetFingerprint> afterFp = fingerprintDbSet(mainDb);
             torn = torn || !before || !afterFp || !(*before == *afterFp) || dbSetMembers(mainDb).size() != members.size();
         }
+        // Read with a sidecar out of reach, which only a salvage run's last
+        // attempt does: never a clean capture, whatever the passes say.
+        torn = torn || sidecarUnlisted;
 
         if (!torn && !readError && !refused) {
             capture.status = DbSetCapture::Status::Captured;
@@ -512,6 +575,12 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 capture.detail = relativeMainDb + " could not be read consistently off this stick; what is here is one "
                                                   "attempt and its parts may not agree with each other";
             }
+            if (sidecarUnlisted) {
+                // Said, because a restore removes a sidecar the archive
+                // does not hold: what the -wal had and the main file
+                // did not yet is not in this backup.
+                note("a -wal or -journal beside it was out of reach and is not in this backup");
+            }
             return capture;
         }
         updater.forgetLastEntries(appended);
@@ -525,7 +594,10 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         }
     }
     capture.status = DbSetCapture::Status::Unstable;
-    capture.detail = relativeMainDb + " kept changing while being read";
+    capture.detail = sidecarRefused
+                         ? relativeMainDb + ": its -wal or -journal was out of reach (access denied) when last tried; "
+                                            "another program may be holding it"
+                         : relativeMainDb + " kept changing while being read";
     return capture;
 }
 
