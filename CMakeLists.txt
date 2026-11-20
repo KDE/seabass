@@ -3334,6 +3334,14 @@ if(TARGET seabass_edit)
     target_link_libraries(style_color_scheme_test PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME style_color_scheme_test COMMAND style_color_scheme_test)
 
+    # The useSystemTheme the app starts with: main() and the settings
+    # controller read it through one rule, which keeps a value stored
+    # while the choice was offered off the screen.
+    add_executable(startup_theme_test tests/startup_theme_test.cpp)
+    target_include_directories(startup_theme_test PRIVATE src)
+    target_link_libraries(startup_theme_test PRIVATE Qt6::Core)
+    add_test(NAME startup_theme_test COMMAND startup_theme_test)
+
     add_executable(update_decision_test
         src/gui/update_decision.cpp
         tests/update_decision_test.cpp
