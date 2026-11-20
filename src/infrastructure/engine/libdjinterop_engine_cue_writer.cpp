@@ -206,6 +206,18 @@ void LibdjinteropEngineCueWriter::writeAnnotation(const std::string &trackSource
     }
 }
 
+void LibdjinteropEngineCueWriter::writeRating(const std::string &trackSourceId, std::optional<int> stars)
+{
+    if (stars && (*stars < 1 || *stars > 5)) {
+        throw std::invalid_argument("engine: a rating is 1 to 5 stars or none, got " + std::to_string(*stars));
+    }
+    auto track = database().track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    track->set_rating(stars ? std::optional<int>(*stars * 20) : std::nullopt);
+}
+
 void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
                                                 const std::vector<domain::CuePoint> &cues)
 {

@@ -1256,6 +1256,142 @@ bool PdbRowWriter::setTrackFilePath(uint32_t trackId, const std::string &filenam
     return true;
 }
 
+namespace
+{
+
+// UTF-8 to UTF-16 code units, nullopt for bytes that are not valid UTF-8.
+// Strict, unlike utf16Of() above, which a name of Seabass's own making
+// goes through: a comment is the DJ's text (an overlong form, a surrogate, a truncated sequence): refused rather
+// than guessed at, see docs/write-path-rules.md.
+std::optional<std::u16string> strictUtf16Of(const std::string &utf8)
+{
+    std::u16string out;
+    size_t i = 0;
+    while (i < utf8.size()) {
+        const auto c = static_cast<unsigned char>(utf8[i]);
+        uint32_t cp = 0;
+        size_t extra = 0;
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c & 0xE0) == 0xC0) {
+            cp = c & 0x1F;
+            extra = 1;
+        } else if ((c & 0xF0) == 0xE0) {
+            cp = c & 0x0F;
+            extra = 2;
+        } else if ((c & 0xF8) == 0xF0) {
+            cp = c & 0x07;
+            extra = 3;
+        } else {
+            return std::nullopt;
+        }
+        if (i + extra >= utf8.size() && extra > 0) {
+            return std::nullopt;  // a sequence cut short by the end
+        }
+        for (size_t k = 1; k <= extra; ++k) {
+            const auto next = static_cast<unsigned char>(utf8[i + k]);
+            if ((next & 0xC0) != 0x80) {
+                return std::nullopt;
+            }
+            cp = (cp << 6) | (next & 0x3F);
+        }
+        const uint32_t minimum[] = {0, 0x80, 0x800, 0x10000};
+        if (cp < minimum[extra] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            return std::nullopt;
+        }
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+        } else {
+            out.push_back(static_cast<char16_t>(cp));
+        }
+        i += extra + 1;
+    }
+    return out;
+}
+
+}  // namespace
+
+std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::trackCommentCapacity(uint32_t trackId) const
+{
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return std::nullopt;
+    }
+    const size_t header = found->rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
+    const size_t absOffset = trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexComment);
+    if (absOffset < header || !stringStaysInRowPage(m_buffer, found->rowBodyOffset, absOffset)) {
+        return std::nullopt;
+    }
+    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, absOffset);
+    return TrackCommentCapacity{span.isUtf16 ? span.textCapacityBytes / 2 : span.textCapacityBytes, span.isUtf16};
+}
+
+std::string PdbRowWriter::trackCommentRefusal(const std::string &comment, const TrackCommentCapacity &capacity)
+{
+    const auto units = strictUtf16Of(comment);
+    if (!units) {
+        return "the comment is not valid UTF-8 text";
+    }
+    if (!capacity.utf16 && !isPlainAscii(comment)) {
+        return "export.pdb stores this track's comment as plain ASCII, so it cannot hold accented letters or "
+               "other characters outside ASCII";
+    }
+    const size_t length = capacity.utf16 ? units->size() : comment.size();
+    if (length > capacity.units) {
+        return "export.pdb has room for " + std::to_string(capacity.units) + " characters in this track's comment, "
+               + "and the comment is " + std::to_string(length);
+    }
+    return {};
+}
+
+bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment, std::string *refusal)
+{
+    const auto refuse = [&](const std::string &why) {
+        if (refusal != nullptr) {
+            *refusal = why;
+        }
+        return false;
+    };
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return false;
+    }
+    const auto capacity = trackCommentCapacity(trackId);
+    if (!capacity) {
+        return refuse("this track's comment field in export.pdb cannot be written in place");
+    }
+    if (const std::string why = trackCommentRefusal(comment, *capacity); !why.empty()) {
+        return refuse(why);
+    }
+    const size_t absOffset = trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexComment);
+    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, absOffset);
+    const size_t text = absOffset + (span.totalBytes - span.textCapacityBytes);
+    if (capacity->utf16) {
+        std::u16string units = *strictUtf16Of(comment);
+        units.resize(capacity->units, u' ');
+        for (size_t i = 0; i < units.size(); ++i) {
+            m_buffer.at(text + i * 2) = static_cast<char>(units[i] & 0xFF);
+            m_buffer.at(text + i * 2 + 1) = static_cast<char>(units[i] >> 8);
+        }
+    } else {
+        std::string bytes = comment;
+        bytes.resize(capacity->units, ' ');
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            m_buffer.at(text + i) = bytes[i];
+        }
+    }
+    m_editedPageIndices.insert(found->pageIndex);
+    return true;
+}
+
 bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTextOverride &text)
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {

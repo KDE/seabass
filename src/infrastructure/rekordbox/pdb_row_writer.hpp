@@ -166,6 +166,38 @@ public:
     bool setTrackFilePath(uint32_t trackId, const std::string &filename, const std::string &filePath,
                           std::string *refusal);
 
+    // How long a comment the row can hold (#105), in the unit its field
+    // counts: the comment string keeps the span the exported value takes,
+    // since a row cannot grow here, so this is that span. An ASCII field
+    // (device_sql_short_ascii or _long_ascii) holds `units` plain ASCII
+    // characters and nothing else; a UTF-16 one (_long_utf16le) holds
+    // `units` UTF-16 code units, one per character but two for a character
+    // outside the Basic Multilingual Plane (most emoji). nullopt when there
+    // is no such row, or its comment slot cannot be written (unused, or
+    // its string leaves the page).
+    struct TrackCommentCapacity
+    {
+        size_t units = 0;
+        bool utf16 = false;
+    };
+    std::optional<TrackCommentCapacity> trackCommentCapacity(uint32_t trackId) const;
+
+    // Why `comment` (UTF-8) cannot go into a field of `capacity`, or empty
+    // when it can: not valid UTF-8, a character an ASCII field cannot
+    // hold, or longer than the field. The one rule setTrackComment()
+    // writes by, for a caller that asks first.
+    static std::string trackCommentRefusal(const std::string &comment, const TrackCommentCapacity &capacity);
+
+    // The DJ's comment on a track row, written into the span the exported
+    // comment takes (#105): encoded as that field encodes (ASCII bytes, or
+    // UTF-16LE code units), right-padded with spaces to fill the span, its
+    // header untouched, so the row keeps its size. The readers trim the
+    // padding, as they do for every padded string. Refused, with *refusal
+    // saying why and nothing written, by trackCommentRefusal()'s rule:
+    // never cut short and never transliterated. Returns false, and no
+    // refusal, when no track with this id exists. `refusal` is required.
+    bool setTrackComment(uint32_t trackId, const std::string &comment, std::string *refusal);
+
     // The track row's other free-text slots. Kept apart from
     // TrackTextOverride because those four are the ones a caller
     // normally wants to set, while these exist only to be emptied --
