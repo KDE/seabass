@@ -32,11 +32,12 @@ QString AppSettingsController::defaultStickBackupDirectory()
 AppSettingsController::AppSettingsController(QObject *parent)
     : QObject(parent), m_settings(openSeabassSettings())
 {
-    // Read but not applied: "Match System Theme" is hidden from the
-    // preferences until it works, and someone who switched it on before
-    // gets the app's own palette like everyone else. The stored value is
-    // left in place for the day the setting comes back.
-    m_useSystemTheme = false;
+    // Not applied while "Match System Theme" is hidden from the
+    // preferences: someone who switched it on before gets the app's own
+    // palette like everyone else. The stored value is left in place for
+    // the day the setting comes back. The same rule main() applies to the
+    // style before any QML loads (gui/seabass_settings.hpp).
+    m_useSystemTheme = startupUseSystemTheme(m_settings);
     m_preferredFormat = m_settings.value("preferredFormat", "rekordbox").toString();
     m_hideStreamingTracks = m_settings.value("hideStreamingTracks", false).toBool();
     m_showPlayCount = m_settings.value("showPlayCount", false).toBool();

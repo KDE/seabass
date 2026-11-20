@@ -35,8 +35,10 @@ namespace
 // tree, so that inheritance chain doesn't reach them). Setting the style
 // globally here, before QGuiApplication exists, is what actually makes
 // every Material-styled surface in the app -- not just the ones directly
-// under the window -- consistently follow either "Kelp" (this app's own
-// always-dark palette) or the system's own light/dark choice.
+// under the window -- consistently follow "Kelp" (this app's own
+// always-dark palette). "System" is only exported when
+// startupUseSystemTheme() says the system theme is in force, which it
+// never does while that choice is hidden from Preferences.
 //
 // Deliberately only sets THEME + ACCENT/PRIMARY, not BACKGROUND/
 // FOREGROUND -- overriding those too caused widespread dark-on-dark and
@@ -52,28 +54,21 @@ namespace
 //
 // Must run before the QGuiApplication is constructed -- Qt Quick
 // Controls reads these at first use, effectively at process startup.
-// Returns the useSystemTheme setting it read, so main() can reuse it
-// without opening QSettings a second time.
+// Returns the useSystemTheme it decided, so main() can reuse it without
+// opening QSettings a second time.
 bool exportMaterialPalette()
 {
-    // Same store AppSettingsController's own QSettings resolves to, and
-    // constructed the same way ("seabass", "seabass") instead of as a
-    // literal path: the two-argument constructor takes the organization
-    // and application names directly, so it does NOT depend on
-    // organizationName/applicationName having been set up by the time
-    // this runs (they haven't -- this executes before QGuiApplication
-    // exists at all), which was the original reason for hardcoding a
-    // path here.
-    //
-    // The hardcoded "~/.config/seabass/seabass.conf" it replaces was
-    // correct on Linux but wrong on Windows, where QSettings' native
-    // format is the registry (HKCU\Software\seabass\seabass), not an INI
-    // file under $HOME. That file therefore never existed on Windows, so
-    // this read always fell through to the default, pinning
-    // useSystemTheme to false forever and making the Settings toggle a
-    // no-op for everything driven from here.
+    // Same store AppSettingsController's own QSettings resolves to
+    // (openSeabassSettings(), which needs no organization or application
+    // name, so it works before QGuiApplication exists), and the same rule
+    // for what it holds: startupUseSystemTheme(). "Match System Theme" is
+    // not offered, so a value stored when it was is not applied here
+    // either. Reading the stored value directly, as this once did while
+    // the controller ignored it, handed a profile that still held true
+    // the desktop's colour scheme in KDE's style under Theme's Kelp: on a
+    // light desktop, a light window with Kelp's near-white titles on it.
     QSettings settings = seabass::gui::openSeabassSettings();
-    const bool useSystemTheme = settings.value("useSystemTheme", false).toBool();
+    const bool useSystemTheme = seabass::gui::startupUseSystemTheme(settings);
 
     // "Current"/"Abyss" -- this app's own brand colors (see Theme.qml),
     // applied regardless of theme, same as the QML-level Material.accent/
@@ -109,13 +104,11 @@ bool exportMaterialPalette()
     //
     // macOS's native "macOS" style refuses the background/contentItem
     // overrides this app's controls are built on (it logs "does not
-    // support customization" for each and draws its own). Material takes
-    // them and honours the palette exported above; Fusion was tried and
-    // drew light pages from the system palette around the app's dark
-    // cards. Material is also what tests/qml's screenshot mode renders.
-    // Moved to gui/controls_style.hpp so the QML harness can make the
-    // same choice: a suite running under a style the app replaces before
-    // it draws anything is testing a different program.
+    // support customization" for each and draws its own), so macOS runs
+    // the app's own SeabassStyle. The choice lives in
+    // gui/controls_style.hpp so the QML harness can make the same one: a
+    // suite running under a style the app replaces before it draws
+    // anything is testing a different program.
     seabass::gui::applyDefaultControlsStyle();
 
     return useSystemTheme;
@@ -184,26 +177,25 @@ int main(int argc, char **argv)
 
     // FluentWinUI3 (opted into above) draws native Windows 11 controls and
     // deliberately ignores the Material attached properties, so Main.qml's
-    // `Material.theme: ... : Material.Dark` -- the binding that gives the
-    // Linux build its always-dark "Kelp" look -- has no effect on any of
+    // `Material.theme: ... : Material.Dark` has no effect on any of
     // them. Left alone, FluentWinUI3 simply follows the Windows system
     // colour scheme, so on a light-mode machine the entire app renders
     // light no matter what this app asked for.
     //
     // Qt 6.8+ exposes the colour scheme as a settable style hint, which is
     // what makes a native-looking style honour the app's own preference
-    // rather than the OS setting: Dark while Kelp is in force, Unknown
-    // ("follow the system") under Match System Theme. Not only here:
-    // AppSettingsController makes the same call when Preferences flips the
-    // setting, so the controls change with Theme rather than at the next
-    // start. Windows only; see gui/style_color_scheme.hpp.
+    // rather than the OS setting: Dark while Kelp is in force, which is
+    // always while Match System Theme is hidden (Unknown, "follow the
+    // system", only under it). AppSettingsController makes the same call
+    // if the setting is flipped while the app runs. Windows only; see
+    // gui/style_color_scheme.hpp.
     seabass::gui::applyStyleColorScheme(useSystemTheme);
 
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
     // The Linux counterpart of the colour-scheme hint above: KDE's style
-    // takes an unstyled Label's ink from the desktop's colour scheme, not
-    // from Theme, so on a light scheme page titles and overlay headings
-    // were near-black on Kelp's near-black. See gui/app_color_scheme.hpp.
+    // takes its grounds and an unstyled Label's ink from the colour scheme
+    // it is handed, not from Theme, so this hands it Kelp whenever Theme
+    // is Kelp. See gui/app_color_scheme.hpp.
     seabass::gui::applyAppColorScheme(
         useSystemTheme,
         QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/seabass"));

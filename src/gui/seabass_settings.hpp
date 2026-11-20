@@ -42,4 +42,20 @@ inline QSettings openSeabassSettings(QObject *parent = nullptr)
                       QStringLiteral("seabass"), parent);
 }
 
+// Whether "Match System Theme" is offered in Preferences. It is not:
+// the Material palette it switches to does not carry the app's own
+// colours through (AppSettingsPage.qml hides the choice).
+inline constexpr bool SystemThemeOffered = false;
+
+// The useSystemTheme the app starts with, from the settings store: the
+// one rule both main() (the controls style, KDE's colour scheme and the
+// Windows colour scheme hint, all fixed before any QML loads) and
+// AppSettingsController (Theme and Material.theme) read, so the two
+// cannot disagree. While the choice is not offered, a value stored when
+// it was is left in the store but not applied: everyone gets Kelp.
+inline bool startupUseSystemTheme(const QSettings &settings)
+{
+    return SystemThemeOffered && settings.value(QStringLiteral("useSystemTheme"), false).toBool();
+}
+
 }  // namespace seabass::gui
