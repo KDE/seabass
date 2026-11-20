@@ -395,9 +395,13 @@ public:
     Q_INVOKABLE QVariantMap engineAnalysis(const QString &rekordboxId) const;
     // As rowBeatTicks(), for Engine's grid of that track.
     Q_INVOKABLE QVariantList engineBeatTicks(const QString &rekordboxId, double widthPx) const;
-    // rekordbox's grid in the same figures: {ready, hasGrid, bpm,
-    // firstDownbeatMs}.
+    // rekordbox's grid in the same figures, on Engine's timeline (see
+    // engineAnalysis()'s rekordboxShiftMs): {ready, hasGrid, bpm,
+    // firstDownbeatMs, shiftMs}. Not ready until both sides are read.
     Q_INVOKABLE QVariantMap rowGridFacts(const QString &rekordboxId) const;
+    // rekordbox's grid as the comparison draws it: rowBeatTicks() moved
+    // onto Engine's timeline.
+    Q_INVOKABLE QVariantList comparisonBeatTicks(const QString &rekordboxId, double widthPx) const;
 
     // The track as WaveformZoomPopup.openFor() takes it: {format,
     // libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
@@ -485,6 +489,11 @@ private:
     struct EngineAnalysis
     {
         bool hasEngineTrack = false;
+        // What to add to rekordbox's beat times (and its waveform) to put
+        // them on Engine's timeline, where the player hears them: an MP3's
+        // lead-in, 0 for anything else (playbackShiftFor(), #50). The two
+        // are compared and drawn on that one timeline.
+        double rekordboxShiftMs = 0.0;
         QByteArray columns;
         std::vector<domain::Beat> beats;
         bool beatRateRecorded = true;

@@ -29,6 +29,10 @@
 #include "gui/stick_path.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/audio/playback_timeline.hpp"
+#include "domain/matching_policy.hpp"
+#include "domain/mp3_lead_in.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/local/analysis_file_facts.hpp"
@@ -906,15 +910,22 @@ void BeatGridsController::pumpEngineReads()
         ? m_library->plan.items[static_cast<std::size_t>(track->item)].engineTrackId
         : std::string();
     const std::uint64_t generation = m_rowGeneration;
+    // The preference is read here, on the GUI thread; the file there.
+    const bool correctMp3 = domain::MatchingPolicy::correctMp3CueTiming();
     using Request = AsyncRequest<std::shared_ptr<EngineAnalysis>>;
     // Only the overview Engine draws across the whole track (no detail):
     // all a 2.x or 3.x library keeps, and what the player shows.
-    Request::Work work = [enginePath = m_library->enginePath.toStdString(),
-                          engineTrackId](application::CancellationToken cancel) {
+    Request::Work work = [enginePath = m_library->enginePath.toStdString(), engineTrackId,
+                          filePath = track->filePath, correctMp3](application::CancellationToken cancel) {
         auto out = std::make_shared<EngineAnalysis>();
         out->hasEngineTrack = !engineTrackId.empty() && !enginePath.empty();
         if (!out->hasEngineTrack || cancel.cancelled()) {
             return out;
+        }
+        if (correctMp3 && domain::hasMp3Extension(filePath)) {
+            out->rekordboxShiftMs = infrastructure::audio::playbackShiftFor(
+                infrastructure::audio::readMp3LeadIn(filePath), true,
+                infrastructure::audio::GridTimeline::Rekordbox).beatsMs;
         }
         domain::TrackAnalysis analysis = infrastructure::engine::readTrackAnalysis(enginePath, engineTrackId);
         out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
@@ -959,7 +970,34 @@ QVariantMap BeatGridsController::engineAnalysis(const QString &rekordboxId) cons
     out.insert(QStringLiteral("columns"), kept->columns);
     out.insert(QStringLiteral("durationMs"), track->durationMs);
     out.insert(QStringLiteral("rateRecorded"), kept->beatRateRecorded);
+    out.insert(QStringLiteral("rekordboxShiftMs"), kept->rekordboxShiftMs);
     return out;
+}
+
+namespace
+{
+
+std::vector<domain::Beat> shiftedBeats(const std::vector<domain::Beat> &beats, double byMs)
+{
+    std::vector<domain::Beat> out = beats;
+    for (domain::Beat &beat : out) {
+        beat.timeMs += byMs;
+    }
+    return out;
+}
+
+}  // namespace
+
+QVariantList BeatGridsController::comparisonBeatTicks(const QString &rekordboxId, double widthPx) const
+{
+    const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId);
+    const EngineAnalysis *engine = m_engineAnalyses.object(rekordboxId);
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (kept == nullptr || engine == nullptr || track == nullptr) {
+        return {};
+    }
+    return beatTicksForDisplay(shiftedBeats(kept->beats, engine->rekordboxShiftMs), kept->beatRateRecorded,
+                               track->durationMs, widthPx);
 }
 
 QVariantList BeatGridsController::engineBeatTicks(const QString &rekordboxId, double widthPx) const
@@ -975,11 +1013,13 @@ QVariantList BeatGridsController::engineBeatTicks(const QString &rekordboxId, do
 QVariantMap BeatGridsController::rowGridFacts(const QString &rekordboxId) const
 {
     const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId);
-    if (kept == nullptr) {
+    const EngineAnalysis *engine = m_engineAnalyses.object(rekordboxId);
+    if (kept == nullptr || engine == nullptr) {
         return {{QStringLiteral("ready"), false}};
     }
-    QVariantMap out = gridFacts(kept->beats);
+    QVariantMap out = gridFacts(shiftedBeats(kept->beats, engine->rekordboxShiftMs));
     out.insert(QStringLiteral("ready"), true);
+    out.insert(QStringLiteral("shiftMs"), engine->rekordboxShiftMs);
     return out;
 }
 

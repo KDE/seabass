@@ -108,14 +108,14 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
     if (!row) {
         // Not a damaged blob: the row could not be read at all (the
         // database locked or being journalled by a write, a moment ago).
-        // Once more, then as before the check: libdjinterop reads it
-        // unchecked. A blob that does not decode is only ever found by
-        // reading it; a row that cannot be read here is one libdjinterop
-        // will most likely fail to open as well, which it reports by
-        // throwing, and that is caught.
+        // Once more; then nothing is handed over. That is exactly when a
+        // blob may be half written, and a decoder that reads past it or
+        // loops on it hangs whoever called (the player's load() runs on
+        // the GUI thread). The track shows no waveform or grid for now,
+        // and every view reads it again once the write is over.
         row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
         if (!row) {
-            return {};
+            return {false, false, false};
         }
     }
     const auto ok = [](const application::EngineSqlValue &value) {

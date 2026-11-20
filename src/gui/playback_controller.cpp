@@ -318,13 +318,20 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             m_drawnBeats.push_back({beat.timeMs + shift.beatsMs, beat.beatInBar});
         }
         m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
-        player()->setSource(QUrl::fromLocalFile(filePath));
+        const QUrl source = QUrl::fromLocalFile(filePath);
+        const bool sameFile = player()->source() == source;
+        player()->setSource(source);
         // The same file again: setSource() changes nothing and no length
-        // is reported again; the one it has is this track's.
+        // is reported again; the one it has is this track's. Only then:
+        // for another file the status read here can still be the old
+        // one's (stop() left it LoadedMedia, and a backend that loads
+        // asynchronously has not moved it to LoadingMedia yet), and the
+        // length with it.
         const auto status = m_player->mediaStatus();
-        if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia
-            || status == QMediaPlayer::BufferingMedia || status == QMediaPlayer::EndOfMedia
-            || status == QMediaPlayer::InvalidMedia) {
+        if (sameFile
+            && (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia
+                || status == QMediaPlayer::BufferingMedia || status == QMediaPlayer::EndOfMedia
+                || status == QMediaPlayer::InvalidMedia)) {
             markDurationKnown();
         }
         if (startPlaying) {
