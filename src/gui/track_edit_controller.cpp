@@ -19,15 +19,17 @@ namespace seabass::gui
 namespace
 {
 
-QVariantMap limitMap(const QString &filePath, const std::optional<CommentLimit> &limit)
+QVariantMap infoMap(const QString &filePath, const TrackLookup *lookup)
 {
     QVariantMap map;
     map.insert(QStringLiteral("filePath"), filePath);
-    map.insert(QStringLiteral("known"), limit.has_value());
-    map.insert(QStringLiteral("limited"), limit && limit->limited);
-    map.insert(QStringLiteral("units"), limit ? static_cast<int>(limit->units) : 0);
-    map.insert(QStringLiteral("asciiOnly"), limit && limit->asciiOnly);
-    map.insert(QStringLiteral("reason"), limit ? QString::fromStdString(limit->reason) : QString());
+    map.insert(QStringLiteral("known"), lookup != nullptr);
+    map.insert(QStringLiteral("editable"), lookup != nullptr && lookup->error.empty());
+    map.insert(QStringLiteral("refusal"), lookup ? QString::fromStdString(lookup->error) : QString());
+    map.insert(QStringLiteral("limited"), lookup && lookup->limit.limited);
+    map.insert(QStringLiteral("units"), lookup ? static_cast<int>(lookup->limit.units) : 0);
+    map.insert(QStringLiteral("asciiOnly"), lookup && lookup->limit.asciiOnly);
+    map.insert(QStringLiteral("reason"), lookup ? QString::fromStdString(lookup->limit.reason) : QString());
     return map;
 }
 
@@ -35,33 +37,33 @@ QVariantMap limitMap(const QString &filePath, const std::optional<CommentLimit> 
 
 TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
 {
-    m_commentLimit = limitMap({}, std::nullopt);
-    connect(&m_limitWatcher, &QFutureWatcher<CommentLimit>::finished, this, [this]() {
-        const QString path = m_runningLookup;
+    m_commentLimit = infoMap({}, nullptr);
+    connect(&m_lookupWatcher, &QFutureWatcher<TrackLookup>::finished, this, [this]() {
         QString error;
-        CommentLimit limit = takeResult(m_limitWatcher, &error);
+        TrackLookup lookup = takeResult(m_lookupWatcher, &error);
         if (!error.isEmpty()) {
-            // Not known is not "no limit": nothing longer than is there.
-            limit.limited = true;
-            limit.units = 0;
-            limit.reason = "The comment's room in export.pdb could not be read: " + error.toStdString();
+            lookup.error = "the stick's catalogs could not be read: " + error.toStdString();
         }
-        m_runningLookup.clear();
+        const QString file = QString::fromStdString(lookup.filePath);
+        if (!file.isEmpty()) {
+            m_lookups[file] = std::move(lookup);
+        }
         if (m_nextLookup) {
-            const auto [rekordboxPath, filePath] = *m_nextLookup;
+            const Ask next = *m_nextLookup;
             m_nextLookup.reset();
-            lookUpCommentLimit(rekordboxPath, filePath);
+            lookUpTrack(next.rekordboxPath, next.enginePath, next.filePath);
             return;
         }
-        m_limit = std::make_pair(path.toStdString(), limit);
-        m_commentLimit = limitMap(path, limit);
-        emit commentLimitChanged();
+        if (file == m_shownFile) {
+            m_commentLimit = trackInfo(file);
+            emit commentLimitChanged();
+        }
     });
 }
 
 TrackEditController::~TrackEditController()
 {
-    awaitQuietly(m_limitWatcher);
+    awaitQuietly(m_lookupWatcher);
 }
 
 QString TrackEditController::cleanComment(const QString &text)
@@ -71,62 +73,85 @@ QString TrackEditController::cleanComment(const QString &text)
     return cleaned.trimmed();
 }
 
-void TrackEditController::lookUpCommentLimit(const QString &rekordboxPath, const QString &filePath)
+const TrackLookup *TrackEditController::lookupFor(const QString &filePath) const
 {
-    if (m_limitWatcher.isRunning()) {
-        m_nextLookup = std::make_pair(rekordboxPath, filePath);
-        return;
-    }
-    m_limitRekordboxPath = rekordboxPath;
-    m_runningLookup = filePath;
-    if (m_commentLimit.value(QStringLiteral("filePath")).toString() != filePath
-        || m_commentLimit.value(QStringLiteral("known")).toBool()) {
-        m_commentLimit = limitMap(filePath, std::nullopt);
-        emit commentLimitChanged();
-    }
-    const std::string file = filePath.toStdString();
-    m_limitWatcher.setFuture(QtConcurrent::run([rekordboxPath, file]() { return commentLimitFor(rekordboxPath, file); }));
+    const auto it = m_lookups.find(filePath);
+    return it == m_lookups.end() ? nullptr : &it->second;
 }
 
-bool TrackEditController::attachSession(const QString &rekordboxPath, const QString &enginePath)
+QVariantMap TrackEditController::trackInfo(const QString &filePath) const
+{
+    return infoMap(filePath, lookupFor(filePath));
+}
+
+void TrackEditController::lookUpTrack(const QString &rekordboxPath, const QString &enginePath, const QString &filePath)
+{
+    // The session is watched from the first track shown, so an edit left
+    // open in a field is staged before any save of this stick.
+    attachSession(rekordboxPath, enginePath, false);
+    m_shownFile = filePath;
+    m_commentLimit = trackInfo(filePath);
+    emit commentLimitChanged();
+    if (m_lookupWatcher.isRunning()) {
+        m_nextLookup = Ask{rekordboxPath, enginePath, filePath};
+        return;
+    }
+    const std::string file = filePath.toStdString();
+    m_lookupWatcher.setFuture(QtConcurrent::run(
+        [rekordboxPath, enginePath, file]() { return seabass::gui::lookUpTrack(rekordboxPath, enginePath, file); }));
+}
+
+bool TrackEditController::attachSession(const QString &rekordboxPath, const QString &enginePath, bool reportMissing)
 {
     auto *registry = EditSessionRegistry::instance();
-    LibraryEditSession *session =
-        registry->sessionFor(registry->libraryIdForPath(rekordboxPath.isEmpty() ? enginePath : rekordboxPath));
+    const QString any = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;
+    LibraryEditSession *session = any.isEmpty() ? nullptr : registry->sessionFor(registry->libraryIdForPath(any));
     if (session != m_session) {
         if (m_session) {
             disconnect(m_session, nullptr, this, nullptr);
         }
         m_session = session;
         if (m_session) {
+            connect(m_session, &LibraryEditSession::aboutToSave, this, &TrackEditController::saveStarting);
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 const auto it = m_staged.find(changeId);
-                if (it != m_staged.end()) {
-                    const TrackFieldValue value = it->second;
-                    const QString file = m_files[changeId];
-                    m_staged.erase(it);
-                    m_files.erase(changeId);
+                if (it == m_staged.end()) {
+                    return;
+                }
+                const TrackFieldValue value = it->second;
+                const QString file = m_files[changeId];
+                m_staged.erase(it);
+                m_files.erase(changeId);
+                // Off the list either way; shown as saved only when written.
+                if (!m_session->lastSkippedIds().contains(changeId)) {
                     emit fieldSaved(file,
-                                    value.field == TrackField::Rating ? QStringLiteral("rating") : QStringLiteral("comment"),
+                                    value.field == TrackField::Rating ? QStringLiteral("rating")
+                                                                      : QStringLiteral("comment"),
                                     value.rating.value_or(-1), QString::fromStdString(value.text));
                     ++m_applied;
-                    ++m_pendingRevision;
-                    emit pendingChanged();
                 }
+                ++m_pendingRevision;
+                emit pendingChanged();
             });
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &) {
                 const bool wrote = m_applied > 0;
                 m_applied = 0;
                 if (wrote) {
+                    // The catalogs changed: what was looked up is stale.
+                    m_lookups.clear();
                     emit tracksSaved();
                 }
             });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() { forgetAll(); });
             // A change taken back elsewhere (the session's own unstage).
             connect(m_session, &LibraryEditSession::pendingChanged, this, [this]() {
+                if (m_session->writing()) {
+                    return;
+                }
                 bool dropped = false;
                 for (auto it = m_staged.begin(); it != m_staged.end();) {
-                    if (!m_session->hasChange(it->first) && !m_session->writing()) {
+                    if (!m_session->hasChange(it->first)) {
+                        m_files.erase(it->first);
                         it = m_staged.erase(it);
                         dropped = true;
                     } else {
@@ -141,11 +166,13 @@ bool TrackEditController::attachSession(const QString &rekordboxPath, const QStr
         }
     }
     if (!m_session) {
-        setErrorMessage(QStringLiteral("This stick has no edit session open."));
+        if (reportMissing) {
+            setErrorMessage(QStringLiteral("This stick has no edit session open."));
+        }
         return false;
     }
     m_session->setLibraryPaths(rekordboxPath, enginePath);
-    if (m_session->writing()) {
+    if (reportMissing && m_session->writing()) {
         setErrorMessage(QStringLiteral("A save is writing to the stick. Try again when it has finished."));
         return false;
     }
@@ -171,11 +198,11 @@ void TrackEditController::setErrorMessage(const QString &message)
 }
 
 bool TrackEditController::stage(const QString &rekordboxPath, const QString &enginePath, const QString &filePath,
-                                const QString &title, TrackFieldValue value)
+                                const QString &title, TrackFieldValue value, const TrackRows &rows)
 {
     const QString id = trackFieldChangeId(value.field, filePath.toStdString());
     auto change = std::make_unique<TrackFieldEditChange>(rekordboxPath, enginePath, filePath.toStdString(),
-                                                         title.toStdString(), value);
+                                                         title.toStdString(), value, rows);
     if (!m_session->stage(std::move(change))) {
         // Refused (another instance holds the stick, or another page is
         // editing it): the session says so itself.
@@ -206,12 +233,18 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
                                     const QString &title, int original, int stars)
 {
     setErrorMessage({});
-    if (filePath.isEmpty()) {
-        setErrorMessage(QStringLiteral("This track has no file on the stick, so its rating cannot be changed here."));
-        return false;
-    }
     if (stars != -1 && (stars < 1 || stars > 5)) {
         setErrorMessage(QStringLiteral("A rating is 1 to 5 stars."));
+        return false;
+    }
+    const TrackLookup *lookup = lookupFor(filePath);
+    if (lookup == nullptr) {
+        setErrorMessage(QStringLiteral("Seabass is still reading where the stick keeps this track. Try again in a "
+                                       "moment."));
+        return false;
+    }
+    if (!lookup->error.empty()) {
+        setErrorMessage(QStringLiteral("This rating cannot be changed: %1.").arg(QString::fromStdString(lookup->error)));
         return false;
     }
     // No catalog tells "no stars" from 0, so they are one value here too.
@@ -220,11 +253,12 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
         unstage(TrackField::Rating, filePath);
         return true;
     }
-    if (!attachSession(rekordboxPath, enginePath)) {
+    if (!attachSession(rekordboxPath, enginePath, true)) {
         return false;
     }
     return stage(rekordboxPath, enginePath, filePath, title,
-                 TrackFieldValue{TrackField::Rating, stars == -1 ? std::nullopt : std::optional<int>(stars), {}});
+                 TrackFieldValue{TrackField::Rating, stars == -1 ? std::nullopt : std::optional<int>(stars), {}},
+                 lookup->rows);
 }
 
 bool TrackEditController::setComment(const QString &rekordboxPath, const QString &enginePath,
@@ -232,29 +266,32 @@ bool TrackEditController::setComment(const QString &rekordboxPath, const QString
                                      const QString &text)
 {
     setErrorMessage({});
-    if (filePath.isEmpty()) {
-        setErrorMessage(QStringLiteral("This track has no file on the stick, so its comment cannot be changed here."));
-        return false;
-    }
     const QString comment = cleanComment(text);
     if (comment == original) {
         unstage(TrackField::Comment, filePath);
         return true;
     }
-    // The field is held to the limit as it is typed; this is the check
-    // behind it, with the limit read again when it is not this file's.
-    const std::string file = filePath.toStdString();
-    const CommentLimit limit =
-        m_limit && m_limit->first == file ? m_limit->second : commentLimitFor(rekordboxPath, file);
-    if (const std::string why = commentLimitRefusal(comment.toStdString(), limit); !why.empty()) {
+    // Never a read here: the lookup made when the track was shown is what
+    // the edit is checked against and staged with.
+    const TrackLookup *lookup = lookupFor(filePath);
+    if (lookup == nullptr) {
+        setErrorMessage(QStringLiteral("Seabass is still reading where the stick keeps this track. Try again in a "
+                                       "moment."));
+        return false;
+    }
+    if (!lookup->error.empty()) {
+        setErrorMessage(QStringLiteral("This comment cannot be changed: %1.").arg(QString::fromStdString(lookup->error)));
+        return false;
+    }
+    if (const std::string why = commentLimitRefusal(comment.toStdString(), lookup->limit); !why.empty()) {
         setErrorMessage(QStringLiteral("This comment cannot be saved: %1.").arg(QString::fromStdString(why)));
         return false;
     }
-    if (!attachSession(rekordboxPath, enginePath)) {
+    if (!attachSession(rekordboxPath, enginePath, true)) {
         return false;
     }
     return stage(rekordboxPath, enginePath, filePath, title,
-                 TrackFieldValue{TrackField::Comment, std::nullopt, comment.toStdString()});
+                 TrackFieldValue{TrackField::Comment, std::nullopt, comment.toStdString()}, lookup->rows);
 }
 
 bool TrackEditController::hasStagedRating(const QString &filePath) const

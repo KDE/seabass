@@ -20,7 +20,8 @@ import SeabassGui
 TestCase {
     id: testCase
     name: "TrackEditing"
-    width: 520
+    // Room for the whole page (the page tests put Browse here).
+    width: 1100
     height: 900
     visible: true
     when: windowShown
@@ -49,6 +50,12 @@ TestCase {
         id: scanComponent
         ScanController {}
     }
+    PlaybackController { id: realPlayback }
+    AppSettingsController { id: realAppSettings }
+    Component {
+        id: pageComponent
+        ScanPage {}
+    }
     // Puts text on the clipboard, for a paste.
     TextField {
         id: clipboardSource
@@ -59,8 +66,10 @@ TestCase {
         failOnWarning(/TypeError/);
         failOnWarning(/ReferenceError/);
     }
+    property string lastPlaylistBefore: ""
     function cleanup() {
         EditSessionRegistry.discardAll();
+        realPlayback.stop();
     }
 
     // A fresh stick, its rekordbox tracks read, and a pane over it.
@@ -134,6 +143,19 @@ TestCase {
         field.paste();
     }
 
+    // Keyboard edits: what a user does, so the field's own edit handling
+    // runs (a programmatic remove() would bypass it).
+    function deleteFromStart(field, count) {
+        field.cursorPosition = 0;
+        for (let i = 0; i < count; ++i) {
+            keyClick(Qt.Key_Delete);
+        }
+    }
+    function clearField(field) {
+        field.selectAll();
+        keyClick(Qt.Key_Delete);
+    }
+
     function beginEditing(env) {
         const editor = findChild(env.panel, "trackCommentEditor");
         const button = findChild(editor, "commentEditButton");
@@ -185,7 +207,8 @@ TestCase {
         const track = roomiest(env, true);
         const editor = findChild(env.panel, "trackCommentEditor");
         const button = findChild(editor, "commentEditButton");
-        compare(button.opacity, 0, "the edit button is hidden until hovered");
+        mouseMove(env.panel, 2, 2);
+        tryCompare(button, "opacity", 0, 2000, "the edit button is hidden until hovered");
         mouseMove(editor, 10, editor.height / 2);
         tryCompare(button, "opacity", 1, 2000);
         shot(env.panel, "rating-comment-hovered");
@@ -226,8 +249,7 @@ TestCase {
         // The original text again takes the change back.
         field = beginEditing(env);
         field.selectAll();
-        field.remove(0, field.text.length);
-        field.insert(0, track.comment);
+        paste(field, track.comment);
         keyClick(Qt.Key_Return);
         verify(!env.controller.hasStagedComment(track.filePath), "the original value unstages");
     }
@@ -257,13 +279,13 @@ TestCase {
         paste(field, "XYZ");
         compare(field.text, "a".repeat(units));
         // With room for three, three of five.
-        field.remove(0, 3);
+        deleteFromStart(field, 3);
         field.cursorPosition = 0;
         paste(field, "VWXYZ");
         compare(field.text, "VWX" + "a".repeat(units - 3), "a paste is cut where it stops fitting");
         // Non-ASCII: not taken by an ASCII field, typed or pasted; a paste
         // keeps what comes before it.
-        field.remove(0, field.text.length);
+        clearField(field);
         paste(field, "Café au lait");
         compare(field.text, "Caf", "cut at the first character the field cannot hold");
         keyClick(Qt.Key_Return);
@@ -290,11 +312,11 @@ TestCase {
         compare(field.text, "é".repeat(units), "accented letters fit a UTF-16 field, one unit each");
         // An emoji is two units: with one unit left it does not fit, and
         // is not cut in half.
-        field.remove(0, 1);
+        deleteFromStart(field, 1);
         field.cursorPosition = field.text.length;
         paste(field, "🎶");
         compare(field.text.length, units - 1, "half an emoji is never kept");
-        field.remove(0, 1);
+        deleteFromStart(field, 1);
         field.cursorPosition = field.text.length;
         paste(field, "🎶");
         compare(field.text.length, units, "with two units free it fits");
@@ -336,5 +358,177 @@ TestCase {
         show(env, again);
         compare(env.panel.shownRating, stars);
         compare(findChild(env.panel, "commentText").text, "saved");
+    }
+
+    // An edit open on track A when B is shown (the pane follows a row
+    // clicked, a track played, or the player moving on: each calls
+    // showFor()) is staged for A, with A's text, and B is left alone.
+    function test_6_switchingTracksMidEditStagesForTheTrackEdited() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const b = tracks(env).find(t => t.filePath && t.filePath !== a.filePath);
+        const field = beginEditing(env);
+        clearField(field);
+        keyClick(Qt.Key_Z);
+        keyClick(Qt.Key_Z);
+        env.panel.showFor(b);
+        compare(env.controller.stagedComment(a.filePath), "zz", "the text typed is A's");
+        verify(env.controller.hasStagedComment(a.filePath));
+        verify(!env.controller.hasStagedComment(b.filePath), "B is untouched");
+        verify(!findChild(env.panel, "trackCommentEditor").editing, "the edit ended with A");
+        // B's lookup has not answered yet: nothing can be typed or rated.
+        const editor = findChild(env.panel, "trackCommentEditor");
+        if (env.panel.commentLimit.known !== true) {
+            verify(!editor.canEdit, "no edit while B's limit is unknown");
+            verify(!findChild(env.panel, "ratingStar3").enabled, "nor a rating");
+        }
+        tryVerify(() => env.panel.commentLimit.known === true, 30000);
+    }
+
+    // The same on the page: a row clicked (TrackDragArea, which takes no
+    // focus) and a track played while A's comment is open.
+    function test_7_onThePageARowClickedOrPlayedEndsTheEditForA() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 880, stickLabel: "TESTSTICK", rekordboxPath: env.stick + "/PIONEER",
+            enginePath: env.stick + "/Engine Library", playbackController: realPlayback,
+            appSettingsController: realAppSettings});
+        verify(page !== null);
+        const list = findChild(page, "trackListView");
+        tryVerify(() => list.count > 1, 120000, "the page lists the stick");
+        const panel = findChild(page, "trackDetailPanel");
+        for (const how of ["row", "play"]) {
+            page.playRow(a);
+            realPlayback.stop();
+            tryVerify(() => panel.commentLimit.known === true, 30000);
+            const editor = findChild(panel, "trackCommentEditor");
+            mouseMove(editor, 10, editor.height / 2);
+            const button = findChild(editor, "commentEditButton");
+            tryCompare(button, "opacity", 1, 2000);
+            mouseClick(button);
+            const field = findChild(editor, "commentField");
+            tryCompare(field, "visible", true);
+            clearField(field);
+            keyClick(how === "row" ? Qt.Key_R : Qt.Key_P);
+            let other = null;
+            for (let i = 0; i < list.count && other === null; ++i) {
+                const item = list.itemAtIndex(i);
+                if (item !== null && item.filePath !== a.filePath) {
+                    other = item;
+                }
+            }
+            verify(other !== null);
+            if (how === "row") {
+                mouseClick(findChild(other, "rowMouseArea"));
+            } else {
+                page.playRow(other);
+                realPlayback.stop();
+            }
+            compare(panel.trackFilePath, other.filePath, "the pane shows the other track");
+            const editsController = page.trackEditController;
+            compare(editsController.stagedComment(a.filePath), how === "row" ? "r" : "p");
+            verify(!editsController.hasStagedComment(other.filePath), "the other track is untouched");
+        }
+    }
+
+    // A save started while the comment is open writes the comment too:
+    // by the Save shortcut on the page, and by the session's save().
+    function test_8_aSaveStagesTheOpenEditFirst() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        let field = beginEditing(env);
+        clearField(field);
+        keyClick(Qt.Key_S);
+        let summary = null;
+        const done = (result) => { summary = result; };
+        env.session.saveFinished.connect(done);
+        env.session.save();
+        tryVerify(() => summary !== null, 120000);
+        env.session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.written, 1, "the open edit was staged and written");
+        compare(env.panel.shownComment, "s");
+        verify(!findChild(env.panel, "trackCommentEditor").editing);
+
+        // The shortcut, on the page.
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 880, stickLabel: "TESTSTICK", rekordboxPath: env.stick + "/PIONEER",
+            enginePath: env.stick + "/Engine Library", playbackController: realPlayback,
+            appSettingsController: realAppSettings});
+        const list = findChild(page, "trackListView");
+        tryVerify(() => list.count > 1, 120000);
+        const panel = findChild(page, "trackDetailPanel");
+        page.playRow(a);
+        realPlayback.stop();
+        tryVerify(() => panel.commentLimit.known === true, 30000);
+        // Something staged first, so the Save button and its shortcut are
+        // there.
+        mouseClick(findChild(panel, "ratingStar" + (a.rating === 2 ? 3 : 2)));
+        const editor = findChild(panel, "trackCommentEditor");
+        mouseMove(editor, 10, editor.height / 2);
+        tryCompare(findChild(editor, "commentEditButton"), "opacity", 1, 2000);
+        mouseClick(findChild(editor, "commentEditButton"));
+        field = findChild(editor, "commentField");
+        tryCompare(field, "visible", true);
+        verify(field.activeFocus);
+        clearField(field);
+        keyClick(Qt.Key_K);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(env.stick + "/PIONEER"));
+        summary = null;
+        session.saveFinished.connect(done);
+        keySequence(StandardKey.Save);
+        tryVerify(() => summary !== null, 120000, "the shortcut saved");
+        session.saveFinished.disconnect(done);
+        compare(summary.written, 2, "rating and the open comment: " + JSON.stringify(summary));
+        compare(panel.shownComment, "k");
+    }
+
+    // A comment that does not fit export.pdb as shown (the Engine or
+    // OneLibrary one, longer) can be shortened: deleting always works,
+    // only growth past the limit is refused.
+    function test_9_aCommentTooLongCanBeShortened() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const units = env.panel.commentLimit.units;
+        const longer = Object.assign({}, a);
+        longer.comment = "w".repeat(units + 6);
+        env.panel.showFor(longer);
+        tryVerify(() => env.panel.commentLimit.known === true, 30000);
+        const field = beginEditing(env);
+        field.cursorPosition = field.text.length;
+        keyClick(Qt.Key_Backspace);
+        compare(field.text.length, units + 5, "a deletion is taken though the text is still too long");
+        keyClick(Qt.Key_X);
+        compare(field.text.length, units + 5, "growth is not");
+        for (let i = 0; i < 5; ++i) {
+            keyClick(Qt.Key_Backspace);
+        }
+        compare(field.text.length, units);
+        keyClick(Qt.Key_Return);
+        compare(env.controller.stagedComment(a.filePath), "w".repeat(units));
+    }
+
+    // Opening the field and leaving it stages nothing, whatever the
+    // comment holds: a line break the one-line field cannot show, or
+    // trailing spaces.
+    function test_10_anUntouchedFieldStagesNothing() {
+        const env = setUp();
+        const a = roomiest(env, false);
+        for (const comment of ["line one\nline two", "trailing  "]) {
+            const shown = Object.assign({}, a);
+            shown.comment = comment;
+            env.panel.showFor(shown);
+            tryVerify(() => env.panel.commentLimit.known === true, 30000);
+            const field = beginEditing(env);
+            keyClick(Qt.Key_Return);
+            tryCompare(field, "visible", false);
+            verify(!env.controller.hasStagedComment(a.filePath), "nothing staged for " + JSON.stringify(comment));
+            compare(env.session.pendingCount, 0);
+            // And by focus leaving it.
+            beginEditing(env);
+            findChild(env.panel, "ratingStar1").forceActiveFocus();
+            verify(!env.controller.hasStagedComment(a.filePath));
+        }
     }
 }

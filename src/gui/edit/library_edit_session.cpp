@@ -481,6 +481,13 @@ bool LibraryEditSession::hasChange(const QString &changeId) const
 
 void LibraryEditSession::save()
 {
+    // Before anything is decided: a page with an edit still open in a
+    // field stages it now, so the save writes what is on the screen. Not
+    // for Undo Last Save, which is staged alone and must stay alone.
+    const bool undoing = !m_changes.empty() && m_changes.front()->id() == QLatin1String("undo:last-save");
+    if (!m_writing && !undoing) {
+        emit aboutToSave();
+    }
     if (m_writing || m_changes.empty()) {
         return;
     }
@@ -663,6 +670,7 @@ void LibraryEditSession::onSaveFinished()
     };
 
     setWriting(false);
+    m_lastSkippedIds = result.skippedIds;
     for (const QString &id : result.appliedIds) {
         emit changeApplied(id);
     }

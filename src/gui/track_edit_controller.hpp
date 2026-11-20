@@ -14,6 +14,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "gui/edit/changes/track_field_edit_change.hpp"
 
@@ -25,9 +26,13 @@ class LibraryEditSession;
 // Browse's track details editing a track's rating and comment (#105):
 // each edit is staged into the stick's edit session as one
 // TrackFieldEditChange, written by the page's Save into every catalog on
-// the stick that lists the file, backed up first and undoable. Tracks are
-// named by their file, so an edit made while browsing one catalog is the
-// same edit in the others.
+// the stick that lists the file, backed up first and undoable.
+//
+// Before a track can be edited its rows in every catalog are looked up
+// off the GUI thread (lookUpTrack): which catalogs list it, in which
+// spelling, and how long a comment export.pdb's row can hold. Nothing in
+// this class reads a library on the GUI thread; an edit asked for before
+// the lookup has answered is refused.
 //
 // Staging a field's original value again takes its staged change back
 // rather than leaving one that writes what is already there.
@@ -37,9 +42,10 @@ class TrackEditController : public QObject
     QML_ELEMENT
     Q_PROPERTY(int pendingRevision READ pendingRevision NOTIFY pendingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
-    // The longest comment the track lookUpCommentLimit() was last asked
-    // about can take, as {filePath, known, limited, units, asciiOnly,
-    // reason}: see CommentLimit. `known` is false until the lookup is done.
+    // The track lookUpTrack() was last asked about, as {filePath, known,
+    // editable, refusal, limited, units, asciiOnly, reason}: `known` is
+    // false until the lookup is done, `editable` false when the track
+    // cannot be edited (`refusal` says why), the rest is its CommentLimit.
     Q_PROPERTY(QVariantMap commentLimit READ commentLimit NOTIFY commentLimitChanged)
 
 public:
@@ -50,9 +56,12 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     QVariantMap commentLimit() const { return m_commentLimit; }
 
-    // Reads export.pdb off the GUI thread for the room the file's comment
-    // has there; commentLimit says it when done. A later call wins.
-    Q_INVOKABLE void lookUpCommentLimit(const QString &rekordboxPath, const QString &filePath);
+    // Reads the stick's catalogs off the GUI thread for the file's rows
+    // and comment room; commentLimit says it when done. A later call wins.
+    Q_INVOKABLE void lookUpTrack(const QString &rekordboxPath, const QString &enginePath, const QString &filePath);
+    // What a finished lookup said about `filePath`, in commentLimit's shape
+    // (`known` false when it has not been looked up).
+    Q_INVOKABLE QVariantMap trackInfo(const QString &filePath) const;
 
     // Stars 1 to 5, or -1 for none; `original` is the value the stick has
     // (-1 for none). Returns false, staging nothing, when refused.
@@ -80,22 +89,26 @@ signals:
     void commentLimitChanged();
     // A save wrote at least one of these edits: the page should rescan.
     void tracksSaved();
-    // One edit is on the stick now: `field` "rating" (value: stars, -1
-    // for none) or "comment" (text), for a pane showing the track.
+    // One edit is on the stick now: `field` "rating" (stars, -1 for none)
+    // or "comment" (text), for a pane showing the track.
     void fieldSaved(const QString &filePath, const QString &field, int stars, const QString &text);
+    // The stick's session is about to save: an edit still open in a field
+    // is to be staged now (LibraryEditSession::aboutToSave).
+    void saveStarting();
 
 private:
-    bool attachSession(const QString &rekordboxPath, const QString &enginePath);
+    bool attachSession(const QString &rekordboxPath, const QString &enginePath, bool reportMissing);
     bool stage(const QString &rekordboxPath, const QString &enginePath, const QString &filePath, const QString &title,
-               TrackFieldValue value);
+               TrackFieldValue value, const TrackRows &rows);
     void unstage(TrackField field, const QString &filePath);
     void setErrorMessage(const QString &message);
     void forgetAll();
+    // The finished lookup for `filePath`, or nullptr.
+    const TrackLookup *lookupFor(const QString &filePath) const;
 
     QPointer<LibraryEditSession> m_session;
-    // By change id: what is staged, for the queries.
+    // By change id: what is staged, for the queries, and for which file.
     std::map<QString, TrackFieldValue> m_staged;
-    // The file each staged change is for, by change id.
     std::map<QString, QString> m_files;
     // The changes applied by the running save.
     int m_applied = 0;
@@ -103,13 +116,19 @@ private:
     QString m_errorMessage;
 
     QVariantMap m_commentLimit;
-    // The last lookup's result, for setComment()'s check.
-    std::optional<std::pair<std::string, CommentLimit>> m_limit;
-    QString m_limitRekordboxPath;
-    QFutureWatcher<CommentLimit> m_limitWatcher;
+    // Every finished lookup, by file: an edit is staged against the rows
+    // its own lookup found, however many tracks were shown since.
+    std::map<QString, TrackLookup> m_lookups;
+    QFutureWatcher<TrackLookup> m_lookupWatcher;
+    struct Ask
+    {
+        QString rekordboxPath;
+        QString enginePath;
+        QString filePath;
+    };
     // A lookup asked for while one runs: started when that one is done.
-    std::optional<std::pair<QString, QString>> m_nextLookup;
-    QString m_runningLookup;
+    std::optional<Ask> m_nextLookup;
+    QString m_shownFile;
 };
 
 }  // namespace seabass::gui

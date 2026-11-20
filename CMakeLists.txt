@@ -3541,6 +3541,20 @@ if(TARGET seabass_edit)
     set_tests_properties(rekordbox_export_sync_controller_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # #105: the track details' edit controller with the real session.
+    add_executable(track_edit_controller_test
+        src/gui/track_edit_controller.hpp
+        src/gui/track_edit_controller.cpp
+        tests/track_edit_controller_test.cpp
+    )
+    target_include_directories(track_edit_controller_test PRIVATE src tests)
+    target_link_libraries(track_edit_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Gui
+        Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME track_edit_controller_test COMMAND track_edit_controller_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs)
+    set_tests_properties(track_edit_controller_test PROPERTIES
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+
     # The #73 hardware round of 2026-11-13 replayed on what the stick
     # TESTSHARK held at each step (tests/fixtures/testshark_t73): the audio
     # heads and the chain checker, the 24-row proposal, save, undo and save
