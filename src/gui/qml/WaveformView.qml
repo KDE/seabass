@@ -12,11 +12,22 @@ import SeabassGui
 // static per-track previews like the Duplicates page, where
 // progress/seeking aren't relevant.
 //
-// Three layers, bottom to top: the bars (this Canvas itself), the beat
-// grid (beatGridLayer), and the cues, the loop being dragged out and the
+// The beat grid is a ruler lane above the waveform (#104): a short tick
+// at every mark, a tall one with the bar's number at every stronger mark,
+// on a ground a little lighter than the waveform's. Behind the bars, so
+// that loud music covers them, a faint line at every mark and a stronger
+// one at every stronger mark. Nothing of the grid is drawn over the bars.
+//
+// Three layers, bottom to top: the grid's lines and the bars over them
+// (this Canvas itself), the ruler lane (beatGridLayer, beside the bars,
+// never over them), and the cues, the loop being dragged out and the
 // playhead (overlayLayer). The bars and the overlay repaint as the
-// playhead moves; the grid only when its beats, the length or the size
+// playhead moves; the lane only when its marks, the length or the size
 // change, never per frame of playback.
+//
+// A view can show a stretch of the track rather than all of it
+// (viewStartMs, viewSpanMs): the zoomed waveform popup lays such views
+// side by side as tiles and moves them, never repainting one per frame.
 Canvas {
     id: root
     // Faded by its caller (a row backdrop at 0.35, a dimmed card at 0.75),
@@ -53,6 +64,9 @@ Canvas {
     // Cue" picker opts in. Hover tooltips for existing cues/loops are
     // always on regardless of this, since they're pure display.
     property bool cueEditable: false
+    // The pointer over the view: a caller whose click opens something
+    // (the details pane, the zoomed popup) says so with a hand.
+    property int pointerShape: Qt.ArrowCursor
     property string hoveredCueText: ""
     // -1 (default) renders every cue identically, today's behavior. A
     // real ms value instead dims every OTHER cue -- e.g.
@@ -67,7 +81,7 @@ Canvas {
     // backup stores no waveforms, and a row that shows cues without one
     // says so rather than looking broken.
     property string missingText: ""
-    readonly property bool hasWaveform: root.waveformData && root.waveformData.length > 0
+    readonly property bool hasWaveform: root.byteColumns > 0 || (root.waveformData && root.waveformData.length > 0)
     // Place the cues even when the track's length is unknown, against a
     // span taken from the cues themselves (the last cue or loop end plus
     // a tenth, and never under minimumCueSpanMs). Off by default: pages
@@ -107,8 +121,8 @@ Canvas {
     // Against the track's real length only, never the cues' own span: a
     // grid on a line with no length would be placed against nothing. Re-evaluated on every
     // change of the beats, the length or the width.
-    readonly property var beatGridLayout: root.beatsSelected
-        ? root.placedBeats(root.beatData, root.trackDurationMs, root.width)
+    readonly property var beatGridLayout: root.beatsSelected || root.viewSpanMs > 0
+        ? root.placedBeats(root.beatData, root.viewSpanMs > 0 ? root.viewSpanMs : root.trackDurationMs, root.width)
         : BeatGridTicks.layout(root.beatData, root.trackDurationMs, root.width)
     readonly property var beatTicks: root.beatGridLayout.ticks
     // True when beatData is already the beats to draw at this width and
@@ -118,6 +132,45 @@ Canvas {
     // grid here.
     property bool beatsSelected: false
 
+    // The stretch of the track this view shows: from viewStartMs, for
+    // viewSpanMs. 0 (the default) shows the whole of it, against
+    // cueSpanMs. Only the zoomed popup's tiles set it.
+    property real viewStartMs: 0
+    property real viewSpanMs: 0
+    readonly property real shownStartMs: root.viewSpanMs > 0 ? root.viewStartMs : 0
+    readonly property real shownSpanMs: root.viewSpanMs > 0 ? root.viewSpanMs : root.cueSpanMs
+    // Where a time falls on this view, in pixels from its left edge.
+    function xAt(ms) {
+        return (ms - root.shownStartMs) * root.width / root.shownSpanMs;
+    }
+
+    // The waveform at a finer resolution than waveformData (the popup's,
+    // see PlaybackController.detailWaveform()): an ArrayBuffer of three
+    // bytes a column, low, mid and high, 0 to 255. Drawn instead of
+    // waveformData when it has a column.
+    property var columnBytes: null
+    // Where the columns fall: column i at columnStartMs + i * columnMs.
+    // columnMs 0 spreads them over trackDurationMs, as waveformData always
+    // is.
+    property real columnMs: 0
+    property real columnStartMs: 0
+    readonly property int byteColumns: root.columnBytes && root.columnBytes.byteLength >= 3
+        ? Math.floor(root.columnBytes.byteLength / 3) : 0
+
+    // The ruler lane: a fifth of the height, never under its minimum, and
+    // none at all on a view too low for it to be read (a list row's
+    // waveform) or without marks to draw. Such a view draws the lines
+    // behind its bars and nothing else of the grid. showRuler can be set
+    // by a caller whose stretch of the track may hold no mark while the
+    // track has a grid (the popup's tiles), so that every tile keeps the
+    // same lane.
+    property bool showRuler: root.beatTicks.length > 0
+    readonly property real rulerHeight: root.showRuler && root.height >= Theme.beatRulerMinimumViewHeight
+        ? Math.max(Theme.beatRulerMinimumHeight, Math.round(root.height * Theme.beatRulerHeightRatio)) : 0
+    // The waveform's own band, under the lane.
+    readonly property real waveTop: root.rulerHeight
+    readonly property real waveHeight: Math.max(0, root.height - root.rulerHeight)
+
     // Selected beats at x = time * width / length, the same arithmetic
     // layoutBeatTicks() places them by.
     function placedBeats(beats, spanMs, widthPx) {
@@ -126,9 +179,16 @@ Canvas {
         }
         const ticks = [];
         for (let i = 0; i < beats.length; ++i) {
-            ticks.push({x: beats[i].timeMs * widthPx / spanMs, downbeat: beats[i].downbeat === true});
+            const beat = beats[i];
+            ticks.push({x: (beat.timeMs - root.shownStartMs) * widthPx / spanMs, timeMs: beat.timeMs,
+                        downbeat: beat.downbeat === true, strong: beat.strong === true, bar: beat.bar || 0});
         }
         return {ticks: ticks, everyBeat: false, barsPerTick: 0};
+    }
+
+    // The time at a pixel from the left edge: xAt() turned round.
+    function timeAtX(x) {
+        return root.shownStartMs + x * root.shownSpanMs / root.width;
     }
 
     signal seekRequested(real ratio)
@@ -145,6 +205,19 @@ Canvas {
     // The bars: the played/unplayed split follows the playhead, and
     // whether bars are drawn at all follows the length.
     onWaveformDataChanged: requestPaint()
+    onColumnBytesChanged: requestPaint()
+    onColumnMsChanged: requestPaint()
+    onColumnStartMsChanged: requestPaint()
+    onBeatTicksChanged: requestPaint()
+    onRulerHeightChanged: requestPaint()
+    onShownStartMsChanged: {
+        requestPaint();
+        overlayLayer.requestPaint();
+    }
+    onShownSpanMsChanged: {
+        requestPaint();
+        overlayLayer.requestPaint();
+    }
     onProgressChanged: {
         requestPaint();
         overlayLayer.requestPaint();
@@ -159,6 +232,9 @@ Canvas {
     }
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
+    // A change of colour scheme repaints the lines behind the bars.
+    readonly property color lineColor: Theme.beatGridLine
+    onLineColorChanged: requestPaint()
     onCueDataChanged: overlayLayer.requestPaint()
     onHighlightCuePositionMsChanged: overlayLayer.requestPaint()
 
@@ -173,11 +249,11 @@ Canvas {
         }
         for (let i = 0; i < cueData.length; i++) {
             const cue = cueData[i];
-            const x = (cue.positionMs / span) * width;
+            const x = root.xAt(cue.positionMs);
             let title = "";
             let hit = false;
             if (cue.isLoop && cue.loopEndMs > cue.positionMs) {
-                const xEnd = (cue.loopEndMs / span) * width;
+                const xEnd = root.xAt(cue.loopEndMs);
                 hit = mouseX >= x - 3 && mouseX <= xEnd + 3;
                 title = cue.kind === "hot" ? "Hot loop " + cue.hotCueNumber : "Loop";
             } else {
@@ -196,81 +272,189 @@ Canvas {
         return "";
     }
 
+    // One column's bands, 0..1, from whichever data the view draws.
+    function columnAt(i) {
+        if (root.byteColumns > 0) {
+            return null;
+        }
+        const col = root.waveformData[i];
+        // Backwards-compatible with a plain 0..1 number (no band split
+        // available) as well as a {low, mid, high} column.
+        return typeof col === "number" ? {low: col, mid: col, high: col} : col;
+    }
+
     onPaint: {
-        var ctx = getContext("2d");
+        const ctx = getContext("2d");
         ctx.reset();
-        var w = width, h = height;
-        var wf = waveformData;
+        const w = width;
+        const top = root.waveTop;
+        const h = root.waveHeight;
+
+        // The grid's lines first, so that the bars cover them: a faint
+        // one at every mark, a stronger one at every stronger mark. Whole
+        // pixels, so a line is one sharp pixel and not two half-lit ones.
+        const ticks = root.beatTicks;
+        if (ticks && ticks.length > 0 && w > 0 && h > 0) {
+            ctx.fillStyle = String(root.lineColor);
+            for (let pass = 0; pass < 2; ++pass) {
+                const strong = pass === 1;
+                ctx.globalAlpha = strong ? Theme.beatGridStrongLineOpacity : Theme.beatGridLineOpacity;
+                for (let k = 0; k < ticks.length; ++k) {
+                    if ((ticks[k].strong === true) !== strong) {
+                        continue;
+                    }
+                    const x = Math.round(ticks[k].x);
+                    if (x >= 0 && x < w) {
+                        ctx.fillRect(x, top, 1, h);
+                    }
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
 
         if (!root.drawsBars) {
             ctx.fillStyle = String(Theme.textMuted);
-            ctx.fillRect(0, h / 2 - 1, w, 2);
+            ctx.fillRect(0, top + h / 2 - 1, w, 2);
+            return;
+        }
+        const bytes = root.byteColumns > 0 ? new Uint8Array(root.columnBytes) : null;
+        const n = bytes ? root.byteColumns : root.waveformData.length;
+        const colMs = root.columnMs > 0 ? root.columnMs : root.trackDurationMs / n;
+        const firstMs = root.columnStartMs;
+        const pxPerMs = w / root.shownSpanMs;
+        const barW = colMs * pxPerMs;
+        // A bar is drawn over the ground, never over a line: its own
+        // rectangle is cleared first, so a translucent (unplayed) bar
+        // shows the ground through it and not the grid.
+        const bar = (x, width, low, mid, high, played) => {
+            const amplitude = Math.max(low, mid, high);
+            const barH = Math.max(1, amplitude * h);
+            // Classic DJ-hardware coloring: bass in blue, mids in
+            // green/yellow, highs in red/white, blended by each band's
+            // relative strength rather than a single flat hue.
+            const r = Math.min(255, Math.round(60 + high * 195));
+            const g = Math.min(255, Math.round(60 + mid * 150 + high * 60));
+            const b = Math.min(255, Math.round(90 + low * 165));
+            const alpha = played ? 1.0 : 0.62;
+            const y = top + (h - barH) / 2;
+            ctx.clearRect(x, y, width, barH);
+            ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+            ctx.fillRect(x, y, width, barH);
+        };
+        const played = (ms) => root.progress >= 0 && root.trackDurationMs > 0
+            && ms / root.trackDurationMs < root.progress;
+        // Only the columns this view shows.
+        const first = Math.max(0, Math.floor((root.shownStartMs - firstMs) / colMs) - 1);
+        const last = Math.min(n - 1, Math.ceil((root.shownStartMs + root.shownSpanMs - firstMs) / colMs) + 1);
+        if (barW >= 0.5) {
+            for (let i = first; i <= last; i++) {
+                const ms = firstMs + i * colMs;
+                const x = (ms - root.shownStartMs) * pxPerMs;
+                let low, mid, high;
+                if (bytes) {
+                    low = bytes[3 * i] / 255; mid = bytes[3 * i + 1] / 255; high = bytes[3 * i + 2] / 255;
+                } else {
+                    const col = root.columnAt(i);
+                    low = col.low; mid = col.mid; high = col.high;
+                }
+                bar(x, Math.max(1, barW - 1), low, mid, high, played(ms));
+            }
         } else {
-            var barW = w / wf.length;
-            for (var i = 0; i < wf.length; i++) {
-                var col = wf[i];
-                // Backwards-compatible with a plain 0..1 number (no band
-                // split available) as well as a {low, mid, high} column.
-                var low = typeof col === "number" ? col : col.low;
-                var mid = typeof col === "number" ? col : col.mid;
-                var high = typeof col === "number" ? col : col.high;
-                var amplitude = Math.max(low, mid, high);
-                var barH = Math.max(1, amplitude * h);
-                var played = root.progress >= 0 && (i / wf.length) < root.progress;
-
-                // Classic DJ-hardware coloring: bass in blue, mids in
-                // green/yellow, highs in red/white, blended by each band's
-                // relative strength rather than a single flat hue.
-                var r = Math.min(255, Math.round(60 + high * 195));
-                var g = Math.min(255, Math.round(60 + mid * 150 + high * 60));
-                var b = Math.min(255, Math.round(90 + low * 165));
-                var alpha = played ? 1.0 : 0.62;
-                ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
-                ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 1), barH);
+            // More than two columns to a pixel: each pixel draws the
+            // loudest of the columns under it, one bar a pixel.
+            const pxFrom = Math.max(0, Math.floor((firstMs + first * colMs - root.shownStartMs) * pxPerMs));
+            const pxTo = Math.min(Math.ceil(w), Math.ceil((firstMs + (last + 1) * colMs - root.shownStartMs) * pxPerMs));
+            for (let px = pxFrom; px < pxTo; ++px) {
+                const msFrom = root.shownStartMs + px / pxPerMs;
+                const i0 = Math.max(first, Math.floor((msFrom - firstMs) / colMs));
+                const i1 = Math.min(last, Math.floor((msFrom + 1 / pxPerMs - firstMs) / colMs));
+                let low = 0, mid = 0, high = 0;
+                for (let i = i0; i <= i1; ++i) {
+                    if (bytes) {
+                        low = Math.max(low, bytes[3 * i]); mid = Math.max(mid, bytes[3 * i + 1]);
+                        high = Math.max(high, bytes[3 * i + 2]);
+                    } else {
+                        const col = root.columnAt(i);
+                        low = Math.max(low, col.low); mid = Math.max(mid, col.mid); high = Math.max(high, col.high);
+                    }
+                }
+                if (bytes) {
+                    low /= 255; mid /= 255; high /= 255;
+                }
+                bar(px, 1, low, mid, high, played(msFrom));
             }
         }
     }
 
-    // The beat grid (#40), a layer of its own so that it is drawn only
-    // when the beats, the length or the size change: ticks from the top
-    // and the bottom edge, leaving the middle of the waveform clear.
-    // Downbeats reach further in and are brighter than ordinary beats.
-    // Above the bars, below the cues.
+    // The ruler lane (#104), a layer of its own so that it is drawn only
+    // when its marks, the length or the size change: a short tick at
+    // every mark, a tall one with its bar's number at every stronger
+    // mark. Above the bars' band, never over it; below the cues.
     Canvas {
         id: beatGridLayer
         objectName: "beatGridLayer"
         anchors.fill: parent
         readonly property var ticks: root.beatTicks
+        readonly property real lane: root.rulerHeight
         // A change of colour scheme is a change of data for this layer.
-        readonly property color tickColor: Theme.beatTick
+        readonly property color groundColor: Theme.beatRulerGround
+        readonly property color tickColor: Theme.beatRulerTick
+        readonly property color strongColor: Theme.beatRulerStrongTick
+        // The track's own stretch of the lane: none before 0:00 or after
+        // its end, where a tile of the zoomed popup can lie.
+        readonly property real trackFrom: root.xAt(0)
+        readonly property real trackTo: root.xAt(root.trackDurationMs > 0 ? root.trackDurationMs : root.shownSpanMs)
         onTicksChanged: requestPaint()
+        onLaneChanged: requestPaint()
+        onGroundColorChanged: requestPaint()
         onTickColorChanged: requestPaint()
+        onStrongColorChanged: requestPaint()
+        onTrackFromChanged: requestPaint()
+        onTrackToChanged: requestPaint()
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            const ticks = beatGridLayer.ticks;
+            const lane = beatGridLayer.lane;
             const w = width;
-            const h = height;
-            if (!ticks || ticks.length === 0 || w <= 0) {
+            if (lane <= 0 || w <= 0) {
                 return;
             }
-            // Ordinary beats first, so a downbeat is never drawn under one.
-            for (let pass = 0; pass < 2; ++pass) {
-                const downbeats = pass === 1;
-                ctx.fillStyle = String(beatGridLayer.tickColor);
-                ctx.globalAlpha = downbeats ? Theme.downbeatTickOpacity : Theme.beatTickOpacity;
-                const length = Math.max(2, Math.round(h * (downbeats ? Theme.downbeatTickLength : Theme.beatTickLength)));
-                for (let i = 0; i < ticks.length; ++i) {
-                    if (ticks[i].downbeat !== downbeats) {
-                        continue;
+            const from = Math.max(0, Math.round(beatGridLayer.trackFrom));
+            const to = Math.min(w, Math.round(beatGridLayer.trackTo));
+            if (to > from) {
+                ctx.fillStyle = String(beatGridLayer.groundColor);
+                ctx.fillRect(from, 0, to - from, lane);
+            }
+            const ticks = beatGridLayer.ticks;
+            if (!ticks || ticks.length === 0) {
+                return;
+            }
+            const shortTick = Math.max(3, Math.round(lane * Theme.beatRulerTickLength));
+            ctx.fillStyle = String(beatGridLayer.tickColor);
+            ctx.globalAlpha = Theme.beatRulerTickOpacity;
+            for (let i = 0; i < ticks.length; ++i) {
+                if (ticks[i].strong !== true) {
+                    ctx.fillRect(Math.round(ticks[i].x), lane - shortTick, 1, shortTick);
+                }
+            }
+            // The numbers sit above the short ticks, left-aligned a little
+            // right of their own tick.
+            const baseline = lane - shortTick - 1;
+            const size = Math.max(Theme.beatRulerNumberMinimumSize,
+                                  Math.min(Theme.beatRulerNumberMaximumSize, Math.round(lane * 0.45)));
+            ctx.fillStyle = String(beatGridLayer.strongColor);
+            ctx.globalAlpha = Theme.beatRulerStrongTickOpacity;
+            ctx.font = "600 " + size + "px sans-serif";
+            ctx.textBaseline = "alphabetic";
+            for (let i = 0; i < ticks.length; ++i) {
+                if (ticks[i].strong === true) {
+                    const x = Math.round(ticks[i].x);
+                    ctx.fillRect(x, 0, 1, lane);
+                    if (ticks[i].bar > 0) {
+                        ctx.fillText(String(ticks[i].bar), x + Theme.beatRulerNumberInset, baseline);
                     }
-                    // Whole pixels, so a tick is one sharp line and not two
-                    // half-lit ones.
-                    const x = Math.min(w - 1, Math.max(0, Math.round(ticks[i].x)));
-                    ctx.fillRect(x, 0, 1, length);
-                    ctx.fillRect(x, h - length, 1, length);
                 }
             }
         }
@@ -284,25 +468,32 @@ Canvas {
         anchors.fill: parent
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
+        // The cues stand in the waveform's band, under the lane; the
+        // playhead runs through both.
+        readonly property real waveTop: root.waveTop
+        onWaveTopChanged: requestPaint()
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
             const w = width;
-            const h = height;
+            const fullHeight = height;
+            const top = overlayLayer.waveTop;
+            const h = fullHeight - top;
+            ctx.translate(0, top);
             const cues = root.cueData;
 
             const span = root.cueSpanMs;
             if (cues && span > 0) {
                 for (let j = 0; j < cues.length; j++) {
                     const cue = cues[j];
-                    const x = (cue.positionMs / span) * w;
+                    const x = root.xAt(cue.positionMs);
                     // A memory cue is drawn in the one memory-cue colour, never
                     // its own: see Theme.memoryCue.
                     const isMemory = cue.kind !== "hot";
                     const color = isMemory ? String(Theme.memoryCue)
                         : (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#") ? cue.color : "#ffcc00";
                     const isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
-                    const xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
+                    const xEnd = isLoop ? root.xAt(cue.loopEndMs) : x;
 
                     // See highlightCuePositionMs's own doc comment. A small
                     // tolerance (not exact equality) since the caller passes
@@ -395,8 +586,10 @@ Canvas {
             // whatever mixed bar colors happen to sit behind it; the
             // downward-pointing triangle at the top gives it a distinct
             // silhouette even where the halo/line alone would blend in.
+            ctx.translate(0, -top);
+            const h2 = fullHeight;
             if (root.progress >= 0 && w > 0) {
-                const px = root.progress * w;
+                const px = root.shownSpanMs > 0 ? root.xAt(root.progress * root.cueSpanMs) : root.progress * w;
                 ctx.save();
                 ctx.shadowColor = "rgba(255,255,255,0.85)";
                 ctx.shadowBlur = 6;
@@ -404,7 +597,7 @@ Canvas {
                 ctx.lineWidth = 3;
                 ctx.beginPath();
                 ctx.moveTo(px, 0);
-                ctx.lineTo(px, h);
+                ctx.lineTo(px, h2);
                 ctx.stroke();
                 ctx.restore();
 
@@ -412,7 +605,7 @@ Canvas {
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
                 ctx.moveTo(px, 0);
-                ctx.lineTo(px, h);
+                ctx.lineTo(px, h2);
                 ctx.stroke();
 
                 ctx.fillStyle = String(Theme.accent);
@@ -435,6 +628,7 @@ Canvas {
         enabled: root.trackDurationMs > 0 || root.lengthUnknown
             || (!root.hasWaveform && root.missingText.length > 0)
         hoverEnabled: true
+        cursorShape: root.pointerShape
         preventStealing: root.cueEditable
 
         property real pressX: -1
@@ -485,12 +679,13 @@ Canvas {
                 // Nothing to seek to or place a cue at: an x on a line
                 // without a length is not a time.
             } else if (dragging) {
-                var a = Math.min(pressX, dragX) / width;
-                var b = Math.max(pressX, dragX) / width;
-                root.loopRangeSelected(a * root.trackDurationMs, b * root.trackDurationMs);
+                const a = root.timeAtX(Math.min(pressX, dragX));
+                const b = root.timeAtX(Math.max(pressX, dragX));
+                root.loopRangeSelected(a, b);
             } else {
-                root.seekRequested(mouse.x / width);
-                root.positionClicked((mouse.x / width) * root.trackDurationMs);
+                const ms = root.timeAtX(mouse.x);
+                root.seekRequested(ms / root.trackDurationMs);
+                root.positionClicked(ms);
             }
             pressX = -1;
             dragX = -1;

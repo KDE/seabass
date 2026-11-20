@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 #include <QVariantMap>
@@ -82,49 +83,96 @@ BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double sp
     // ms * width / span, one rounding each, so a spacing exactly at a
     // threshold is not lost to the arithmetic.
     const auto toPx = [&](double ms) { return ms * widthPx / spanMs; };
-    std::vector<BeatTick> inside;
-    inside.reserve(beats.size());
+    // Every beat of the grid, in time order whatever the source handed
+    // over and without the near-duplicates of a damaged grid, before and
+    // after the track as well: the bars are counted from the grid's first
+    // downbeat, wherever the track starts.
+    std::vector<BeatTick> all;
+    all.reserve(beats.size());
     for (const domain::Beat &beat : beats) {
-        if (std::isfinite(beat.timeMs) && beat.timeMs >= 0.0 && beat.timeMs <= spanMs) {
-            inside.push_back({beat.timeMs, toPx(beat.timeMs), beat.beatInBar == 1});
+        if (std::isfinite(beat.timeMs)) {
+            all.push_back({beat.timeMs, toPx(beat.timeMs), beat.beatInBar == 1});
         }
     }
+    std::stable_sort(all.begin(), all.end(), [](const BeatTick &a, const BeatTick &b) { return a.timeMs < b.timeMs; });
+    all = withoutNearDuplicates(std::move(all));
+    // The bars, measured on their own: a downbeat too close to the one
+    // before it starts no bar of its own.
+    std::vector<BeatTick> bars;
+    for (const BeatTick &tick : all) {
+        if (tick.downbeat) {
+            bars.push_back(tick);
+        }
+    }
+    bars = withoutNearDuplicates(std::move(bars));
+    // Each beat's bar: 1 from the first downbeat on, 0 before it.
+    {
+        size_t next = 0;
+        int bar = 0;
+        for (BeatTick &tick : all) {
+            if (next < bars.size() && tick.downbeat && tick.timeMs == bars[next].timeMs) {
+                ++bar;
+                bars[next].bar = bar;
+                bars[next].startsBar = true;
+                tick.startsBar = true;
+                ++next;
+            }
+            tick.bar = bar;
+        }
+    }
+    const auto insideTrack = [&](const BeatTick &tick) { return tick.timeMs >= 0.0 && tick.timeMs <= spanMs; };
+    std::vector<BeatTick> inside;
+    std::copy_if(all.begin(), all.end(), std::back_inserter(inside), insideTrack);
     if (inside.empty()) {
         return layout;
     }
-    // In time order whatever the source handed over, then without the
-    // near-duplicates of a damaged grid.
-    std::stable_sort(inside.begin(), inside.end(),
-                     [](const BeatTick &a, const BeatTick &b) { return a.timeMs < b.timeMs; });
-    inside = withoutNearDuplicates(std::move(inside));
+    std::vector<BeatTick> insideBars;
+    std::copy_if(bars.begin(), bars.end(), std::back_inserter(insideBars), insideTrack);
+    // The smallest bar in pixels, measured where the track is.
+    const double barPx = toPx(smallestGapMs(insideBars));
+    // Every `strongBars`th bar is a stronger mark, and carries its number:
+    // the smallest power of two from `base` up that keeps the numbers
+    // MinimumBarNumberSpacingPx apart.
+    const auto strongEvery = [&](size_t base) {
+        size_t n = base;
+        while (static_cast<double>(n) * barPx < MinimumBarNumberSpacingPx && n < insideBars.size()) {
+            n *= 2;
+        }
+        return n;
+    };
+    const auto markStrong = [](std::vector<BeatTick> &ticks, size_t every) {
+        for (BeatTick &tick : ticks) {
+            tick.strong = tick.startsBar && static_cast<size_t>(tick.bar - 1) % every == 0;
+        }
+    };
     if (toPx(smallestGapMs(inside)) >= MinimumBeatSpacingPx) {
         layout.ticks = std::move(inside);
         layout.everyBeat = true;
         layout.barsPerTick = 1;
-        return layout;
-    }
-    std::vector<BeatTick> downbeats;
-    for (const BeatTick &tick : inside) {
-        if (tick.downbeat) {
-            downbeats.push_back(tick);
+        if (!insideBars.empty()) {
+            layout.strongBars = static_cast<int>(strongEvery(1));
+            markStrong(layout.ticks, static_cast<size_t>(layout.strongBars));
         }
-    }
-    if (downbeats.empty()) {
         return layout;
     }
-    // The same for the bars, measured on their own.
-    downbeats = withoutNearDuplicates(std::move(downbeats));
+    if (insideBars.empty()) {
+        return layout;
+    }
     // N bars span at least N times the smallest bar, so N times it is a
-    // spacing every Nth downbeat is sure to keep.
-    const double bar = toPx(smallestGapMs(downbeats));
+    // spacing every Nth downbeat is sure to keep. Every Nth counted from
+    // bar 1, so a bar's mark does not move with where the track starts.
     size_t barsPerTick = 1;
-    while (static_cast<double>(barsPerTick) * bar < MinimumDownbeatSpacingPx && barsPerTick < downbeats.size()) {
+    while (static_cast<double>(barsPerTick) * barPx < MinimumDownbeatSpacingPx && barsPerTick < insideBars.size()) {
         barsPerTick *= 2;
     }
-    for (size_t k = 0; k < downbeats.size(); k += barsPerTick) {
-        layout.ticks.push_back(downbeats[k]);
+    for (const BeatTick &tick : insideBars) {
+        if (static_cast<size_t>(tick.bar - 1) % barsPerTick == 0) {
+            layout.ticks.push_back(tick);
+        }
     }
     layout.barsPerTick = static_cast<int>(barsPerTick);
+    layout.strongBars = static_cast<int>(strongEvery(std::max<size_t>(barsPerTick == 1 ? 4 : 16, barsPerTick)));
+    markStrong(layout.ticks, static_cast<size_t>(layout.strongBars));
     return layout;
 }
 
@@ -141,6 +189,8 @@ QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, bool ra
         QVariantMap entry;
         entry.insert(QStringLiteral("timeMs"), tick.timeMs);
         entry.insert(QStringLiteral("downbeat"), tick.downbeat);
+        entry.insert(QStringLiteral("strong"), tick.strong);
+        entry.insert(QStringLiteral("bar"), tick.bar);
         kept.append(entry);
     }
     return kept;

@@ -114,17 +114,34 @@ QtObject {
     // it gets one mark, ice on the dark ground and slate on the light.
     readonly property color memoryCue: isLightBackground ? "#3b4a5a" : "#e4eef7"
     readonly property color memoryCueInk: isLightBackground ? "#ffffff" : "#000000"
-    // The beat grid on a waveform (#40): one ink, ice on the dark ground
-    // and slate on the light like the memory cue, laid on at two
-    // strengths. A downbeat is brighter and reaches further in from the
-    // top and bottom edges than an ordinary beat; both stop short of the
-    // middle, where the waveform is, and every cue is drawn over them.
-    // Lengths are fractions of the waveform's height.
-    readonly property color beatTick: isLightBackground ? "#1b2530" : "#ffffff"
-    readonly property real beatTickOpacity: 0.35
-    readonly property real downbeatTickOpacity: 0.85
-    readonly property real beatTickLength: 0.15
-    readonly property real downbeatTickLength: 0.3
+    // The beat grid on a waveform (#40, drawn as a ruler since #104): a
+    // lane above the waveform with a short tick at every mark and a tall,
+    // numbered one at every stronger mark, and lines behind the bars, a
+    // faint one at every mark and a stronger one at every stronger mark.
+    // Nothing of it is drawn over the bars, and every cue is drawn over
+    // all of it. The lines' ink is ice on the dark ground and slate on the
+    // light, like the memory cue.
+    readonly property color beatGridLine: isLightBackground ? "#1b2530" : "#ffffff"
+    readonly property real beatGridLineOpacity: 0.10
+    readonly property real beatGridStrongLineOpacity: 0.26
+    // The lane's ground: the text colour laid thinly over whatever the
+    // waveform stands on, so the lane is a shade off that ground, lighter
+    // on a dark one.
+    readonly property color beatRulerGround: Qt.rgba(text.r, text.g, text.b, 0.07)
+    readonly property color beatRulerTick: textMuted
+    readonly property real beatRulerTickOpacity: 0.9
+    readonly property color beatRulerStrongTick: text
+    readonly property real beatRulerStrongTickOpacity: 0.9
+    // Sizes in pixels, and fractions of the view's or the lane's height.
+    // A view lower than beatRulerMinimumViewHeight (a list row's
+    // waveform, a 40 px card) has no lane and no numbers, only the lines.
+    readonly property real beatRulerHeightRatio: 0.2
+    readonly property real beatRulerMinimumHeight: 12
+    readonly property real beatRulerMinimumViewHeight: 44
+    readonly property real beatRulerTickLength: 0.3
+    readonly property real beatRulerNumberMinimumSize: 8
+    readonly property real beatRulerNumberMaximumSize: 13
+    readonly property real beatRulerNumberInset: 3
 
     function mix(a, b, t) {
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0);

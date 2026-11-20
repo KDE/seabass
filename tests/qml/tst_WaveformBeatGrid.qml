@@ -7,10 +7,12 @@ import QtTest
 import SeabassGui
 import "PixelScale.js" as PixelScale
 
-// The beat grid drawn over a waveform (#40): ticks where the library's
-// own grid puts each beat, downbeats taller and brighter, and only as
-// many as the width has room for. Seabass draws a grid here and never
-// makes one up.
+// The beat grid drawn with a waveform (#40, as a ruler since #104): a
+// lane above the waveform with a tick where the library's own grid puts
+// each mark and a tall, numbered one at each stronger mark, and lines
+// behind the bars, only as many as the width has room for. Nothing of the
+// grid is drawn over the bars. Seabass draws a grid here and never makes
+// one up.
 TestCase {
     id: testCase
     name: "WaveformBeatGrid"
@@ -172,6 +174,86 @@ TestCase {
         compare(BeatGridTicks.layout(beats, 60000, 600).ticks.length, 0);
     }
 
+    // ---- Stronger marks and bar numbers (#104) ------------------------
+
+    function strongBarsOf(layout) {
+        return layout.ticks.filter((tick) => tick.strong).map((tick) => tick.bar);
+    }
+
+    // Every beat drawn: every downbeat is a stronger mark, numbered with
+    // its bar, and every beat carries the bar it is in.
+    function test_everyDownbeatIsStrongWhenEveryBeatIsDrawn() {
+        const layout = BeatGridTicks.layout(grid(500, 0, 60000), 60000, 1200);
+        compare(layout.everyBeat, true);
+        compare(layout.strongBars, 1);
+        for (let i = 0; i < layout.ticks.length; ++i) {
+            compare(layout.ticks[i].strong, i % 4 === 0, "beat " + i);
+            compare(layout.ticks[i].bar, Math.floor(i / 4) + 1, "beat " + i + "'s bar");
+            fuzzyCompare(layout.ticks[i].timeMs, i * 500, 1e-9);
+        }
+    }
+
+    // Every bar drawn: every fourth bar is a stronger mark.
+    function test_everyFourthBarIsStrongWhenEveryBarIsDrawn() {
+        const layout = BeatGridTicks.layout(grid(500, 0, 60000), 60000, 600);
+        compare(layout.barsPerTick, 1);
+        compare(layout.strongBars, 4);
+        compare(strongBarsOf(layout), [1, 5, 9, 13, 17, 21, 25, 29]);
+        compare(layout.ticks.map((tick) => tick.bar).slice(0, 6), [1, 2, 3, 4, 5, 6]);
+    }
+
+    // Bars thinned: every 16th bar, or every Nth where more than 16 are
+    // thinned to one mark, doubled until the numbers stay apart.
+    function test_every16BarsIsStrongWhenBarsAreThinned() {
+        const layout = BeatGridTicks.layout(grid(500, 0, 60000), 60000, 150);
+        compare(layout.barsPerTick, 4);
+        compare(layout.strongBars, 16);
+        compare(strongBarsOf(layout), [1, 17]);
+
+        // Ten minutes at 128 BPM: a bar is 1.875 px at 600 px, so every
+        // 8th bar has a mark and every 16th is stronger; at 300 px every
+        // 16th has a mark and 16 bars (15 px) are too close for numbers.
+        const beats = grid(60000 / 128, 0, 600000);
+        const at600 = BeatGridTicks.layout(beats, 600000, 600);
+        compare(at600.barsPerTick, 8);
+        compare(at600.strongBars, 16);
+        compare(strongBarsOf(at600).slice(0, 3), [1, 17, 33]);
+        const at300 = BeatGridTicks.layout(beats, 600000, 300);
+        compare(at300.barsPerTick, 16);
+        compare(at300.strongBars, 32);
+        compare(strongBarsOf(at300).slice(0, 3), [1, 33, 65]);
+        for (const layout of [at600, at300]) {
+            const xs = layout.ticks.filter((tick) => tick.strong).map((tick) => tick.x);
+            for (let k = 1; k < xs.length; ++k) {
+                verify(xs[k] - xs[k - 1] >= BeatGridTicks.minimumBarNumberSpacing(),
+                       "numbers " + (xs[k] - xs[k - 1]) + " px apart");
+            }
+        }
+    }
+
+    // Bars count from the grid's first downbeat, before the track's start
+    // or not; beats before it are in bar 0 and never a stronger mark.
+    function test_barsCountFromTheFirstDownbeat() {
+        // Two beats of a bar that started before 0:00 (at -1000 ms).
+        const early = BeatGridTicks.layout(grid(500, -1000, 70000), 60000, 1200);
+        compare(early.ticks[0].timeMs, 0);
+        compare(early.ticks[0].bar, 1);
+        compare(early.ticks[0].strong, false);
+        compare(early.ticks[2].timeMs, 1000);
+        compare(early.ticks[2].bar, 2);
+        compare(early.ticks[2].strong, true);
+        // The grid's first two beats are the end of a bar it does not have.
+        const late = BeatGridTicks.layout(grid(500, 0, 60000, 2), 60000, 1200);
+        compare(late.ticks[0].bar, 0);
+        compare(late.ticks[0].strong, false);
+        compare(late.ticks[2].bar, 1);
+        compare(late.ticks[2].strong, true);
+        // Thinned, the marks stay on bars 1, 1 + N ... wherever 0:00 is.
+        const thinned = BeatGridTicks.layout(grid(500, -1000, 70000), 60000, 150);
+        compare(thinned.barsPerTick, 4);
+        compare(thinned.ticks.map((tick) => tick.bar).slice(0, 3), [5, 9, 13]);
+    }
+
     // ---- The view ----------------------------------------------------
 
     Component {
@@ -244,34 +326,122 @@ TestCase {
         return Math.abs(c.r - g.r) + Math.abs(c.g - g.g) + Math.abs(c.b - g.b);
     }
 
-    function test_theViewDrawsTicksWhereTheBeatsAre() {
+    function distance(a, b) {
+        return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+    }
+
+    // `count` columns of one colour at full height.
+    function columns(count, band) {
+        const out = [];
+        for (let i = 0; i < count; ++i) {
+            out.push(band);
+        }
+        return out;
+    }
+
+    // 600 px for a minute at 120 BPM: a mark at every bar, 20 px apart,
+    // every fourth (bars 1, 5, 9 ...) stronger. The view is 80 px high:
+    // a lane of 16 above 64 of waveform.
+    function test_theRulerLaneIsAboveTheWaveform() {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
         const view = host.view;
-        compare(view.beatTicks.length, 30, "600 px: the downbeats");
+        compare(view.beatTicks.length, 30, "600 px: the bars");
         compare(xs(view.beatTicks).slice(0, 3), [0, 20, 40]);
+        compare(view.rulerHeight, 16, "a fifth of the height");
+        compare(view.waveTop, 16);
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(host).save(screenshotDir + "/waveform-beat-grid-600.png");
         }
-        // A tick at the top edge over each downbeat, ground between them.
-        verify(inkAt(host, 200, 2) > 0.3, "a downbeat tick at 200, ink " + inkAt(host, 200, 2));
-        verify(inkAt(host, 210, 2) < 0.05, "ground between ticks, ink " + inkAt(host, 210, 2));
-        verify(inkAt(host, 200, host.height - 3) > 0.3, "and at the foot");
+        // The lane's ground is a shade off the view's, between the marks;
+        // under the lane, between the lines, the ground is the view's.
+        verify(inkAt(host, 70, 4) > 0.04, "the lane's ground, ink " + inkAt(host, 70, 4));
+        verify(inkAt(host, 70, 40) < 0.01, "the waveform's ground, ink " + inkAt(host, 70, 40));
     }
 
-    // Wider, the ordinary beats join in: shorter and fainter than the
-    // downbeats, so the bar still reads.
-    function test_downbeatsAreTallerAndBrighter() {
+    // A tall tick at each stronger mark with the bar's number beside it,
+    // a short one at the foot of the lane at every other mark.
+    function test_rulerTicksAndNumbersAreWhereTheBarsAre() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
+        const view = host.view;
+        compare(view.beatTicks[8].bar, 9);
+        compare(view.beatTicks[8].strong, true, "bar 9 is a stronger mark");
+        compare(view.beatTicks[9].strong, false, "bar 10 is not");
+        const image = grabImage(host);
+        const lane = PixelScale.pixel(image, host, 70, 4);
+        const at = (x, y) => distance(PixelScale.pixel(image, host, x, y), lane);
+        // Bar 9 at x 160: its tick from the top of the lane to the foot.
+        verify(at(160, 1) > 0.6, "a tall tick at bar 9, " + at(160, 1));
+        verify(at(160, 14) > 0.6, "down to the foot");
+        // Bar 10 at 180: only at the foot.
+        verify(at(180, 2) < 0.02, "no tall tick at bar 10, " + at(180, 2));
+        verify(at(180, 14) > 0.4, "a short one at its foot, " + at(180, 14));
+        // A number right of bar 9's tick, nothing right of bar 10's.
+        let numberInk = 0;
+        let besideShort = 0;
+        for (let x = 162; x < 170; ++x) {
+            for (let y = 2; y < 10; ++y) {
+                numberInk = Math.max(numberInk, at(x, y));
+                besideShort = Math.max(besideShort, at(x + 20, y));
+            }
+        }
+        verify(numberInk > 0.4, "bar 9's number, ink " + numberInk);
+        verify(besideShort < 0.02, "no number at bar 10, ink " + besideShort);
+    }
+
+    // Behind the waveform a faint line at every mark, a stronger one at
+    // every stronger mark; nothing between them.
+    function test_linesStandBehindTheWaveform() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
+        const faint = inkAt(host, 180, 30);
+        const strong = inkAt(host, 160, 30);
+        verify(faint > 0.03, "a faint line at bar 10, ink " + faint);
+        verify(strong > faint + 0.1, "a stronger one at bar 9: " + strong + " vs " + faint);
+        verify(inkAt(host, 190, 30) < 0.01, "ground between them");
+    }
+
+    // The bars cover the lines, played (opaque) and not (translucent):
+    // a bar's pixel over a line is the bar's colour, the same as beside
+    // it, and nothing of the grid shows on any bar.
+    function test_nothingOfTheGridIsDrawnOverTheBars() {
+        for (const progress of [1, -1]) {
+            const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), progress: progress,
+                                   waveformData: columns(600, {low: 1, mid: 0, high: 0})});
+            const image = grabImage(host);
+            const bar = PixelScale.pixel(image, host, 165, 48);
+            verify(bar.b > 0.5 && bar.r < bar.b, "a blue bar: " + bar);
+            let worst = 0;
+            let worstX = -1;
+            // Short of the right edge, where a played track's playhead
+            // stands with its glow.
+            for (let x = 1; x < 585; ++x) {
+                const d = distance(PixelScale.pixel(image, host, x, 48), bar);
+                if (d > worst) {
+                    worst = d;
+                    worstX = x;
+                }
+            }
+            verify(worst < 0.02, "progress " + progress + ": every bar the same colour, the worst at "
+                   + worstX + " off by " + worst);
+            // And the lane is beside the bars, not over them.
+            verify(distance(PixelScale.pixel(image, host, 70, 4), bar) > 0.3, "the lane is not a bar");
+            if (progress === 1 && screenshotDir && screenshotDir.length > 0) {
+                image.save(screenshotDir + "/waveform-beat-grid-behind-bars.png");
+            }
+        }
+    }
+
+    // Wider, every beat has its mark: a short tick and a faint line;
+    // every downbeat a tall, numbered one.
+    function test_everyBeatHasAFaintLineWhereThereIsRoom() {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
         repaintedAfter(host, () => host.width = 1200);
         tryCompare(host.view.beatTicks, "length", 120);
-        const downbeat = 400;   // beat 40
+        const downbeat = 400;   // beat 40, bar 11
         const beat = 410;       // beat 41
-        verify(inkAt(host, beat, 2) > 0.05, "an ordinary beat has a tick, ink " + inkAt(host, beat, 2));
-        verify(inkAt(host, downbeat, 2) > inkAt(host, beat, 2) + 0.2,
-               "a downbeat's is brighter: " + inkAt(host, downbeat, 2) + " vs " + inkAt(host, beat, 2));
-        const below = host.height * 0.25;
-        verify(inkAt(host, downbeat, below) > 0.3, "a downbeat's reaches further in");
-        verify(inkAt(host, beat, below) < 0.05, "an ordinary beat's does not, ink " + inkAt(host, beat, below));
+        verify(inkAt(host, beat, 30) > 0.03, "beat 41 has a line, ink " + inkAt(host, beat, 30));
+        verify(inkAt(host, beat, 14) > 0.3, "and a short tick");
+        verify(inkAt(host, beat, 2) < inkAt(host, 405, 2) + 0.02, "but no tall one");
+        verify(inkAt(host, downbeat, 2) > 0.6, "the downbeat's tick is tall");
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(host).save(screenshotDir + "/waveform-beat-grid-1200.png");
         }
@@ -283,11 +453,23 @@ TestCase {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
         repaintedAfter(host, () => host.width = 1200);
         tryCompare(host.view.beatTicks, "length", 120);
-        verify(inkAt(host, 410, 2) > 0.05);
+        verify(inkAt(host, 410, 30) > 0.03);
         repaintedAfter(host, () => host.width = 600);
         tryCompare(host.view.beatTicks, "length", 30);
-        verify(inkAt(host, 205, 2) < 0.05, "beat 41 is gone at 600 px, ink " + inkAt(host, 205, 2));
-        verify(inkAt(host, 200, 2) > 0.3, "downbeat 40 stays");
+        verify(inkAt(host, 205, 30) < 0.01, "beat 41's line is gone at 600 px, ink " + inkAt(host, 205, 30));
+        verify(inkAt(host, 200, 30) > 0.03, "bar 11's stays");
+    }
+
+    // A view too low for a lane to be read (a list row, a 40 px card)
+    // draws the lines behind its bars and no lane, no ticks, no numbers.
+    function test_aLowViewHasLinesButNoLane() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
+        repaintedAfter(host, () => host.height = 40);
+        compare(host.view.rulerHeight, 0);
+        compare(host.view.waveTop, 0);
+        verify(inkAt(host, 180, 10) > 0.03, "a line at bar 10, ink " + inkAt(host, 180, 10));
+        verify(inkAt(host, 170, 2) < 0.01, "no lane, ink " + inkAt(host, 170, 2));
+        verify(inkAt(host, 182, 4) < 0.01, "no number beside bar 9's line");
     }
 
     // A view handed beats already selected for its width (every view in
@@ -303,17 +485,20 @@ TestCase {
 
     // A track without a grid, or one whose grid the app does not show
     // (an Engine row that records no sample rate hands an empty list,
-    // see beat_grid_display_test), draws no ticks at all and says
-    // nothing about it.
-    function test_noBeatsDrawNoTicks() {
+    // see beat_grid_display_test), draws no lane and no lines at all and
+    // says nothing about it.
+    function test_noBeatsDrawNoGrid() {
         const host = makeView({trackDurationMs: 60000, beatData: []});
         compare(host.view.beatTicks.length, 0);
+        compare(host.view.rulerHeight, 0, "no lane");
         for (let x = 0; x < 600; x += 5) {
-            verify(inkAt(host, x, 2) < 0.05, "no ink at " + x);
+            verify(inkAt(host, x, 4) < 0.01, "no ink at " + x);
+            verify(inkAt(host, x, 30) < 0.01, "no line at " + x);
         }
     }
 
-    // A cue sitting on a downbeat is drawn over the tick, never under it.
+    // A cue sitting on a mark is drawn over its line, in the waveform's
+    // band under the lane.
     function test_cueMarkersDrawOnTopOfTheGrid() {
         const host = makeView({
             trackDurationMs: 60000,
@@ -321,20 +506,22 @@ TestCase {
             cueData: [{kind: "hot", hotCueNumber: 1, positionMs: 20000, color: "#ff0000", isLoop: false}],
         });
         const image = grabImage(host);
-        // x 200: downbeat 10 and the cue. The flag covers the tick's top
-        // (its number starts two pixels in), the line its foot.
-        const flag = PixelScale.pixel(image, host, 200, 1);
+        // x 200: bar 11 and the cue. The flag stands at the top of the
+        // waveform's band (its number starts two pixels in), the line
+        // runs down it.
+        const top = host.view.waveTop;
+        const flag = PixelScale.pixel(image, host, 200, top + 1);
         verify(flag.r > 0.9 && flag.g < 0.2 && flag.b < 0.2, "the cue's flag is on top: " + flag);
         const line = PixelScale.pixel(image, host, 200, host.height - 3);
         verify(line.r > 0.9 && line.g < 0.2 && line.b < 0.2, "and so is its line: " + line);
     }
 
-    // The grid is drawn once per change of data or size, never per
-    // frame of playback: moving the playhead repaints the playhead.
+    // The lane is drawn once per change of data or size, never per frame
+    // of playback: moving the playhead repaints the playhead.
     function test_playbackDoesNotRepaintTheGrid() {
         const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), progress: 0});
         const gridLayer = findChild(host.view, "beatGridLayer");
-        verify(gridLayer !== null, "the grid has a layer of its own");
+        verify(gridLayer !== null, "the lane has a layer of its own");
         const overlay = findChild(host.view, "waveformOverlay");
         verify(overlay !== null);
         const gridPaints = createTemporaryObject(spyComponent, testCase, {target: gridLayer, signalName: "paint"});
@@ -344,7 +531,7 @@ TestCase {
             wait(20);
         }
         verify(overlayPaints.count > 0, "the playhead moved and was repainted");
-        compare(gridPaints.count, 0, "the grid was not");
+        compare(gridPaints.count, 0, "the lane was not");
         host.width = 700;
         tryVerify(() => gridPaints.count > 0, 2000, "a new width repaints it");
     }
@@ -369,7 +556,25 @@ TestCase {
         mouseMove(host.view, 160, 40);
         tryVerify(() => paints.count > 0, 2000, "dragging out a loop repaints it");
         mouseRelease(host.view, 160, 40);
-        compare(gridPaints.count, 0, "none of it repaints the grid");
+        compare(gridPaints.count, 0, "none of it repaints the lane");
+    }
+
+    // A view showing a stretch of the track (a tile of the zoomed popup)
+    // places the bars, the marks and the cues by time within it.
+    function test_aViewShowsAStretchOfTheTrack() {
+        const host = makeView({trackDurationMs: 60000, beatsSelected: true,
+                               beatData: BeatGridTicks.layout(grid(500, 0, 60000), 60000, 6000).ticks,
+                               viewStartMs: 10000, viewSpanMs: 6000});
+        // 6 s across 600 px: a beat every 50 px, from 10 s on.
+        compare(host.view.beatTicks[20].timeMs, 10000);
+        fuzzyCompare(host.view.beatTicks[20].x, 0, 1e-9);
+        fuzzyCompare(host.view.beatTicks[21].x, 50, 1e-9);
+        compare(host.view.beatTicks[20].bar, 6);
+        compare(host.view.beatTicks[20].strong, true);
+        verify(inkAt(host, 0, 1) > 0.6, "bar 6's tall tick at the left edge");
+        verify(inkAt(host, 50, 30) > 0.03, "a line at the next beat");
+        verify(inkAt(host, 25, 30) < 0.01, "ground between beats");
+        compare(host.view.timeAtX(300), 13000);
     }
 
     Component {
@@ -438,6 +643,7 @@ TestCase {
         verify(view !== null);
         tryVerify(() => view.beatTicks.length > 0, 2000, "the bar's waveform has a grid");
         compare(asked[asked.length - 1], view.width, "asked for at the waveform's width");
+        verify(view.rulerHeight >= 12, "and a ruler lane, " + view.rulerHeight + " px");
         bar.width = 700;
         tryVerify(() => asked[asked.length - 1] === view.width && view.width < 700, 2000, "and again at a new width");
     }
@@ -535,6 +741,9 @@ TestCase {
             verify(kept.length > 0 && kept.length < beats.length || whole.length === beats.length,
                    "a row is handed fewer beats at " + width + " px: " + kept.length + " of " + beats.length);
             compare(placed(kept, durationMs, width), xs(whole), "same ticks at " + width);
+            verify(whole.some((tick) => tick.strong === true), "stronger marks at " + width);
+            compare(kept.map((beat) => beat.strong), whole.map((tick) => tick.strong), "same stronger marks at " + width);
+            compare(kept.map((beat) => beat.bar), whole.map((tick) => tick.bar), "same bar numbers at " + width);
         }
         compare(controller.beatTicksFor("rekordbox", pioneer, id, 0, 600).length, 0, "no length, nothing");
         compare(controller.beatTicksFor("rekordbox", pioneer, id, durationMs, 0).length, 0, "no width, nothing");

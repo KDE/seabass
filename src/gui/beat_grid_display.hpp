@@ -47,18 +47,35 @@ QVariantList beatGridForDisplay(const std::vector<domain::Beat> &beats, bool rat
 // the start or after `spanMs` get no tick, and without a length or a
 // width there are none.
 //
+// Which marks are stronger, the ones a ruler draws tall and numbers
+// (#104), follows from the same rule:
+//
+//   - Every beat drawn: every downbeat.
+//   - Every bar drawn: every 4th bar.
+//   - Every Nth bar drawn: every 16th bar, or every Nth where N is more.
+//
+// In each case doubled until no two numbers are closer than
+// MinimumBarNumberSpacingPx (strongBars). Bars are counted from the
+// grid's first downbeat as bar 1, before the track's start or not; a
+// beat before that downbeat is in bar 0, and a mark is always placed on
+// a bar counted that way (bar 1, 1 + N, 1 + 2N ...).
+//
 // WaveformView lays out its beatData with this (BeatGridTicks, the QML
 // face of it), and a list row is handed only the beats this keeps
 // (PlaybackController::beatTicksFor()). Laid out again, those come out as
 // the same ticks, so the two never disagree.
 inline constexpr double MinimumBeatSpacingPx = 6.0;
 inline constexpr double MinimumDownbeatSpacingPx = 12.0;
+inline constexpr double MinimumBarNumberSpacingPx = 24.0;
 
 struct BeatTick
 {
     double timeMs = 0.0;
     double x = 0.0;  // pixels from the left edge
     bool downbeat = false;
+    int bar = 0;             // counted from the grid's first downbeat as 1; 0 before it
+    bool startsBar = false;  // the beat that starts bar `bar`
+    bool strong = false;     // a stronger mark: drawn tall and numbered
 };
 
 struct BeatTickLayout
@@ -66,12 +83,14 @@ struct BeatTickLayout
     std::vector<BeatTick> ticks;
     bool everyBeat = false;  // whether the ordinary beats are drawn
     int barsPerTick = 0;     // the N of "every Nth downbeat"; 1 for every one (or every beat), 0 for none
+    int strongBars = 0;      // every how many bars a mark is stronger; 0 for none
 };
 
 BeatTickLayout layoutBeatTicks(const std::vector<domain::Beat> &beats, double spanMs, double widthPx);
 
-// The beats layoutBeatTicks() keeps, as beatGridForDisplay() hands them
-// (and as empty, for a rate not recorded).
+// The beats layoutBeatTicks() keeps, as beatGridForDisplay() hands them,
+// each with its `strong` and `bar` as well (and as empty, for a rate not
+// recorded).
 QVariantList beatTicksForDisplay(const std::vector<domain::Beat> &beats, bool rateRecorded, double spanMs,
                                  double widthPx);
 
