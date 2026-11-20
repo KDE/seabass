@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,6 +39,51 @@ struct TrackFieldValue
     std::string text;
 };
 
+// Where one catalog lists a track's file: found by its path with letter
+// case and Unicode composition folded the way FAT and exFAT fold them
+// (application::normalizedPathKey), since another catalog, or the disk,
+// may spell a folder in another case (#103). Every row found must be in
+// ONE spelling: rows in two spellings are two rows the player may tell
+// apart, and which of them is "the track" is not something Seabass can
+// know, so that is Ambiguous and the edit is refused.
+struct CatalogRows
+{
+    enum class State
+    {
+        NoCatalog,  // the stick has no such catalog
+        NotListed,  // the catalog does not list the file
+        Listed,
+        Ambiguous,
+        // The catalog is there in a form Seabass does not write (an Engine
+        // 1.x library, m.db at the library's top level): the edit is
+        // refused rather than written to the others alone.
+        Unwritable,
+    };
+    State state = State::NoCatalog;
+    // The catalog's own spelling of the path, as stored (Listed).
+    std::string spelling;
+    // Its rows for the file, in that spelling (Listed).
+    std::vector<std::int64_t> ids;
+    // The spellings found (Ambiguous).
+    std::vector<std::string> spellings;
+};
+
+// The file's rows in each catalog of the stick.
+struct TrackRows
+{
+    CatalogRows rekordbox;   // export.pdb
+    CatalogRows oneLibrary;  // exportLibrary.db
+    CatalogRows engine;      // m.db
+    bool listedAnywhere() const;
+    // Why an edit of this track cannot be staged, one plain sentence; empty
+    // when it can.
+    std::string refusal() const;
+};
+
+// Reads every catalog on the stick (export.pdb whole, OneLibrary, Engine):
+// off the GUI thread. Throws when a catalog that is there cannot be read.
+TrackRows findTrackRows(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath);
+
 // The change's id for `field` of the file at `filePath`: one per field and
 // track, so staging the same field again replaces the earlier value.
 QString trackFieldChangeId(TrackField field, const std::string &filePath);
@@ -55,8 +101,12 @@ QString trackFieldChangeId(TrackField field, const std::string &filePath);
 class TrackFieldEditChange : public PendingChange
 {
 public:
+    // `rows` is where each catalog listed the file when the edit was
+    // staged (findTrackRows()): at Save each must list it the same way,
+    // or the save fails saying which one does not, rather than writing
+    // the others and leaving the catalogs disagreeing.
     TrackFieldEditChange(QString pioneerRoot, QString enginePath, std::string filePath, std::string title,
-                         TrackFieldValue value);
+                         TrackFieldValue value, TrackRows rows);
 
     QString id() const override;
     QString owner() const override;
@@ -68,6 +118,10 @@ public:
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     std::vector<RekordboxWrite> rekordboxWrites() const override;
+    // Counts the save's track edits, so the first one opens each
+    // catalog's write session knowing how many writes are coming (one
+    // whole-file replace of export.pdb for a large batch, not one each).
+    void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
     const TrackFieldValue &value() const { return m_value; }
@@ -79,6 +133,7 @@ private:
     std::string m_filePath;
     std::string m_title;
     TrackFieldValue m_value;
+    TrackRows m_rows;
     // The last apply() wrote the rating into export.pdb or OneLibrary.
     bool m_wroteRekordboxSide = false;
 };
@@ -101,8 +156,20 @@ struct CommentLimit
     std::string reason;
 };
 
-// Reads export.pdb whole: off the GUI thread.
-CommentLimit commentLimitFor(const QString &pioneerRoot, const std::string &filePath);
+// From the rows findTrackRows() found: export.pdb's rows for the file
+// decide it. Reads export.pdb whole: off the GUI thread.
+CommentLimit commentLimitFor(const QString &pioneerRoot, const TrackRows &rows);
+
+// One track's rows and comment limit, read together off the GUI thread
+// for the track details; `error` says why they could not be read.
+struct TrackLookup
+{
+    std::string filePath;
+    TrackRows rows;
+    CommentLimit limit;
+    std::string error;
+};
+TrackLookup lookUpTrack(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath);
 
 // Why `comment` cannot be written under `limit`, or empty when it can.
 std::string commentLimitRefusal(const std::string &comment, const CommentLimit &limit);

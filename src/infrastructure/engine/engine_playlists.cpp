@@ -173,6 +173,40 @@ std::vector<djinterop::track> tracksForFile(const djinterop::database &db, const
 
 }  // namespace
 
+std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot)
+{
+    const std::string file = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(file.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        const std::string why = db ? sqlite3_errmsg(db) : "out of memory";
+        sqlite3_close(db);
+        throw std::runtime_error("engine: could not open " + file + ": " + why);
+    }
+    sqlite3_busy_timeout(db, 5000);
+    std::vector<std::pair<std::int64_t, std::string>> rows;
+    sqlite3_stmt *stmt = nullptr;
+    std::string failure;
+    if (sqlite3_prepare_v2(db, "SELECT id, path FROM Track WHERE path IS NOT NULL AND path <> ''", -1, &stmt, nullptr)
+        != SQLITE_OK) {
+        failure = sqlite3_errmsg(db);
+    } else {
+        int rc = SQLITE_ROW;
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            const auto *text = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+            rows.emplace_back(sqlite3_column_int64(stmt, 0), text ? std::string(text) : std::string());
+        }
+        if (rc != SQLITE_DONE) {
+            failure = sqlite3_errmsg(db);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    if (!failure.empty()) {
+        throw std::runtime_error("engine: could not read the tracks' paths in " + file + ": " + failure);
+    }
+    return rows;
+}
+
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
                                                 const std::string &filePath)
 {

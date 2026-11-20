@@ -2222,6 +2222,32 @@ bool PdbRowWriter::trackInAnyPlaylist(uint32_t trackId) const
     return !findAllPlaylistEntriesForTrack(m_buffer, trackId).empty();
 }
 
+std::vector<std::pair<uint32_t, std::string>> PdbRowWriter::trackFilePaths() const
+{
+    std::vector<std::pair<uint32_t, std::string>> rows;
+    std::istringstream iss(m_buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_TRACKS) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (!row->present()) {
+                        continue;
+                    }
+                    if (auto *t = dynamic_cast<Pdb::track_row_t *>(row->body())) {
+                        rows.emplace_back(t->id(), sqlText(t->file_path()));
+                    }
+                }
+            }
+        });
+    }
+    return rows;
+}
+
 std::vector<uint32_t> PdbRowWriter::trackIdsWithFilePath(const std::string &pathOnStick) const
 {
     std::vector<uint32_t> ids;
