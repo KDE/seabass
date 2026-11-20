@@ -10,6 +10,8 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <atomic>
+#include <filesystem>
 #include <array>
 #include <fstream>
 #include <iostream>
@@ -755,10 +757,46 @@ std::vector<std::pair<int64_t, std::string>> contentPathsIn(SqlCipherDb &db)
 
 std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot)
 {
-    SqlCipherLibrary lib;
-    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-    return contentPathsIn(db);
+    // From a copy on this computer, not the stick's file: exportLibrary.db
+    // runs in WAL mode, and even a read-only connection writes its
+    // -shm (measured on a fixture copy: a lookup rewrote the stick's
+    // exportLibrary.db-shm, same size, new modification time). The database and its -wal are
+    // copied, so the copy holds every committed row; the -shm is rebuilt
+    // by SQLite from the copied -wal.
+    namespace fs = std::filesystem;
+    const fs::path db = pathFromUtf8(OneLibraryCueWriter::dbPathFor(pioneerRoot));
+    static std::atomic<unsigned> serial{0};
+    const fs::path dir = fs::temp_directory_path()
+        / ("seabass-onelibrary-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-"
+           + std::to_string(serial++));
+    fs::create_directories(dir);
+    struct Cleanup
+    {
+        fs::path dir;
+        ~Cleanup()
+        {
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+        }
+    } cleanup{dir};
+    const fs::path copy = dir / db.filename();
+    fs::copy_file(db, copy);
+    std::error_code ec;
+    fs::path wal = db;
+    wal += "-wal";
+    if (fs::is_regular_file(wal, ec)) {
+        fs::path walCopy = copy;
+        walCopy += "-wal";
+        fs::copy_file(wal, walCopy);
+    }
+    std::vector<std::pair<int64_t, std::string>> rows;
+    {
+        SqlCipherLibrary lib;
+        SqlCipherDb opened(lib, pathToUtf8(copy), /*readOnly=*/false);
+        opened.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        rows = contentPathsIn(opened);
+    }
+    return rows;
 }
 
 std::vector<std::pair<int64_t, std::string>> OneLibraryCueWriter::contentPaths()

@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -80,8 +81,36 @@ struct TrackRows
     std::string refusal() const;
 };
 
-// Reads every catalog on the stick (export.pdb whole, OneLibrary, Engine):
-// off the GUI thread. Throws when a catalog that is there cannot be read.
+struct CommentLimit;
+
+// Every catalog on one stick read once (export.pdb whole, OneLibrary's
+// content paths, Engine's track paths), each row's path folded to its
+// key: a track shown is then answered from memory, without touching the
+// stick again. Built off the GUI thread (buildStickPathIndex); copied
+// cheaply, the rows are shared.
+class StickPathIndex
+{
+public:
+    QString pioneerRoot;
+    QString enginePath;
+    bool valid() const { return m_data != nullptr; }
+    TrackRows rowsFor(const std::string &filePath) const;
+    CommentLimit limitFor(const TrackRows &rows) const;
+
+    struct Data;
+
+private:
+    friend StickPathIndex buildStickPathIndex(const QString &, const QString &);
+    std::shared_ptr<const Data> m_data;
+};
+
+// Reads the stick: off the GUI thread. Throws when a catalog that is
+// there cannot be read. An Engine 1.x library is looked for at
+// `enginePath` and, since the stick scan reports none for it, beside the
+// PIONEER folder.
+StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &enginePath);
+
+// The same for one file, reading the stick (buildStickPathIndex).
 TrackRows findTrackRows(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath);
 
 // The change's id for `field` of the file at `filePath`: one per field and
@@ -170,6 +199,9 @@ struct TrackLookup
     std::string error;
 };
 TrackLookup lookUpTrack(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath);
+
+// The plain sentence saying why `limit` holds, empty when it is none.
+std::string limitReason(const CommentLimit &limit);
 
 // Why `comment` cannot be written under `limit`, or empty when it can.
 std::string commentLimitRefusal(const std::string &comment, const CommentLimit &limit);
