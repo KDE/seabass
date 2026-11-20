@@ -104,9 +104,19 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
         return {};
     }
     std::string error;
-    const auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
+    auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
     if (!row) {
-        return {false, false, false};
+        // Not a damaged blob: the row could not be read at all (the
+        // database locked or being journalled by a write, a moment ago).
+        // Once more, then as before the check: libdjinterop reads it
+        // unchecked. A blob that does not decode is only ever found by
+        // reading it; a row that cannot be read here is one libdjinterop
+        // will most likely fail to open as well, which it reports by
+        // throwing, and that is caught.
+        row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
+        if (!row) {
+            return {};
+        }
     }
     const auto ok = [](const application::EngineSqlValue &value) {
         return value.isNull() || internal::engineBlobDecodable(value.bytes);
@@ -117,7 +127,7 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
 }  // namespace
 
 domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
-                                        bool withDetail)
+                                        std::size_t detailUpTo)
 {
     domain::TrackAnalysis analysis;
     try {
@@ -137,7 +147,7 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
             try {
                 const std::vector<djinterop::waveform_entry> entries = track->waveform();
                 analysis.waveform = previewOf(entries);
-                if (withDetail && !entries.empty()) {
+                if (!entries.empty() && entries.size() <= detailUpTo) {
                     analysis.detail.columns.reserve(entries.size());
                     for (const djinterop::waveform_entry &entry : entries) {
                         analysis.detail.columns.push_back(
@@ -159,7 +169,10 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
         }
         // The grid is placed by the rate trackData records (or works one
         // out), so it needs both blobs. A trackData that does not decode
-        // records no rate: no grid, as for a row without one (#40).
+        // is not read at all, so no rate is known from it, and a grid whose
+        // rate is not known is not drawn (#40). (A row whose trackData is
+        // NULL is read as ever: libdjinterop gives no rate, and the beat
+        // reader works one out from the markers.)
         if (decodable.beats && decodable.trackData) {
             try {
                 analysis.beats = beatGridOf(*track);

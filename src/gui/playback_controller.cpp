@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <QAudioBuffer>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
@@ -73,7 +74,7 @@ QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
 
 domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId,
                                    const infrastructure::rekordbox::AnlzPathIndex *pathIndex = nullptr,
-                                   bool withDetail = false)
+                                   std::size_t detailUpTo = 0)
 {
     try {
         if (format == "rekordbox") {
@@ -82,7 +83,7 @@ domain::TrackAnalysis readAnalysis(const QString &format, const QString &library
         }
         if (format == "engine") {
             return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
-                                                             withDetail);
+                                                             detailUpTo);
         }
         // Any other format (currently just "onelibrary") has no waveform
         // reader of its own -- stays empty rather than falling into
@@ -286,14 +287,16 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         const auto index = format == QLatin1String("rekordbox") && !libraryPath.isEmpty()
             ? anlzIndexFor(libraryPath) : nullptr;
         const domain::TrackAnalysis analysis = libraryPath.isEmpty()
-            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), true);
+            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), MaximumKeptDetailColumns);
         m_waveform = toVariantList(analysis.waveform);
         // Kept for the popup only where it is overview-sized (Engine 2.x
         // and 3.x, about a thousand entries); a 1.x high-resolution
         // waveform (ten megabytes for an hour) is read again off the GUI
         // thread if the popup asks.
-        m_loadedDetailKept = analysis.detail.columns.size() <= MaximumKeptDetailColumns;
-        m_loadedDetail = m_loadedDetailKept ? std::move(analysis.detail) : domain::DetailWaveform{};
+        // Built by the read only when it is that small: a larger one is not
+        // built here at all.
+        m_loadedDetailKept = !analysis.detail.columns.empty();
+        m_loadedDetail = std::move(analysis.detail);
         // An MP3 is played on Engine's timeline; the cues and a rekordbox
         // grid are not on it (#50).
         const auto shift = infrastructure::audio::playbackShiftFor(
@@ -319,7 +322,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         // is reported again; the one it has is this track's.
         const auto status = m_player->mediaStatus();
         if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia
-            || status == QMediaPlayer::BufferingMedia || status == QMediaPlayer::EndOfMedia) {
+            || status == QMediaPlayer::BufferingMedia || status == QMediaPlayer::EndOfMedia
+            || status == QMediaPlayer::InvalidMedia) {
             markDurationKnown();
         }
         if (startPlaying) {
@@ -524,20 +528,28 @@ void PlaybackController::requestDetailWaveform()
     if (m_libraryBusy) {
         return;
     }
-    // Everything else is read off the GUI thread, export.pdb's analysis
-    // paths included: no library read here (#104).
+    // Everything else is read off the GUI thread (#104). export.pdb's
+    // analysis paths: the index load() keeps for this library, as it is,
+    // without looking at the file again here; the worker parses export.pdb
+    // itself only where there is none.
+    std::shared_ptr<const infrastructure::rekordbox::AnlzPathIndex> index;
+    if (!engine) {
+        if (const auto kept = m_anlzIndexes.find(m_currentLibraryPath); kept != m_anlzIndexes.end()) {
+            index = kept->second.index;
+        }
+    }
     const std::string path = m_currentLibraryPath.toStdString();
     const std::string sourceId = m_currentSourceId.toStdString();
     const QString stickRoot = QFileInfo(m_currentLibraryPath).absolutePath();
     m_detailRequest.start(
         QString::number(serial), stickRoot,
-        [path, sourceId, engine](application::CancellationToken cancel) {
+        [path, sourceId, engine, index](application::CancellationToken cancel) {
             if (cancel.cancelled()) {
                 return domain::DetailWaveform{};
             }
             domain::DetailWaveform detail = engine
-                ? infrastructure::engine::readTrackAnalysis(path, sourceId, true).detail
-                : infrastructure::rekordbox::readDetailWaveform(path, sourceId);
+                ? infrastructure::engine::readTrackAnalysis(path, sourceId, std::numeric_limits<std::size_t>::max()).detail
+                : infrastructure::rekordbox::readDetailWaveform(path, sourceId, nullptr, index.get());
             return cancel.cancelled() ? domain::DetailWaveform{} : detail;
         },
         {[this, serial](domain::DetailWaveform &&detail) { setDetailWaveform(detail, serial); },

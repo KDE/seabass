@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -27,8 +28,10 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 // The waveform preview and the beat grid from one opening of the
 // database. Either half is empty where the track has not got it.
 //
-// `withDetail` also hands over every entry of the waveform, not averaged
-// down, as TrackAnalysis::detail (the zoomed popup, #104): Engine 2.x and
+// `detailUpTo` also hands over every entry of the waveform, not averaged
+// down, as TrackAnalysis::detail (the zoomed popup, #104), when there are
+// no more than that many (0, the default: never; the player keeps only an
+// overview-sized one and reads a larger one again when it is asked for): Engine 2.x and
 // 3.x libraries keep only the overview the player draws across the whole
 // track (about a thousand entries, all libdjinterop reads from them),
 // 1.x libraries the high-resolution waveform as well. Its spacing comes
@@ -44,6 +47,6 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 // same. A 1.x library keeps these blobs in p.db, which this check does
 // not read: there the decoder is still handed them unchecked.
 domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
-                                        bool withDetail = false);
+                                        std::size_t detailUpTo = 0);
 
 }  // namespace seabass::infrastructure::engine
