@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,7 @@
 #include <string_view>
 
 #include <djinterop/djinterop.hpp>
+#include <zlib.h>
 #include <djinterop/engine/v2/engine_library.hpp>
 #include <djinterop/engine/v3/engine_library.hpp>
 
@@ -515,6 +517,72 @@ std::string textOf(const std::vector<std::byte> &bytes)
     return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
+// Whether libdjinterop's zlib_uncompress can be handed `bytes` safely: a
+// four-byte big-endian length, then a zlib stream. As pinned, it takes the
+// address of byte 4 even when the blob has only four (out of range: an
+// abort under MSVC's checked iterators that no catch sees), gives inflate
+// four bytes more than the blob holds, and loops for ever on a stream that
+// does not end within them (inflate then returns Z_BUF_ERROR with no input
+// left, which it does not treat as the end). So a blob is passed on only
+// when it is empty or says length 0 (both decode to nothing without a
+// read past the header), or when its stream, inflated here first, ends
+// within the blob and inflates to no more than a sane bound (the length
+// is also reserved up front).
+constexpr std::uint32_t MaxEngineBlobBytes = 64u * 1024u * 1024u;
+
+bool engineBlobDecodable(const std::string &bytes)
+{
+    if (bytes.empty()) {
+        return true;
+    }
+    if (bytes.size() < 4) {
+        return false;
+    }
+    const auto byte = [&](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[i])); };
+    const std::uint32_t declared = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
+    if (declared == 0) {
+        return true;
+    }
+    if (declared > MaxEngineBlobBytes || bytes.size() < 5) {
+        return false;
+    }
+    z_stream strm{};
+    if (inflateInit(&strm) != Z_OK) {
+        return false;
+    }
+    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(bytes.data() + 4));
+    strm.avail_in = static_cast<uInt>(bytes.size() - 4);
+    std::array<unsigned char, 16384> out{};
+    std::uint64_t inflated = 0;
+    int ret = Z_OK;
+    while (ret == Z_OK) {
+        strm.next_out = out.data();
+        strm.avail_out = static_cast<uInt>(out.size());
+        ret = inflate(&strm, Z_NO_FLUSH);
+        inflated += out.size() - strm.avail_out;
+        if (inflated > MaxEngineBlobBytes) {
+            ret = Z_DATA_ERROR;
+        }
+    }
+    inflateEnd(&strm);
+    return ret == Z_STREAM_END;
+}
+
+// Stored bytes through libdjinterop's decoder, nothing when they would not
+// decode, or are not safe to try (engineBlobDecodable).
+template<typename Blob>
+std::optional<Blob> fromEngineBlob(const std::string &bytes)
+{
+    if (!engineBlobDecodable(bytes)) {
+        return std::nullopt;
+    }
+    try {
+        return Blob::from_blob(bytesOf(bytes));
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
 // A column's blob through libdjinterop's decoder, nothing when it is not a
 // blob or does not decode: no analysis to keep or compare.
 template<typename Blob>
@@ -523,11 +591,7 @@ std::optional<Blob> decoded(const EngineSqlValue &value)
     if (value.type != EngineSqlValue::Type::Blob) {
         return std::nullopt;
     }
-    try {
-        return Blob::from_blob(bytesOf(value.bytes));
-    } catch (const std::exception &) {
-        return std::nullopt;
-    }
+    return fromEngineBlob<Blob>(value.bytes);
 }
 
 // A flag as the player reads it; nothing when the column holds no number
@@ -872,11 +936,7 @@ std::optional<OverviewBlob> readOverviewFile(const std::filesystem::path &path)
     if (in.bad()) {
         return std::nullopt;
     }
-    try {
-        return OverviewBlob::from_blob(bytesOf(text));
-    } catch (const std::exception &) {
-        return std::nullopt;
-    }
+    return fromEngineBlob<OverviewBlob>(text);
 }
 
 }  // namespace
@@ -1200,14 +1260,15 @@ enum class BlobKind { TrackData, Overview, BeatData };
 
 std::string canonicalBlob(const std::string &bytes, BlobKind kind)
 {
+    const auto encoded = [&](const auto &blob) { return blob ? "d" + textOf(blob->to_blob()) : "r" + bytes; };
     try {
         switch (kind) {
         case BlobKind::TrackData:
-            return "d" + textOf(TrackDataBlob::from_blob(bytesOf(bytes)).to_blob());
+            return encoded(fromEngineBlob<TrackDataBlob>(bytes));
         case BlobKind::Overview:
-            return "d" + textOf(OverviewBlob::from_blob(bytesOf(bytes)).to_blob());
+            return encoded(fromEngineBlob<OverviewBlob>(bytes));
         case BlobKind::BeatData:
-            return "d" + textOf(BeatDataBlob::from_blob(bytesOf(bytes)).to_blob());
+            return encoded(fromEngineBlob<BeatDataBlob>(bytes));
         }
     } catch (const std::exception &) {
     }

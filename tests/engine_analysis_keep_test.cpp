@@ -562,6 +562,33 @@ int main(int argc, char **argv)
             check(snapshot(stick, id) == before, name + ": the row is untouched");
             check(store.find(options.keepKey).status == Status::None, name + ": nothing kept");
         }
+        // Beat data the decoder must never be handed: a length and no
+        // stream (four bytes: libdjinterop indexed past the end, an abort
+        // on MSVC), too short for a length, a stream that never ends
+        // (libdjinterop looped for ever), lengths no blob has. Each is
+        // unreadable, the row left alone; a length of 0 with bytes after
+        // it decodes to nothing, which is no beat data either.
+        for (const auto &[blob, what] : std::vector<std::pair<std::string, std::string>>{
+                 {"x'01'", "1 byte"},
+                 {"x'000102'", "3 bytes"},
+                 {"x'00010203'", "4 bytes, a length and nothing else"},
+                 {"x'0001020378'", "5 bytes"},
+                 {"x'00000000deadbeef'", "length 0, bytes after it"},
+                 {"x'00000040789c4b4c4a'", "a stream cut short"},
+                 {"x'ffffffff789c030000000001'", "a length of 4 GiB less one"},
+                 {"x'7fffffff789c030000000001'", "a length of 2 GiB"}}) {
+            exec(stick.mdb, "UPDATE PerformanceData SET beatData = " + blob + " WHERE trackId = 14");
+            const EngineAnalysisColumns before = snapshot(stick, 14);
+            AnalysisImportOptions options = keyed("k14");
+            options.fileSampleRateHz = 44100.0;
+            options.fileSampleCount = 7938000;
+            const auto r = writer.importAnalysis("14", analysisOf(180.0, 102.0, 3), options);
+            check(r.grid.outcome == Outcome::RowUnreadable && r.waveform == Waveform::RowUnreadable,
+                  "beat data of " + what + ": unreadable");
+            check(writer.engineAnalysisFacts("14", "k14").kept == EngineAnalysisFacts::Kept::None,
+                  "beat data of " + what + ": nothing kept, no throw");
+            check(snapshot(stick, 14) == before, "beat data of " + what + ": the row is untouched");
+        }
     }
 
     // 10. Nothing kept yet, the row's grid Seabass's (the ledger's) over
