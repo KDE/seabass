@@ -14,6 +14,7 @@
 #include <QMediaPlayer>
 #endif
 #include <QFile>
+#include <QFileInfo>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -71,7 +72,8 @@ QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
 }
 
 domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId,
-                                   const infrastructure::rekordbox::AnlzPathIndex *pathIndex = nullptr)
+                                   const infrastructure::rekordbox::AnlzPathIndex *pathIndex = nullptr,
+                                   bool withDetail = false)
 {
     try {
         if (format == "rekordbox") {
@@ -79,7 +81,8 @@ domain::TrackAnalysis readAnalysis(const QString &format, const QString &library
                                                                 nullptr, pathIndex);
         }
         if (format == "engine") {
-            return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString());
+            return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
+                                                             withDetail);
         }
         // Any other format (currently just "onelibrary") has no waveform
         // reader of its own -- stays empty rather than falling into
@@ -206,6 +209,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
                                const QString &artworkPath, const QVariantList &cues,
                                const QString &fallbackArtworkPath, bool startPlaying)
 {
+    emit trackAboutToChange();
     if (m_player) {
         m_player->stop();
     }
@@ -220,6 +224,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_beatNumbers.clear();
     m_drawnBeats.clear();
     ++m_trackSerial;
+    dropDetailWaveform();
 
     m_currentFormat = format;
     m_currentSourceId = sourceId;
@@ -261,8 +266,9 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         const auto index = format == QLatin1String("rekordbox") && !libraryPath.isEmpty()
             ? anlzIndexFor(libraryPath) : nullptr;
         const domain::TrackAnalysis analysis = libraryPath.isEmpty()
-            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get());
+            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), true);
         m_waveform = toVariantList(analysis.waveform);
+        m_loadedDetail = analysis.detail;
         // An MP3 is played on Engine's timeline; the cues and a rekordbox
         // grid are not on it (#50).
         const auto shift = infrastructure::audio::playbackShiftFor(
@@ -299,6 +305,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
 void PlaybackController::loadFile(const QString &format, const QString &libraryPath, const QString &filePath,
                                   const QString &title, const QString &artist)
 {
+    emit trackAboutToChange();
     if (m_player) {
         m_player->stop();
     }
@@ -310,6 +317,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_beatNumbers.clear();
     m_drawnBeats.clear();
     ++m_trackSerial;
+    dropDetailWaveform();
 
     m_currentFormat = format;
     m_currentSourceId = QStringLiteral("recording:") + filePath;
@@ -407,32 +415,28 @@ QVariantMap PlaybackController::detailWaveform() const
     if (m_detailSerial == m_trackSerial) {
         return m_detailWaveform;
     }
-    // Not while a library is being written: an Engine library is opened
-    // through libdjinterop to read it, as next() would (see libraryBusy).
-    // Nothing is kept, so the ask after the write reads it.
-    if (m_libraryBusy) {
-        return {{QStringLiteral("columns"), QByteArray()},
-                {QStringLiteral("msPerColumn"), 0.0},
-                {QStringLiteral("startMs"), m_beatShiftMs}};
+    return {{QStringLiteral("columns"), QByteArray()},
+            {QStringLiteral("msPerColumn"), 0.0},
+            {QStringLiteral("startMs"), m_beatShiftMs}};
+}
+
+void PlaybackController::dropDetailWaveform()
+{
+    m_detailRequest.cancel();
+    m_detailWanted = false;
+    m_loadedDetail = {};
+    const bool had = m_detailSerial >= 0;
+    m_detailSerial = -1;
+    m_detailWaveform.clear();
+    if (had) {
+        emit detailWaveformChanged();
     }
-    domain::DetailWaveform detail;
-    // Only a catalog's track has one: a recording (loadFile()) and a
-    // stored backup row (no library path) have no analysis to read.
-    if (m_hasTrack && !m_currentLibraryPath.isEmpty() && !m_currentSourceId.startsWith(QLatin1String("recording:"))) {
-        try {
-            if (m_currentFormat == QLatin1String("rekordbox")) {
-                const auto index = anlzIndexFor(m_currentLibraryPath);
-                detail = infrastructure::rekordbox::readDetailWaveform(
-                    m_currentLibraryPath.toStdString(), m_currentSourceId.toStdString(), nullptr, index.get());
-            } else if (m_currentFormat == QLatin1String("engine")) {
-                detail = infrastructure::engine::readDetailWaveform(m_currentLibraryPath.toStdString(),
-                                                                    m_currentSourceId.toStdString());
-            }
-        } catch (const std::exception &) {
-            // On the UI thread, like readAnalysis(): no finer waveform,
-            // never a crash.
-            detail = {};
-        }
+}
+
+void PlaybackController::setDetailWaveform(const domain::DetailWaveform &detail, int serial)
+{
+    if (serial != m_trackSerial) {
+        return;   // another track has been loaded since it was asked for
     }
     QByteArray columns;
     columns.reserve(static_cast<qsizetype>(detail.columns.size() * 3));
@@ -447,8 +451,42 @@ QVariantMap PlaybackController::detailWaveform() const
     m_detailWaveform = {{QStringLiteral("columns"), columns},
                         {QStringLiteral("msPerColumn"), detail.msPerColumn},
                         {QStringLiteral("startMs"), m_beatShiftMs}};
-    m_detailSerial = m_trackSerial;
-    return m_detailWaveform;
+    m_detailSerial = serial;
+    emit detailWaveformChanged();
+}
+
+void PlaybackController::requestDetailWaveform()
+{
+    if (!m_hasTrack || m_detailSerial == m_trackSerial) {
+        return;
+    }
+    m_detailWanted = true;
+    const int serial = m_trackSerial;
+    // Engine: nothing finer than what load() read can come back, so no
+    // second opening of the database.
+    if (m_currentFormat != QLatin1String("rekordbox") || m_currentLibraryPath.isEmpty()
+        || m_currentSourceId.startsWith(QLatin1String("recording:"))) {
+        setDetailWaveform(m_currentFormat == QLatin1String("engine") ? m_loadedDetail : domain::DetailWaveform{},
+                          serial);
+        return;
+    }
+    // Not while a library is being written: an analysis file can be
+    // half rewritten. setLibraryBusy(false) asks again.
+    if (m_libraryBusy) {
+        return;
+    }
+    // The index is load()'s, kept: no export.pdb parse here.
+    const auto index = anlzIndexFor(m_currentLibraryPath);
+    const std::string pioneer = m_currentLibraryPath.toStdString();
+    const std::string sourceId = m_currentSourceId.toStdString();
+    const QString stickRoot = QFileInfo(m_currentLibraryPath).absolutePath();
+    m_detailRequest.start(
+        QString::number(serial), stickRoot,
+        [pioneer, sourceId, index](application::CancellationToken) {
+            return infrastructure::rekordbox::readDetailWaveform(pioneer, sourceId, nullptr, index.get());
+        },
+        {[this, serial](domain::DetailWaveform &&detail) { setDetailWaveform(detail, serial); },
+         [](const QString &) {}, [] {}});
 }
 
 // Rebuilt whenever export.pdb's size or modification time differs from
@@ -530,10 +568,18 @@ void PlaybackController::setLibraryBusy(bool busy)
     }
     m_libraryBusy = busy;
     emit libraryBusyChanged();
+    if (busy) {
+        // A read under way may meet a file half rewritten; asked again
+        // once the write is over.
+        m_detailRequest.cancel();
+    }
     if (!busy) {
         // A write has just finished, and any library may now say something
         // else about any track: a sample rate recorded, a grid replaced.
         forgetAnalyses();
+        if (m_detailWanted && m_detailSerial != m_trackSerial) {
+            requestDetailWaveform();
+        }
     }
     if (!busy && m_advanceWhenLibraryFree) {
         m_advanceWhenLibraryFree = false;
@@ -704,6 +750,7 @@ bool PlaybackController::jumpToHotCue(int number)
 
 void PlaybackController::stop()
 {
+    emit trackAboutToChange();
     if (m_player) {
         m_player->stop();
         // Clearing the source, not just stopping playback, is what actually
@@ -724,6 +771,7 @@ void PlaybackController::stop()
     m_beatNumbers.clear();
     m_drawnBeats.clear();
     ++m_trackSerial;
+    dropDetailWaveform();
     m_cues.clear();
     m_cueShiftMs = 0.0;
     emit trackChanged();

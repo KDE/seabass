@@ -19,6 +19,8 @@
 
 #include "domain/audio_levels.hpp"
 #include "domain/beat_grid.hpp"
+#include "domain/waveform.hpp"
+#include "gui/async_request.hpp"
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -107,6 +109,17 @@ class PlaybackController : public QObject
     Q_PROPERTY(qreal levelMid READ levelMid NOTIFY levelsChanged)
     Q_PROPERTY(qreal levelHigh READ levelHigh NOTIFY levelsChanged)
     Q_PROPERTY(int beatCount READ beatCount NOTIFY beatCountChanged)
+    // The loaded track's waveform at the finest resolution its library
+    // holds and Seabass reads (domain::DetailWaveform), for the zoomed
+    // waveform popup (#104): {columns, msPerColumn, startMs}. `columns`
+    // is an ArrayBuffer in QML, three bytes a column (low, mid, high, 0
+    // to 255): a list of maps would be some forty thousand of them.
+    // msPerColumn 0 spreads the columns over the track's length; startMs
+    // is where the first column falls on the timeline the player plays
+    // on, moved as the beats are. Empty columns until requestDetailWaveform()
+    // has an answer, and where there is nothing finer (a view then draws
+    // `waveform`).
+    Q_PROPERTY(QVariantMap detailWaveform READ detailWaveform NOTIFY detailWaveformChanged)
 
 public:
     explicit PlaybackController(QObject *parent = nullptr);
@@ -140,6 +153,7 @@ public:
     qreal levelMid() const { return m_levels.mid; }
     qreal levelHigh() const { return m_levels.high; }
     int beatCount() const { return m_beatCount; }
+    QVariantMap detailWaveform() const;
     // Linear gain, 0.0 (silent) to 1.0 (unattenuated) -- matches
     // QAudioOutput::volume()'s own scale directly, no remapping.
     qreal volume() const { return m_volume; }
@@ -217,19 +231,12 @@ public:
     // (the player keeps time by that grid, but nothing draws it as fact).
     // Bind with trackSerial so a new track is laid out again.
     Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
-    // The loaded track's waveform at the finest resolution its library
-    // holds and Seabass reads (domain::DetailWaveform; rekordbox's
-    // scrolling waveform, Engine's own), for the zoomed waveform popup
-    // (#104): {columns, msPerColumn, startMs}. `columns` is an
-    // ArrayBuffer in QML, three bytes a column (low, mid, high, 0 to
-    // 255): a list of maps would be some forty thousand of them.
-    // msPerColumn 0 spreads the columns over the track's length; startMs
-    // is where the first column falls on the timeline the player plays
-    // on, moved as the beats are. Read on the first ask after a load and
-    // kept until the next; empty columns where there is nothing finer
-    // (a view falls back on `waveform`), and, not kept, while
-    // libraryBusy: bind with it as well as trackSerial.
-    Q_INVOKABLE QVariantMap detailWaveform() const;
+    // Asks for the loaded track's detailWaveform. Engine's is what load()
+    // read and is there at once; rekordbox's scrolling waveform is read
+    // off the GUI thread (AsyncRequest), never while a library is being
+    // written (asked again once the write is over), and dropped if
+    // another track has been loaded by the time it arrives.
+    Q_INVOKABLE void requestDetailWaveform();
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
@@ -269,6 +276,10 @@ public:
     Q_INVOKABLE void stop();
 
 signals:
+    // Emitted before load(), loadFile() or stop() changes anything: what
+    // was shown of the old track can still be read (the player bar keeps
+    // a picture of it to blend from, #104).
+    void trackAboutToChange();
     void trackChanged();
     void cuesChanged();
     void durationChanged();
@@ -287,6 +298,7 @@ signals:
     // `previousSourceId`: whoever was showing that track may want to follow.
     void advanced(const QString &previousSourceId);
     void beatCountChanged();
+    void detailWaveformChanged();
 
 private:
     void setErrorMessage(const QString &message);
@@ -349,9 +361,16 @@ private:
     // How far the loaded track's grid was moved onto the playback
     // timeline; its detail waveform moves with it.
     double m_beatShiftMs = 0.0;
-    // detailWaveform() for the track of m_detailSerial.
-    mutable QVariantMap m_detailWaveform;
-    mutable int m_detailSerial = -1;
+    // detailWaveform for the track of m_detailSerial; m_loadedDetail is
+    // what load() read of an Engine track's waveform, handed over as it
+    // is when asked for. m_detailWanted: asked for, for this track.
+    QVariantMap m_detailWaveform;
+    int m_detailSerial = -1;
+    bool m_detailWanted = false;
+    domain::DetailWaveform m_loadedDetail;
+    void setDetailWaveform(const domain::DetailWaveform &detail, int serial);
+    void dropDetailWaveform();
+    AsyncRequest<domain::DetailWaveform> m_detailRequest{this, nullptr};
     int m_trackSerial = 0;
     QString m_errorMessage;
     // One read of a track's analysis, for waveformFor() and
