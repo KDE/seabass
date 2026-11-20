@@ -371,27 +371,53 @@ TestCase {
 
     // ---- Zoom ----------------------------------------------------------
 
-    // From four bars across to the whole track, by keys and buttons.
+    // From four bars across to the whole track, by keys; the slider's
+    // handle goes with them, to its right and left ends.
     function test_zoomStopsAtFourBarsAndTheWholeTrack() {
         const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const slider = findChild(popup.contentItem, "zoomSlider");
         compare(popup.barMs, 2000);
         compare(popup.shownSpanMs, 16 * 2000, "opens at 16 bars");
         for (let i = 0; i < 12; ++i) {
             keyClick(Qt.Key_Plus);
         }
         compare(popup.shownSpanMs, 4 * 2000, "no closer than four bars");
-        verify(!findChild(popup.contentItem, "zoomInButton").enabled, "zoom in is off there");
-        const zoomOut = findChild(popup.contentItem, "zoomOutButton");
+        fuzzyCompare(slider.value, 1, 1e-9, "the handle at the right end");
         for (let i = 0; i < 20; ++i) {
-            mouseClick(zoomOut);
+            keyClick(Qt.Key_Minus);
         }
         compare(popup.shownSpanMs, testCase.trackMs, "no further than the whole track");
-        verify(!zoomOut.enabled, "zoom out is off there");
+        fuzzyCompare(slider.value, 0, 1e-9, "the handle at the left end");
         keyClick(Qt.Key_Minus);
         compare(popup.shownSpanMs, testCase.trackMs);
         // Zooming while following keeps the position under the line.
         keyClick(Qt.Key_Plus);
         verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "still under the line");
+    }
+
+    // The slider zooms: its right end is four bars, its left end the
+    // whole track, its middle halfway between them on a log scale. It
+    // zooms around the line, as a key does, and after a drag it follows
+    // the keys again.
+    function test_theSliderZooms() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const slider = findChild(popup.contentItem, "zoomSlider");
+        verify(slider.enabled);
+        const y = slider.height / 2;
+        mouseClick(slider, slider.width - 1, y);
+        compare(popup.shownSpanMs, 4 * 2000, "the right end: four bars");
+        verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "still under the line");
+        mouseClick(slider, 1, y);
+        compare(popup.shownSpanMs, testCase.trackMs, "the left end: the whole track");
+        mouseClick(slider, slider.width / 2, y);
+        const middle = Math.sqrt(4 * 2000 * testCase.trackMs);
+        verify(Math.abs(popup.shownSpanMs - middle) / middle < 0.05,
+               "the middle: " + popup.shownSpanMs + " against " + middle);
+        verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "still under the line");
+        const before = slider.value;
+        keyClick(Qt.Key_Plus);
+        verify(slider.value > before, "a key moves the handle after the slider was used");
+        fuzzyCompare(slider.value, popup.zoomLevel, 1e-9);
     }
 
     // Ctrl and the wheel zoom; detached, around the pointer.
@@ -894,7 +920,7 @@ TestCase {
         const popup = openLoaded(makeFakePlayer({position: 60000}));
         const content = popup.contentItem;
         const close = findChild(content, "zoomCloseButton");
-        const zoomIn = findChild(content, "zoomInButton");
+        const zoomIn = findChild(content, "zoomSlider");
         const play = findChild(content, "zoomPlayButton");
         const title = findChild(content, "zoomTitle");
         const time = findChild(content, "zoomTime");
