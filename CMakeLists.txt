@@ -3906,6 +3906,14 @@ if(TARGET seabass_edit)
         target_link_libraries(mirror_failure_fails_the_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME mirror_failure_fails_the_change_test COMMAND mirror_failure_fails_the_change_test)
+    if(WIN32)
+        # An MSVC Debug build takes 416 s for this test alone on a two-core
+        # laptop (2026-11-07) and went past the rig's 900 s with six tests
+        # running and the virus scanner reading along (Round 15). A limit
+        # of its own, which ctest's --timeout does not override, so that a
+        # slow machine is a slow test and not a failed one.
+        set_tests_properties(mirror_failure_fails_the_change_test PROPERTIES TIMEOUT 2400)
+    endif()
 
     add_executable(catalog_digest_test tests/catalog_digest_test.cpp)
     target_include_directories(catalog_digest_test PRIVATE src)
@@ -5018,6 +5026,12 @@ target_link_libraries(anonymization_verifier_test PRIVATE seabass_core)
 add_test(NAME anonymization_verifier_test COMMAND anonymization_verifier_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(anonymization_verifier_test PROPERTIES LABELS "integration")
+if(WIN32)
+    # 286 s alone in an MSVC Debug build on a two-core laptop (2026-11-07),
+    # past the rig's 900 s with six tests running (Round 15): see
+    # mirror_failure_fails_the_change_test.
+    set_tests_properties(anonymization_verifier_test PROPERTIES TIMEOUT 2400)
+endif()
 
 # An Engine row with no relative path names no file, not the Engine Library
 # folder -- see the test's own header.
