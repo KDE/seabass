@@ -82,6 +82,17 @@ void fillGapsFrom(domain::Track &into, const domain::Track &from)
 
 }  // namespace
 
+std::vector<domain::Track> withoutOneLibraryAnnotations(std::vector<domain::Track> rows)
+{
+    for (auto &row : rows) {
+        if (row.format == "onelibrary") {
+            row.rating.reset();
+            row.comment.clear();
+        }
+    }
+    return rows;
+}
+
 std::vector<domain::Track> collapseCatalogRows(const std::vector<domain::Track> &rows)
 {
     std::vector<domain::Track> files;
@@ -138,21 +149,9 @@ CleanupScanRows collapseForCleanupScan(const CatalogTracks &catalogs,
             rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
         }
     }
-    // OneLibrary's rating and comment are left out of the fold here, as
-    // they were before its reader read them (#105). Folded last, they only
-    // ever fill a file's blank, and a blank filled can make a survivor
-    // look as if it carried a doomed copy's rating when only one of its
-    // catalogs does: Clean Up would then release a group it held, and the
-    // rows it removes take a rating export.pdb and Engine do not have
-    // anywhere else. Held exactly as before is the safe side: the
-    // planner's rule (hasUnpreservableDataAtRisk) was measured on these
-    // values.
-    for (auto &row : rows) {
-        if (row.format == "onelibrary") {
-            row.rating.reset();
-            row.comment.clear();
-        }
-    }
+    // OneLibrary's rating and comment left out, as before #105: see
+    // withoutOneLibraryAnnotations().
+    rows = withoutOneLibraryAnnotations(std::move(rows));
     rows = withoutStreaming(std::move(rows));
     if (rows.empty()) {
         // No catalog supplied anything. Falling through to an empty

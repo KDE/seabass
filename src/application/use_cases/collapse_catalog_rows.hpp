@@ -80,6 +80,17 @@ namespace seabass::application
 // names the track in one format still selects the file.
 std::vector<domain::Track> collapseCatalogRows(const std::vector<domain::Track> &rows);
 
+// collapseCatalogRows() for Metadata Backup and Restore and for Clean Up:
+// the same fold with OneLibrary's rating and comment left out, as they
+// were before the OneLibrary reader read them (#105). Folded after
+// export.pdb's, they only ever fill a blank, and the decisions these
+// features make on the folded value were made and measured without them:
+// a stale OneLibrary rating would hide a backed-up one from Restore, and a
+// OneLibrary-only rating on a Clean Up survivor would release a group
+// whose removal takes a rating export.pdb holds nowhere else. Showing
+// such disagreements is a separate feature.
+std::vector<domain::Track> withoutOneLibraryAnnotations(std::vector<domain::Track> rows);
+
 // What a cleanup scan should group, given every catalog on the stick.
 //
 // Two answers, and the difference is a safety rule rather than a
