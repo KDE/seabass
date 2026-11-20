@@ -520,11 +520,20 @@ Page {
                         root.controller.requestRowAnalysis(trackRow.rekordboxId);
                         trackRow.takeAnalysis();
                     }
-                    onRekordboxIdChanged: trackRow.ask()
-                    Component.onCompleted: trackRow.ask()
+                    onRekordboxIdChanged: {
+                        trackRow.ask();
+                        trackRow.askEngine();
+                    }
+                    Component.onCompleted: {
+                        trackRow.ask();
+                        trackRow.askEngine();
+                    }
                     Component.onDestruction: {
                         if (trackRow.askedFor.length > 0) {
                             root.controller.releaseRowAnalysis(trackRow.askedFor);
+                        }
+                        if (trackRow.engineAskedFor.length > 0) {
+                            root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
                         }
                     }
                     Connections {
@@ -558,6 +567,14 @@ Page {
                         trackRow.engineSide = want.length > 0 ? root.controller.engineAnalysis(want) : {ready: false};
                     }
                     onExpandedChanged: trackRow.askEngine()
+                    // A delegate built for the open row (scrolled back into
+                    // view, or the list rebuilt after a read) starts
+                    // expanded, and onExpandedChanged does not run for the
+                    // value it starts with; one reused for another track
+                    // asks for that one's.
+                    // (askEngine() is called from the row's own
+                    // onRekordboxIdChanged and Component.onCompleted above,
+                    // and let go in its Component.onDestruction.)
                     Connections {
                         target: root.controller
                         function onEngineAnalysisReady(id) {
@@ -571,8 +588,10 @@ Page {
                             }
                         }
                     }
-                    // rekordbox's grid in figures, once its analysis is in.
+                    // rekordbox's grid in figures, on Engine's timeline: once
+                    // both sides are in (the shift comes with Engine's).
                     readonly property var rekordboxGrid: trackRow.analysis.ready === true
+                        && trackRow.engineSide.ready === true
                         ? root.controller.rowGridFacts(trackRow.analysisId) : ({ready: false})
 
                     expandedItems: [
@@ -603,10 +622,20 @@ Page {
                                 Layout.preferredHeight: comparison.laneHeight
                                 gridStyle: "lines"
                                 beatsSelected: true
-                                columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
-                                trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
-                                beatData: trackRow.analysis.ready === true && rekordboxLane.width > 0
-                                    ? root.controller.rowBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
+                                // On Engine's timeline, as Engine's lane: an
+                                // MP3's waveform and grid moved by its lead-in
+                                // (rowGridFacts().shiftMs), so a grid copied
+                                // across lines up with the copy.
+                                readonly property bool ready: trackRow.rekordboxGrid.ready === true
+                                readonly property int columnCount: rekordboxLane.ready && trackRow.analysis.columns
+                                    ? trackRow.analysis.columns.byteLength / 3 : 0
+                                columnBytes: rekordboxLane.ready ? trackRow.analysis.columns : null
+                                trackDurationMs: rekordboxLane.ready ? trackRow.analysis.durationMs : 0
+                                columnMs: rekordboxLane.columnCount > 0
+                                    ? trackRow.analysis.durationMs / rekordboxLane.columnCount : 0
+                                columnStartMs: rekordboxLane.ready ? trackRow.rekordboxGrid.shiftMs || 0 : 0
+                                beatData: rekordboxLane.ready && rekordboxLane.width > 0
+                                    ? root.controller.comparisonBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
                                 missingText: trackRow.analysis.ready === true ? "rekordbox has no analysis of this track"
                                                                               : "Reading..."
                             }

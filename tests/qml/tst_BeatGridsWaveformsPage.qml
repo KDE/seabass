@@ -121,9 +121,23 @@ TestCase {
     // waits for the next polish: a position read before it is where the
     // item was, and on a loaded Mac the click landed on nothing there,
     // the box ticking no track.
+    //
+    // The item and every layout above it, not the whole window: the
+    // layouts that move it are its ancestors, while the window also holds
+    // the saved toast, whose countdown mark asks for a polish every frame
+    // for its six seconds. Waiting on the window then timed out after a
+    // save whenever frames came slowly (a loaded suite, CI), with nothing
+    // under the click still moving.
     function clickOn(item) {
         verify(item !== null, "something to click");
-        verify(waitForPolish(item.Window.window), "the page is laid out before the click");
+        const ancestors = [];
+        for (let p = item; p !== null && p !== undefined; p = p.parent) {
+            ancestors.push(p);
+        }
+        // Until none of them is waiting at once: a parent's polish may move
+        // a child and ask for its polish in turn.
+        tryVerify(() => ancestors.every((p) => !isPolishScheduled(p)), 5000,
+                  "the page is laid out before the click");
         mouseClick(item);
     }
 
@@ -1174,8 +1188,14 @@ TestCase {
         compare(e.hasEngineTrack, true);
         compare(e.hasGrid, true);
         verify(e.bpm > 60 && e.bpm < 200, "a tempo: " + e.bpm);
-        const summary = findChild(row, "comparisonSummary");
-        verify(summary.text.length > 0 && summary.text.indexOf("Reading") < 0, "says what differs: " + summary.text);
+        // B04 is an MP3 with a 25 ms lead-in: Engine's grid is on the
+        // player's timeline, rekordbox's is put there before comparing, so
+        // only the tempo differs (the player analysed 108.00 BPM, rekordbox
+        // 107.91), not the place of the beats.
+        verify(e.rekordboxShiftMs < -20, "the lead-in moves rekordbox's side: " + e.rekordboxShiftMs);
+        compare(o.c.rowGridFacts(b04).shiftMs, e.rekordboxShiftMs);
+        compare(rekordbox.columnStartMs, e.rekordboxShiftMs, "its waveform moved with it");
+        tryCompare(findChild(row, "comparisonSummary"), "text", "Engine's tempo is 0.09 BPM faster.");
 
         // Another row opened closes this one; B01 has no grid of Engine's.
         const other = delegateInView(o.page, b01);
@@ -1191,6 +1211,20 @@ TestCase {
         clickOn(findChild(other, "rowTitle"));
         compare(other.expanded, false);
         compare(o.page.openTrackId, "");
+    }
+
+    // A delegate built for the row that is already open (scrolled back
+    // into view, or the list built again after a read) starts expanded:
+    // it still asks for Engine's side and shows the comparison.
+    function test_aRowBuiltOpenStillCompares() {
+        const o = openOn(t73());
+        o.page.openTrackId = b04;
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const row = delegateInView(o.page, b04);
+        compare(row.expanded, true, "built open");
+        tryVerify(() => o.c.engineAnalysis(b04).ready === true, 30000, "Engine's side is asked for and read");
+        tryCompare(findChild(row, "comparisonSummary"), "text", "Engine's tempo is 0.09 BPM faster.");
     }
 
     // What the summary says, for each way two grids can differ.

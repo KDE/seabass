@@ -408,8 +408,6 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/view-refresh.svg
     qml/icons/breeze/waveform.svg
     qml/icons/breeze/window-close.svg
-    qml/icons/breeze/zoom-in.svg
-    qml/icons/breeze/zoom-out.svg
 )
 # The three catalog glyphs (LibrarySourceToggle, FormatToggle), subset
 # from Noto Sans Symbols2 so they render the same on every platform
