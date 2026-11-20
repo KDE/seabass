@@ -227,6 +227,8 @@ SeabassDialog {
             return ({});
         }
         root.controller.trackSerial;
+        // Read again once a write that held it off is over.
+        root.controller.libraryBusy;
         return root.controller.detailWaveform();
     }
     readonly property bool hasDetail: root.detail.columns !== undefined && root.detail.columns !== null
