@@ -9,18 +9,28 @@ SPDX-License-Identifier: CC0-1.0
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-only OR GPL-3.0-only</project_license>
   <name>Seabass</name>
+  <name xml:lang="ar">Seabass</name>
   <name xml:lang="ca">Seabass</name>
   <name xml:lang="ca-valencia">Seabass</name>
   <name xml:lang="es">Seabass</name>
   <name xml:lang="nl">Seabass</name>
   <name xml:lang="pt-BR">Seabass</name>
+  <name xml:lang="sr">Seabass</name>
+  <name xml:lang="sr-Latn">Seabass</name>
+  <name xml:lang="sr-ijekavian">Seabass</name>
+  <name xml:lang="sr-ijekavianlatin">Seabass</name>
   <name xml:lang="tr">Seabass</name>
   <name xml:lang="uk">Seabass</name>
   <summary>Keep the rekordbox and Engine DJ libraries on a USB stick in step</summary>
+  <summary xml:lang="ar">أبقِ مكتبتي rekordbox وEngine DJ على ذاكرة USB متزامنتين</summary>
   <summary xml:lang="ca">Manté les biblioteques de DJ de «rekordbox» i «Engine» en una memòria USB</summary>
   <summary xml:lang="ca-valencia">Manté les biblioteques de DJ de «rekordbox» i «Engine» en una memòria USB</summary>
   <summary xml:lang="nl">Bewaar de rekordbox- en Engine DJ-bibliotheken op een USB-stick in stap</summary>
   <summary xml:lang="pt-BR">Mantenha as bibliotecas do rekordbox e do Engine DJ em um pendrive sincronizadas</summary>
+  <summary xml:lang="sr">Одржавајте усклађеним библиотеке rekordbox‑а и Engine DJ‑а на УСБ стику</summary>
+  <summary xml:lang="sr-Latn">Održavajte usklađenim biblioteke rekordbox‑a i Engine DJ‑a na USB stiku</summary>
+  <summary xml:lang="sr-ijekavian">Одржавајте усклађеним библиотеке rekordbox‑а и Engine DJ‑а на УСБ стику</summary>
+  <summary xml:lang="sr-ijekavianlatin">Održavajte usklađenim biblioteke rekordbox‑a i Engine DJ‑a na USB stiku</summary>
   <summary xml:lang="tr">rekordbox ve Engine DJ kitaplıklarını, bir USB bellekte eşzamanlı tutar</summary>
   <summary xml:lang="uk">Підтримання синхронності бібліотек rekordbox та Engine DJ на USB-накопичувачі</summary>
   <developer id="org.kde">
@@ -33,10 +43,15 @@ SPDX-License-Identifier: CC0-1.0
       talk to each other: set a hot cue in one and the others never hear about it. Seabass
       treats those copies as one library written several times, and keeps them honest.
     </p>
+    <p xml:lang="ar">Seabass صندوق أدوات لذاكرات USB الخاصة بمنسقي الأغاني. الذاكرة المهيأة لأجهزة Pioneer وDenon معًا تحمل نسختين أو ثلاث نسخ مستقلة من المكتبة نفسها، وهي لا تتواصل فيما بينها: عيّن إشارة ساخنة في إحداها ولن تعلم الأخريات بذلك أبدًا. يتعامل Seabass مع تلك النسخ كمكتبة واحدة كُتبت عدة مرات، ويبقيها متطابقة.</p>
     <p xml:lang="ca">El Seabass és un quadre d'eines per a memòries USB de DJ. Una memòria preparada tant per als equips Pioneer com per a Denon porta dues o tres còpies independents de la mateixa biblioteca, i no es comuniquen entre si: poseu un «cue» actiu en una i les altres mai se n'assabenten. El Seabass tracta aquestes còpies com una biblioteca escrita diverses vegades, i les manté íntegres.</p>
     <p xml:lang="ca-valencia">El Seabass és un quadro d'eines per a memòries USB de DJ. Una memòria preparada tant per als equips Pioneer com per a Denon porta dues o tres còpies independents de la mateixa biblioteca, i no es comuniquen entre si: poseu un «cue» actiu en una i les altres mai se n'assabenten. El Seabass tracta estes còpies com una biblioteca escrita diverses vegades, i les manté íntegres.</p>
     <p xml:lang="nl">Seabass is een toolbox voor USB-sticks die door dj's worden gebruikt. Een USB-stick die is voorbereid voor zowel Pioneer- als Denon-apparatuur bevat twee of drie onafhankelijke kopieën van dezelfde muziekbibliotheek; deze kopieën staan ​​los van elkaar: als u een 'hot cue' instelt in de ene versie, wordt dit niet doorgegeven aan de andere versies. Seabass beschouwt deze kopieën als één bibliotheek die simpelweg meerdere keren is weggeschreven, en zorgt ervoor dat ze consistent blijven.</p>
     <p xml:lang="pt-BR">O Seabass é um conjunto de ferramentas para pendrives de DJ. Um pendrive preparado tanto para equipamentos da Pioneer quanto da Denon contém duas ou três cópias independentes da mesma biblioteca, e elas não se comunicam entre si: se você definir um hot cue em uma, as outras nunca ficarão sabendo. O Seabass trata essas cópias como uma única biblioteca gravada várias vezes e garante que todas permaneçam sincronizadas.</p>
+    <p xml:lang="sr">Seabass је скуп алатки за ди‑џејске УСБ стикове. Стик припремљен и за Pioneer и за Denon опрему носи две или три независне копије исте библиотеке, које међусобно не комуницирају: поставите брзу ознаку у једној, а остале за то никад неће сазнати. Seabass те копије сматра једном библиотеком уписаном више пута и држи их усклађеним.</p>
+    <p xml:lang="sr-Latn">Seabass je skup alatki za di‑džejske USB stikove. Stik pripremljen i za Pioneer i za Denon opremu nosi dve ili tri nezavisne kopije iste biblioteke, koje međusobno ne komuniciraju: postavite brzu oznaku u jednoj, a ostale za to nikad neće saznati. Seabass te kopije smatra jednom bibliotekom upisanom više puta i drži ih usklađenim.</p>
+    <p xml:lang="sr-ijekavian">Seabass је скуп алатки за ди‑џејске УСБ стикове. Стик припремљен и за Pioneer и за Denon опрему носи двије или три независне копије исте библиотеке, које међусобно не комуницирају: поставите брзу ознаку у једној, а остале за то никад неће сазнати. Seabass те копије сматра једном библиотеком уписаном више пута и држи их усклађеним.</p>
+    <p xml:lang="sr-ijekavianlatin">Seabass je skup alatki za di‑džejske USB stikove. Stik pripremljen i za Pioneer i za Denon opremu nosi dvije ili tri nezavisne kopije iste biblioteke, koje međusobno ne komuniciraju: postavite brzu oznaku u jednoj, a ostale za to nikad neće saznati. Seabass te kopije smatra jednom bibliotekom upisanom više puta i drži ih usklađenim.</p>
     <p xml:lang="tr">Seabass, DJ USB bellekleri için bir araç kutusudur. Hem Pioneer hem de Denon donanımı için hazırlanan bir bellek, aynı kitaplığın iki veya üç bağımsız kopyasını taşır ve birbirleriyle konuşmazlar: Birine anlık bir işaret noktası koyduğunuzda normalde diğerleri bunu asla bilmezler. Seabass, bu kopyaları birden fazla kez yazılmış bir kitaplık gibi ele alır ve onları birbirlerinden haberdar tutar.</p>
     <p xml:lang="uk">Seabass — це набір інструментів для USB-накопичувачів, що використовуються ді-джеями. Накопичувач, підготовлений для роботи з обладнанням Pioneer і Denon, містить дві або три незалежні копії однієї і тієї ж бібліотеки, які ніяк не взаємодіють між собою: якщо ви встановите «гарячу мітку» в одній із них, інші про це навіть «не дізнаються». Seabass розглядає ці копії як єдину бібліотеку, записану кілька разів, і стежить за тим, щоб усі вони залишалися узгодженими.</p>
     <p>Features:</p>
@@ -46,56 +61,95 @@ SPDX-License-Identifier: CC0-1.0
     <p xml:lang="es">Funciones:</p>
     <p xml:lang="nl">Mogelijkheden:</p>
     <p xml:lang="pt-BR">Funcionalidades:</p>
+    <p xml:lang="sr">Могућности:</p>
+    <p xml:lang="sr-Latn">Mogućnosti:</p>
+    <p xml:lang="sr-ijekavian">Могућности:</p>
+    <p xml:lang="sr-ijekavianlatin">Mogućnosti:</p>
     <p xml:lang="tr">Özellikler:</p>
     <p xml:lang="uk">Можливості:</p>
     <ul>
       <li>Browse the library on a stick, with waveforms, hot cues and playback</li>
+      <li xml:lang="ar">تصفح المكتبة على الذاكرة، مع أشكال الموجات والإشارات الساخنة والتشغيل</li>
       <li xml:lang="ca">Navegueu per la biblioteca en una memòria, amb formes d'ona, «cues» actius i reproducció</li>
       <li xml:lang="ca-valencia">Navegueu per la biblioteca en una memòria, amb formes d'ona, «cues» actius i reproducció</li>
       <li xml:lang="nl">Blader door de bibliotheek op een USB-stick, inclusief golfvormen, hot cues en afspeelfuncties</li>
       <li xml:lang="pt-BR">Navegue pela biblioteca em um dispositivo USB, com formas de onda, hot cues e reprodução</li>
+      <li xml:lang="sr">Прегледајте библиотеку на стику, са таласним облицима, брзим ознакама и пуштањем</li>
+      <li xml:lang="sr-Latn">Pregledajte biblioteku na stiku, sa talasnim oblicima, brzim oznakama i puštanjem</li>
+      <li xml:lang="sr-ijekavian">Прегледајте библиотеку на стику, са таласним облицима, брзим ознакама и пуштањем</li>
+      <li xml:lang="sr-ijekavianlatin">Pregledajte biblioteku na stiku, sa talasnim oblicima, brzim oznakama i puštanjem</li>
       <li xml:lang="tr">Kitaplığınızı bir USB bellekte; dalga biçimleri, anlık işaret noktaları ve çalma bilgisi aynı olarak tutun.</li>
       <li xml:lang="uk">Навігація бібліотекою на зовнішньому носії — з показом форм хвиль, гарячими мітками та відтворенням</li>
       <li>Sync cue points between rekordbox and Engine DJ</li>
+      <li xml:lang="ar">زامن نقاط الإشارة بين rekordbox وEngine DJ</li>
       <li xml:lang="ca">Sincronitzeu els punts de «cue» entre els DJ «rekordbox» i l'«Engine»</li>
       <li xml:lang="ca-valencia">Sincronitzeu els punts de «cue» entre els DJ «rekordbox» i l'«Engine»</li>
       <li xml:lang="nl">Synchroniseer cue-punten tussen rekordbox en Engine DJ</li>
       <li xml:lang="pt-BR">Sincronize cue points entre o rekordbox e o Engine DJ</li>
+      <li xml:lang="sr">Усклађујте тачке ознака између rekordbox‑а и Engine DJ‑а</li>
+      <li xml:lang="sr-Latn">Usklađujte tačke oznaka između rekordbox‑a i Engine DJ‑a</li>
+      <li xml:lang="sr-ijekavian">Усклађујте тачке ознака између rekordbox‑а и Engine DJ‑а</li>
+      <li xml:lang="sr-ijekavianlatin">Usklađujte tačke oznaka između rekordbox‑a i Engine DJ‑a</li>
       <li xml:lang="tr">İşaret noktalarını rekordbox ve Engine DJ ile eşzamanlı tutun.</li>
       <li xml:lang="uk">Синхронізація точок міток між rekordbox і Engine DJ</li>
       <li>Full backups of a stick, and restoring them onto any drive</li>
+      <li xml:lang="ar">نسخ احتياطية كاملة للذاكرة، واستعادتها على أي قرص</li>
       <li xml:lang="ca">Còpies de seguretat completes d'una memòria, i restaurar-les a qualsevol unitat</li>
       <li xml:lang="ca-valencia">Còpies de seguretat completes d'una memòria, i restaurar-les a qualsevol unitat</li>
       <li xml:lang="nl">Volledige reservekopieën van een stick maken en deze terugzetten op een willekeurig schijfstation</li>
       <li xml:lang="pt-BR">Backups completos de um dispositivo de armazenamento e sua restauração em qualquer unidade</li>
+      <li xml:lang="sr">Потпуне резервне копије стика и њихово враћање на било коју јединицу</li>
+      <li xml:lang="sr-Latn">Potpune rezervne kopije stika i njihovo vraćanje na bilo koju jedinicu</li>
+      <li xml:lang="sr-ijekavian">Потпуне резервне копије стика и њихово враћање на било коју јединицу</li>
+      <li xml:lang="sr-ijekavianlatin">Potpune rezervne kopije stika i njihovo vraćanje na bilo koju jedinicu</li>
       <li xml:lang="tr">Tam bellek yedekleme ve herhangi bir belleğe geri yükleme desteği</li>
       <li xml:lang="uk">Створення повних резервних копій флеш-накопичувача та їхнє відновлення на будь-який диск</li>
       <li>Back up cues, ratings and other metadata, and restore them later</li>
+      <li xml:lang="ar">نسخ الإشارات والتقييمات وغيرها من البيانات الوصفية احتياطيًا، واستعدها لاحقًا</li>
       <li xml:lang="ca">Còpies de seguretat dels «cues», les valoracions i altres metadades, i restaurar-les més tard</li>
       <li xml:lang="ca-valencia">Còpies de seguretat dels «cues», les valoracions i altres metadades, i restaurar-les més tard</li>
       <li xml:lang="nl">Maak een reservekopie van cues, beoordelingen en andere metadata en zet deze later weer terug</li>
       <li xml:lang="pt-BR">Faça backup de marcadores, classificações e outros metadados, e restaure-os posteriormente</li>
+      <li xml:lang="sr">Правите резервне копије ознака, оцена и других метаподатака и касније их вратите</li>
+      <li xml:lang="sr-Latn">Pravite rezervne kopije oznaka, ocena i drugih metapodataka i kasnije ih vratite</li>
+      <li xml:lang="sr-ijekavian">Правите резервне копије ознака, оцјена и других метаподатака и касније их вратите</li>
+      <li xml:lang="sr-ijekavianlatin">Pravite rezervne kopije oznaka, ocjena i drugih metapodataka i kasnije ih vratite</li>
       <li xml:lang="tr">İşaret noktaları, derecelendirmeler ve diğer üst veriyi yedekleyin ve daha sonra geri yükleyin.</li>
       <li xml:lang="uk">Створюйте резервних копій міток, оцінок та інших метаданих, а згодом їхнє відновлення</li>
       <li>Find and clean up duplicate tracks, resolving conflicting cues by hand</li>
+      <li xml:lang="ar">العثور على المقاطع المكررة وتنظيفها، وحل الإشارات المتعارضة يدويًا</li>
       <li xml:lang="ca">Cerca i neteja de pistes duplicades, resolent «cues» conflictius a mà</li>
       <li xml:lang="ca-valencia">Busca i neteja de pistes duplicades, resolent «cues» conflictius a mà</li>
       <li xml:lang="nl">Zoek en verwijder dubbele tracks, en los conflicterende cues handmatig op</li>
       <li xml:lang="pt-BR">Encontre e limpe faixas duplicadas, resolvendo manualmente os pontos de marcação conflitantes</li>
+      <li xml:lang="sr">Нађите и почистите дупликате нумера, уз ручно разрешавање сукобљених ознака</li>
+      <li xml:lang="sr-Latn">Nađite i počistite duplikate numera, uz ručno razrešavanje sukobljenih oznaka</li>
+      <li xml:lang="sr-ijekavian">Нађите и почистите дупликате нумера, уз ручно разрјешавање сукобљених ознака</li>
+      <li xml:lang="sr-ijekavianlatin">Nađite i počistite duplikate numera, uz ručno razrješavanje sukobljenih oznaka</li>
       <li xml:lang="tr">Yinelenmiş parçaları bulun ve temizleyin; çakışan işaret noktalarını çözün.</li>
       <li xml:lang="uk">Пошук і вилучення композицій-дублікатів, з вирішенням конфліктів між мітками вручну</li>
       <li>Library health checks that find and repair missing files</li>
+      <li xml:lang="ar">فحوص سلامة المكتبة التي تعثر على الملفات المفقودة وتصلحها</li>
       <li xml:lang="ca">Comprovacions de l'estat de la biblioteca que troben i reparen els fitxers que manquin</li>
       <li xml:lang="ca-valencia">Comprovacions de l'estat de la biblioteca que troben i reparen els fitxers que falten</li>
       <li xml:lang="nl">Welzijnscontroles voor bibliotheken die ontbrekende bestanden opsporen en herstellen</li>
       <li xml:lang="pt-BR">Verificações de integridade da biblioteca que localizam e corrigem arquivos ausentes</li>
+      <li xml:lang="sr">Провере здравља библиотеке које налазе и поправљају недостајуће фајлове</li>
+      <li xml:lang="sr-Latn">Provere zdravlja biblioteke koje nalaze i popravljaju nedostajuće fajlove</li>
+      <li xml:lang="sr-ijekavian">Провјере здравља библиотеке које налазе и поправљају недостајуће фајлове</li>
+      <li xml:lang="sr-ijekavianlatin">Provjere zdravlja biblioteke koje nalaze i popravljaju nedostajuće fajlove</li>
       <li xml:lang="tr">Eksik dosyaları bulup onaran kitaplık sağlığı denetimleri</li>
       <li xml:lang="uk">Перевірки цілісності бібліотеки, що виявляють і відновлюють файли, яких не вистачає</li>
       <li>Statistics about a library and health checks for the stick itself</li>
+      <li xml:lang="ar">إحصاءات عن المكتبة وفحوص سلامة للذاكرة نفسها</li>
       <li xml:lang="ca">Estadístiques sobre una biblioteca i controls d'estat per a la pròpia memòria</li>
       <li xml:lang="ca-valencia">Estadístiques sobre una biblioteca i controls d'estat per a la pròpia memòria</li>
       <li xml:lang="nl">Statistieken over een bibliotheek en welzijnscontroles voor de stick zelf</li>
       <li xml:lang="pt-BR">Estatísticas sobre uma biblioteca e verificações de integridade do próprio dispositivo</li>
+      <li xml:lang="sr">Статистика о библиотеци и провере здравља самог стика</li>
+      <li xml:lang="sr-Latn">Statistika o biblioteci i provere zdravlja samog stika</li>
+      <li xml:lang="sr-ijekavian">Статистика о библиотеци и провјере здравља самог стика</li>
+      <li xml:lang="sr-ijekavianlatin">Statistika o biblioteci i provjere zdravlja samog stika</li>
       <li xml:lang="tr">Kitaplık istatistikleri ve USB bellek için sağlık denetimi</li>
       <li xml:lang="uk">Статистика щодо бібліотеки та перевірки справності самого носія</li>
     </ul>
@@ -103,10 +157,15 @@ SPDX-License-Identifier: CC0-1.0
       Seabass works on the library already on your stick. It makes no network request
       unless you switch on the update check.
     </p>
+    <p xml:lang="ar">يعمل Seabass على المكتبة الموجودة أصلًا على ذاكرتك. لا يجري أي طلب شبكي ما لم تشغّل فحص التحديثات.</p>
     <p xml:lang="ca">El Seabass funciona ja a la biblioteca a la memòria. No fa cap sol·licitud de xarxa a menys que activeu la comprovació d'actualització.</p>
     <p xml:lang="ca-valencia">El Seabass funciona ja a la biblioteca a la memòria. No fa cap sol·licitud de xarxa a menys que activeu la comprovació d'actualització.</p>
     <p xml:lang="nl">Seabass werkt met de bibliotheek die al op uw stick staat. Er worden geen netwerkverzoeken gedaan, tenzij u de controle op bijwerken inschakelt.</p>
     <p xml:lang="pt-BR">O Seabass trabalha com a biblioteca que já está no seu dispositivo. Ele não faz nenhuma solicitação de rede, a menos que você ative a verificação de atualizações.</p>
+    <p xml:lang="sr">Seabass ради над библиотеком која је већ на вашем стику. Не шаље никакве мрежне захтеве осим ако не укључите проверу допуна.</p>
+    <p xml:lang="sr-Latn">Seabass radi nad bibliotekom koja je već na vašem stiku. Ne šalje nikakve mrežne zahteve osim ako ne uključite proveru dopuna.</p>
+    <p xml:lang="sr-ijekavian">Seabass ради над библиотеком која је већ на вашем стику. Не шаље никакве мрежне захтјеве осим ако не укључите провјеру допуна.</p>
+    <p xml:lang="sr-ijekavianlatin">Seabass radi nad bibliotekom koja je već na vašem stiku. Ne šalje nikakve mrežne zahtjeve osim ako ne uključite provjeru dopuna.</p>
     <p xml:lang="tr">Seabass, hâlihazırda çubuğunuzda bulunan kitaplıkta çalışır. Güncelleme denetimini açmadığınız sürece ağ isteğinde bulunmaz.</p>
     <p xml:lang="uk">Seabass працює з бібліотекою, яка вже є на вашому пристрої. Вона не виконує жодних запитів до мережі, якщо ви не увімкнете перевірку оновлень.</p>
   </description>
@@ -128,50 +187,75 @@ SPDX-License-Identifier: CC0-1.0
   <screenshots>
     <screenshot type="default">
       <caption>The main window with a USB stick and what can be done with it</caption>
+      <caption xml:lang="ar">النافذة الرئيسة مع ذاكرة USB وما يمكن فعله بها</caption>
       <caption xml:lang="ca">La finestra principal amb una memòria USB i què es pot fer amb ella</caption>
       <caption xml:lang="ca-valencia">La finestra principal amb una memòria USB i què es pot fer amb ella</caption>
       <caption xml:lang="nl">Het hoofdvenster met een USB-stick en de mogelijkheden die deze biedt</caption>
       <caption xml:lang="pt-BR">A janela principal com um pendrive e o que é possível fazer com ele</caption>
+      <caption xml:lang="sr">Главни прозор са УСБ стиком и оним што се са њим може урадити</caption>
+      <caption xml:lang="sr-Latn">Glavni prozor sa USB stikom i onim što se sa njim može uraditi</caption>
+      <caption xml:lang="sr-ijekavian">Главни прозор са УСБ стиком и оним што се са њим може урадити</caption>
+      <caption xml:lang="sr-ijekavianlatin">Glavni prozor sa USB stikom i onim što se sa njim može uraditi</caption>
       <caption xml:lang="tr">Bir USB bellek ile ana pencere ve onunla yapabilecekleriniz</caption>
       <caption xml:lang="uk">Головне вікно з USB-накопичувачем і варіантами дій із ним</caption>
       <image>https://vizzzion.org/seabass/screenshots/hub-redacted.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a library, with a track playing and its hot cues</caption>
+      <caption xml:lang="ar">تصفح مكتبة، مع تشغيل مقطع وإشاراته الساخنة</caption>
       <caption xml:lang="ca">Navegar per una biblioteca, amb una pista en reproducció i els seus «cues» actius</caption>
       <caption xml:lang="ca-valencia">Navegar per una biblioteca, amb una pista en reproducció i els seus «cues» actius</caption>
       <caption xml:lang="nl">Door een bibliotheek bladeren, terwijl een nummer wordt afgespeeld, inclusief de bijbehorende hot cues</caption>
       <caption xml:lang="pt-BR">Navegar por uma biblioteca, com uma faixa em reprodução e seus hot cues</caption>
+      <caption xml:lang="sr">Прегледање библиотеке, док се пушта нумера, са њеним брзим ознакама</caption>
+      <caption xml:lang="sr-Latn">Pregledanje biblioteke, dok se pušta numera, sa njenim brzim oznakama</caption>
+      <caption xml:lang="sr-ijekavian">Прегледање библиотеке, док се пушта нумера, са њеним брзим ознакама</caption>
+      <caption xml:lang="sr-ijekavianlatin">Pregledanje biblioteke, dok se pušta numera, sa njenim brzim oznakama</caption>
       <caption xml:lang="tr">Bir parça çalarken ve işaret noktaları belliyken kitaplığa göz atma</caption>
       <caption xml:lang="uk">Навігація бібліотекою: відтворення композиції і її гарячі мітки</caption>
       <image>https://vizzzion.org/seabass/screenshots/browse-library.png</image>
     </screenshot>
     <screenshot>
       <caption>Duplicate tracks and how much space consolidating them frees</caption>
+      <caption xml:lang="ar">المقاطع المكررة ومقدار المساحة التي يوفرها دمجها</caption>
       <caption xml:lang="ca">Duplica les pistes i quant espai s'allibera quan les consolida</caption>
       <caption xml:lang="ca-valencia">Duplica les pistes i quant espai s'allibera quan les consolida</caption>
       <caption xml:lang="nl">Dubbele nummers en hoeveel ruimte het consolideren ervan oplevert</caption>
       <caption xml:lang="pt-BR">Faixas duplicadas e quanto espaço a consolidação delas libera</caption>
+      <caption xml:lang="sr">Дупликати нумера и колико простора ослобађа њихово обједињавање</caption>
+      <caption xml:lang="sr-Latn">Duplikati numera i koliko prostora oslobađa njihovo objedinjavanje</caption>
+      <caption xml:lang="sr-ijekavian">Дупликати нумера и колико простора ослобађа њихово обједињавање</caption>
+      <caption xml:lang="sr-ijekavianlatin">Duplikati numera i koliko prostora oslobađa njihovo objedinjavanje</caption>
       <caption xml:lang="tr">Yinelenmiş parçalar ve onları temizlemenin ne kadar alan açacağı</caption>
       <caption xml:lang="uk">Дубльовані композиції і обсяг місця, яке звільняється внаслідок їхнього об'єднання</caption>
       <image>https://vizzzion.org/seabass/screenshots/duplicates.png</image>
     </screenshot>
     <screenshot>
       <caption>Library health, with the rows that can be repaired</caption>
+      <caption xml:lang="ar">سلامة المكتبة، مع الصفوف القابلة للإصلاح</caption>
       <caption xml:lang="ca">Estat de la biblioteca, amb les files que es poden reparar</caption>
       <caption xml:lang="ca-valencia">Estat de la biblioteca, amb les files que es poden reparar</caption>
       <caption xml:lang="nl">Bibliotheekwelzijn, inclusief de rijen die kunnen worden hersteld</caption>
       <caption xml:lang="pt-BR">Integridade da biblioteca, com as linhas que podem ser reparadas</caption>
+      <caption xml:lang="sr">Здравље библиотеке, са редовима који се могу поправити</caption>
+      <caption xml:lang="sr-Latn">Zdravlje biblioteke, sa redovima koji se mogu popraviti</caption>
+      <caption xml:lang="sr-ijekavian">Здравље библиотеке, са редовима који се могу поправити</caption>
+      <caption xml:lang="sr-ijekavianlatin">Zdravlje biblioteke, sa redovima koji se mogu popraviti</caption>
       <caption xml:lang="tr">Onarılabilecek satırları gösteren kitaplık sağlığı</caption>
       <caption xml:lang="uk">Стан бібліотеки, разом із рядками, які можна відновити</caption>
       <image>https://vizzzion.org/seabass/screenshots/library-health.png</image>
     </screenshot>
     <screenshot>
       <caption>Backups of a stick, each with a note and a Restore action</caption>
+      <caption xml:lang="ar">نسخ احتياطية للذاكرة، لكل منها ملاحظة وإجراء استعادة</caption>
       <caption xml:lang="ca">Còpies de seguretat d'una memòria, cadascuna amb una nota i una acció de restauració</caption>
       <caption xml:lang="ca-valencia">Còpies de seguretat d'una memòria, cadascuna amb una nota i una acció de restauració</caption>
       <caption xml:lang="nl">Reservekopieën van een stick, elk voorzien van een notitie en een herstelactie</caption>
       <caption xml:lang="pt-BR">Backups de um dispositivo, cada um com uma observação e uma ação de restauração</caption>
+      <caption xml:lang="sr">Резервне копије стика, свака са белешком и радњом „Врати“</caption>
+      <caption xml:lang="sr-Latn">Rezervne kopije stika, svaka sa beleškom i radnjom „Vrati“</caption>
+      <caption xml:lang="sr-ijekavian">Резервне копије стика, свака са биљешком и радњом „Врати“</caption>
+      <caption xml:lang="sr-ijekavianlatin">Rezervne kopije stika, svaka sa bilješkom i radnjom „Vrati“</caption>
       <caption xml:lang="tr">Her biri bir not ve “Geri Yükle” eylemi ile bellek yedekleri</caption>
       <caption xml:lang="uk">Резервні копії носія — кожна з приміткою та дією відновлення</caption>
       <image>https://vizzzion.org/seabass/screenshots/backups.png</image>
@@ -193,10 +277,15 @@ SPDX-License-Identifier: CC0-1.0
     <release version="0.7.10" type="development" date="2026-09-25">
       <description>
         <p>The second alpha of Seabass 0.8.</p>
+        <p xml:lang="ar">الإصدار ألفا الثاني من Seabass 0.8.</p>
         <p xml:lang="ca">La segona alfa del Seabass 0.8.</p>
         <p xml:lang="ca-valencia">La segona alfa del Seabass 0.8.</p>
         <p xml:lang="nl">De tweede alfa-versie van Seabass 0.8.</p>
         <p xml:lang="pt-BR">A segunda versão alfa do Seabass 0.8.</p>
+        <p xml:lang="sr">Друго алфа издање Seabass‑а 0.8.</p>
+        <p xml:lang="sr-Latn">Drugo alfa izdanje Seabass‑a 0.8.</p>
+        <p xml:lang="sr-ijekavian">Друго алфа издање Seabass‑а 0.8.</p>
+        <p xml:lang="sr-ijekavianlatin">Drugo alfa izdanje Seabass‑a 0.8.</p>
         <p xml:lang="tr">Seabass 0.8’in ikinci alfa sürümü</p>
         <p xml:lang="uk">Друга альфа-версія Seabass 0.8.</p>
       </description>
