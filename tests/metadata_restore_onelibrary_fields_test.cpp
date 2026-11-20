@@ -180,15 +180,21 @@ Offer offer(const Stick &s, bool after, std::optional<int> storedStars, const st
             std::int64_t storedAt, std::int64_t stickAt)
 {
     auto rows = readAll(s);
-    if (!after) {
+    std::vector<domain::Track> files;
+    if (after) {
+        // What Metadata Restore folds now (metadata_restore_controller).
+        files = application::collapseCatalogRows(application::withoutOneLibraryAnnotations(rows));
+    } else {
+        // What it folded on master: the reader returned no rating or
+        // comment for OneLibrary.
         for (auto &r : rows) {
             if (r.format == "onelibrary") {
                 r.rating.reset();
                 r.comment.clear();
             }
         }
+        files = application::collapseCatalogRows(rows);
     }
-    const auto files = application::collapseCatalogRows(rows);
     const domain::Track *stick = nullptr;
     for (const auto &f : files) {
         if (key(f.filePath) == key(s.file)) {
@@ -240,66 +246,52 @@ int main(int argc, char **argv)
     constexpr std::int64_t Older = 1000;
     constexpr std::int64_t Newer = 2000;
 
-    // 1. export.pdb 0, OneLibrary 3, Engine none; the store 4. Before, the
-    //    stick read as unrated and 4 was a blank filled, written over the
-    //    3 OneLibrary had and nobody saw. Now the stick reads 3, which is
-    //    a real disagreement with the store, settled by the merge rule:
-    //    the more recent side wins. The catalogs themselves disagree here
-    //    (export.pdb unrated, OneLibrary 3), so this is the one change, and
-    //    it is the one the reader exists for.
+    // Every case: what Restore offers now is what it offered on master,
+    // field by field, with the stick or the store the more recent side.
+    const auto same = [](const Offer &a, const Offer &b) {
+        return a.rating == b.rating && a.ratingValue == b.ratingValue && a.ratingConflict == b.ratingConflict
+               && a.comment == b.comment && a.commentValue == b.commentValue
+               && a.commentConflict == b.commentConflict && a.stickRating == b.stickRating
+               && a.stickComment == b.stickComment;
+    };
+    struct Case
     {
-        const Stick s = makeStick(fixture, "seabass_restore_ol_rating");
-        setStick(s, std::nullopt, 3, std::nullopt, "", "", "");
-        const Offer before = offer(s, false, 4, "", Newer, Older);
-        const Offer after = offer(s, true, 4, "", Newer, Older);
-        const Offer afterStickNewer = offer(s, true, 4, "", Older, Newer);
-        print("1 before", before);
-        print("1 after, store newer", after);
-        print("1 after, stick newer", afterStickNewer);
-        assert(before.rating && !before.ratingConflict && before.ratingValue == 4 && "before: a blank filled");
-        assert(after.stickRating == 3 && after.ratingConflict && after.rating && after.ratingValue == 4);
-        assert(!afterStickNewer.rating && "the stick's newer 3 is kept (no proposal: nothing offered)");
-        std::cout << "case 1 (export.pdb 0, OneLibrary 3, store 4) OK\n";
-    }
-
-    // 2. Comments: export.pdb empty, OneLibrary "x", Engine "y"; the store
-    //    "z". Before, the stick read "y" (Engine's); now "x" (OneLibrary's,
-    //    folded before Engine). Both a conflict with "z", as before.
-    {
-        const Stick s = makeStick(fixture, "seabass_restore_ol_comment");
-        setStick(s, std::nullopt, std::nullopt, std::nullopt, "", "x", "y");
-        const Offer before = offer(s, false, std::nullopt, "z", Newer, Older);
-        const Offer after = offer(s, true, std::nullopt, "z", Newer, Older);
-        print("2 before", before);
-        print("2 after", after);
-        assert(before.stickComment == "y" && before.commentConflict && before.comment);
-        assert(after.stickComment == "x" && after.commentConflict && after.comment && after.commentValue == "z");
-        std::cout << "case 2 (export.pdb \"\", OneLibrary \"x\", Engine \"y\", store \"z\") OK\n";
-    }
-
-    // 3. Agreement: every catalog 3 and "same", the store the same: nothing
-    //    offered, before or after. The store 4: the same conflict both ways.
-    {
-        const Stick s = makeStick(fixture, "seabass_restore_ol_agree");
-        setStick(s, 3, 3, 3, "", "same", "same");
-        for (const bool after : {false, true}) {
-            const Offer same = offer(s, after, 3, "same", Newer, Older);
-            assert(!same.rating && !same.comment && !same.ratingConflict && !same.commentConflict);
-            const Offer differs = offer(s, after, 4, "same", Newer, Older);
-            assert(differs.ratingConflict && differs.rating && differs.ratingValue == 4);
+        const char *what;
+        std::optional<int> pdb, one, engine;
+        std::string pdbComment, oneComment, engineComment;
+        std::optional<int> stored;
+        std::string storedComment;
+    };
+    const std::vector<Case> cases = {
+        {"export.pdb and Engine unrated, OneLibrary a stale 2, the backup 5", std::nullopt, 2, std::nullopt, "", "", "",
+         5, ""},
+        {"export.pdb 0, OneLibrary 3, the backup 4", std::nullopt, 3, std::nullopt, "", "", "", 4, ""},
+        {"comments: export.pdb empty, OneLibrary x, Engine y, the backup z", std::nullopt, std::nullopt, std::nullopt, "",
+         "x", "y", std::nullopt, "z"},
+        {"agreement, the backup the same", 3, 3, 3, "", "same", "same", 3, "same"},
+        {"agreement, the backup 4", 3, 3, 3, "", "same", "same", 4, "same"},
+        {"blank everywhere, the backup 4 and z", std::nullopt, std::nullopt, std::nullopt, "", "", "", 4, "z"},
+    };
+    int n = 0;
+    for (const auto &c : cases) {
+        const Stick s = makeStick(fixture, "seabass_restore_ol_" + std::to_string(++n));
+        setStick(s, c.pdb, c.one, c.engine, c.pdbComment, c.oneComment, c.engineComment);
+        for (const auto [storedAt, stickAt] : {std::pair{Newer, Older}, std::pair{Older, Newer}}) {
+            const Offer master = offer(s, false, c.stored, c.storedComment, storedAt, stickAt);
+            const Offer now = offer(s, true, c.stored, c.storedComment, storedAt, stickAt);
+            print(std::string(c.what) + (storedAt > stickAt ? ", backup newer: " : ", stick newer: ") + "master", master);
+            print(std::string(c.what) + (storedAt > stickAt ? ", backup newer: " : ", stick newer: ") + "now", now);
+            assert(same(master, now) && "Restore offers what it offered on master");
         }
-        std::cout << "case 3 (agreement restores as before) OK\n";
     }
-
-    // 4. A blank everywhere but the store: a blank filled, before and after.
+    // The case the review named, spelled out: master offered the backup's
+    // 5 even with the stick newer, as a blank filled; so does Restore now.
     {
-        const Stick s = makeStick(fixture, "seabass_restore_ol_blank");
-        setStick(s, std::nullopt, std::nullopt, std::nullopt, "", "", "");
-        for (const bool after : {false, true}) {
-            const Offer o = offer(s, after, 4, "z", Older, Newer);
-            assert(o.rating && !o.ratingConflict && o.comment && !o.commentConflict);
-        }
-        std::cout << "case 4 (blanks are filled, before and after) OK\n";
+        const Stick s = makeStick(fixture, "seabass_restore_ol_named");
+        setStick(s, std::nullopt, 2, std::nullopt, "", "", "");
+        const Offer now = offer(s, true, 5, "", Older, Newer);
+        assert(now.rating && now.ratingValue == 5 && !now.ratingConflict);
     }
+    std::cout << "metadata Restore offers on every case what it offered on master OK\n";
     return 0;
 }

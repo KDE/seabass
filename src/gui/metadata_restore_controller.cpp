@@ -61,7 +61,9 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
                 rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
             }
         }
-        const auto stickTracks = application::collapseCatalogRows(rows);
+        // OneLibrary's rating and comment left out of the fold, as before
+        // its reader read them: see withoutOneLibraryAnnotations().
+        const auto stickTracks = application::collapseCatalogRows(application::withoutOneLibraryAnnotations(rows));
         result.stickTrackCount = static_cast<int>(stickTracks.size());
 
         progress.start("Reading the metadata store", 0);

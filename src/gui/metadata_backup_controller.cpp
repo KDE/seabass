@@ -92,7 +92,9 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
                 rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
             }
         }
-        auto stickTracks = application::collapseCatalogRows(rows);
+        // OneLibrary's rating and comment left out of the fold, as before
+        // its reader read them: see withoutOneLibraryAnnotations().
+        auto stickTracks = application::collapseCatalogRows(application::withoutOneLibraryAnnotations(rows));
         // A cover the catalog names but the stick no longer holds would be
         // offered on every run: store() finds nothing to copy, so the row
         // never gets one. Seen on a real stick. Dropped here, before the
