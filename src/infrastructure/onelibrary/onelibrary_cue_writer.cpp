@@ -740,6 +740,33 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
     refreshStalenessBaseline();
 }
 
+namespace
+{
+std::vector<std::pair<int64_t, std::string>> contentPathsIn(SqlCipherDb &db)
+{
+    std::vector<std::pair<int64_t, std::string>> rows;
+    SqlCipherStatement scan(db, "SELECT content_id, path FROM content WHERE path IS NOT NULL ORDER BY content_id");
+    while (scan.step()) {
+        rows.emplace_back(scan.columnInt64(0), scan.columnText(1));
+    }
+    return rows;
+}
+}  // namespace
+
+std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot)
+{
+    SqlCipherLibrary lib;
+    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    return contentPathsIn(db);
+}
+
+std::vector<std::pair<int64_t, std::string>> OneLibraryCueWriter::contentPaths()
+{
+    checkNotStale();
+    return contentPathsIn(verifyConnection());
+}
+
 bool OneLibraryCueWriter::hasTrackAtPath(const std::string &filePath)
 {
     checkNotStale();

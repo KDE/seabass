@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "domain/onelibrary_cue_table.hpp"
@@ -122,6 +123,11 @@ public:
 private:
     std::map<int64_t, std::vector<domain::CueTableEntry>> m_tables;
 };
+
+// Every content row's id and path in the stick's exportLibrary.db,
+// opened read-only on its own: for a caller off the GUI thread that does
+// not hold a writer. Throws when the database cannot be read.
+std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot);
 
 class OneLibraryCueWriter
 {
@@ -251,6 +257,11 @@ public:
     // rekordbox repair mirrors its row removal here -- and that must tell
     // "already done" from "never there" before removing it.
     bool hasTrackAtPath(const std::string &filePath);
+    // Every content row's id and path, as exportLibrary.db spells it
+    // ("/Contents/..."), read through this writer's connection: for a
+    // caller matching paths by its own rule. See oneLibraryContentPaths()
+    // for the same read without a writer.
+    std::vector<std::pair<int64_t, std::string>> contentPaths();
 
     // The same removal for one content row, named by id. What a caller
     // holding row ids (Clean Up, whose plan was read from this database)

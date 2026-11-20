@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -42,6 +43,9 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
+#include "infrastructure/work_counters.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
+#include <djinterop/djinterop.hpp>
 
 #include "engine_change_fixture.hpp"
 #include "fixture_copy.hpp"
@@ -226,18 +230,90 @@ struct FixtureStick
     }
 };
 
+// Raw writes below the change, to set a stick up.
+void oneLibraryExec(const FixtureStick &s, const std::string &sql, const std::vector<std::string> &texts = {})
+{
+    infrastructure::onelibrary::SqlCipherLibrary lib;
+    infrastructure::onelibrary::SqlCipherDb db(lib, s.oneLibraryDb(), false);
+    db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+    infrastructure::onelibrary::SqlCipherStatement st(db, sql);
+    int i = 1;
+    for (const auto &t : texts) {
+        st.bindText(i++, t);
+    }
+    st.run();
+}
+
+// The catalog's own stored path for the file: OneLibrary's content.path.
+std::string oneLibraryPathOf(const FixtureStick &s, const std::string &file)
+{
+    for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pathToUtf8(s.pioneer))) {
+        if (key(pathToUtf8(s.stick) + path) == key(file)) {
+            return path;
+        }
+    }
+    assert(false && "OneLibrary lists the file");
+    return {};
+}
+
+// The file's folder spelled in upper case: "/Contents/x.mp3" to
+// "/CONTENTS/x.mp3", as another catalog may spell it on a FAT stick.
+std::string upperFolder(const std::string &stored)
+{
+    const auto slash = stored.find_last_of('/');
+    std::string out = stored;
+    for (size_t i = 0; i < slash; ++i) {
+        out[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[i])));
+    }
+    return out;
+}
+
+// Every catalog's rating for the file set to its own value, so a rollback
+// is seen in each: export.pdb `pdb`, OneLibrary `one`, Engine `engine`.
+void setRatings(const FixtureStick &s, const std::string &file, int pdbStars, int oneStars, int engineStars)
+{
+    const Copies copies = s.copiesOf(file);
+    {
+        infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(s.pdb()));
+        assert(pdb.setTrackRating(static_cast<uint32_t>(std::stoul(copies.at("rekordbox").sourceId)), pdbStars));
+        assert(pdb.commit());
+    }
+    oneLibraryExec(s, "UPDATE content SET rating = " + std::to_string(oneStars) + " WHERE content_id = "
+                          + copies.at("onelibrary").sourceId);
+    assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "UPDATE Track SET rating = " + std::to_string(engineStars * 20)
+                                                               + " WHERE id = " + copies.at("engine").sourceId + ";"));
+    const Copies after = s.copiesOf(file);
+    assert(after.at("rekordbox").rating == std::optional<int>(pdbStars));
+    assert(after.at("onelibrary").rating == std::optional<int>(oneStars));
+    assert(after.at("engine").rating == std::optional<int>(engineStars));
+}
+
+void expectRatings(const FixtureStick &s, const std::string &file, int pdbStars, int oneStars, int engineStars)
+{
+    const Copies c = s.copiesOf(file);
+    if (c.at("rekordbox").rating != std::optional<int>(pdbStars) || c.at("onelibrary").rating != std::optional<int>(oneStars)
+        || c.at("engine").rating != std::optional<int>(engineStars)) {
+        std::cerr << "ratings: export.pdb " << c.at("rekordbox").rating.value_or(0) << ", OneLibrary "
+                  << c.at("onelibrary").rating.value_or(0) << ", Engine " << c.at("engine").rating.value_or(0) << "\n";
+        assert(false && "every catalog kept its own rating");
+    }
+}
+
 std::shared_ptr<TrackFieldEditChange> ratingChange(const FixtureStick &s, const std::string &file,
                                                    std::optional<int> stars)
 {
     return std::make_shared<TrackFieldEditChange>(s.pioneerQ(), s.engineQ(), file, "T",
-                                                  TrackFieldValue{TrackField::Rating, stars, {}});
+                                                  TrackFieldValue{TrackField::Rating, stars, {}},
+                                                  findTrackRows(s.pioneerQ(), s.engineQ(), file));
 }
 
 std::shared_ptr<TrackFieldEditChange> commentChange(const FixtureStick &s, const std::string &file,
                                                     const std::string &text, QString pioneer = {})
 {
-    return std::make_shared<TrackFieldEditChange>(pioneer.isNull() ? s.pioneerQ() : pioneer, s.engineQ(), file, "T",
-                                                  TrackFieldValue{TrackField::Comment, std::nullopt, text});
+    const QString root = pioneer.isNull() ? s.pioneerQ() : pioneer;
+    return std::make_shared<TrackFieldEditChange>(root, s.engineQ(), file, "T",
+                                                  TrackFieldValue{TrackField::Comment, std::nullopt, text},
+                                                  findTrackRows(root, s.engineQ(), file));
 }
 
 void expectRatingEverywhere(const FixtureStick &s, const std::string &file, std::optional<int> stars)
@@ -384,7 +460,7 @@ int main(int argc, char **argv)
     if (runs(3)) {
         FixtureStick s(fixture, "seabass_track_edit_limit");
         const auto [track, capacity] = roomiestComment(s, false);
-        const CommentLimit limit = commentLimitFor(s.pioneerQ(), track.filePath);
+        const CommentLimit limit = commentLimitFor(s.pioneerQ(), findTrackRows(s.pioneerQ(), s.engineQ(), track.filePath));
         assert(limit.limited && limit.units == capacity.units && limit.asciiOnly == !capacity.utf16);
         assert(!limit.reason.empty());
         const std::string atLimit(limit.units, 'L');
@@ -402,7 +478,7 @@ int main(int argc, char **argv)
         for (const auto &t : s.inBothRekordbox()) {
             const auto c = reader.trackCommentCapacity(static_cast<uint32_t>(std::stoul(t.sourceId)));
             if (c && c->units == 0) {
-                const CommentLimit none = commentLimitFor(s.pioneerQ(), t.filePath);
+                const CommentLimit none = commentLimitFor(s.pioneerQ(), findTrackRows(s.pioneerQ(), s.engineQ(), t.filePath));
                 assert(none.limited && none.units == 0 && none.reason.find("no room") != std::string::npos);
                 assert(commentLimitRefusal("", none).empty() && !commentLimitRefusal("a", none).empty());
                 sawNoRoom = true;
@@ -419,7 +495,7 @@ int main(int argc, char **argv)
         FixtureStick s(fixture, "seabass_track_edit_no_pdb");
         const std::string file = s.threeCatalogTrack().filePath;
         fs::remove(s.pdb());
-        assert(!commentLimitFor(s.pioneerQ(), file).limited);
+        assert(!commentLimitFor(s.pioneerQ(), findTrackRows(s.pioneerQ(), s.engineQ(), file)).limited);
         const std::string text = std::string(300, 'w') + " Gr\xc3\xbc\xc3\x9f" + "e \xf0\x9f\x8e\xb6";
         const auto result = saveChanges({commentChange(s, file, text)}, s.pioneerQ(), s.engineQ());
         assert(result.error.isEmpty());
@@ -506,5 +582,241 @@ int main(int argc, char **argv)
         assert(ratingChange(s, file, 1)->owner() == QStringLiteral("addcue"));
         std::cout << "case 7 (ids and units) OK\n";
     }
+    // 8. export.pdb spells the path in another case than OneLibrary and
+    //    Engine (#103's FAT stick): an edit asked for by Engine's row
+    //    reaches export.pdb too, and its comment limit comes from it.
+    if (runs(8)) {
+        FixtureStick s(fixture, "seabass_track_edit_case");
+        const auto [track, capacity] = roomiestComment(s, false);
+        const Copies copies = s.copiesOf(track.filePath);
+        const std::string stored = oneLibraryPathOf(s, track.filePath);
+        const std::string upper = upperFolder(stored);
+        assert(upper != stored);
+        oneLibraryExec(s, "UPDATE content SET path = ? WHERE path = ?", {upper, stored});
+        const std::string engineRelative =
+            pathToGenericUtf8(pathFromUtf8(pathToUtf8(s.stick) + upper).lexically_relative(s.engine));
+        assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "UPDATE Track SET path = '" + engineRelative
+                                                                   + "' WHERE id = " + copies.at("engine").sourceId + ";"));
+        // The file as Browse names it when it shows Engine's row.
+        const std::string engineFile =
+            pathToUtf8((s.engine / pathFromUtf8(engineRelative)).lexically_normal());
+        const TrackRows rows = findTrackRows(s.pioneerQ(), s.engineQ(), engineFile);
+        assert(rows.rekordbox.state == CatalogRows::State::Listed && "export.pdb's row is found, case folded");
+        assert(rows.oneLibrary.state == CatalogRows::State::Listed && rows.engine.state == CatalogRows::State::Listed);
+        assert(rows.refusal().empty());
+        const CommentLimit limit = commentLimitFor(s.pioneerQ(), rows);
+        assert(limit.limited && limit.units == capacity.units && "the limit is export.pdb's, not none");
+        const int stars = copies.at("rekordbox").rating.value_or(0) == 4 ? 2 : 4;
+        const auto result = saveChanges({ratingChange(s, engineFile, stars)}, s.pioneerQ(), s.engineQ());
+        assert(result.error.isEmpty());
+        for (const auto &[format, t] : s.copiesOf(engineFile)) {
+            assert(t.rating == std::optional<int>(stars) && "every catalog took it, export.pdb included");
+        }
+        std::cout << "case 8 (export.pdb spelling the path in another case is found and written) OK\n";
+    }
+
+    // 9. OneLibrary lists the file twice, in two spellings: which row is
+    //    the track cannot be known, so the edit is refused when it is
+    //    looked up, and a save staged before that fails and writes nothing.
+    if (runs(9)) {
+        FixtureStick s(fixture, "seabass_track_edit_ambiguous");
+        const std::string file = s.threeCatalogTrack().filePath;
+        const auto staged = ratingChange(s, file, 5);
+        setRatings(s, file, 1, 2, 3);
+        const std::string stored = oneLibraryPathOf(s, file);
+        // Another row of OneLibrary's pointed at the same file, its folder
+        // in upper case.
+        oneLibraryExec(s, "UPDATE content SET path = ? WHERE content_id = (SELECT min(content_id) FROM content WHERE "
+                          "path <> ?)", {upperFolder(stored), stored});
+        const TrackRows rows = findTrackRows(s.pioneerQ(), s.engineQ(), file);
+        assert(rows.oneLibrary.state == CatalogRows::State::Ambiguous);
+        assert(rows.refusal().find("more than one spelling") != std::string::npos);
+        const auto result = saveChanges({staged}, s.pioneerQ(), s.engineQ());
+        assert(!result.error.isEmpty() && result.error.contains("more than one spelling"));
+        expectRatings(s, file, 1, 2, 3);
+        std::cout << "case 9 (two OneLibrary rows in two spellings: refused, nothing written) OK\n";
+    }
+
+    // 10. A catalog that listed the track at staging and does not at Save
+    //     fails the save whole, saying which; each catalog in turn, the
+    //     first (OneLibrary), the second (Engine) and the last (export.pdb),
+    //     and every catalog keeps its own, different, rating.
+    if (runs(10)) {
+        for (const std::string lost : {"onelibrary", "engine", "rekordbox"}) {
+            FixtureStick s(fixture, "seabass_track_edit_lost_" + lost);
+            const std::string file = s.threeCatalogTrack().filePath;
+            const auto staged = ratingChange(s, file, 5);
+            setRatings(s, file, 1, 2, 3);
+            const Copies copies = s.copiesOf(file);
+            if (lost == "onelibrary") {
+                oneLibraryExec(s, "UPDATE content SET path = '/Contents/gone.mp3' WHERE content_id = "
+                                  + copies.at("onelibrary").sourceId);
+            } else if (lost == "engine") {
+                assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "UPDATE Track SET path = '../Contents/gone.mp3' "
+                                                                       "WHERE id = " + copies.at("engine").sourceId + ";"));
+            } else {
+                infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(s.pdb()));
+                assert(pdb.removeTrack(static_cast<uint32_t>(std::stoul(copies.at("rekordbox").sourceId))));
+                assert(pdb.commit());
+            }
+            const std::string name = lost == "onelibrary" ? "OneLibrary" : lost == "engine" ? "Engine" : "export.pdb";
+            const auto result = saveChanges({staged}, s.pioneerQ(), s.engineQ());
+            if (!result.error.contains(QString::fromStdString(name + " no longer lists"))) {
+                std::cerr << lost << ": " << result.error.toStdString() << "\n";
+                assert(false && "the save fails naming the catalog");
+            }
+            assert(result.rolledBack);
+            const Copies after = s.copiesOf(file);
+            if (lost != "rekordbox") {
+                assert(after.at("rekordbox").rating == std::optional<int>(1));
+            }
+            if (lost != "onelibrary") {
+                assert(after.at("onelibrary").rating == std::optional<int>(2) && "OneLibrary, written first, put back");
+            }
+            if (lost != "engine") {
+                assert(after.at("engine").rating == std::optional<int>(3) && "Engine put back");
+            }
+        }
+        std::cout << "case 10 (a catalog losing the row between staging and Save fails the save, first, second or last) "
+                     "OK\n";
+    }
+
+    // 11. The last write fails (export.pdb's replace meets a folder) with
+    //     every catalog holding a rating of its own: all three keep theirs.
+    if (runs(11)) {
+        FixtureStick s(fixture, "seabass_track_edit_rollback_distinct");
+        const std::string file = s.threeCatalogTrack().filePath;
+        setRatings(s, file, 1, 2, 3);
+        const auto staged = ratingChange(s, file, 5);
+        const fs::path obstacle = pathFromUtf8(pathToUtf8(s.pdb()) + ".tmp-seabass-write");
+        write(obstacle / "in the way", "x");
+        const auto result = saveChanges({staged}, s.pioneerQ(), s.engineQ());
+        fs::remove_all(obstacle);
+        assert(!result.error.isEmpty() && result.rolledBack);
+        expectRatings(s, file, 1, 2, 3);
+        std::cout << "case 11 (export.pdb failing last: OneLibrary and Engine, each with its own rating, put back) OK\n";
+    }
+
+    // 12. Rating and comment of one track in one save, read back in all
+    //     three; and with a playlist created in the same save.
+    if (runs(12)) {
+        FixtureStick s(fixture, "seabass_track_edit_both");
+        const auto [track, capacity] = roomiestComment(s, false);
+        const std::string file = track.filePath;
+        const int stars = track.rating.value_or(0) == 3 ? 4 : 3;
+        const QStringList all{QStringLiteral("rekordbox"), QStringLiteral("onelibrary"), QStringLiteral("engine")};
+        const auto result = saveChanges({ratingChange(s, file, stars), commentChange(s, file, "both"),
+                                         std::make_shared<CreatePlaylistChange>(s.pioneerQ(), s.engineQ(), "Edited",
+                                                                                all)},
+                                        s.pioneerQ(), s.engineQ());
+        if (!result.error.isEmpty()) {
+            std::cerr << result.error.toStdString() << "\n";
+        }
+        assert(result.error.isEmpty() && result.appliedIds.size() == 3);
+        expectRatingEverywhere(s, file, stars);
+        expectCommentEverywhere(s, file, "both");
+        bool made = false;
+        for (const auto &n : infrastructure::rekordbox::PdbRowWriter(pathToUtf8(s.pdb())).playlistTree()) {
+            made = made || n.name == "Edited";
+        }
+        assert(made && "the playlist edit in the same save landed too");
+        std::cout << "case 12 (rating, comment and a playlist edit in one save) OK\n";
+    }
+
+    // 13. Twenty tracks edited in one save replace export.pdb once, not
+    //     twenty times (the session's scratch copy), and a failure on the
+    //     last of them still rolls every one back.
+    if (runs(13)) {
+        const auto durableWrites = [&](int tracks, bool failLast) {
+            FixtureStick s(fixture, "seabass_track_edit_batch_" + std::to_string(tracks) + (failLast ? "f" : ""));
+            const auto candidates = s.inBothRekordbox();
+            assert(candidates.size() >= static_cast<size_t>(tracks));
+            std::vector<std::shared_ptr<PendingChange>> changes;
+            std::vector<std::pair<std::string, std::optional<int>>> before;
+            for (int i = 0; i < tracks; ++i) {
+                const auto &t = candidates[static_cast<size_t>(i)];
+                before.emplace_back(t.filePath, t.rating);
+                changes.push_back(ratingChange(s, t.filePath, t.rating.value_or(0) == 5 ? 4 : 5));
+            }
+            if (failLast) {
+                // The last track's export.pdb row goes before the save.
+                infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(s.pdb()));
+                assert(pdb.removeTrack(static_cast<uint32_t>(std::stoul(candidates[static_cast<size_t>(tracks - 1)].sourceId))));
+                assert(pdb.commit());
+            }
+            const std::string pdbBefore = fileBytes(s.pdb());
+            infrastructure::WorkCounters::instance().reset();
+            const auto result = saveChanges(changes, s.pioneerQ(), s.engineQ());
+            const auto writes = infrastructure::WorkCounters::instance().snapshot().durableFileWrites;
+            // The writes went to a local scratch copy of each database, put
+            // onto the stick once at the end, when there were enough of them.
+            std::ifstream logFile(s.stick / "Seabass" / "seabass.log");
+            const std::string log((std::istreambuf_iterator<char>(logFile)), std::istreambuf_iterator<char>());
+            const bool scratched = log.find("applying up to " + std::to_string(tracks)
+                                            + " rekordbox update(s) to a local scratch copy")
+                                   != std::string::npos;
+            assert(scratched == (tracks >= 15) && "a batch goes through one scratch copy of export.pdb");
+            if (failLast) {
+                assert(!result.error.isEmpty() && result.rolledBack);
+                assert(fileBytes(s.pdb()) == pdbBefore && "every edit before the failing one was put back");
+            } else {
+                assert(result.error.isEmpty() && result.appliedIds.size() == static_cast<qsizetype>(tracks));
+            }
+            return writes;
+        };
+        const auto one = durableWrites(1, false);
+        const auto twenty = durableWrites(20, false);
+        // Durable writes count the scratch copy's too (each change commits
+        // into it, on this computer's disk): 20 there, and then one per
+        // database onto the stick.
+        std::cerr << "    durable writes: 1 track " << one << ", 20 tracks " << twenty << "\n";
+        durableWrites(20, true);
+        std::cout << "case 13 (twenty edits, one replace; a failure on the last rolls all back) OK\n";
+    }
+
+    // 14. The fixture's Engine library is schema 3.x; a 2.x one is written
+    //     the same way, and a cleared rating reads back as none; an Engine
+    //     1.x library (m.db at its top level) is refused, not skipped.
+    if (runs(14)) {
+        FixtureStick s(fixture, "seabass_track_edit_schema");
+        assert(sqlScalar(pathToUtf8(s.mdb()), "SELECT schemaVersionMajor FROM Information;") == 3);
+        for (const bool v2 : {true, false}) {
+            const fs::path root = seabass::testing::scratchRoot() / (v2 ? "seabass_track_edit_v2" : "seabass_track_edit_v1");
+            fs::remove_all(root);
+            const fs::path library = root / "Engine Library";
+            fs::create_directories(root);
+            {
+                auto db = djinterop::engine::create_database(
+                    pathToUtf8(library), v2 ? djinterop::engine::engine_schema::schema_2_21_2 : djinterop::engine::latest_v1_schema);
+                djinterop::track_snapshot snapshot;
+                snapshot.title = "Old";
+                snapshot.relative_path = "../Contents/old.mp3";
+                snapshot.rating = 40;
+                db.create_track(snapshot);
+            }
+            const std::string file = pathToUtf8((library / "../Contents/old.mp3").lexically_normal());
+            const QString engine = pathToQString(library);
+            const TrackRows rows = findTrackRows({}, engine, file);
+            if (!v2) {
+                assert(rows.engine.state == CatalogRows::State::Unwritable && !rows.refusal().empty());
+                std::cout << "    Engine 1.x: refused (" << rows.refusal() << ")\n";
+                fs::remove_all(root);
+                continue;
+            }
+            assert(sqlScalar(pathToUtf8(library / "Database2" / "m.db"), "SELECT schemaVersionMajor FROM Information;") == 2);
+            assert(rows.engine.state == CatalogRows::State::Listed);
+            for (const std::optional<int> stars : {std::optional<int>(5), std::optional<int>()}) {
+                auto change = std::make_shared<TrackFieldEditChange>(QString(), engine, file, "Old",
+                                                                     TrackFieldValue{TrackField::Rating, stars, {}}, rows);
+                assert(saveChanges({change}, {}, engine).error.isEmpty());
+                infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(library));
+                const auto tracks = application::ScanLibrary(reader).execute();
+                assert(tracks.size() == 1 && tracks[0].rating == stars);
+            }
+            fs::remove_all(root);
+        }
+        std::cout << "case 14 (Engine 3.x fixture, 2.x written and cleared, 1.x refused) OK\n";
+    }
+
     return 0;
 }

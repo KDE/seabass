@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "domain/engine_update_planning.hpp"
@@ -98,6 +99,13 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
 // library at `databaseRoot` (a write root, maybe a scratch copy), by the
 // path Engine stores relative to the stick's real library folder
 // `realLibraryPath`.
+// Every Track row's id and path, as Engine spells it (relative to the
+// library folder), read from the library at `databaseRoot` with SQLite
+// directly and read-only: one query, for a caller matching paths by its
+// own rule (letter case folded the way FAT and exFAT do). Rows with no
+// path are left out. Throws when the database cannot be read.
+std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot);
+
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
                                                 const std::string &filePath);
 
