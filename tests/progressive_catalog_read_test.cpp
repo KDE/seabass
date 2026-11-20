@@ -36,6 +36,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -47,6 +48,9 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/onelibrary/onelibrary_key.hpp"
+#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
@@ -341,6 +345,37 @@ int main(int argc, char **argv)
         checkSameLibrary(tracks, catalogSizes, "onelibrary sizes are the catalog's, kept by fillFileSizes");
         check(seabass::application::catalogDigest(tracks) == OneLibraryDigest,
               "onelibrary digest equals the pinned one, got " + seabass::application::catalogDigest(tracks));
+        // The digest pins the reader's own output; the rating and comment
+        // in it (#105) are checked against the database itself, read with
+        // SQL from this copy: NULL or 0 is no rating, and the comment as
+        // stored.
+        {
+            using namespace seabass::infrastructure::onelibrary;
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerUtf8), /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement rows(db, "SELECT content_id, rating, djComment FROM content");
+            std::map<std::string, std::pair<std::optional<int>, std::string>> stored;
+            while (rows.step()) {
+                std::optional<int> rating;
+                if (!rows.columnIsNull(1) && rows.columnInt64(1) > 0) {
+                    rating = static_cast<int>(rows.columnInt64(1));
+                }
+                stored[std::to_string(rows.columnInt64(0))] = {rating, rows.columnIsNull(2) ? "" : rows.columnText(2)};
+            }
+            int rated = 0;
+            int commented = 0;
+            bool agree = stored.size() == tracks.size();
+            for (const auto &t : tracks) {
+                const auto it = stored.find(t.sourceId);
+                agree = agree && it != stored.end() && it->second.first == t.rating && it->second.second == t.comment;
+                rated += t.rating ? 1 : 0;
+                commented += t.comment.empty() ? 0 : 1;
+            }
+            check(agree, "onelibrary rating and comment are content.rating and content.djComment");
+            check(rated > 0 && commented > 0, "the fixture has ratings and comments to compare, got "
+                                                  + std::to_string(rated) + " and " + std::to_string(commented));
+        }
         check(countIf(tracks, sized) == OneLibraryRowsSized, "onelibrary rows sized");
         check(countIf(tracks, withCues) == OneLibraryRowsWithCues,
               "onelibrary rows with cues: " + std::to_string(countIf(tracks, withCues)));
