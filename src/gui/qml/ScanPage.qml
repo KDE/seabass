@@ -1696,6 +1696,8 @@ Page {
                         anchors.margins: 2
                         sourceComponent: WaveformView {
                             opacity: 0.35
+                            // A backdrop behind a row's text: no ruler lane.
+                            gridStyle: "lines"
                             waveformData: playbackController.waveform
                             format: playbackController.currentFormat
                             cueData: playbackController.cues
@@ -2241,6 +2243,7 @@ Page {
             libraryPath: root.currentPath()
             scanController: scanController
             keyNotation: root.appSettingsController.keyNotation
+            appSettingsController: root.appSettingsController
             onCloseRequested: root.trackPanelOpen = false
             onRescanRequested: root.rescan()
         }

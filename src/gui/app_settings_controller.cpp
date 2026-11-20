@@ -13,6 +13,9 @@
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "app_settings_controller.hpp"
+
+#include <algorithm>
+#include <cmath>
 #include "gui/qt_path.hpp"
 
 #include <QDir>
@@ -37,6 +40,8 @@ AppSettingsController::AppSettingsController(QObject *parent)
     m_preferredFormat = m_settings.value("preferredFormat", "rekordbox").toString();
     m_hideStreamingTracks = m_settings.value("hideStreamingTracks", false).toBool();
     m_showPlayCount = m_settings.value("showPlayCount", false).toBool();
+    m_waveformZoomBars = std::max(0.0, m_settings.value("waveformZoomBars", 0.0).toDouble());
+    m_showRemainingTime = m_settings.value("showRemainingTime", false).toBool();
     m_keyNotation = m_settings.value("keyNotation", "camelot").toString();
     m_exactMatchSeconds = m_settings.value("music/exactMatchSeconds",
                                             static_cast<int>(domain::MatchingPolicy::DefaultExactMatchSeconds))
@@ -137,6 +142,27 @@ void AppSettingsController::setShowPlayCount(bool value)
     m_showPlayCount = value;
     m_settings.setValue("showPlayCount", value);
     emit showPlayCountChanged();
+}
+
+void AppSettingsController::setWaveformZoomBars(double bars)
+{
+    bars = std::isfinite(bars) ? std::max(0.0, bars) : 0.0;
+    if (m_waveformZoomBars == bars) {
+        return;
+    }
+    m_waveformZoomBars = bars;
+    m_settings.setValue("waveformZoomBars", bars);
+    emit waveformZoomBarsChanged();
+}
+
+void AppSettingsController::setShowRemainingTime(bool value)
+{
+    if (m_showRemainingTime == value) {
+        return;
+    }
+    m_showRemainingTime = value;
+    m_settings.setValue("showRemainingTime", value);
+    emit showRemainingTimeChanged();
 }
 
 bool AppSettingsController::audioComparisonSupported()
