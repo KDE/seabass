@@ -227,10 +227,17 @@ std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
     return members;
 }
 
-bool hasSqliteHeader(const fs::path &file)
+bool dbSetSidecarRefused(const fs::path &mainDb)
 {
-    unsigned char header[sizeof SqliteMagic];
-    return readPrefix(file, header, sizeof header) && std::memcmp(header, SqliteMagic, sizeof SqliteMagic) == 0;
+    // The header as fingerprintDbSet() reads it, so that what is a
+    // database here is one there.
+    unsigned char header[100];
+    if (!readPrefix(mainDb, header, sizeof header) || std::memcmp(header, SqliteMagic, sizeof SqliteMagic) != 0) {
+        return false;
+    }
+    SidecarPresence presence = SidecarPresence::Known;
+    listDbSet(mainDb, presence);
+    return presence == SidecarPresence::Refused;
 }
 
 std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
