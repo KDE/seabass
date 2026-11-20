@@ -334,5 +334,34 @@ int main()
     }
 
     std::cout << "all collapse_catalog_rows_test cases passed\n";
+    // #105: OneLibrary's reader reads ratings and comments now. Clean Up
+    // must not release a group it held because of that: here the
+    // survivor's file is rated only in OneLibrary, the doomed copy in
+    // export.pdb. Removing the doomed rows takes export.pdb's rating 3 with
+    // them while the survivor's export.pdb row has none, so the group is
+    // held, as it was before OneLibrary's value was read. And a doomed
+    // copy rated only in OneLibrary is held no less than before.
+    {
+        Track survivorRb = row("rekordbox", "rb1", "/stick/Contents/a.mp3", "Sorry", 200.0, 320);
+        Track survivorOne = row("onelibrary", "ol1", "/stick/Contents/a.mp3", "Sorry", 200.0, 320);
+        survivorOne.rating = 3;
+        survivorOne.comment = "only in OneLibrary";
+        Track doomedRb = row("rekordbox", "rb2", "/stick/Contents/b.mp3", "Sorry", 200.0, 128);
+        doomedRb.rating = 3;
+        doomedRb.comment = "only in OneLibrary";
+        Track doomedOne = row("onelibrary", "ol2", "/stick/Contents/b.mp3", "Sorry", 200.0, 128);
+        application::CatalogTracks catalogs;
+        catalogs.rekordbox = std::vector<Track>{survivorRb, doomedRb};
+        catalogs.oneLibrary = std::vector<Track>{survivorOne, doomedOne};
+        const auto scan = application::collapseForCleanupScan(catalogs, {}, {});
+        assert(scan.collapsedAcrossCatalogs && scan.rows.size() == 2);
+        domain::DuplicateGroup group;
+        group.tracks = scan.rows;
+        const auto plan = domain::DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.filePath == "/stick/Contents/a.mp3");
+        assert(plan.hasUnpreservableDataAtRisk && "held: export.pdb's rating would go with the doomed rows");
+        std::cout << "case 17 (a rating only OneLibrary holds for the survivor does not release a group) OK\n";
+    }
+
     return 0;
 }

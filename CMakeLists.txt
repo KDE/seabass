@@ -3770,6 +3770,17 @@ if(TARGET seabass_edit)
     add_test(NAME track_field_edit_change_test COMMAND track_field_edit_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs)
 
+    # #105: what Metadata Restore offers once the OneLibrary reader reads
+    # rating and comment, against what it offered before.
+    add_executable(metadata_restore_onelibrary_fields_test tests/metadata_restore_onelibrary_fields_test.cpp)
+    target_include_directories(metadata_restore_onelibrary_fields_test PRIVATE src tests)
+    target_link_libraries(metadata_restore_onelibrary_fields_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(metadata_restore_onelibrary_fields_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME metadata_restore_onelibrary_fields_test COMMAND metadata_restore_onelibrary_fields_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs)
+
     add_executable(restore_backups_change_test tests/restore_backups_change_test.cpp)
     target_include_directories(restore_backups_change_test PRIVATE src tests)
     target_link_libraries(restore_backups_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)

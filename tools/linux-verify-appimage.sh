@@ -47,13 +47,15 @@ appimage="${1:?the .AppImage to check}"
 appimage="$(cd "$(dirname "$appimage")" && pwd)/$(basename "$appimage")"
 image="${SEABASS_VERIFY_IMAGE:-seabass-appimage-host:26.04}"
 fixture="$root/tests/fixtures/anonymized_library"
-# What seabass-cli digest says about that fixture's OneLibrary. Taken from a
-# trusted build (2026-11-08, Seabass/1.0 at 1902bb81) reading the same
-# committed file. It changes if the fixture, the digest's definition in
-# application/catalog_digest or what the OneLibrary reader returns does
-# (last: 922da1fd, cues from the analysis file), and then this line
+# What seabass-cli digest says about that fixture's OneLibrary: the value
+# progressive_catalog_read_test pins for the same committed file, whose
+# rating and comment it checks against the database's own SQL. It changes
+# if the fixture, the digest's definition in application/catalog_digest or
+# what the OneLibrary reader returns does
+# (last: #105, the reader reads rating and comment; before it 922da1fd,
+# cues from the analysis file), and then this line
 # changes with it.
-expected="${SEABASS_EXPECTED_ONELIBRARY_DIGEST:-1b0059a8d7d507a6fbbee924b054d1503bea151b3bf8298ba11d378bff94c5dc}"
+expected="${SEABASS_EXPECTED_ONELIBRARY_DIGEST:-5b50a751bc47bdf0fe971bd577b31aa2175c65183955a2529515e3f465f059c4}"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
     [ "$image" = "seabass-appimage-host:26.04" ] || { echo "no image $image" >&2; exit 2; }
