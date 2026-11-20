@@ -208,6 +208,8 @@ set(SEABASS_GUI_QML_FILES
     qml/RestoreStickBackupPage.qml
     qml/CloneStickPage.qml
     qml/TrackDetailPanel.qml
+    qml/TrackRatingEditor.qml
+    qml/TrackCommentEditor.qml
     qml/TrackRing.qml
     qml/TrackRingFullscreen.qml
 )
@@ -226,6 +228,8 @@ set(SEABASS_GUI_SOURCES
     add_cue_controller.cpp
     playlist_edit_controller.hpp
     playlist_edit_controller.cpp
+    track_edit_controller.hpp
+    track_edit_controller.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
     beat_grids_controller.hpp
@@ -350,6 +354,9 @@ endif()
 # tools/update-breeze-icons.sh -- which is also where to add one.
 set(SEABASS_GUI_ICONS
     qml/icons/breeze/application-menu.svg
+    qml/icons/breeze/document-edit.svg
+    qml/icons/breeze/rating.svg
+    qml/icons/breeze/rating-unrated.svg
     qml/icons/breeze/archive-insert.svg
     qml/icons/breeze/arrow-down.svg
     qml/icons/breeze/arrow-right.svg

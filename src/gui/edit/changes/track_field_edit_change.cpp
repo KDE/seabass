@@ -290,8 +290,9 @@ CommentLimit commentLimitFor(const QString &pioneerRoot, const std::string &file
     if (limit.limited) {
         limit.reason = limit.units == 0
             ? "export.pdb keeps no room for a comment on this track, and Seabass cannot make its row larger."
-            : "export.pdb keeps room for " + std::to_string(limit.units)
-                  + " characters in this track's comment, and Seabass cannot make its row larger.";
+            : "export.pdb keeps room for " + std::to_string(limit.units) + " characters in this track's comment"
+                  + (limit.asciiOnly ? ", plain ASCII only (no accented letters)," : "")
+                  + " and Seabass cannot make its row larger.";
     }
     return limit;
 }
