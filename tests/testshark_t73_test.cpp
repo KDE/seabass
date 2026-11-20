@@ -100,6 +100,7 @@
 #include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
+using seabass::pathToGenericUtf8;
 using seabass::pathFromUtf8;
 using seabass::pathToUtf8;
 using seabass::gui::EditSessionRegistry;
@@ -1050,8 +1051,9 @@ void pretendPlayerAnalysedB01(const testing::EngineChangeStick &stick, bool lock
     assert(analysisRows(stick.db).at(std::stoll(b01))[IsAnalyzed] == "1");
 }
 
-// The files under `dir`, by path from it, with their bytes; none when it
-// is not there.
+// The files under `dir`, by path from it with '/' on every platform (the
+// keys are compared with "Database2/m.db" and the like), with their bytes;
+// none when it is not there.
 std::map<std::string, std::string> filesUnder(const fs::path &dir)
 {
     std::map<std::string, std::string> out;
@@ -1061,7 +1063,7 @@ std::map<std::string, std::string> filesUnder(const fs::path &dir)
     }
     for (const auto &entry : fs::recursive_directory_iterator(dir)) {
         if (entry.is_regular_file()) {
-            out[pathToUtf8(fs::relative(entry.path(), dir))] = fileBytes(entry.path());
+            out[pathToGenericUtf8(fs::relative(entry.path(), dir))] = fileBytes(entry.path());
         }
     }
     return out;
