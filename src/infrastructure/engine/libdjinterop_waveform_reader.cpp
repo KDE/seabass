@@ -92,6 +92,8 @@ struct DecodableBlobs
 {
     bool waveform = true;
     bool beats = true;
+    // trackData: the sample rate and count are read from it.
+    bool trackData = true;
 };
 
 DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t trackId)
@@ -104,12 +106,12 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
     std::string error;
     const auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
     if (!row) {
-        return {false, false};
+        return {false, false, false};
     }
     const auto ok = [](const application::EngineSqlValue &value) {
         return value.isNull() || internal::engineBlobDecodable(value.bytes);
     };
-    return {ok(row->columns.overviewWaveFormData), ok(row->columns.beatData)};
+    return {ok(row->columns.overviewWaveFormData), ok(row->columns.beatData), ok(row->columns.trackData)};
 }
 
 }  // namespace
@@ -141,8 +143,10 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
                         analysis.detail.columns.push_back(
                             {entry.low.value / 255.0, entry.mid.value / 255.0, entry.high.value / 255.0});
                     }
-                    const std::optional<unsigned long long> samples = track->sample_count();
-                    const std::optional<double> rate = track->sample_rate();
+                    // The spacing from trackData, only where it decodes.
+                    const std::optional<unsigned long long> samples =
+                        decodable.trackData ? track->sample_count() : std::nullopt;
+                    const std::optional<double> rate = decodable.trackData ? track->sample_rate() : std::nullopt;
                     if (samples && *samples > 0 && rate && *rate > 0.0) {
                         analysis.detail.msPerColumn = static_cast<double>(*samples) / *rate * 1000.0
                             / static_cast<double>(entries.size());
@@ -153,14 +157,17 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
                 analysis.detail = {};
             }
         }
-        if (decodable.beats) {
+        // The grid is placed by the rate trackData records (or works one
+        // out), so it needs both blobs. A trackData that does not decode
+        // records no rate: no grid, as for a row without one (#40).
+        if (decodable.beats && decodable.trackData) {
             try {
                 analysis.beats = beatGridOf(*track);
             } catch (const std::exception &) {
                 analysis.beats.clear();
             }
         }
-        analysis.beatRateRecorded = sampleRateRecorded(*track);
+        analysis.beatRateRecorded = decodable.trackData && sampleRateRecorded(*track);
     } catch (const std::exception &) {
         return {};
     }
