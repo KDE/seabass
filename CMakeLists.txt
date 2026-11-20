@@ -2956,13 +2956,15 @@ seabass_cli_test(cli_copy_beatgrids_declined EXIT 0
     EXPECT "\\n  would be written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
            "skipped: no changes made."
     FORBID "backed up" "copy-beatgrids summary")
+# The CLI prints a path the platform's way (pathToUtf8), so the backup
+# path's separators are "\" on Windows: "." takes either.
 set(_cli_bg_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_beatgrids")
 seabass_cli_test(cli_copy_beatgrids_run EXIT 0
     COPY_FROM ${_cli_fixture} COPY_TO ${_cli_bg_copy}
     ARGS copy-beatgrids --auto --rekordbox ${_cli_bg_copy}/rekordbox --engine ${_cli_bg_copy}/engine
     EXPECT "matched tracks:    1161\\n"
            "\\n  would be written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
-           "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
+           "backed up Engine to [^\\n]*.Seabass.backups.[0-9T]+-copy-beatgrids\\n"
            "\\ncopy-beatgrids summary\\n  written: +188\\n  not analysed by the player yet: +973\\n  total: +1161\\n"
     FORBID "already the same" "failed" "edited on Engine" "locked on Engine"
     EXISTS "${_cli_bg_copy}/Seabass/beat-grids.tsv" "${_cli_bg_copy}/Seabass/backups/*-copy-beatgrids/*")
@@ -3063,7 +3065,7 @@ if(TARGET seabass_taglib)
         COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_run}
         ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
         EXPECT "rows that would be completed: +6\\n"
-               "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids\\n"
+               "backed up Engine to [^\\n]*.Seabass.backups.[0-9T]+-copy-beatgrids\\n"
                "\\ncopy-beatgrids summary\\n  written: +11\\n  total: +11\\n  waveforms written: +11\\n  waveforms total: +11\\n  rows completed: +6\\n  Engine's own analysis kept: +5\\n"
         FORBID "failed" "would be written: +0"
         EXISTS "${_cli_an_run}/Seabass/beat-grids.tsv" "${_cli_an_run}/Seabass/backups/*-copy-beatgrids/backup.zip"
@@ -3126,7 +3128,7 @@ if(TARGET seabass_taglib)
     seabass_cli_test(cli_restore_analysis_run EXIT 0
         ARGS copy-beatgrids --restore-engine-analysis --auto --rekordbox ${_cli_rs}/PIONEER
              --engine "${_cli_rs}/Engine Library"
-        EXPECT "backed up Engine to [^\\n]*/Seabass/backups/[0-9T]+-copy-beatgrids(-[0-9]+)?\\n"
+        EXPECT "backed up Engine to [^\\n]*.Seabass.backups.[0-9T]+-copy-beatgrids(-[0-9]+)?\\n"
                "\\ncopy-beatgrids restore-engine-analysis summary\\n  restored: +5\\n  nothing kept: +6\\n  total: +11\\n"
         FORBID "failed")
     add_test(NAME cli_restore_analysis_rows COMMAND engine_analysis_rows "${_cli_rs}/Engine Library")
