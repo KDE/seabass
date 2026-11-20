@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -92,9 +94,9 @@ static bool scanProcesses(const std::string &name)
 namespace
 {
 
-std::string toLower(std::string s)
+std::wstring toLower(std::wstring s)
 {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
     return s;
 }
 
@@ -103,26 +105,29 @@ std::string toLower(std::string s)
 // Enumerates every running process via Toolhelp32Snapshot and compares
 // each one's executable name (szExeFile, e.g. "rekordbox.exe") against
 // name + ".exe", case-insensitively -- Windows process names always
-// include the extension, unlike Linux's /proc/<pid>/comm.
+// include the extension, unlike Linux's /proc/<pid>/comm. The W forms by
+// name, not the TCHAR macros: a Qt target defines UNICODE and the core
+// library does not, and this file is built in both.
 static bool scanProcesses(const std::string &name)
 {
-    std::string wanted = toLower(name) + ".exe";
+    // The names asked for are ASCII ("rekordbox", "Engine DJ").
+    std::wstring wanted = toLower(std::wstring(name.begin(), name.end())) + L".exe";
 
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    PROCESSENTRY32 entry;
-    entry.dwSize = sizeof(PROCESSENTRY32);
+    PROCESSENTRY32W entry;
+    entry.dwSize = sizeof(PROCESSENTRY32W);
     bool found = false;
-    if (::Process32First(snapshot, &entry)) {
+    if (::Process32FirstW(snapshot, &entry)) {
         do {
             if (toLower(entry.szExeFile) == wanted) {
                 found = true;
                 break;
             }
-        } while (::Process32Next(snapshot, &entry));
+        } while (::Process32NextW(snapshot, &entry));
     }
     ::CloseHandle(snapshot);
     return found;
