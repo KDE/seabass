@@ -360,6 +360,27 @@ int main()
         assert(f.archiveNames().count("Engine Library/Database2/m.db"));
         assert(!f.archiveNames().count("Engine Library/Database2/m.db-journal"));
         assert(f.verifies());
+
+        // The same journal over a database the backup already has as it
+        // is: that copy is carried, not given up for an attempt that
+        // cannot succeed while the journal is held.
+        const fs::path again = f.stick / "Engine Library" / "Database2" / "m.db-wal";
+        writeFile(again, "a sidecar on its way out", 1'700'000'005);
+        const HANDLE second =
+            ::CreateFileW(again.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        assert(second != INVALID_HANDLE_VALUE);
+        const BOOL markedAgain =
+            ::SetFileInformationByHandle(second, FileDispositionInfo, &disposition, sizeof disposition);
+        assert(markedAgain);
+        (void)markedAgain;
+        (void)fs::is_regular_file(again, ec);
+        assert(ec == std::errc::permission_denied && "precondition: refused again");
+        BackupStickOutcome unchanged = BackupStick::execute(f.options);
+        ::CloseHandle(second);
+        assert(unchanged.status != BackupOutcomeStatus::Failed);
+        assert(f.archiveNames().count("Engine Library/Database2/m.db") && "the copy the backup had is still in it");
+        assert(f.verifies());
         std::cout << "case 7b (a journal Windows refuses at planning: the database is a set left out, then captured) OK\n";
     }
 #endif

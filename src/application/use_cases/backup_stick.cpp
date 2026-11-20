@@ -312,17 +312,22 @@ RunPlan planRun(const BackupStickOptions &options, const OpenedArchive &opened)
         fs::path mainDb = options.stickRoot / seabass::pathFromUtf8(entry.relativePath);
         std::optional<DbSetFingerprint> fingerprint = fingerprintDbSet(mainDb);
         if (!fingerprint) {
-            if (!hasSqliteHeader(mainDb)) {
-                continue;  // not SQLite after all: an ordinary file
+            if (unchangedPaths.count(entry.relativePath) != 0 || !dbSetSidecarRefused(mainDb)) {
+                // Not SQLite after all: an ordinary file. Or a database
+                // nothing can be said about just now whose main file is
+                // as the last backup has it: that copy is carried, as
+                // it always was, and a later run looks again.
+                continue;
             }
-            // A database all the same, with a -wal or -journal that
-            // could not be looked at just now: on Windows, a journal a
-            // commit has deleted while somebody else still has it open.
-            // Called an ordinary file it was copied alone, with nothing
-            // read twice and nothing to notice a writer, and stored as
-            // if it were whole. It is a set to capture, and the capture
-            // lists it again when it gets there. Both sidecar names are
-            // its members, so neither is copied as a file of its own.
+            // A database all the same, with a -wal or -journal that is
+            // refused just now: on Windows, a journal a commit has
+            // deleted while somebody else still has it open. Its main
+            // file is new or has changed, and called an ordinary file
+            // it was read alone, with nothing read twice and nothing to
+            // notice a writer, and stored as if it were whole. It is a
+            // set to capture, and the capture lists it again when it
+            // gets there. Both sidecar names are its members, so
+            // neither is copied as a file of its own.
             plan.dbSetsToCapture.push_back(entry.relativePath);
             plan.dbSetMemberPaths.insert(entry.relativePath);
             plan.dbSetMemberPaths.insert(entry.relativePath + "-wal");
