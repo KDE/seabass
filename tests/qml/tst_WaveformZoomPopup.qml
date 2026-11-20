@@ -31,6 +31,7 @@ TestCase {
         .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
     readonly property string clickFile: Qt.resolvedUrl("../fixtures/mp3-click/click-D-lame-44100.mp3").toString()
         .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
+    readonly property string otherClickFile: clickFile.replace("click-D-lame-44100", "click-D-lame-48000")
     function grid(fromMs, toMs, beatMs) {
         const beats = [];
         let index = 0;
@@ -1085,5 +1086,302 @@ TestCase {
         verify(faces(bar).length <= 2, "never more than two faces");
         tryVerify(() => faces(bar).length === 1 && bar.blend === 1, 3000, "settles");
         compare(faces(bar)[0].title, "Track 9");
+    }
+
+    // ---- Second review of 2026-11-20 -----------------------------------
+
+    function plantedStick(columnsById) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        const pioneer = stick + "/PIONEER";
+        const ids = stickFixture.rekordboxTrackIds(pioneer, columnsById.length);
+        for (let i = 0; i < columnsById.length; ++i) {
+            verify(stickFixture.plantScrollWaveform(pioneer, ids[i], columnsById[i]), "planted " + ids[i]);
+        }
+        return {pioneer: pioneer, ids: ids};
+    }
+    function detailColumns(player) {
+        return player.detailWaveform.columns.byteLength / 3;
+    }
+
+    // A detail asked for track A that lands after B was loaded is dropped.
+    function test_anEarlierTracksDetailIsDropped() {
+        const stick = plantedStick([300, 200]);
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("rekordbox", stick.pioneer, stick.ids[0], testCase.clickFile, "A", "", "", [], "", false);
+        player.requestDetailWaveform();
+        player.load("rekordbox", stick.pioneer, stick.ids[1], testCase.clickFile, "B", "", "", [], "", false);
+        wait(300);
+        compare(detailColumns(player), 0, "A's columns are not B's");
+        player.requestDetailWaveform();
+        tryVerify(() => detailColumns(player) === 200, 5000, "B's own");
+        player.stop();
+    }
+
+    // A write that starts while the read runs: nothing taken from it, read
+    // again when the write is over.
+    function test_aWriteDuringTheReadIsWaitedFor() {
+        const stick = plantedStick([300]);
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("rekordbox", stick.pioneer, stick.ids[0], testCase.clickFile, "A", "", "", [], "", false);
+        player.requestDetailWaveform();
+        player.libraryBusy = true;
+        wait(300);
+        compare(detailColumns(player), 0, "nothing while the write runs");
+        player.libraryBusy = false;
+        tryVerify(() => detailColumns(player) === 300, 5000, "read once it is over");
+        player.stop();
+    }
+
+    // A write may replace what was delivered: dropped when it ends and
+    // read again while it is wanted; once released, not read for nobody.
+    function test_aDeliveredDetailIsReadAgainAfterAWrite() {
+        const stick = plantedStick([300]);
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("rekordbox", stick.pioneer, stick.ids[0], testCase.clickFile, "A", "", "", [], "", false);
+        player.requestDetailWaveform();
+        tryVerify(() => detailColumns(player) === 300, 5000);
+        verify(stickFixture.plantScrollWaveform(stick.pioneer, stick.ids[0], 500), "the write");
+        player.libraryBusy = true;
+        player.libraryBusy = false;
+        tryVerify(() => detailColumns(player) === 500, 5000, "the new one");
+        player.releaseDetailWaveform();
+        player.libraryBusy = true;
+        player.libraryBusy = false;
+        wait(300);
+        compare(detailColumns(player), 0, "released: dropped and not read again");
+        player.stop();
+    }
+
+    // Touchpad phases: a begin and an end without deltas do nothing; the
+    // fingers move it; let go with speed it glides; the system's own
+    // momentum (macOS) is followed with no glide of ours on top.
+    function test_touchpadPhases() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const a = area(popup);
+        const flick = flickOf(popup);
+        const y = a.height / 2;
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 1);
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 3);
+        compare(popup.attached, true, "a begin and an end with nothing between: nothing");
+        verify(!flick.moving);
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 1);
+        const before = popup.centerMs;
+        for (let i = 0; i < 3; ++i) {
+            stickFixture.touchpadWheel(a, 600, y, -30, 0, 2);
+        }
+        compare(popup.attached, false);
+        verify(Math.abs(popup.centerMs - (before + 90 / popup.pxPerMs)) < 1, "followed the fingers");
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 3);
+        verify(flick.moving, "let go with speed: a glide");
+        const atMomentum = popup.centerMs;
+        stickFixture.touchpadWheel(a, 600, y, -20, 0, 4);
+        verify(!flick.moving, "the system's momentum stops ours");
+        verify(Math.abs(popup.centerMs - (atMomentum + 20 / popup.pxPerMs)) < 1, "and moves it itself");
+    }
+
+    // Grabbing the waveform while it plays holds it where it was: no jump
+    // back when the press becomes a drag.
+    function test_aGrabWhilePlayingHoldsTheWaveform() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = openLoaded(player);
+        popup.frameClock = false;
+        player.playing = true;
+        const a = area(popup);
+        const y = a.height / 2;
+        const grabbed = popup.centerMs;
+        mousePress(a, 700, y);
+        popup.advanceClock(1.0);
+        compare(popup.centerMs, grabbed, "held under the hand");
+        for (let x = 680; x >= 500; x -= 20) {
+            mouseMove(a, x, y);
+        }
+        verify(popup.centerMs >= grabbed, "no jump back: " + grabbed + " to " + popup.centerMs);
+        mouseRelease(a, 500, y);
+        flickOf(popup).cancelFlick();
+        player.playing = false;
+    }
+
+    // A press that stops a glide does not seek on its release. Real time:
+    // the glide must still be running when the press lands, which a very
+    // loaded machine could prevent; the velocity is high and the press
+    // comes at once, so it is not a close thing.
+    function test_aPressThatStopsAGlideDoesNotSeek() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = openLoaded(player);
+        const a = area(popup);
+        popup.flingAt(2500);
+        verify(flickOf(popup).moving, "gliding");
+        player.calls = [];
+        mousePress(a, 700, a.height / 2);
+        mouseRelease(a, 700, a.height / 2);
+        compare(player.calls.indexOf("seek"), -1, "no seek: " + player.calls);
+        compare(popup.attached, false, "still let go");
+        verify(!flickOf(popup).moving, "stopped");
+        // A plain click after that seeks as ever.
+        mouseClick(a, 700, a.height / 2);
+        verify(player.calls.indexOf("seek") >= 0, "a click seeks");
+    }
+
+    // The time with the keyboard: Return switches it; Space stays the
+    // play key, with the app's own shortcut there.
+    function test_theTimeKeys() {
+        const player = makeFakePlayer({position: 61000});
+        createTemporaryObject(spaceComponent, testCase, {playbackController: player});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player});
+        waitForPolish(testCase.Window.window);
+        const time = findChild(bar, "playerTime");
+        time.forceActiveFocus();
+        compare(time.text, "1:01 / 4:00");
+        keyClick(Qt.Key_Space);
+        compare(player.playing, true, "Space plays");
+        compare(time.text, "1:01 / 4:00", "and leaves the time");
+        keyClick(Qt.Key_Return);
+        compare(time.text, "-2:59 / 4:00", "Return switches it");
+        keyClick(Qt.Key_Enter);
+        compare(time.text, "1:01 / 4:00", "and Enter");
+        verify(time.Accessible.description.indexOf("Return") >= 0, time.Accessible.description);
+        player.playing = false;
+    }
+
+    // The time left adds up with the time played to the length shown, and
+    // without a length only the time played is shown.
+    Component {
+        id: timeComponent
+        TrackTimeLabel {}
+    }
+    function test_theTimeLeftAddsUp() {
+        const time = createTemporaryObject(timeComponent, testCase, {positionMs: 61500, durationMs: 240400,
+                                                                     localRemaining: true});
+        compare(time.text, "-2:59 / 4:00");
+        time.localRemaining = false;
+        compare(time.text, "1:01 / 4:00");
+        time.localRemaining = true;
+        time.durationMs = 0;
+        compare(time.text, "1:01 / 0:00", "no length: the time played");
+    }
+
+    // The zoom is written once it has been left alone, not at each notch.
+    function test_theZoomIsWrittenOnceSettled() {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        settings.waveformZoomBars = 0;
+        const popup = createTemporaryObject(popupComponent, testCase,
+                                            {playbackController: makeFakePlayer({position: 60000}), settings: settings});
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        waitForPolish(testCase.Window.window);
+        const writes = createTemporaryObject(spyComponent, testCase, {target: settings, signalName: "waveformZoomBarsChanged"});
+        for (let i = 0; i < 3; ++i) {
+            mouseWheel(area(popup), 600, 50, 0, 120, Qt.NoButton, Qt.ControlModifier);
+        }
+        compare(writes.count, 0, "not at every notch");
+        tryCompare(writes, "count", 1, 3000, "once, when it has settled");
+        fuzzyCompare(settings.waveformZoomBars, popup.spanBars, 1e-9);
+        settings.waveformZoomBars = 0;
+        popup.close();
+    }
+
+    // The real controller announces every change of track before it makes
+    // it: load, a missing file, loadFile, stop. A missing file leaves no
+    // old track behind: no length, and Play does not play the old file.
+    function test_theControllerAnnouncesEveryChange() {
+        const player = createTemporaryObject(realPlayer, testCase);
+        const order = [];
+        const about = () => order.push("about:" + player.trackSerial);
+        const changed = () => order.push("changed:" + player.trackSerial);
+        player.trackAboutToChange.connect(about);
+        player.trackChanged.connect(changed);
+        player.load("rekordbox", "", "1", testCase.clickFile, "Click", "", "", [], "", false);
+        tryVerify(() => player.duration > 0 && player.durationSerial === player.trackSerial, 5000, "a length");
+        const clickLength = player.duration;
+        // Settled by running (2026-11-20, Qt 6.11, FFmpeg backend, under
+        // xvfb): loading another file reads duration 0 at once; loading
+        // the same file again changes nothing and still reads its length
+        // (3030 ms), with no new report to come. durationSerial says whose
+        // length it is either way: the same file's is taken as known at
+        // once.
+        player.load("rekordbox", "", "2", testCase.otherClickFile, "Another click", "", "", [], "", false);
+        console.log("OBSERVED duration right after loading another file:", player.duration,
+                    "durationSerial", player.durationSerial, "trackSerial", player.trackSerial);
+        verify(player.durationSerial !== player.trackSerial, "not known yet for the new serial");
+        tryVerify(() => player.durationSerial === player.trackSerial, 5000);
+        player.load("rekordbox", "", "2b", testCase.otherClickFile, "The same again", "", "", [], "", false);
+        tryVerify(() => player.durationSerial === player.trackSerial, 5000, "the same file again");
+        player.load("rekordbox", "", "3", "/nonexistent/missing.mp3", "Missing", "", "", [], "", false);
+        compare(player.duration, 0, "no length left of the old file");
+        compare(player.durationSerial, player.trackSerial, "known: none will come");
+        verify(player.errorMessage.length > 0);
+        player.togglePlay();
+        wait(200);
+        compare(player.playing, false, "Play does not play the old file");
+        player.loadFile("rekordbox", "", testCase.clickFile, "Recording", "");
+        player.stop();
+        compare(order.length, 12, JSON.stringify(order));
+        for (let i = 0; i < order.length; i += 2) {
+            verify(order[i].indexOf("about:") === 0 && order[i + 1].indexOf("changed:") === 0, JSON.stringify(order));
+            verify(order[i] !== "about:" + order[i + 1].split(":")[1], "announced before the serial moved");
+        }
+        verify(clickLength > 0);
+    }
+
+    // The old face keeps its own cues, grid, position and length while the
+    // new track's come in; after the blend no face is layered.
+    function test_theOldFaceKeepsItsOwnTrack() {
+        const player = makeFakePlayer({position: 61000});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player, blendAnimated: false});
+        waitForPolish(testCase.Window.window);
+        const first = faces(bar)[0];
+        const cues = first.cues;
+        const beats = first.beats;
+        verify(beats.length > 0);
+        player.changeTrack("Space Oddity", "Another Artist", 600, player.detail);
+        player.cues = [];
+        player.position = 5000;
+        player.duration = 180000;
+        const old = faces(bar).filter((face) => face.isLeaving)[0];
+        compare(old, first);
+        compare(old.cues, cues, "its cues");
+        compare(old.beats, beats, "its grid");
+        compare(old.positionMs, 61000, "its position");
+        compare(old.durationMs, testCase.trackMs, "its length");
+        bar.blend = 1;
+        tryVerify(() => faces(bar).length === 1, 2000);
+        compare(faces(bar)[0].layer.enabled, false, "not layered once whole");
+    }
+
+    // A change during a blend goes on from what shows: no pop.
+    function test_anInterruptedBlendDoesNotPop() {
+        const player = makeFakePlayer({position: 61000});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player, blendAnimated: false});
+        waitForPolish(testCase.Window.window);
+        player.changeTrack("Second", "", 500, player.detail);
+        bar.blend = 0.7;
+        const second = faces(bar).filter((face) => !face.isLeaving)[0];
+        fuzzyCompare(second.opacity, 0.7, 1e-9);
+        player.changeTrack("Third", "", 500, player.detail);
+        compare(second.isLeaving, true, "the face mostly showing stays");
+        fuzzyCompare(second.opacity, 0.7, 1e-9, "at the opacity it had");
+        const third = faces(bar).filter((face) => !face.isLeaving)[0];
+        compare(third.title, "Third");
+        verify(third.opacity < 0.01, "the new one starts from nothing");
+        bar.blend = 1;
+        tryVerify(() => faces(bar).length === 1 && faces(bar)[0].title === "Third", 2000);
+    }
+
+    // While the new track's length is awaited, the old face's popup button
+    // still opens the popup for what is loaded.
+    function test_theHeldFaceStillOpensThePopup() {
+        const player = makeFakePlayer({position: 61000});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player, blendAnimated: false});
+        waitForPolish(testCase.Window.window);
+        player.duration = 0;
+        player.changeTrack("Space Oddity", "", 600, player.detail);
+        verify(bar.blendWaiting, "held");
+        const old = faces(bar).filter((face) => face.isLeaving)[0];
+        mouseClick(findChild(old, "openWaveformPopupButton"));
+        const popup = findChild(bar, "waveformZoomPopup");
+        tryCompare(popup, "opened", true);
+        compare(popup.trackTitle, "Space Oddity", "for the loaded track");
+        popup.close();
     }
 }

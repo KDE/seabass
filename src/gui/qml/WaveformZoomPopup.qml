@@ -84,6 +84,10 @@ SeabassDialog {
             root.askForDetail();
         } else {
             flick.cancelFlick();
+            root.storeZoom();
+            if (root.controller && typeof root.controller.releaseDetailWaveform === "function") {
+                root.controller.releaseDetailWaveform();
+            }
         }
     }
     function askForDetail() {
@@ -133,9 +137,20 @@ SeabassDialog {
     function setSpan(span) {
         root.spanBars = span / root.barMs;
         root.localZoomBars = root.spanBars;
-        if (root.settings) {
+        zoomStore.restart();
+    }
+    // The zoom is written to the settings once it has been left alone for
+    // a moment, and when the popup closes: not at every notch of a wheel.
+    function storeZoom() {
+        zoomStore.stop();
+        if (root.settings && root.settings.waveformZoomBars !== root.spanBars) {
             root.settings.waveformZoomBars = root.spanBars;
         }
+    }
+    Timer {
+        id: zoomStore
+        interval: 500
+        onTriggered: root.storeZoom()
     }
 
     // Zooms by `factor` (above 1 is closer) keeping the time under
@@ -481,19 +496,34 @@ SeabassDialog {
                 contentWidth: root.durationMs * root.pxPerMs + width
                 contentHeight: height
                 pressDelay: 0
+                onMovementEnded: root.gliding = false
                 onContentXChanged: {
                     if (flick.moving && root.pxPerMs > 0) {
                         root.detach();
                         root.manualMs = root.clampTime(flick.contentX / root.pxPerMs);
                     }
                 }
-                // A click (no drag) seeks there.
+                // A press holds the waveform where it is (it no longer
+                // follows the playhead under the hand, so a drag starts
+                // from what was grabbed); a click seeks there, unless the
+                // press only stopped a glide.
                 MouseArea {
                     objectName: "zoomInput"
                     width: flick.contentWidth
                     height: flick.height
+                    property bool stoppedGlide: false
                     cursorShape: flick.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-                    onClicked: (mouse) => root.seekToX(mouse.x - flick.contentX)
+                    onPressed: {
+                        stoppedGlide = flick.moving || root.gliding;
+                        root.gliding = false;
+                        flick.cancelFlick();
+                        root.detach();
+                    }
+                    onClicked: (mouse) => {
+                        if (!stoppedGlide) {
+                            root.seekToX(mouse.x - flick.contentX);
+                        }
+                    }
                 }
             }
             Binding {
@@ -515,32 +545,50 @@ SeabassDialog {
                 property real fingerVelocity: 0
                 property real lastWheelTime: 0
                 onWheel: (wheel) => {
+                    wheel.accepted = true;
                     const pixels = wheel.pixelDelta.x !== 0 || wheel.pixelDelta.y !== 0;
+                    const angles = wheel.angleDelta.x !== 0 || wheel.angleDelta.y !== 0;
+                    // The phase first: the end of a touchpad scroll usually
+                    // carries no delta at all.
+                    if (wheel.phase === Qt.ScrollEnd) {
+                        if (Math.abs(fingerVelocity) > 0.2) {
+                            root.flingAt(fingerVelocity * 1000);
+                        }
+                        fingerVelocity = 0;
+                        return;
+                    }
+                    if (!pixels && !angles) {
+                        return;   // nothing to scroll by
+                    }
                     if (wheel.modifiers & Qt.ControlModifier) {
                         const steps = pixels ? wheel.pixelDelta.y / 50 : wheel.angleDelta.y / 120;
                         root.zoomBy(Math.pow(root.zoomStep, steps), wheel.x);
-                    } else if (pixels) {
-                        // A touchpad: the waveform follows the fingers, and
-                        // flung, glides on as a drag does.
+                        return;
+                    }
+                    if (pixels) {
                         const dx = Math.abs(wheel.pixelDelta.x) >= Math.abs(wheel.pixelDelta.y)
                             ? wheel.pixelDelta.x : wheel.pixelDelta.y;
+                        if (wheel.phase === Qt.ScrollMomentum) {
+                            // The system's own glide (macOS): followed as it
+                            // comes, with no glide of ours on top.
+                            root.scrollBy(-dx);
+                            return;
+                        }
+                        // A touchpad: the waveform follows the fingers, and
+                        // flung (ScrollEnd above) glides on as a drag does.
                         const now = Date.now();
                         const dt = Math.max(1, now - lastWheelTime);
                         fingerVelocity = dt < 100 ? -dx / dt : 0;
                         lastWheelTime = now;
                         root.scrollBy(-dx);
-                        if (wheel.phase === Qt.ScrollEnd && Math.abs(fingerVelocity) > 0.2) {
-                            root.flingAt(fingerVelocity * 1000);
-                        }
-                    } else {
-                        // A wheel, plain or with shift (which turns it
-                        // sideways): an eighth of the view a notch, on
-                        // through the track as the wheel turns down.
-                        const notches = (Math.abs(wheel.angleDelta.x) > Math.abs(wheel.angleDelta.y)
-                                         ? wheel.angleDelta.x : wheel.angleDelta.y) / 120;
-                        root.scrollBy(-notches * area.width / 8);
+                        return;
                     }
-                    wheel.accepted = true;
+                    // A wheel, plain or with shift (which turns it
+                    // sideways): an eighth of the view a notch, on through
+                    // the track as the wheel turns down.
+                    const notches = (Math.abs(wheel.angleDelta.x) > Math.abs(wheel.angleDelta.y)
+                                     ? wheel.angleDelta.x : wheel.angleDelta.y) / 120;
+                    root.scrollBy(-notches * area.width / 8);
                 }
             }
             PinchHandler {
@@ -569,10 +617,14 @@ SeabassDialog {
 
     // A glide of `velocity` pixels a second, positive on through the
     // track, as a flick of the waveform gives it.
+    // Set while a glide of flingAt() runs; a press during it stops it and
+    // does not seek.
+    property bool gliding: false
     function flingAt(velocity) {
         root.detach();
         flick.contentX = root.manualMs * root.pxPerMs;
         flick.flick(-velocity, 0);
+        root.gliding = flick.moving;
     }
 
     // In the popup, so that they are not refused while it is open (a

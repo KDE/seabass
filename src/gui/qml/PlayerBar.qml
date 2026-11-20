@@ -215,9 +215,19 @@ Frame {
     property real blendDuration: Theme.playerBlendDuration
     // False stops the animation, for a test that moves `blend` itself.
     property bool blendAnimated: true
-    // 0: only the old face shows; 1: only the new one.
+    // 0: only the old face shows; 1: only the new one. blendStart is
+    // where the blend began: a change during a blend starts from what is
+    // showing, not from nothing, so nothing pops.
     property real blend: 1
+    property real blendStart: 0
     property bool blendWaiting: false
+    // Whether the loaded track's length has been reported (or is known
+    // never to come): the controller's durationSerial where it has one,
+    // else a length above 0 (a test's controller).
+    readonly property bool lengthKnown: root.controller
+        && (root.controller.durationSerial !== undefined
+            ? root.controller.durationSerial === root.controller.trackSerial
+            : root.controller.duration > 0)
 
     // A face on its way out: hidden at once, destroyed when Qt gets to it.
     function retire(face) {
@@ -239,20 +249,27 @@ Frame {
         blendAnimation.stop();
         blendFallback.stop();
         if (faces.leaving) {
-            // Keep the face mostly showing, drop the other.
-            if (root.blend < 0.5) {
+            // Keep the face mostly showing, drop the other, and go on from
+            // the opacity it has now.
+            const shown = faces.current.opacity;
+            if (shown < 0.5) {
                 root.retire(faces.current);
                 faces.current = null;
+                root.blendStart = root.blend;
             } else {
                 root.retire(faces.leaving);
                 faces.current.freeze();
                 faces.leaving = faces.current;
                 faces.current = null;
+                root.blend = 1 - shown;
+                root.blendStart = root.blend;
             }
         } else {
             faces.current.freeze();
             faces.leaving = faces.current;
             faces.current = null;
+            root.blend = 0;
+            root.blendStart = 0;
         }
         root.frozenForChange = true;
     }
@@ -265,9 +282,8 @@ Frame {
             root.retire(faces.current);
         }
         faces.current = root.makeFace();
-        root.blend = 0;
         root.blendWaiting = true;
-        if (root.controller.duration > 0 || !root.controller.hasTrack) {
+        if (root.lengthKnown || !root.controller.hasTrack) {
             root.startBlend();
         } else {
             blendFallback.restart();
@@ -293,7 +309,6 @@ Frame {
         id: blendAnimation
         target: root
         property: "blend"
-        from: 0
         to: 1
         duration: root.blendDuration
         easing.type: Easing.InOutQuad
@@ -309,7 +324,12 @@ Frame {
         function onTrackAboutToChange() { root.trackAboutToChange(); }
         function onTrackChanged() { root.trackChanged(); }
         function onDurationChanged() {
-            if (root.controller.duration > 0) {
+            if (root.lengthKnown) {
+                root.startBlend();
+            }
+        }
+        function onDurationSerialChanged() {
+            if (root.lengthKnown) {
                 root.startBlend();
             }
         }
@@ -324,9 +344,12 @@ Frame {
             spacing: 12
             readonly property bool isLeaving: faces.leaving === face
             property bool retired: false
-            opacity: face.isLeaving ? 1 - root.blend : (faces.leaving ? root.blend : 1)
+            // The new face: hidden while it waits for its data, then from
+            // nothing to whole over the stretch of the blend left.
+            opacity: face.isLeaving ? 1 - root.blend
+                : (!faces.leaving ? 1 : (root.blendWaiting ? 0
+                    : Math.max(0, (root.blend - root.blendStart) / Math.max(1e-6, 1 - root.blendStart))))
             visible: opacity > 0 && !face.retired
-            enabled: !face.isLeaving
             z: face.isLeaving ? 1 : 0
             layer.enabled: face.opacity < 1
 
@@ -440,6 +463,11 @@ Frame {
                     // new track, a new length or a new width.
                     beatsSelected: true
                     beatData: face.beats
+                    // The old track's picture, while it blends out, does
+                    // not seek: its place in the music is not the new
+                    // track's. Its popup button and time still work (they
+                    // act on what is loaded, and on the shared setting).
+                    enabled: !face.isLeaving
                     trackDurationMs: face.durationMs
                     progress: trackDurationMs > 0 ? face.positionMs / trackDurationMs : 0
                     onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)
