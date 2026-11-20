@@ -4,6 +4,11 @@
 
 #include <sqlite3.h>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -388,6 +393,101 @@ int main()
         assert(unreadable == 0);
         std::cout << "case 4c (a journal deleted between the listing and the measuring is the writer, not a read error) OK\n";
     }
+
+#if defined(_WIN32)
+    // ---- A journal Windows keeps refusing ----
+    //
+    // Case 4c runs into a journal that is deleted while somebody still
+    // has it open, and on a machine at its ordinary speed the handle is
+    // closed within the 63 ms the listing waits. Slowed down, or with a
+    // scanner holding the handle, it is not, and that cannot be run
+    // into on demand. So it is arranged: a journal marked for deletion
+    // through a handle that stays open answers "access denied" to every
+    // stat for as long as the handle lives.
+    //
+    // Refused past the listing's waiting it is still the writer: an
+    // attempt that tore, and read again if there are attempts left. As a
+    // ReadError it left the database out of the backup with nothing
+    // tried again (3 of 400 in Windows Round 13, 2026-11-20).
+    {
+        // A database to each part: the journal of the part before may
+        // still be on its way out, held by a scanner that opened it.
+        fs::path journal;
+        const auto holdPendingDelete = [&root, &journal](const std::string &name) {
+            const fs::path db = root / "Engine Library" / "Database2" / name;
+            createDatabase(db, 4);
+            journal = db;
+            journal += "-journal";
+            {
+                std::ofstream out(journal, std::ios::binary);
+                out << "a journal on its way out";
+                assert(out.good());
+            }
+            const HANDLE handle =
+                ::CreateFileW(journal.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            assert(handle != INVALID_HANDLE_VALUE);
+            FILE_DISPOSITION_INFO disposition{};
+            disposition.DeleteFile = TRUE;
+            const BOOL marked = ::SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof disposition);
+            assert(marked);
+            (void)marked;
+            std::error_code ec;
+            (void)fs::is_regular_file(journal, ec);
+            assert(ec == std::errc::permission_denied && "precondition: the journal is refused, not absent");
+            return handle;
+        };
+
+        // Held throughout, no attempts to spare: unstable, nothing listed.
+        {
+            Harness h;
+            const HANDLE handle = holdPendingDelete("pending.db");
+            const DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/pending.db", *h.updater, 0);
+            ::CloseHandle(handle);
+            if (capture.status != DbSetCapture::Status::Unstable) {
+                std::cerr << "a refused journal: status " << static_cast<int>(capture.status) << ", " << capture.detail
+                          << "\n";
+            }
+            assert(capture.status == DbSetCapture::Status::Unstable && "the writer, not a set that cannot be read");
+            assert(capture.entries.empty() && h.updater->newEntryCount() == 0);
+            assert(capture.detail.find("access denied") != std::string::npos && "and it says what stood in the way");
+        }
+
+        // Let go of while the attempts last: captured, the main file alone.
+        {
+            Harness h;
+            const HANDLE handle = holdPendingDelete("let-go.db");
+            std::thread releaser([handle] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                ::CloseHandle(handle);
+            });
+            const DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/let-go.db", *h.updater, 3);
+            releaser.join();
+            if (capture.status != DbSetCapture::Status::Captured) {
+                std::cerr << "a journal let go of: status " << static_cast<int>(capture.status) << ", " << capture.detail
+                          << "\n";
+            }
+            assert(capture.status == DbSetCapture::Status::Captured && "read again once the journal had gone");
+            assert(capture.entries.size() == 1 && h.updater->newEntryCount() == 1);
+            assert(!fs::exists(journal));
+        }
+
+        // A salvage run keeps its last attempt even so, and never as clean.
+        {
+            Harness h;
+            const HANDLE handle = holdPendingDelete("salvaged.db");
+            const DbSetCapture capture =
+                captureDbSet(root, "Engine Library/Database2/salvaged.db", *h.updater, 1, {}, /*salvage=*/true);
+            ::CloseHandle(handle);
+            assert(capture.status == DbSetCapture::Status::Salvaged);
+            assert(capture.entries.size() == 1 && h.updater->newEntryCount() == 1);
+            assert(capture.detail.find("may not agree") != std::string::npos);
+            assert(capture.detail.find("out of reach and is not in this backup") != std::string::npos
+                   && "and that a sidecar is missing from it is said");
+        }
+        std::cout << "case 4d (a journal Windows keeps refusing is the writer: read again, not a read error) OK\n";
+    }
+#endif
 
     // ---- A short read of a set that has moved since ----
     //
