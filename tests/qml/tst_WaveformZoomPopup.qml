@@ -57,6 +57,9 @@ TestCase {
             property var waveform: []
             property var cues: [{kind: "hot", hotCueNumber: 1, positionMs: 64000, color: "#ff0000", isLoop: false}]
             property int trackSerial: 1
+            // The real player's: its length is known for this track. Bound,
+            // so always known unless a test sets it.
+            property int durationSerial: trackSerial
             property var beatTimesMs: testCase.grid(0, testCase.trackMs).map((beat) => beat.timeMs)
             property var calls: []
             property var loads: []
@@ -83,6 +86,8 @@ TestCase {
             property var detailWaveform: ({})
             property bool autoDetail: true
             property int detailRequests: 0
+            property int detailReleases: 0
+            function releaseDetailWaveform() { ++detailReleases; }
             property real beatMs: 500
             property bool noGrid: false
             property bool libraryBusy: false
@@ -393,6 +398,50 @@ TestCase {
         // Zooming while following keeps the position under the line.
         keyClick(Qt.Key_Plus);
         verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "still under the line");
+    }
+
+    // Two popups on one player (the player bar's and the details pane's):
+    // one that never asked for the detail lets nothing go when it closes
+    // or is destroyed, so the other one's read goes on.
+    function test_aPopupLetsGoOnlyOfWhatItAskedFor() {
+        const player = makeFakePlayer({position: 60000});
+        const asking = openLoaded(player);
+        const other = makePopup(player);
+        compare(player.detailRequests, 1);
+        other.open();
+        other.close();
+        tryCompare(other, "visible", false);
+        compare(player.detailReleases, 1, "the other one asked when it opened, and let go when it closed");
+        const idle = makePopup(player);
+        idle.destroy();
+        wait(0);
+        compare(player.detailReleases, 1, "a popup that never opened lets nothing go");
+        verify(asking.visible, "and the open one still has its detail");
+        asking.close();
+        tryCompare(asking, "visible", false);
+        compare(player.detailReleases, 2, "the open one lets go of its own");
+    }
+
+    // Until the player has reported this track's length, the popup draws
+    // no tiles and lays nothing out to a length: `duration` may still be
+    // the previous track's, and a tile with no length would spread the
+    // whole track over its own width. Once the length is in, it draws to
+    // that one.
+    function test_nothingIsLaidOutToAnotherTracksLength() {
+        const player = makeFakePlayer({position: 0});
+        const popup = openLoaded(player);
+        verify(tiles(popup).length > 0, "drawn while the length is known");
+        compare(popup.durationMs, testCase.trackMs);
+        player.durationSerial = player.trackSerial;   // the length stops following
+        player.changeTrack("Space Oddity", "David Bowie", 500, player.detail);
+        compare(popup.lengthKnown, false, "the old track's length is not this one's");
+        compare(popup.durationMs, 0);
+        tryCompare(popup, "tilesShown", 0);
+        player.duration = 180000;
+        player.durationSerial = player.trackSerial;
+        compare(popup.durationMs, 180000, "the new track's length once reported");
+        tryVerify(() => tiles(popup).length > 0, 5000, "and drawn again");
+        tiles(popup).forEach((t) => compare(t.trackDurationMs, 180000));
     }
 
     // The slider zooms: its right end is four bars, its left end the
@@ -1448,6 +1497,7 @@ TestCase {
         const bar = createTemporaryObject(barComponent, testCase, {controller: player, blendAnimated: false});
         waitForPolish(testCase.Window.window);
         player.duration = 0;
+        player.durationSerial = player.trackSerial;   // the new length not reported yet
         player.changeTrack("Space Oddity", "", 600, player.detail);
         verify(bar.blendWaiting, "held");
         const old = faces(bar).filter((face) => face.isLeaving)[0];

@@ -111,6 +111,32 @@ TestCase {
         compare(player.beatTicksFor("engine", lib.path, lib.id, 60000, 1200).length, 0, "read again after the sticks changed");
     }
 
+    // A popup closed and opened again finds its detail already delivered;
+    // a write that ends after that still gets it read again, from the
+    // library as the write left it, not the copy load() read before it.
+    function test_aReopenedPopupGetsTheDetailAgainAfterAWrite() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const player = createTemporaryObject(playerComponent, testCase);
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        player.requestDetailWaveform();
+        compare(player.detailWaveform.columns.byteLength, 1024 * 3, "the first opening's detail");
+        compare(new Uint8Array(player.detailWaveform.columns)[0], 128, "at the level it was written at");
+        player.releaseDetailWaveform();   // closed
+        player.requestDetailWaveform();   // and opened again: already there
+        compare(player.detailWaveform.columns.byteLength, 1024 * 3);
+        player.libraryBusy = true;
+        // The level, not the count: libdjinterop writes an overview of its
+        // own length whatever it is handed.
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 64), "the write changes the waveform");
+        player.libraryBusy = false;
+        const level = () => player.detailWaveform.columns && player.detailWaveform.columns.byteLength > 0
+            ? new Uint8Array(player.detailWaveform.columns)[0] : -1;
+        tryVerify(() => level() === 64, 10000, "read again after the write, as the write left it");
+        player.stop();
+    }
+
     // Stopping, a recording and a load that fails each leave no grid.
     function test_theLoadedGridGoesWithTheTrack() {
         const lib = library();

@@ -85,20 +85,39 @@ SeabassDialog {
         } else {
             flick.cancelFlick();
             root.storeZoom();
-            if (root.controller && typeof root.controller.releaseDetailWaveform === "function") {
-                root.controller.releaseDetailWaveform();
-            }
+            root.releaseDetail();
         }
     }
+    // Whether this popup asked for the detail and has not let it go: the
+    // player bar and the details pane each have a popup on one player,
+    // and one that never asked must not cancel the other's read.
+    property bool detailAsked: false
     function askForDetail() {
         if (root.controller && typeof root.controller.requestDetailWaveform === "function") {
+            root.detailAsked = true;
             root.controller.requestDetailWaveform();
         }
+    }
+    function releaseDetail() {
+        if (root.detailAsked && root.controller && typeof root.controller.releaseDetailWaveform === "function") {
+            root.controller.releaseDetailWaveform();
+        }
+        root.detailAsked = false;
     }
 
     // ---- Zoom ------------------------------------------------------
 
-    readonly property real durationMs: root.controller && root.controller.duration > 0 ? root.controller.duration : 0
+    // The loaded track's length, once the player has reported it for this
+    // track: until then `duration` may still be the previous track's (see
+    // durationSerial), and a grid, cues or columns laid out to it would be
+    // laid out wrong. A controller without durationSerial (a test's fake)
+    // is taken at its word, as PlayerBar does.
+    readonly property bool lengthKnown: !!root.controller && root.controller.duration > 0
+        && (root.controller.durationSerial === undefined
+            || root.controller.durationSerial === root.controller.trackSerial)
+    readonly property real durationMs: root.lengthKnown ? root.controller.duration : 0
+    // How many tiles are drawn (for the tests).
+    readonly property int tilesShown: tileRepeater.count
     // A bar of this track: four beats of its grid at their median
     // spacing, or of 120 BPM where it has no grid.
     readonly property real barMs: {
@@ -503,7 +522,11 @@ SeabassDialog {
                 height: area.height
 
                 Repeater {
-                    model: root.showing && root.pxPerMs > 0 ? root.tileCount : 0
+                    id: tileRepeater
+                    // No tiles until the length is known: a tile with no
+                    // length to place its columns by would spread the
+                    // whole track across its own width, once per tile.
+                    model: root.showing && root.durationMs > 0 && root.pxPerMs > 0 ? root.tileCount : 0
                     delegate: WaveformView {
                         id: tileView
                         required property int index
@@ -742,9 +765,7 @@ SeabassDialog {
     // detail is no longer wanted.
     Component.onDestruction: {
         root.storeZoom();
-        if (root.controller && typeof root.controller.releaseDetailWaveform === "function") {
-            root.controller.releaseDetailWaveform();
-        }
+        root.releaseDetail();
     }
     Connections {
         target: Qt.application
