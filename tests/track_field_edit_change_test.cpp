@@ -1063,13 +1063,37 @@ int main(int argc, char **argv)
             return unchanged ? 0 : 1;
         }
         FixtureStick s(fixture, "seabass_track_edit_index");
-        assert(fs::exists(pathFromUtf8(s.oneLibraryDb() + "-wal")) && "the copy has OneLibrary's WAL, as the fixture");
         assert(!infrastructure::isWalModeSqlite(s.mdb()) && "the fixture's m.db keeps a rollback journal");
-        assert(measure(s.stick, pathToUtf8(fixture.filename())) && "a lookup leaves the stick as it was");
-        // OneLibrary with no -wal or -shm beside it (the fixture's -wal is
-        // empty, so nothing is lost), and Engine's m.db switched to WAL
-        // mode: still untouched, and still read whole.
-        fs::remove(pathFromUtf8(s.oneLibraryDb() + "-wal"));
+        // OneLibrary as rekordbox leaves it while it has it open: in WAL
+        // mode, with a row only its -wal holds. Made here, on the copy, so
+        // the test owns its precondition: a connection is held open with
+        // checkpoints off, and one row's path is moved in it.
+        const fs::path wal = pathFromUtf8(s.oneLibraryDb() + "-wal");
+        {
+            infrastructure::onelibrary::SqlCipherLibrary lib;
+            auto held = std::make_unique<infrastructure::onelibrary::SqlCipherDb>(lib, s.oneLibraryDb(), false);
+            held->exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+            {
+                infrastructure::onelibrary::SqlCipherStatement mode(*held, "PRAGMA journal_mode;");
+                assert(mode.step() && mode.columnText(0) == "wal" && "OneLibrary is in WAL mode");
+            }
+            held->exec("PRAGMA wal_autocheckpoint = 0;");
+            held->exec("UPDATE content SET path = '/Contents/only-in-the-wal.mp3' WHERE content_id = "
+                       "(SELECT min(content_id) FROM content);");
+            std::error_code ec;
+            assert(fs::is_regular_file(wal, ec) && fs::file_size(wal, ec) > 0 && "the moved row is in the -wal");
+            const StickPathIndex fromWal = buildStickPathIndex(s.pioneerQ(), s.engineQ());
+            assert(fromWal.rowsFor(pathToUtf8(s.stick / "Contents" / "only-in-the-wal.mp3")).oneLibrary.state
+                       == CatalogRows::State::Listed
+                   && "the index reads the row the -wal holds");
+            assert(measure(s.stick, pathToUtf8(fixture.filename()) + ", OneLibrary with a -wal")
+                   && "a lookup leaves the stick as it was");
+            held.reset();
+        }
+        // OneLibrary with no -wal or -shm beside it (the held connection,
+        // closed, checkpointed the -wal into the database), and Engine's
+        // m.db switched to WAL mode: still untouched, and still read whole.
+        fs::remove(wal);
         fs::remove(pathFromUtf8(s.oneLibraryDb() + "-shm"));
         assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "PRAGMA journal_mode=WAL;"));
         assert(infrastructure::isWalModeSqlite(s.mdb()) && "m.db is in WAL mode now");
