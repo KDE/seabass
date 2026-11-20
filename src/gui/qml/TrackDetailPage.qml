@@ -193,6 +193,8 @@ Page {
         }
 
         WaveformView {
+            // The ruler lane above the bars (#104).
+            gridStyle: "ruler"
             objectName: "trackDetailWaveform"
             Layout.fillWidth: true
             Layout.preferredHeight: 120

@@ -461,7 +461,11 @@ Page {
                     anchors.fill: parent
                     anchors.margins: 2
                     sourceComponent: WaveformView {
+                        objectName: "rowBackdropWaveform"
                         opacity: 0.35
+                        // Behind the row's text: the lines only, no ruler
+                        // lane and no numbers (#104).
+                        gridStyle: "lines"
                         waveformData: root.playbackController.waveform
                         format: root.playbackController.currentFormat
                         cueData: root.playbackController.cues

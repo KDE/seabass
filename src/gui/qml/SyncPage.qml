@@ -376,6 +376,8 @@ Page {
             Layout.fillWidth: true
             Layout.preferredHeight: 40
             WaveformView {
+                // A 40 px card: the lines behind the bars only.
+                gridStyle: "lines"
                 anchors.fill: parent
                 opacity: card.dimmed ? 0.75 : 1.0
                 // Fetched on demand, and only for a row someone opened --

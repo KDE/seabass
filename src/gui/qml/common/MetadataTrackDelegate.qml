@@ -455,6 +455,8 @@ Rectangle {
             visible: active
             active: delegate.expanded && delegate.showWaveform
             sourceComponent: WaveformView {
+                // A list row's waveform: the lines only, no lane.
+                gridStyle: "lines"
                 objectName: "rowWaveform"
                 waveformData: delegate.waveformData
                 cueData: delegate.waveformCues

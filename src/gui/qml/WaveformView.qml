@@ -165,8 +165,28 @@ Canvas {
     // track has a grid (the popup's tiles), so that every tile keeps the
     // same lane.
     property bool showRuler: root.beatTicks.length > 0
-    readonly property real rulerHeight: root.showRuler && root.height >= Theme.beatRulerMinimumViewHeight
-        ? Math.max(Theme.beatRulerMinimumHeight, Math.round(root.height * Theme.beatRulerHeightRatio)) : 0
+    // How the grid is drawn, stated by every view that has one:
+    //   "ruler"  the lane above the bars and the lines behind them (the
+    //            details pane, the detail page, the zoomed popup);
+    //   "sliced" cut out of the bars as gaps, a narrow one at every mark
+    //            and a wider one at every stronger mark, with a short
+    //            mark at the top and bottom edge in each gap so a quiet
+    //            passage still shows it (the player bar, option G);
+    //   "lines"  the lines behind the bars only (cards, row backdrops);
+    //   "none"   nothing.
+    property string gridStyle: "ruler"
+    readonly property bool drawsLines: root.gridStyle === "ruler" || root.gridStyle === "lines"
+    readonly property real rulerHeight: root.gridStyle === "ruler" && root.showRuler
+        && root.height >= Theme.beatRulerMinimumViewHeight
+        ? Math.min(Theme.beatRulerMaximumHeight,
+                   Math.max(Theme.beatRulerMinimumHeight, Math.round(root.height * Theme.beatRulerHeightRatio)))
+        : 0
+    // The band colours: "classic" as every view has drawn them, or
+    // "vivid", the brighter, more contrasted CDJ-style colours of the
+    // zoomed popup. See Theme.waveformRgb().
+    property string colorScheme: "classic"
+    // How opaque a bar not yet played is; a played one is opaque.
+    property real unplayedOpacity: 0.62
     // The waveform's own band, under the lane.
     readonly property real waveTop: root.rulerHeight
     readonly property real waveHeight: Math.max(0, root.height - root.rulerHeight)
@@ -209,6 +229,9 @@ Canvas {
     onColumnMsChanged: requestPaint()
     onColumnStartMsChanged: requestPaint()
     onBeatTicksChanged: requestPaint()
+    onGridStyleChanged: requestPaint()
+    onColorSchemeChanged: requestPaint()
+    onUnplayedOpacityChanged: requestPaint()
     onRulerHeightChanged: requestPaint()
     onShownStartMsChanged: {
         requestPaint();
@@ -272,6 +295,13 @@ Canvas {
         return "";
     }
 
+    // A mark's pixel column: whole pixels, and a mark at the very end of
+    // the track (x = width) on the last pixel rather than off the edge.
+    function markX(tick, w) {
+        const x = Math.round(tick.x);
+        return x >= w && tick.x < w + 0.5 && tick.timeMs >= root.trackDurationMs - 1e-6 ? w - 1 : x;
+    }
+
     // One column's bands, 0..1, from whichever data the view draws.
     function columnAt(i) {
         if (root.byteColumns > 0) {
@@ -294,7 +324,7 @@ Canvas {
         // one at every mark, a stronger one at every stronger mark. Whole
         // pixels, so a line is one sharp pixel and not two half-lit ones.
         const ticks = root.beatTicks;
-        if (ticks && ticks.length > 0 && w > 0 && h > 0) {
+        if (root.drawsLines && ticks && ticks.length > 0 && w > 0 && h > 0) {
             ctx.fillStyle = String(root.lineColor);
             for (let pass = 0; pass < 2; ++pass) {
                 const strong = pass === 1;
@@ -303,7 +333,7 @@ Canvas {
                     if ((ticks[k].strong === true) !== strong) {
                         continue;
                     }
-                    const x = Math.round(ticks[k].x);
+                    const x = root.markX(ticks[k], w);
                     if (x >= 0 && x < w) {
                         ctx.fillRect(x, top, 1, h);
                     }
@@ -319,37 +349,40 @@ Canvas {
         }
         const bytes = root.byteColumns > 0 ? new Uint8Array(root.columnBytes) : null;
         const n = bytes ? root.byteColumns : root.waveformData.length;
-        const colMs = root.columnMs > 0 ? root.columnMs : root.trackDurationMs / n;
-        const firstMs = root.columnStartMs;
-        const pxPerMs = w / root.shownSpanMs;
+        // With no span to place them against (no length yet: the player
+        // between a load and its duration), the columns are spread across
+        // the width, one unit of "time" each, as they always were.
+        const spread = !(root.shownSpanMs > 0) || !(root.trackDurationMs > 0 || root.columnMs > 0);
+        const colMs = spread ? 1 : (root.columnMs > 0 ? root.columnMs : root.trackDurationMs / n);
+        const firstMs = spread ? 0 : root.columnStartMs;
+        const startMs = spread ? 0 : root.shownStartMs;
+        const spanMs = spread ? n : root.shownSpanMs;
+        const lengthMs = spread ? n : (root.trackDurationMs > 0 ? root.trackDurationMs : spanMs);
+        const pxPerMs = w / spanMs;
         const barW = colMs * pxPerMs;
+        const vivid = root.colorScheme === "vivid";
+        const unplayed = root.unplayedOpacity;
         // A bar is drawn over the ground, never over a line: its own
         // rectangle is cleared first, so a translucent (unplayed) bar
         // shows the ground through it and not the grid.
         const bar = (x, width, low, mid, high, played) => {
             const amplitude = Math.max(low, mid, high);
             const barH = Math.max(1, amplitude * h);
-            // Classic DJ-hardware coloring: bass in blue, mids in
-            // green/yellow, highs in red/white, blended by each band's
-            // relative strength rather than a single flat hue.
-            const r = Math.min(255, Math.round(60 + high * 195));
-            const g = Math.min(255, Math.round(60 + mid * 150 + high * 60));
-            const b = Math.min(255, Math.round(90 + low * 165));
-            const alpha = played ? 1.0 : 0.62;
+            const c = Theme.waveformRgb(low, mid, high, vivid);
+            const alpha = played ? 1.0 : unplayed;
             const y = top + (h - barH) / 2;
             ctx.clearRect(x, y, width, barH);
-            ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+            ctx.fillStyle = "rgba(" + c.r + "," + c.g + "," + c.b + "," + alpha + ")";
             ctx.fillRect(x, y, width, barH);
         };
-        const played = (ms) => root.progress >= 0 && root.trackDurationMs > 0
-            && ms / root.trackDurationMs < root.progress;
+        const played = (ms) => root.progress >= 0 && ms / lengthMs < root.progress;
         // Only the columns this view shows.
-        const first = Math.max(0, Math.floor((root.shownStartMs - firstMs) / colMs) - 1);
-        const last = Math.min(n - 1, Math.ceil((root.shownStartMs + root.shownSpanMs - firstMs) / colMs) + 1);
-        if (barW >= 0.5) {
+        const first = Math.max(0, Math.floor((startMs - firstMs) / colMs) - 1);
+        const last = Math.min(n - 1, Math.ceil((startMs + spanMs - firstMs) / colMs) + 1);
+        if (barW >= 1) {
             for (let i = first; i <= last; i++) {
                 const ms = firstMs + i * colMs;
-                const x = (ms - root.shownStartMs) * pxPerMs;
+                const x = (ms - startMs) * pxPerMs;
                 let low, mid, high;
                 if (bytes) {
                     low = bytes[3 * i] / 255; mid = bytes[3 * i + 1] / 255; high = bytes[3 * i + 2] / 255;
@@ -360,14 +393,15 @@ Canvas {
                 bar(x, Math.max(1, barW - 1), low, mid, high, played(ms));
             }
         } else {
-            // More than two columns to a pixel: each pixel draws the
-            // loudest of the columns under it, one bar a pixel.
-            const pxFrom = Math.max(0, Math.floor((firstMs + first * colMs - root.shownStartMs) * pxPerMs));
-            const pxTo = Math.min(Math.ceil(w), Math.ceil((firstMs + (last + 1) * colMs - root.shownStartMs) * pxPerMs));
+            // More than one column to a pixel: each pixel draws the
+            // loudest of the columns under it, one bar a pixel, so that
+            // neighbouring columns never overwrite each other.
+            const pxFrom = Math.max(0, Math.floor((firstMs + first * colMs - startMs) * pxPerMs));
+            const pxTo = Math.min(Math.ceil(w), Math.ceil((firstMs + (last + 1) * colMs - startMs) * pxPerMs));
             for (let px = pxFrom; px < pxTo; ++px) {
-                const msFrom = root.shownStartMs + px / pxPerMs;
+                const msFrom = startMs + px / pxPerMs;
                 const i0 = Math.max(first, Math.floor((msFrom - firstMs) / colMs));
-                const i1 = Math.min(last, Math.floor((msFrom + 1 / pxPerMs - firstMs) / colMs));
+                const i1 = Math.min(last, Math.ceil((msFrom + 1 / pxPerMs - firstMs) / colMs) - 1);
                 let low = 0, mid = 0, high = 0;
                 for (let i = i0; i <= i1; ++i) {
                     if (bytes) {
@@ -382,6 +416,38 @@ Canvas {
                     low /= 255; mid /= 255; high /= 255;
                 }
                 bar(px, 1, low, mid, high, played(msFrom));
+            }
+        }
+
+        // The sliced grid: cut out of the bars, then a short mark at the
+        // top and bottom edge of each cut. Sizes scale with the height
+        // the design was drawn at (Theme.beatSliced*).
+        if (root.gridStyle === "sliced" && ticks && ticks.length > 0 && w > 0) {
+            const full = height;
+            const scale = full / Theme.beatSlicedDesignHeight;
+            for (let pass = 0; pass < 2; ++pass) {
+                const strong = pass === 1;
+                const gap = Math.max(strong ? 2 : 1, Math.round((strong ? Theme.beatSlicedStrongGap : Theme.beatSlicedGap) * scale));
+                const mark = Math.max(strong ? 3 : 2,
+                                      Math.round((strong ? Theme.beatSlicedStrongMark : Theme.beatSlicedMark) * scale));
+                const markW = strong ? Math.max(1, gap / 2) : 1;
+                for (let k = 0; k < ticks.length; ++k) {
+                    if ((ticks[k].strong === true) !== strong) {
+                        continue;
+                    }
+                    const x = root.markX(ticks[k], w);
+                    if (x < -gap || x > w + gap) {
+                        continue;
+                    }
+                    const left = x - Math.floor(gap / 2);
+                    ctx.clearRect(left, 0, gap, full);
+                    ctx.globalAlpha = strong ? 1 : Theme.beatSlicedMarkOpacity;
+                    ctx.fillStyle = String(strong ? Theme.accent : Theme.textMuted);
+                    const markLeft = x - Math.floor(markW / 2);
+                    ctx.fillRect(markLeft, 0, markW, mark);
+                    ctx.fillRect(markLeft, full - mark, markW, mark);
+                    ctx.globalAlpha = 1;
+                }
             }
         }
     }
@@ -436,24 +502,34 @@ Canvas {
             ctx.globalAlpha = Theme.beatRulerTickOpacity;
             for (let i = 0; i < ticks.length; ++i) {
                 if (ticks[i].strong !== true) {
-                    ctx.fillRect(Math.round(ticks[i].x), lane - shortTick, 1, shortTick);
+                    ctx.fillRect(root.markX(ticks[i], w), lane - shortTick, 1, shortTick);
                 }
             }
             // The numbers sit above the short ticks, left-aligned a little
             // right of their own tick.
             const baseline = lane - shortTick - 1;
             const size = Math.max(Theme.beatRulerNumberMinimumSize,
-                                  Math.min(Theme.beatRulerNumberMaximumSize, Math.round(lane * 0.45)));
+                                  Math.min(Theme.beatRulerNumberMaximumSize, Math.round(lane * Theme.beatRulerNumberRatio)));
+            // Where the track ends: a number that would run past it is set
+            // left of its tick instead. Not the view's own edge: a tile of
+            // the popup leaves a number running over its edge to the next
+            // tile, which draws it too.
+            const end = beatGridLayer.trackTo;
             ctx.fillStyle = String(beatGridLayer.strongColor);
             ctx.globalAlpha = Theme.beatRulerStrongTickOpacity;
             ctx.font = "600 " + size + "px sans-serif";
             ctx.textBaseline = "alphabetic";
             for (let i = 0; i < ticks.length; ++i) {
                 if (ticks[i].strong === true) {
-                    const x = Math.round(ticks[i].x);
+                    const x = root.markX(ticks[i], w);
                     ctx.fillRect(x, 0, 1, lane);
                     if (ticks[i].bar > 0) {
-                        ctx.fillText(String(ticks[i].bar), x + Theme.beatRulerNumberInset, baseline);
+                        const text = String(ticks[i].bar);
+                        const width = ctx.measureText(text).width;
+                        const right = x + Theme.beatRulerNumberInset + width;
+                        const at = right > end && x <= end ? x - Theme.beatRulerNumberInset - width
+                                                           : x + Theme.beatRulerNumberInset;
+                        ctx.fillText(text, at, baseline);
                     }
                 }
             }
