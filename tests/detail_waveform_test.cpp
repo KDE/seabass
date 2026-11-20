@@ -159,6 +159,45 @@ int main()
         check(missing.columns.empty() && missing.msPerColumn == 0.0, "no files, nothing");
     }
 
+    {
+        // Length fields that promise more than the file holds: more
+        // entries than the section's bytes, or a section longer than the
+        // file. Refused, never read past the end, never a crash.
+        const auto lying = [](const std::string &fourcc, std::uint32_t entryBytes, std::uint32_t claimedEntries,
+                              const std::string &entries) {
+            std::string out = fourcc;
+            u32(out, 24);
+            u32(out, static_cast<std::uint32_t>(24 + entries.size()));
+            u32(out, entryBytes);
+            u32(out, claimedEntries);
+            u32(out, 0);
+            return out + entries;
+        };
+        const auto longerThanTheFile = [](const std::string &section) {
+            std::string out = section;
+            const std::uint32_t claimed = static_cast<std::uint32_t>(section.size() + 1000);
+            for (int i = 0; i < 4; ++i) {
+                out[8 + i] = static_cast<char>((claimed >> (24 - 8 * i)) & 0xff);
+            }
+            return out;
+        };
+        const std::string badPwv7 = lying("PWV7", 3, 1000, bytes({1, 2, 3, 4, 5, 6}));
+        const std::string badPwv3 = lying("PWV3", 1, 1000, bytes({0xFF, 0x10}));
+        for (const std::string &pwv7Section : {badPwv7, longerThanTheFile(pwv7)}) {
+            MemorySource source;
+            source.files[twoEx] = anlzFile(pwv7Section);
+            source.files[ext] = anlzFile(pwv3);
+            const domain::DetailWaveform detail = rb::readDetailWaveform(source, AnalyzePath);
+            check(detail.columns.size() == 2, "a PWV7 that claims more than it holds is refused, PWV3 read instead");
+        }
+        for (const std::string &pwv3Section : {badPwv3, longerThanTheFile(pwv3)}) {
+            MemorySource source;
+            source.files[ext] = anlzFile(pwv3Section);
+            const domain::DetailWaveform detail = rb::readDetailWaveform(source, AnalyzePath);
+            check(detail.columns.empty() && detail.msPerColumn == 0.0, "a PWV3 that claims more is refused");
+        }
+    }
+
     if (failures > 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

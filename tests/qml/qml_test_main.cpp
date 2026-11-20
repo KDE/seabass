@@ -64,6 +64,8 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
+#include "infrastructure/rekordbox/anlz_byte_source.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include <djinterop/engine/v3/beat_data_blob.hpp>
 #include <djinterop/engine/v3/overview_waveform_data_blob.hpp>
 #include <djinterop/engine/v3/track_data_blob.hpp>
@@ -620,6 +622,54 @@ public:
             ids.clear();
         }
         return ids;
+    }
+
+    // Writes a .2EX beside the track's analysis file holding a PWV7 of
+    // `columns` entries (low 100, mid 50, high 25): the scrolling waveform
+    // the anonymised fixture does not carry (the zoomed popup, #104).
+    Q_INVOKABLE bool plantScrollWaveform(const QString &pioneerRoot, const QString &trackId, int columns)
+    {
+        try {
+            const auto analyze = seabass::infrastructure::rekordbox::findAnlzPathForTrackId(
+                pioneerRoot.toStdString(), static_cast<uint32_t>(trackId.toUInt()));
+            if (!analyze) {
+                return false;
+            }
+            const std::string relative = seabass::infrastructure::rekordbox::anlzSiblingRelativePath(*analyze, ".2EX");
+            const auto u32 = [](std::string &out, std::uint32_t v) {
+                for (int shift = 24; shift >= 0; shift -= 8) {
+                    out.push_back(static_cast<char>((v >> shift) & 0xff));
+                }
+            };
+            std::string entries;
+            for (int i = 0; i < columns; ++i) {
+                entries += std::string{char(100), char(50), char(25)};
+            }
+            std::string section = "PWV7";
+            u32(section, 24);
+            u32(section, static_cast<std::uint32_t>(24 + entries.size()));
+            u32(section, 3);
+            u32(section, static_cast<std::uint32_t>(columns));
+            u32(section, 0);
+            section += entries;
+            std::string file = "PMAI";
+            u32(file, 28);
+            u32(file, static_cast<std::uint32_t>(28 + section.size()));
+            file.append(16, '\0');
+            file += section;
+            // A stick copy hard-links the committed fixture's analysis
+            // files (fixture_copy.hpp): unlinked first, so the write goes
+            // to the copy and never through to the fixture.
+            const std::filesystem::path target =
+                seabass::pathFromUtf8(pioneerRoot.toStdString()) / seabass::pathFromUtf8(relative);
+            std::error_code ec;
+            std::filesystem::remove(target, ec);
+            std::ofstream out(target, std::ios::binary | std::ios::trunc);
+            out << file;
+            return static_cast<bool>(out);
+        } catch (const std::exception &) {
+            return false;
+        }
     }
 
     // Moves a file's modification time a minute on, which is what any
