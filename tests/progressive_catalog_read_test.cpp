@@ -155,7 +155,9 @@ struct CountingProgress : seabass::application::ProgressReporter
 const std::string RekordboxDigest = "b5b7775ec3990ee5a7e9b6e4d4597082347a18e592dbf219382ada1cc8fdce65";
 // OneLibrary's changed with #59: its cues are its analysis files' now, not
 // its cue table's (17 rows with table cues before, 264 with file cues).
-const std::string OneLibraryDigest = "1b0059a8d7d507a6fbbee924b054d1503bea151b3bf8298ba11d378bff94c5dc";
+// And with #105: the reader reads content.rating and content.djComment,
+// which the digest carries.
+const std::string OneLibraryDigest = "5b50a751bc47bdf0fe971bd577b31aa2175c65183955a2529515e3f465f059c4";
 const std::string EngineDigest = "70ee572caca6bd8c04e524289b54f1c9a306130befde89b824e5fd1b882d2373";
 
 // What the base commit's readers returned over the same planting: rows
