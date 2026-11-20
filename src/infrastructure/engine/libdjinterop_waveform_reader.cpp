@@ -6,9 +6,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <optional>
 
 #include <djinterop/djinterop.hpp>
+
+#include "application/ports/kept_engine_analysis.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
+#include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/engine/engine_track_rows.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 
@@ -73,67 +81,90 @@ std::vector<domain::WaveformColumn> previewOf(const std::vector<djinterop::wavef
 
 }  // namespace
 
-domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId)
+namespace
+{
+
+// Which of a 2.x or 3.x row's blobs libdjinterop may be handed (see
+// engineBlobDecodable()). A library without Database2/m.db is 1.x: its
+// blobs are elsewhere and are not checked. A row that cannot be read
+// here is not handed over at all: unsure means leave it.
+struct DecodableBlobs
+{
+    bool waveform = true;
+    bool beats = true;
+};
+
+DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t trackId)
+{
+    const std::filesystem::path mainDb = pathFromUtf8(engineLibraryPath) / Database2Dir / MainDbName;
+    std::error_code ec;
+    if (!std::filesystem::exists(mainDb, ec)) {
+        return {};
+    }
+    std::string error;
+    const auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
+    if (!row) {
+        return {false, false};
+    }
+    const auto ok = [](const application::EngineSqlValue &value) {
+        return value.isNull() || internal::engineBlobDecodable(value.bytes);
+    };
+    return {ok(row->columns.overviewWaveFormData), ok(row->columns.beatData)};
+}
+
+}  // namespace
+
+domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
+                                        bool withDetail)
 {
     domain::TrackAnalysis analysis;
     try {
         if (!djinterop::engine::database_exists(engineLibraryPath)) {
             return {};
         }
+        const std::int64_t trackId = std::stoll(trackSourceId);
+        const DecodableBlobs decodable = decodableBlobs(engineLibraryPath, trackId);
         auto db = djinterop::engine::load_database(engineLibraryPath);
-        std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
+        std::optional<djinterop::track> track = db.track_by_id(trackId);
         if (!track) {
             return {};
         }
-        analysis.waveform = previewOf(track->waveform());
-        // Its own try: a grid libdjinterop cannot read is no reason to
-        // throw the waveform away with it.
-        try {
-            analysis.beats = beatGridOf(*track);
-        } catch (const std::exception &) {
-            analysis.beats.clear();
+        // Each half in its own try: a waveform libdjinterop cannot read
+        // is no reason to throw the grid away with it, nor the other way.
+        if (decodable.waveform) {
+            try {
+                const std::vector<djinterop::waveform_entry> entries = track->waveform();
+                analysis.waveform = previewOf(entries);
+                if (withDetail && !entries.empty()) {
+                    analysis.detail.columns.reserve(entries.size());
+                    for (const djinterop::waveform_entry &entry : entries) {
+                        analysis.detail.columns.push_back(
+                            {entry.low.value / 255.0, entry.mid.value / 255.0, entry.high.value / 255.0});
+                    }
+                    const std::optional<unsigned long long> samples = track->sample_count();
+                    const std::optional<double> rate = track->sample_rate();
+                    if (samples && *samples > 0 && rate && *rate > 0.0) {
+                        analysis.detail.msPerColumn = static_cast<double>(*samples) / *rate * 1000.0
+                            / static_cast<double>(entries.size());
+                    }
+                }
+            } catch (const std::exception &) {
+                analysis.waveform.clear();
+                analysis.detail = {};
+            }
+        }
+        if (decodable.beats) {
+            try {
+                analysis.beats = beatGridOf(*track);
+            } catch (const std::exception &) {
+                analysis.beats.clear();
+            }
         }
         analysis.beatRateRecorded = sampleRateRecorded(*track);
     } catch (const std::exception &) {
         return {};
     }
     return analysis;
-}
-
-domain::DetailWaveform readDetailWaveform(const std::string &engineLibraryPath, const std::string &trackSourceId)
-{
-    domain::DetailWaveform detail;
-    try {
-        if (!djinterop::engine::database_exists(engineLibraryPath)) {
-            return {};
-        }
-        auto db = djinterop::engine::load_database(engineLibraryPath);
-        std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
-        if (!track) {
-            return {};
-        }
-        const std::vector<djinterop::waveform_entry> entries = track->waveform();
-        detail.columns.reserve(entries.size());
-        for (const djinterop::waveform_entry &entry : entries) {
-            detail.columns.push_back(
-                {entry.low.value / 255.0, entry.mid.value / 255.0, entry.high.value / 255.0});
-        }
-        if (!detail.columns.empty()) {
-            try {
-                const std::optional<unsigned long long> samples = track->sample_count();
-                const std::optional<double> rate = track->sample_rate();
-                if (samples && *samples > 0 && rate && *rate > 0.0) {
-                    detail.msPerColumn = static_cast<double>(*samples) / *rate * 1000.0
-                        / static_cast<double>(detail.columns.size());
-                }
-            } catch (const std::exception &) {
-                detail.msPerColumn = 0.0;
-            }
-        }
-    } catch (const std::exception &) {
-        return {};
-    }
-    return detail;
 }
 
 std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,

@@ -26,16 +26,21 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 
 // The waveform preview and the beat grid from one opening of the
 // database. Either half is empty where the track has not got it.
-domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId);
-
-// Every entry of the waveform libdjinterop reads for the track, not
-// downsampled, for a view zoomed in to a few bars (#104). Engine 2.x and
+//
+// `withDetail` also hands over every entry of the waveform, not averaged
+// down, as TrackAnalysis::detail (the zoomed popup, #104): Engine 2.x and
 // 3.x libraries keep only the overview the player draws across the whole
-// track (about a thousand entries: libdjinterop reads nothing finer from
-// them), Engine 1.x libraries the high-resolution waveform as well, and
-// that is what libdjinterop hands over there. msPerColumn from the row's
-// sample count and rate; 0 where either is missing. Empty where the track
-// or its waveform cannot be read; nothing throws.
-domain::DetailWaveform readDetailWaveform(const std::string &engineLibraryPath, const std::string &trackSourceId);
+// track (about a thousand entries, all libdjinterop reads from them),
+// 1.x libraries the high-resolution waveform as well. Its spacing comes
+// from the row's sample count and rate, 0 where either is missing.
+//
+// A 2.x or 3.x row's waveform and beat blobs are checked before
+// libdjinterop decodes them (engineBlobDecodable(), as the cue writer
+// does since 347a95da): one too short or with a stream cut short, which
+// its decoder would read past or loop on for ever, gives no waveform, or
+// no grid, and the other half is read all the same. A 1.x library keeps
+// its waveform in another database this check does not read.
+domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
+                                        bool withDetail = false);
 
 }  // namespace seabass::infrastructure::engine
