@@ -420,6 +420,53 @@ TestCase {
         fuzzyCompare(slider.value, popup.zoomLevel, 1e-9);
     }
 
+    // A mark at 4, 8, 16, 32 and 64 bars and one at the whole track (120
+    // bars here), left to right from the whole track, inside the slider.
+    function test_theSliderHasAMarkAtEveryDoubling() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const slider = findChild(popup.contentItem, "zoomSlider");
+        compare(popup.zoomTicks.length, 6);
+        for (let i = 0; i < 5; ++i) {
+            fuzzyCompare(popup.spanAtLevel(popup.zoomTicks[i]), (4 << i) * 2000, 1e-6);
+        }
+        compare(popup.zoomTicks[5], 0);
+        const marks = [];
+        for (let i = 0; i < slider.children.length; ++i) {
+            if (slider.children[i].objectName === "zoomTick") {
+                marks.push(slider.children[i]);
+            }
+        }
+        compare(marks.length, 6);
+        marks.sort((a, b) => a.x - b.x);
+        verify(marks[0].x >= 0 && marks[5].x + marks[5].width <= slider.width, "inside the slider");
+        for (let i = 1; i < marks.length; ++i) {
+            verify(marks[i].x > marks[i - 1].x, "apart");
+        }
+    }
+
+    // A drag follows the handle at most once per interval, so a fast drag
+    // costs a few zooms rather than one per mouse event; the handle stays
+    // under the pointer meanwhile, and letting go lands on where it is.
+    function test_aDragZoomsAtMostOncePerInterval() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const slider = findChild(popup.contentItem, "zoomSlider");
+        const spy = createTemporaryObject(spyComponent, testCase, {target: popup, signalName: "shownSpanMsChanged"});
+        const y = slider.height / 2;
+        const from = slider.width * 0.5;
+        mousePress(slider, from, y);
+        const zoomsAtPress = spy.count;
+        const moves = 30;
+        for (let i = 1; i <= moves; ++i) {
+            mouseMove(slider, from + (slider.width * 0.45) * i / moves, y);
+        }
+        verify(spy.count - zoomsAtPress <= 2, "a burst of " + moves + " moves zooms at once and once more at most, not "
+               + (spy.count - zoomsAtPress) + " times");
+        verify(slider.value > 0.9, "the handle stays under the pointer: " + slider.value);
+        mouseRelease(slider, from + slider.width * 0.45, y);
+        fuzzyCompare(popup.zoomLevel, slider.value, 1e-9, "letting go lands where the handle is");
+        verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "still under the line");
+    }
+
     // Ctrl and the wheel zoom; detached, around the pointer.
     function test_ctrlWheelZoomsAroundThePointer() {
         const player = makeFakePlayer({position: 60000});

@@ -133,9 +133,7 @@ SeabassDialog {
     // The zoom as the slider shows it: 0 is the whole track, 1 is four
     // bars across. Even on a log scale, so equal moves of the handle are
     // equal zoom factors wherever on the slider they are made.
-    readonly property real zoomLevel: root.maximumSpanMs > root.minimumSpanMs
-        ? Math.log(root.maximumSpanMs / root.shownSpanMs) / Math.log(root.maximumSpanMs / root.minimumSpanMs)
-        : 1
+    readonly property real zoomLevel: root.levelOfSpan(root.shownSpanMs)
 
     function clampSpan(span) {
         return Math.max(root.minimumSpanMs, Math.min(root.maximumSpanMs, span));
@@ -183,10 +181,60 @@ SeabassDialog {
     function zoomOut() {
         root.zoomBy(1 / root.zoomStep, root.lineX);
     }
+    // The span a slider level stands for.
+    function spanAtLevel(level) {
+        return root.maximumSpanMs * Math.pow(root.minimumSpanMs / root.maximumSpanMs, level);
+    }
+    function levelOfSpan(span) {
+        return root.maximumSpanMs > root.minimumSpanMs
+            ? Math.log(root.maximumSpanMs / span) / Math.log(root.maximumSpanMs / root.minimumSpanMs)
+            : 1;
+    }
     // The slider's zoom: as a key does it, around the line.
     function zoomToLevel(level) {
-        const span = root.maximumSpanMs * Math.pow(root.minimumSpanMs / root.maximumSpanMs, level);
-        root.zoomBy(root.shownSpanMs / span, root.lineX);
+        root.zoomBy(root.shownSpanMs / root.spanAtLevel(level), root.lineX);
+    }
+    // A drag reports far more often than the view can follow: every zoom
+    // redraws each tile and works out the track's beat marks again. So
+    // while the handle is dragged the zoom follows it at most once per
+    // interval, the first move at once and the latest one at the end of
+    // it; letting go applies where the handle is.
+    readonly property int zoomFollowInterval: 50
+    property real pendingZoomLevel: -1
+    function followSlider(level) {
+        root.pendingZoomLevel = level;
+        if (!zoomFollow.running) {
+            root.applyPendingZoom();
+        }
+    }
+    function applyPendingZoom() {
+        if (root.pendingZoomLevel < 0) {
+            return;
+        }
+        const level = root.pendingZoomLevel;
+        root.pendingZoomLevel = -1;
+        root.zoomToLevel(level);
+        zoomFollow.restart();
+    }
+    Timer {
+        id: zoomFollow
+        interval: root.zoomFollowInterval
+        onTriggered: root.applyPendingZoom()
+    }
+    // A mark on the slider at every doubling from four bars, and one at
+    // the whole track unless a doubling sits next to it.
+    readonly property var zoomTicks: {
+        if (root.maximumSpanMs <= root.minimumSpanMs) {
+            return [];
+        }
+        const out = [];
+        for (let bars = root.minimumBars; bars * root.barMs < root.maximumSpanMs; bars *= 2) {
+            out.push(root.levelOfSpan(bars * root.barMs));
+        }
+        if (out.length === 0 || out[out.length - 1] > 0.08) {
+            out.push(0);
+        }
+        return out;
     }
 
     // ---- Position --------------------------------------------------
@@ -386,16 +434,42 @@ SeabassDialog {
                 from: 0
                 to: 1
                 enabled: root.maximumSpanMs > root.minimumSpanMs
+                // The handle moves through the slider's own C++ setter,
+                // which leaves this binding in place; and the zoom a drag
+                // applies is always the handle's own latest level, so it
+                // never pulls the handle back.
                 value: root.zoomLevel
                 Accessible.name: "Zoom"
-                ToolTip.visible: hovered && !pressed
-                ToolTip.delay: 600
-                ToolTip.text: "Zoom"
-                // The handle moves through the slider's own C++ setter,
-                // which leaves the binding to zoomLevel in place: keys and
-                // the wheel go on moving the handle after a drag
-                // (tst_WaveformZoomPopup::test_theSliderZooms).
-                onMoved: root.zoomToLevel(value)
+                // While dragged it says how much it shows.
+                ToolTip.visible: pressed || hovered
+                ToolTip.delay: pressed ? 0 : 600
+                ToolTip.text: !pressed ? "Zoom"
+                    : value <= 0.001 ? "Whole track"
+                    : Math.round(root.spanAtLevel(value) / root.barMs) + " bars"
+                onMoved: root.followSlider(value)
+                onPressedChanged: {
+                    if (!pressed) {
+                        root.applyPendingZoom();
+                    }
+                }
+
+                // The marks, under the groove where the handle's centre
+                // passes them. Some styles draw the handle without an item
+                // (org.kde.desktop): there the groove's ends are used.
+                Repeater {
+                    model: root.zoomTicks
+                    Rectangle {
+                        required property real modelData
+                        objectName: "zoomTick"
+                        readonly property real handleWidth: zoomSlider.handle ? zoomSlider.handle.width : 0
+                        width: Math.max(1, Theme.snap(1))
+                        height: Theme.scaled(4)
+                        x: Theme.snap(zoomSlider.leftPadding + handleWidth / 2
+                                      + modelData * (zoomSlider.availableWidth - handleWidth) - width / 2)
+                        y: Theme.snap(zoomSlider.height - height)
+                        color: Theme.textMuted
+                    }
+                }
             }
             IconToolButton {
                 objectName: "followButton"
