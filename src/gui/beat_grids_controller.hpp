@@ -494,6 +494,13 @@ private:
         // lead-in, 0 for anything else (playbackShiftFor(), #50). The two
         // are compared and drawn on that one timeline.
         double rekordboxShiftMs = 0.0;
+        // The MP3's lead-in could not be read (the file did not open, a
+        // read failed): the shift is unknown, not 0, and where the beats
+        // fall is not compared.
+        bool shiftUnknown = false;
+        // The read itself failed (the stick went away, the worker was
+        // refused): nothing of Engine's is known.
+        bool readFailed = false;
         QByteArray columns;
         std::vector<domain::Beat> beats;
         bool beatRateRecorded = true;

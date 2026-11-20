@@ -87,7 +87,8 @@ namespace
 // Which of a 2.x or 3.x row's blobs libdjinterop may be handed (see
 // engineBlobDecodable()). A library without Database2/m.db is 1.x: its
 // blobs are elsewhere and are not checked. A row that cannot be read
-// here is not handed over at all: unsure means leave it.
+// because the database is locked is not handed over at all (see
+// decodableBlobs()).
 struct DecodableBlobs
 {
     bool waveform = true;
@@ -106,16 +107,23 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
     std::string error;
     auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
     if (!row) {
-        // Not a damaged blob: the row could not be read at all (the
-        // database locked or being journalled by a write, a moment ago).
-        // Once more; then nothing is handed over. That is exactly when a
-        // blob may be half written, and a decoder that reads past it or
-        // loops on it hangs whoever called (the player's load() runs on
-        // the GUI thread). The track shows no waveform or grid for now,
-        // and every view reads it again once the write is over.
+        // Not a damaged blob: the row could not be read at all. Once more.
+        // If the database is still locked (a write under way, SQLite's
+        // own "database is locked" / "database table is locked"), nothing
+        // is handed over: that is exactly when a blob may be half
+        // written, and a decoder that reads past it or loops on it hangs
+        // whoever called (the player's load() runs on the GUI thread);
+        // every view reads again once the write is over. Any other
+        // failure lasts (a read-only mount of a WAL database, a schema
+        // this reader does not know), and there libdjinterop reads the
+        // blobs unchecked as it did before the check, rather than the
+        // library never showing a waveform at all.
         row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
         if (!row) {
-            return {false, false, false};
+            if (error.find("locked") != std::string::npos) {
+                return {false, false, false};
+            }
+            return {};
         }
     }
     const auto ok = [](const application::EngineSqlValue &value) {

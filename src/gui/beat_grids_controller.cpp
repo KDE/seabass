@@ -923,9 +923,10 @@ void BeatGridsController::pumpEngineReads()
             return out;
         }
         if (correctMp3 && domain::hasMp3Extension(filePath)) {
+            const infrastructure::audio::Mp3LeadInLook look = infrastructure::audio::lookForMp3LeadIn(filePath);
+            out->shiftUnknown = !look.looked;
             out->rekordboxShiftMs = infrastructure::audio::playbackShiftFor(
-                infrastructure::audio::readMp3LeadIn(filePath), true,
-                infrastructure::audio::GridTimeline::Rekordbox).beatsMs;
+                look.leadIn, true, infrastructure::audio::GridTimeline::Rekordbox).beatsMs;
         }
         domain::TrackAnalysis analysis = infrastructure::engine::readTrackAnalysis(enginePath, engineTrackId);
         out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
@@ -950,8 +951,16 @@ void BeatGridsController::pumpEngineReads()
             emit engineAnalysisReady(id);
             pumpEngineReads();
         },
-        // A stick gone or a worker refused: the row says it has nothing.
-        [this](const QString &) { pumpEngineReads(); },
+        // A stick gone or a worker refused: the row says it could not
+        // be read, rather than reading for ever.
+        [this, id, generation](const QString &) {
+            auto *failed = new EngineAnalysis;
+            failed->readFailed = true;
+            failed->generation = generation;
+            m_engineAnalyses.insert(id, failed, 1);
+            emit engineAnalysisReady(id);
+            pumpEngineReads();
+        },
         [] {},
     };
     m_engineRead.start(id, stickRootOf(m_library->rekordboxPath), std::move(work), std::move(ending));
@@ -971,6 +980,8 @@ QVariantMap BeatGridsController::engineAnalysis(const QString &rekordboxId) cons
     out.insert(QStringLiteral("durationMs"), track->durationMs);
     out.insert(QStringLiteral("rateRecorded"), kept->beatRateRecorded);
     out.insert(QStringLiteral("rekordboxShiftMs"), kept->rekordboxShiftMs);
+    out.insert(QStringLiteral("shiftUnknown"), kept->shiftUnknown);
+    out.insert(QStringLiteral("readFailed"), kept->readFailed);
     return out;
 }
 
