@@ -45,6 +45,8 @@
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/work_counters.hpp"
 #include "infrastructure/media/stick_root_scan.hpp"
+#include "infrastructure/database_read_copy.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include <chrono>
 #include "gui/edit/changes/playlist_edit_changes.hpp"
@@ -914,8 +916,16 @@ int main(int argc, char **argv)
         const fs::path oneDb = pathFromUtf8(s.oneLibraryDb());
         const auto oneBefore = listing(oneDb.parent_path());
         const auto engineDump = seabass::testing::dumpDatabase(pathToUtf8(s.mdb()));
+        infrastructure::WorkCounters::instance().reset();
         const auto result = saveChanges(changes, s.pioneerQ(), s.engineQ());
         assert(result.error.isEmpty());
+        // Fifteen tracks OneLibrary does not list, checked against one read
+        // of it for the whole save, not one copy of the database each.
+        const auto opens = infrastructure::WorkCounters::instance().snapshot().encryptedDatabaseOpens;
+        if (opens != 1) {
+            std::cerr << "    OneLibrary opened " << opens << " times\n";
+        }
+        assert(opens == 1 && "one read of OneLibrary for the save");
         // OneLibrary's files byte for byte and time for time as they were
         // (export.pdb, in the same folder, was written and is left out).
         auto oneAfter = listing(oneDb.parent_path());
@@ -1054,7 +1064,40 @@ int main(int argc, char **argv)
         }
         FixtureStick s(fixture, "seabass_track_edit_index");
         assert(fs::exists(pathFromUtf8(s.oneLibraryDb() + "-wal")) && "the copy has OneLibrary's WAL, as the fixture");
+        assert(!infrastructure::isWalModeSqlite(s.mdb()) && "the fixture's m.db keeps a rollback journal");
         assert(measure(s.stick, pathToUtf8(fixture.filename())) && "a lookup leaves the stick as it was");
+        // OneLibrary with no -wal or -shm beside it (the fixture's -wal is
+        // empty, so nothing is lost), and Engine's m.db switched to WAL
+        // mode: still untouched, and still read whole.
+        fs::remove(pathFromUtf8(s.oneLibraryDb() + "-wal"));
+        fs::remove(pathFromUtf8(s.oneLibraryDb() + "-shm"));
+        assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "PRAGMA journal_mode=WAL;"));
+        assert(infrastructure::isWalModeSqlite(s.mdb()) && "m.db is in WAL mode now");
+        const auto walIndex = buildStickPathIndex(s.pioneerQ(), s.engineQ());
+        const auto engineRows = infrastructure::engine::engineTrackPaths(pathToUtf8(s.engine));
+        assert(!engineRows.empty());
+        const std::string engineFile =
+            pathToUtf8((s.engine / pathFromUtf8(engineRows.front().second)).lexically_normal());
+        assert(walIndex.rowsFor(engineFile).engine.state == CatalogRows::State::Listed && "WAL m.db read whole");
+        assert(measure(s.stick, "the same, OneLibrary without a -wal and m.db in WAL mode")
+               && "a lookup leaves a WAL-mode m.db and a -wal-less OneLibrary as they were");
+        // A copy a crashed run left in the temporary folder goes when the
+        // index is next read; anything else there, and a copy made since
+        // this process started, stays.
+        const fs::path temp = fs::temp_directory_path();
+        const fs::path stale = temp / (std::string(infrastructure::ReadCopyPrefix) + "left-by-a-crash");
+        const fs::path fresh = temp / (std::string(infrastructure::ReadCopyPrefix) + "made-just-now");
+        const fs::path other = temp / "seabass-something-else";
+        for (const auto &dir : {stale, fresh, other}) {
+            fs::create_directories(dir / "rekordbox");
+        }
+        fs::last_write_time(stale, infrastructure::readCopiesSince() - std::chrono::hours(1));
+        fs::last_write_time(other, infrastructure::readCopiesSince() - std::chrono::hours(1));
+        (void)buildStickPathIndex(s.pioneerQ(), s.engineQ());
+        assert(!fs::exists(stale) && "a copy older than this process is removed");
+        assert(fs::exists(fresh) && fs::exists(other) && "nothing else is");
+        fs::remove_all(fresh);
+        fs::remove_all(other);
         std::cout << "case 18 (reading the stick's index changes no file on it) OK\n";
     }
 
