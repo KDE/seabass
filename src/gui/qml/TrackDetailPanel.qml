@@ -59,7 +59,12 @@ Pane {
         ? panel.trackEditController.stagedComment(panel.trackFilePath) : panel.trackComment
     readonly property var commentLimit: panel.trackEditController !== null
         && panel.trackEditController.commentLimit.filePath === panel.trackFilePath
-        ? panel.trackEditController.commentLimit : ({known: false, limited: false, units: 0, asciiOnly: false, reason: ""})
+        ? panel.trackEditController.commentLimit
+        : ({known: false, editable: false, refusal: "", limited: false, units: 0, asciiOnly: false, reason: ""})
+    // The track can be edited: its rows in every catalog are known and
+    // none of them is ambiguous.
+    readonly property bool trackEditable: panel.canEditTrack && panel.commentLimit.known === true
+        && panel.commentLimit.editable === true
 
     signal closeRequested()
     // Supplied by ScanPage so the artist list can be built. Optional:
@@ -116,6 +121,9 @@ Pane {
     property real pendingLoopEndMs: -1
 
     function showFor(delegate) {
+        // An edit open in the comment field belongs to the track shown
+        // until now: staged for it, or dropped, before this one is shown.
+        commentEditor.endEdit();
         panel.trackSourceId = delegate.sourceId;
         panel.trackTitle = delegate.title;
         panel.trackArtist = delegate.artist;
@@ -143,7 +151,7 @@ Pane {
         panel.trackAlbum = value("album", "");
         panel.trackPlayCount = value("playCount", 0);
         if (panel.trackEditController !== null && panel.trackFilePath.length > 0) {
-            panel.trackEditController.lookUpCommentLimit(panel.rekordboxPath, panel.trackFilePath);
+            panel.trackEditController.lookUpTrack(panel.rekordboxPath, panel.enginePath, panel.trackFilePath);
         }
         panel.pendingPositionMs = -1;
         panel.pendingLoopEndMs = -1;
@@ -226,6 +234,11 @@ Pane {
         target: panel.trackEditController !== null && ("objectName" in panel.trackEditController)
             ? panel.trackEditController : null
         ignoreUnknownSignals: true
+        // A save is starting: what is still open in the comment field is
+        // staged first, so the save writes what the pane shows.
+        function onSaveStarting() {
+            commentEditor.commitOpenEdit();
+        }
         function onFieldSaved(filePath, field, stars, text) {
             if (filePath !== panel.trackFilePath) {
                 return;
@@ -430,7 +443,7 @@ Pane {
                         TrackRatingEditor {
                             objectName: "trackRatingEditor"
                             value: panel.shownRating > 0 ? panel.shownRating : -1
-                            editable: panel.canEditTrack
+                            editable: panel.trackEditable
                             pending: panel.ratingPending
                             onRatingPicked: (stars) => panel.trackEditController.setRating(panel.rekordboxPath,
                                 panel.enginePath, panel.trackFilePath, panel.trackTitle, panel.trackRating, stars)
@@ -581,8 +594,20 @@ Pane {
                 pending: panel.commentPending
                 editable: panel.canEditTrack
                 limit: panel.commentLimit
-                onAccepted: (text) => panel.trackEditController.setComment(panel.rekordboxPath, panel.enginePath,
-                    panel.trackFilePath, panel.trackTitle, panel.trackComment, text)
+                target: ({filePath: panel.trackFilePath, title: panel.trackTitle, original: panel.trackComment,
+                          rekordboxPath: panel.rekordboxPath, enginePath: panel.enginePath})
+                commitFn: (text, target) => panel.trackEditController.setComment(target.rekordboxPath,
+                    target.enginePath, target.filePath, target.title, target.original, text)
+            }
+            // Why this track's rating and comment cannot be changed here.
+            Label {
+                objectName: "trackEditRefusal"
+                visible: panel.canEditTrack && panel.commentLimit.known === true && panel.commentLimit.editable !== true
+                text: "Not editable here: " + panel.commentLimit.refusal + "."
+                color: Theme.textMuted
+                font.pointSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
             Label {
                 objectName: "trackEditError"

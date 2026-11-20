@@ -184,6 +184,11 @@ public:
     // Same, for taking a batch back out again.
     void unstageAll(const QStringList &changeIds);
     bool hasChange(const QString &changeId) const;
+    // The ids the last save reached and found nothing to do for
+    // (ChangeOutcome::skip): changeApplied() is emitted for them too, as
+    // they are off the pending list, so a page that shows what was
+    // written asks this first.
+    QStringList lastSkippedIds() const { return m_lastSkippedIds; }
 
     Q_INVOKABLE void save();
     Q_INVOKABLE void discard();
@@ -211,6 +216,9 @@ signals:
     void writeProgressChanged();
     void canUndoChanged();
     void stickPresenceChanged();
+    // save() was called: emitted first, before anything is read or
+    // refused, so a page can stage an edit it still has open in a field.
+    void aboutToSave();
     // A change is fully on the stick; controllers update their models.
     void changeApplied(const QString &changeId);
     void saveFinished(const QVariantMap &summary);
@@ -241,6 +249,7 @@ private:
     // going away with it is safe.
     QFutureWatcher<infrastructure::backup::StickSpace> m_stickSpaceWatcher;
     std::vector<std::shared_ptr<PendingChange>> m_changes;
+    QStringList m_lastSkippedIds;
     std::vector<UndoableBackup> m_lastBackups;
     // m_lastBackups belong to a save that did not finish; see
     // adoptInterruptedSave() and undoLastSave().
