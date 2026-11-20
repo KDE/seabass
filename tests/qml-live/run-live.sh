@@ -96,7 +96,7 @@ run() {  # name, extra env assignments...
     # (TagLib on Windows) and start with a stray space, so the filter allows
     # one. Only grep -a sees the raw stream: BSD sed stops at a byte that is
     # not text.
-    env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$log" \
+    env SEABASS_LIVE_LANE=1 "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$log" \
         | grep -aE "^ *(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^ *   (Actual|Expected|Loc)" \
         | sed -E 's/^ +(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)/\1/' \
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'

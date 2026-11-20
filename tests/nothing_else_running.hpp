@@ -19,10 +19,13 @@ namespace seabass::tests
 // "rekordbox" running while the suite runs. Three suite runs went red
 // that way on 2026-11-19, in tests about nothing of the sort.
 //
-// The guard itself is tested where it is meant to be: the detector's own
-// test against a real child process, write_guard_test with a scan of its
-// own, dj_software_independence_test with the rig's fake process alive,
-// and tests/qml-live/ (which the QML harness leaves on the real scan).
+// The guard itself is tested where it is meant to be: write_guard_test
+// with scans of its own (and that this stub beats one naming rekordbox),
+// and tests/qml-live/ against the rig's fake process, which the QML
+// harness leaves on the real scan. tst_HarnessProcessScan (tests/qml) and
+// LiveGuard (tests/qml-live) pin which lane got which. No test in the
+// ordinary suite starts a process under a DJ application's name: the rig,
+// a live lane or an installed Seabass on the same machine would see it.
 inline bool noProcessIsRunning(const std::string &)
 {
     return false;

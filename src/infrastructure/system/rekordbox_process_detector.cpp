@@ -198,6 +198,11 @@ void setProcessScanForTesting(ProcessScanForTesting scan)
     g_processScanForTesting.store(scan);
 }
 
+bool processScanIsOverriddenForTesting()
+{
+    return g_processScanForTesting.load() != nullptr;
+}
+
 bool isProcessRunning(const std::string &name)
 {
     if (ProcessScanForTesting scan = g_processScanForTesting.load()) {

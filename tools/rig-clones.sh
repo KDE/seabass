@@ -137,7 +137,7 @@ keep_cue() {  # stick, position ms
     # no way to see. The same round on Windows takes minutes per step and
     # passed, which is a difference in machines, not in the product.
     sleep 3
-    SEABASS_LIVE_STICK="$1" SEABASS_RIG_KEEP_CUE_MS="$2" \
+    SEABASS_LIVE_LANE=1 SEABASS_LIVE_STICK="$1" SEABASS_RIG_KEEP_CUE_MS="$2" \
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_11_rigKeepCue
 }
 

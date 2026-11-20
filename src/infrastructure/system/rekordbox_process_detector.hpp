@@ -28,6 +28,9 @@ bool isProcessRunning(const std::string &name);
 // or setting that reaches it: the guard it feeds is a data-safety check.
 using ProcessScanForTesting = bool (*)(const std::string &name);
 void setProcessScanForTesting(ProcessScanForTesting scan);
+// Whether a scan set above is in place, so a test harness can show
+// which one its run got (the QML harness's harnessProcessScan).
+bool processScanIsOverriddenForTesting();
 
 // Convenience wrapper for the one process this app actually cares about:
 // writing to a stick's files while rekordbox itself might also have them

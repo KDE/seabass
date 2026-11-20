@@ -1649,39 +1649,6 @@ if(SEABASS_GUI AND Qt6_FOUND)
             TIMEOUT ${_seabass_qml_file_timeout}
             PROCESSORS 1)
 
-        # A file of saves run with a process called "rekordbox" alive: the
-        # suite must not depend on what else runs on this machine, and on
-        # 2026-11-19 it did, three times, whenever the release rig's fake
-        # rekordbox overlapped a ctest run (tests/nothing_else_running.hpp).
-        # RUN_SERIAL because the fake is real to any binary that does not
-        # install the "nothing running" scan, which is the point. Linux
-        # only: the fake is a forked child renamed with prctl().
-        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            add_executable(dj_software_independence_test
-                src/infrastructure/system/rekordbox_process_detector.cpp
-                tests/dj_software_independence_test.cpp)
-            target_include_directories(dj_software_independence_test PRIVATE src)
-            set(_seabass_independence_file "${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_UndoOffered.qml")
-            if(SEABASS_XVFB_RUN)
-                get_property(_display GLOBAL PROPERTY SEABASS_QML_NEXT_DISPLAY)
-                add_test(NAME dj_software_independence_test
-                    COMMAND dj_software_independence_test
-                        ${SEABASS_XVFB_RUN} -a -n ${_display} -s "-screen 0 1280x1024x24"
-                        $<TARGET_FILE:seabass_qml_tests> -input "${_seabass_independence_file}")
-                math(EXPR _display "${_display} + 1")
-                set_property(GLOBAL PROPERTY SEABASS_QML_NEXT_DISPLAY ${_display})
-            else()
-                add_test(NAME dj_software_independence_test
-                    COMMAND dj_software_independence_test
-                        $<TARGET_FILE:seabass_qml_tests> -input "${_seabass_independence_file}")
-            endif()
-            set_tests_properties(dj_software_independence_test PROPERTIES
-                ENVIRONMENT "${_seabass_qml_test_env}"
-                LABELS qml
-                TIMEOUT ${_seabass_qml_file_timeout}
-                RUN_SERIAL TRUE)
-        endif()
-
         # The same suite again, under the style the Linux build actually
         # starts with. The pinned lane above compares pixels like with
         # like across machines; this one answers a different question --

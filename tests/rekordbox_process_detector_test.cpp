@@ -94,24 +94,29 @@ int main()
     }
     std::cout << "case 3 (isRekordboxRunning wrapper runs without error) OK\n";
 
-    // The guard this exists for, actually seen to fire. Everything above
-    // proves the scanner reads real process state; none of it proves it
-    // would recognise the one name the feature is about, and a guard
-    // that has never been seen to close is not known to close. So: a
-    // child process really called "Engine DJ".
+    // A process renamed after fork is seen by name, and unseen once it
+    // exits: the real scan, against a process this test owns. Not under a
+    // DJ application's name: while this ran, the release rig, a live lane
+    // or the installed Seabass on the same machine would see it too and
+    // refuse its writes, which is the very thing tests/nothing_else_running.hpp
+    // keeps the suite from depending on. So a name of the same shape as
+    // "Engine DJ" (two words, a space, under comm's 15 bytes) and nobody's
+    // product, and PR_SET_PDEATHSIG so a killed test cannot leave it behind.
     //
     // Linux only, because prctl() is how a process renames itself here.
-    // What this does NOT cover is the spelling on the other two
-    // platforms -- "Engine DJ.exe" on Windows, the bundle name on macOS
-    // -- which only a machine with Engine DJ installed can settle.
 #if defined(__linux__)
-    if (isEngineDjRunning()) {
-        std::cerr << "warning: Engine DJ appears to be running here, so the child-process case is skipped\n";
-    } else {
+    {
+        static const char *const probeName = "Seabass Probe";
+        assert(!isProcessRunning(probeName));
+        const pid_t parent = ::getpid();
         const pid_t child = ::fork();
         assert(child >= 0);
         if (child == 0) {
-            ::prctl(PR_SET_NAME, "Engine DJ", 0, 0, 0);
+            ::prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+            if (::getppid() != parent) {
+                ::_exit(0);
+            }
+            ::prctl(PR_SET_NAME, probeName, 0, 0, 0);
             for (;;) {
                 ::pause();
             }
@@ -123,36 +128,45 @@ int main()
         bool seen = false;
         for (int attempt = 0; attempt < 100 && !seen; ++attempt) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            seen = isEngineDjRunning();
+            seen = isProcessRunning(probeName);
         }
-        const bool conflicting = isConflictingDjSoftwareRunning();
-        const std::string named = conflictingDjSoftwareName();
 
-        // Killed BEFORE anything is asserted. A failing assert aborts,
-        // an abort runs no more of this function, and the child sits in
-        // pause() for ever -- which on this machine means every later
-        // run of this test finds an "Engine DJ" already running and
-        // quietly skips the case that just failed.
+        // Killed BEFORE anything is asserted: a failing assert aborts and
+        // would leave the child in pause().
         ::kill(child, SIGKILL);
         int status = 0;
         ::waitpid(child, &status, 0);
 
-        assert(seen && "a process called \"Engine DJ\" was running and the guard did not see it");
-        assert(conflicting);
-        assert(named == "Engine DJ");
-
-        // And it stops saying so once the process is gone, or the guard
-        // would refuse every write for ever after one run of Engine DJ.
+        assert(seen && "a renamed child process was running and the scan did not see it");
         bool gone = false;
         for (int attempt = 0; attempt < 100 && !gone; ++attempt) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            gone = !isEngineDjRunning();
+            gone = !isProcessRunning(probeName);
         }
         assert(gone);
-        assert(conflictingDjSoftwareName().empty());
-        std::cout << "case 4 (a process called \"Engine DJ\" is seen, and unseen once it exits) OK\n";
+        std::cout << "case 4 (a renamed child process is seen, and unseen once it exits) OK\n";
     }
 #endif
+
+    // The DJ names on top of the scan, from a scan this test names: that
+    // "Engine DJ" in the process list makes the guard's checks fire and
+    // name it, and that they stop once it is gone.
+    setProcessScanForTesting([](const std::string &name) {
+        return name == "Engine DJ";
+    });
+    assert(processScanIsOverriddenForTesting());
+    assert(isEngineDjRunning());
+    assert(!isRekordboxRunning());
+    assert(isConflictingDjSoftwareRunning());
+    assert(conflictingDjSoftwareName() == "Engine DJ");
+    setProcessScanForTesting([](const std::string &) {
+        return false;
+    });
+    assert(!isConflictingDjSoftwareRunning());
+    assert(conflictingDjSoftwareName().empty());
+    setProcessScanForTesting(nullptr);
+    assert(!processScanIsOverriddenForTesting());
+    std::cout << "case 5 (Engine DJ in the process list is seen and named, and not once gone) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

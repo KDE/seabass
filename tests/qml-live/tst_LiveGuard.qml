@@ -44,6 +44,10 @@ TestCase {
     }
 
     function test_guardBlocksWhileEditingAndCliIsRefused() {
+        // The live lane keeps the real process scan (the ordinary lane's
+        // tst_HarnessProcessScan pins the stub): on the stub this test
+        // could only fail on a timeout, and never say why.
+        compare(harnessProcessScan, "real");
         var guard = createTemporaryObject(guardComponent, testCase);
         compare(guard.blocking, false);
         var page = createTemporaryObject(settingsPage, testCase, {stickLabel: stickLabel, pioneerRoot: rekordboxPath});

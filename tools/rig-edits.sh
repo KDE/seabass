@@ -110,7 +110,7 @@ run() {  # board id, full "TestCase::function" name
     echo "=== $1"
     local log; log="$(mktemp)"
     local bad=0
-    "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$1" 2>&1 | tee "$log"
+    SEABASS_LIVE_LANE=1 "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$1" 2>&1 | tee "$log"
     [ "${PIPESTATUS[0]}" -eq 0 ] || bad=1
     # A skip proves nothing, and QtTest exits 0 for it.
     if grep -aqE "^ *SKIP" "$log"; then

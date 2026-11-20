@@ -9,6 +9,7 @@
 
 #include "gui/write_guard.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
+#include "nothing_else_running.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -17,6 +18,7 @@
 namespace
 {
 
+using seabass::infrastructure::system::processScanIsOverriddenForTesting;
 using seabass::infrastructure::system::setProcessScanForTesting;
 
 bool nothing(const std::string &)
@@ -64,6 +66,21 @@ int main()
     setProcessScanForTesting(nullptr);
     assert(!seabass::infrastructure::system::isProcessRunning("definitely-not-a-real-process-xyz123"));
     std::cout << "case 4 (nullptr restores the real scan) OK\n";
+
+    // The non-live binaries' stub wins over whatever the scan would say:
+    // with a scan in place that names rekordbox, assumeNothingElseRunning()
+    // lets a write through. In-process scans only; no process is started.
+    setProcessScanForTesting(&rekordbox);
+    assert(processScanIsOverriddenForTesting());
+    assert(!seabass::gui::refuseIfDjSoftwareRunning().isEmpty());
+    seabass::tests::assumeNothingElseRunning();
+    assert(processScanIsOverriddenForTesting());
+    assert(seabass::gui::refuseIfDjSoftwareRunning().isEmpty());
+    std::cout << "case 5 (the harness stub beats a scan that names rekordbox) OK\n";
+
+    setProcessScanForTesting(nullptr);
+    assert(!processScanIsOverriddenForTesting());
+    std::cout << "case 6 (nullptr reads back as the real scan) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

@@ -135,7 +135,7 @@ trap 'failed=1; conclude' EXIT
 # name (a bare TestCase name exits without running anything).
 test_pid=""
 start_test() {  # full test name, log file
-    SEABASS_LIVE_KILL_MARKER="$marker" "$bin" -input "$root/tests/qml-live" "$1" > "$2" 2>&1 &
+    SEABASS_LIVE_LANE=1 SEABASS_LIVE_KILL_MARKER="$marker" "$bin" -input "$root/tests/qml-live" "$1" > "$2" 2>&1 &
     test_pid=$!
 }
 

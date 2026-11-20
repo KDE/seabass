@@ -559,7 +559,7 @@ live_test() {  # <stick> <full test name>...
         local log="$out/live-${name//:/_}.txt"
         local before=0
         [ -f "$stick_log" ] && before=$(wc -l < "$stick_log")
-        "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" 2>&1 | tee "$log"
+        SEABASS_LIVE_LANE=1 "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" 2>&1 | tee "$log"
         [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
         if grep -aqE "^ *SKIP" "$log"; then
             echo "   SKIPPED, which counts as a failure here"
@@ -1066,13 +1066,13 @@ metadata_between_sticks() {
     # two-second mtime resolution, the same reason rig-clones.sh does.
     echo "=== planting a difference on $B for the metadata to carry"
     sleep 3
-    if ! SEABASS_LIVE_STICK="$B" SEABASS_RIG_KEEP_CUE_MS=45000 \
+    if ! SEABASS_LIVE_LANE=1 SEABASS_LIVE_STICK="$B" SEABASS_RIG_KEEP_CUE_MS=45000 \
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_11_rigKeepCue; then
         echo "could not plant a cue on $B, so there is nothing for W7 to carry"
         return 1
     fi
     local rc=0
-    SEABASS_LIVE_STICK="$A" SEABASS_LIVE_SECOND_STICK="$B" \
+    SEABASS_LIVE_LANE=1 SEABASS_LIVE_STICK="$A" SEABASS_LIVE_SECOND_STICK="$B" \
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_12_metadataFromSecondStickSaveUndo \
         || rc=1
     unchanged_catalogs "$A" || rc=1

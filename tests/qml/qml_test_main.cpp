@@ -3373,6 +3373,15 @@ void seedMetadataStoreForTests()
         // process when it appears). Empty: that file skips itself.
         engine->rootContext()->setContextProperty(QStringLiteral("liveKillMarker"),
                                                   qEnvironmentVariable("SEABASS_LIVE_KILL_MARKER"));
+        // Which process scan the DJ-software guard got in this run, read
+        // back from the detector rather than from main()'s decision:
+        // "stubbed" (tests/nothing_else_running.hpp) or "real". Only this
+        // harness sets it; tst_HarnessProcessScan expects "stubbed" and
+        // tests/qml-live's LiveGuard expects "real".
+        engine->rootContext()->setContextProperty(
+            QStringLiteral("harnessProcessScan"),
+            seabass::infrastructure::system::processScanIsOverriddenForTesting() ? QStringLiteral("stubbed")
+                                                                                 : QStringLiteral("real"));
         // tools/rig-clones.sh: where tst_LiveEditMode::test_11_rigKeepCue
         // adds a memory cue it keeps, in ms (0: the test skips itself).
         engine->rootContext()->setContextProperty(QStringLiteral("liveRigKeepCueMs"),
@@ -3463,14 +3472,19 @@ int runStormQuitLeg(int argc, char **argv, const char *driver)
     return seabass::gui::endProcess(result);
 }
 
-// Whether this run is one of tests/qml-live/'s: run-live.sh and the rig
-// scripts all start this binary with -input pointing at that directory
-// (or at a file in it). Those test the DJ-software guard against the
-// rig's fake rekordbox and must see the real process list; every other
-// lane (tests/qml, qml-shader, qml-storm, and a run with no -input, which
-// is tests/qml) must not depend on what else runs on the machine.
+// Whether this run is one of tests/qml-live/'s, which test the DJ-software
+// guard against the rig's fake rekordbox and must see the real process
+// list; every other lane (tests/qml, qml-shader, qml-storm, and a run with
+// no -input, which is tests/qml) must not depend on what else runs on the
+// machine. Live if either says so: SEABASS_LIVE_LANE=1, which run-live.sh
+// and every rig script that starts this binary on tests/qml-live set, or
+// -input naming that directory (or a file in it). The variable only ever
+// keeps the real scan; nothing in the environment installs the stub.
 bool runsLiveTests(int argc, char **argv)
 {
+    if (qgetenv("SEABASS_LIVE_LANE") == "1") {
+        return true;
+    }
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::strcmp(argv[i], "-input") != 0) {
             continue;
