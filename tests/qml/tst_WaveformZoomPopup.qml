@@ -1384,4 +1384,61 @@ TestCase {
         compare(popup.trackTitle, "Space Oddity", "for the loaded track");
         popup.close();
     }
+
+    // ---- Third review of 2026-11-20 -------------------------------------
+
+    // A touchpad lift flings only when the fingers were moving at the
+    // lift: held still a second (Wayland sends nothing meanwhile), then
+    // lifted, nothing glides.
+    function test_aStaleSwipeDoesNotFling() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const a = area(popup);
+        const flick = flickOf(popup);
+        const y = a.height / 2;
+        popup.clockNow = 10000;
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 1);
+        for (let i = 0; i < 3; ++i) {
+            popup.clockNow += 10;
+            stickFixture.touchpadWheel(a, 600, y, -30, 0, 2);
+        }
+        popup.clockNow += 1000;
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 3);
+        verify(!flick.moving, "held still before the lift: no glide");
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 1);
+        for (let i = 0; i < 3; ++i) {
+            popup.clockNow += 10;
+            stickFixture.touchpadWheel(a, 600, y, -30, 0, 2);
+        }
+        popup.clockNow += 10;
+        stickFixture.touchpadWheel(a, 600, y, 0, 0, 3);
+        verify(flick.moving, "lifted while moving: a glide");
+        flick.cancelFlick();
+        popup.clockNow = -1;
+    }
+
+    // Opening the popup after a load reads export.pdb no more: the index
+    // the load built is handed to the read.
+    function test_theDetailReadUsesTheLoadsIndex() {
+        const stick = plantedStick([300]);
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("rekordbox", stick.pioneer, stick.ids[0], testCase.clickFile, "A", "", "", [], "", false);
+        const parses = stickFixture.trackDatabaseParses();
+        player.requestDetailWaveform();
+        tryVerify(() => detailColumns(player) === 300, 5000);
+        compare(stickFixture.trackDatabaseParses(), parses, "export.pdb not parsed again");
+        player.stop();
+    }
+
+    // A file that does not decode, loaded again: no new status comes, and
+    // its length is known (none) at once, so the bar does not wait.
+    function test_aBrokenFileAgainIsKnownAtOnce() {
+        const broken = stickFixture.scratchDirectory() + "/not-audio.mp3";
+        verify(stickFixture.writeText(broken, "this is not an MP3 file, only text"));
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("rekordbox", "", "1", broken, "Broken", "", "", [], "", false);
+        tryVerify(() => player.durationSerial === player.trackSerial, 5000, "the first load: InvalidMedia reported");
+        player.load("rekordbox", "", "2", broken, "Broken again", "", "", [], "", false);
+        compare(player.durationSerial, player.trackSerial, "the same broken file again: known at once");
+        player.stop();
+    }
 }

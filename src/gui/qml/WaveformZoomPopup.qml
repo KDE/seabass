@@ -182,7 +182,8 @@ SeabassDialog {
 
     // The golden-ratio point left of the middle: 1 - 1/phi of the width.
     readonly property real lineRatio: 1 - 2 / (1 + Math.sqrt(5))
-    readonly property real lineX: Math.round(area.width * root.lineRatio)
+    // On the device grid, so the line is sharp at a fractional scale.
+    readonly property real lineX: Theme.snap(area.width * root.lineRatio)
     // Whether the view follows the playhead. Scrolling by hand lets go;
     // play, a seek, the follow button and another track take hold again.
     property bool attached: true
@@ -467,7 +468,7 @@ SeabassDialog {
             // "This position": fixed, the waveform moves under it.
             Rectangle {
                 objectName: "positionLine"
-                x: root.lineX - width / 2
+                x: Theme.snap(root.lineX - width / 2)
                 width: Theme.snap(2)
                 height: area.height
                 color: Theme.accent
@@ -550,8 +551,13 @@ SeabassDialog {
                     const angles = wheel.angleDelta.x !== 0 || wheel.angleDelta.y !== 0;
                     // The phase first: the end of a touchpad scroll usually
                     // carries no delta at all.
+                    // Flung only if the fingers were still moving when they
+                    // left: Wayland sends nothing while they rest on the
+                    // pad, then an end with no delta, and the last
+                    // velocity would be a stale one.
                     if (wheel.phase === Qt.ScrollEnd) {
-                        if (Math.abs(fingerVelocity) > 0.2) {
+                        if (root.now() - lastWheelTime <= root.flingRecentMs
+                                && Math.abs(fingerVelocity) > root.flingMinimumVelocity) {
                             root.flingAt(fingerVelocity * 1000);
                         }
                         fingerVelocity = 0;
@@ -576,7 +582,7 @@ SeabassDialog {
                         }
                         // A touchpad: the waveform follows the fingers, and
                         // flung (ScrollEnd above) glides on as a drag does.
-                        const now = Date.now();
+                        const now = root.now();
                         const dt = Math.max(1, now - lastWheelTime);
                         fingerVelocity = dt < 100 ? -dx / dt : 0;
                         lastWheelTime = now;
@@ -617,6 +623,17 @@ SeabassDialog {
 
     // A glide of `velocity` pixels a second, positive on through the
     // track, as a flick of the waveform gives it.
+    // A touchpad's lift flings only if its last motion was this recent
+    // (milliseconds) and at least this fast (pixels a millisecond).
+    readonly property int flingRecentMs: 80
+    readonly property real flingMinimumVelocity: 0.2
+    // The wall clock in milliseconds; a test sets clockNow to hand it
+    // times of its own.
+    property real clockNow: -1
+    function now() {
+        return root.clockNow >= 0 ? root.clockNow : Date.now();
+    }
+
     // Set while a glide of flingAt() runs; a press during it stops it and
     // does not seek.
     property bool gliding: false
@@ -625,6 +642,19 @@ SeabassDialog {
         flick.contentX = root.manualMs * root.pxPerMs;
         flick.flick(-velocity, 0);
         root.gliding = flick.moving;
+    }
+
+    // Gone or the app quitting: a zoom not yet written is written, and the
+    // detail is no longer wanted.
+    Component.onDestruction: {
+        root.storeZoom();
+        if (root.controller && typeof root.controller.releaseDetailWaveform === "function") {
+            root.controller.releaseDetailWaveform();
+        }
+    }
+    Connections {
+        target: Qt.application
+        function onAboutToQuit() { root.storeZoom(); }
     }
 
     // In the popup, so that they are not refused while it is open (a
