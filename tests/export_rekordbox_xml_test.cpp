@@ -264,5 +264,22 @@ int main(int argc, char **argv)
     testPlaylistsSurviveTheMerge();
     testAgainstFixture(argc > 1 ? fs::path(argv[1]) : fs::path("tests/fixtures/anonymized_library"));
     std::cout << "export_rekordbox_xml_test passed\n";
+    // #105: a rating and comment only OneLibrary holds do not reach the
+    // XML, which is what it wrote before OneLibrary's reader read them:
+    // the output is the one for the same rows with OneLibrary's blank.
+    {
+        Track rb = row("rekordbox", "1", "/stick/Contents/a.mp3", "A");
+        Track one = row("onelibrary", "7", "/stick/Contents/a.mp3", "A");
+        one.rating = 4;
+        one.comment = "only in OneLibrary";
+        Track oneAsBefore = one;
+        oneAsBefore.rating.reset();
+        oneAsBefore.comment.clear();
+        const auto now = ExportRekordboxXml().execute({rb, one});
+        const auto before = ExportRekordboxXml().execute({rb, oneAsBefore});
+        assert(now.xml == before.xml && "the export is what it was before OneLibrary's rating was read");
+        assert(now.xml.find("only in OneLibrary") == std::string::npos);
+        std::cout << "case (OneLibrary's rating and comment leave the XML as it was) OK\n";
+    }
     return 0;
 }
