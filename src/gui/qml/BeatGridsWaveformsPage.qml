@@ -497,6 +497,46 @@ Page {
                     noteColor: root.toneColor(trackRow.model.noteTone)
                     onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
 
+                    // rekordbox's analysis of the track, for its small
+                    // waveform: asked for while the row is built, let go
+                    // when it goes, read off the GUI thread (see
+                    // requestRowAnalysis()). `analysisId` is the track
+                    // `analysis` is of: an answer for any other track is
+                    // never taken.
+                    property var analysis: ({ready: false})
+                    property string analysisId: ""
+                    property string askedFor: ""
+                    function takeAnalysis() {
+                        trackRow.analysisId = trackRow.rekordboxId;
+                        trackRow.analysis = root.controller.rowAnalysis(trackRow.rekordboxId);
+                    }
+                    function ask() {
+                        if (trackRow.askedFor !== trackRow.rekordboxId) {
+                            if (trackRow.askedFor.length > 0) {
+                                root.controller.releaseRowAnalysis(trackRow.askedFor);
+                            }
+                            trackRow.askedFor = trackRow.rekordboxId;
+                        }
+                        root.controller.requestRowAnalysis(trackRow.rekordboxId);
+                        trackRow.takeAnalysis();
+                    }
+                    onRekordboxIdChanged: trackRow.ask()
+                    Component.onCompleted: trackRow.ask()
+                    Component.onDestruction: {
+                        if (trackRow.askedFor.length > 0) {
+                            root.controller.releaseRowAnalysis(trackRow.askedFor);
+                        }
+                    }
+                    Connections {
+                        target: root.controller
+                        function onRowAnalysisReady(id) {
+                            if (id === trackRow.rekordboxId) {
+                                trackRow.takeAnalysis();
+                            }
+                        }
+                        function onRowAnalysesStale() { trackRow.ask(); }
+                    }
+
                     // Two lines, the same on every row: the grid's state over
                     // the waveform's, each badge after a caption column as
                     // wide as the wider caption, so the badges line up from
@@ -536,6 +576,42 @@ Page {
                         }
                     ]
                     actionItems: [
+                        // rekordbox's waveform and beat grid, what copying
+                        // would put on the player: as wide on every row
+                        // whether it has one or not, so the columns beside
+                        // it line up, and lower than the text beside it, so
+                        // the row is no taller. A click opens it zoomed in,
+                        // the track loaded into the player, where there is
+                        // a file to play.
+                        Item {
+                            objectName: "rowWaveformSlot"
+                            visible: root.rowWaveformWidth > 0
+                            Layout.preferredWidth: root.rowWaveformWidth
+                            Layout.preferredHeight: root.rowWaveformHeight
+                            Layout.alignment: Qt.AlignVCenter
+                            WaveformView {
+                                id: rowWaveform
+                                objectName: "rowSourceWaveform"
+                                anchors.fill: parent
+                                readonly property string trackId: trackRow.analysisId
+                                visible: trackRow.analysis.ready === true && rowWaveform.hasWaveform
+                                gridStyle: "lines"
+                                columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
+                                trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
+                                beatsSelected: true
+                                beatData: trackRow.analysis.ready === true
+                                    ? root.controller.rowBeatTicks(trackRow.analysisId, rowWaveform.width) : []
+                                readonly property bool opensZoom: rowWaveform.visible
+                                    && trackRow.analysis.playable === true && rowWaveform.trackDurationMs > 0
+                                    && root.playbackController !== null
+                                pointerShape: rowWaveform.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onPositionClicked: {
+                                    if (rowWaveform.opensZoom) {
+                                        zoomPopup.openFor(root.controller.zoomTrack(trackRow.analysisId));
+                                    }
+                                }
+                            }
+                        },
                         Label {
                             objectName: "bpmLabel"
                             visible: trackRow.model.bpm > 0
@@ -622,6 +698,27 @@ Page {
     }
     readonly property real stateCaptionWidth: Math.ceil(Math.max(gridCaptionMetric.implicitWidth,
                                                                  waveformCaptionMetric.implicitWidth))
+
+    // A row's waveform: up to rowWaveformMaximumWidth, narrower on a
+    // narrow page and none at all where the title column would have too
+    // little left (the badges under the title need it more). Taken from
+    // the page's width, not the list's: it is then known before the rows
+    // are laid out again, and the title column beside it moves once per
+    // change of width (see StateMark's room). As tall as the expanded
+    // waveform of a metadata row, below the height of the row's text.
+    readonly property real rowWaveformMaximumWidth: Theme.scaled(160)
+    readonly property real rowWaveformWidth: {
+        const room = Math.round(Math.min(root.rowWaveformMaximumWidth, (root.width - Theme.scaled(640)) / 2));
+        return room >= Theme.scaled(64) ? room : 0;
+    }
+    readonly property real rowWaveformHeight: Math.round(Theme.scaled(40))
+
+    // One zoomed waveform for the page, opened from a row's waveform.
+    WaveformZoomPopup {
+        id: zoomPopup
+        playbackController: root.playbackController
+        settings: root.appSettingsController
+    }
 
     BusyOverlay {
         anchors.fill: parent

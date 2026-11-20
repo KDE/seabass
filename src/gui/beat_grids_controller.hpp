@@ -5,6 +5,8 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QByteArray>
+#include <QCache>
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
@@ -142,6 +144,14 @@ struct BeatGridLibrary
         std::string key;
         QString artworkUrl;
         QString fallbackArtworkUrl;
+        // What the zoomed waveform popup loads into the player: the audio
+        // file (empty where there is none to play), the covers as paths,
+        // the length and rekordbox's cues.
+        std::string filePath;
+        std::string artworkPath;
+        std::string fallbackArtworkPath;
+        double durationMs = 0.0;
+        std::vector<domain::CuePoint> cues;
         // Into plan.items, -1 for a track with no Engine row of its own.
         int item = -1;
     };
@@ -278,6 +288,10 @@ class BeatGridsController : public QObject
     Q_PROPERTY(int lastSaveMarked READ lastSaveMarked NOTIFY lastSaveChanged)
     Q_PROPERTY(QString lastSaveText READ lastSaveText NOTIFY lastSaveChanged)
 
+    // How many rows' analyses have been read for their waveforms: what a
+    // test watches to see that nothing is read while a library is written.
+    Q_PROPERTY(int rowAnalysisReads READ rowAnalysisReads NOTIFY rowAnalysisReadsChanged)
+
 public:
     explicit BeatGridsController(QObject *parent = nullptr);
     ~BeatGridsController() override;
@@ -339,6 +353,37 @@ public:
     int lastSaveRestored() const { return m_lastSave.restored; }
     int lastSaveMarked() const { return m_lastSave.marked; }
     QString lastSaveText() const { return m_lastSave.text; }
+    int rowAnalysisReads() const { return m_rowAnalysisReads; }
+
+    // A row's small waveform: rekordbox's analysis of the track (its
+    // waveform preview and beat grid), what the page copies and what the
+    // user judges before copying it.
+    //
+    // A row asks for its track's when its delegate is built and lets go
+    // of it when the delegate goes, so only the rows in view (and the few
+    // the list builds ahead of it) are read. One read at a time, off the
+    // GUI thread, the oldest ask first; a row let go before its turn is
+    // never read, and one already being read is kept when it lands.
+    // None while any library is being written (the rule PlaybackController
+    // keeps by libraryBusy): asked for then, it waits, and a read under way
+    // is put back to be read again. What was read is kept (bounded), so a
+    // row scrolled back to draws at once; after a write the kept ones stay
+    // drawn until each row's track has been read again.
+    Q_INVOKABLE void requestRowAnalysis(const QString &rekordboxId);
+    Q_INVOKABLE void releaseRowAnalysis(const QString &rekordboxId);
+    // What has been read of a track, never a read itself: {ready} false
+    // until its analysis is in; then {ready, columns (an ArrayBuffer in
+    // QML, three bytes a column, low, mid and high), durationMs, playable
+    // (there is an audio file to play)}. No columns for a track rekordbox
+    // has no analysis of.
+    Q_INVOKABLE QVariantMap rowAnalysis(const QString &rekordboxId) const;
+    // The beats of that track's grid a waveform `widthPx` wide draws over
+    // the track's length (beatTicksForDisplay()); empty until read.
+    Q_INVOKABLE QVariantList rowBeatTicks(const QString &rekordboxId, double widthPx) const;
+    // The track as WaveformZoomPopup.openFor() takes it: {format,
+    // libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
+    // fallbackArtworkPath}. Empty for a track the library does not have.
+    Q_INVOKABLE QVariantMap zoomTrack(const QString &rekordboxId) const;
 
     // Reads the stick holding these two catalogs. A request for the same
     // paths while one runs is served by it.
@@ -395,8 +440,32 @@ signals:
     // A save of this page's changes finished; `whole` when every change
     // landed and nothing went wrong. The page's toast says lastSaveText.
     void saveCounted(bool whole);
+    // A row's analysis is in (rowAnalysis()); for the row showing that
+    // track only.
+    void rowAnalysisReady(const QString &rekordboxId);
+    // What was read may be out of date (a write has ended): every row asks
+    // for its track's again.
+    void rowAnalysesStale();
+    void rowAnalysisReadsChanged();
 
 private:
+    // One track's analysis as a row draws it, read off the GUI thread.
+    struct RowAnalysis
+    {
+        QByteArray columns;
+        std::vector<domain::Beat> beats;
+        bool beatRateRecorded = true;
+        // The track's audio file is there to be played.
+        bool fileThere = false;
+        // m_rowGeneration when it was read.
+        std::uint64_t generation = 0;
+    };
+    bool rowReadsHeld() const;
+    void onWriteStateChanged();
+    void pumpRowReads();
+    void forgetRowAnalyses();
+    const BeatGridLibrary::Track *libraryTrack(const QString &rekordboxId) const;
+
     struct Summary
     {
         int pending = 0;
@@ -482,9 +551,20 @@ private:
     // Where preview workers hand their rows (PreviewSink in the .cpp).
     std::shared_ptr<QObject> m_previewSink;
 
+    // The rows' analyses: what has been read, keyed by rekordbox id, at
+    // most RowAnalysisCacheKb of it; the ids rows want read, the oldest
+    // ask first; and whether reads are held for a write.
+    static constexpr int RowAnalysisCacheKb = 32 * 1024;
+    QCache<QString, RowAnalysis> m_rowAnalyses{RowAnalysisCacheKb};
+    QStringList m_rowWanted;
+    std::uint64_t m_rowGeneration = 1;
+    bool m_rowReadsHeld = false;
+    int m_rowAnalysisReads = 0;
+
     // Last, so they are destroyed first: their destructors cancel the work.
     AsyncRequest<std::shared_ptr<BeatGridLibrary>> m_load{this, [this]() { emit loadingChanged(); }};
     AsyncRequest<QString> m_preview{this, [this]() { emit previewBusyChanged(); }};
+    AsyncRequest<std::shared_ptr<RowAnalysis>> m_rowRead{this, nullptr};
 };
 
 }  // namespace seabass::gui
