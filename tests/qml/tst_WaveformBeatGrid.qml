@@ -254,6 +254,30 @@ TestCase {
         compare(thinned.ticks.map((tick) => tick.bar).slice(0, 3), [5, 9, 13]);
     }
 
+    // An MP3's grid moved onto the player's timeline (rekordbox's grid,
+    // a LAME file: 52 ms earlier) can put the first downbeat before 0:00:
+    // the player bar and the popup then draw no mark for bar 1, but every
+    // bar keeps its number, the same as the details pane gives it from the
+    // unmoved grid. The same track is never numbered two ways.
+    function test_aGridMovedBeforeTheStartKeepsItsBarNumbers() {
+        const library = grid(500, 20, 60000);
+        const moved = library.map((beat) => ({timeMs: beat.timeMs - 52, downbeat: beat.downbeat}));
+        for (const width of [600, 1200, 150]) {
+            const pane = BeatGridTicks.layout(library, 60000, width);
+            const bar = BeatGridTicks.layout(moved, 60000, width);
+            verify(bar.ticks.length > 0 && pane.ticks.length > 0);
+            compare(pane.ticks[0].bar, 1, "the pane's first mark is bar 1 at " + width);
+            for (const tick of bar.ticks) {
+                const same = pane.ticks.filter((t) => Math.abs(t.timeMs - 52 - tick.timeMs) < 1e-6);
+                if (same.length === 1) {
+                    compare(tick.bar, same[0].bar, "the same bar number at " + tick.timeMs + " ms, " + width + " px");
+                    compare(tick.strong, same[0].strong, "and the same strength");
+                }
+            }
+            verify(bar.ticks.every((tick) => tick.bar !== 1 || !tick.strong), "bar 1's mark is before 0:00");
+        }
+    }
+
     // ---- The view ----------------------------------------------------
 
     Component {
@@ -472,6 +496,141 @@ TestCase {
         verify(inkAt(host, 182, 4) < 0.01, "no number beside bar 9's line");
     }
 
+    // A waveform with no length to place it against (the player bar
+    // between a load and the player's duration, or for good when the file
+    // cannot be decoded; a card whose row has none) is spread across the
+    // width, as it always was: bars, not nothing.
+    function test_aWaveformWithoutALengthIsSpreadAcrossTheWidth() {
+        const host = makeView({trackDurationMs: 0,
+                               waveformData: columns(300, {low: 1, mid: 0, high: 0})});
+        compare(host.view.drawsBars, true);
+        for (const x of [10, 300, 590]) {
+            verify(inkAt(host, x, 40) > 0.3, "a bar at " + x + ", ink " + inkAt(host, x, 40));
+        }
+    }
+
+    // More than two columns to a pixel: each pixel draws the loudest of
+    // the columns under it, so one loud column among quiet ones shows.
+    function test_aPixelDrawsTheLoudestOfItsColumns() {
+        const data = columns(6000, {low: 0.1, mid: 0, high: 0});
+        data[3005] = {low: 1, mid: 0, high: 0};
+        const host = makeView({trackDurationMs: 60000, waveformData: data});
+        // Ten columns a pixel: column 3005 is pixel 300.
+        verify(inkAt(host, 300, 6) > 0.3, "the loud column's pixel is a full bar, ink " + inkAt(host, 300, 6));
+        verify(inkAt(host, 310, 6) < 0.01, "its neighbours are quiet, ink " + inkAt(host, 310, 6));
+    }
+
+    // Columns handed over as bytes start where columnStartMs says: on the
+    // player's timeline, moved as the beats are.
+    function test_byteColumnsStartAtTheirStart() {
+        const buffer = new ArrayBuffer(100 * 3);
+        const bytes = new Uint8Array(buffer);
+        bytes[0] = 255;   // the first column loud, the rest silent
+        const host = makeView({trackDurationMs: 60000, columnBytes: buffer, columnMs: 100, columnStartMs: 1000});
+        // 600 px for 60 s: 1000 ms is x 10.
+        verify(inkAt(host, 10, 6) > 0.3, "the first column at 1 s, ink " + inkAt(host, 10, 6));
+        verify(inkAt(host, 0, 6) < 0.01 && inkAt(host, 5, 6) < 0.01, "nothing before it");
+    }
+
+    // A mark exactly at the track's end is drawn, on the last pixel.
+    function test_aMarkAtTheEndIsDrawn() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60001)});
+        compare(host.view.beatTicks[host.view.beatTicks.length - 1].x, 600, "bar 31 at 60 s");
+        verify(inkAt(host, 599, 30) > 0.03, "its line on the last pixel, ink " + inkAt(host, 599, 30));
+        verify(inkAt(host, 599, 14) > 0.3, "and its tick");
+    }
+
+    // A stronger mark near the end has its number left of its tick, not
+    // cut off at the edge.
+    function test_aNumberAtTheEndIsNotCutOff() {
+        // 57 s on 600 px: bar 29 at 56 s is a stronger mark at 589.5 px,
+        // and its number would run past 600.
+        const host = makeView({trackDurationMs: 57000, beatData: grid(500, 0, 57000)});
+        const tick = host.view.beatTicks.filter((t) => t.bar === 29)[0];
+        verify(tick.strong && tick.x > 585, "bar 29 is a stronger mark at the end, at " + tick.x);
+        const image = grabImage(host);
+        const lane = PixelScale.pixel(image, host, 575, 13);
+        let leftInk = 0;
+        for (let x = 572; x < 588; ++x) {
+            for (let y = 2; y < 10; ++y) {
+                leftInk = Math.max(leftInk, distance(PixelScale.pixel(image, host, x, y), lane));
+            }
+        }
+        verify(leftInk > 0.4, "its number left of the tick, ink " + leftInk);
+    }
+
+    // Columns a little narrower than a pixel do not overwrite each other:
+    // drawn one bar a pixel, the loudest column of each.
+    function test_narrowColumnsDoNotOverwriteEachOther() {
+        const data = columns(800, {low: 0.1, mid: 0, high: 0});
+        for (let i = 0; i < 800; i += 4) {
+            data[i] = {low: 1, mid: 0, high: 0};
+        }
+        // 800 columns on 600 px: 0.75 px a column, every fourth loud.
+        const host = makeView({trackDurationMs: 60000, waveformData: data, progress: 1});
+        const image = grabImage(host);
+        const full = PixelScale.pixel(image, host, 0, 40);
+        verify(distance(full, Theme.background) > 0.3, "a loud bar at x 0: " + full);
+        // Every loud column is 3 px apart; every pixel that holds one is a
+        // full, unblended bar.
+        // Short of the right edge, where the played track's playhead
+        // stands with its glow.
+        for (let i = 0; i < 770; i += 4) {
+            const x = Math.floor(i * 0.75);
+            const c = PixelScale.pixel(image, host, x, 40);
+            verify(distance(c, full) < 0.05, "column " + i + " at x " + x + " is whole: " + c + " vs " + full);
+        }
+    }
+
+    // The sliced grid (the player bar, option G): cut out of the bars as
+    // gaps in the ground, narrow at a mark and wide at a stronger one,
+    // with short marks at the top and bottom edge, accent at the stronger;
+    // no lane and no lines.
+    function test_theSlicedGridIsCutOutOfTheBars() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), gridStyle: "sliced",
+                               progress: 1, waveformData: columns(600, {low: 1, mid: 0, high: 0})});
+        compare(host.view.rulerHeight, 0, "no lane");
+        const image = grabImage(host);
+        const at = (x, y) => PixelScale.pixel(image, host, x, y);
+        const bar = at(185, 40);
+        verify(bar.b > 0.5, "a bar: " + bar);
+        const ground = Theme.background;
+        // Bar 10 at 180, an ordinary mark: a gap two pixels wide (179, 180).
+        verify(distance(at(179, 40), ground) < 0.02 && distance(at(180, 40), ground) < 0.02,
+               "the gap is the ground: " + at(179, 40) + " " + at(180, 40));
+        verify(distance(at(178, 40), bar) < 0.02 && distance(at(181, 40), bar) < 0.02, "the bars beside it");
+        // Its edge marks, muted, at the top and the bottom.
+        verify(distance(at(180, 1), ground) > 0.1 && distance(at(180, 1), bar) > 0.1, "a mark at the top");
+        verify(distance(at(180, 78), ground) > 0.1, "and the bottom");
+        verify(distance(at(180, 20), ground) < 0.02, "the gap between them is the ground");
+        // Bar 9 at 160, a stronger mark: a wider gap and accent marks.
+        verify(distance(at(159, 40), ground) < 0.02 && distance(at(161, 40), ground) < 0.02, "a wider gap");
+        verify(distance(at(160, 1), Theme.accent) < 0.1, "an accent mark: " + at(160, 1));
+        // Nothing of the grid elsewhere: no lines, no lane.
+        const empty = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), gridStyle: "sliced"});
+        verify(inkAt(empty, 180, 30) < 0.01, "no line behind, ink " + inkAt(empty, 180, 30));
+        verify(inkAt(empty, 170, 4) < 0.01, "no lane");
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-sliced.png");
+        }
+    }
+
+    // The vivid colours of the popup: saturated blue lows, amber mids,
+    // white highs, a quiet column darker than a loud one; the classic
+    // colours unchanged.
+    function test_theVividColours() {
+        const low = Theme.waveformRgb(1, 0, 0, true);
+        verify(low.b > 220 && low.r < 60 && low.g < 120, "blue lows: " + JSON.stringify(low));
+        const mid = Theme.waveformRgb(0, 1, 0, true);
+        verify(mid.r > 220 && mid.g > 120 && mid.b < 60, "amber mids: " + JSON.stringify(mid));
+        const high = Theme.waveformRgb(0, 0, 1, true);
+        verify(high.r > 240 && high.g > 240 && high.b > 240, "white highs: " + JSON.stringify(high));
+        const quiet = Theme.waveformRgb(0.2, 0, 0, true);
+        verify(quiet.b < low.b * 0.6, "a quiet column darker: " + JSON.stringify(quiet));
+        compare(Theme.waveformRgb(1, 1, 1, false), {r: 255, g: 255, b: 255});
+        compare(Theme.waveformRgb(0, 0, 0, false), {r: 60, g: 60, b: 90});
+    }
+
     // A view handed beats already selected for its width (every view in
     // the app is) places them and selects nothing again: the rule runs
     // once per picture. A whole grid handed that way is drawn whole.
@@ -643,7 +802,7 @@ TestCase {
         verify(view !== null);
         tryVerify(() => view.beatTicks.length > 0, 2000, "the bar's waveform has a grid");
         compare(asked[asked.length - 1], view.width, "asked for at the waveform's width");
-        verify(view.rulerHeight >= 12, "and a ruler lane, " + view.rulerHeight + " px");
+        compare(view.gridStyle, "sliced", "cut out of the bars, not a ruler lane (#104)");
         bar.width = 700;
         tryVerify(() => asked[asked.length - 1] === view.width && view.width < 700, 2000, "and again at a new width");
     }

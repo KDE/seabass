@@ -135,13 +135,62 @@ QtObject {
     // Sizes in pixels, and fractions of the view's or the lane's height.
     // A view lower than beatRulerMinimumViewHeight (a list row's
     // waveform, a 40 px card) has no lane and no numbers, only the lines.
+    // The lane is a fifth of the view's height, between 12 and 20 px: the
+    // details pane's 80 px view has 16, the popup's and the detail page's
+    // the 20 of the most. Its numbers are half the lane, 8 to 10 px.
     readonly property real beatRulerHeightRatio: 0.2
     readonly property real beatRulerMinimumHeight: 12
+    readonly property real beatRulerMaximumHeight: 20
     readonly property real beatRulerMinimumViewHeight: 44
     readonly property real beatRulerTickLength: 0.3
+    readonly property real beatRulerNumberRatio: 0.5
     readonly property real beatRulerNumberMinimumSize: 8
-    readonly property real beatRulerNumberMaximumSize: 13
+    readonly property real beatRulerNumberMaximumSize: 10
     readonly property real beatRulerNumberInset: 3
+    // The sliced grid (the player bar): gaps cut out of the bars and short
+    // marks at their top and bottom edge, as drawn for a 92 px view and
+    // scaled to the view's height. Stronger marks in the accent colour,
+    // the others muted.
+    readonly property real beatSlicedDesignHeight: 92
+    readonly property real beatSlicedGap: 2
+    readonly property real beatSlicedStrongGap: 4
+    readonly property real beatSlicedMark: 4
+    readonly property real beatSlicedStrongMark: 7
+    readonly property real beatSlicedMarkOpacity: 0.8
+
+    // A waveform column's colour from its three bands, 0..1 each, as
+    // {r, g, b} of 0..255. "Classic" is the colour every waveform has
+    // drawn: bass in blue, mids in green and yellow, highs towards white,
+    // blended by each band's strength. "Vivid" (the zoomed popup) is the
+    // three-band look of a CDJ: saturated blue lows, amber mids, white
+    // highs, each band weighted by its square so the loudest one decides,
+    // and the whole made darker for a quiet column and brighter for a
+    // loud one.
+    readonly property color waveformVividLow: "#1f5fff"
+    readonly property color waveformVividMid: "#ff9a1a"
+    readonly property color waveformVividHigh: "#ffffff"
+    readonly property real waveformVividQuietBrightness: 0.35
+    // How much of the ground lies over the part of a zoomed waveform
+    // already played: the part ahead of the playhead is what a DJ reads.
+    readonly property real waveformPlayedShade: 0.45
+    // How long the player bar takes to blend from one track to the next.
+    readonly property int playerBlendDuration: 250
+    function waveformRgb(low, mid, high, vivid) {
+        if (!vivid) {
+            return {r: Math.min(255, Math.round(60 + high * 195)),
+                    g: Math.min(255, Math.round(60 + mid * 150 + high * 60)),
+                    b: Math.min(255, Math.round(90 + low * 165))};
+        }
+        const wl = low * low, wm = mid * mid, wh = high * high;
+        const sum = wl + wm + wh;
+        const amplitude = Math.max(low, mid, high);
+        const bright = waveformVividQuietBrightness + (1 - waveformVividQuietBrightness) * amplitude;
+        const band = (c) => sum > 0
+            ? (wl * waveformVividLow[c] + wm * waveformVividMid[c] + wh * waveformVividHigh[c]) / sum
+            : waveformVividLow[c];
+        return {r: Math.round(255 * band("r") * bright), g: Math.round(255 * band("g") * bright),
+                b: Math.round(255 * band("b") * bright)};
+    }
 
     function mix(a, b, t) {
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0);

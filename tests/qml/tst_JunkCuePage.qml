@@ -679,6 +679,20 @@ TestCase {
         mouseMove(page, 1, 1);
         verify(play.visible, "shown while it is the track playing");
         tryCompare(item, "isPlaying", true);
+        // The playing row's waveform behind its text has no ruler lane:
+        // the row is taller than a lane needs, but a lane and its numbers
+        // there would sit behind the title (#104).
+        const backdrop = findChild(item, "rowBackdropWaveform");
+        verify(backdrop !== null, "the playing row's backdrop");
+        verify(backdrop.height >= Theme.beatRulerMinimumViewHeight, "tall enough for a lane: " + backdrop.height);
+        // Handed marks, as a track with a grid hands them (the fixture's
+        // may have none): still no lane.
+        backdrop.trackDurationMs = 60000;
+        backdrop.beatsSelected = true;
+        backdrop.beatData = [{timeMs: 1000, downbeat: true, strong: true, bar: 1}];
+        verify(backdrop.beatTicks.length > 0);
+        compare(backdrop.gridStyle, "lines");
+        compare(backdrop.rulerHeight, 0, "no lane");
         realPlayback.pause();
     }
 }

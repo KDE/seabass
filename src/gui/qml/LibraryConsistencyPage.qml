@@ -615,6 +615,8 @@ HealthCheckPage {
                                     }
                                 }
                                 WaveformView {
+                                    // A 40 px card: the lines behind the bars only.
+                                    gridStyle: "lines"
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 40
                                     // Best-effort, on demand -- same PlaybackController
