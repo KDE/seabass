@@ -8,6 +8,11 @@
 
 #include <sqlite3.h>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -308,6 +313,56 @@ int main()
         assert(f.archiveNames().count("Engine Library/Database2/m.db"));
         std::cout << "case 7 (conflicting process mid-run: completed files kept, DB skipped, next run finishes) OK\n";
     }
+
+#if defined(_WIN32)
+    // ---- A journal Windows keeps refusing, from the planning on ----
+    //
+    // A journal a commit deleted while somebody else still has it open
+    // answers "access denied" to every stat until the last handle goes.
+    // The plan could not fingerprint such a database, took "no
+    // fingerprint" for "not a database", and copied m.db as an ordinary
+    // file: read once, alone, stored as whole and the backup called
+    // complete. It is a database set, to be captured as one or said to
+    // be left out.
+    {
+        Fixture f("pending-journal");
+        const fs::path journal = f.stick / "Engine Library" / "Database2" / "m.db-journal";
+        writeFile(journal, "a journal on its way out", 1'700'000'004);
+        const HANDLE handle =
+            ::CreateFileW(journal.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        assert(handle != INVALID_HANDLE_VALUE);
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        const BOOL marked = ::SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof disposition);
+        assert(marked);
+        (void)marked;
+        std::error_code ec;
+        (void)fs::is_regular_file(journal, ec);
+        assert(ec == std::errc::permission_denied && "precondition: the journal is refused, not absent");
+
+        BackupStickOutcome held = BackupStick::execute(f.options);
+        ::CloseHandle(handle);
+        if (held.databaseCaptured || held.status != BackupOutcomeStatus::DbUnstable) {
+            std::cerr << "journal held: status " << static_cast<int>(held.status) << ", " << held.message << "\n";
+            for (const std::string &warning : held.warnings) {
+                std::cerr << "  " << warning << "\n";
+            }
+        }
+        assert(!held.databaseCaptured && "a database whose journal could not be seen is not captured");
+        assert(held.status == BackupOutcomeStatus::DbUnstable);
+        assert(!f.archiveNames().count("Engine Library/Database2/m.db") && "and not copied as an ordinary file");
+        assert(f.archiveNames().count("Contents/a.mp3") && "the rest of the stick is");
+        assert(f.verifies());
+
+        BackupStickOutcome after = BackupStick::execute(f.options);
+        assert(after.status == BackupOutcomeStatus::Complete && after.databaseCaptured);
+        assert(f.archiveNames().count("Engine Library/Database2/m.db"));
+        assert(!f.archiveNames().count("Engine Library/Database2/m.db-journal"));
+        assert(f.verifies());
+        std::cout << "case 7b (a journal Windows refuses at planning: the database is a set left out, then captured) OK\n";
+    }
+#endif
 
     // ---- Cancel, keep for later, resume ----
     {
