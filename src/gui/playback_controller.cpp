@@ -286,7 +286,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         // resolve against the working directory.
         const auto index = format == QLatin1String("rekordbox") && !libraryPath.isEmpty()
             ? anlzIndexFor(libraryPath) : nullptr;
-        const domain::TrackAnalysis analysis = libraryPath.isEmpty()
+        // Not const: its detail is moved out below.
+        domain::TrackAnalysis analysis = libraryPath.isEmpty()
             ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), MaximumKeptDetailColumns);
         m_waveform = toVariantList(analysis.waveform);
         // Kept for the popup only where it is overview-sized (Engine 2.x
@@ -364,6 +365,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_fallbackArtworkPath.clear();
     m_cues.clear();
     m_cueShiftMs = 0.0;
+    m_beatShiftMs = 0.0;
     m_hasTrack = true;
 
     // Never readAnalysis(): no catalog knows this file.
@@ -506,10 +508,16 @@ void PlaybackController::setDetailWaveform(const domain::DetailWaveform &detail,
 
 void PlaybackController::requestDetailWaveform()
 {
-    if (!m_hasTrack || m_detailSerial == m_trackSerial) {
+    if (!m_hasTrack) {
         return;
     }
+    // Wanted even when it is already here: a popup closed and opened
+    // again finds the detail delivered, and a write ending after that
+    // must still ask for it again (setLibraryBusy(false)).
     m_detailWanted = true;
+    if (m_detailSerial == m_trackSerial) {
+        return;
+    }
     const int serial = m_trackSerial;
     const bool engine = m_currentFormat == QLatin1String("engine");
     if ((!engine && m_currentFormat != QLatin1String("rekordbox")) || m_currentLibraryPath.isEmpty()
@@ -657,6 +665,10 @@ void PlaybackController::setLibraryBusy(bool busy)
             m_detailWaveform.clear();
             emit detailWaveformChanged();
         }
+        // The Engine detail load() kept was read before the write: read it
+        // again rather than hand that back.
+        m_loadedDetailKept = false;
+        m_loadedDetail = {};
         if (m_detailWanted) {
             requestDetailWaveform();
         }
@@ -854,6 +866,7 @@ void PlaybackController::stop()
     dropDetailWaveform();
     m_cues.clear();
     m_cueShiftMs = 0.0;
+    m_beatShiftMs = 0.0;
     emit trackChanged();
     markDurationKnown();
     emit cuesChanged();

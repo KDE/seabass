@@ -524,8 +524,11 @@ Pane {
             cueEditable: panel.addCueEnabled
             // A click opens the waveform zoomed in (#104), the track loaded
             // into the player: only for a track there is a file to play.
+            // And only with a length: without one the waveform takes no
+            // click at all (WaveformView's area is off), so a hand would
+            // promise what the click cannot do.
             readonly property bool opensZoom: !panel.addCueEnabled && panel.trackStreamingSource.length === 0
-                && panel.trackFilePath.length > 0
+                && panel.trackFilePath.length > 0 && waveformView.trackDurationMs > 0
             pointerShape: opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
             gridStyle: "ruler"
             onPositionClicked: (ms) => {

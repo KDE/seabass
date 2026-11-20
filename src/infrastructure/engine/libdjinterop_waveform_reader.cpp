@@ -153,10 +153,21 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
                         analysis.detail.columns.push_back(
                             {entry.low.value / 255.0, entry.mid.value / 255.0, entry.high.value / 255.0});
                     }
-                    // The spacing from trackData, only where it decodes.
-                    const std::optional<unsigned long long> samples =
-                        decodable.trackData ? track->sample_count() : std::nullopt;
-                    const std::optional<double> rate = decodable.trackData ? track->sample_rate() : std::nullopt;
+                    // The spacing from trackData, only where it decodes,
+                    // and in a try of its own: a trackData libdjinterop
+                    // throws on leaves the detail unspaced (msPerColumn
+                    // 0), never takes the overview away with it.
+                    std::optional<unsigned long long> samples;
+                    std::optional<double> rate;
+                    if (decodable.trackData) {
+                        try {
+                            samples = track->sample_count();
+                            rate = track->sample_rate();
+                        } catch (const std::exception &) {
+                            samples.reset();
+                            rate.reset();
+                        }
+                    }
                     if (samples && *samples > 0 && rate && *rate > 0.0) {
                         analysis.detail.msPerColumn = static_cast<double>(*samples) / *rate * 1000.0
                             / static_cast<double>(entries.size());
