@@ -66,6 +66,9 @@
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include <QQuickItem>
+#include <QQuickWindow>
+#include <QWheelEvent>
 #include <djinterop/engine/v3/beat_data_blob.hpp>
 #include <djinterop/engine/v3/overview_waveform_data_blob.hpp>
 #include <djinterop/engine/v3/track_data_blob.hpp>
@@ -664,12 +667,30 @@ public:
                 seabass::pathFromUtf8(pioneerRoot.toStdString()) / seabass::pathFromUtf8(relative);
             std::error_code ec;
             std::filesystem::remove(target, ec);
+            if (std::filesystem::exists(target)) {
+                return false;   // still linked to the fixture: never write through it
+            }
             std::ofstream out(target, std::ios::binary | std::ios::trunc);
             out << file;
             return static_cast<bool>(out);
         } catch (const std::exception &) {
             return false;
         }
+    }
+
+    // A wheel event as a touchpad sends it, with a phase and pixel
+    // deltas (QtTest's mouseWheel has neither), at `x`, `y` in `item`.
+    // phase: 0 none, 1 begin, 2 update, 3 end, 4 momentum.
+    Q_INVOKABLE void touchpadWheel(QQuickItem *item, double x, double y, double pixelDx, double pixelDy, int phase)
+    {
+        if (!item || !item->window()) {
+            return;
+        }
+        const QPointF scene = item->mapToScene(QPointF(x, y));
+        QWheelEvent event(scene, item->window()->mapToGlobal(scene), QPoint(int(pixelDx), int(pixelDy)),
+                          QPoint(int(pixelDx), int(pixelDy)), Qt::NoButton, Qt::NoModifier,
+                          static_cast<Qt::ScrollPhase>(phase), false);
+        QCoreApplication::sendEvent(item->window(), &event);
     }
 
     // Moves a file's modification time a minute on, which is what any
