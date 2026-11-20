@@ -134,10 +134,22 @@ TestCase {
         for (let p = item; p !== null && p !== undefined; p = p.parent) {
             ancestors.push(p);
         }
-        // Until none of them is waiting at once: a parent's polish may move
-        // a child and ask for its polish in turn.
-        tryVerify(() => ancestors.every((p) => !isPolishScheduled(p)), 5000,
-                  "the page is laid out before the click");
+        // Until none of them is waiting, and the item has stayed where it
+        // is over two looks (a sibling's polish can change its size and
+        // move the item without any ancestor waiting yet): a parent's
+        // polish may move a child and ask for its polish in turn.
+        let last = "";
+        tryVerify(() => {
+            if (!ancestors.every((p) => !isPolishScheduled(p))) {
+                last = "";
+                return false;
+            }
+            const at = item.mapToItem(null, 0, 0);
+            const here = at.x + "," + at.y + "," + item.width + "," + item.height;
+            const still = here === last;
+            last = here;
+            return still;
+        }, 5000, "the page is laid out before the click");
         mouseClick(item);
     }
 
@@ -1254,6 +1266,13 @@ TestCase {
         compare(p.comparisonText(false, grid(128, 100), {ready: false}),
                 "Not in the Engine library yet: there is nothing to compare with.");
         compare(p.comparisonText(true, grid(128, 100), {ready: false}), "Reading both analyses...");
+        compare(p.comparisonText(true, grid(128, 100), {ready: true, readFailed: true}),
+                "Engine's analysis of this track could not be read. Is the stick still there?");
+        compare(p.comparisonText(true, grid(128, 100), Object.assign(engine(128.5, 112), {shiftUnknown: true})),
+                "Engine's tempo is 0.50 BPM faster; where the beats fall is not compared: "
+                + "this MP3's lead-in could not be read.");
+        compare(p.comparisonText(true, grid(128, 100), Object.assign(engine(128, 112), {shiftUnknown: true})),
+                "Where the beats fall is not compared: this MP3's lead-in could not be read.");
     }
 
     // A picture of the rows with their waveforms, at the page's usual width.

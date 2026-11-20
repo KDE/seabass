@@ -636,8 +636,11 @@ Page {
                                 columnStartMs: rekordboxLane.ready ? trackRow.rekordboxGrid.shiftMs || 0 : 0
                                 beatData: rekordboxLane.ready && rekordboxLane.width > 0
                                     ? root.controller.comparisonBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
-                                missingText: trackRow.analysis.ready === true ? "rekordbox has no analysis of this track"
-                                                                              : "Reading..."
+                                // Drawn once both sides are in (the shift comes
+                                // with Engine's): until then it is reading,
+                                // not missing.
+                                missingText: trackRow.analysis.ready !== true || trackRow.engineSide.ready !== true
+                                    ? "Reading..." : "rekordbox has no analysis of this track"
                             }
                             Label {
                                 Layout.fillWidth: true
@@ -658,6 +661,7 @@ Page {
                                 beatData: engineLane.ready && engineLane.width > 0
                                     ? root.controller.engineBeatTicks(trackRow.engineAskedFor, engineLane.width) : []
                                 missingText: !engineLane.ready ? "Reading..."
+                                    : trackRow.engineSide.readFailed === true ? "Engine's analysis could not be read"
                                     : trackRow.engineSide.hasEngineTrack !== true ? "Not in the Engine library"
                                     : "Engine has no waveform for this track"
                             }
@@ -867,6 +871,9 @@ Page {
         if (!rekordbox || rekordbox.ready !== true || !engine || engine.ready !== true) {
             return "Reading both analyses...";
         }
+        if (engine.readFailed === true) {
+            return "Engine's analysis of this track could not be read. Is the stick still there?";
+        }
         if (engine.hasEngineTrack !== true) {
             return "Not in the Engine library yet: there is nothing to compare with.";
         }
@@ -884,6 +891,13 @@ Page {
         if (Math.abs(tempo) >= 0.005) {
             parts.push("Engine's tempo is " + Math.abs(tempo).toFixed(2) + " BPM "
                        + (tempo > 0 ? "faster" : "slower"));
+        }
+        if (engine.shiftUnknown === true) {
+            // Without the lead-in the two timelines cannot be lined up:
+            // the tempo still compares, the places of the beats do not.
+            parts.push("where the beats fall is not compared: this MP3's lead-in could not be read");
+            const said = parts.join("; ");
+            return said.charAt(0).toUpperCase() + said.slice(1) + ".";
         }
         const beatMs = 60000 / rekordbox.bpm;
         const apart = engine.firstDownbeatMs - rekordbox.firstDownbeatMs;
