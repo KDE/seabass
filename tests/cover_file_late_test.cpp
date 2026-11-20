@@ -18,6 +18,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include "infrastructure/backup/cover_file_late.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -90,22 +91,19 @@ int main()
         check(text == "player's", "the file that was there is as it was");
     }
 
-    // 3. Cannot be looked at: refused, the record as it was.
-    const fs::path locked = root / "stick" / "locked";
-    fs::create_directories(locked);
-    const std::string hidden = pathToUtf8(locked / "inside.rgb");
-    fs::permissions(locked, fs::perms::none, fs::perm_options::replace);
-    std::error_code ec;
-    (void)fs::exists(pathFromUtf8(hidden), ec);
-    if (!ec) {
-        // Root looks through any permission: nothing to test here.
-        std::cout << "cover_file_late_test: exists() does not fail here (running as root?), case 3 not run\n";
-        ++failures;
-    } else {
+    // 3. Cannot be looked at: refused, the record as it was. The existence
+    // check is made to fail rather than a folder locked: root, as KDE's CI
+    // runs, looks through any permission, and Windows has no such bits.
+    {
+        const std::string hidden = pathToUtf8(root / "stick" / "hidden.rgb");
+        const auto failingProbe = [](const fs::path &, std::error_code &ec) {
+            ec = std::make_error_code(std::errc::permission_denied);
+            return false;
+        };
         const auto before = recordOf(store, recordId);
         bool threw = false;
         try {
-            coverFileLate(store, recordId, hidden, "copy-beatgrids");
+            coverFileLate(store, recordId, hidden, "copy-beatgrids", failingProbe);
         } catch (const std::runtime_error &e) {
             threw = std::string(e.what()).find("cannot be told") != std::string::npos;
         }
@@ -114,7 +112,6 @@ int main()
         check(after.filePaths == before.filePaths && after.absentPaths == before.absentPaths,
               "and the record is as it was");
     }
-    fs::permissions(locked, fs::perms::owner_all, fs::perm_options::replace);
 
     // 4. Not there, no record: refused.
     bool threw = false;

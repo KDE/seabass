@@ -469,18 +469,26 @@ int main(int argc, char **argv)
         const auto copied = snapshot(stick, 13);
 
         // b. A copy of another analysis: the entry written, then the
-        // columns' transaction refused (the database read-only).
+        // columns' transaction refused: another connection holds the
+        // database's write lock, so the writer's BEGIN IMMEDIATE is busy
+        // (after its 5 s wait). A lock, not a read-only file: root, as
+        // KDE's CI runs, writes to one anyway.
         {
             auto writer = writerFor(stick, store);
+            sqlite3 *holder = nullptr;
             store.setBeforeChange([&](const std::string &) {
-                fs::permissions(pathFromUtf8(stick.mdb), fs::perms::owner_read | fs::perms::group_read,
-                                fs::perm_options::replace);
+                if (holder == nullptr) {
+                    sqlite3_open_v2(stick.mdb.c_str(), &holder, SQLITE_OPEN_READWRITE, nullptr);
+                    check(sqlite3_exec(holder, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK,
+                          "b. the write lock is taken" + tag);
+                }
             });
             check(throws([&] { writer.importAnalysis("13", second, keyed("k13")); }),
                   "b. the columns' transaction fails the copy" + tag);
             store.setBeforeChange({});
-            fs::permissions(pathFromUtf8(stick.mdb), fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read,
-                            fs::perm_options::replace);
+            check(holder != nullptr, "b. the entry was written before the columns" + tag);
+            sqlite3_exec(holder, "ROLLBACK;", nullptr, nullptr, nullptr);
+            sqlite3_close(holder);
         }
         check(snapshot(stick, 13) == copied, "b. the row is the first copy's still" + tag);
         {
