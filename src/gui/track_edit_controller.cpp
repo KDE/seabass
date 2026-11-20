@@ -16,54 +16,61 @@
 namespace seabass::gui
 {
 
-namespace
-{
-
-QVariantMap infoMap(const QString &filePath, const TrackLookup *lookup)
-{
-    QVariantMap map;
-    map.insert(QStringLiteral("filePath"), filePath);
-    map.insert(QStringLiteral("known"), lookup != nullptr);
-    map.insert(QStringLiteral("editable"), lookup != nullptr && lookup->error.empty());
-    map.insert(QStringLiteral("refusal"), lookup ? QString::fromStdString(lookup->error) : QString());
-    map.insert(QStringLiteral("limited"), lookup && lookup->limit.limited);
-    map.insert(QStringLiteral("units"), lookup ? static_cast<int>(lookup->limit.units) : 0);
-    map.insert(QStringLiteral("asciiOnly"), lookup && lookup->limit.asciiOnly);
-    map.insert(QStringLiteral("reason"), lookup ? QString::fromStdString(lookup->limit.reason) : QString());
-    return map;
-}
-
-}  // namespace
-
 TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
 {
-    m_commentLimit = infoMap({}, nullptr);
-    connect(&m_lookupWatcher, &QFutureWatcher<TrackLookup>::finished, this, [this]() {
+    m_commentLimit = trackInfo({});
+    connect(&m_indexWatcher, &QFutureWatcher<IndexRead>::finished, this, [this]() {
         QString error;
-        TrackLookup lookup = takeResult(m_lookupWatcher, &error);
+        IndexRead read = takeResult(m_indexWatcher, &error);
         if (!error.isEmpty()) {
-            lookup.error = "the stick's catalogs could not be read: " + error.toStdString();
+            read.error = "the stick's catalogs could not be read: " + error.toStdString();
         }
-        const QString file = QString::fromStdString(lookup.filePath);
-        if (!file.isEmpty()) {
-            m_lookups[file] = std::move(lookup);
-        }
-        if (m_nextLookup) {
-            const Ask next = *m_nextLookup;
-            m_nextLookup.reset();
-            lookUpTrack(next.rekordboxPath, next.enginePath, next.filePath);
+        if (m_hold) {
+            m_held = std::move(read);
             return;
         }
-        if (file == m_shownFile) {
-            m_commentLimit = trackInfo(file);
-            emit commentLimitChanged();
-        }
+        takeRead(std::move(read));
     });
 }
 
 TrackEditController::~TrackEditController()
 {
-    awaitQuietly(m_lookupWatcher);
+    awaitQuietly(m_indexWatcher);
+}
+
+void TrackEditController::setHoldIndexForTesting(bool hold)
+{
+    if (m_hold == hold) {
+        return;
+    }
+    m_hold = hold;
+    emit holdIndexForTestingChanged();
+    if (!m_hold && m_held) {
+        IndexRead read = std::move(*m_held);
+        m_held.reset();
+        takeRead(std::move(read));
+    }
+}
+
+void TrackEditController::takeRead(IndexRead read)
+{
+    if (read.generation != m_generation) {
+        // Read before the stick changed: read it again.
+        m_indexState = IndexState::None;
+        buildIndex();
+        return;
+    }
+    if (read.error.empty() && read.index.valid()) {
+        m_index = std::move(read.index);
+        m_indexState = IndexState::Ready;
+        m_indexError.clear();
+    } else {
+        // Not kept: the next track shown reads the stick again.
+        m_index = {};
+        m_indexState = IndexState::Failed;
+        m_indexError = QString::fromStdString(read.error.empty() ? "the stick's catalogs could not be read" : read.error);
+    }
+    publish();
 }
 
 QString TrackEditController::cleanComment(const QString &text)
@@ -73,32 +80,115 @@ QString TrackEditController::cleanComment(const QString &text)
     return cleaned.trimmed();
 }
 
-const TrackLookup *TrackEditController::lookupFor(const QString &filePath) const
-{
-    const auto it = m_lookups.find(filePath);
-    return it == m_lookups.end() ? nullptr : &it->second;
-}
-
 QVariantMap TrackEditController::trackInfo(const QString &filePath) const
 {
-    return infoMap(filePath, lookupFor(filePath));
+    QVariantMap map;
+    map.insert(QStringLiteral("filePath"), filePath);
+    const bool ready = m_indexState == IndexState::Ready && !filePath.isEmpty();
+    map.insert(QStringLiteral("known"), ready);
+    map.insert(QStringLiteral("reading"), m_indexState == IndexState::Building || m_indexState == IndexState::None);
+    map.insert(QStringLiteral("failed"), m_indexState == IndexState::Failed);
+    TrackRows rows;
+    CommentLimit limit;
+    std::string refusal;
+    if (ready) {
+        rows = m_index.rowsFor(filePath.toStdString());
+        limit = m_index.limitFor(rows);
+        refusal = rows.refusal();
+    } else if (m_indexState == IndexState::Failed) {
+        refusal = m_indexError.toStdString();
+    }
+    map.insert(QStringLiteral("editable"), ready && refusal.empty());
+    map.insert(QStringLiteral("refusal"), QString::fromStdString(refusal));
+    map.insert(QStringLiteral("limited"), limit.limited);
+    map.insert(QStringLiteral("units"), static_cast<int>(limit.units));
+    map.insert(QStringLiteral("asciiOnly"), limit.asciiOnly);
+    map.insert(QStringLiteral("reason"), QString::fromStdString(limit.reason));
+    return map;
+}
+
+void TrackEditController::publish()
+{
+    m_commentLimit = trackInfo(m_shownFile);
+    emit commentLimitChanged();
+}
+
+void TrackEditController::buildIndex()
+{
+    if (m_indexWatcher.isRunning() || m_rekordboxPath.isEmpty() && m_enginePath.isEmpty()) {
+        return;
+    }
+    m_indexState = IndexState::Building;
+    if (m_session && m_session->writing()) {
+        // Not while a save writes the catalogs: read them when it is done.
+        m_waitingForSave = true;
+        return;
+    }
+    m_waitingForSave = false;
+    const QString rekordbox = m_rekordboxPath;
+    const QString engine = m_enginePath;
+    const int generation = m_generation;
+    m_indexWatcher.setFuture(QtConcurrent::run([rekordbox, engine, generation]() {
+        IndexRead read;
+        read.generation = generation;
+        try {
+            read.index = buildStickPathIndex(rekordbox, engine);
+        } catch (const std::exception &e) {
+            read.error = std::string("the stick's catalogs could not be read: ") + e.what();
+        } catch (...) {
+            read.error = "the stick's catalogs could not be read";
+        }
+        return read;
+    }));
+}
+
+void TrackEditController::invalidate()
+{
+    ++m_generation;
+    m_index = {};
+    m_indexState = IndexState::None;
+    m_held.reset();
+    if (!m_shownFile.isEmpty()) {
+        buildIndex();
+    }
+    publish();
 }
 
 void TrackEditController::lookUpTrack(const QString &rekordboxPath, const QString &enginePath, const QString &filePath)
 {
+    setErrorMessage({});
     // The session is watched from the first track shown, so an edit left
     // open in a field is staged before any save of this stick.
     attachSession(rekordboxPath, enginePath, false);
     m_shownFile = filePath;
-    m_commentLimit = trackInfo(filePath);
-    emit commentLimitChanged();
-    if (m_lookupWatcher.isRunning()) {
-        m_nextLookup = Ask{rekordboxPath, enginePath, filePath};
+    if (rekordboxPath != m_rekordboxPath || enginePath != m_enginePath) {
+        m_rekordboxPath = rekordboxPath;
+        m_enginePath = enginePath;
+        invalidate();
         return;
     }
-    const std::string file = filePath.toStdString();
-    m_lookupWatcher.setFuture(QtConcurrent::run(
-        [rekordboxPath, enginePath, file]() { return seabass::gui::lookUpTrack(rekordboxPath, enginePath, file); }));
+    if (m_indexState == IndexState::None || m_indexState == IndexState::Failed) {
+        buildIndex();
+    }
+    publish();
+}
+
+void TrackEditController::noteDroppedComment(const QString &title, const QString &why)
+{
+    setErrorMessage(QStringLiteral("The comment typed for \"%1\" was not staged. %2").arg(title, why));
+}
+
+bool TrackEditController::answer(const QString &filePath, TrackRows &rows, CommentLimit &limit, QString &why) const
+{
+    if (m_indexState != IndexState::Ready) {
+        why = m_indexState == IndexState::Failed
+            ? QStringLiteral("Seabass could not read where the stick keeps this track: %1.").arg(m_indexError)
+            : QStringLiteral("Seabass is still reading the stick. Try again in a moment.");
+        return false;
+    }
+    rows = m_index.rowsFor(filePath.toStdString());
+    limit = m_index.limitFor(rows);
+    return true;
 }
 
 bool TrackEditController::attachSession(const QString &rekordboxPath, const QString &enginePath, bool reportMissing)
@@ -136,12 +226,14 @@ bool TrackEditController::attachSession(const QString &rekordboxPath, const QStr
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &) {
                 const bool wrote = m_applied > 0;
                 m_applied = 0;
+                // Any save of this stick, this page's or not, Undo Last
+                // Save too: the catalogs may have changed.
+                invalidate();
                 if (wrote) {
-                    // The catalogs changed: what was looked up is stale.
-                    m_lookups.clear();
                     emit tracksSaved();
                 }
             });
+            connect(m_session, &LibraryEditSession::stickPresenceChanged, this, [this]() { invalidate(); });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() { forgetAll(); });
             // A change taken back elsewhere (the session's own unstage).
             connect(m_session, &LibraryEditSession::pendingChanged, this, [this]() {
@@ -237,14 +329,15 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
         setErrorMessage(QStringLiteral("A rating is 1 to 5 stars."));
         return false;
     }
-    const TrackLookup *lookup = lookupFor(filePath);
-    if (lookup == nullptr) {
-        setErrorMessage(QStringLiteral("Seabass is still reading where the stick keeps this track. Try again in a "
-                                       "moment."));
+    TrackRows rows;
+    CommentLimit limit;
+    QString why;
+    if (!answer(filePath, rows, limit, why)) {
+        setErrorMessage(why);
         return false;
     }
-    if (!lookup->error.empty()) {
-        setErrorMessage(QStringLiteral("This rating cannot be changed: %1.").arg(QString::fromStdString(lookup->error)));
+    if (const std::string refusal = rows.refusal(); !refusal.empty()) {
+        setErrorMessage(QStringLiteral("This rating cannot be changed: %1.").arg(QString::fromStdString(refusal)));
         return false;
     }
     // No catalog tells "no stars" from 0, so they are one value here too.
@@ -257,8 +350,7 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
         return false;
     }
     return stage(rekordboxPath, enginePath, filePath, title,
-                 TrackFieldValue{TrackField::Rating, stars == -1 ? std::nullopt : std::optional<int>(stars), {}},
-                 lookup->rows);
+                 TrackFieldValue{TrackField::Rating, stars == -1 ? std::nullopt : std::optional<int>(stars), {}}, rows);
 }
 
 bool TrackEditController::setComment(const QString &rekordboxPath, const QString &enginePath,
@@ -271,27 +363,27 @@ bool TrackEditController::setComment(const QString &rekordboxPath, const QString
         unstage(TrackField::Comment, filePath);
         return true;
     }
-    // Never a read here: the lookup made when the track was shown is what
-    // the edit is checked against and staged with.
-    const TrackLookup *lookup = lookupFor(filePath);
-    if (lookup == nullptr) {
-        setErrorMessage(QStringLiteral("Seabass is still reading where the stick keeps this track. Try again in a "
-                                       "moment."));
+    // Never a read here: answered from the stick's index.
+    TrackRows rows;
+    CommentLimit limit;
+    QString why;
+    if (!answer(filePath, rows, limit, why)) {
+        setErrorMessage(why);
         return false;
     }
-    if (!lookup->error.empty()) {
-        setErrorMessage(QStringLiteral("This comment cannot be changed: %1.").arg(QString::fromStdString(lookup->error)));
+    if (const std::string refusal = rows.refusal(); !refusal.empty()) {
+        setErrorMessage(QStringLiteral("This comment cannot be changed: %1.").arg(QString::fromStdString(refusal)));
         return false;
     }
-    if (const std::string why = commentLimitRefusal(comment.toStdString(), lookup->limit); !why.empty()) {
-        setErrorMessage(QStringLiteral("This comment cannot be saved: %1.").arg(QString::fromStdString(why)));
+    if (const std::string refused = commentLimitRefusal(comment.toStdString(), limit); !refused.empty()) {
+        setErrorMessage(QStringLiteral("This comment cannot be saved: %1.").arg(QString::fromStdString(refused)));
         return false;
     }
     if (!attachSession(rekordboxPath, enginePath, true)) {
         return false;
     }
     return stage(rekordboxPath, enginePath, filePath, title,
-                 TrackFieldValue{TrackField::Comment, std::nullopt, comment.toStdString()}, lookup->rows);
+                 TrackFieldValue{TrackField::Comment, std::nullopt, comment.toStdString()}, rows);
 }
 
 bool TrackEditController::hasStagedRating(const QString &filePath) const
