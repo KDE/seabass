@@ -419,8 +419,9 @@ TestCase {
         env.controller.invalidate();
         env.panel.showFor(b);
         verify(!env.controller.hasStagedComment(a.filePath));
-        verify(env.controller.errorMessage.indexOf("\"" + a.title + "\"") >= 0,
-               "the line names the track the comment was typed for: " + env.controller.errorMessage);
+        compare(env.controller.errorMessage, "The comment typed for \"" + a.title + "\" was not staged. "
+                + "Seabass is still reading the stick.",
+                "one plain line naming the track, no advice to try again for text that is gone");
         verify(findChild(env.panel, "trackEditError").visible);
         env.controller.holdIndexForTesting = false;
         env.panel.showFor(c);
@@ -596,5 +597,69 @@ TestCase {
             findChild(env.panel, "ratingStar1").forceActiveFocus();
             verify(!env.controller.hasStagedComment(a.filePath));
         }
+    }
+
+    // A catalog that cannot be read: one plain sentence naming it, no
+    // path or error text; another track shown does not read the stick
+    // again, "Read Again" does.
+    function test_11_aFailedReadSaysWhichCatalogInASentence() {
+        const env = setUp();
+        const a = tracks(env).find(t => t.filePath);
+        const b = tracks(env).find(t => t.filePath && t.filePath !== a.filePath);
+        verify(stickFixture.writeText(env.stick + "/Engine Library/Database2/m.db", "not a database"),
+               "Engine's database replaced by something unreadable");
+        env.controller.invalidate();
+        env.panel.showFor(a);
+        tryVerify(() => env.panel.commentLimit.failed === true, 30000, "the read fails");
+        const line = findChild(env.panel, "trackEditRefusal");
+        verify(line.visible);
+        compare(line.text, "Seabass could not read the Engine library on this stick, so nothing can be changed here.");
+        const builds = env.controller.indexBuildsForTesting;
+        env.panel.showFor(b);
+        wait(200);
+        compare(env.controller.indexBuildsForTesting, builds, "another track shown does not read the stick again");
+        const again = findChild(env.panel, "readStickAgainButton");
+        verify(again.visible);
+        mouseClick(again);
+        compare(env.controller.indexBuildsForTesting, builds + 1, "Read Again does");
+        tryVerify(() => env.panel.commentLimit.failed === true, 30000);
+    }
+
+    // One read of the stick per save, though the page reads its list again
+    // after it; none for switching the catalog shown.
+    function test_12_oneReadPerSaveAndNoneForAFormatToggle() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 880, stickLabel: "TESTSTICK", rekordboxPath: env.stick + "/PIONEER",
+            enginePath: env.stick + "/Engine Library", playbackController: realPlayback,
+            appSettingsController: realAppSettings});
+        const list = findChild(page, "trackListView");
+        tryVerify(() => list.count > 1, 120000);
+        const panel = findChild(page, "trackDetailPanel");
+        page.playRow(a);
+        realPlayback.stop();
+        tryVerify(() => panel.commentLimit.known === true, 30000);
+        const controller = page.trackEditController;
+        mouseClick(findChild(panel, "ratingStar" + (a.rating === 2 ? 3 : 2)));
+        const before = controller.indexBuildsForTesting;
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(env.stick + "/PIONEER"));
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000);
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "");
+        tryVerify(() => panel.commentLimit.known === true, 30000, "read again after the save");
+        tryVerify(() => list.count > 1, 120000, "and the list read again");
+        wait(500);
+        compare(controller.indexBuildsForTesting, before + 1, "one read for the save");
+        page.format = "onelibrary";
+        tryVerify(() => list.count > 1, 120000);
+        page.format = "rekordbox";
+        tryVerify(() => list.count > 1, 120000);
+        wait(500);
+        compare(controller.indexBuildsForTesting, before + 1, "none for the catalog shown changing");
     }
 }

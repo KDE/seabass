@@ -4,6 +4,7 @@
 
 #include "track_edit_controller.hpp"
 
+#include <QDebug>
 #include <QRegularExpression>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -15,6 +16,20 @@
 
 namespace seabass::gui
 {
+
+namespace
+{
+std::function<void()> &buildGate()
+{
+    static std::function<void()> gate;
+    return gate;
+}
+}  // namespace
+
+void TrackEditController::setIndexBuildGateForTesting(std::function<void()> gate)
+{
+    buildGate() = std::move(gate);
+}
 
 TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
 {
@@ -33,10 +48,12 @@ TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
     });
 }
 
-TrackEditController::~TrackEditController()
-{
-    awaitQuietly(m_indexWatcher);
-}
+// Not waited for: a read of the stick still running finishes on its own
+// worker and is dropped, as the other controllers let theirs go (see
+// PlaylistEditController). The task holds nothing of this object, only
+// copies of the paths, and removes its own temporary copy when it ends;
+// the watcher going away with this object stops listening to it.
+TrackEditController::~TrackEditController() = default;
 
 void TrackEditController::setHoldIndexForTesting(bool hold)
 {
@@ -68,7 +85,8 @@ void TrackEditController::takeRead(IndexRead read)
         // Not kept: the next track shown reads the stick again.
         m_index = {};
         m_indexState = IndexState::Failed;
-        m_indexError = QString::fromStdString(read.error.empty() ? "the stick's catalogs could not be read" : read.error);
+        m_indexError = QString::fromStdString(read.error.empty() ? "Seabass could not read this stick, so nothing can be changed here."
+                                                                 : read.error);
     }
     publish();
 }
@@ -120,23 +138,33 @@ void TrackEditController::buildIndex()
     }
     m_indexState = IndexState::Building;
     if (m_session && m_session->writing()) {
-        // Not while a save writes the catalogs: read them when it is done.
-        m_waitingForSave = true;
+        // Not while a save writes the catalogs: saveFinished reads them.
         return;
     }
-    m_waitingForSave = false;
+    ++m_builds;
     const QString rekordbox = m_rekordboxPath;
     const QString engine = m_enginePath;
     const int generation = m_generation;
-    m_indexWatcher.setFuture(QtConcurrent::run([rekordbox, engine, generation]() {
+    const std::function<void()> gate = buildGate();
+    m_indexWatcher.setFuture(QtConcurrent::run([rekordbox, engine, generation, gate]() {
         IndexRead read;
         read.generation = generation;
+        if (gate) {
+            gate();
+        }
         try {
             read.index = buildStickPathIndex(rekordbox, engine);
+        } catch (const StickReadError &e) {
+            // The pane says which catalog in a sentence; the detail is for
+            // the log.
+            qWarning().noquote() << "track details: could not read the" << QString::fromStdString(e.catalog())
+                                 << "on" << rekordbox << engine << ":" << e.what();
+            read.error = "Seabass could not read the " + e.catalog() + " on this stick, so nothing can be changed here.";
         } catch (const std::exception &e) {
-            read.error = std::string("the stick's catalogs could not be read: ") + e.what();
+            qWarning().noquote() << "track details: could not read" << rekordbox << engine << ":" << e.what();
+            read.error = "Seabass could not read this stick, so nothing can be changed here.";
         } catch (...) {
-            read.error = "the stick's catalogs could not be read";
+            read.error = "Seabass could not read this stick, so nothing can be changed here.";
         }
         return read;
     }));
@@ -167,23 +195,24 @@ void TrackEditController::lookUpTrack(const QString &rekordboxPath, const QStrin
         invalidate();
         return;
     }
-    if (m_indexState == IndexState::None || m_indexState == IndexState::Failed) {
+    // A failed read is not retried for every track shown: only on the
+    // events that can change it (invalidate()).
+    if (m_indexState == IndexState::None) {
         buildIndex();
     }
     publish();
 }
 
-void TrackEditController::noteDroppedComment(const QString &title, const QString &why)
+void TrackEditController::noteDroppedComment(const QString &title)
 {
-    setErrorMessage(QStringLiteral("The comment typed for \"%1\" was not staged. %2").arg(title, why));
+    const QString said = QStringLiteral("The comment typed for \"%1\" was not staged.").arg(title);
+    setErrorMessage(m_lastRefusal.isEmpty() ? said : said + QLatin1Char(' ') + m_lastRefusal);
 }
 
 bool TrackEditController::answer(const QString &filePath, TrackRows &rows, CommentLimit &limit, QString &why) const
 {
     if (m_indexState != IndexState::Ready) {
-        why = m_indexState == IndexState::Failed
-            ? QStringLiteral("Seabass could not read where the stick keeps this track: %1.").arg(m_indexError)
-            : QStringLiteral("Seabass is still reading the stick. Try again in a moment.");
+        why = m_indexState == IndexState::Failed ? m_indexError : QStringLiteral("Seabass is still reading the stick.");
         return false;
     }
     rows = m_index.rowsFor(filePath.toStdString());
@@ -202,7 +231,13 @@ bool TrackEditController::attachSession(const QString &rekordboxPath, const QStr
         }
         m_session = session;
         if (m_session) {
-            connect(m_session, &LibraryEditSession::aboutToSave, this, &TrackEditController::saveStarting);
+            connect(m_session, &LibraryEditSession::aboutToSave, this, [this]() {
+                emit saveStarting();
+                // A read running now overlaps the save: it is not used.
+                if (m_indexWatcher.isRunning()) {
+                    ++m_generation;
+                }
+            });
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 const auto it = m_staged.find(changeId);
                 if (it == m_staged.end()) {
@@ -259,12 +294,14 @@ bool TrackEditController::attachSession(const QString &rekordboxPath, const QStr
     }
     if (!m_session) {
         if (reportMissing) {
-            setErrorMessage(QStringLiteral("This stick has no edit session open."));
+            m_lastRefusal = QStringLiteral("This stick has no edit session open.");
+            setErrorMessage(m_lastRefusal);
         }
         return false;
     }
     m_session->setLibraryPaths(rekordboxPath, enginePath);
     if (reportMissing && m_session->writing()) {
+        m_lastRefusal = QStringLiteral("A save was writing to the stick.");
         setErrorMessage(QStringLiteral("A save is writing to the stick. Try again when it has finished."));
         return false;
     }
@@ -325,6 +362,7 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
                                     const QString &title, int original, int stars)
 {
     setErrorMessage({});
+    m_lastRefusal.clear();
     if (stars != -1 && (stars < 1 || stars > 5)) {
         setErrorMessage(QStringLiteral("A rating is 1 to 5 stars."));
         return false;
@@ -333,7 +371,8 @@ bool TrackEditController::setRating(const QString &rekordboxPath, const QString 
     CommentLimit limit;
     QString why;
     if (!answer(filePath, rows, limit, why)) {
-        setErrorMessage(why);
+        m_lastRefusal = why;
+        setErrorMessage(m_indexState == IndexState::Failed ? why : why + QStringLiteral(" Try again in a moment."));
         return false;
     }
     if (const std::string refusal = rows.refusal(); !refusal.empty()) {
@@ -358,6 +397,7 @@ bool TrackEditController::setComment(const QString &rekordboxPath, const QString
                                      const QString &text)
 {
     setErrorMessage({});
+    m_lastRefusal.clear();
     const QString comment = cleanComment(text);
     if (comment == original) {
         unstage(TrackField::Comment, filePath);
@@ -368,15 +408,18 @@ bool TrackEditController::setComment(const QString &rekordboxPath, const QString
     CommentLimit limit;
     QString why;
     if (!answer(filePath, rows, limit, why)) {
-        setErrorMessage(why);
+        m_lastRefusal = why;
+        setErrorMessage(m_indexState == IndexState::Failed ? why : why + QStringLiteral(" Try again in a moment."));
         return false;
     }
     if (const std::string refusal = rows.refusal(); !refusal.empty()) {
-        setErrorMessage(QStringLiteral("This comment cannot be changed: %1.").arg(QString::fromStdString(refusal)));
+        m_lastRefusal = QStringLiteral("This comment cannot be changed: %1.").arg(QString::fromStdString(refusal));
+        setErrorMessage(m_lastRefusal);
         return false;
     }
     if (const std::string refused = commentLimitRefusal(comment.toStdString(), limit); !refused.empty()) {
-        setErrorMessage(QStringLiteral("This comment cannot be saved: %1.").arg(QString::fromStdString(refused)));
+        m_lastRefusal = QStringLiteral("This comment cannot be saved: %1.").arg(QString::fromStdString(refused));
+        setErrorMessage(m_lastRefusal);
         return false;
     }
     if (!attachSession(rekordboxPath, enginePath, true)) {
