@@ -407,6 +407,14 @@ QVariantMap PlaybackController::detailWaveform() const
     if (m_detailSerial == m_trackSerial) {
         return m_detailWaveform;
     }
+    // Not while a library is being written: an Engine library is opened
+    // through libdjinterop to read it, as next() would (see libraryBusy).
+    // Nothing is kept, so the ask after the write reads it.
+    if (m_libraryBusy) {
+        return {{QStringLiteral("columns"), QByteArray()},
+                {QStringLiteral("msPerColumn"), 0.0},
+                {QStringLiteral("startMs"), m_beatShiftMs}};
+    }
     domain::DetailWaveform detail;
     // Only a catalog's track has one: a recording (loadFile()) and a
     // stored backup row (no library path) have no analysis to read.

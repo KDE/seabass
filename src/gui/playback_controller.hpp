@@ -227,7 +227,8 @@ public:
     // is where the first column falls on the timeline the player plays
     // on, moved as the beats are. Read on the first ask after a load and
     // kept until the next; empty columns where there is nothing finer
-    // than nothing (a view falls back on `waveform`).
+    // (a view falls back on `waveform`), and, not kept, while
+    // libraryBusy: bind with it as well as trackSerial.
     Q_INVOKABLE QVariantMap detailWaveform() const;
 
     // The list the player walks: next(), previous(), and on to the next
