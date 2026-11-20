@@ -26,6 +26,7 @@
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/fs_remove.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
@@ -35,6 +36,54 @@
 
 namespace seabass::infrastructure::engine
 {
+
+namespace internal
+{
+
+// See engine_blob_check.hpp.
+constexpr std::uint32_t MaxEngineBlobBytes = 64u * 1024u * 1024u;
+
+bool engineBlobDecodable(const std::string &bytes)
+{
+    if (bytes.empty()) {
+        return true;
+    }
+    if (bytes.size() < 4) {
+        return false;
+    }
+    const auto byte = [&](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[i])); };
+    const std::uint32_t declared = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
+    if (declared == 0) {
+        return true;
+    }
+    if (declared > MaxEngineBlobBytes || bytes.size() < 5) {
+        return false;
+    }
+    z_stream strm{};
+    if (inflateInit(&strm) != Z_OK) {
+        return false;
+    }
+    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(bytes.data() + 4));
+    strm.avail_in = static_cast<uInt>(bytes.size() - 4);
+    std::array<unsigned char, 16384> out{};
+    std::uint64_t inflated = 0;
+    int ret = Z_OK;
+    while (ret == Z_OK) {
+        strm.next_out = out.data();
+        strm.avail_out = static_cast<uInt>(out.size());
+        ret = inflate(&strm, Z_NO_FLUSH);
+        inflated += out.size() - strm.avail_out;
+        if (inflated > MaxEngineBlobBytes) {
+            ret = Z_DATA_ERROR;
+        }
+    }
+    inflateEnd(&strm);
+    return ret == Z_STREAM_END;
+}
+
+}  // namespace internal
+
+using internal::engineBlobDecodable;
 
 namespace
 {
@@ -515,57 +564,6 @@ std::vector<std::byte> bytesOf(const std::string &text)
 std::string textOf(const std::vector<std::byte> &bytes)
 {
     return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
-}
-
-// Whether libdjinterop's zlib_uncompress can be handed `bytes` safely: a
-// four-byte big-endian length, then a zlib stream. As pinned, it takes the
-// address of byte 4 even when the blob has only four (out of range: an
-// abort under MSVC's checked iterators that no catch sees), gives inflate
-// four bytes more than the blob holds, and loops for ever on a stream that
-// does not end within them (inflate then returns Z_BUF_ERROR with no input
-// left, which it does not treat as the end). So a blob is passed on only
-// when it is empty or says length 0 (both decode to nothing without a
-// read past the header), or when its stream, inflated here first, ends
-// within the blob and inflates to no more than a sane bound (the length
-// is also reserved up front).
-constexpr std::uint32_t MaxEngineBlobBytes = 64u * 1024u * 1024u;
-
-bool engineBlobDecodable(const std::string &bytes)
-{
-    if (bytes.empty()) {
-        return true;
-    }
-    if (bytes.size() < 4) {
-        return false;
-    }
-    const auto byte = [&](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[i])); };
-    const std::uint32_t declared = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
-    if (declared == 0) {
-        return true;
-    }
-    if (declared > MaxEngineBlobBytes || bytes.size() < 5) {
-        return false;
-    }
-    z_stream strm{};
-    if (inflateInit(&strm) != Z_OK) {
-        return false;
-    }
-    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(bytes.data() + 4));
-    strm.avail_in = static_cast<uInt>(bytes.size() - 4);
-    std::array<unsigned char, 16384> out{};
-    std::uint64_t inflated = 0;
-    int ret = Z_OK;
-    while (ret == Z_OK) {
-        strm.next_out = out.data();
-        strm.avail_out = static_cast<uInt>(out.size());
-        ret = inflate(&strm, Z_NO_FLUSH);
-        inflated += out.size() - strm.avail_out;
-        if (inflated > MaxEngineBlobBytes) {
-            ret = Z_DATA_ERROR;
-        }
-    }
-    inflateEnd(&strm);
-    return ret == Z_STREAM_END;
 }
 
 // Stored bytes through libdjinterop's decoder, nothing when they would not

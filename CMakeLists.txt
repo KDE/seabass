@@ -4273,6 +4273,12 @@ add_executable(engine_analysis_keep_test tests/engine_analysis_keep_test.cpp)
 target_link_libraries(engine_analysis_keep_test PRIVATE seabass_core_testing DjInterop SQLite::SQLite3)
 target_include_directories(engine_analysis_keep_test PRIVATE src)
 add_test(NAME engine_analysis_keep_test COMMAND engine_analysis_keep_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+# Every compressed Engine blob of the real fixtures passes the cue writer's
+# decodability check, and libdjinterop decodes it too.
+add_executable(engine_blob_check_fixtures_test tests/engine_blob_check_fixtures_test.cpp)
+target_link_libraries(engine_blob_check_fixtures_test PRIVATE seabass_core_testing DjInterop SQLite::SQLite3)
+target_include_directories(engine_blob_check_fixtures_test PRIVATE src)
+add_test(NAME engine_blob_check_fixtures_test COMMAND engine_blob_check_fixtures_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
 
 add_test(NAME libdjinterop_engine_analysis_import_test COMMAND libdjinterop_engine_analysis_import_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures)
