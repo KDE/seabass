@@ -109,12 +109,18 @@ TestCase {
         const staged = s.pendingCount;
         console.log("  staged " + staged + " of " + ctrl.planCount);
 
-        // On the first track written, not before: by then the save has
-        // made its backups and noted them, and has started changing the
-        // catalogs -- the state a pull leaves behind.
+        // Once the save has made its backups and noted them on the stick,
+        // not before: from then on it changes the catalogs -- the state a
+        // pull leaves behind. Not on the bar's first unit alone: since one
+        // bar covers the save (#58, 485dbb1e) that unit is the first file
+        // of the undo copy, ticked before the copy's record exists and so
+        // before the note, and a kill there left a stick with neither a
+        // note nor a change (rig F6, Rounds 14 and 15: the kill at the
+        // marker never once found the note). The note is what the script
+        // looks for, so the marker waits for it.
         let marked = false;
         const markWhenWriting = function() {
-            if (marked || s.writeCurrent < 1) return;
+            if (marked || s.writeCurrent < 1 || !stickFixture.fileExists(saveNote)) return;
             marked = stickFixture.writeText(liveKillMarker, "rekordbox=" + ctrl.rekordboxTrackCount + "\nengine="
                                             + ctrl.engineTrackCount + "\nstaged=" + staged + "\n");
             console.log("  marker written at " + s.writeCurrent + " of " + s.writeTotal + ": " + marked);
