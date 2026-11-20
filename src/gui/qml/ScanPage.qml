@@ -1074,6 +1074,10 @@ Page {
     }
 
     function rescan() {
+        // The stick is read again: so is where it keeps each track.
+        if ("invalidate" in root.trackEditController) {
+            root.trackEditController.invalidate();
+        }
         selectedPlaylistIndex = 0;
         root.shownPlaylist = "";
         // Until the scan is done the list still holds the OLD library's

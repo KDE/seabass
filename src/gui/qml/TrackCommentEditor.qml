@@ -90,10 +90,15 @@ Item {
     }
     // Before another track is shown: what was typed goes to the track it
     // was typed for when it can, and is dropped when it cannot.
+    // Returns "" when nothing was lost, else the title of the track whose
+    // typed comment could not be staged.
     function endEdit() {
+        const title = root.editTarget !== null ? root.editTarget.title : "";
         if (!root.finish(true)) {
             root.finish(false);
+            return title;
         }
+        return "";
     }
     // Before a save: staged if it can be; left open, with its text, if not.
     function commitOpenEdit() {
@@ -112,7 +117,9 @@ Item {
             objectName: "commentText"
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: root.text.length > 0 ? root.text : (root.noRoom ? "No comment" : "Add a comment")
+            text: root.text.length > 0 ? root.text
+                : root.limit !== null && root.limit.reading === true ? "Reading the stick"
+                : root.noRoom ? "No comment" : "Add a comment"
             color: root.text.length > 0 ? (root.pending ? Theme.textMuted : Theme.text) : Theme.textMuted
             font.italic: root.pending || root.text.length === 0
             TapHandler {

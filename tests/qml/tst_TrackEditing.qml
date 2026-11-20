@@ -376,14 +376,80 @@ TestCase {
         verify(env.controller.hasStagedComment(a.filePath));
         verify(!env.controller.hasStagedComment(b.filePath), "B is untouched");
         verify(!findChild(env.panel, "trackCommentEditor").editing, "the edit ended with A");
-        // B's lookup has not answered yet: nothing can be typed or rated.
-        const editor = findChild(env.panel, "trackCommentEditor");
-        if (env.panel.commentLimit.known !== true) {
-            verify(!editor.canEdit, "no edit while B's limit is unknown");
-            verify(!findChild(env.panel, "ratingStar3").enabled, "nor a rating");
-        }
         tryVerify(() => env.panel.commentLimit.known === true, 30000);
     }
+
+    // While the stick is being read nothing can be rated or typed, and the
+    // pane says so quietly; when the read answers, both can. The read is
+    // held back by the controller's test seam, so the state is one this
+    // test makes rather than one it hopes to catch.
+    function test_6b_nothingIsEditableWhileTheStickIsRead() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        env.controller.holdIndexForTesting = true;
+        env.controller.invalidate();
+        compare(env.panel.commentLimit.known, false);
+        compare(env.panel.commentLimit.reading, true);
+        const editor = findChild(env.panel, "trackCommentEditor");
+        verify(!editor.canEdit, "no comment edit while the stick is read");
+        verify(!findChild(env.panel, "ratingStar3").enabled, "nor a rating");
+        compare(findChild(env.panel, "trackRatingEditor").opacity, 0.5, "the stars are dimmed");
+        mouseClick(findChild(env.panel, "ratingStar3"));
+        verify(!env.controller.hasStagedRating(a.filePath), "a click stages nothing");
+        env.controller.holdIndexForTesting = false;
+        tryVerify(() => env.panel.commentLimit.known === true, 30000, "the read answers");
+        verify(editor.canEdit);
+        verify(findChild(env.panel, "ratingStar3").enabled);
+    }
+
+    // A comment typed for A that cannot be staged when the pane turns to
+    // B (here: the stick is being read again, after another save) is not
+    // lost without a word: the pane moves on and one line names A. The
+    // line goes with the next track shown.
+    function test_6c_aCommentThatCannotBeStagedOnASwitchIsNamed() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const tracksNow = tracks(env);
+        const b = tracksNow.find(t => t.filePath && t.filePath !== a.filePath);
+        const c = tracksNow.find(t => t.filePath && t.filePath !== a.filePath && t.filePath !== b.filePath);
+        const field = beginEditing(env);
+        clearField(field);
+        keyClick(Qt.Key_Q);
+        env.controller.holdIndexForTesting = true;
+        env.controller.invalidate();
+        env.panel.showFor(b);
+        verify(!env.controller.hasStagedComment(a.filePath));
+        verify(env.controller.errorMessage.indexOf("\"" + a.title + "\"") >= 0,
+               "the line names the track the comment was typed for: " + env.controller.errorMessage);
+        verify(findChild(env.panel, "trackEditError").visible);
+        env.controller.holdIndexForTesting = false;
+        env.panel.showFor(c);
+        compare(env.controller.errorMessage, "", "and goes with the next track shown");
+    }
+
+    // Rate, Save, rate again, without showing the track again: the stick is
+    // read again after the save, and the track can be edited once it is.
+    function test_6d_theTrackShownCanBeEditedAgainAfterASave() {
+        const env = setUp();
+        const a = roomiest(env, true);
+        const first = a.rating === 3 ? 2 : 3;
+        mouseClick(findChild(env.panel, "ratingStar" + first));
+        verify(env.controller.hasStagedRating(a.filePath));
+        let summary = null;
+        const done = (result) => { summary = result; };
+        env.session.saveFinished.connect(done);
+        env.session.save();
+        tryVerify(() => summary !== null, 120000);
+        env.session.saveFinished.disconnect(done);
+        compare(summary.error, "");
+        compare(env.panel.shownRating, first);
+        tryVerify(() => env.panel.commentLimit.known === true, 30000, "the stick is read again");
+        mouseClick(findChild(env.panel, "ratingStar4"));
+        compare(env.controller.errorMessage, "");
+        verify(env.controller.hasStagedRating(a.filePath), "the second rating stages");
+        compare(env.controller.stagedRating(a.filePath), 4);
+    }
+
 
     // The same on the page: a row clicked (TrackDragArea, which takes no
     // focus) and a track played while A's comment is open.

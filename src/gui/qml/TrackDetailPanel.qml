@@ -60,9 +60,13 @@ Pane {
     readonly property var commentLimit: panel.trackEditController !== null
         && panel.trackEditController.commentLimit.filePath === panel.trackFilePath
         ? panel.trackEditController.commentLimit
-        : ({known: false, editable: false, refusal: "", limited: false, units: 0, asciiOnly: false, reason: ""})
+        : ({known: false, reading: true, failed: false, editable: false, refusal: "", limited: false, units: 0,
+            asciiOnly: false, reason: ""})
     // The track can be edited: its rows in every catalog are known and
     // none of them is ambiguous.
+    // The stick's index is being read: nothing can be edited yet.
+    readonly property bool readingStick: panel.canEditTrack && panel.commentLimit.known !== true
+        && panel.commentLimit.failed !== true
     readonly property bool trackEditable: panel.canEditTrack && panel.commentLimit.known === true
         && panel.commentLimit.editable === true
 
@@ -123,7 +127,8 @@ Pane {
     function showFor(delegate) {
         // An edit open in the comment field belongs to the track shown
         // until now: staged for it, or dropped, before this one is shown.
-        commentEditor.endEdit();
+        const droppedFor = commentEditor.endEdit();
+        const droppedWhy = panel.trackEditController !== null ? panel.trackEditController.errorMessage : "";
         panel.trackSourceId = delegate.sourceId;
         panel.trackTitle = delegate.title;
         panel.trackArtist = delegate.artist;
@@ -152,6 +157,13 @@ Pane {
         panel.trackPlayCount = value("playCount", 0);
         if (panel.trackEditController !== null && panel.trackFilePath.length > 0) {
             panel.trackEditController.lookUpTrack(panel.rekordboxPath, panel.enginePath, panel.trackFilePath);
+        } else if (panel.trackEditController !== null) {
+            panel.trackEditController.clearError();
+        }
+        // Said under the track shown now, naming the one it was typed for:
+        // the pane moved on, and the text did not go with it.
+        if (panel.trackEditController !== null && droppedFor.length > 0) {
+            panel.trackEditController.noteDroppedComment(droppedFor, droppedWhy);
         }
         panel.pendingPositionMs = -1;
         panel.pendingLoopEndMs = -1;
@@ -441,10 +453,18 @@ Pane {
                         spacing: Theme.tightSpacing
                         Layout.alignment: Qt.AlignVCenter
                         TrackRatingEditor {
+                            id: ratingEditor
                             objectName: "trackRatingEditor"
                             value: panel.shownRating > 0 ? panel.shownRating : -1
                             editable: panel.trackEditable
                             pending: panel.ratingPending
+                            // Dimmed while the stick is read, and saying so:
+                            // a quiet state, not a spinner.
+                            opacity: panel.readingStick ? 0.5 : 1
+                            HoverHandler { id: ratingHover }
+                            ToolTip.visible: ratingHover.hovered && panel.readingStick
+                            ToolTip.delay: 400
+                            ToolTip.text: "Reading the stick"
                             onRatingPicked: (stars) => panel.trackEditController.setRating(panel.rekordboxPath,
                                 panel.enginePath, panel.trackFilePath, panel.trackTitle, panel.trackRating, stars)
                         }
@@ -602,8 +622,11 @@ Pane {
             // Why this track's rating and comment cannot be changed here.
             Label {
                 objectName: "trackEditRefusal"
-                visible: panel.canEditTrack && panel.commentLimit.known === true && panel.commentLimit.editable !== true
-                text: "Not editable here: " + panel.commentLimit.refusal + "."
+                visible: panel.canEditTrack && panel.commentLimit.refusal.length > 0
+                    && (panel.commentLimit.known === true || panel.commentLimit.failed === true)
+                text: panel.commentLimit.failed === true
+                    ? "The stick could not be read, so nothing can be changed here: " + panel.commentLimit.refusal + "."
+                    : "Not editable here: " + panel.commentLimit.refusal + "."
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 wrapMode: Text.WordWrap

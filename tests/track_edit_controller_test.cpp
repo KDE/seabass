@@ -16,7 +16,6 @@
 
 #include <QCoreApplication>
 #include <QSignalSpy>
-#include <QThread>
 
 #include <cassert>
 #include <filesystem>
@@ -56,11 +55,14 @@ private:
     QString m_id;
 };
 
-bool waitFor(const std::function<bool()> &done)
+// Waits for `done` by the signal that can make it true, never by sleeping:
+// each wait returns as soon as `signal` fires, and gives up after a minute.
+template <typename Object, typename Signal>
+bool waitFor(Object *object, Signal signal, const std::function<bool()> &done)
 {
-    for (int i = 0; i < 600 && !done(); ++i) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(20);
+    QSignalSpy spy(object, signal);
+    for (int i = 0; i < 12 && !done(); ++i) {
+        spy.wait(5000);
     }
     return done();
 }
@@ -109,7 +111,8 @@ int main(int argc, char **argv)
     assert(!controller.setComment(pioneer, engine, file, QStringLiteral("T"), QString(), QStringLiteral("x")));
     assert(session->pendingCount() == 0);
     controller.lookUpTrack(pioneer, engine, file);
-    assert(waitFor([&] { return controller.commentLimit().value(QStringLiteral("known")).toBool(); }));
+    assert(waitFor(&controller, &TrackEditController::commentLimitChanged,
+                   [&] { return controller.commentLimit().value(QStringLiteral("known")).toBool(); }));
     assert(controller.commentLimit().value(QStringLiteral("editable")).toBool());
     assert(controller.setRating(pioneer, engine, file, QStringLiteral("T"), original, stars));
     assert(session->pendingCount() == 1 && controller.hasStagedRating(file));
@@ -124,13 +127,32 @@ int main(int argc, char **argv)
     QSignalSpy finished(session, &LibraryEditSession::saveFinished);
     session->save();
     assert(starting.count() == 1 && "the page hears of the save before it starts");
-    assert(waitFor([&] { return !finished.isEmpty(); }));
+    assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
     assert(session->lastSkippedIds().contains(id));
     assert(saved.isEmpty() && "a skipped change is not reported as saved");
     assert(tracksSaved.isEmpty());
     assert(!controller.hasStagedRating(file) && "and it is off the list");
     std::cout << "case 2 (a save tells the page first) OK\n";
     std::cout << "case 3 (a skipped change is not shown as saved) OK\n";
+
+    // 4. After a save the track still shown can be edited again: the
+    //    index is read again (known goes false, then true) and the next
+    //    star stages, without the track being shown again.
+    assert(waitFor(&controller, &TrackEditController::commentLimitChanged,
+                   [&] { return controller.commentLimit().value(QStringLiteral("known")).toBool(); }));
+    assert(controller.setRating(pioneer, engine, file, QStringLiteral("T"), original, 3 == original ? 2 : 3));
+    QSignalSpy finishedAgain(session, &LibraryEditSession::saveFinished);
+    session->save();
+    assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finishedAgain.isEmpty(); }));
+    assert(finishedAgain.takeFirst().at(0).toMap().value(QStringLiteral("error")).toString().isEmpty());
+    assert(!controller.commentLimit().value(QStringLiteral("known")).toBool()
+           && "the index is read again after the save");
+    assert(waitFor(&controller, &TrackEditController::commentLimitChanged,
+                   [&] { return controller.commentLimit().value(QStringLiteral("known")).toBool(); }));
+    assert(controller.setRating(pioneer, engine, file, QStringLiteral("T"), 3 == original ? 2 : 3, 4)
+           && "a second edit of the same track stages");
+    assert(controller.hasStagedRating(file));
+    std::cout << "case 4 (after a save the track shown can be edited again) OK\n";
     registry->discardAll();
     return 0;
 }
