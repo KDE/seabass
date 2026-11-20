@@ -25,6 +25,11 @@ double BeatGridTicks::minimumDownbeatSpacing() const
     return MinimumDownbeatSpacingPx;
 }
 
+double BeatGridTicks::minimumBarNumberSpacing() const
+{
+    return MinimumBarNumberSpacingPx;
+}
+
 QVariantMap BeatGridTicks::layout(const QVariant &beats, double spanMs, double widthPx) const
 {
     QVariant value = beats;
@@ -47,11 +52,16 @@ QVariantMap BeatGridTicks::layout(const QVariant &beats, double spanMs, double w
     QVariantList ticks;
     ticks.reserve(static_cast<qsizetype>(laidOut.ticks.size()));
     for (const BeatTick &tick : laidOut.ticks) {
-        ticks.append(QVariantMap{{QStringLiteral("x"), tick.x}, {QStringLiteral("downbeat"), tick.downbeat}});
+        ticks.append(QVariantMap{{QStringLiteral("x"), tick.x},
+                                 {QStringLiteral("timeMs"), tick.timeMs},
+                                 {QStringLiteral("downbeat"), tick.downbeat},
+                                 {QStringLiteral("strong"), tick.strong},
+                                 {QStringLiteral("bar"), tick.bar}});
     }
     return {{QStringLiteral("ticks"), ticks},
             {QStringLiteral("everyBeat"), laidOut.everyBeat},
-            {QStringLiteral("barsPerTick"), laidOut.barsPerTick}};
+            {QStringLiteral("barsPerTick"), laidOut.barsPerTick},
+            {QStringLiteral("strongBars"), laidOut.strongBars}};
 }
 
 }  // namespace seabass::gui

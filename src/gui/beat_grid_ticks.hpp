@@ -28,11 +28,13 @@ public:
 
     Q_INVOKABLE double minimumBeatSpacing() const;
     Q_INVOKABLE double minimumDownbeatSpacing() const;
+    Q_INVOKABLE double minimumBarNumberSpacing() const;
 
     // `beats`: [{timeMs, downbeat}] in time order, as WaveformView.beatData
     // takes them; anything else (undefined, an entry without a time) gives
-    // or contributes no tick. Returns {ticks: [{x, downbeat}], everyBeat,
-    // barsPerTick}, see BeatTickLayout.
+    // or contributes no tick. Returns {ticks: [{x, timeMs, downbeat,
+    // strong, bar}], everyBeat, barsPerTick, strongBars}, see
+    // BeatTickLayout.
     Q_INVOKABLE QVariantMap layout(const QVariant &beats, double spanMs, double widthPx) const;
 };
 
