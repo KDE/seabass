@@ -38,6 +38,29 @@ Pane {
     // For the zoomed waveform popup's kept zoom and time (#104). Optional.
     property var appSettingsController: null
 
+    // Rating and comment editing (#105): staged into the stick's edit
+    // session by this controller, written by the page's Save. Optional:
+    // without it both are shown read-only.
+    property var trackEditController: null
+    property string rekordboxPath: ""
+    property string enginePath: ""
+    readonly property bool canEditTrack: panel.trackEditController !== null && panel.trackFilePath.length > 0
+        && panel.trackStreamingSource.length === 0
+    // What the pane shows: the staged value when there is one.
+    readonly property bool ratingPending: panel.trackEditController !== null
+        && panel.trackEditController.pendingRevision >= 0
+        && panel.trackEditController.hasStagedRating(panel.trackFilePath)
+    readonly property int shownRating: panel.ratingPending
+        ? panel.trackEditController.stagedRating(panel.trackFilePath) : panel.trackRating
+    readonly property bool commentPending: panel.trackEditController !== null
+        && panel.trackEditController.pendingRevision >= 0
+        && panel.trackEditController.hasStagedComment(panel.trackFilePath)
+    readonly property string shownComment: panel.commentPending
+        ? panel.trackEditController.stagedComment(panel.trackFilePath) : panel.trackComment
+    readonly property var commentLimit: panel.trackEditController !== null
+        && panel.trackEditController.commentLimit.filePath === panel.trackFilePath
+        ? panel.trackEditController.commentLimit : ({known: false, limited: false, units: 0, asciiOnly: false, reason: ""})
+
     signal closeRequested()
     // Supplied by ScanPage so the artist list can be built. Optional:
     // without it the section simply does not appear, which is what the
@@ -119,6 +142,9 @@ Pane {
         panel.trackComment = value("comment", "");
         panel.trackAlbum = value("album", "");
         panel.trackPlayCount = value("playCount", 0);
+        if (panel.trackEditController !== null && panel.trackFilePath.length > 0) {
+            panel.trackEditController.lookUpCommentLimit(panel.rekordboxPath, panel.trackFilePath);
+        }
         panel.pendingPositionMs = -1;
         panel.pendingLoopEndMs = -1;
         waveformView.waveformData = playbackController.waveformFor(
@@ -191,6 +217,24 @@ Pane {
             panel.pendingPositionMs = -1;
             panel.pendingLoopEndMs = -1;
             cueCommentField.text = "";
+        }
+    }
+
+    // A saved rating or comment is the track's own value from now on:
+    // the pane keeps showing it while the page reads the stick again.
+    Connections {
+        target: panel.trackEditController !== null && ("objectName" in panel.trackEditController)
+            ? panel.trackEditController : null
+        ignoreUnknownSignals: true
+        function onFieldSaved(filePath, field, stars, text) {
+            if (filePath !== panel.trackFilePath) {
+                return;
+            }
+            if (field === "rating") {
+                panel.trackRating = stars;
+            } else {
+                panel.trackComment = text;
+            }
         }
     }
 
@@ -371,18 +415,32 @@ Pane {
                         }
                     }
 
-                    // Unrated and zero stars are different answers, and both
-                    // formats store them the same way at the file level, so
-                    // the distinction only survives if it is shown.
-                    FactLabel { visible: panel.trackRating >= 0; text: "Rating" }
-                    Label {
-                        visible: panel.trackRating >= 0
-                        font.pointSize: Theme.fontSmall
+                    // Unrated and zero stars are one value in every catalog
+                    // (each stores 0 for both), so the row shows stars or
+                    // none. Editable where the track has a file on the
+                    // stick: a click stages it (#105).
+                    FactLabel {
+                        visible: panel.canEditTrack || panel.shownRating > 0
+                        text: "Rating"
+                    }
+                    RowLayout {
+                        visible: panel.canEditTrack || panel.shownRating > 0
+                        spacing: Theme.tightSpacing
                         Layout.alignment: Qt.AlignVCenter
-                        text: panel.trackRating > 0 ? "\u2605".repeat(panel.trackRating)
-                                                     + "\u2606".repeat(5 - panel.trackRating)
-                                                    : "not rated above zero"
-                        color: panel.trackRating > 0 ? Theme.warnIcon : Theme.textMuted
+                        TrackRatingEditor {
+                            objectName: "trackRatingEditor"
+                            value: panel.shownRating > 0 ? panel.shownRating : -1
+                            editable: panel.canEditTrack
+                            pending: panel.ratingPending
+                            onRatingPicked: (stars) => panel.trackEditController.setRating(panel.rekordboxPath,
+                                panel.enginePath, panel.trackFilePath, panel.trackTitle, panel.trackRating, stars)
+                        }
+                        PendingMark {
+                            objectName: "ratingPendingMark"
+                            visible: panel.ratingPending
+                            what: "rating"
+                            onUndo: panel.trackEditController.unstageRating(panel.trackFilePath)
+                        }
                     }
 
                     FactLabel { visible: panel.trackPlayCount > 0; text: "Plays" }
@@ -480,19 +538,61 @@ Pane {
         }
 
         // The DJ's own words about the track, so it wraps rather than
-        // being squeezed into the grid above.
-        ColumnLayout {
-            visible: panel.trackComment.length > 0
-            Layout.fillWidth: true
-            spacing: 2
-            Label { text: "Comment"; color: Theme.textMuted }
+        // being squeezed into the grid above. Editable in place (#105).
+        component PendingMark: RowLayout {
+            id: mark
+            property string what: ""
+            signal undo()
+            spacing: 0
             Label {
-                text: panel.trackComment
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                text: "Unsaved"
+                color: Theme.warnText
+                font.pointSize: Theme.fontSmall
+            }
+            IconToolButton {
+                objectName: mark.objectName + "Undo"
+                text: "Undo the " + mark.what + " change"
+                Accessible.name: text
+                iconName: "edit-undo"
+                iconSize: Theme.scaled(16)
+                iconColor: Theme.textMuted
+                onClicked: mark.undo()
             }
         }
-
+        ColumnLayout {
+            visible: panel.canEditTrack || panel.shownComment.length > 0
+            Layout.fillWidth: true
+            spacing: 2
+            RowLayout {
+                spacing: Theme.tightSpacing
+                Label { text: "Comment"; color: Theme.textMuted }
+                PendingMark {
+                    objectName: "commentPendingMark"
+                    visible: panel.commentPending
+                    what: "comment"
+                    onUndo: panel.trackEditController.unstageComment(panel.trackFilePath)
+                }
+            }
+            TrackCommentEditor {
+                id: commentEditor
+                objectName: "trackCommentEditor"
+                Layout.fillWidth: true
+                text: panel.shownComment
+                pending: panel.commentPending
+                editable: panel.canEditTrack
+                limit: panel.commentLimit
+                onAccepted: (text) => panel.trackEditController.setComment(panel.rekordboxPath, panel.enginePath,
+                    panel.trackFilePath, panel.trackTitle, panel.trackComment, text)
+            }
+            Label {
+                objectName: "trackEditError"
+                visible: panel.trackEditController !== null && panel.trackEditController.errorMessage.length > 0
+                text: panel.trackEditController !== null ? panel.trackEditController.errorMessage : ""
+                color: Theme.danger
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
 
         Label {
             visible: panel.trackStreamingSource.length > 0

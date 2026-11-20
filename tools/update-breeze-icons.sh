@@ -78,6 +78,10 @@ actions/22/draw-eraser.svg
 actions/22/archive-insert.svg
 actions/22/view-refresh.svg
 actions/22/deep-history.svg
+# Browse track details: rating stars and the comment's edit button (#105)
+emblems/22/rating.svg
+emblems/22/rating-unrated.svg
+actions/22/document-edit.svg
 actions/22/media-record.svg
 # Buttons and marks on the section pages
 actions/22/go-home.svg

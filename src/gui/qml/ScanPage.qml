@@ -79,6 +79,18 @@ Page {
         id: addCueController
     }
 
+    // A track's rating and comment, edited in the track details (#105),
+    // staged into the same session and written by the same Save into
+    // every catalog on the stick that lists the file.
+    property var trackEditController: TrackEditController {}
+    Connections {
+        target: ("objectName" in root.trackEditController) ? root.trackEditController : null
+        ignoreUnknownSignals: true
+        function onTracksSaved() {
+            root.rescan();
+        }
+    }
+
     // Playlist editing (out of the experimental setting since 2026-11-19):
     // creating and deleting a playlist, adding a track to one and taking it
     // out, staged into the same session as an added cue, written by the
@@ -2239,6 +2251,9 @@ Page {
             SplitView.minimumWidth: 360
             addCueController: addCueController
             playbackController: root.playbackController
+            trackEditController: root.trackEditController
+            rekordboxPath: root.rekordboxPath
+            enginePath: root.enginePath
             format: root.format
             libraryPath: root.currentPath()
             scanController: scanController
