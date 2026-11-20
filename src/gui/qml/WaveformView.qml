@@ -297,11 +297,26 @@ Canvas {
         return "";
     }
 
-    // A mark's pixel column: whole pixels, and a mark at the very end of
-    // the track (x = width) on the last pixel rather than off the edge.
+    // Every grid feature of a pixel or two sits on whole DEVICE pixels:
+    // on a desktop scaled by 1.25 or 1.5 a line one logical pixel wide at
+    // a logical x would straddle two device pixels and blur, or vanish at
+    // the grid's low opacities. at() puts a coordinate on the device
+    // grid; thick() is a width of n logical pixels as whole device pixels,
+    // never under one.
+    readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    function at(v) {
+        return Math.round(v * root.dpr) / root.dpr;
+    }
+    function thick(n) {
+        return Math.max(1, Math.floor(n * root.dpr + 0.25)) / root.dpr;
+    }
+
+    // A mark's column on the device grid, and a mark at the very end of
+    // the track (x = width) on the last device pixel rather than off the
+    // edge.
     function markX(tick, w) {
-        const x = Math.round(tick.x);
-        return x >= w && tick.x < w + 0.5 && tick.timeMs >= root.trackDurationMs - 1e-6 ? w - 1 : x;
+        const x = root.at(tick.x);
+        return x >= w && tick.x < w + 0.5 && tick.timeMs >= root.trackDurationMs - 1e-6 ? w - 1 / root.dpr : x;
     }
 
     // One column's bands, 0..1, from whichever data the view draws.
@@ -337,7 +352,7 @@ Canvas {
                     }
                     const x = root.markX(ticks[k], w);
                     if (x >= 0 && x < w) {
-                        ctx.fillRect(x, top, 1, h);
+                        ctx.fillRect(x, top, root.thick(1), h);
                     }
                 }
             }
@@ -373,9 +388,13 @@ Canvas {
             const c = Theme.waveformRgb(low, mid, high, vivid);
             const alpha = played ? 1.0 : unplayed;
             const y = top + (h - barH) / 2;
-            ctx.clearRect(x, y, width, barH);
+            // Both edges on the device grid, so neighbouring bars meet
+            // without a seam at a fractional scale.
+            const left = root.at(x);
+            const right = Math.max(left + 1 / root.dpr, root.at(x + width));
+            ctx.clearRect(left, y, right - left, barH);
             ctx.fillStyle = "rgba(" + c.r + "," + c.g + "," + c.b + "," + alpha + ")";
-            ctx.fillRect(x, y, width, barH);
+            ctx.fillRect(left, y, right - left, barH);
         };
         const played = (ms) => root.progress >= 0 && ms / lengthMs < root.progress;
         // Only the columns this view shows.
@@ -449,13 +468,13 @@ Canvas {
                         continue;
                     }
                     lastX = x;
-                    const left = x - Math.floor(gap / 2);
-                    ctx.clearRect(left, 0, gap, full);
+                    const left = root.at(x - Math.floor(gap / 2));
+                    ctx.clearRect(left, 0, root.thick(gap), full);
                     ctx.globalAlpha = strong ? 1 : Theme.beatSlicedMarkOpacity;
                     ctx.fillStyle = String(strong ? Theme.accent : Theme.textMuted);
-                    const markLeft = x - Math.floor(markW / 2);
-                    ctx.fillRect(markLeft, 0, markW, mark);
-                    ctx.fillRect(markLeft, full - mark, markW, mark);
+                    const markLeft = root.at(x - Math.floor(markW / 2));
+                    ctx.fillRect(markLeft, 0, root.thick(markW), root.at(mark));
+                    ctx.fillRect(markLeft, root.at(full - mark), root.thick(markW), root.at(mark));
                     ctx.globalAlpha = 1;
                 }
             }
@@ -501,7 +520,7 @@ Canvas {
             const to = Math.min(w, Math.round(beatGridLayer.trackTo));
             if (to > from) {
                 ctx.fillStyle = String(beatGridLayer.groundColor);
-                ctx.fillRect(from, 0, to - from, lane);
+                ctx.fillRect(root.at(from), 0, root.at(to) - root.at(from), root.at(lane));
             }
             const ticks = beatGridLayer.ticks;
             if (!ticks || ticks.length === 0) {
@@ -512,7 +531,7 @@ Canvas {
             ctx.globalAlpha = Theme.beatRulerTickOpacity;
             for (let i = 0; i < ticks.length; ++i) {
                 if (ticks[i].strong !== true) {
-                    ctx.fillRect(root.markX(ticks[i], w), lane - shortTick, 1, shortTick);
+                    ctx.fillRect(root.markX(ticks[i], w), root.at(lane - shortTick), root.thick(1), root.at(shortTick));
                 }
             }
             // The numbers sit above the short ticks, left-aligned a little
@@ -532,7 +551,7 @@ Canvas {
             for (let i = 0; i < ticks.length; ++i) {
                 if (ticks[i].strong === true) {
                     const x = root.markX(ticks[i], w);
-                    ctx.fillRect(x, 0, 1, lane);
+                    ctx.fillRect(x, 0, root.thick(1), lane);
                     if (ticks[i].bar > 0) {
                         const text = String(ticks[i].bar);
                         const width = ctx.measureText(text).width;
