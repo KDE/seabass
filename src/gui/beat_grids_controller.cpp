@@ -9,18 +9,21 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <utility>
 
 #include "application/phased_progress.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/sync_libraries.hpp"
+#include "gui/beat_grid_display.hpp"
 #include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/main_thread_shared.hpp"
+#include "gui/metadata_row_text.hpp"
 #include "gui/playlist_thumbnail_provider.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/stick_path.hpp"
@@ -305,11 +308,16 @@ std::shared_ptr<BeatGridLibrary> runLoad(const QString &rekordboxPath, const QSt
             track.bpm = t.bpm;
             track.key = t.key;
             track.artworkUrl = toLocalFileUrl(t.artworkPath);
+            track.artworkPath = t.artworkPath;
+            track.filePath = t.filePath;
+            track.durationMs = t.durationSeconds > 0.0 ? t.durationSeconds * 1000.0 : 0.0;
+            track.cues = t.cues;
             if (const auto item = itemOf.find(t.sourceId); item != itemOf.end()) {
                 track.item = item->second;
                 const auto art = engineArt.find(out->plan.items[static_cast<size_t>(item->second)].engineTrackId);
                 if (art != engineArt.end()) {
                     track.fallbackArtworkUrl = toLocalFileUrl(art->second);
+                    track.fallbackArtworkPath = art->second;
                 }
             }
             out->trackIndex[t.sourceId] = out->tracks.size();
@@ -653,6 +661,11 @@ BeatGridsController::BeatGridsController(QObject *parent) : QObject(parent)
     m_options.waveforms = true;
     m_options.overwriteEngineEdits = false;
     recount();
+    // The rows' reads wait while any library is being written.
+    connect(EditSessionRegistry::instance(), &EditSessionRegistry::stateChanged, this,
+            &BeatGridsController::onWriteStateChanged);
+    connect(this, &BeatGridsController::writingChanged, this, &BeatGridsController::onWriteStateChanged);
+    m_rowReadsHeld = rowReadsHeld();
 }
 
 BeatGridsController::~BeatGridsController() = default;
@@ -677,6 +690,179 @@ QVariantMap BeatGridsController::playlistThumbnails() const
 bool BeatGridsController::writing() const
 {
     return m_session && m_session->writing();
+}
+
+// --- the rows' waveforms -------------------------------------------------
+
+bool BeatGridsController::rowReadsHeld() const
+{
+    return writing() || EditSessionRegistry::instance()->anyWriting();
+}
+
+void BeatGridsController::onWriteStateChanged()
+{
+    const bool held = rowReadsHeld();
+    if (held == m_rowReadsHeld) {
+        return;
+    }
+    m_rowReadsHeld = held;
+    if (held) {
+        // A read under way may meet a file half rewritten: put back, and
+        // read again once the write is over.
+        if (m_rowRead.busy()) {
+            const QString id = m_rowRead.key();
+            m_rowRead.cancel();
+            m_rowWanted.removeAll(id);
+            m_rowWanted.prepend(id);
+        }
+        return;
+    }
+    // Any library may now say something else about any track. What was
+    // read stays drawn until each row has its track's again.
+    ++m_rowGeneration;
+    emit rowAnalysesStale();
+    pumpRowReads();
+}
+
+const BeatGridLibrary::Track *BeatGridsController::libraryTrack(const QString &rekordboxId) const
+{
+    if (!m_library) {
+        return nullptr;
+    }
+    const auto at = m_library->trackIndex.find(rekordboxId.toStdString());
+    return at == m_library->trackIndex.end() ? nullptr : &m_library->tracks[at->second];
+}
+
+void BeatGridsController::requestRowAnalysis(const QString &rekordboxId)
+{
+    if (libraryTrack(rekordboxId) == nullptr) {
+        return;
+    }
+    if (const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId); kept && kept->generation == m_rowGeneration) {
+        return;
+    }
+    if ((m_rowRead.busy() && m_rowRead.key() == rekordboxId) || m_rowWanted.contains(rekordboxId)) {
+        return;
+    }
+    m_rowWanted.append(rekordboxId);
+    pumpRowReads();
+}
+
+void BeatGridsController::releaseRowAnalysis(const QString &rekordboxId)
+{
+    // Not yet read: never read. Being read: kept when it lands, for a
+    // row scrolled back to.
+    m_rowWanted.removeAll(rekordboxId);
+}
+
+void BeatGridsController::pumpRowReads()
+{
+    if (m_rowRead.busy() || m_rowReadsHeld || m_rowWanted.isEmpty() || !m_library) {
+        return;
+    }
+    const QString id = m_rowWanted.takeFirst();
+    const BeatGridLibrary::Track *track = libraryTrack(id);
+    if (track == nullptr) {
+        pumpRowReads();
+        return;
+    }
+    ++m_rowAnalysisReads;
+    emit rowAnalysisReadsChanged();
+    const std::uint64_t generation = m_rowGeneration;
+    using Request = AsyncRequest<std::shared_ptr<RowAnalysis>>;
+    // The library as read, with the analysis paths of its export.pdb: the
+    // worker looks nothing up in the database itself.
+    Request::Work work = [library = m_library, sourceId = id.toStdString(),
+                          filePath = track->filePath](application::CancellationToken cancel) {
+        auto out = std::make_shared<RowAnalysis>();
+        if (cancel.cancelled()) {
+            return out;
+        }
+        domain::TrackAnalysis analysis = infrastructure::rekordbox::readTrackAnalysis(
+            library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get());
+        out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
+        const auto byte = [](double v) {
+            return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
+        };
+        for (const auto &column : analysis.waveform) {
+            out->columns.append(byte(column.low));
+            out->columns.append(byte(column.mid));
+            out->columns.append(byte(column.high));
+        }
+        out->beats = std::move(analysis.beats);
+        out->beatRateRecorded = analysis.beatRateRecorded;
+        // Looked at here rather than on the GUI thread: the popup is
+        // offered only where there is a file to play.
+        std::error_code ec;
+        out->fileThere = !filePath.empty() && fs::is_regular_file(pathFromUtf8(filePath), ec);
+        return out;
+    };
+    Request::Ending ending{
+        [this, id, generation](std::shared_ptr<RowAnalysis> &&read) {
+            read->generation = generation;
+            const int cost = std::max(1, static_cast<int>((read->columns.size()
+                                                            + read->beats.size() * sizeof(domain::Beat)) / 1024));
+            m_rowAnalyses.insert(id, new RowAnalysis(std::move(*read)), cost);
+            emit rowAnalysisReady(id);
+            pumpRowReads();
+        },
+        // A stick gone or a worker refused: the row stays without one.
+        [this](const QString &) { pumpRowReads(); },
+        [] {},
+    };
+    m_rowRead.start(id, stickRootOf(m_library->rekordboxPath), std::move(work), std::move(ending));
+}
+
+void BeatGridsController::forgetRowAnalyses()
+{
+    m_rowRead.cancel();
+    m_rowWanted.clear();
+    m_rowAnalyses.clear();
+    ++m_rowGeneration;
+}
+
+QVariantMap BeatGridsController::rowAnalysis(const QString &rekordboxId) const
+{
+    const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId);
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (kept == nullptr || track == nullptr) {
+        return {{QStringLiteral("ready"), false}};
+    }
+    return {
+        {QStringLiteral("ready"), true},
+        {QStringLiteral("columns"), kept->columns},
+        {QStringLiteral("durationMs"), track->durationMs},
+        {QStringLiteral("playable"), kept->fileThere},
+    };
+}
+
+QVariantList BeatGridsController::rowBeatTicks(const QString &rekordboxId, double widthPx) const
+{
+    const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId);
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (kept == nullptr || track == nullptr) {
+        return {};
+    }
+    return beatTicksForDisplay(kept->beats, kept->beatRateRecorded, track->durationMs, widthPx);
+}
+
+QVariantMap BeatGridsController::zoomTrack(const QString &rekordboxId) const
+{
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (track == nullptr) {
+        return {};
+    }
+    return {
+        {QStringLiteral("format"), QStringLiteral("rekordbox")},
+        {QStringLiteral("libraryPath"), m_library->rekordboxPath},
+        {QStringLiteral("sourceId"), rekordboxId},
+        {QStringLiteral("filePath"), QString::fromStdString(track->filePath)},
+        {QStringLiteral("title"), QString::fromStdString(track->title)},
+        {QStringLiteral("artist"), QString::fromStdString(track->artist)},
+        {QStringLiteral("artworkPath"), QString::fromStdString(track->artworkPath)},
+        {QStringLiteral("cues"), metadataCueList(track->cues)},
+        {QStringLiteral("fallbackArtworkPath"), QString::fromStdString(track->fallbackArtworkPath)},
+    };
 }
 
 bool BeatGridsController::canStageAnything() const
@@ -829,6 +1015,9 @@ void BeatGridsController::adoptLibrary(std::shared_ptr<BeatGridLibrary> library)
     }
     m_states.clear();
     ++m_generation;
+    // Another read of the stick: the rows' analyses are read again, from
+    // this one.
+    forgetRowAnalyses();
     emit libraryChanged();
     rebuildRows();
     recount();

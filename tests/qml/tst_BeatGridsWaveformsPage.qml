@@ -38,6 +38,10 @@ TestCase {
     readonly property string b12: "6"     // not analysed, in two playlists
     readonly property string n1: "13"     // analysed
 
+    // The player a row's waveform loads its track into, as Main.qml hands
+    // the page one; a test that opens the zoomed popup passes it.
+    PlaybackController { id: realPlayback }
+
     function fixture(name) {
         const url = Qt.resolvedUrl("../fixtures/" + name).toString();
         return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
@@ -939,5 +943,218 @@ TestCase {
         o.c.setPlaylistTicked("T73 Renamed", true);
         waitSettled(o.c);
         compare(findChild(o.page, "stageButton").enabled, false, "a read-only stick takes no copy");
+    }
+
+    // ---- the rows' waveforms ---------------------------------------------
+
+    function rowWaveformOf(delegate) {
+        const view = findChild(delegate, "rowSourceWaveform");
+        verify(view !== null, "the row has a waveform slot");
+        return view;
+    }
+    // A waveform's columns as a string, to tell one track's from another's.
+    function columnsKey(analysis) {
+        if (!analysis || analysis.ready !== true || !analysis.columns) {
+            return "";
+        }
+        return Array.from(new Uint8Array(analysis.columns)).join(",");
+    }
+
+    // A row shows rekordbox's waveform with its beat grid as lines; a row
+    // whose track rekordbox has no analysis of (its .DAT taken off) shows
+    // none and offers no click. The waveform is lower than the row's text,
+    // so the row is no taller for it. A click on it opens the zoomed
+    // popup with that track loaded, and ticks nothing.
+    function test_rowWaveformAndItsPopup() {
+        const stick = t73();
+        verify(stickFixture.removeRekordboxBeatGridFile(stick, b02), "B02's analysis file is taken off");
+        const o = openOn(stick, {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+
+        const withRow = delegateInView(o.page, b01);
+        const withView = rowWaveformOf(withRow);
+        tryVerify(() => withView.visible, 30000, "B01's waveform is drawn");
+        compare(withView.trackId, b01);
+        verify(withView.byteColumns > 0, "with rekordbox's columns");
+        compare(withView.gridStyle, "lines");
+        verify(withView.beatTicks.length > 0, "and its beat grid's lines: " + withView.beatTicks.length);
+        verify(withView.trackDurationMs > 0, "over the track's length");
+        compare(withView.pointerShape, Qt.PointingHandCursor, "a hand: there is a file to play");
+
+        const withoutRow = delegateInView(o.page, b02);
+        const withoutView = rowWaveformOf(withoutRow);
+        tryVerify(() => o.c.rowAnalysis(b02).ready === true, 30000, "B02's analysis is read");
+        verify(waitForPolish(o.page.Window.window));
+        compare(withoutView.visible, false, "no waveform for a track rekordbox has not analysed");
+        compare(withoutView.opensZoom, false);
+        compare(withoutView.pointerShape, Qt.ArrowCursor, "and no hand");
+
+        // The rows keep one shape, and the waveform fits beside the text.
+        compare(withRow.height, withoutRow.height, "a row with a waveform is as tall as one without");
+        const slot = withView.parent;
+        const textColumn = findChild(withRow, "rowTitle").parent;
+        verify(slot.height <= textColumn.height,
+               "the waveform (" + slot.height + ") is no taller than the row's text (" + textColumn.height + ")");
+
+        // A click on B02's empty slot opens nothing.
+        const popup = findChild(o.page, "waveformZoomPopup");
+        verify(popup !== null, "the page has one popup");
+        clickOn(withoutView.parent);
+        compare(popup.visible, false, "nothing to open on a row without a waveform");
+        compare(o.c.isTicked(b02), false);
+
+        // A click on B01's opens the popup with B01 in the player.
+        compare(o.c.isTicked(b01), false);
+        const box = findChild(withRow, "selectCheckBox");
+        clickOn(withView);
+        tryCompare(popup, "opened", true, 10000, "the zoomed popup opens");
+        compare(realPlayback.currentFormat, "rekordbox");
+        compare(realPlayback.currentSourceId, b01, "with the clicked row's track");
+        compare(realPlayback.currentLibraryPath, stick + "/PIONEER");
+        compare(findChild(popup, "zoomTitle").text, row(o.c, b01).title);
+        compare(o.c.isTicked(b01), false, "the click ticks nothing");
+        compare(box.checked, false, "and the row's box stays as it was");
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
+    // A row's read is the track's it was asked for and lands on that row
+    // only: B01's read, under way when its row is replaced by another
+    // playlist's B07 in the same place, is kept for B01 and never drawn on
+    // B07's row. The other rows of the playlist left before their turn are
+    // never read.
+    // A page with T73 New shown and only its three rows read. Every track
+    // is listed at first, and its row read: the libraries are read again
+    // with only T73 New shown, which forgets what was read.
+    function openOnT73NewOnly() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        showPlaylist(o.page, "T73 Folder/T73 New");
+        o.c.load(o.page.rekordboxPath, o.page.enginePath);
+        tryVerify(() => o.c.loaded && !o.c.loading, 120000, "the libraries are read again");
+        waitSettled(o.c);
+        compare(o.c.shownPlaylist, "T73 Folder/T73 New");
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            const id = o.c.tracks.get(i).rekordboxId;
+            tryVerify(() => o.c.rowAnalysis(id).ready === true, 30000, id + " is read");
+        }
+        return o;
+    }
+    function test_aLateReadLandsOnItsOwnTrackOnly() {
+        const o = openOnT73NewOnly();
+        compare(o.c.rowAnalysis(b01).ready, false, "B01 is not read yet");
+        const list = findChild(o.page, "trackList");
+        const ready = createTemporaryObject(signalSpyComponent, testCase,
+                                            {target: o.c, signalName: "rowAnalysisReady"});
+        // Built at once, B01 first, so its read starts first; then another
+        // playlist before anything has landed.
+        const reads = o.c.rowAnalysisReads;
+        o.c.shownPlaylist = "T73 Renamed";
+        verify(trackDelegate(o.page, b01) !== null, "B01's row is built at once");
+        compare(o.c.rowAnalysisReads, reads + 1, "one read at a time: B01's");
+        compare(ready.count, 0, "and nothing has landed yet");
+        const leftEarly = [];
+        for (let i = 1; i < o.c.tracks.count; ++i) {
+            leftEarly.push(o.c.tracks.get(i).rekordboxId);
+        }
+        verify(leftEarly.length > 0);
+        o.c.shownPlaylist = "T73 Order";
+        compare(o.c.tracks.get(0).rekordboxId, b07, "B07 is first in T73 Order");
+        const b07Row = trackDelegate(o.page, b07);
+        verify(b07Row !== null, "B07's row is built at once, where B01's was");
+        // What B07's row draws the moment B01's read lands (the rows take
+        // an answer before this handler runs: they connected first).
+        let atB01 = null;
+        const onReady = (id) => {
+            if (id === b01 && atB01 === null) {
+                atB01 = {id: b07Row.analysisId, columns: columnsKey(b07Row.analysis)};
+            }
+        };
+        o.c.rowAnalysisReady.connect(onReady);
+
+        tryVerify(() => {
+            for (let i = 0; i < ready.count; ++i) {
+                if (ready.signalArguments[i][0] === b01) {
+                    return true;
+                }
+            }
+            return false;
+        }, 30000, "B01's read lands after its row has gone");
+        o.c.rowAnalysisReady.disconnect(onReady);
+        verify(atB01 !== null);
+        verify(columnsKey(o.c.rowAnalysis(b01)).length > 0, "B01 has a waveform");
+        verify(atB01.columns !== columnsKey(o.c.rowAnalysis(b01)), "B01's columns never land on B07's row");
+        verify(atB01.id !== b01, "nor is B07's row said to draw B01's");
+        tryVerify(() => o.c.rowAnalysis(b07).ready === true, 30000, "B07's is read for its row");
+        verify(waitForPolish(o.page.Window.window));
+        const first = delegateInView(o.page, b07);
+        const view = rowWaveformOf(first);
+        tryVerify(() => view.visible, 10000, "B07's row draws its waveform");
+        compare(view.trackId, b07, "B07's row draws B07's analysis");
+        compare(columnsKey(first.analysis), columnsKey(o.c.rowAnalysis(b07)), "B07's columns");
+        verify(columnsKey(first.analysis) !== columnsKey(o.c.rowAnalysis(b01)), "not B01's");
+        for (let i = 0; i < list.contentItem.children.length; ++i) {
+            const item = list.contentItem.children[i];
+            if (item.analysisId !== undefined && item.analysisId.length > 0) {
+                compare(item.analysisId, item.rekordboxId, item.objectName + " draws its own track's");
+            }
+        }
+        for (const id of leftEarly) {
+            if (o.c.tracks.indexOf(id) < 0) {
+                compare(o.c.rowAnalysis(id).ready, false, "T73 Renamed's " + id + " left before its turn: never read");
+            }
+        }
+    }
+
+    // Nothing is read for a row while a library is being written: a row
+    // that asks then waits, and is read once the write is over.
+    function test_noRowReadWhileWriting() {
+        const o = openOnT73NewOnly();
+        compare(o.c.rowAnalysis(b07).ready, false, "B07 is not read yet");
+        o.c.setTicked(n1, true);
+        waitSettled(o.c);
+        clickOn(findChild(o.page, "stageButton"));
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        let reads = -1;
+        let asked = false;
+        const saved = finished(session, () => {
+            session.save();
+            verify(EditSessionRegistry.anyWriting, "the save is writing");
+            reads = o.c.rowAnalysisReads;
+            // B07 is in no row shown: asked for as a row would.
+            o.c.requestRowAnalysis(b07);
+            asked = true;
+            compare(o.c.rowAnalysisReads, reads, "no read starts while the library is written");
+        }, "the copy");
+        verify(asked);
+        compare(saved.error, "", JSON.stringify(saved));
+        tryVerify(() => o.c.rowAnalysis(b07).ready === true, 30000, "read once the write is over");
+        verify(o.c.rowAnalysisReads > reads);
+        o.c.releaseRowAnalysis(b07);
+    }
+
+    Component {
+        id: signalSpyComponent
+        SignalSpy {}
+    }
+
+    // A picture of the rows with their waveforms, at the page's usual width.
+    function test_rowWaveformsScreenshot() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        o.c.setTicked(b01, true);
+        o.c.setTicked(b04, true);
+        waitSettled(o.c);
+        for (const id of [b01, b04, b12]) {
+            tryVerify(() => o.c.rowAnalysis(id).ready === true, 30000, id + " is read");
+        }
+        verify(waitForPolish(o.page.Window.window));
+        tryVerify(() => rowWaveformOf(trackDelegate(o.page, b01)).visible, 10000);
+        waitForRendering(o.page);
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-row-waveforms.png");
+        }
     }
 }
