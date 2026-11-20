@@ -246,6 +246,8 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
     // table-only check and then failed to prepare the query.
     bool hasAlbums = false;
     bool hasAnalysisPath = false;
+    bool hasRating = false;
+    bool hasDjComment = false;
     {
         bool hasAlbumTable = false;
         SqlCipherStatement table(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='album'");
@@ -259,6 +261,10 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
                 hasAlbums = hasAlbumTable;
             } else if (column == "analysisDataFilePath") {
                 hasAnalysisPath = true;
+            } else if (column == "rating") {
+                hasRating = true;
+            } else if (column == "djComment") {
+                hasDjComment = true;
             }
         }
     }
@@ -274,10 +280,14 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
     // Every real exportLibrary.db seen has the column; a database without
     // it names no analysis files, so its tracks read with no cues.
     const std::string analysisColumn = hasAnalysisPath ? "c.analysisDataFilePath" : "NULL";
+    // The rating (0 to 5 stars, the scale OneLibraryCueWriter writes) and
+    // the DJ's comment (#105): what the Browse track details show and edit.
+    const std::string ratingColumn = hasRating ? "c.rating" : "NULL";
+    const std::string commentColumn = hasDjComment ? "c.djComment" : "NULL";
     SqlCipherStatement stmt(db,
                              "SELECT c.content_id, c.title, a.name, c.bpmx100, c.length, c.path, c.fileName, "
                              "c.bitrate, c.fileSize, k.name, c.djPlayCount, i.path, " + albumColumn
-                                 + ", " + analysisColumn + " FROM content c "
+                                 + ", " + analysisColumn + ", " + ratingColumn + ", " + commentColumn + " FROM content c "
                              "LEFT JOIN artist a ON a.artist_id = c.artist_id_artist "
                              "LEFT JOIN key k ON k.key_id = c.key_id "
                              "LEFT JOIN image i ON i.image_id = c.image_id" + albumJoin);
@@ -321,6 +331,12 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
         if (!stmt.columnIsNull(10)) {
             track.playCount = static_cast<int>(stmt.columnInt64(10));
         }
+        // 0 or NULL is "no stars", as the other readers read theirs: no
+        // catalog tells unrated from zero stars (see Track::rating).
+        if (!stmt.columnIsNull(14) && stmt.columnInt64(14) > 0 && stmt.columnInt64(14) <= 5) {
+            track.rating = static_cast<int>(stmt.columnInt64(14));
+        }
+        track.comment = stmt.columnText(15);
         std::string imageRelPath = stmt.columnText(11);
         if (!imageRelPath.empty()) {
             // Same stick-root-relative convention as content.path (e.g.

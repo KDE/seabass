@@ -112,6 +112,15 @@ public:
     void writeAnnotation(const std::string &trackSourceId, const std::optional<int> &stars,
                           const std::optional<std::string> &comment);
 
+    // A rating set or cleared on purpose (#105, the Browse track details):
+    // stars 1 to 5 as writeAnnotation() writes them (20 per star), and
+    // nullopt for "no stars", which Engine stores as 0, the one value it
+    // has for both "unrated" and "zero stars" (libdjinterop's RATING_NONE).
+    // Unlike writeAnnotation(), which never clears, because a restore
+    // only ever puts a rating back. Throws if the track doesn't exist or
+    // stars is outside 1..5.
+    void writeRating(const std::string &trackSourceId, std::optional<int> stars);
+
     // Fills in a Clean Up survivor's missing bpm/key from another copy
     // in its duplicate group (see domain::DuplicateCleanupPlan). Only
     // bpm and key -- Engine track artwork isn't writable through

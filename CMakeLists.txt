@@ -1145,6 +1145,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/playlist_edit_changes.cpp
         src/gui/edit/changes/delete_tracks_change.cpp
         src/gui/edit/changes/moved_file_changes.cpp
+        src/gui/edit/changes/track_field_edit_change.hpp
+        src/gui/edit/changes/track_field_edit_change.cpp
         src/gui/edit/changes/level_cue_table_change.cpp
         src/gui/edit/changes/remove_dangling_playlist_entries_change.cpp
         src/gui/edit/changes/repoint_playlist_entries_change.cpp
@@ -3742,6 +3744,17 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME moved_file_change_test COMMAND moved_file_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+
+    # #105: a track's rating and comment edited in Browse, written into
+    # all three catalogs of a copy of the fixture, undone and rolled back.
+    add_executable(track_field_edit_change_test tests/track_field_edit_change_test.cpp)
+    target_include_directories(track_field_edit_change_test PRIVATE src tests)
+    target_link_libraries(track_field_edit_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(track_field_edit_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME track_field_edit_change_test COMMAND track_field_edit_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs)
 
     add_executable(restore_backups_change_test tests/restore_backups_change_test.cpp)
     target_include_directories(restore_backups_change_test PRIVATE src tests)
