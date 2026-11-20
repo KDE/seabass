@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <set>
+#include <unordered_map>
 #include <stdexcept>
 
 #include "application/path_key.hpp"
@@ -117,10 +119,41 @@ std::function<std::string(const std::string &)> engineJoin(const std::string &en
     };
 }
 
+std::vector<std::pair<std::int64_t, std::string>> pdbPaths(const infrastructure::rekordbox::PdbRowWriter &pdb)
+{
+    std::vector<std::pair<std::int64_t, std::string>> paths;
+    for (const auto &row : pdb.trackPathRows()) {
+        paths.emplace_back(row.id, row.filePath);
+    }
+    return paths;
+}
+
 CatalogRows pdbRows(const infrastructure::rekordbox::PdbRowWriter &pdb, const std::string &pioneer,
                     const std::string &filePath)
 {
-    return match(pdb.trackFilePaths(), keyOf(filePath), rekordboxJoin(pioneer));
+    return match(pdbPaths(pdb), keyOf(filePath), rekordboxJoin(pioneer));
+}
+
+// An Engine 1.x library on the stick: m.db at the library folder's top
+// level and no Database2. The stick scan hands no Engine path over for
+// one (it looks for Database2/m.db only), so it is looked for from the
+// stick's root as well as at `engine`.
+bool hasEngine1x(const std::string &pioneer, const std::string &engine)
+{
+    std::vector<fs::path> libraries;
+    if (!engine.empty()) {
+        libraries.push_back(pathFromUtf8(engine));
+    }
+    if (!pioneer.empty()) {
+        libraries.push_back(pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(pioneer)) / "Engine Library");
+    }
+    std::error_code ec;
+    for (const auto &library : libraries) {
+        if (fs::is_regular_file(library / "m.db", ec) && !fs::is_regular_file(library / "Database2" / "m.db", ec)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString catalogName(const char *catalog)
@@ -193,25 +226,137 @@ std::string TrackRows::refusal() const
     return {};
 }
 
-TrackRows findTrackRows(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath)
+namespace
 {
-    TrackRows rows;
+// Every row of one catalog, with its path's key, and the rows by key.
+struct IndexedCatalog
+{
+    bool present = false;
+    std::vector<std::pair<std::int64_t, std::string>> rows;
+    std::unordered_map<std::string, std::vector<std::size_t>> byKey;
+
+    void add(std::int64_t id, const std::string &stored, const std::function<std::string(const std::string &)> &join)
+    {
+        if (stored.empty()) {
+            return;
+        }
+        byKey[keyOf(join(stored))].push_back(rows.size());
+        rows.emplace_back(id, stored);
+    }
+
+    CatalogRows find(const std::string &wanted) const
+    {
+        if (!present) {
+            return {};
+        }
+        CatalogRows out;
+        out.state = CatalogRows::State::NotListed;
+        const auto it = byKey.find(wanted);
+        if (it == byKey.end()) {
+            return out;
+        }
+        std::set<std::string> spellings;
+        for (const std::size_t i : it->second) {
+            spellings.insert(rows[i].second);
+            out.ids.push_back(rows[i].first);
+            out.spelling = rows[i].second;
+        }
+        if (spellings.size() > 1) {
+            out.state = CatalogRows::State::Ambiguous;
+            out.spellings.assign(spellings.begin(), spellings.end());
+            out.ids.clear();
+            out.spelling.clear();
+        } else {
+            out.state = CatalogRows::State::Listed;
+        }
+        return out;
+    }
+};
+}  // namespace
+
+struct StickPathIndex::Data
+{
+    IndexedCatalog rekordbox;
+    IndexedCatalog oneLibrary;
+    IndexedCatalog engine;
+    bool engineUnwritable = false;
+    std::map<std::int64_t, std::optional<infrastructure::rekordbox::PdbRowWriter::TrackCommentCapacity>> comments;
+};
+
+StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &enginePath)
+{
     const std::string pioneer = pioneerRoot.toStdString();
     const std::string engine = enginePath.toStdString();
-    const std::string wanted = keyOf(filePath);
+    StickPathIndex index;
+    index.pioneerRoot = pioneerRoot;
+    index.enginePath = enginePath;
+    auto built = std::make_shared<StickPathIndex::Data>();
+    auto &data = *built;
+    const auto join = rekordboxJoin(pioneer);
     if (hasPdb(pioneer)) {
+        data.rekordbox.present = true;
         const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(pioneer));
-        rows.rekordbox = pdbRows(pdb, pioneer, filePath);
+        for (const auto &row : pdb.trackPathRows()) {
+            data.rekordbox.add(row.id, row.filePath, join);
+            data.comments[row.id] = row.comment;
+        }
     }
     if (hasOneLibrary(pioneer)) {
-        rows.oneLibrary = match(infrastructure::onelibrary::oneLibraryContentPaths(pioneer), wanted, rekordboxJoin(pioneer));
+        data.oneLibrary.present = true;
+        for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pioneer)) {
+            data.oneLibrary.add(id, path, join);
+        }
     }
     if (hasEngine(engine)) {
-        rows.engine = match(infrastructure::engine::engineTrackPaths(engine), wanted, engineJoin(engine));
-    } else if (!engine.empty() && isFile(pathToUtf8(pathFromUtf8(engine) / "m.db"))) {
+        data.engine.present = true;
+        const auto engineJoined = engineJoin(engine);
+        for (const auto &[id, path] : infrastructure::engine::engineTrackPaths(engine)) {
+            data.engine.add(id, path, engineJoined);
+        }
+    }
+    data.engineUnwritable = hasEngine1x(pioneer, engine);
+    index.m_data = std::move(built);
+    return index;
+}
+
+TrackRows StickPathIndex::rowsFor(const std::string &filePath) const
+{
+    TrackRows rows;
+    if (!m_data) {
+        return rows;
+    }
+    const std::string wanted = keyOf(filePath);
+    rows.rekordbox = m_data->rekordbox.find(wanted);
+    rows.oneLibrary = m_data->oneLibrary.find(wanted);
+    rows.engine = m_data->engine.find(wanted);
+    if (m_data->engineUnwritable) {
+        rows.engine = {};
         rows.engine.state = CatalogRows::State::Unwritable;
     }
     return rows;
+}
+
+CommentLimit StickPathIndex::limitFor(const TrackRows &rows) const
+{
+    CommentLimit limit;
+    if (!m_data || rows.rekordbox.state != CatalogRows::State::Listed) {
+        return limit;
+    }
+    for (const auto id : rows.rekordbox.ids) {
+        const auto it = m_data->comments.find(id);
+        const auto capacity = it == m_data->comments.end() ? std::nullopt : it->second;
+        const std::size_t units = capacity ? capacity->units : 0;
+        limit.units = limit.limited ? std::min(limit.units, units) : units;
+        limit.asciiOnly = limit.asciiOnly || !capacity || !capacity->utf16;
+        limit.limited = true;
+    }
+    limit.reason = limitReason(limit);
+    return limit;
+}
+
+TrackRows findTrackRows(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath)
+{
+    return buildStickPathIndex(pioneerRoot, enginePath).rowsFor(filePath);
 }
 
 QString trackFieldChangeId(TrackField field, const std::string &filePath)
@@ -368,7 +513,17 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
         // a whole-file replace onto the stick, the one most likely to meet
         // a stick that is full or gone, so it goes last and a failure
         // there has the most to roll back rather than the least.
-        if (m_rows.oneLibrary.state == State::Listed || hasOneLibrary(pioneer)) {
+        // A catalog that did not list the file when the edit was staged
+        // is only looked at, read-only, to see that it still does not: it
+        // is not opened for writing, backed up for this change, or put
+        // through a write session (which would copy it back unchanged).
+        if (hasEngine1x(pioneer, engine)) {
+            return ChangeOutcome::failure(
+                QStringLiteral("The stick has an Engine 1.x library, which Seabass does not write, so \"%1\" was not "
+                               "edited in any catalog: they would disagree.")
+                    .arg(title));
+        }
+        if (m_rows.oneLibrary.state == State::Listed) {
             if (!hasOneLibrary(pioneer)) {
                 return ChangeOutcome::failure(
                     QStringLiteral("OneLibrary is no longer on the stick, so no catalog was written."));
@@ -379,19 +534,22 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             if (const QString why = drifted("OneLibrary", m_rows.oneLibrary, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
             }
-            if (now.state == State::Listed) {
-                // By the catalog's own spelling: its rows, and only them.
-                const std::string path = rekordboxJoin(pioneer)(now.spelling);
-                if (rating) {
-                    writer.writeAnnotationForPath(path, m_value.rating.value_or(0), std::nullopt);
-                } else {
-                    writer.writeAnnotationForPath(path, std::nullopt, m_value.text);
-                }
-                m_wroteRekordboxSide = true;
-                written << QStringLiteral("OneLibrary");
+            // By the catalog's own spelling: its rows, and only them.
+            const std::string path = rekordboxJoin(pioneer)(now.spelling);
+            if (rating) {
+                writer.writeAnnotationForPath(path, m_value.rating.value_or(0), std::nullopt);
+            } else {
+                writer.writeAnnotationForPath(path, std::nullopt, m_value.text);
+            }
+            written << QStringLiteral("OneLibrary");
+        } else if (hasOneLibrary(pioneer)) {
+            const CatalogRows now =
+                match(infrastructure::onelibrary::oneLibraryContentPaths(pioneer), keyOf(m_filePath), rekordboxJoin(pioneer));
+            if (const QString why = drifted("OneLibrary", m_rows.oneLibrary, now, title); !why.isEmpty()) {
+                return ChangeOutcome::failure(why);
             }
         }
-        if (m_rows.engine.state == State::Listed || hasEngine(engine)) {
+        if (m_rows.engine.state == State::Listed) {
             if (!hasEngine(engine)) {
                 return ChangeOutcome::failure(
                     QStringLiteral("Engine's library is no longer on the stick, so no catalog was written."));
@@ -402,20 +560,25 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             if (const QString why = drifted("Engine", m_rows.engine, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
             }
-            if (now.state == State::Listed) {
-                infrastructure::engine::LibdjinteropEngineCueWriter writer(session.writeRoot());
-                for (const auto id : now.ids) {
-                    if (rating) {
-                        writer.writeRating(std::to_string(id), m_value.rating);
-                    } else {
-                        writer.writeAnnotation(std::to_string(id), std::nullopt, m_value.text);
-                    }
+            infrastructure::engine::LibdjinteropEngineCueWriter writer(session.writeRoot());
+            for (const auto id : now.ids) {
+                if (rating) {
+                    writer.writeRating(std::to_string(id), m_value.rating);
+                } else {
+                    writer.writeAnnotation(std::to_string(id), std::nullopt, m_value.text);
                 }
-                session.noteItemApplied();
-                written << QStringLiteral("Engine");
+            }
+            session.noteItemApplied();
+            written << QStringLiteral("Engine");
+        } else if (hasEngine(engine)) {
+            const FormatWriteSession *existing = existingFormatWriteSession(ctx, "engine", engine);
+            const CatalogRows now = match(infrastructure::engine::engineTrackPaths(existing ? existing->writeRoot() : engine),
+                                          keyOf(m_filePath), engineJoin(engine));
+            if (const QString why = drifted("Engine", m_rows.engine, now, title); !why.isEmpty()) {
+                return ChangeOutcome::failure(why);
             }
         }
-        if (m_rows.rekordbox.state == State::Listed || hasPdb(pioneer)) {
+        if (m_rows.rekordbox.state == State::Listed) {
             if (!hasPdb(pioneer)) {
                 return ChangeOutcome::failure(
                     QStringLiteral("export.pdb is no longer on the stick, so no catalog was written."));
@@ -426,33 +589,44 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             if (const QString why = drifted("export.pdb", m_rows.rekordbox, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
             }
-            if (now.state == State::Listed) {
-                for (const auto id : now.ids) {
-                    const auto row = static_cast<uint32_t>(id);
-                    if (rating) {
-                        // 0 is how export.pdb says "no stars": the byte has
-                        // no other value for it.
-                        pdb.setTrackRating(row, m_value.rating.value_or(0));
-                    } else {
-                        std::string refusal;
-                        if (!pdb.setTrackComment(row, m_value.text, &refusal)) {
-                            return ChangeOutcome::failure(
-                                QStringLiteral("The comment on \"%1\" cannot be written into export.pdb: %2.")
-                                    .arg(title, QString::fromStdString(refusal.empty() ? "its row has gone" : refusal)));
-                        }
+            for (const auto id : now.ids) {
+                const auto row = static_cast<uint32_t>(id);
+                if (rating) {
+                    // 0 is how export.pdb says "no stars": the byte has no
+                    // other value for it.
+                    pdb.setTrackRating(row, m_value.rating.value_or(0));
+                } else {
+                    std::string refusal;
+                    if (!pdb.setTrackComment(row, m_value.text, &refusal)) {
+                        return ChangeOutcome::failure(
+                            QStringLiteral("The comment on \"%1\" cannot be written into export.pdb: %2.")
+                                .arg(title, QString::fromStdString(refusal.empty() ? "its row has gone" : refusal)));
                     }
                 }
-                if (!pdb.commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb."));
-                }
-                session.noteItemApplied();
-                m_wroteRekordboxSide = true;
-                written << QStringLiteral("export.pdb");
+            }
+            if (!pdb.commit()) {
+                return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb."));
+            }
+            session.noteItemApplied();
+            // The origin ledger records export.pdb's ratings (the
+            // rekordbox baseline is read from it), so only a rating that
+            // reached export.pdb is reported as Seabass's.
+            m_wroteRekordboxSide = true;
+            written << QStringLiteral("export.pdb");
+        } else if (hasPdb(pioneer)) {
+            const FormatWriteSession *existing = existingFormatWriteSession(ctx, "rekordbox", pioneer);
+            const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(existing ? existing->writeRoot() : pioneer));
+            const CatalogRows now = pdbRows(pdb, pioneer, m_filePath);
+            if (const QString why = drifted("export.pdb", m_rows.rekordbox, now, title); !why.isEmpty()) {
+                return ChangeOutcome::failure(why);
             }
         }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QStringLiteral("Could not write the %1 of \"%2\": %3")
                                           .arg(fieldName(m_value.field), title, QString::fromUtf8(e.what())));
+    } catch (...) {
+        return ChangeOutcome::failure(
+            QStringLiteral("Could not write the %1 of \"%2\".").arg(fieldName(m_value.field), title));
     }
     if (written.isEmpty()) {
         // Staging refuses a track no catalog lists, and a catalog that
@@ -466,36 +640,31 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
     return ChangeOutcome::success();
 }
 
+std::string limitReason(const CommentLimit &limit)
+{
+    if (!limit.limited) {
+        return {};
+    }
+    return limit.units == 0
+        ? "export.pdb keeps no room for a comment on this track, and Seabass cannot make its row larger."
+        : "export.pdb keeps room for " + std::to_string(limit.units) + " characters in this track's comment"
+              + (limit.asciiOnly ? ", plain ASCII only (no accented letters)," : "")
+              + " and Seabass cannot make its row larger.";
+}
+
 CommentLimit commentLimitFor(const QString &pioneerRoot, const TrackRows &rows)
 {
-    CommentLimit limit;
     if (rows.rekordbox.state != CatalogRows::State::Listed) {
-        return limit;
+        return {};
     }
-    const std::string pioneer = pioneerRoot.toStdString();
     try {
-        const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(pioneer));
-        for (const auto id : rows.rekordbox.ids) {
-            const auto capacity = pdb.trackCommentCapacity(static_cast<uint32_t>(id));
-            const std::size_t units = capacity ? capacity->units : 0;
-            limit.units = limit.limited ? std::min(limit.units, units) : units;
-            limit.asciiOnly = limit.asciiOnly || !capacity || !capacity->utf16;
-            limit.limited = true;
-        }
+        return buildStickPathIndex(pioneerRoot, QString()).limitFor(rows);
     } catch (const std::exception &e) {
+        CommentLimit limit;
         limit.limited = true;
-        limit.units = 0;
         limit.reason = std::string("export.pdb could not be read, so the comment cannot be changed: ") + e.what();
         return limit;
     }
-    if (limit.limited) {
-        limit.reason = limit.units == 0
-            ? "export.pdb keeps no room for a comment on this track, and Seabass cannot make its row larger."
-            : "export.pdb keeps room for " + std::to_string(limit.units) + " characters in this track's comment"
-                  + (limit.asciiOnly ? ", plain ASCII only (no accented letters)," : "")
-                  + " and Seabass cannot make its row larger.";
-    }
-    return limit;
 }
 
 TrackLookup lookUpTrack(const QString &pioneerRoot, const QString &enginePath, const std::string &filePath)
@@ -503,11 +672,14 @@ TrackLookup lookUpTrack(const QString &pioneerRoot, const QString &enginePath, c
     TrackLookup lookup;
     lookup.filePath = filePath;
     try {
-        lookup.rows = findTrackRows(pioneerRoot, enginePath, filePath);
-        lookup.limit = commentLimitFor(pioneerRoot, lookup.rows);
+        const StickPathIndex index = buildStickPathIndex(pioneerRoot, enginePath);
+        lookup.rows = index.rowsFor(filePath);
+        lookup.limit = index.limitFor(lookup.rows);
         lookup.error = lookup.rows.refusal();
     } catch (const std::exception &e) {
         lookup.error = std::string("the stick's catalogs could not be read: ") + e.what();
+    } catch (...) {
+        lookup.error = "the stick's catalogs could not be read";
     }
     return lookup;
 }

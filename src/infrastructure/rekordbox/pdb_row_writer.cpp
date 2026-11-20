@@ -1313,6 +1313,21 @@ std::optional<std::u16string> strictUtf16Of(const std::string &utf8)
 
 }  // namespace
 
+namespace
+{
+std::optional<PdbRowWriter::TrackCommentCapacity> commentCapacityAt(const std::string &buffer, size_t rowBodyOffset)
+{
+    const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
+    const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, TrackStringIndexComment);
+    if (absOffset < header || !stringStaysInRowPage(buffer, rowBodyOffset, absOffset)) {
+        return std::nullopt;
+    }
+    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
+    return PdbRowWriter::TrackCommentCapacity{span.isUtf16 ? span.textCapacityBytes / 2 : span.textCapacityBytes,
+                                              span.isUtf16};
+}
+}  // namespace
+
 std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::trackCommentCapacity(uint32_t trackId) const
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
@@ -1322,13 +1337,7 @@ std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::trackCommentCapa
     if (!found) {
         return std::nullopt;
     }
-    const size_t header = found->rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
-    const size_t absOffset = trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexComment);
-    if (absOffset < header || !stringStaysInRowPage(m_buffer, found->rowBodyOffset, absOffset)) {
-        return std::nullopt;
-    }
-    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, absOffset);
-    return TrackCommentCapacity{span.isUtf16 ? span.textCapacityBytes / 2 : span.textCapacityBytes, span.isUtf16};
+    return commentCapacityAt(m_buffer, found->rowBodyOffset);
 }
 
 std::string PdbRowWriter::trackCommentRefusal(const std::string &comment, const TrackCommentCapacity &capacity)
@@ -2222,9 +2231,9 @@ bool PdbRowWriter::trackInAnyPlaylist(uint32_t trackId) const
     return !findAllPlaylistEntriesForTrack(m_buffer, trackId).empty();
 }
 
-std::vector<std::pair<uint32_t, std::string>> PdbRowWriter::trackFilePaths() const
+std::vector<PdbRowWriter::TrackPathRow> PdbRowWriter::trackPathRows() const
 {
-    std::vector<std::pair<uint32_t, std::string>> rows;
+    std::vector<TrackPathRow> rows;
     std::istringstream iss(m_buffer);
     kaitai::kstream ks(&iss);
     Pdb pdb(false, &ks);
@@ -2239,7 +2248,9 @@ std::vector<std::pair<uint32_t, std::string>> PdbRowWriter::trackFilePaths() con
                         continue;
                     }
                     if (auto *t = dynamic_cast<Pdb::track_row_t *>(row->body())) {
-                        rows.emplace_back(t->id(), sqlText(t->file_path()));
+                        const size_t body = static_cast<size_t>(pdb.len_page()) * page->page_index()
+                                            + static_cast<size_t>(row->row_base());
+                        rows.push_back({t->id(), sqlText(t->file_path()), commentCapacityAt(m_buffer, body)});
                     }
                 }
             }

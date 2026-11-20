@@ -44,6 +44,9 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/work_counters.hpp"
+#include "infrastructure/media/stick_root_scan.hpp"
+#include "infrastructure/backup/filesystem_backup_store.hpp"
+#include <chrono>
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include <djinterop/djinterop.hpp>
 
@@ -296,6 +299,30 @@ void expectRatings(const FixtureStick &s, const std::string &file, int pdbStars,
         std::cerr << "ratings: export.pdb " << c.at("rekordbox").rating.value_or(0) << ", OneLibrary "
                   << c.at("onelibrary").rating.value_or(0) << ", Engine " << c.at("engine").rating.value_or(0) << "\n";
         assert(false && "every catalog kept its own rating");
+    }
+}
+
+// Every file under `root`: path, size and modification time, to tell
+// whether anything was created, removed or written.
+std::map<std::string, std::pair<std::uintmax_t, long long>> listing(const fs::path &root)
+{
+    std::map<std::string, std::pair<std::uintmax_t, long long>> out;
+    std::error_code ec;
+    for (const auto &entry : fs::recursive_directory_iterator(root, ec)) {
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+        out[pathToUtf8(entry.path())] = {entry.file_size(ec),
+                                         static_cast<long long>(entry.last_write_time(ec).time_since_epoch().count())};
+    }
+    return out;
+}
+
+void printListing(const std::map<std::string, std::pair<std::uintmax_t, long long>> &l, const fs::path &root)
+{
+    for (const auto &[path, sm] : l) {
+        std::cerr << "      " << pathToUtf8(pathFromUtf8(path).lexically_relative(root)) << "  " << sm.first << " bytes  mtime "
+                  << sm.second << "\n";
     }
 }
 
@@ -816,6 +843,219 @@ int main(int argc, char **argv)
             fs::remove_all(root);
         }
         std::cout << "case 14 (Engine 3.x fixture, 2.x written and cleared, 1.x refused) OK\n";
+    }
+
+    // 15. An Engine 1.x library (m.db at the library folder's top
+    //     level): the stick scan hands no Engine path over for it, so it
+    //     is found from the stick's root; the edit is refused, at lookup
+    //     and again at Save for an edit staged before it appeared.
+    if (runs(15)) {
+        FixtureStick s(fixture, "seabass_track_edit_engine1x");
+        const std::string file = s.inBothRekordbox().front().filePath;
+        fs::remove_all(s.engine);
+        application::DetectedStick before;
+        infrastructure::media::scanMountedRoot(pathToUtf8(s.stick), before);
+        assert(before.rekordboxPath && !before.enginePath);
+        const QString pioneer = QString::fromStdString(*before.rekordboxPath);
+        const auto staged = std::make_shared<TrackFieldEditChange>(pioneer, QString(), file, "T",
+                                                                   TrackFieldValue{TrackField::Rating, 4, {}},
+                                                                   findTrackRows(pioneer, QString(), file));
+        {
+            auto db = djinterop::engine::create_database(pathToUtf8(s.engine), djinterop::engine::latest_v1_schema);
+        }
+        application::DetectedStick scanned;
+        infrastructure::media::scanMountedRoot(pathToUtf8(s.stick), scanned);
+        assert(scanned.rekordboxPath && !scanned.enginePath && "the scan reports no Engine path for a 1.x library");
+        const QString engineFromScan = scanned.enginePath ? QString::fromStdString(*scanned.enginePath) : QString();
+        const TrackRows rows = findTrackRows(QString::fromStdString(*scanned.rekordboxPath), engineFromScan, file);
+        assert(rows.engine.state == CatalogRows::State::Unwritable);
+        assert(rows.refusal().find("Engine 1.x") != std::string::npos);
+        const std::string pdbBefore = fileBytes(s.pdb());
+        const auto result = saveChanges({staged}, pioneer, engineFromScan);
+        assert(!result.error.isEmpty() && result.error.contains("Engine 1.x"));
+        assert(fileBytes(s.pdb()) == pdbBefore && "nothing written");
+        std::cout << "case 15 (an Engine 1.x library found from the stick root: refused at lookup and at Save) OK\n";
+    }
+
+    // 16. A track only export.pdb lists: OneLibrary and Engine are not
+    //     opened for writing, not backed up for it, not rewritten, even in
+    //     a batch of 15 that puts export.pdb through a scratch copy; and
+    //     the origin ledger is told only of what reached export.pdb.
+    if (runs(16)) {
+        FixtureStick s(fixture, "seabass_track_edit_pdb_only");
+        // Engine's import counter level with export.pdb, as any earlier
+        // Seabass save leaves a stick: every save levels it otherwise, and
+        // that write is not this change's.
+        {
+            const auto state =
+                infrastructure::engine::readRekordboxImportState(pathToUtf8(s.engine), pathToUtf8(s.pioneer));
+            assert(state.error.empty());
+            std::string error;
+            assert(infrastructure::engine::markRekordboxLibraryImported(pathToUtf8(s.engine), state.librarySequence,
+                                                                         &error));
+        }
+        std::vector<std::shared_ptr<PendingChange>> changes;
+        std::vector<std::string> files;
+        for (const auto &t : s.inBothRekordbox()) {
+            if (files.size() == 15) {
+                break;
+            }
+            if (s.copiesOf(t.filePath).count("engine")) {
+                continue;
+            }
+            const std::string stored = oneLibraryPathOf(s, t.filePath);
+            oneLibraryExec(s, "UPDATE content SET path = ? WHERE path = ?", {"/Elsewhere" + stored, stored});
+            assert(s.copiesOf(t.filePath).size() == 1);
+            files.push_back(t.filePath);
+        }
+        for (const auto &f : files) {
+            changes.push_back(ratingChange(s, f, 5));
+        }
+        const fs::path oneDb = pathFromUtf8(s.oneLibraryDb());
+        const auto oneBefore = listing(oneDb.parent_path());
+        const auto engineDump = seabass::testing::dumpDatabase(pathToUtf8(s.mdb()));
+        const auto result = saveChanges(changes, s.pioneerQ(), s.engineQ());
+        assert(result.error.isEmpty());
+        // OneLibrary's files byte for byte and time for time as they were
+        // (export.pdb, in the same folder, was written and is left out).
+        auto oneAfter = listing(oneDb.parent_path());
+        auto oneBeforeNoPdb = oneBefore;
+        oneAfter.erase(pathToUtf8(s.pdb()));
+        oneBeforeNoPdb.erase(pathToUtf8(s.pdb()));
+        if (oneAfter != oneBeforeNoPdb) {
+            std::cerr << "    before:\n";
+            printListing(oneBeforeNoPdb, s.stick);
+            std::cerr << "    after:\n";
+            printListing(oneAfter, s.stick);
+            assert(false && "OneLibrary is untouched, times included");
+        }
+        // Engine: no track row touched. The save does write one row of it,
+        // Information's import counter, because export.pdb changed and
+        // Engine must be told the change was Seabass's (save_loop.cpp's
+        // settleImportLevel; every save that writes export.pdb does it),
+        // so the file itself changes and is backed up under that step.
+        const auto engineDiffs =
+            seabass::testing::differences(engineDump, seabass::testing::dumpDatabase(pathToUtf8(s.mdb())));
+        for (const auto &d : engineDiffs) {
+            if (d.table != "Information") {
+                seabass::testing::printDifferences(engineDiffs);
+                assert(false && "only Engine's import counter changed");
+            }
+        }
+        for (const auto &backup : result.backups) {
+            infrastructure::backup::FilesystemBackupStore store(backup.backupDir.toStdString());
+            for (const auto &record : store.list()) {
+                for (const auto &path : record.filePaths) {
+                    assert(key(path) != key(s.oneLibraryDb()) && "no backup of OneLibrary, which nothing wrote");
+                    if (record.label == "track-edit") {
+                        assert(key(path) != key(pathToUtf8(s.mdb())) && "this change backed up no Engine database");
+                    }
+                }
+            }
+        }
+        for (const auto &f : files) {
+            assert(s.copiesOf(f).at("rekordbox").rating == std::optional<int>(5));
+        }
+        std::cout << "case 16 (a track only export.pdb lists leaves OneLibrary and Engine untouched) OK\n";
+    }
+
+    // 17. A OneLibrary-only stick: the rating lands there, and nothing is
+    //     reported to the origin ledger, which records export.pdb's.
+    if (runs(17)) {
+        FixtureStick s(fixture, "seabass_track_edit_onelibrary_only");
+        const std::string file = s.inBothRekordbox().front().filePath;
+        fs::remove(s.pdb());
+        fs::remove_all(s.engine);
+        const auto change = std::make_shared<TrackFieldEditChange>(
+            s.pioneerQ(), QString(), file, "T", TrackFieldValue{TrackField::Rating, 4, {}},
+            findTrackRows(s.pioneerQ(), QString(), file));
+        const auto result = saveChanges({change}, s.pioneerQ(), QString());
+        assert(result.error.isEmpty());
+        infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(s.pioneer));
+        bool found = false;
+        for (const auto &t : application::ScanLibrary(reader).execute()) {
+            if (key(t.filePath) == key(file)) {
+                assert(t.rating == std::optional<int>(4));
+                found = true;
+            }
+        }
+        assert(found);
+        assert(change->rekordboxWrites().empty() && "export.pdb was not written, so no rekordbox rating is reported");
+        std::cout << "case 17 (OneLibrary only: written, and no rekordbox write reported) OK\n";
+    }
+
+    // 18. The stick's index, read for the track details: a lookup leaves
+    //     the stick byte for byte as it was, its -wal and -shm included,
+    //     and how long it takes. TRACK_EDIT_MEASURE=<stick root> measures
+    //     a copy of another stick the same way.
+    if (runs(18)) {
+        const auto measure = [](const fs::path &stick, const std::string &name) {
+            const QString pioneer = pathToQString(stick / "PIONEER");
+            const QString engine = fs::exists(stick / "Engine Library" / "Database2" / "m.db")
+                ? pathToQString(stick / "Engine Library") : QString();
+            const auto before = listing(stick);
+            const auto start = std::chrono::steady_clock::now();
+            const StickPathIndex index = buildStickPathIndex(pioneer, engine);
+            const auto built = std::chrono::steady_clock::now();
+            infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(stick / "PIONEER"));
+            const auto tracks = application::ScanLibrary(reader).execute();
+            const auto selectStart = std::chrono::steady_clock::now();
+            int editable = 0;
+            for (const auto &t : tracks) {
+                const TrackRows rows = index.rowsFor(t.filePath);
+                (void)index.limitFor(rows);
+                editable += rows.refusal().empty() ? 1 : 0;
+            }
+            const auto selectEnd = std::chrono::steady_clock::now();
+            const auto after = listing(stick);
+            const double buildMs = std::chrono::duration<double, std::milli>(built - start).count();
+            const double perSelectionUs =
+                std::chrono::duration<double, std::micro>(selectEnd - selectStart).count() / std::max<size_t>(1, tracks.size());
+            std::cerr << "    " << name << ": index built in " << buildMs << " ms; " << tracks.size()
+                      << " export.pdb tracks answered at " << perSelectionUs << " us each, " << editable
+                      << " editable\n";
+            if (before != after) {
+                std::cerr << "    the stick changed:\n";
+                for (const auto &[path, sm] : after) {
+                    const auto was = before.find(path);
+                    if (was == before.end() || was->second != sm) {
+                        std::cerr << "      " << pathToUtf8(pathFromUtf8(path).lexically_relative(stick)) << ": "
+                                  << (was == before.end() ? std::string("new")
+                                                          : "size " + std::to_string(was->second.first) + " -> "
+                                                                + std::to_string(sm.first) + ", mtime "
+                                                                + (was->second.second == sm.second ? "same" : "changed"))
+                                  << "\n";
+                    }
+                }
+                for (const auto &[path, sm] : before) {
+                    if (!after.count(path)) {
+                        std::cerr << "      " << pathToUtf8(pathFromUtf8(path).lexically_relative(stick)) << ": removed\n";
+                    }
+                }
+            }
+            return before == after;
+        };
+        if (const char *other = std::getenv("TRACK_EDIT_MEASURE")) {
+            const fs::path copy = seabass::testing::scratchRoot() / "seabass_track_edit_measure";
+            fs::remove_all(copy);
+            for (const char *part : {"PIONEER/rekordbox", "Engine Library/Database2"}) {
+                fs::create_directories(copy / part);
+                for (const auto &entry : fs::directory_iterator(pathFromUtf8(other) / part)) {
+                    if (entry.is_regular_file()) {
+                        fs::copy_file(entry.path(), copy / part / entry.path().filename(),
+                                      fs::copy_options::overwrite_existing);
+                    }
+                }
+            }
+            const bool unchanged = measure(copy, std::string("copy of ") + other);
+            std::cerr << "    " << (unchanged ? "unchanged" : "CHANGED") << " by the lookup\n";
+            fs::remove_all(copy);
+            return unchanged ? 0 : 1;
+        }
+        FixtureStick s(fixture, "seabass_track_edit_index");
+        assert(fs::exists(pathFromUtf8(s.oneLibraryDb() + "-wal")) && "the copy has OneLibrary's WAL, as the fixture");
+        assert(measure(s.stick, pathToUtf8(fixture.filename())) && "a lookup leaves the stick as it was");
+        std::cout << "case 18 (reading the stick's index changes no file on it) OK\n";
     }
 
     return 0;

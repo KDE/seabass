@@ -183,6 +183,18 @@ public:
     };
     std::optional<TrackCommentCapacity> trackCommentCapacity(uint32_t trackId) const;
 
+    // Every present track row's id, its file_path as export.pdb spells it
+    // (padding trimmed) and its comment's room (as trackCommentCapacity()),
+    // in one parse: for a caller that matches paths by its own rule, such
+    // as one that folds letter case the way FAT and exFAT do.
+    struct TrackPathRow
+    {
+        uint32_t id = 0;
+        std::string filePath;
+        std::optional<TrackCommentCapacity> comment;
+    };
+    std::vector<TrackPathRow> trackPathRows() const;
+
     // Why `comment` (UTF-8) cannot go into a field of `capacity`, or empty
     // when it can: not valid UTF-8, a character an ASCII field cannot
     // hold, or longer than the field. The one rule setTrackComment()
@@ -382,10 +394,6 @@ public:
     // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
     // ignored. More than one when the file was imported twice.
     std::vector<uint32_t> trackIdsWithFilePath(const std::string &pathOnStick) const;
-    // Every present track row's id and file_path, as export.pdb spells it
-    // (padding trimmed): for a caller that matches paths by its own rule,
-    // such as one that folds letter case the way FAT and exFAT do.
-    std::vector<std::pair<uint32_t, std::string>> trackFilePaths() const;
     // Whether any playlist has an entry for the track.
     bool trackInAnyPlaylist(uint32_t trackId) const;
 
