@@ -151,10 +151,14 @@ std::map<std::string, std::vector<domain::CuePoint>> rekordboxCuesByFile(const s
 
 }  // namespace
 
-ExportRekordboxXmlResult ExportRekordboxXml::execute(const std::vector<domain::Track> &rows,
+ExportRekordboxXmlResult ExportRekordboxXml::execute(const std::vector<domain::Track> &rowsAsRead,
                                                       const ExportRekordboxXmlOptions &options)
 {
     ExportRekordboxXmlResult result;
+    // OneLibrary's rating and comment left out, as before its reader read
+    // them (#105): this export writes what it wrote then. Whether it
+    // should carry them is a decision of its own.
+    const std::vector<domain::Track> rows = withoutOneLibraryAnnotations(rowsAsRead);
 
     collectConflicts(rows, result.conflicts);
     const auto alreadyInRekordbox = rekordboxCuesByFile(rows);
