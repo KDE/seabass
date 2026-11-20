@@ -293,6 +293,7 @@ TestCase {
             WaveformView {
                 id: waveform
                 anchors.fill: parent
+                gridStyle: "ruler"
             }
         }
     }
@@ -629,6 +630,45 @@ TestCase {
         verify(quiet.b < low.b * 0.6, "a quiet column darker: " + JSON.stringify(quiet));
         compare(Theme.waveformRgb(1, 1, 1, false), {r: 255, g: 255, b: 255});
         compare(Theme.waveformRgb(0, 0, 0, false), {r: 60, g: 60, b: 90});
+    }
+
+    // A view states its grid style; one that does not gets the lines only,
+    // never a lane by accident.
+    Component {
+        id: plainView
+        WaveformView { width: 600; height: 80 }
+    }
+    function test_theDefaultGridStyleIsLines() {
+        const view = createTemporaryObject(plainView, testCase, {trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
+        compare(view.gridStyle, "lines");
+        compare(view.rulerHeight, 0);
+    }
+
+    // A colour is never invalid, whatever the bands hold.
+    function test_aColourIsAlwaysValid() {
+        for (const vivid of [false, true]) {
+            for (const bands of [[NaN, 2, -1], [Infinity, NaN, 0.5], [-3, -3, -3]]) {
+                const c = Theme.waveformRgb(bands[0], bands[1], bands[2], vivid);
+                for (const v of [c.r, c.g, c.b]) {
+                    verify(Number.isInteger(v) && v >= 0 && v <= 255, JSON.stringify(bands) + " gave " + JSON.stringify(c));
+                }
+            }
+        }
+    }
+
+    // Sliced, every beat would cut too much of the bars away: the gaps of
+    // ordinary marks stay at least 12 px apart.
+    function test_slicedGapsAreThinned() {
+        const host = makeView({trackDurationMs: 60000, beatData: grid(500, 0, 60000), gridStyle: "sliced",
+                               progress: 1, waveformData: columns(1200, {low: 1, mid: 0, high: 0})});
+        repaintedAfter(host, () => host.width = 1200);
+        tryCompare(host.view.beatTicks, "length", 120);
+        const image = grabImage(host);
+        const at = (x) => PixelScale.pixel(image, host, x, 40);
+        const ground = Theme.background;
+        verify(distance(at(410), ground) < 0.02, "beat 41's gap");
+        verify(distance(at(420), ground) > 0.3, "beat 42, 10 px on, has none: " + at(420));
+        verify(distance(at(430), ground) < 0.02, "beat 43's gap");
     }
 
     // A view handed beats already selected for its width (every view in

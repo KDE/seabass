@@ -157,6 +157,7 @@ QtObject {
     readonly property real beatSlicedMark: 4
     readonly property real beatSlicedStrongMark: 7
     readonly property real beatSlicedMarkOpacity: 0.8
+    readonly property real beatSlicedMinimumSpacing: 12
 
     // A waveform column's colour from its three bands, 0..1 each, as
     // {r, g, b} of 0..255. "Classic" is the colour every waveform has
@@ -176,6 +177,12 @@ QtObject {
     // How long the player bar takes to blend from one track to the next.
     readonly property int playerBlendDuration: 250
     function waveformRgb(low, mid, high, vivid) {
+        // A band out of range, or not a number, is clamped (NaN to 0):
+        // never an invalid colour.
+        const band01 = (v) => v > 0 ? Math.min(1, v) : 0;
+        low = band01(low);
+        mid = band01(mid);
+        high = band01(high);
         if (!vivid) {
             return {r: Math.min(255, Math.round(60 + high * 195)),
                     g: Math.min(255, Math.round(60 + mid * 150 + high * 60)),

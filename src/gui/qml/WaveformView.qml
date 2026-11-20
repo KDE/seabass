@@ -174,7 +174,9 @@ Canvas {
     //            passage still shows it (the player bar, option G);
     //   "lines"  the lines behind the bars only (cards, row backdrops);
     //   "none"   nothing.
-    property string gridStyle: "ruler"
+    // "lines" by default: a view without a style of its own never gets a
+    // lane by accident.
+    property string gridStyle: "lines"
     readonly property bool drawsLines: root.gridStyle === "ruler" || root.gridStyle === "lines"
     readonly property real rulerHeight: root.gridStyle === "ruler" && root.showRuler
         && root.height >= Theme.beatRulerMinimumViewHeight
@@ -431,6 +433,10 @@ Canvas {
                 const mark = Math.max(strong ? 3 : 2,
                                       Math.round((strong ? Theme.beatSlicedStrongMark : Theme.beatSlicedMark) * scale));
                 const markW = strong ? Math.max(1, gap / 2) : 1;
+                // Where every beat has a mark, a gap at each would cut too
+                // much of the bars away: ordinary gaps at least
+                // Theme.beatSlicedMinimumSpacing apart.
+                let lastX = -Infinity;
                 for (let k = 0; k < ticks.length; ++k) {
                     if ((ticks[k].strong === true) !== strong) {
                         continue;
@@ -439,6 +445,10 @@ Canvas {
                     if (x < -gap || x > w + gap) {
                         continue;
                     }
+                    if (!strong && x - lastX < Theme.beatSlicedMinimumSpacing) {
+                        continue;
+                    }
+                    lastX = x;
                     const left = x - Math.floor(gap / 2);
                     ctx.clearRect(left, 0, gap, full);
                     ctx.globalAlpha = strong ? 1 : Theme.beatSlicedMarkOpacity;
