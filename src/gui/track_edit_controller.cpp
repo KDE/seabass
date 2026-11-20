@@ -11,6 +11,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/future_result.hpp"
 
 namespace seabass::gui
 {
@@ -37,7 +38,14 @@ TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
     m_commentLimit = limitMap({}, std::nullopt);
     connect(&m_limitWatcher, &QFutureWatcher<CommentLimit>::finished, this, [this]() {
         const QString path = m_runningLookup;
-        const CommentLimit limit = m_limitWatcher.result();
+        QString error;
+        CommentLimit limit = takeResult(m_limitWatcher, &error);
+        if (!error.isEmpty()) {
+            // Not known is not "no limit": nothing longer than is there.
+            limit.limited = true;
+            limit.units = 0;
+            limit.reason = "The comment's room in export.pdb could not be read: " + error.toStdString();
+        }
         m_runningLookup.clear();
         if (m_nextLookup) {
             const auto [rekordboxPath, filePath] = *m_nextLookup;
@@ -53,7 +61,7 @@ TrackEditController::TrackEditController(QObject *parent) : QObject(parent)
 
 TrackEditController::~TrackEditController()
 {
-    m_limitWatcher.waitForFinished();
+    awaitQuietly(m_limitWatcher);
 }
 
 QString TrackEditController::cleanComment(const QString &text)
