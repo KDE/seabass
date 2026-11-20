@@ -380,6 +380,25 @@ public:
     // The beats of that track's grid a waveform `widthPx` wide draws over
     // the track's length (beatTicksForDisplay()); empty until read.
     Q_INVOKABLE QVariantList rowBeatTicks(const QString &rekordboxId, double widthPx) const;
+    // An opened row's comparison: what the Engine library has for the
+    // track now, beside rekordbox's (rowAnalysis()), so the two grids and
+    // waveforms can be judged against each other before anything is
+    // copied. Read the way a row's own is (off the GUI thread, one at a
+    // time, held while any library is written, read again after one),
+    // but only for rows that are open.
+    Q_INVOKABLE void requestEngineAnalysis(const QString &rekordboxId);
+    Q_INVOKABLE void releaseEngineAnalysis(const QString &rekordboxId);
+    // {ready} false until read; then {ready, hasEngineTrack (the track has
+    // an Engine row), columns (as rowAnalysis()'s; empty where Engine has
+    // no waveform), msPerColumn (0: spread over durationMs), durationMs,
+    // hasGrid, bpm, firstDownbeatMs, rateRecorded}.
+    Q_INVOKABLE QVariantMap engineAnalysis(const QString &rekordboxId) const;
+    // As rowBeatTicks(), for Engine's grid of that track.
+    Q_INVOKABLE QVariantList engineBeatTicks(const QString &rekordboxId, double widthPx) const;
+    // rekordbox's grid in the same figures: {ready, hasGrid, bpm,
+    // firstDownbeatMs}.
+    Q_INVOKABLE QVariantMap rowGridFacts(const QString &rekordboxId) const;
+
     // The track as WaveformZoomPopup.openFor() takes it: {format,
     // libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
     // fallbackArtworkPath}. Empty for a track the library does not have.
@@ -447,6 +466,8 @@ signals:
     // for its track's again.
     void rowAnalysesStale();
     void rowAnalysisReadsChanged();
+    // An opened row's Engine side is in (engineAnalysis()).
+    void engineAnalysisReady(const QString &rekordboxId);
 
 private:
     // One track's analysis as a row draws it, read off the GUI thread.
@@ -460,9 +481,20 @@ private:
         // m_rowGeneration when it was read.
         std::uint64_t generation = 0;
     };
+    // What the Engine library has for one track, for an opened row.
+    struct EngineAnalysis
+    {
+        bool hasEngineTrack = false;
+        QByteArray columns;
+        std::vector<domain::Beat> beats;
+        bool beatRateRecorded = true;
+        // m_rowGeneration when it was read.
+        std::uint64_t generation = 0;
+    };
     bool rowReadsHeld() const;
     void onWriteStateChanged();
     void pumpRowReads();
+    void pumpEngineReads();
     void forgetRowAnalyses();
     const BeatGridLibrary::Track *libraryTrack(const QString &rekordboxId) const;
 
@@ -560,11 +592,16 @@ private:
     std::uint64_t m_rowGeneration = 1;
     bool m_rowReadsHeld = false;
     int m_rowAnalysisReads = 0;
+    // The opened rows' Engine sides, the same way; few rows are open.
+    static constexpr int EngineAnalysisCacheKb = 8 * 1024;
+    QCache<QString, EngineAnalysis> m_engineAnalyses{EngineAnalysisCacheKb};
+    QStringList m_engineWanted;
 
     // Last, so they are destroyed first: their destructors cancel the work.
     AsyncRequest<std::shared_ptr<BeatGridLibrary>> m_load{this, [this]() { emit loadingChanged(); }};
     AsyncRequest<QString> m_preview{this, [this]() { emit previewBusyChanged(); }};
     AsyncRequest<std::shared_ptr<RowAnalysis>> m_rowRead{this, nullptr};
+    AsyncRequest<std::shared_ptr<EngineAnalysis>> m_engineRead{this, nullptr};
 };
 
 }  // namespace seabass::gui

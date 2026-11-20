@@ -28,6 +28,7 @@
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/stick_path.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/local/analysis_file_facts.hpp"
@@ -715,6 +716,12 @@ void BeatGridsController::onWriteStateChanged()
             m_rowWanted.removeAll(id);
             m_rowWanted.prepend(id);
         }
+        if (m_engineRead.busy()) {
+            const QString id = m_engineRead.key();
+            m_engineRead.cancel();
+            m_engineWanted.removeAll(id);
+            m_engineWanted.prepend(id);
+        }
         return;
     }
     // Any library may now say something else about any track. What was
@@ -722,6 +729,7 @@ void BeatGridsController::onWriteStateChanged()
     ++m_rowGeneration;
     emit rowAnalysesStale();
     pumpRowReads();
+    pumpEngineReads();
 }
 
 const BeatGridLibrary::Track *BeatGridsController::libraryTrack(const QString &rekordboxId) const
@@ -818,7 +826,161 @@ void BeatGridsController::forgetRowAnalyses()
     m_rowRead.cancel();
     m_rowWanted.clear();
     m_rowAnalyses.clear();
+    m_engineRead.cancel();
+    m_engineWanted.clear();
+    m_engineAnalyses.clear();
     ++m_rowGeneration;
+}
+
+// --- an opened row's Engine side -----------------------------------------
+
+namespace
+{
+
+// A grid as the comparison states it: its tempo (the median beat spacing,
+// so one odd marker does not move it) and its first downbeat. Empty where
+// there are fewer than two beats.
+QVariantMap gridFacts(const std::vector<domain::Beat> &beats)
+{
+    if (beats.size() < 2) {
+        return {{QStringLiteral("hasGrid"), false}};
+    }
+    std::vector<double> gaps;
+    gaps.reserve(beats.size() - 1);
+    for (std::size_t i = 1; i < beats.size(); ++i) {
+        gaps.push_back(beats[i].timeMs - beats[i - 1].timeMs);
+    }
+    std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2), gaps.end());
+    const double beatMs = gaps[gaps.size() / 2];
+    // The first beat said to be a downbeat; a grid that says nothing about
+    // bars starts its bars at its first beat.
+    double downbeat = beats.front().timeMs;
+    for (const auto &beat : beats) {
+        if (beat.beatInBar == 1) {
+            downbeat = beat.timeMs;
+            break;
+        }
+    }
+    return {
+        {QStringLiteral("hasGrid"), beatMs > 0.0},
+        {QStringLiteral("bpm"), beatMs > 0.0 ? 60000.0 / beatMs : 0.0},
+        {QStringLiteral("firstDownbeatMs"), downbeat},
+    };
+}
+
+}  // namespace
+
+void BeatGridsController::requestEngineAnalysis(const QString &rekordboxId)
+{
+    if (libraryTrack(rekordboxId) == nullptr) {
+        return;
+    }
+    if (const EngineAnalysis *kept = m_engineAnalyses.object(rekordboxId);
+        kept && kept->generation == m_rowGeneration) {
+        return;
+    }
+    if ((m_engineRead.busy() && m_engineRead.key() == rekordboxId) || m_engineWanted.contains(rekordboxId)) {
+        return;
+    }
+    m_engineWanted.append(rekordboxId);
+    pumpEngineReads();
+}
+
+void BeatGridsController::releaseEngineAnalysis(const QString &rekordboxId)
+{
+    m_engineWanted.removeAll(rekordboxId);
+}
+
+void BeatGridsController::pumpEngineReads()
+{
+    if (m_engineRead.busy() || m_rowReadsHeld || m_engineWanted.isEmpty() || !m_library) {
+        return;
+    }
+    const QString id = m_engineWanted.takeFirst();
+    const BeatGridLibrary::Track *track = libraryTrack(id);
+    if (track == nullptr) {
+        pumpEngineReads();
+        return;
+    }
+    const std::string engineTrackId = track->item >= 0
+        ? m_library->plan.items[static_cast<std::size_t>(track->item)].engineTrackId
+        : std::string();
+    const std::uint64_t generation = m_rowGeneration;
+    using Request = AsyncRequest<std::shared_ptr<EngineAnalysis>>;
+    // Only the overview Engine draws across the whole track (no detail):
+    // all a 2.x or 3.x library keeps, and what the player shows.
+    Request::Work work = [enginePath = m_library->enginePath.toStdString(),
+                          engineTrackId](application::CancellationToken cancel) {
+        auto out = std::make_shared<EngineAnalysis>();
+        out->hasEngineTrack = !engineTrackId.empty() && !enginePath.empty();
+        if (!out->hasEngineTrack || cancel.cancelled()) {
+            return out;
+        }
+        domain::TrackAnalysis analysis = infrastructure::engine::readTrackAnalysis(enginePath, engineTrackId);
+        out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
+        const auto byte = [](double v) {
+            return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
+        };
+        for (const auto &column : analysis.waveform) {
+            out->columns.append(byte(column.low));
+            out->columns.append(byte(column.mid));
+            out->columns.append(byte(column.high));
+        }
+        out->beats = std::move(analysis.beats);
+        out->beatRateRecorded = analysis.beatRateRecorded;
+        return out;
+    };
+    Request::Ending ending{
+        [this, id, generation](std::shared_ptr<EngineAnalysis> &&read) {
+            read->generation = generation;
+            const int cost = std::max(1, static_cast<int>((read->columns.size()
+                                                            + read->beats.size() * sizeof(domain::Beat)) / 1024));
+            m_engineAnalyses.insert(id, new EngineAnalysis(std::move(*read)), cost);
+            emit engineAnalysisReady(id);
+            pumpEngineReads();
+        },
+        // A stick gone or a worker refused: the row says it has nothing.
+        [this](const QString &) { pumpEngineReads(); },
+        [] {},
+    };
+    m_engineRead.start(id, stickRootOf(m_library->rekordboxPath), std::move(work), std::move(ending));
+}
+
+QVariantMap BeatGridsController::engineAnalysis(const QString &rekordboxId) const
+{
+    const EngineAnalysis *kept = m_engineAnalyses.object(rekordboxId);
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (kept == nullptr || track == nullptr) {
+        return {{QStringLiteral("ready"), false}};
+    }
+    QVariantMap out = gridFacts(kept->beats);
+    out.insert(QStringLiteral("ready"), true);
+    out.insert(QStringLiteral("hasEngineTrack"), kept->hasEngineTrack);
+    out.insert(QStringLiteral("columns"), kept->columns);
+    out.insert(QStringLiteral("durationMs"), track->durationMs);
+    out.insert(QStringLiteral("rateRecorded"), kept->beatRateRecorded);
+    return out;
+}
+
+QVariantList BeatGridsController::engineBeatTicks(const QString &rekordboxId, double widthPx) const
+{
+    const EngineAnalysis *kept = m_engineAnalyses.object(rekordboxId);
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (kept == nullptr || track == nullptr) {
+        return {};
+    }
+    return beatTicksForDisplay(kept->beats, kept->beatRateRecorded, track->durationMs, widthPx);
+}
+
+QVariantMap BeatGridsController::rowGridFacts(const QString &rekordboxId) const
+{
+    const RowAnalysis *kept = m_rowAnalyses.object(rekordboxId);
+    if (kept == nullptr) {
+        return {{QStringLiteral("ready"), false}};
+    }
+    QVariantMap out = gridFacts(kept->beats);
+    out.insert(QStringLiteral("ready"), true);
+    return out;
 }
 
 QVariantMap BeatGridsController::rowAnalysis(const QString &rekordboxId) const

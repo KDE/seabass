@@ -1140,6 +1140,88 @@ TestCase {
         SignalSpy {}
     }
 
+    // ---- an opened row: rekordbox against Engine ---------------------------
+
+    // A click on a row opens it, and the open row shows rekordbox's
+    // waveform and grid over Engine's, and what differs in words. B04 was
+    // analysed by the player, so Engine has a grid of its own to compare;
+    // B01 was not. One row is open at a time, and Engine's side is read
+    // only for the open one.
+    function test_anOpenedRowComparesRekordboxWithEngine() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+
+        const row = delegateInView(o.page, b04);
+        compare(row.expanded, false);
+        compare(findChild(row, "analysisComparison").visible, false, "closed, no comparison");
+        compare(o.c.engineAnalysis(b04).ready, false, "and nothing of Engine's read for it");
+        clickOn(findChild(row, "rowTitle"));
+        compare(row.expanded, true, "a click opens the row");
+        compare(o.c.isTicked(b04), false, "and ticks nothing");
+        const comparison = findChild(row, "analysisComparison");
+        tryVerify(() => comparison.visible, 5000, "the open row shows the comparison");
+
+        const rekordbox = findChild(row, "comparisonRekordbox");
+        const engine = findChild(row, "comparisonEngine");
+        tryVerify(() => o.c.engineAnalysis(b04).ready === true, 30000, "Engine's side is read");
+        tryVerify(() => rekordbox.byteColumns > 0 && engine.byteColumns > 0, 30000, "both waveforms are drawn");
+        verify(rekordbox.beatTicks.length > 0, "rekordbox's grid");
+        verify(engine.beatTicks.length > 0, "Engine's grid: the player analysed B04");
+        compare(rekordbox.trackDurationMs, engine.trackDurationMs, "on one time axis");
+        compare(rekordbox.width, engine.width);
+        const e = o.c.engineAnalysis(b04);
+        compare(e.hasEngineTrack, true);
+        compare(e.hasGrid, true);
+        verify(e.bpm > 60 && e.bpm < 200, "a tempo: " + e.bpm);
+        const summary = findChild(row, "comparisonSummary");
+        verify(summary.text.length > 0 && summary.text.indexOf("Reading") < 0, "says what differs: " + summary.text);
+
+        // Another row opened closes this one; B01 has no grid of Engine's.
+        const other = delegateInView(o.page, b01);
+        clickOn(findChild(other, "rowTitle"));
+        compare(other.expanded, true);
+        compare(row.expanded, false, "one row open at a time");
+        tryVerify(() => o.c.engineAnalysis(b01).ready === true, 30000);
+        compare(o.c.engineAnalysis(b01).hasEngineTrack, true);
+        compare(o.c.engineAnalysis(b01).hasGrid, false, "the player never analysed B01");
+        tryCompare(findChild(other, "comparisonSummary"), "text", "Engine has no beat grid for this track yet.");
+
+        // Clicked again, it closes.
+        clickOn(findChild(other, "rowTitle"));
+        compare(other.expanded, false);
+        compare(o.page.openTrackId, "");
+    }
+
+    // What the summary says, for each way two grids can differ.
+    function test_theComparisonInWords() {
+        const o = openOn(t73());
+        const p = o.page;
+        const grid = (bpm, downbeat) => ({ready: true, hasGrid: true, bpm: bpm, firstDownbeatMs: downbeat});
+        const engine = (bpm, downbeat) => Object.assign(grid(bpm, downbeat), {hasEngineTrack: true});
+        compare(p.comparisonText(true, grid(128, 100), engine(128, 100)), "The two beat grids agree.");
+        compare(p.comparisonText(true, grid(128, 100), engine(128, 100.4)), "The two beat grids agree.",
+                "under a millisecond is the same place");
+        compare(p.comparisonText(true, grid(128, 100), engine(128, 112)), "Engine's beats fall 12 ms later.");
+        compare(p.comparisonText(true, grid(128, 100), engine(128, 88)), "Engine's beats fall 12 ms earlier.");
+        // A whole bar apart is the same lines in the same places.
+        compare(p.comparisonText(true, grid(120, 100), engine(120, 2100)), "The two beat grids agree.");
+        // One beat apart: the same lines, the bars counted from another one.
+        compare(p.comparisonText(true, grid(120, 100), engine(120, 600)), "Engine's bars start on another beat.");
+        compare(p.comparisonText(true, grid(128, 100), engine(128.5, 100)), "Engine's tempo is 0.50 BPM faster.");
+        compare(p.comparisonText(true, grid(128, 100), engine(127.9, 110)),
+                "Engine's tempo is 0.10 BPM slower; Engine's beats fall 10 ms later.");
+        compare(p.comparisonText(true, grid(128, 100), {ready: true, hasEngineTrack: true, hasGrid: false}),
+                "Engine has no beat grid for this track yet.");
+        compare(p.comparisonText(true, {ready: true, hasGrid: false}, engine(128, 100)),
+                "rekordbox has no beat grid for this track; Engine has one.");
+        compare(p.comparisonText(true, grid(128, 100), {ready: true, hasEngineTrack: false}),
+                "Not in the Engine library yet: there is nothing to compare with.");
+        compare(p.comparisonText(false, grid(128, 100), {ready: false}),
+                "Not in the Engine library yet: there is nothing to compare with.");
+        compare(p.comparisonText(true, grid(128, 100), {ready: false}), "Reading both analyses...");
+    }
+
     // A picture of the rows with their waveforms, at the page's usual width.
     function test_rowWaveformsScreenshot() {
         const o = openOn(t73(), {playbackController: realPlayback});

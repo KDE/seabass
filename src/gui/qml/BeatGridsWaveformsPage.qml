@@ -537,6 +537,104 @@ Page {
                         function onRowAnalysesStale() { trackRow.ask(); }
                     }
 
+                    // Opened by a click on the row: rekordbox's analysis
+                    // over the Engine library's, on one time axis, each
+                    // with its grid, and what differs between the grids in
+                    // words. One row open at a time. Engine's side is read
+                    // only for the open row (requestEngineAnalysis()).
+                    expanded: root.openTrackId.length > 0 && root.openTrackId === trackRow.rekordboxId
+                    onExpandToggled: root.openTrackId = trackRow.expanded ? "" : trackRow.rekordboxId
+                    property var engineSide: ({ready: false})
+                    property string engineAskedFor: ""
+                    function askEngine() {
+                        const want = trackRow.expanded ? trackRow.rekordboxId : "";
+                        if (trackRow.engineAskedFor !== want && trackRow.engineAskedFor.length > 0) {
+                            root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
+                        }
+                        trackRow.engineAskedFor = want;
+                        if (want.length > 0) {
+                            root.controller.requestEngineAnalysis(want);
+                        }
+                        trackRow.engineSide = want.length > 0 ? root.controller.engineAnalysis(want) : {ready: false};
+                    }
+                    onExpandedChanged: trackRow.askEngine()
+                    Connections {
+                        target: root.controller
+                        function onEngineAnalysisReady(id) {
+                            if (id === trackRow.engineAskedFor) {
+                                trackRow.engineSide = root.controller.engineAnalysis(id);
+                            }
+                        }
+                        function onRowAnalysesStale() {
+                            if (trackRow.expanded) {
+                                trackRow.askEngine();
+                            }
+                        }
+                    }
+                    // rekordbox's grid in figures, once its analysis is in.
+                    readonly property var rekordboxGrid: trackRow.analysis.ready === true
+                        ? root.controller.rowGridFacts(trackRow.analysisId) : ({ready: false})
+
+                    expandedItems: [
+                        ColumnLayout {
+                            id: comparison
+                            objectName: "analysisComparison"
+                            Layout.fillWidth: true
+                            spacing: Theme.tightSpacing
+                            readonly property real laneHeight: Math.round(Theme.scaled(56))
+
+                            Label {
+                                objectName: "comparisonSummary"
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: Theme.text
+                                text: root.comparisonText(trackRow.matched, trackRow.rekordboxGrid, trackRow.engineSide)
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: "rekordbox" + root.gridFactsText(trackRow.rekordboxGrid)
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                            }
+                            WaveformView {
+                                id: rekordboxLane
+                                objectName: "comparisonRekordbox"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: comparison.laneHeight
+                                gridStyle: "lines"
+                                beatsSelected: true
+                                columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
+                                trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
+                                beatData: trackRow.analysis.ready === true && rekordboxLane.width > 0
+                                    ? root.controller.rowBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
+                                missingText: trackRow.analysis.ready === true ? "rekordbox has no analysis of this track"
+                                                                              : "Reading..."
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: "Engine" + root.gridFactsText(trackRow.engineSide)
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                            }
+                            WaveformView {
+                                id: engineLane
+                                objectName: "comparisonEngine"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: comparison.laneHeight
+                                gridStyle: "lines"
+                                beatsSelected: true
+                                readonly property bool ready: trackRow.engineSide.ready === true
+                                columnBytes: engineLane.ready ? trackRow.engineSide.columns : null
+                                trackDurationMs: engineLane.ready ? trackRow.engineSide.durationMs : 0
+                                beatData: engineLane.ready && engineLane.width > 0
+                                    ? root.controller.engineBeatTicks(trackRow.engineAskedFor, engineLane.width) : []
+                                missingText: !engineLane.ready ? "Reading..."
+                                    : trackRow.engineSide.hasEngineTrack !== true ? "Not in the Engine library"
+                                    : "Engine has no waveform for this track"
+                            }
+                        }
+                    ]
+
                     // Two lines, the same on every row: the grid's state over
                     // the waveform's, each badge after a caption column as
                     // wide as the wider caption, so the badges line up from
@@ -712,6 +810,68 @@ Page {
         return room >= Theme.scaled(64) ? room : 0;
     }
     readonly property real rowWaveformHeight: Math.round(Theme.scaled(40))
+
+    // The row opened for comparing, by rekordbox id; empty for none.
+    property string openTrackId: ""
+
+    // A grid's figures after a lane's name: its tempo and where its first
+    // downbeat is.
+    function gridFactsText(facts) {
+        if (!facts || facts.ready !== true) {
+            return "";
+        }
+        if (facts.hasGrid !== true) {
+            return ", no beat grid";
+        }
+        return ", " + facts.bpm.toFixed(2) + " BPM, first downbeat at "
+            + (facts.firstDownbeatMs / 1000).toFixed(3) + " s";
+    }
+
+    // What differs between the two grids, in one sentence. The offset is
+    // taken within one beat of rekordbox's grid (grids a whole number of
+    // beats apart put the same lines in the same places); a downbeat on
+    // another beat of the bar is said separately.
+    function comparisonText(matched, rekordbox, engine) {
+        if (!matched) {
+            return "Not in the Engine library yet: there is nothing to compare with.";
+        }
+        if (!rekordbox || rekordbox.ready !== true || !engine || engine.ready !== true) {
+            return "Reading both analyses...";
+        }
+        if (engine.hasEngineTrack !== true) {
+            return "Not in the Engine library yet: there is nothing to compare with.";
+        }
+        if (rekordbox.hasGrid !== true && engine.hasGrid !== true) {
+            return "Neither library has a beat grid for this track.";
+        }
+        if (rekordbox.hasGrid !== true) {
+            return "rekordbox has no beat grid for this track; Engine has one.";
+        }
+        if (engine.hasGrid !== true) {
+            return "Engine has no beat grid for this track yet.";
+        }
+        const parts = [];
+        const tempo = engine.bpm - rekordbox.bpm;
+        if (Math.abs(tempo) >= 0.005) {
+            parts.push("Engine's tempo is " + Math.abs(tempo).toFixed(2) + " BPM "
+                       + (tempo > 0 ? "faster" : "slower"));
+        }
+        const beatMs = 60000 / rekordbox.bpm;
+        const apart = engine.firstDownbeatMs - rekordbox.firstDownbeatMs;
+        let phase = apart - Math.round(apart / beatMs) * beatMs;
+        if (Math.abs(phase) >= 1) {
+            parts.push("Engine's beats fall " + Math.round(Math.abs(phase)) + " ms "
+                       + (phase > 0 ? "later" : "earlier"));
+        }
+        const beatsApart = Math.round(apart / beatMs);
+        if (((beatsApart % 4) + 4) % 4 !== 0) {
+            parts.push("Engine's bars start on another beat");
+        }
+        if (parts.length === 0) {
+            return "The two beat grids agree.";
+        }
+        return parts.join("; ") + ".";
+    }
 
     // One zoomed waveform for the page, opened from a row's waveform.
     WaveformZoomPopup {
