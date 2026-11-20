@@ -128,7 +128,6 @@ Pane {
         // An edit open in the comment field belongs to the track shown
         // until now: staged for it, or dropped, before this one is shown.
         const droppedFor = commentEditor.endEdit();
-        const droppedWhy = panel.trackEditController !== null ? panel.trackEditController.errorMessage : "";
         panel.trackSourceId = delegate.sourceId;
         panel.trackTitle = delegate.title;
         panel.trackArtist = delegate.artist;
@@ -163,7 +162,7 @@ Pane {
         // Said under the track shown now, naming the one it was typed for:
         // the pane moved on, and the text did not go with it.
         if (panel.trackEditController !== null && droppedFor.length > 0) {
-            panel.trackEditController.noteDroppedComment(droppedFor, droppedWhy);
+            panel.trackEditController.noteDroppedComment(droppedFor);
         }
         panel.pendingPositionMs = -1;
         panel.pendingLoopEndMs = -1;
@@ -624,13 +623,20 @@ Pane {
                 objectName: "trackEditRefusal"
                 visible: panel.canEditTrack && panel.commentLimit.refusal.length > 0
                     && (panel.commentLimit.known === true || panel.commentLimit.failed === true)
-                text: panel.commentLimit.failed === true
-                    ? "The stick could not be read, so nothing can be changed here: " + panel.commentLimit.refusal + "."
+                text: panel.commentLimit.failed === true ? panel.commentLimit.refusal
                     : "Not editable here: " + panel.commentLimit.refusal + "."
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
+            }
+            // A failed read is tried again on a save, a rescan or the stick
+            // coming back, and here, when asked: never on every track shown.
+            Button {
+                objectName: "readStickAgainButton"
+                visible: panel.canEditTrack && panel.commentLimit.failed === true
+                text: "Read Again"
+                onClicked: panel.trackEditController.invalidate()
             }
             Label {
                 objectName: "trackEditError"

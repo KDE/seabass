@@ -16,6 +16,11 @@
 
 #include <QCoreApplication>
 #include <QSignalSpy>
+#include <QThreadPool>
+
+#include <atomic>
+#include <chrono>
+#include <future>
 
 #include <cassert>
 #include <filesystem>
@@ -28,6 +33,7 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/track_edit_controller.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
@@ -153,6 +159,39 @@ int main(int argc, char **argv)
            && "a second edit of the same track stages");
     assert(controller.hasStagedRating(file));
     std::cout << "case 4 (after a save the track shown can be edited again) OK\n";
+
+    // 5. Leaving Browse does not wait for a read of the stick: a
+    //    controller destroyed while its read is held up in the worker
+    //    returns at once, and the read, let go, ends on its own and leaves
+    //    no temporary copy behind.
+    {
+        std::promise<void> entered;
+        std::promise<void> release;
+        std::shared_future<void> released = release.get_future().share();
+        std::atomic<bool> enteredOnce{false};
+        TrackEditController::setIndexBuildGateForTesting([&entered, &enteredOnce, released]() {
+            if (!enteredOnce.exchange(true)) {
+                entered.set_value();
+            }
+            released.wait();
+        });
+        auto *held = new TrackEditController;
+        held->lookUpTrack(pioneer, engine, file);
+        assert(entered.get_future().wait_for(std::chrono::seconds(30)) == std::future_status::ready);
+        const auto start = std::chrono::steady_clock::now();
+        delete held;
+        const auto took = std::chrono::steady_clock::now() - start;
+        assert(took < std::chrono::milliseconds(500) && "the destructor does not wait for the read");
+        TrackEditController::setIndexBuildGateForTesting({});
+        release.set_value();
+        QThreadPool::globalInstance()->waitForDone();
+        std::error_code ec;
+        for (const auto &entry : fs::directory_iterator(fs::temp_directory_path(), ec)) {
+            assert(pathToUtf8(entry.path().filename()).rfind(infrastructure::ReadCopyPrefix, 0) != 0
+                   && "the read removed its copy");
+        }
+        std::cout << "case 5 (a controller destroyed mid-read returns at once and leaks no copy) OK\n";
+    }
     registry->discardAll();
     return 0;
 }

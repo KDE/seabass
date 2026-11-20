@@ -12,6 +12,7 @@
 #include <QVariantMap>
 
 #include <map>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -58,6 +59,8 @@ class TrackEditController : public QObject
     // the pane in its "reading" state.
     Q_PROPERTY(bool holdIndexForTesting READ holdIndexForTesting WRITE setHoldIndexForTesting NOTIFY
                    holdIndexForTestingChanged)
+    // Test seam: how many reads of the stick this controller has started.
+    Q_PROPERTY(int indexBuildsForTesting READ indexBuildsForTesting NOTIFY commentLimitChanged)
 
 public:
     explicit TrackEditController(QObject *parent = nullptr);
@@ -68,19 +71,27 @@ public:
     QVariantMap commentLimit() const { return m_commentLimit; }
     bool holdIndexForTesting() const { return m_hold; }
     void setHoldIndexForTesting(bool hold);
+    int indexBuildsForTesting() const { return m_builds; }
+    // Test seam: run by every read of the stick, on its worker thread,
+    // before it reads; a test blocks in it to keep a read running. Empty
+    // for none.
+    static void setIndexBuildGateForTesting(std::function<void()> gate);
 
     // The track the pane shows: answered from the stick's index, read
     // first when there is none. Clears errorMessage: it was about the
     // track shown before.
     Q_INVOKABLE void lookUpTrack(const QString &rekordboxPath, const QString &enginePath, const QString &filePath);
-    // The stick changed under the index (the page read it again): read it
-    // again.
+    // The stick may have changed under the index: read it again. Called
+    // on the session's own events (a save, the stick going and coming
+    // back) and by the pane's "Read again" after a failed read; a track
+    // shown does not retry a failed read by itself.
     Q_INVOKABLE void invalidate();
     // What the index says about `filePath`, in commentLimit's shape.
     Q_INVOKABLE QVariantMap trackInfo(const QString &filePath) const;
     // A comment typed for `title` that could not be staged when the pane
-    // turned to another track: errorMessage says so, with `why`.
-    Q_INVOKABLE void noteDroppedComment(const QString &title, const QString &why);
+    // turned to another track: errorMessage says so, with why the last
+    // refused staging was refused.
+    Q_INVOKABLE void noteDroppedComment(const QString &title);
     Q_INVOKABLE void clearError() { setErrorMessage({}); }
 
     // Stars 1 to 5, or -1 for none; `original` is the value the stick has
@@ -163,7 +174,10 @@ private:
     QString m_shownFile;
     // Bumped by invalidate(): a read started before it is not used.
     int m_generation = 0;
-    bool m_waitingForSave = false;
+    int m_builds = 0;
+    // Why the last setRating()/setComment() was refused, without advice
+    // on what to do next: for noteDroppedComment().
+    QString m_lastRefusal;
     QFutureWatcher<IndexRead> m_indexWatcher;
     bool m_hold = false;
     std::optional<IndexRead> m_held;
