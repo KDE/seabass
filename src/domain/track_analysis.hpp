@@ -27,6 +27,10 @@ struct TrackAnalysis
     // cues are at a guess (Track::cueRateUnverified). The player still
     // keeps time by such a grid; nothing draws it as fact.
     bool beatRateRecorded = true;
+    // The waveform at the finest resolution the read gave, for the zoomed
+    // popup (#104). Only an Engine read asked for it fills it: the entries
+    // the overview above is averaged from are already in memory there.
+    DetailWaveform detail;
 };
 
 }  // namespace seabass::domain

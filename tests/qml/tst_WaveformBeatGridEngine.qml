@@ -164,4 +164,27 @@ TestCase {
                     "a row is handed the ticks of the whole grid at " + width);
         }
     }
+
+    // A waveform blob libdjinterop must not be handed (#104 review, as the
+    // cue writer's since 347a95da): three bytes, and a stream cut short,
+    // which libdjinterop's decoder would loop on for ever. The waveform
+    // reads give nothing for it and come back; the grid of the same row
+    // is read all the same.
+    function test_anUndecodableWaveformBlobIsNotDecoded_data() {
+        return [{tag: "three bytes", hex: "000102"},
+                {tag: "a stream cut short", hex: "00000040789c4b4c4a"}];
+    }
+    function test_anUndecodableWaveformBlobIsNotDecoded(data) {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setOverviewBlob(lib.path, data.hex), "planted");
+        const player = createTemporaryObject(playerComponent, testCase);
+        compare(player.waveformFor("engine", lib.path, lib.id).length, 0, "no waveform from it");
+        compare(player.beatGridFor("engine", lib.path, lib.id).length, 121, "the grid all the same");
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        compare(player.waveform.length, 0, "nor on load");
+        player.requestDetailWaveform();
+        compare(player.detailWaveform.columns.byteLength, 0, "nor for the popup");
+        player.stop();
+    }
 }
