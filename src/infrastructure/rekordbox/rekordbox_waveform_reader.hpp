@@ -91,4 +91,22 @@ RekordboxWaveformSections readWaveformSections(const std::string &pioneerRoot, c
                                                std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
                                                const AnlzPathIndex *pathIndex = nullptr);
 
+// The scrolling waveform a CDJ draws while it plays, 150 columns a
+// second, for a view zoomed in to a few bars (#104): the three-band PWV7
+// from the .2EX where there is one, else the monochrome PWV3 from the
+// .EXT. PWV7's three bytes are low, mid and high, in the order PWV6's
+// are (measured against the player's own overview, see
+// domain/engine_overview.cpp; PWV7 against PWV6 on a real stick gives the
+// same order), each 0 to 127. PWV3's byte is PWAV's: a 5-bit height and
+// a 3-bit whiteness, rendered the way readTrackAnalysis() renders PWAV.
+// The colour scrolling waveform (PWV5) is not read. Empty where neither
+// is there or a file does not parse; nothing throws.
+domain::DetailWaveform readDetailWaveform(AnlzByteSource &source, const std::string &analyzePath);
+
+// The same for a track of the export under `pioneerRoot`, with the same
+// `anlzSource` and `pathIndex` choices as readTrackAnalysis().
+domain::DetailWaveform readDetailWaveform(const std::string &pioneerRoot, const std::string &trackSourceId,
+                                          std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
+                                          const AnlzPathIndex *pathIndex = nullptr);
+
 }  // namespace seabass::infrastructure::rekordbox

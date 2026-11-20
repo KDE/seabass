@@ -4,6 +4,7 @@
 
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -204,6 +205,85 @@ RekordboxWaveformSections readWaveformSections(const std::string &pioneerRoot, c
             anlzSource = anlzSourceForPioneerRoot(pioneerRoot);
         }
         return readWaveformSections(*anlzSource, *analyzePath);
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+
+namespace
+{
+
+// rekordbox's scrolling waveforms have 150 entries a second.
+constexpr double ScrollMsPerEntry = 1000.0 / 150.0;
+
+// A PWAV or PWV3 byte: a 5-bit height and a 3-bit whiteness, all three
+// bands the same height, the whiteness tinting it (see readTrackAnalysis()).
+domain::WaveformColumn monochromeColumn(unsigned char b)
+{
+    const double height = (b & 0x1F) / 31.0;
+    const double whiteness = ((b >> 5) & 0x07) / 7.0;
+    return {height, height * (0.55 + 0.45 * whiteness), height * whiteness};
+}
+
+}  // namespace
+
+domain::DetailWaveform readDetailWaveform(AnlzByteSource &source, const std::string &analyzePath)
+{
+    domain::DetailWaveform detail;
+    try {
+        std::unique_ptr<std::istringstream> stream;
+        std::unique_ptr<kaitai::kstream> kaitaiStream;
+        if (auto anlz = parsedSibling(source, analyzePath, ".2EX", stream, kaitaiStream)) {
+            if (const auto entries = previewEntries<Anlz::wave_3band_scroll_tag_t>(
+                    *anlz, Anlz::SECTION_TAGS_WAVE_3BAND_SCROLL, 3)) {
+                detail.columns.reserve(entries->size() / 3);
+                for (std::size_t i = 0; i + 2 < entries->size(); i += 3) {
+                    const auto band = [&](std::size_t k) {
+                        return std::min(1.0, static_cast<unsigned char>((*entries)[i + k]) / 127.0);
+                    };
+                    detail.columns.push_back({band(0), band(1), band(2)});
+                }
+            }
+        }
+    } catch (const std::exception &) {
+        detail.columns.clear();
+    }
+    if (detail.columns.empty()) {
+        try {
+            std::unique_ptr<std::istringstream> stream;
+            std::unique_ptr<kaitai::kstream> kaitaiStream;
+            if (auto anlz = parsedSibling(source, analyzePath, ".EXT", stream, kaitaiStream)) {
+                if (const auto entries = previewEntries<Anlz::wave_scroll_tag_t>(
+                        *anlz, Anlz::SECTION_TAGS_WAVE_SCROLL, 1)) {
+                    detail.columns.reserve(entries->size());
+                    for (unsigned char b : *entries) {
+                        detail.columns.push_back(monochromeColumn(b));
+                    }
+                }
+            }
+        } catch (const std::exception &) {
+            detail.columns.clear();
+        }
+    }
+    detail.msPerColumn = detail.columns.empty() ? 0.0 : ScrollMsPerEntry;
+    return detail;
+}
+
+domain::DetailWaveform readDetailWaveform(const std::string &pioneerRoot, const std::string &trackSourceId,
+                                          std::shared_ptr<AnlzByteSource> anlzSource,
+                                          const AnlzPathIndex *pathIndex)
+{
+    try {
+        const auto trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
+        auto analyzePath = pathIndex != nullptr ? pathIndex->pathFor(trackId)
+                                                : findAnlzPathForTrackId(pioneerRoot, trackId);
+        if (!analyzePath) {
+            return {};
+        }
+        if (!anlzSource) {
+            anlzSource = anlzSourceForPioneerRoot(pioneerRoot);
+        }
+        return readDetailWaveform(*anlzSource, *analyzePath);
     } catch (const std::exception &) {
         return {};
     }

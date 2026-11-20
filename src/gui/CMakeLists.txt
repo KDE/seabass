@@ -181,6 +181,7 @@ set(SEABASS_GUI_QML_FILES
     qml/DonationPage.qml
     qml/PlayerBar.qml
     qml/WaveformView.qml
+    qml/WaveformZoomPopup.qml
     qml/SettingsPage.qml
     qml/AppSettingsPage.qml
     qml/AnonymizeLibraryPage.qml
@@ -376,6 +377,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/folder.svg
     qml/icons/breeze/go-down.svg
     qml/icons/breeze/go-home.svg
+    qml/icons/breeze/go-jump.svg
     qml/icons/breeze/go-next.svg
     qml/icons/breeze/go-previous.svg
     qml/icons/breeze/go-up.svg
@@ -403,7 +405,10 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/view-media-track.svg
     qml/icons/breeze/vcs-diff.svg
     qml/icons/breeze/view-refresh.svg
+    qml/icons/breeze/waveform.svg
     qml/icons/breeze/window-close.svg
+    qml/icons/breeze/zoom-in.svg
+    qml/icons/breeze/zoom-out.svg
 )
 # The three catalog glyphs (LibrarySourceToggle, FormatToggle), subset
 # from Noto Sans Symbols2 so they render the same on every platform

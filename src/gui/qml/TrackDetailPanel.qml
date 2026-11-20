@@ -503,6 +503,7 @@ Pane {
 
         WaveformView {
             id: waveformView
+            objectName: "trackDetailPanelWaveform"
             Layout.fillWidth: true
             Layout.preferredHeight: 80
             cueData: panel.trackCues
@@ -519,7 +520,20 @@ Pane {
             // still invites a click that now leads nowhere, which is
             // worse than a waveform that is plainly read-only.
             cueEditable: panel.addCueEnabled
+            // A click opens the waveform zoomed in (#104), the track loaded
+            // into the player: only for a track there is a file to play.
+            readonly property bool opensZoom: !panel.addCueEnabled && panel.trackStreamingSource.length === 0
+                && panel.trackFilePath.length > 0
+            pointerShape: opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
             onPositionClicked: (ms) => {
+                if (waveformView.opensZoom) {
+                    zoomPopup.openFor({format: panel.format, libraryPath: panel.libraryPath,
+                                       sourceId: panel.trackSourceId, filePath: panel.trackFilePath,
+                                       title: panel.trackTitle, artist: panel.trackArtist,
+                                       artworkPath: panel.trackArtworkPath, cues: panel.trackCues,
+                                       fallbackArtworkPath: panel.trackFallbackArtworkPath});
+                    return;
+                }
                 if (!panel.addCueEnabled || panel.trackStreamingSource.length > 0) {
                     return;
                 }
@@ -536,6 +550,11 @@ Pane {
                 // combo's own visibility below.
                 cueKindCombo.currentIndex = 0;
             }
+        }
+
+        WaveformZoomPopup {
+            id: zoomPopup
+            playbackController: panel.playbackController
         }
 
         Label {

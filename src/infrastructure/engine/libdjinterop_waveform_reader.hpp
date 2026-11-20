@@ -28,4 +28,14 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 // database. Either half is empty where the track has not got it.
 domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId);
 
+// Every entry of the waveform libdjinterop reads for the track, not
+// downsampled, for a view zoomed in to a few bars (#104). Engine 2.x and
+// 3.x libraries keep only the overview the player draws across the whole
+// track (about a thousand entries: libdjinterop reads nothing finer from
+// them), Engine 1.x libraries the high-resolution waveform as well, and
+// that is what libdjinterop hands over there. msPerColumn from the row's
+// sample count and rate; 0 where either is missing. Empty where the track
+// or its waveform cannot be read; nothing throws.
+domain::DetailWaveform readDetailWaveform(const std::string &engineLibraryPath, const std::string &trackSourceId);
+
 }  // namespace seabass::infrastructure::engine

@@ -152,10 +152,12 @@ public:
     // fallbackArtworkPath is the row's own; left out, it is looked up in
     // the queue when the track is in it (Browse offers its list as the
     // queue before it plays a row), and is empty otherwise.
+    // startPlaying false loads the track paused at its start, the way
+    // opening the waveform popup with nothing playing does (#104).
     Q_INVOKABLE void load(const QString &format, const QString &libraryPath, const QString &sourceId,
                            const QString &filePath, const QString &title, const QString &artist,
                            const QString &artworkPath, const QVariantList &cues,
-                           const QString &fallbackArtworkPath = QString());
+                           const QString &fallbackArtworkPath = QString(), bool startPlaying = true);
 
     // A plain audio file that no catalog lists: a set recording on the
     // stick (Clean Up Recordings). What load() does minus every catalog
@@ -215,6 +217,18 @@ public:
     // (the player keeps time by that grid, but nothing draws it as fact).
     // Bind with trackSerial so a new track is laid out again.
     Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
+    // The loaded track's waveform at the finest resolution its library
+    // holds and Seabass reads (domain::DetailWaveform; rekordbox's
+    // scrolling waveform, Engine's own), for the zoomed waveform popup
+    // (#104): {columns, msPerColumn, startMs}. `columns` is an
+    // ArrayBuffer in QML, three bytes a column (low, mid, high, 0 to
+    // 255): a list of maps would be some forty thousand of them.
+    // msPerColumn 0 spreads the columns over the track's length; startMs
+    // is where the first column falls on the timeline the player plays
+    // on, moved as the beats are. Read on the first ask after a load and
+    // kept until the next; empty columns where there is nothing finer
+    // than nothing (a view falls back on `waveform`).
+    Q_INVOKABLE QVariantMap detailWaveform() const;
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
@@ -331,6 +345,12 @@ private:
     // playback timeline, and whether its rate is the library's.
     std::vector<domain::Beat> m_drawnBeats;
     bool m_drawnBeatsRateRecorded = true;
+    // How far the loaded track's grid was moved onto the playback
+    // timeline; its detail waveform moves with it.
+    double m_beatShiftMs = 0.0;
+    // detailWaveform() for the track of m_detailSerial.
+    mutable QVariantMap m_detailWaveform;
+    mutable int m_detailSerial = -1;
     int m_trackSerial = 0;
     QString m_errorMessage;
     // One read of a track's analysis, for waveformFor() and

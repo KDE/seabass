@@ -100,6 +100,42 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
     return analysis;
 }
 
+domain::DetailWaveform readDetailWaveform(const std::string &engineLibraryPath, const std::string &trackSourceId)
+{
+    domain::DetailWaveform detail;
+    try {
+        if (!djinterop::engine::database_exists(engineLibraryPath)) {
+            return {};
+        }
+        auto db = djinterop::engine::load_database(engineLibraryPath);
+        std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
+        if (!track) {
+            return {};
+        }
+        const std::vector<djinterop::waveform_entry> entries = track->waveform();
+        detail.columns.reserve(entries.size());
+        for (const djinterop::waveform_entry &entry : entries) {
+            detail.columns.push_back(
+                {entry.low.value / 255.0, entry.mid.value / 255.0, entry.high.value / 255.0});
+        }
+        if (!detail.columns.empty()) {
+            try {
+                const std::optional<unsigned long long> samples = track->sample_count();
+                const std::optional<double> rate = track->sample_rate();
+                if (samples && *samples > 0 && rate && *rate > 0.0) {
+                    detail.msPerColumn = static_cast<double>(*samples) / *rate * 1000.0
+                        / static_cast<double>(detail.columns.size());
+                }
+            } catch (const std::exception &) {
+                detail.msPerColumn = 0.0;
+            }
+        }
+    } catch (const std::exception &) {
+        return {};
+    }
+    return detail;
+}
+
 std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,
                                                           const std::string &trackSourceId)
 {
