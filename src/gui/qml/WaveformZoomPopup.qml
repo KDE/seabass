@@ -438,7 +438,11 @@ SeabassDialog {
                         beatsSelected: true
                         beatData: root.ticksBetween(tileView.viewStartMs, tileView.viewStartMs + tileView.viewSpanMs)
                         gridStyle: "ruler"
-                        showRuler: root.ticks.length > 0
+                        // Evaluated once more in a tile the Repeater is
+                        // dropping as the player reports the length (a
+                        // real one, opened from a page), when `root` is
+                        // already gone from its context.
+                        showRuler: (root ? root.ticks : []).length > 0
                         colorScheme: "vivid"
                         // Played or not is shown by the dimming below, which
                         // moves with the playhead without a repaint.
