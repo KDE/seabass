@@ -378,8 +378,25 @@ int main()
         const fs::path copy = f.root / "COPY";
         fs::copy(f.target, copy, fs::copy_options::recursive);
         assert(fs::exists(copy / seabass::pathFromUtf8(std::string(sb::RestoredDatabasesPath))));
-        // (The copy has its own mtimes, newer than the backup.)
-        f.expect(copy, f.source, State::Outdated, Kind::None, false, "a file manager copy");
+        // Whether a copy keeps the files' mtimes depends on the tool and the
+        // platform (std::filesystem::copy keeps them on Windows, not on
+        // Linux; Dolphin and Explorer keep them, cp does not), so both are
+        // set here rather than left to the copy. Either way the record is
+        // TARGET's and vouches for nothing: never current.
+        // Its own mtimes, newer than the backup: changed since.
+        const fs::path copiedDb = Fixture::mdb(copy);
+        const fs::file_time_type clonedAt = fs::last_write_time(Fixture::mdb(f.target));
+        setMtime(copiedDb, now() + 60);
+        f.expect(copy, f.source, State::Outdated, Kind::None, false, "a file manager copy, new mtimes");
+        // The clone's mtimes kept, every file's: older than the backup, so
+        // behind it.
+        for (const auto &entry : fs::recursive_directory_iterator(f.target)) {
+            if (entry.is_regular_file()) {
+                fs::last_write_time(copy / fs::relative(entry.path(), f.target), fs::last_write_time(entry.path()));
+            }
+        }
+        assert(fs::last_write_time(copiedDb) == clonedAt);
+        f.expect(copy, f.source, State::BehindBackup, Kind::DiskBackup, false, "a file manager copy, mtimes kept");
         restore.targetRoot = copy;
         restore.targetLabel = "COPY";
         assert(RestoreStickBackup::preview(restore).filesToWrite >= 1);
