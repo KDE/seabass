@@ -360,6 +360,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             visible: playbackCtrl.hasTrack
             controller: playbackCtrl
+            settings: appSettingsCtrl
         }
     }
 

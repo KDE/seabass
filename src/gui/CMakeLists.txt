@@ -182,6 +182,7 @@ set(SEABASS_GUI_QML_FILES
     qml/PlayerBar.qml
     qml/WaveformView.qml
     qml/WaveformZoomPopup.qml
+    qml/TrackTimeLabel.qml
     qml/SettingsPage.qml
     qml/AppSettingsPage.qml
     qml/AnonymizeLibraryPage.qml

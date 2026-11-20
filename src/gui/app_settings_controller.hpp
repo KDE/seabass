@@ -29,6 +29,9 @@ class AppSettingsController : public QObject
     Q_PROPERTY(bool hideStreamingTracks READ hideStreamingTracks WRITE setHideStreamingTracks NOTIFY
                    hideStreamingTracksChanged)
     Q_PROPERTY(bool showPlayCount READ showPlayCount WRITE setShowPlayCount NOTIFY showPlayCountChanged)
+    Q_PROPERTY(double waveformZoomBars READ waveformZoomBars WRITE setWaveformZoomBars NOTIFY waveformZoomBarsChanged)
+    Q_PROPERTY(bool showRemainingTime READ showRemainingTime WRITE setShowRemainingTime NOTIFY
+                   showRemainingTimeChanged)
     Q_PROPERTY(QString keyNotation READ keyNotation WRITE setKeyNotation NOTIFY keyNotationChanged)
     // The three "Music" preferences. They are not read from here by the
     // code that acts on them: each setter pushes the trio into
@@ -114,6 +117,19 @@ public:
     // never brought in step. The track panel keeps its own "Plays" line.
     bool showPlayCount() const { return m_showPlayCount; }
     void setShowPlayCount(bool value);
+
+    // How many bars the zoomed waveform popup shows across its width, as
+    // last zoomed (#104): bars, not milliseconds, so it carries between
+    // tracks of different tempo. 0 until it has been zoomed (it then
+    // opens at 16).
+    double waveformZoomBars() const { return m_waveformZoomBars; }
+    void setWaveformZoomBars(double bars);
+
+    // Whether the player bar and the popup show the time left ("-2:59 /
+    // 4:00") instead of the time played ("1:01 / 4:00"): a click on
+    // either time switches both.
+    bool showRemainingTime() const { return m_showRemainingTime; }
+    void setShowRemainingTime(bool value);
 
     // How KeyBadge.qml renders a musical key everywhere it appears
     // (Browse Library's Key column, Library Statistics' "Tracks per
@@ -234,6 +250,8 @@ signals:
     void preferredFormatChanged();
     void hideStreamingTracksChanged();
     void showPlayCountChanged();
+    void waveformZoomBarsChanged();
+    void showRemainingTimeChanged();
     void keyNotationChanged();
     void exactMatchSecondsChanged();
     void compareAudioSecondsChanged();
@@ -255,6 +273,8 @@ private:
     QString m_preferredFormat = QStringLiteral("rekordbox");
     bool m_hideStreamingTracks = false;
     bool m_showPlayCount = false;
+    double m_waveformZoomBars = 0.0;
+    bool m_showRemainingTime = false;
     QString m_keyNotation = QStringLiteral("camelot");
     int m_exactMatchSeconds = 2;
     int m_compareAudioSeconds = 10;

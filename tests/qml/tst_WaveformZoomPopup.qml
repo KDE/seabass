@@ -27,10 +27,14 @@ TestCase {
     // 120 BPM: a beat every 500 ms, a bar every 2 s, the first beat of
     // every four a downbeat, over four minutes.
     readonly property real trackMs: 240000
-    function grid(fromMs, toMs) {
+    readonly property string fixtureRoot: Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+        .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
+    readonly property string clickFile: Qt.resolvedUrl("../fixtures/mp3-click/click-D-lame-44100.mp3").toString()
+        .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
+    function grid(fromMs, toMs, beatMs) {
         const beats = [];
         let index = 0;
-        for (let t = fromMs; t < toMs - 1e-6; t += 500) {
+        for (let t = fromMs; t < toMs - 1e-6; t += beatMs || 500) {
             beats.push({timeMs: t, downbeat: index % 4 === 0});
             ++index;
         }
@@ -73,9 +77,36 @@ TestCase {
             }
             signal seeked(real positionMs)
             signal trackChanged()
-            function detailWaveform() { return detail; }
+            // The player's own: empty until asked for, then (autoDetail)
+            // handed over at once, or when a test sets it.
+            property var detailWaveform: ({})
+            property bool autoDetail: true
+            property int detailRequests: 0
+            property real beatMs: 500
+            property bool noGrid: false
+            property bool libraryBusy: false
+            function requestDetailWaveform() {
+                ++detailRequests;
+                if (autoDetail) {
+                    detailWaveform = detail;
+                }
+            }
             function beatTicksAt(durationMs, widthPx) {
-                return BeatGridTicks.layout(testCase.grid(0, durationMs), durationMs, widthPx).ticks;
+                return noGrid ? [] : BeatGridTicks.layout(testCase.grid(0, durationMs, beatMs), durationMs, widthPx).ticks;
+            }
+            // Another track loaded, as the queue moving on does it.
+            signal trackAboutToChange()
+            function changeTrack(newTitle, newArtist, newBeatMs, newDetail) {
+                trackAboutToChange();
+                title = newTitle;
+                artist = newArtist;
+                beatMs = newBeatMs;
+                beatTimesMs = testCase.grid(0, duration, newBeatMs).map((beat) => beat.timeMs);
+                position = 0;
+                detail = newDetail;
+                detailWaveform = ({});
+                ++trackSerial;
+                trackChanged();
             }
             function load(format, libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
                           fallbackArtworkPath, startPlaying) {
@@ -319,13 +350,16 @@ TestCase {
     function test_playingMovesSmoothlyBetweenReports() {
         const player = makeFakePlayer({position: 30000});
         const popup = openLoaded(player);
+        // The frames driven by hand, not by the clock on the wall.
+        popup.frameClock = false;
         player.playing = true;
         const start = popup.centerMs;
         const xStart = strip(popup).x;
-        wait(400);
-        const advanced = popup.centerMs - start;
-        verify(advanced > 150 && advanced < 1500, "moved on by itself: " + advanced + " ms in 400");
-        verify(strip(popup).x < xStart, "and the strip with it");
+        for (let i = 0; i < 24; ++i) {
+            popup.advanceClock(1 / 60);
+        }
+        fuzzyCompare(popup.centerMs - start, 400, 1e-6, "24 frames of 1/60 s moved it 400 ms");
+        verify(Math.abs((xStart - strip(popup).x) - 400 * popup.pxPerMs) <= 1, "and the strip with it");
         const here = popup.centerMs;
         player.position = here + 40;
         verify(Math.abs(popup.centerMs - here) < 20, "a near report nudges, " + (popup.centerMs - here));
@@ -366,6 +400,7 @@ TestCase {
         const a = area(popup);
         // Let go first: a drag.
         mouseDrag(a, popup.lineX, a.height / 2, -100, 0);
+        findChild(popup.contentItem, "zoomFlick").cancelFlick();
         compare(popup.attached, false);
         const x = popup.lineX + 300;
         const before = popup.centerMs + (x - popup.lineX) / popup.pxPerMs;
@@ -387,8 +422,11 @@ TestCase {
 
         // A drag right shows earlier music.
         mouseDrag(a, popup.lineX, a.height / 2, 200, 0);
+        findChild(popup.contentItem, "zoomFlick").cancelFlick();
         compare(popup.attached, false);
-        verify(Math.abs(popup.centerMs - (60000 - 200 / popup.pxPerMs)) <= 3 / popup.pxPerMs,
+        // Back by about the drag (the Flickable starts after its drag
+        // threshold).
+        verify(popup.centerMs < 60000 - 100 / popup.pxPerMs && popup.centerMs > 60000 - 300 / popup.pxPerMs,
                "the drag moved the view to " + popup.centerMs);
         tryCompare(follow, "visible", true);
         waitForPolish(testCase.Window.window);
@@ -629,7 +667,8 @@ TestCase {
         const barView = findChild(scene.bar, "playerWaveform");
         tryVerify(() => paneView.beatTicks.length > 0 && barView.beatTicks.length > 0, 2000, "both have a grid");
         verify(paneView.rulerHeight >= 12, "the pane's lane, " + paneView.rulerHeight);
-        verify(barView.rulerHeight >= 12, "the bar's lane, " + barView.rulerHeight);
+        compare(barView.gridStyle, "sliced", "the bar's grid is cut out of its bars");
+        compare(barView.rulerHeight, 0, "no lane in the bar");
         verify(paneView.beatTicks.some((tick) => tick.strong && tick.bar > 1), "numbered marks in the pane");
         waitForRendering(scene);
         if (screenshotDir && screenshotDir.length > 0) {
@@ -668,9 +707,383 @@ TestCase {
     }
     function test_theControllersDetailWaveformIsAnArrayBuffer() {
         const player = createTemporaryObject(realPlayer, testCase);
-        const detail = player.detailWaveform();
+        const detail = player.detailWaveform;
         verify(detail.columns instanceof ArrayBuffer, "an ArrayBuffer, got " + typeof detail.columns);
         compare(detail.columns.byteLength, 0, "no track, no columns");
         compare(detail.msPerColumn, 0);
+    }
+
+    // ---- Review of 2026-11-20 -------------------------------------------
+
+    // The queue moves on while the popup is open: it shows the new track
+    // (title, artist, waveform, grid), keeps the zoom as a number of bars
+    // across, at the new track's tempo, and follows the playhead again.
+    function test_aNewTrackKeepsTheZoomInBarsAndIsFollowed() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = openLoaded(player);
+        popup.zoomIn();
+        const bars = popup.shownSpanMs / popup.barMs;
+        verify(Math.abs(bars - 16 / 1.5) < 1e-6, "zoomed in to " + bars + " bars");
+        mouseWheel(area(popup), area(popup).width / 2, 50, 0, -120);
+        compare(popup.attached, false);
+        const requests = player.detailRequests;
+        const other = new ArrayBuffer(300);
+        player.changeTrack("Space Oddity", "Another Artist", 600, {columns: other, msPerColumn: 10, startMs: 0});
+        compare(popup.trackTitle, "Space Oddity");
+        compare(findChild(popup.contentItem, "zoomTitle").text, "Space Oddity");
+        compare(findChild(popup.contentItem, "zoomArtist").text, "Another Artist");
+        compare(popup.barMs, 2400, "the new track's bar");
+        fuzzyCompare(popup.shownSpanMs / popup.barMs, bars, 1e-6);
+        compare(popup.attached, true, "following again");
+        compare(popup.centerMs, 0);
+        verify(player.detailRequests > requests, "its waveform asked for");
+        tryVerify(() => tiles(popup).length > 0 && tiles(popup).every((tile) => tile.columnBytes === other),
+                  2000, "and drawn");
+        const ticks = popup.ticks;
+        fuzzyCompare(ticks[1].timeMs - ticks[0].timeMs, 600, 1e-6, "its own grid");
+    }
+
+    // The overview until the finer waveform arrives, then the finer one.
+    function test_theOverviewStandsInUntilTheDetailArrives() {
+        const player = makeFakePlayer({position: 60000, autoDetail: false});
+        player.waveform = [{low: 0.5, mid: 0.2, high: 0.1}, {low: 0.6, mid: 0.2, high: 0.1}];
+        const popup = openLoaded(player);
+        tryVerify(() => tiles(popup).length > 0, 2000);
+        compare(player.detailRequests, 1, "asked for once");
+        verify(tiles(popup).every((tile) => tile.columnBytes === null && tile.waveformData.length === 2),
+               "the overview meanwhile");
+        player.detailWaveform = player.detail;
+        tryVerify(() => tiles(popup).every((tile) => tile.columnBytes === player.detail.columns), 2000,
+                  "then the detail");
+    }
+
+    // Opening, the popup listens from the first moment: a report that
+    // arrives while it is still fading in is taken, not missed.
+    Component {
+        id: slowPopupComponent
+        WaveformZoomPopup {
+            enter: Transition {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 300 }
+            }
+        }
+    }
+    function test_aReportWhileOpeningIsTaken() {
+        const player = makeFakePlayer({position: 30000, playing: true});
+        const popup = createTemporaryObject(slowPopupComponent, testCase, {playbackController: player});
+        popup.frameClock = false;
+        popup.openLoaded();
+        compare(popup.opened, false, "still opening");
+        player.position = 90000;
+        tryCompare(popup, "opened", true);
+        compare(popup.centerMs, 90000, "the report was taken");
+        player.playing = false;
+    }
+
+    // A track whose grid is not drawn: no lane, no lines, the waveform
+    // has the whole height.
+    function test_aTrackWithoutAGridHasNoLaneInThePopup() {
+        const player = makeFakePlayer({position: 60000, noGrid: true});
+        const popup = openLoaded(player);
+        for (let i = 0; i < 12; ++i) {
+            popup.zoomIn();
+        }
+        waitForTiles(popup);
+        compare(popup.ticks.length, 0);
+        for (const tile of tiles(popup)) {
+            compare(tile.rulerHeight, 0, "no lane");
+            compare(tile.waveHeight, tile.height, "the waveform has the whole height");
+        }
+        const a = area(popup);
+        const image = grabImage(testCase);
+        const pixelAt = (x, y) => {
+            const p = a.mapToItem(testCase, x, y);
+            return PixelScale.pixel(image, testCase, p.x, p.y);
+        };
+        // Above the quiet bars, right of the line: ground all along, where
+        // a beat would have had a line every 500 ms.
+        const ground = pixelAt(popup.lineX + 20, 10);
+        for (let x = popup.lineX + 20; x < a.width - 20; x += 3) {
+            const c = pixelAt(x, 10);
+            const d = Math.abs(c.r - ground.r) + Math.abs(c.g - ground.g) + Math.abs(c.b - ground.b);
+            verify(d < 0.01, "no line at " + x + ": " + d);
+        }
+    }
+
+    // Ctrl and the wheel while following: zoomed around the line, the
+    // playhead stays under it, and it still follows.
+    function test_ctrlWheelWhileFollowingZoomsAroundTheLine() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const a = area(popup);
+        const span = popup.shownSpanMs;
+        mouseWheel(a, popup.lineX + 400, a.height / 2, 0, 120, Qt.NoButton, Qt.ControlModifier);
+        verify(popup.shownSpanMs < span, "closer");
+        compare(popup.attached, true, "still following");
+        verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "60 s still under the line");
+    }
+
+    // The player bar's own waveform still seeks; only its button opens
+    // the popup.
+    Component {
+        id: barComponent
+        PlayerBar { width: 1000 }
+    }
+    function test_thePlayerBarWaveformStillSeeks() {
+        const player = makeFakePlayer({position: 0});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player});
+        const view = findChild(bar, "playerWaveform");
+        verify(view !== null);
+        waitForPolish(testCase.Window.window);
+        mouseClick(view, view.width / 2, view.height - 5);
+        compare(player.calls[player.calls.length - 1], "seek");
+        verify(Math.abs(player.position - testCase.trackMs / 2) < testCase.trackMs / view.width * 2,
+               "seeked to the middle: " + player.position);
+        compare(findChild(bar, "waveformZoomPopup").visible, false, "no popup");
+    }
+
+    // Engine: the waveform load() read is all there is (2.x and 3.x keep
+    // only the overview), so the popup is handed it without the library
+    // being opened again: changed in the database after the load, the
+    // popup still gets what was loaded.
+    function test_anEngineTracksDetailIsWhatLoadRead() {
+        const lib = engineGridFixture.library();
+        verify(lib.length > 0);
+        const id = engineGridFixture.trackId(lib);
+        verify(engineGridFixture.setWaveform(lib, 1024, 128));
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.load("engine", lib, id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        verify(engineGridFixture.setWaveform(lib, 512, 64));
+        player.requestDetailWaveform();
+        const detail = player.detailWaveform;
+        compare(detail.columns.byteLength, 1024 * 3, "the 1024 entries the load read, at once");
+        fuzzyCompare(detail.msPerColumn, 60000 / 1024, 1e-6);
+        compare(new Uint8Array(detail.columns)[0], 128);
+        player.stop();
+    }
+
+    // rekordbox: read off the GUI thread, and not while a library is being
+    // written; nothing is kept from a refused read, and the read comes
+    // once the write is over.
+    function test_aRekordboxDetailWaitsForTheWriteToEnd() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        const pioneer = stick + "/PIONEER";
+        const id = stickFixture.rekordboxTrackIds(pioneer, 1)[0];
+        verify(stickFixture.plantScrollWaveform(pioneer, id, 300), "a PWV7 of 300 columns planted");
+        const player = createTemporaryObject(realPlayer, testCase);
+        player.libraryBusy = true;
+        player.load("rekordbox", pioneer, id, testCase.clickFile, "Click", "Artist", "", [], "", false);
+        player.requestDetailWaveform();
+        wait(200);
+        compare(player.detailWaveform.columns.byteLength, 0, "nothing while a library is written");
+        player.libraryBusy = false;
+        tryVerify(() => player.detailWaveform.columns.byteLength === 300 * 3, 5000, "read once the write is over");
+        player.stop();
+    }
+
+    // ---- The owner's changes of 2026-11-20 -------------------------------
+
+    function flickOf(popup) {
+        return findChild(popup.contentItem, "zoomFlick");
+    }
+
+    // Title and artist at the left of the top row, the controls right of
+    // them with close in the top right corner, the time under the
+    // waveform at the right.
+    function test_theLayout() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const content = popup.contentItem;
+        const close = findChild(content, "zoomCloseButton");
+        const zoomIn = findChild(content, "zoomInButton");
+        const play = findChild(content, "zoomPlayButton");
+        const title = findChild(content, "zoomTitle");
+        const time = findChild(content, "zoomTime");
+        const a = area(popup);
+        const right = (item) => item.mapToItem(content, item.width, 0).x;
+        const left = (item) => item.mapToItem(content, 0, 0).x;
+        const top = (item) => item.mapToItem(content, 0, 0).y;
+        verify(Math.abs(right(close) - right(a)) <= 1, "close at the right edge");
+        verify(top(close) < top(a), "above the waveform");
+        verify(right(zoomIn) <= left(close) && right(play) <= left(zoomIn), "the controls left of it");
+        verify(right(title) <= left(play), "the title left of them");
+        verify(top(time) >= top(a) + a.height, "the time under the waveform");
+        verify(Math.abs(right(time) - right(a)) <= 1, "at the right");
+        compare(findChild(content, "zoomTitle").text, "Major Tom");
+        compare(findChild(content, "zoomArtist").text, "DJ Amador");
+    }
+
+    // The lane is low and its numbers small: 20 px at most, numbers of
+    // at most 10.
+    function test_theLaneIsLow() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        waitForTiles(popup);
+        const tile = tiles(popup)[0];
+        verify(tile.rulerHeight >= 18 && tile.rulerHeight <= 20, "a lane of " + tile.rulerHeight);
+        verify(Theme.beatRulerNumberMaximumSize <= 10);
+    }
+
+    // The zoom, in bars, is kept: reopened, and by a fresh settings
+    // controller (an app restart).
+    Component {
+        id: settingsComponent
+        AppSettingsController {}
+    }
+    function test_theZoomIsKept() {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        settings.waveformZoomBars = 0;
+        const player = makeFakePlayer({position: 60000});
+        const popup = createTemporaryObject(popupComponent, testCase, {playbackController: player, settings: settings});
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        waitForPolish(testCase.Window.window);
+        compare(popup.spanBars, 16, "the first time ever: 16 bars");
+        popup.zoomIn();
+        popup.zoomIn();
+        const bars = popup.spanBars;
+        verify(Math.abs(bars - 16 / 2.25) < 1e-6, "zoomed to " + bars);
+        popup.close();
+        tryCompare(popup, "visible", false);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        compare(popup.spanBars, bars, "reopened at the same zoom");
+        const fresh = createTemporaryObject(settingsComponent, testCase);
+        fuzzyCompare(fresh.waveformZoomBars, bars, 1e-9, "and after a restart");
+        // Another tempo: the same bars, another time span.
+        player.changeTrack("Slower", "Someone", 750, player.detail);
+        fuzzyCompare(popup.shownSpanMs, bars * 3000, 1e-6);
+        settings.waveformZoomBars = 0;
+        popup.close();
+    }
+
+    // Flung, the waveform glides on and slows to a stop; a press stops a
+    // glide at once; it never goes past the track's ends.
+    function test_aFlickGlidesAndAPressStopsIt() {
+        const player = makeFakePlayer({position: 120000});
+        const popup = openLoaded(player);
+        const a = area(popup);
+        const flick = flickOf(popup);
+        // A quick drag to the left, let go while moving.
+        const y = a.height / 2;
+        mousePress(a, 900, y);
+        for (let x = 880; x >= 600; x -= 40) {
+            mouseMove(a, x, y, 8);
+        }
+        mouseRelease(a, 600, y, Qt.LeftButton, Qt.NoModifier, 8);
+        compare(popup.attached, false, "a flick lets go of the playhead");
+        verify(flick.flicking, "gliding after the release");
+        const atRelease = popup.centerMs;
+        tryVerify(() => !flick.moving, 10000, "and comes to rest");
+        verify(popup.centerMs > atRelease, "it went on through the track: " + atRelease + " to " + popup.centerMs);
+
+        // Again, and a press during the glide stops it there.
+        mousePress(a, 900, y);
+        for (let x = 880; x >= 600; x -= 40) {
+            mouseMove(a, x, y, 8);
+        }
+        mouseRelease(a, 600, y, Qt.LeftButton, Qt.NoModifier, 8);
+        verify(flick.flicking);
+        mousePress(a, 700, y);
+        tryVerify(() => !flick.flicking, 1000, "the press stopped it");
+        const held = popup.centerMs;
+        wait(100);
+        compare(popup.centerMs, held, "it stays");
+        mouseRelease(a, 700, y);
+
+        // Flung hard towards the end from near it: it stops at the end.
+        popup.follow();
+        player.position = testCase.trackMs - 1000;
+        popup.flingAt(1e6);
+        tryVerify(() => !flick.moving, 10000);
+        verify(Math.abs(popup.centerMs - testCase.trackMs) < 1, "at the end: " + popup.centerMs);
+        // Follow takes hold again and stops any glide.
+        popup.flingAt(-5000);
+        mouseClick(findChild(popup.contentItem, "followButton"));
+        compare(popup.attached, true);
+        verify(!flick.moving, "the glide stopped");
+        compare(popup.centerMs, player.position);
+    }
+
+    // A click on the time switches between the time played and the time
+    // left, in the popup and the bar alike, through the one setting, and
+    // with the keyboard too.
+    function test_theTimeSwitchesEverywhere() {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        settings.showRemainingTime = false;
+        const player = makeFakePlayer({position: 61000});
+        const popup = createTemporaryObject(popupComponent, testCase, {playbackController: player, settings: settings});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player, settings: settings});
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        waitForPolish(testCase.Window.window);
+        const popupTime = findChild(popup.contentItem, "zoomTime");
+        const barTime = findChild(bar, "playerTime");
+        compare(popupTime.text, "1:01 / 4:00");
+        compare(barTime.text, "1:01 / 4:00");
+        verify(popupTime.Accessible.name.indexOf("Time played") === 0);
+        mouseClick(popupTime);
+        compare(settings.showRemainingTime, true);
+        compare(popupTime.text, "-2:59 / 4:00");
+        compare(barTime.text, "-2:59 / 4:00", "the bar follows");
+        const fresh = createTemporaryObject(settingsComponent, testCase);
+        compare(fresh.showRemainingTime, true, "kept");
+        popup.close();
+        tryCompare(popup, "visible", false);
+        mouseClick(barTime);
+        compare(barTime.text, "1:01 / 4:00", "the bar's click switches back");
+        barTime.forceActiveFocus();
+        keyClick(Qt.Key_Space);
+        compare(barTime.text, "-2:59 / 4:00", "and the keyboard");
+        settings.showRemainingTime = false;
+    }
+
+    // The bar blends from one track to the next: the old face held until
+    // the new track's length is known, both during the blend, only the
+    // new one after it; ten changes in a row end with one face.
+    function faces(bar) {
+        const holder = findChild(bar, "playerFaces");
+        const out = [];
+        for (let i = 0; i < holder.children.length; ++i) {
+            if (holder.children[i].objectName === "playerFace" && !holder.children[i].retired) {
+                out.push(holder.children[i]);
+            }
+        }
+        return out;
+    }
+    function test_theBarBlendsToTheNextTrack() {
+        const player = makeFakePlayer({position: 61000});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: player, blendAnimated: false});
+        waitForPolish(testCase.Window.window);
+        compare(faces(bar).length, 1);
+        const height = bar.height;
+        // The new track's length not known yet: the old face is held.
+        player.duration = 0;
+        player.changeTrack("Space Oddity", "Another Artist", 600, player.detail);
+        let both = faces(bar);
+        compare(both.length, 2, "old and new");
+        const old = both.filter((face) => face.isLeaving)[0];
+        const next = both.filter((face) => !face.isLeaving)[0];
+        compare(old.title, "Major Tom", "the old face keeps its track");
+        compare(next.title, "Space Oddity");
+        compare(old.opacity, 1, "held");
+        compare(next.opacity, 0, "the new one waits for its data");
+        player.duration = testCase.trackMs;
+        compare(bar.blendWaiting, false, "its length came: the blend may start");
+        bar.blend = 0.5;
+        fuzzyCompare(old.opacity, 0.5, 1e-9);
+        fuzzyCompare(next.opacity, 0.5, 1e-9);
+        verify(old.layer.enabled && next.layer.enabled, "each fades as one picture");
+        compare(bar.height, height, "no layout jump");
+        bar.blend = 1;
+        tryVerify(() => faces(bar).length === 1, 2000, "the old face gone");
+        compare(faces(bar)[0].title, "Space Oddity");
+        compare(faces(bar)[0].opacity, 1);
+
+        // Ten in a row, animated: one face at the end, the last track's.
+        bar.blendAnimated = true;
+        for (let i = 0; i < 10; ++i) {
+            player.changeTrack("Track " + i, "Artist", 500, player.detail);
+        }
+        verify(faces(bar).length <= 2, "never more than two faces");
+        tryVerify(() => faces(bar).length === 1 && bar.blend === 1, 3000, "settles");
+        compare(faces(bar)[0].title, "Track 9");
     }
 }

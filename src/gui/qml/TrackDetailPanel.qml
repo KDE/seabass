@@ -35,6 +35,8 @@ Pane {
     // every other KeyBadge call site does it, so the panel stays
     // testable without a running AppSettingsController.
     property string keyNotation: "camelot"
+    // For the zoomed waveform popup's kept zoom and time (#104). Optional.
+    property var appSettingsController: null
 
     signal closeRequested()
     // Supplied by ScanPage so the artist list can be built. Optional:
@@ -525,6 +527,7 @@ Pane {
             readonly property bool opensZoom: !panel.addCueEnabled && panel.trackStreamingSource.length === 0
                 && panel.trackFilePath.length > 0
             pointerShape: opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+            gridStyle: "ruler"
             onPositionClicked: (ms) => {
                 if (waveformView.opensZoom) {
                     zoomPopup.openFor({format: panel.format, libraryPath: panel.libraryPath,
@@ -555,6 +558,7 @@ Pane {
         WaveformZoomPopup {
             id: zoomPopup
             playbackController: panel.playbackController
+            settings: panel.appSettingsController
         }
 
         Label {

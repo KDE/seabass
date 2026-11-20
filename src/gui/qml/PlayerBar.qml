@@ -181,88 +181,269 @@ Frame {
             }
         }
 
-        // Its square only while there is art to show in it: a cover the
-        // stick does not have leaves no empty gap before the title.
-        ArtworkImage {
-            id: playerArtwork
-            objectName: "playerArtwork"
-            Layout.preferredWidth: 64
-            Layout.preferredHeight: 64
-            fillMode: Image.PreserveAspectFit
-            visible: playerArtwork.showing.length > 0
-            source: root.controller.artworkPath
-            fallbackSource: root.controller.fallbackArtworkPath || ""
-            // The cover here is the same cover as the ring's on the detail
-            // pane, and a click on it opens the same fullscreen view.
-            HoverHandler { cursorShape: Qt.PointingHandCursor }
-            TapHandler {
-                objectName: "playerArtworkTap"
-                onTapped: barFullscreen.open()
+        // The loaded track's face: its cover, title, time and waveform.
+        // A new track's face blends in over the old one's (see faces).
+        Item {
+            id: faces
+            objectName: "playerFaces"
+            Layout.fillWidth: true
+            Layout.preferredHeight: faces.current ? faces.current.implicitHeight : 0
+            property Item current: null
+            property Item leaving: null
+        }
+    }
+
+    // AppSettingsController, for the time shown (played or left) and the
+    // popup's zoom. Optional: without it both are the bar's own.
+    property var settings: null
+
+    // ---- The blend from one track to the next (#104) -----------------
+    //
+    // A face shows one track: cover, title and artist, time, waveform with
+    // its grid and cues, all bound to the player. When the player loads
+    // another track the face showing the old one is frozen (its bindings
+    // replaced by the values they had), and a new face is made for the
+    // new track, hidden until the player has its length (the waveform's
+    // grid and cues are placed by it; a file that does not play gets a
+    // moment, then is shown as it is). Then the new face blends in over
+    // blendDuration while the old one blends out, and the old one is
+    // destroyed. A further change meanwhile keeps whichever of the two is
+    // mostly showing and starts again from it: blends never stack.
+    //
+    // Each face fades as one picture (layer while not opaque), for the
+    // reason WaveformView gives for its own layer.
+    property real blendDuration: Theme.playerBlendDuration
+    // False stops the animation, for a test that moves `blend` itself.
+    property bool blendAnimated: true
+    // 0: only the old face shows; 1: only the new one.
+    property real blend: 1
+    property bool blendWaiting: false
+
+    // A face on its way out: hidden at once, destroyed when Qt gets to it.
+    function retire(face) {
+        face.retired = true;
+        face.destroy();
+    }
+    function makeFace() {
+        return faceComponent.createObject(faces, {});
+    }
+    Component.onCompleted: faces.current = root.makeFace()
+
+    // Before the player changes anything: the face showing the old track
+    // keeps it.
+    property bool frozenForChange: false
+    function trackAboutToChange() {
+        if (!faces.current || root.frozenForChange) {
+            return;
+        }
+        blendAnimation.stop();
+        blendFallback.stop();
+        if (faces.leaving) {
+            // Keep the face mostly showing, drop the other.
+            if (root.blend < 0.5) {
+                root.retire(faces.current);
+                faces.current = null;
+            } else {
+                root.retire(faces.leaving);
+                faces.current.freeze();
+                faces.leaving = faces.current;
+                faces.current = null;
+            }
+        } else {
+            faces.current.freeze();
+            faces.leaving = faces.current;
+            faces.current = null;
+        }
+        root.frozenForChange = true;
+    }
+    function trackChanged() {
+        // A controller that does not announce the change (a test's) is
+        // frozen now, as late as it can be.
+        root.trackAboutToChange();
+        root.frozenForChange = false;
+        if (faces.current) {
+            root.retire(faces.current);
+        }
+        faces.current = root.makeFace();
+        root.blend = 0;
+        root.blendWaiting = true;
+        if (root.controller.duration > 0 || !root.controller.hasTrack) {
+            root.startBlend();
+        } else {
+            blendFallback.restart();
+        }
+    }
+    function startBlend() {
+        if (!root.blendWaiting) {
+            return;
+        }
+        root.blendWaiting = false;
+        blendFallback.stop();
+        if (root.blendAnimated) {
+            blendAnimation.restart();
+        }
+    }
+    onBlendChanged: {
+        if (root.blend >= 1 && !root.blendWaiting && faces.leaving) {
+            root.retire(faces.leaving);
+            faces.leaving = null;
+        }
+    }
+    NumberAnimation {
+        id: blendAnimation
+        target: root
+        property: "blend"
+        from: 0
+        to: 1
+        duration: root.blendDuration
+        easing.type: Easing.InOutQuad
+    }
+    Timer {
+        id: blendFallback
+        interval: 600
+        onTriggered: root.startBlend()
+    }
+    Connections {
+        target: root.controller
+        ignoreUnknownSignals: true
+        function onTrackAboutToChange() { root.trackAboutToChange(); }
+        function onTrackChanged() { root.trackChanged(); }
+        function onDurationChanged() {
+            if (root.controller.duration > 0) {
+                root.startBlend();
             }
         }
+    }
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
+    Component {
+        id: faceComponent
+        RowLayout {
+            id: face
+            objectName: "playerFace"
+            width: faces.width
+            spacing: 12
+            readonly property bool isLeaving: faces.leaving === face
+            property bool retired: false
+            opacity: face.isLeaving ? 1 - root.blend : (faces.leaving ? root.blend : 1)
+            visible: opacity > 0 && !face.retired
+            enabled: !face.isLeaving
+            z: face.isLeaving ? 1 : 0
+            layer.enabled: face.opacity < 1
 
-            RowLayout {
+            // Bound to the player while this face shows the loaded track;
+            // freeze() keeps what they were.
+            property string title: root.controller.title || ""
+            property string artist: root.controller.artist || ""
+            property string artworkPath: root.controller.artworkPath || ""
+            property string fallbackArtworkPath: root.controller.fallbackArtworkPath || ""
+            property var waveform: root.controller.waveform
+            property var cues: root.controller.cues
+            property real durationMs: root.controller.duration
+            property real positionMs: root.controller.position
+            property string errorMessage: root.controller.errorMessage || ""
+            property var beats: {
+                root.controller.trackSerial;
+                return root.controller.beatTicksAt(root.controller.duration, playerWaveform.width);
+            }
+            function freeze() {
+                face.title = face.title;
+                face.artist = face.artist;
+                face.artworkPath = face.artworkPath;
+                face.fallbackArtworkPath = face.fallbackArtworkPath;
+                face.waveform = face.waveform;
+                face.cues = face.cues;
+                face.durationMs = face.durationMs;
+                face.positionMs = face.positionMs;
+                face.errorMessage = face.errorMessage;
+                face.beats = face.beats;
+            }
+
+            // Its square only while there is art to show in it: a cover the
+            // stick does not have leaves no empty gap before the title.
+            ArtworkImage {
+                id: playerArtwork
+                objectName: "playerArtwork"
+                Layout.preferredWidth: 64
+                Layout.preferredHeight: 64
+                fillMode: Image.PreserveAspectFit
+                visible: playerArtwork.showing.length > 0
+                source: face.artworkPath
+                fallbackSource: face.fallbackArtworkPath
+                // The cover here is the same cover as the ring's on the detail
+                // pane, and a click on it opens the same fullscreen view.
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    objectName: "playerArtworkTap"
+                    onTapped: barFullscreen.open()
+                }
+            }
+
+            ColumnLayout {
                 Layout.fillWidth: true
-                // Room for the close button in the corner above it, so it
-                // never covers the time.
-                Layout.rightMargin: closeButton.width
+                spacing: 2
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    // Room for the close button in the corner above it, so it
+                    // never covers the time.
+                    Layout.rightMargin: closeButton.width
+                    Label {
+                        objectName: "playerTitle"
+                        text: face.title + (face.artist.length > 0 ? "  - " + face.artist : "")
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    // The waveform zoomed in, the way a player shows it (#104):
+                    // the bar's own waveform keeps its click for seeking.
+                    IconToolButton {
+                        objectName: "openWaveformPopupButton"
+                        implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
+                        implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
+                        padding: 0
+                        flat: true
+                        text: "Zoom into the waveform"
+                        iconName: "waveform"
+                        iconSize: Theme.iconSizeSmall * 0.5
+                        ToolTip.visible: hovered
+                        ToolTip.text: text
+                        onClicked: zoomPopup.openLoaded()
+                    }
+                    TrackTimeLabel {
+                        objectName: "playerTime"
+                        positionMs: face.positionMs
+                        durationMs: face.durationMs
+                        settings: root.settings
+                    }
+                }
+
                 Label {
-                    text: root.controller.title + (root.controller.artist.length > 0 ? "  - " + root.controller.artist : "")
-                    font.bold: true
+                    visible: face.errorMessage.length > 0
+                    text: face.errorMessage
+                    color: Theme.danger
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
-                // The waveform zoomed in, the way a player shows it (#104):
-                // the bar's own waveform keeps its click for seeking.
-                IconToolButton {
-                    objectName: "openWaveformPopupButton"
-                    implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
-                    implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
-                    padding: 0
-                    flat: true
-                    text: "Zoom into the waveform"
-                    iconName: "waveform"
-                    iconSize: Theme.iconSizeSmall * 0.5
-                    ToolTip.visible: hovered
-                    ToolTip.text: text
-                    onClicked: zoomPopup.openLoaded()
-                }
-                Label {
-                    objectName: "playerTime"
-                    text: Theme.trackTime(root.controller.position) + " / " + Theme.trackTime(root.controller.duration)
-                    color: Theme.textMuted
-                }
-            }
 
-            Label {
-                visible: root.controller.errorMessage.length > 0
-                text: root.controller.errorMessage
-                color: Theme.danger
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-            }
-
-            WaveformView {
-                objectName: "playerWaveform"
-                Layout.fillWidth: true
-                Layout.preferredHeight: 48
-                waveformData: root.controller.waveform
-                cueData: root.controller.cues
-                // Only the beats drawn at this width, read with the
-                // waveform when the track was loaded; laid out again for a
-                // new track, a new length or a new width.
-                beatsSelected: true
-                beatData: {
-                    root.controller.trackSerial;
-                    return root.controller.beatTicksAt(root.controller.duration, width);
+                WaveformView {
+                    id: playerWaveform
+                    objectName: "playerWaveform"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 48
+                    waveformData: face.waveform
+                    cueData: face.cues
+                    // The grid cut out of the bars (option G): a ruler
+                    // lane was too heavy for the bar.
+                    gridStyle: "sliced"
+                    // Only the beats drawn at this width, read with the
+                    // waveform when the track was loaded; laid out again for a
+                    // new track, a new length or a new width.
+                    beatsSelected: true
+                    beatData: face.beats
+                    trackDurationMs: face.durationMs
+                    progress: trackDurationMs > 0 ? face.positionMs / trackDurationMs : 0
+                    onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)
                 }
-                trackDurationMs: root.controller.duration
-                progress: trackDurationMs > 0 ? root.controller.position / trackDurationMs : 0
-                onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)
             }
         }
     }
@@ -295,6 +476,7 @@ Frame {
     WaveformZoomPopup {
         id: zoomPopup
         playbackController: root.controller
+        settings: root.settings
     }
 
     TrackRingFullscreen {

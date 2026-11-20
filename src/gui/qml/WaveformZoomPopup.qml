@@ -16,7 +16,8 @@ import SeabassGui
 // Opened from the track details pane (openFor(): the track is loaded into
 // the player, paused if nothing was playing and playing if something
 // was) and from the player bar (openLoaded()). Closing it changes nothing
-// about playback.
+// about playback. While open it follows the player: another track loaded
+// is shown at once, at the same zoom in bars.
 //
 // Drawn as tiles: WaveformViews a fixed width apart, each showing its own
 // stretch of the track, laid side by side on a strip that is only moved
@@ -29,12 +30,19 @@ SeabassDialog {
 
     required property var playbackController
     readonly property var controller: root.playbackController
+    // AppSettingsController, for the zoom and the time shown, which are
+    // kept between openings and runs. Optional: without it both are this
+    // popup's own.
+    property var settings: null
 
     showBadge: false
     // Escape closes it only while it has the focus.
     focus: true
-    title: root.controller && root.controller.title ? root.controller.title : ""
-    headline: root.controller && root.controller.artist ? root.controller.artist : ""
+    // The title and artist are drawn in the popup's own top row, beside
+    // the controls (the dialog's title bar would put them above them).
+    title: ""
+    readonly property string trackTitle: root.controller && root.controller.title ? root.controller.title : ""
+    readonly property string trackArtist: root.controller && root.controller.artist ? root.controller.artist : ""
     parent: Overlay.overlay
     width: parent ? Math.round(parent.width * 0.92) : 1000
 
@@ -57,12 +65,31 @@ SeabassDialog {
         root.openLoaded();
     }
 
-    // The track the player has, as it is.
+    // The track the player has, as it is, at the zoom last used.
     function openLoaded() {
         root.attached = true;
-        root.spanMs = 0;
+        root.spanBars = root.settings && root.settings.waveformZoomBars > 0
+            ? root.settings.waveformZoomBars : root.localZoomBars;
         root.resync(root.controller.position || 0);
         root.open();
+    }
+
+    // Everything here runs from the moment open() is called, not only
+    // once the dialog has finished fading in: a report of the player's
+    // that arrives while it opens is taken.
+    readonly property bool showing: root.visible
+
+    onShowingChanged: {
+        if (root.showing) {
+            root.askForDetail();
+        } else {
+            flick.cancelFlick();
+        }
+    }
+    function askForDetail() {
+        if (root.controller && typeof root.controller.requestDetailWaveform === "function") {
+            root.controller.requestDetailWaveform();
+        }
     }
 
     // ---- Zoom ------------------------------------------------------
@@ -86,20 +113,29 @@ SeabassDialog {
     // The closest the view goes: this many bars across (my reading of "a
     // few bars"); the furthest is the whole track.
     readonly property int minimumBars: 4
-    // Where it opens.
+    // Where it opens the first time ever.
     readonly property int openingBars: 16
     readonly property real minimumSpanMs: root.minimumBars * root.barMs
     readonly property real maximumSpanMs: Math.max(root.minimumSpanMs, root.durationMs)
-    // How much of the track the view shows across its width. 0 until it
-    // is zoomed: the opening span.
-    property real spanMs: 0
-    readonly property real shownSpanMs: root.clampSpan(root.spanMs > 0 ? root.spanMs : root.openingBars * root.barMs)
+    // How many bars the view shows across its width: bars, not time, so
+    // that another track, faster or slower, is shown at the same zoom.
+    property real spanBars: root.openingBars
+    // The zoom kept without a settings controller.
+    property real localZoomBars: root.openingBars
+    readonly property real shownSpanMs: root.clampSpan(root.spanBars * root.barMs)
     readonly property real pxPerMs: area.width > 0 ? area.width / root.shownSpanMs : 0
     // One press of a zoom key or button, and one notch of the wheel.
     readonly property real zoomStep: 1.5
 
     function clampSpan(span) {
         return Math.max(root.minimumSpanMs, Math.min(root.maximumSpanMs, span));
+    }
+    function setSpan(span) {
+        root.spanBars = span / root.barMs;
+        root.localZoomBars = root.spanBars;
+        if (root.settings) {
+            root.settings.waveformZoomBars = root.spanBars;
+        }
     }
 
     // Zooms by `factor` (above 1 is closer) keeping the time under
@@ -111,12 +147,13 @@ SeabassDialog {
         if (span === root.shownSpanMs || before <= 0) {
             return;
         }
+        flick.cancelFlick();
         if (root.attached) {
-            root.spanMs = span;
+            root.setSpan(span);
             return;
         }
         const at = root.manualMs + (anchorX - root.lineX) / before;
-        root.spanMs = span;
+        root.setSpan(span);
         root.manualMs = root.clampTime(at - (anchorX - root.lineX) / root.pxPerMs);
     }
     function zoomIn() {
@@ -132,7 +169,7 @@ SeabassDialog {
     readonly property real lineRatio: 1 - 2 / (1 + Math.sqrt(5))
     readonly property real lineX: Math.round(area.width * root.lineRatio)
     // Whether the view follows the playhead. Scrolling by hand lets go;
-    // play, a seek and the follow button take hold again.
+    // play, a seek, the follow button and another track take hold again.
     property bool attached: true
     // The time under the line while it does not follow.
     property real manualMs: 0
@@ -159,14 +196,19 @@ SeabassDialog {
             root.attached = false;
         }
     }
+    function attach() {
+        flick.cancelFlick();
+        root.attached = true;
+    }
     function follow() {
         root.resync(root.controller.position || 0);
-        root.attached = true;
+        root.attach();
     }
     function scrollBy(px) {
         if (root.pxPerMs <= 0) {
             return;
         }
+        flick.cancelFlick();
         root.detach();
         root.manualMs = root.clampTime(root.manualMs + px / root.pxPerMs);
     }
@@ -178,19 +220,25 @@ SeabassDialog {
         const ms = Math.round(root.clampTime(root.centerMs + (x - root.lineX) / root.pxPerMs));
         root.controller.seek(ms);
         root.resync(ms);
-        root.attached = true;
+        root.attach();
     }
 
+    // The frames. frameClock false stops the clock on the wall, so that a
+    // test can hand it frames of its own through advanceClock().
+    property bool frameClock: true
+    function advanceClock(seconds) {
+        root.smoothMs = Math.min(root.durationMs, root.smoothMs + seconds * 1000);
+    }
     FrameAnimation {
         objectName: "waveformClock"
-        running: root.opened && root.playing
+        running: root.showing && root.playing && root.frameClock
         // smoothFrameTime, for the reason the ring gives (TrackRing.qml).
-        onTriggered: root.smoothMs = Math.min(root.durationMs, root.smoothMs + smoothFrameTime * 1000)
+        onTriggered: root.advanceClock(smoothFrameTime)
     }
     Connections {
-        // Only while open: closed, nothing here is shown, and openLoaded()
-        // takes the position as it is then.
-        target: root.opened ? root.controller : null
+        // Only while shown: hidden, nothing here is drawn, and
+        // openLoaded() takes the position as it is then.
+        target: root.showing ? root.controller : null
         ignoreUnknownSignals: true
         function onPositionChanged() {
             const reported = root.controller.position;
@@ -204,39 +252,35 @@ SeabassDialog {
         function onPlayingChanged() {
             root.resync(root.controller.position || 0);
             if (root.playing) {
-                root.attached = true;
+                root.attach();
             }
         }
         function onSeeked(positionMs) {
             root.resync(positionMs);
-            root.attached = true;
+            root.attach();
         }
+        // Another track: shown at the zoom in bars it had, from where the
+        // player is, following it, and its finer waveform asked for.
         function onTrackChanged() {
-            root.spanMs = 0;
             root.resync(root.controller.position || 0);
-            root.attached = true;
+            root.attach();
+            root.askForDetail();
         }
     }
 
     // ---- What is drawn ---------------------------------------------
 
-    // The finest waveform the library has for the loaded track, read when
-    // the popup opens; the overview where there is nothing finer.
-    readonly property var detail: {
-        if (!root.opened || !root.controller || typeof root.controller.detailWaveform !== "function") {
-            return ({});
-        }
-        root.controller.trackSerial;
-        // Read again once a write that held it off is over.
-        root.controller.libraryBusy;
-        return root.controller.detailWaveform();
-    }
+    // The finest waveform the library has for the loaded track, as the
+    // player hands it over once it has been read (off the GUI thread);
+    // the overview until then, and where there is nothing finer.
+    readonly property var detail: root.showing && root.controller && root.controller.detailWaveform
+        ? root.controller.detailWaveform : ({})
     readonly property bool hasDetail: root.detail.columns !== undefined && root.detail.columns !== null
         && root.detail.columns.byteLength >= 3
     // The beats drawn at this zoom, for the whole track: the same rule as
     // every other waveform, at the width the whole track would have.
     readonly property var ticks: {
-        if (!root.opened || !root.controller || root.durationMs <= 0 || root.pxPerMs <= 0
+        if (!root.showing || !root.controller || root.durationMs <= 0 || root.pxPerMs <= 0
                 || typeof root.controller.beatTicksAt !== "function") {
             return [];
         }
@@ -264,15 +308,40 @@ SeabassDialog {
     // under the line, to whole device pixels.
     readonly property real stripX: Theme.snap(root.lineX - root.centerMs * root.pxPerMs)
     readonly property int firstTile: root.tileWidth > 0 ? Math.floor(-root.stripX / root.tileWidth) : 0
+    // The lane's height, the same on every tile.
+    readonly property real laneHeight: root.ticks.length > 0 ? Theme.beatRulerMaximumHeight : 0
 
     ColumnLayout {
         Layout.fillWidth: true
         spacing: Theme.tightSpacing
 
+        // Title and artist on the left; the controls on the right, then
+        // close in the corner.
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.tightSpacing
 
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                Label {
+                    objectName: "zoomTitle"
+                    Layout.fillWidth: true
+                    text: root.trackTitle
+                    font.bold: true
+                    font.pointSize: Theme.fontMedium
+                    color: Theme.text
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "zoomArtist"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: root.trackArtist
+                    color: Theme.textMuted
+                    elide: Text.ElideRight
+                }
+            }
             IconToolButton {
                 objectName: "zoomPlayButton"
                 focusPolicy: Qt.NoFocus
@@ -304,15 +373,6 @@ SeabassDialog {
                 iconName: "go-jump"
                 onClicked: root.follow()
             }
-            Item {
-                Layout.fillWidth: true
-            }
-            Label {
-                objectName: "zoomTime"
-                text: Theme.trackTime(root.controller ? root.controller.position || 0 : 0) + " / "
-                    + Theme.trackTime(root.durationMs)
-                color: Theme.textMuted
-            }
             IconToolButton {
                 objectName: "zoomCloseButton"
                 focusPolicy: Qt.NoFocus
@@ -337,7 +397,7 @@ SeabassDialog {
                 height: area.height
 
                 Repeater {
-                    model: root.opened && root.pxPerMs > 0 ? root.tileCount : 0
+                    model: root.showing && root.pxPerMs > 0 ? root.tileCount : 0
                     delegate: WaveformView {
                         id: tileView
                         required property int index
@@ -361,11 +421,32 @@ SeabassDialog {
                         waveformData: root.hasDetail || !root.controller ? [] : root.controller.waveform
                         beatsSelected: true
                         beatData: root.ticksBetween(tileView.viewStartMs, tileView.viewStartMs + tileView.viewSpanMs)
+                        gridStyle: "ruler"
                         showRuler: root.ticks.length > 0
+                        colorScheme: "vivid"
+                        // Played or not is shown by the dimming below, which
+                        // moves with the playhead without a repaint.
+                        unplayedOpacity: 1
                         cueData: root.controller ? root.controller.cues : []
                         progress: -1
                     }
                 }
+            }
+
+            // The part already played, dimmed: what is ahead of the
+            // playhead is what matters on a player.
+            Rectangle {
+                objectName: "playedShade"
+                readonly property real playheadX: root.stripX
+                    + (root.controller ? (root.playing && root.attached ? root.smoothMs
+                                                                       : root.controller.position || 0) : 0)
+                      * root.pxPerMs
+                x: Math.max(0, root.stripX)
+                y: root.laneHeight
+                width: Math.max(0, Math.min(area.width, playheadX) - x)
+                height: area.height - y
+                color: Theme.background
+                opacity: Theme.waveformPlayedShade
             }
 
             // "This position": fixed, the waveform moves under it.
@@ -386,53 +467,71 @@ SeabassDialog {
                 color: Theme.accent
             }
 
-            // Click to seek, drag and wheel to scroll, ctrl+wheel to zoom.
-            MouseArea {
-                id: input
-                objectName: "zoomInput"
+            // Dragging and flicking scroll it with Qt's own flick physics:
+            // let go with speed and it glides on and slows to a stop, at
+            // the track's ends at the latest; a press stops it. The
+            // Flickable is a proxy, never drawn: its contentX is the time
+            // under the line in pixels, kept in step while it is still.
+            Flickable {
+                id: flick
+                objectName: "zoomFlick"
                 anchors.fill: parent
-                property real pressX: -1
-                property real pressMs: 0
-                property bool dragging: false
-                cursorShape: dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-                onPressed: (mouse) => {
-                    input.pressX = mouse.x;
-                    input.pressMs = root.centerMs;
-                    input.dragging = false;
-                }
-                onPositionChanged: (mouse) => {
-                    if (input.pressX < 0) {
-                        return;
-                    }
-                    if (!input.dragging && Math.abs(mouse.x - input.pressX) >= Qt.styleHints.startDragDistance) {
-                        input.dragging = true;
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                contentWidth: root.durationMs * root.pxPerMs + width
+                contentHeight: height
+                pressDelay: 0
+                onContentXChanged: {
+                    if (flick.moving && root.pxPerMs > 0) {
                         root.detach();
-                    }
-                    if (input.dragging && root.pxPerMs > 0) {
-                        root.manualMs = root.clampTime(input.pressMs - (mouse.x - input.pressX) / root.pxPerMs);
+                        root.manualMs = root.clampTime(flick.contentX / root.pxPerMs);
                     }
                 }
-                onReleased: (mouse) => {
-                    if (!input.dragging && input.pressX >= 0) {
-                        root.seekToX(mouse.x);
-                    }
-                    input.pressX = -1;
-                    input.dragging = false;
+                // A click (no drag) seeks there.
+                MouseArea {
+                    objectName: "zoomInput"
+                    width: flick.contentWidth
+                    height: flick.height
+                    cursorShape: flick.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                    onClicked: (mouse) => root.seekToX(mouse.x - flick.contentX)
                 }
-                onCanceled: {
-                    input.pressX = -1;
-                    input.dragging = false;
-                }
+            }
+            Binding {
+                target: flick
+                property: "contentX"
+                value: root.centerMs * root.pxPerMs
+                when: !flick.moving
+                restoreMode: Binding.RestoreNone
+            }
+
+            // The wheel: ctrl zooms, otherwise it scrolls; presses go on
+            // to the Flickable underneath.
+            MouseArea {
+                objectName: "zoomWheel"
+                anchors.fill: parent
+                acceptedButtons: Qt.NoButton
+                // Pixels a millisecond of the last touchpad scroll, for its
+                // fling when the fingers leave.
+                property real fingerVelocity: 0
+                property real lastWheelTime: 0
                 onWheel: (wheel) => {
                     const pixels = wheel.pixelDelta.x !== 0 || wheel.pixelDelta.y !== 0;
                     if (wheel.modifiers & Qt.ControlModifier) {
                         const steps = pixels ? wheel.pixelDelta.y / 50 : wheel.angleDelta.y / 120;
                         root.zoomBy(Math.pow(root.zoomStep, steps), wheel.x);
                     } else if (pixels) {
-                        // A touchpad: the waveform follows the fingers.
+                        // A touchpad: the waveform follows the fingers, and
+                        // flung, glides on as a drag does.
                         const dx = Math.abs(wheel.pixelDelta.x) >= Math.abs(wheel.pixelDelta.y)
                             ? wheel.pixelDelta.x : wheel.pixelDelta.y;
+                        const now = Date.now();
+                        const dt = Math.max(1, now - lastWheelTime);
+                        fingerVelocity = dt < 100 ? -dx / dt : 0;
+                        lastWheelTime = now;
                         root.scrollBy(-dx);
+                        if (wheel.phase === Qt.ScrollEnd && Math.abs(fingerVelocity) > 0.2) {
+                            root.flingAt(fingerVelocity * 1000);
+                        }
                     } else {
                         // A wheel, plain or with shift (which turns it
                         // sideways): an eighth of the view a notch, on
@@ -457,6 +556,23 @@ SeabassDialog {
                 }
             }
         }
+
+        // The time, under the waveform at the right.
+        TrackTimeLabel {
+            objectName: "zoomTime"
+            Layout.alignment: Qt.AlignRight
+            positionMs: root.controller ? root.controller.position || 0 : 0
+            durationMs: root.durationMs
+            settings: root.settings
+        }
+    }
+
+    // A glide of `velocity` pixels a second, positive on through the
+    // track, as a flick of the waveform gives it.
+    function flingAt(velocity) {
+        root.detach();
+        flick.contentX = root.manualMs * root.pxPerMs;
+        flick.flick(-velocity, 0);
     }
 
     // In the popup, so that they are not refused while it is open (a
@@ -464,12 +580,12 @@ SeabassDialog {
     // own (PlayPauseShortcut), which works over every dialog.
     Shortcut {
         sequences: ["+", "=", StandardKey.ZoomIn]
-        enabled: root.opened
+        enabled: root.showing
         onActivated: root.zoomIn()
     }
     Shortcut {
         sequences: ["-", StandardKey.ZoomOut]
-        enabled: root.opened
+        enabled: root.showing
         onActivated: root.zoomOut()
     }
 }
