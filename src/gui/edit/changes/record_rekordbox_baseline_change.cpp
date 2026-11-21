@@ -129,18 +129,25 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
             if (deleteStaged && !deleteLanded && !createLanded && old && old->path == reused->recordedPath) {
                 // Neither half on the stick: the record keeps the old
                 // playlist whole, as before, so the next analysis finds the
-                // reuse again and offers both halves.
+                // reuse again and offers both halves. With its own declines
+                // and none of this save's about the new playlist: those
+                // cannot be recorded under the id while it holds the old
+                // one, so they are asked again.
                 keys.erase(reusedKey);
                 keys.insert(createKey);
                 keys.insert(domain::orderItemKey(reused->id));
                 for (const auto &member : old->members) {
                     keys.insert(domain::memberItemKey(reused->id, member));
                 }
-                for (const auto &[declinedKey, state] : previous->declined) {
+                const auto underTheId = [&](const std::string &declinedKey) {
                     const auto item = domain::parseItemKey(declinedKey);
-                    if (item && item->playlistId == reused->id
+                    return item && item->playlistId == reused->id
                         && (item->kind == domain::ItemKey::Kind::Playlist || item->kind == domain::ItemKey::Kind::Member
-                            || item->kind == domain::ItemKey::Kind::Order)) {
+                            || item->kind == domain::ItemKey::Kind::Order);
+                };
+                std::erase_if(next.declined, [&](const auto &entry) { return underTheId(entry.first); });
+                for (const auto &[declinedKey, state] : previous->declined) {
+                    if (underTheId(declinedKey)) {
                         next.declined.emplace(declinedKey, state);
                     }
                 }
@@ -150,9 +157,11 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
             keys.insert(reusedKey);
             if (deleteStaged && !deleteLanded) {
                 // The new playlist landed and the old one's delete did not:
-                // the record can hold only one of them under the id. The
-                // delete stays staged; said, so a discarded save does not
-                // leave the old playlist on Engine unnoticed.
+                // the record can hold only one of them under the id, and
+                // holds the new one, so no later analysis plans the delete.
+                // It stays staged, and the page keeps listing it, ticked
+                // (RekordboxExportSyncController's leftover deletes), until
+                // it is saved or unticked; said here, in the save's warning.
                 notDeleted.push_back(reused->recordedPath);
             }
         }
@@ -193,10 +202,10 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
             std::string said;
             for (const auto &path : notDeleted) {
                 said += std::string(said.empty() ? "" : " ") + "The old playlist \"" + path
-                    + "\" was not deleted and stays on " + engineName + " unless the save is completed.";
+                    + "\" was not deleted from " + engineName + "; its delete is still staged, and saving again "
+                    + "completes it.";
             }
-            ctx.log().record("rekordbox baseline: " + said);
-            throw std::runtime_error(said);
+            throw std::runtime_error(said);  // logged by runAfterCommitHooks
         }
     });
 }

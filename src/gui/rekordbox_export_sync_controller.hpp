@@ -10,7 +10,9 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <map>
 #include <memory>
+#include <string>
 
 #include "gui/rekordbox_export_sync_list_model.hpp"
 #include "gui/staged_cue_edit_controller.hpp"
@@ -177,6 +179,8 @@ private:
     void onAnalyzeFinished(RekordboxExportSyncAnalysis &&result);
     void attachSession();
     void onSessionSaveFinished(const QVariantMap &summary);
+    void rememberLeftoverDeletes();
+    void offerLeftoverDeletes(domain::EngineUpdateProposal &proposal);
 
     RekordboxExportSyncListModel m_model;
     QString m_stickLabel;
@@ -191,6 +195,14 @@ private:
     LibraryEditSession *m_connectedSession = nullptr;
     // What recordSaved() says once the save rememberExport() started lands.
     QString m_rememberedText;
+    // #99: the deletes of recorded playlists whose id rekordbox gave to
+    // another item (keyed reusedPlaylistItemKey), still staged after a save
+    // that stopped once the new playlist's create had landed. The record
+    // then holds the new playlist under the id, so no analysis plans these
+    // again: each later analysis of this stick lists them, ticked, in place
+    // of the Engine-only playlist they would delete, until one is saved,
+    // unticked in a stage, or Engine no longer has the playlist.
+    std::map<std::string, domain::PlaylistDelete> m_leftoverDeletes;
 };
 
 }  // namespace seabass::gui
