@@ -2968,6 +2968,12 @@ void testReusedInRenamedFolder()
         assert(pdb.renamePlaylist(folderId, "T73 Folder 2"));
         freshId = pdb.createPlaylist(0, "T73 Fresh", false);
         assert(pdb.appendPlaylistEntries(freshId, {b07->pdbId}) == 1);
+        // Every track rated anew: one Engine change each, so the save
+        // has the 15 and more Engine changes that take a scratch copy of
+        // m.db (bulk_write_strategy.cpp), the old playlist's delete first.
+        for (const auto &track : record->tracks) {
+            assert(pdb.setTrackRating(track.pdbId, track.rating == 5 ? 3 : 5));
+        }
         assert(pdb.commit());
     }
     assert(!record->findPlaylist(freshId));
@@ -2986,12 +2992,16 @@ void testReusedInRenamedFolder()
     for (const auto &row : got) {
         std::cout << "  lists: " << row << "\n";
     }
-    const std::multiset<std::string> want{
+    std::multiset<std::string> want{
         "[x] rename T73 Folder to T73 Folder 2",
         "[x] delete playlist T73 Folder 2/T73 Old (1)",
         "[x] create playlist T73 Fresh",
         "[x] put into T73 Fresh: " + b07->pathKey + " after (first)",
     };
+    for (const auto &track : record->tracks) {
+        want.insert("[x] rating to Engine " + track.pathKey + ": " + std::to_string(track.rating == 5 ? 3 : 5));
+    }
+    assert(record->tracks.size() >= 11 && "with the four playlist rows, 15 Engine changes");
     assert(sameList(want, got));
     controller.stageSelected();
     assert(controller.errorMessage().isEmpty());
@@ -3013,7 +3023,31 @@ void testReusedInRenamedFolder()
     }
     assert(deleteAt >= 0 && createAt == deleteAt + 1 && "the old playlist's delete directly before the create");
     assert(renameAt > createAt && "both before the folder's rename");
+    assert(deleteAt == 0 && "the old playlist's delete is the save's first write");
+    const fs::path operationLog = seabass::infrastructure::paths::stickOperationLog(stick.root);
+    const std::string logBefore = fs::exists(operationLog) ? fileBytes(operationLog) : std::string();
     waitForSave(session, controller, false);
+    // The page's save, opened by that delete: through a scratch copy of
+    // m.db for its 15 and more Engine changes, and its backups filed under
+    // the page, not under Browse's playlist delete.
+    {
+        const std::string log =
+            fileBytes(operationLog).substr(logBefore.size());
+        const bool scratch = log.find(": applying up to") != std::string::npos
+            && log.find("to a local scratch copy first") != std::string::npos;
+        if (!scratch) {
+            std::cerr << "FAIL: the save did not go through a scratch copy of m.db\n";
+        }
+        assert(scratch);
+        assert(!session->lastSaveBackups().empty());
+        for (const auto &backup : session->lastSaveBackups()) {
+            std::cout << "    backup record " << backup.id.toStdString() << "\n";
+            if (!backup.id.endsWith(QStringLiteral("-rekordbox-export-sync"))) {
+                std::cerr << "FAIL: the save's backup is filed as " << backup.id.toStdString() << "\n";
+            }
+            assert(backup.id.endsWith(QStringLiteral("-rekordbox-export-sync")));
+        }
+    }
     assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Old';") == 0);
     assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Folder 2';") == 1);
     assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM PlaylistEntity e JOIN Playlist p ON p.id = e.listId "

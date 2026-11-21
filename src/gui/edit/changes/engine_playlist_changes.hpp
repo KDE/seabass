@@ -89,7 +89,10 @@ private:
 // PIONEER root and the Engine library alone, wrapped in OwnedChange for
 // this page. Its id is "rekordbox-export-sync:addcue:delete-playlist:"
 // plus the path; it refuses a path Engine spells twice and skips one it
-// no longer has.
-std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path);
+// no longer has. It carries the save's Engine item count and the page's
+// backup label, like the page's other Engine changes: it can be the
+// save's first Engine write (an old playlist of a reused id, staged
+// before its successor's create), which opens the write session.
+std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path, int itemCountHint);
 
 }  // namespace seabass::gui

@@ -194,10 +194,11 @@ ChangeOutcome RenameEnginePlaylistChange::apply(SaveContext &ctx)
     return ChangeOutcome::success();
 }
 
-std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path)
+std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path, int itemCountHint)
 {
     return ownedByRekordboxExportSync(std::make_unique<DeletePlaylistChange>(
-        QString(), std::move(enginePath), std::move(path), QStringList{QStringLiteral("engine")}));
+        QString(), std::move(enginePath), std::move(path), QStringList{QStringLiteral("engine")},
+        QStringLiteral("addcue"), itemCountHint, rekordboxExportSyncOwner().toStdString()));
 }
 
 }  // namespace seabass::gui

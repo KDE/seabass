@@ -99,12 +99,17 @@ private:
 // rekordbox does it (#62). Tracks stay. Staged from Browse, whose editor
 // is "addcue", and from Library Health's Playlists check, whose session
 // belongs to "library-health": a session refuses a change of another
-// owner than the batch's, so the stager says whose it is.
+// owner than the batch's, so the stager says whose it is. A page that
+// stages it among many changes of its own (Sync after Rekordbox Export)
+// gives the save's item count and its own backup label: the first change
+// of a save to write a library decides how its write session works and
+// under which label its backups are filed.
 class DeletePlaylistChange : public PendingChange
 {
 public:
     DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
-                         QString owner = QStringLiteral("addcue"));
+                         QString owner = QStringLiteral("addcue"), int itemCountHint = 1,
+                         std::string label = "playlist-delete");
 
     static QString idFor(const std::string &playlist);
 
@@ -125,6 +130,8 @@ private:
     std::string m_playlist;
     QStringList m_libraries;
     QString m_owner;
+    int m_itemCountHint = 1;
+    std::string m_label;
 };
 
 // Puts one file at the end of a playlist in every library on the stick

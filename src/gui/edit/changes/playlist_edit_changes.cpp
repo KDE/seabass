@@ -26,7 +26,6 @@ namespace
 {
 
 constexpr const char *CreateLabel = "playlist-create";
-constexpr const char *DeleteLabel = "playlist-delete";
 constexpr const char *RemoveLabel = "playlist-remove";
 constexpr const char *AddLabel = "playlist-add";
 constexpr const char *MoveLabel = "playlist-move";
@@ -401,9 +400,10 @@ ChangeOutcome CreatePlaylistChange::apply(SaveContext &ctx)
 }
 
 DeletePlaylistChange::DeletePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
-                                           QString owner)
+                                           QString owner, int itemCountHint, std::string label)
     : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
-      m_libraries(std::move(libraries)), m_owner(std::move(owner))
+      m_libraries(std::move(libraries)), m_owner(std::move(owner)), m_itemCountHint(itemCountHint),
+      m_label(std::move(label))
 {
 }
 
@@ -454,7 +454,7 @@ QStringList DeletePlaylistChange::formatsTouched() const
 
 std::vector<BackupTarget> DeletePlaylistChange::filesToBackup(SaveContext &) const
 {
-    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, DeleteLabel);
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, m_label.c_str());
 }
 
 ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
@@ -463,7 +463,8 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
     int deleted = 0;
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
-            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, DeleteLabel);
+            FormatWriteSession &session =
+                sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, m_label);
             infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
             if (const auto id = pdbPlaylistId(rows, m_playlist)) {
                 if (rows.deletePlaylist(*id) > 0) {
@@ -476,7 +477,7 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
             }
         }
         if (m_libraries.contains(QStringLiteral("onelibrary"))) {
-            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), DeleteLabel);
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), m_label);
             requireOneOneLibraryPlaylist(sharedOneLibraryWriter(ctx, pioneer), m_playlist);
             if (sharedOneLibraryWriter(ctx, pioneer).deletePlaylist(m_playlist) > 0) {
                 ++deleted;
@@ -484,7 +485,7 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         }
         if (m_libraries.contains(QStringLiteral("engine"))) {
             FormatWriteSession &session =
-                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), 1, DeleteLabel);
+                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, m_label);
             requireOneEnginePlaylist(session.writeRoot(), m_playlist);
             if (infrastructure::engine::deleteEnginePlaylist(session.writeRoot(), m_playlist) > 0) {
                 session.noteItemApplied();
