@@ -3573,6 +3573,12 @@ void testCreate()
     const fs::path tmp = testing::scratchRoot() / "testshark_t73_create" / "tmp";
     fs::create_directories(tmp);
     qputenv("TMPDIR", QByteArray::fromStdString(pathToUtf8(tmp)));
+#ifdef _WIN32
+    // Windows takes its temporary folder from TMP, then TEMP, and never
+    // from TMPDIR: without these the count below is of every test's builds.
+    qputenv("TMP", QByteArray::fromStdString(pathToUtf8(tmp)));
+    qputenv("TEMP", QByteArray::fromStdString(pathToUtf8(tmp)));
+#endif
     testCreateBoth();
     testCreateLeftForPlayer();
     testCreateOffAndOneSwitch();
