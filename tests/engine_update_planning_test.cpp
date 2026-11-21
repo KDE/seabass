@@ -462,6 +462,53 @@ bool hasPlaylist(const World &w, const std::string &path)
                        [&](const EnginePlaylistInfo &pl) { return pl.path == path; });
 }
 
+// The proposal as a save with `unticked` applies it: without the rows of
+// those keys and every row that depends on one (the page's rule, as in
+// recordAfterSave).
+EngineUpdateProposal tickedOnly(const EngineUpdateProposal &p, const std::set<std::string> &unticked)
+{
+    std::set<std::string> off = unticked;
+    for (bool grew = true; grew;) {
+        grew = false;
+        eachRow(p, [&](const EngineUpdateItemHeader &h) {
+            for (const auto &dep : h.dependsOn) {
+                if (off.count(dep) && off.insert(h.key).second) {
+                    grew = true;
+                }
+            }
+        });
+    }
+    EngineUpdateProposal out = p;
+    const auto drop = [&](auto &rows) {
+        std::erase_if(rows, [&](const auto &row) { return off.count(row.header.key) > 0; });
+    };
+    drop(out.playlistsToCreate);
+    drop(out.tracksToAdd);
+    drop(out.playlistsToRename);
+    drop(out.membership);
+    drop(out.metadataToEngine);
+    drop(out.cuesToEngine);
+    drop(out.playlistsToDelete);
+    drop(out.tracksToRemove);
+    drop(out.restoresToRekordbox);
+    drop(out.cuesToRekordbox);
+    return out;
+}
+
+// Every key a record holds in its x lines is of the file's grammar
+// (rekordbox_baseline.hpp's itemKey), the grammar Seabass 1.0.1 reads:
+// nothing of a plan's own reaches the stick.
+bool keysOfTheFileGrammar(const RekordboxBaseline &record)
+{
+    for (const auto &[key, state] : record.declined) {
+        if (!parseItemKey(key)) {
+            std::cerr << "FAIL: the record holds the key \"" << key << "\", outside the file's grammar\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main()
@@ -627,9 +674,10 @@ int main()
     // rekordbox and exported a new, unrelated "T73 New" with C and D, and
     // rekordbox gave the new one id 2. Both lists hold tracks and share
     // none, and Engine's "T73 Delete Me" is as recorded: the old playlist
-    // is deleted (its tracks taken out first, each a row) and the new one
-    // created, one item under the id. Saved, the record is rekordbox's and
-    // the next analysis offers nothing.
+    // is deleted and the new one created, two items: the create under the
+    // id, the delete under a key of the plan's own that no record holds.
+    // Saved, the record is rekordbox's and the next analysis offers
+    // nothing.
     const auto issueWorld = [](bool engineChanged, int engineCopies) {
         World w;
         w.rekordbox = {rb("1", "Music/A.mp3", {{"T73 Delete Me", 0}}), rb("2", "Music/B.mp3", {{"T73 Delete Me", 1}}),
@@ -654,7 +702,9 @@ int main()
         assert(p.playlistsToDelete.size() == 1);
         const auto &del = p.playlistsToDelete[0];
         assert(del.path == "T73 Delete Me" && del.pdbId == 2 && !del.folder && del.engineMembers == 2);
-        assert(del.header.key == "playlist:2" && del.header.checkedByDefault && !del.header.conflict);
+        assert(del.header.key == "reused:2:T73 Delete Me" && del.header.checkedByDefault && !del.header.conflict);
+        assert(!parseItemKey(del.header.key) && "the plan's own key, outside the file's grammar");
+        assert(del.header.dependsOn.empty());
         assert(del.header.reason == EngineUpdateReason::RekordboxRemoved);
         assert(del.header.reasonText == "rekordbox deleted this playlist" + Since);
         assert(p.playlistsToCreate.size() == 1);
@@ -662,17 +712,16 @@ int main()
         assert(create.path == "T73 New" && create.pdbId == 2 && !create.folder);
         assert(create.header.key == "playlist:2" && create.header.checkedByDefault);
         assert(create.header.reason == EngineUpdateReason::RekordboxAdded);
-        assert(del.header.rekordboxState == create.header.rekordboxState);
-        // The old tracks out of the old playlist, the new ones into the
-        // new: each a row under the id.
-        assert(p.membership.size() == 4);
+        assert(create.header.dependsOn.empty());
+        // The new tracks into the new playlist, each a row under the id;
+        // the delete takes the old playlist's tracks with it.
+        assert(p.membership.size() == 2);
         std::multiset<std::string> edits;
         for (const auto &m : p.membership) {
             assert(m.header.dependsOn == Deps{"playlist:2"} && m.header.checkedByDefault);
             edits.insert((m.kind == MembershipEdit::Kind::Add ? "+" : "-") + m.playlistPath + ":" + m.pathKey);
         }
-        assert((edits == std::multiset<std::string>{"-T73 Delete Me:music/a.mp3", "-T73 Delete Me:music/b.mp3",
-                                                    "+T73 New:music/c.mp3", "+T73 New:music/d.mp3"}));
+        assert((edits == std::multiset<std::string>{"+T73 New:music/c.mp3", "+T73 New:music/d.mp3"}));
         assert(p.conflicts.empty() && p.engineOwnKept.empty());
 
         World after = w;
@@ -682,6 +731,7 @@ int main()
         const auto record = recordAfterSave(base, w, p);
         assert(recorded(record, 2) && recorded(record, 2)->path == "T73 New");
         assert(recorded(record, 2)->members == (Deps{"music/c.mp3", "music/d.mp3"}));
+        assert(keysOfTheFileGrammar(record));
         assert(plan(after, record).empty() && "the next analysis offers nothing");
 
         // Every membership row unticked: a new, empty "T73 New", none of
@@ -695,26 +745,26 @@ int main()
         std::cout << "a reused playlist id, no track in common: delete and create, the record right after (#99) OK\n";
     }
 
-    // #99: the pair declined. The record keeps the old playlist with its
-    // own tracks, and the new one unrecorded, so the next analysis is the
-    // same situation: the pair stays out while rekordbox's playlist is as
-    // declined, and when rekordbox renames it, it comes back as a delete
-    // and a create, never as a rename of the old playlist.
+    // #99: the pair declined, the delete and the create unticked. Engine
+    // keeps "T73 Delete Me"; the record holds nothing under id 2 (the old
+    // playlist is gone from rekordbox, and the create was declined) and
+    // only the create's decline, so the next analysis lists "T73 Delete
+    // Me" as Engine's own and keeps the create out while rekordbox's
+    // playlist is as declined. When rekordbox renames it, the create comes
+    // back, never a rename of the old playlist, never its delete.
     {
         const auto [w, base] = issueWorld(false, 1);
         const auto p = plan(w, base);
-        const auto record = recordAfterSave(base, w, p, {"playlist:2"});
-        const auto *kept = recorded(record, 2);
-        assert(kept && kept->path == "T73 Delete Me" && !kept->folder);
-        if (kept->members != (Deps{"music/a.mp3", "music/b.mp3"})) {
-            std::cerr << "FAIL: the declined pair records playlist 2 with " << kept->members.size()
-                      << " member(s), not its own A and B\n";
-        }
-        assert(kept->members == (Deps{"music/a.mp3", "music/b.mp3"}));
-        assert(record.declined.count("playlist:2") == 1);
+        const std::string oldKey = p.playlistsToDelete.at(0).header.key;
+        const auto record = recordAfterSave(base, w, p, {"playlist:2", oldKey});
+        assert(!recorded(record, 2) && "neither item of the id recorded");
+        assert(record.declined.count("playlist:2") == 1 && record.declined.size() == 1);
+        assert(keysOfTheFileGrammar(record));
         const auto again = plan(w, record);
         assert(again.playlistsToRename.empty() && again.playlistsToCreate.empty() && again.playlistsToDelete.empty());
         assert(again.membership.empty() && again.conflicts.empty());
+        assert(again.engineOwnKept.size() == 1 && again.engineOwnKept[0].engineOnlyPlaylist
+               && again.engineOwnKept[0].playlistPath == "T73 Delete Me" && again.engineOwnKept[0].trackCount == 2);
 
         World renamed = w;
         renamed.rekordbox[2].playlists = {{"T73 New2", 0}};
@@ -722,10 +772,117 @@ int main()
         renamed.rekordboxPlaylists = {{"T73 New2", false, 2}};
         const auto later = plan(renamed, record);
         assert(later.playlistsToRename.empty() && "never a rename of the old playlist");
-        assert(later.playlistsToDelete.size() == 1 && later.playlistsToDelete[0].path == "T73 Delete Me");
+        assert(later.playlistsToDelete.empty() && "the old playlist is Engine's own now");
         assert(later.playlistsToCreate.size() == 1 && later.playlistsToCreate[0].path == "T73 New2");
         assert(later.playlistsToCreate[0].header.checkedByDefault);
-        std::cout << "a declined delete and create keeps the old playlist with its tracks in the record (#99) OK\n";
+        assert(later.playlistsToCreate[0].header.reason == EngineUpdateReason::RekordboxAdded);
+        std::cout << "a declined delete and create: Engine keeps the old playlist as its own, the record neither "
+                     "(#99) OK\n";
+    }
+
+    // #99, the defect the reviews left open: the pair saved with part of
+    // it unticked. The old playlist's item is the plan's own; the record
+    // never holds it, so nothing of "T73 Delete Me" lands under the new
+    // playlist. Each variant is saved (Engine as the ticked rows leave it,
+    // the record as the page makes it), then rekordbox puts A, one of the
+    // old playlist's tracks, into "T73 New": the add is offered, ticked,
+    // and nothing says Engine took A out.
+    //   own rows: every row about the old playlist but its delete unticked
+    //             (before this fix: its remove rows);
+    //   membership: the whole Membership section unticked;
+    //   old: the old playlist's delete unticked, the create ticked;
+    //   new: the create unticked, the delete ticked;
+    //   both: the delete and the create unticked.
+    {
+        const auto [w, base] = issueWorld(false, 1);
+        const auto p = plan(w, base);
+        assert(p.playlistsToDelete.size() == 1 && p.playlistsToCreate.size() == 1);
+        const std::string oldKey = p.playlistsToDelete[0].header.key;
+        const std::string newKey = p.playlistsToCreate[0].header.key;
+        assert(newKey == "playlist:2");
+        std::set<std::string> ownRows;
+        std::set<std::string> membership;
+        for (const auto &m : p.membership) {
+            membership.insert(m.header.key);
+            if (m.playlistPath == "T73 Delete Me") {
+                ownRows.insert(m.header.key);
+            }
+        }
+        struct Variant
+        {
+            const char *what;
+            std::set<std::string> unticked;
+            bool oldDeleted;
+            bool newCreated;
+        };
+        const std::vector<Variant> variants = {
+            {"own rows", ownRows, true, true},
+            {"membership", membership, true, true},
+            {"old", {oldKey}, false, true},
+            {"new", {newKey}, true, false},
+            {"both", {oldKey, newKey}, false, false},
+        };
+        for (const auto &v : variants) {
+            std::cout << "  #99 saved with " << v.what << " unticked\n";
+            World after = w;
+            apply(after, tickedOnly(p, v.unticked));
+            if (hasPlaylist(after, "T73 Delete Me") == v.oldDeleted || hasPlaylist(after, "T73 New") != v.newCreated) {
+                std::cerr << "FAIL (" << v.what << "): Engine has \"T73 Delete Me\" "
+                          << hasPlaylist(after, "T73 Delete Me") << ", \"T73 New\" " << hasPlaylist(after, "T73 New")
+                          << "\n";
+            }
+            assert(hasPlaylist(after, "T73 Delete Me") != v.oldDeleted);
+            assert(hasPlaylist(after, "T73 New") == v.newCreated);
+            const auto record = recordAfterSave(base, w, p, v.unticked);
+            assert(keysOfTheFileGrammar(record));
+            // The record holds rekordbox's playlist 2 or nothing under the
+            // id, never the old playlist or its tracks.
+            const auto *two = recorded(record, 2);
+            assert(!two || two->path == "T73 New");
+            if (two) {
+                for (const auto &member : two->members) {
+                    if (member == "music/a.mp3" || member == "music/b.mp3") {
+                        std::cerr << "FAIL (" << v.what << "): the record holds " << member << " under \"T73 New\"\n";
+                    }
+                    assert(member != "music/a.mp3" && member != "music/b.mp3");
+                }
+            }
+            assert(!two == !v.newCreated && "the create unticked: no record of the id");
+
+            // The next analysis, nothing changed since: nothing of the
+            // old playlist offered again, no conflict, no rename; left on
+            // Engine, it is Engine's own playlist.
+            const auto next = plan(after, record);
+            assert(next.conflicts.empty() && next.playlistsToRename.empty() && next.playlistsToDelete.empty());
+            assert(next.playlistsToCreate.empty() && "a declined create stays out");
+            const bool oldListed = std::any_of(next.engineOwnKept.begin(), next.engineOwnKept.end(), [](const auto &k) {
+                return k.engineOnlyPlaylist && k.playlistPath == "T73 Delete Me";
+            });
+            assert(oldListed == !v.oldDeleted && "left on Engine, the old playlist is Engine's own");
+
+            // rekordbox puts A into "T73 New" (when Engine has it).
+            if (!v.newCreated) {
+                continue;
+            }
+            World added = after;
+            added.rekordbox[0].playlists = {{"T73 New", 2}};
+            const auto withA = plan(added, record);
+            bool offered = false;
+            for (const auto &m : withA.membership) {
+                if (m.kind == MembershipEdit::Kind::Add && m.pathKey == "music/a.mp3" && m.playlistPath == "T73 New") {
+                    offered = m.header.checkedByDefault && m.header.reason == EngineUpdateReason::RekordboxAdded;
+                }
+            }
+            for (const auto &k : withA.engineOwnKept) {
+                if (k.header.key == "member:2:music/a.mp3") {
+                    std::cerr << "FAIL (" << v.what << "): \"" << k.header.reasonText << "\"\n";
+                }
+                assert(k.header.key != "member:2:music/a.mp3" && "nothing says Engine took A out");
+            }
+            assert(offered && "the add of A is offered, ticked");
+        }
+        std::cout << "a reused id saved with parts unticked: the old playlist never in the record, a later add "
+                     "offered (#99) OK\n";
     }
 
     // #99: Engine's "T73 Delete Me" changed since the record, so its delete
@@ -875,9 +1032,10 @@ int main()
         apply(after, p);
         assert(!hasPlaylist(after, "Old") && engineOrder(after, "NewF/Kid") == Deps{"music/c.mp3"});
         assert(plan(after, recordAfterSave(base, w, p)).empty());
-        const auto declined = recordAfterSave(base, w, p, {"playlist:5"});
-        assert(recorded(declined, 5) && recorded(declined, 5)->path == "Old" && !recorded(declined, 5)->folder);
-        assert((recorded(declined, 5)->members == Deps{"music/a.mp3", "music/b.mp3"}));
+        // Both declined: the record holds neither item of id 5.
+        assert(p.playlistsToDelete[0].header.key == "reused:5:Old");
+        const auto declined = recordAfterSave(base, w, p, {"playlist:5", "reused:5:Old"});
+        assert(!recorded(declined, 5) && keysOfTheFileGrammar(declined));
 
         for (const bool engineHoldsSomething : {false, true}) {
             World v;

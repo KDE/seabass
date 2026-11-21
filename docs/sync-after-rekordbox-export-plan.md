@@ -355,19 +355,34 @@ What it reuses, and what it must not:
 - Playlists: diff by pdb id between B and R for create, delete and
   rename. rekordbox gives a deleted playlist's id to the next item it
   makes (#99), so an id under a new path is planned as B's item deleted
-  and R's created, one item under the id, only when that is certain and
-  safe: two playlists that both hold tracks and share none, or a
-  playlist and a folder; the delete a plain row (Engine has exactly one
-  item at the old path, of the same kind, a playlist there holding
-  exactly B's tracks, a folder nothing at all); the create at a path
-  whose parent Engine already has, every track of a new playlist with a
-  row. The old playlist's tracks are rows of their own (taken out before
-  the delete), so a record that keeps the pair keeps them. Everywhere
-  else the id pairs as before: a rename (also where the lists share some
-  tracks, or one is empty, or the delete would be a conflict), or the
-  conflict that raises. Two folders pair by id. Without a baseline a rename is
-  guessed only when parent and members agree closely, and the guess is
-  a conflict. An Engine path
+  and R's created only when that is certain and safe: two playlists
+  that both hold tracks and share none, or a playlist and a folder; the
+  delete a plain row (Engine has exactly one item at the old path, of
+  the same kind, a playlist there holding exactly B's tracks, each one
+  Engine row, a folder nothing at all); the create at a path whose
+  parent Engine already has, every track of a new playlist with a row.
+  Everywhere else the id pairs as before: a rename (also where the
+  lists share some tracks, or one is empty, or the delete would be a
+  conflict), or the conflict that raises. Two folders pair by id.
+  **Decision (#99, 2026-11-21):** the delete and the create are two
+  items, ticked apart. The create is `playlist:<id>` as always; the
+  delete has a key of the plan's own, `reused:<id>:<old path>`, outside
+  the item grammar and never written to the record (no new key form on
+  disk: a 1.0.1 record reads, and a 1.0.1 reads ours). rekordbox no
+  longer has the old item, so the next record holds no entry for it
+  whatever the save did: the id holds R's playlist (or nothing, the
+  create left out or declined), and nothing of the old playlist's
+  tracks can land under the new one. Its tracks get no rows of their
+  own; the delete takes them, as any delete does. Left unticked, the
+  delete means "leave Engine's playlist alone": it stays on Engine as a
+  playlist rekordbox does not know, listed as Engine's own from then on
+  and never offered again, never adopted into the new playlist. The
+  record is built with `previous` read without the old playlist
+  (`keepPreviousItems` takes the reused key for that, at stage time and
+  again after the commit, where a save that stopped before the create
+  landed records no playlist under the id rather than the old one).
+  Without a baseline a rename is guessed only when parent and members
+  agree closely, and the guess is a conflict. An Engine path
   that resolves to more than one playlist
   (`enginePlaylistCountAtPath() != 1`, `engine_playlists.hpp`) is a
   conflict, the rule Browse already enforces. **Decision (review of

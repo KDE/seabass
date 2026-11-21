@@ -7,6 +7,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,7 +32,11 @@ namespace seabass::gui
 //
 //   - the items of every change that did not land keep the previous
 //     baseline's value (domain::keepPreviousItems), so a save that stopped
-//     at a failure records only what landed;
+//     at a failure records only what landed; `reusedIds`, the proposal's
+//     keys of recorded playlists whose id rekordbox gave to another item
+//     (domain::reusedPlaylistItemKey, #99), go with them whatever landed,
+//     so the previous record's old playlist is never put back under the
+//     id;
 //   - every rekordbox write of the changes that landed is merged as
 //     Seabass's own (the origin ledger, domain::recordSeabassWrites);
 //   - the pdb sequence is export.pdb's as the save left it, re-read, since
@@ -59,7 +64,8 @@ public:
 
     // stickRoot: the stick's root (UTF-8), where Seabass/ lives. The
     // export.pdb whose sequence is recorded is the save's rekordbox path.
-    RecordRekordboxBaselineChange(std::string stickRoot, domain::RekordboxBaseline next, AppliedBy appliedBy);
+    RecordRekordboxBaselineChange(std::string stickRoot, domain::RekordboxBaseline next, AppliedBy appliedBy,
+                                  std::set<std::string> reusedIds = {});
 
     static QString idString();
 
@@ -77,6 +83,7 @@ private:
     std::string m_stickRoot;
     domain::RekordboxBaseline m_next;
     AppliedBy m_appliedBy;
+    std::set<std::string> m_reusedIds;
 };
 
 }  // namespace seabass::gui

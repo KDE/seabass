@@ -386,6 +386,26 @@ std::string cueItemKey(const std::string &pathKey, const CuePoint &cue)
     return itemKey(key);
 }
 
+std::string reusedPlaylistItemKey(std::uint32_t id, const std::string &recordedPath)
+{
+    return "reused:" + std::to_string(id) + ":" + recordedPath;
+}
+
+std::optional<ReusedPlaylistKey> parseReusedPlaylistItemKey(const std::string &text)
+{
+    std::string_view rest(text);
+    const auto head = takeField(rest);
+    if (!head || *head != "reused") {
+        return std::nullopt;
+    }
+    const auto idField = takeField(rest);
+    const auto id = idField ? wholeNumber<std::uint32_t>(*idField) : std::nullopt;
+    if (!id || rest.empty()) {
+        return std::nullopt;
+    }
+    return ReusedPlaylistKey{*id, std::string(rest)};
+}
+
 namespace
 {
 
@@ -428,9 +448,18 @@ void keepTrack(RekordboxBaseline &next, const RekordboxBaseline *previous, const
     }
 }
 
-void keepPlaylist(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id)
+// previous's playlist `id`, or nullptr where it has none or a reused-id
+// key took it out of its view (`otherItem`, keepPreviousItems).
+const BaselinePlaylist *recordedPlaylist(const RekordboxBaseline *previous, std::uint32_t id,
+                                         const std::set<std::uint32_t> &otherItem)
 {
-    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    return previous && !otherItem.contains(id) ? previous->findPlaylist(id) : nullptr;
+}
+
+void keepPlaylist(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id,
+                  const std::set<std::uint32_t> &otherItem)
+{
+    const BaselinePlaylist *before = recordedPlaylist(previous, id, otherItem);
     const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
         return p.id == id;
     });
@@ -452,7 +481,7 @@ void keepPlaylist(RekordboxBaseline &next, const RekordboxBaseline *previous, st
 }
 
 void keepMember(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id,
-                const std::string &pathKey)
+                const std::string &pathKey, const std::set<std::uint32_t> &otherItem)
 {
     const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
         return p.id == id;
@@ -461,7 +490,7 @@ void keepMember(RekordboxBaseline &next, const RekordboxBaseline *previous, std:
         return;  // no playlist to hold it
     }
     std::erase(it->members, pathKey);
-    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    const BaselinePlaylist *before = recordedPlaylist(previous, id, otherItem);
     if (!before) {
         return;
     }
@@ -473,9 +502,10 @@ void keepMember(RekordboxBaseline &next, const RekordboxBaseline *previous, std:
     }
 }
 
-void keepOrder(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id)
+void keepOrder(RekordboxBaseline &next, const RekordboxBaseline *previous, std::uint32_t id,
+               const std::set<std::uint32_t> &otherItem)
 {
-    const BaselinePlaylist *before = previous ? previous->findPlaylist(id) : nullptr;
+    const BaselinePlaylist *before = recordedPlaylist(previous, id, otherItem);
     const auto it = std::find_if(next.playlists.begin(), next.playlists.end(), [&](const BaselinePlaylist &p) {
         return p.id == id;
     });
@@ -562,9 +592,16 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys)
 {
     std::vector<std::pair<ItemKey, std::string>> parsed;
+    // Ids whose playlist in `previous` is another item than next's (#99).
+    std::set<std::uint32_t> otherItem;
     for (const auto &text : keys) {
         if (auto key = parseItemKey(text)) {
             parsed.emplace_back(std::move(*key), text);
+        } else if (const auto reused = parseReusedPlaylistItemKey(text)) {
+            const BaselinePlaylist *recorded = previous ? previous->findPlaylist(reused->id) : nullptr;
+            if (recorded && recorded->path == reused->recordedPath) {
+                otherItem.insert(reused->id);
+            }
         }
     }
     std::stable_sort(parsed.begin(), parsed.end(), [](const auto &a, const auto &b) {
@@ -576,13 +613,13 @@ void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previou
             keepTrack(next, previous, key.pathKey);
             break;
         case ItemKey::Kind::Playlist:
-            keepPlaylist(next, previous, key.playlistId);
+            keepPlaylist(next, previous, key.playlistId, otherItem);
             break;
         case ItemKey::Kind::Member:
-            keepMember(next, previous, key.playlistId, key.pathKey);
+            keepMember(next, previous, key.playlistId, key.pathKey, otherItem);
             break;
         case ItemKey::Kind::Order:
-            keepOrder(next, previous, key.playlistId);
+            keepOrder(next, previous, key.playlistId, otherItem);
             break;
         default:
             keepValue(next, previous, key, text);
@@ -622,7 +659,9 @@ RekordboxBaseline nextBaseline(const RekordboxBaseline *previous, const std::vec
 
     std::set<std::string> kept;
     for (const auto &key : offered) {
-        if (!applied.contains(key)) {
+        // A reused id's key reads `previous` for the others, whatever
+        // became of its row.
+        if (!applied.contains(key) || parseReusedPlaylistItemKey(key)) {
             kept.insert(key);
         }
     }
@@ -631,7 +670,13 @@ RekordboxBaseline nextBaseline(const RekordboxBaseline *previous, const std::vec
     }
     keepPreviousItems(next, previous, kept);
 
-    next.declined = declined;
+    // Never a reused id's key: the plan's own, outside the file's grammar.
+    next.declined.clear();
+    for (const auto &[key, hash] : declined) {
+        if (!parseReusedPlaylistItemKey(key)) {
+            next.declined.emplace(key, hash);
+        }
+    }
     if (previous) {
         for (const auto &[key, hash] : previous->declined) {
             if (kept.contains(key)) {

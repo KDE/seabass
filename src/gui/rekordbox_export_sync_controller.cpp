@@ -1193,8 +1193,14 @@ void RekordboxExportSyncController::stageSelected()
                              analysis.rekordboxPlaylists, analysis.currentSequence, offered, applied, declined,
                              stickRelativeOf, pathKeyOf);
     const int changeCount = static_cast<int>(changes.size() - analysisTracks.size());
+    std::set<std::string> reusedIds;
+    for (const auto &key : offered) {
+        if (domain::parseReusedPlaylistItemKey(key)) {
+            reusedIds.insert(key);
+        }
+    }
     changes.push_back(std::make_unique<RecordRekordboxBaselineChange>(analysis.stickRoot, std::move(next),
-                                                                      std::move(appliedBy)));
+                                                                      std::move(appliedBy), std::move(reusedIds)));
 
     QStringList ids;
     for (const auto &change : changes) {

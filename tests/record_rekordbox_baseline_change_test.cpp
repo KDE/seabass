@@ -15,6 +15,10 @@
 //    save where nothing landed records nothing.
 // 4. A wrapped SyncPlanChange onto rekordbox is in the ledger: the
 //    track's cues are the written set, of Seabass origin.
+// 5. #99: rekordbox gave the recorded "Old"'s id to a new playlist, and
+//    the save stopped before the new one's create landed. The record
+//    holds no playlist of the id, never "Old" again, whether or not the
+//    old one's delete landed.
 
 #include <QCoreApplication>
 
@@ -22,6 +26,8 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <set>
+#include <string>
 
 #include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/changes/record_rekordbox_baseline_change.hpp"
@@ -42,10 +48,11 @@ std::shared_ptr<PendingChange> owned(std::unique_ptr<PendingChange> change)
 }
 
 std::shared_ptr<PendingChange> record(const testing::EngineChangeStick &stick, domain::RekordboxBaseline next,
-                                      RecordRekordboxBaselineChange::AppliedBy appliedBy)
+                                      RecordRekordboxBaselineChange::AppliedBy appliedBy,
+                                      std::set<std::string> reusedIds = {})
 {
     return std::make_shared<RecordRekordboxBaselineChange>(testing::stickRootOf(stick), std::move(next),
-                                                           std::move(appliedBy));
+                                                           std::move(appliedBy), std::move(reusedIds));
 }
 
 void reportError(const SaveLoopResult &result, const char *what)
@@ -262,6 +269,52 @@ int main(int argc, char **argv)
         assert(!row.rating && row.ratingOrigin == ValueOrigin::Unknown && "no rating written, none recorded");
         std::cout << "case 4 (a wrapped sync onto rekordbox is in the ledger, Seabass origin) OK\n";
     }
+
+    // 5. #99: the record says playlist 9 is "Old" holding k1; rekordbox
+    //    gave id 9 to "New", holding k2. The page staged "Old"'s delete
+    //    (its key the plan's own) in a change that lands, and "New"'s
+    //    create with its member in one the save never reaches. `next` is
+    //    the record if all of it had landed: 9 is "New" with k2.
+    for (const bool deleteLanded : {true, false}) {
+        const auto stick = testing::makeEngineChangeStick(
+            fixture, deleteLanded ? "record_reused_delete_landed" : "record_reused_delete_unticked");
+        testing::levelImportCounter(stick);
+        const auto tracks = testing::rekordboxTracks(stick, 2);
+        const std::string k1 = testing::keyOf(stick, tracks[0]);
+        const std::string k2 = testing::keyOf(stick, tracks[1]);
+        domain::RekordboxBaseline previous;
+        previous.pdbSequence = 100;
+        previous.tracks = {testing::baselineRow(stick, tracks[0], 1, ValueOrigin::Rekordbox, 4000.0),
+                           testing::baselineRow(stick, tracks[1], 1, ValueOrigin::Rekordbox, 4000.0)};
+        previous.playlists = {domain::BaselinePlaylist{9, 0, false, "Old", {k1}}};
+        testing::plantBaseline(stick, previous);
+
+        domain::RekordboxBaseline next = previous;
+        next.playlists = {domain::BaselinePlaylist{9, 0, false, "New", {k2}}};
+        const std::string reused = domain::reusedPlaylistItemKey(9, "Old");
+        const QString failId = QStringLiteral("rekordbox-export-sync:fail");
+        const QString stopId = QStringLiteral("rekordbox-export-sync:stop");
+        RecordRekordboxBaselineChange::AppliedBy appliedBy = {{failId.toStdString(), {"playlist:9", "member:9:" + k2}}};
+        if (deleteLanded) {
+            appliedBy.insert(appliedBy.begin(), {SyncOntoEngineId.toStdString(), {reused}});
+        }
+        const SaveLoopResult saved = testing::saveChanges(
+            {owned(testing::syncOntoEngine(stick)), std::make_shared<CancellingChange>(stopId),
+             std::make_shared<testing::FailingChange>(failId), record(stick, next, appliedBy, {reused})},
+            stick.pioneerPath(), stick.enginePath());
+        assert(saved.cancelled && saved.failedId.isEmpty());
+        const auto recorded = testing::readBaseline(stick);
+        assert(recorded && recorded->pdbSequence == testing::FixtureSequence);
+        if (const auto *nine = recorded->findPlaylist(9)) {
+            std::cerr << "FAIL: the record holds playlist 9 as \"" << nine->path << "\" with " << nine->members.size()
+                      << " member(s)\n";
+        }
+        assert(!recorded->findPlaylist(9) && "the create did not land and the old playlist is another item");
+        for (const auto &[key, state] : recorded->declined) {
+            assert(domain::parseItemKey(key));
+        }
+    }
+    std::cout << "case 5 (#99: a stopped save never records the old playlist under a reused id) OK\n";
 
     std::cout << "record_rekordbox_baseline_change_test: all passed\n";
     return 0;
