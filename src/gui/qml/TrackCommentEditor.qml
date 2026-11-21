@@ -136,6 +136,9 @@ Item {
             iconSize: Theme.scaled(16)
             iconColor: Theme.textMuted
             enabled: root.canEdit
+            // Not there at all where the comment is only shown (editable
+            // false): a disabled pencil would promise an edit.
+            visible: root.editable
             // Shown on hover only, to keep the pane light; kept in the
             // layout so the text does not reflow when it appears. Reached
             // with Tab as well, and then shown.

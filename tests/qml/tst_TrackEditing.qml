@@ -40,6 +40,21 @@ TestCase {
             playbackController: ({waveformFor: function() { return []; },
                                   beatTicksFor: function() { return []; }})
             format: "rekordbox"
+            // Off in the app (ratings only, 2026-11-21); these tests keep
+            // the comment editor covered for when it is switched on.
+            commentEditingEnabled: true
+        }
+    }
+    Component {
+        id: plainPanelComponent
+        // As panelComponent, without switching the comment editor on.
+        TrackDetailPanel {
+            width: 500
+            height: 880
+            addCueController: ({statusMessage: "", errorMessage: "", busy: false, pendingRevision: 0})
+            playbackController: ({waveformFor: function() { return []; },
+                                  beatTicksFor: function() { return []; }})
+            format: "rekordbox"
         }
     }
     Component {
@@ -200,6 +215,32 @@ TestCase {
         mouseClick(undo);
         verify(!env.controller.hasStagedRating(track.filePath));
         compare(env.session.pendingCount, 0);
+    }
+
+    // In the app the comment is shown, not edited (ratings only for now,
+    // 2026-11-21): a panel as the page makes it has no edit button on
+    // the comment, while its stars still stage.
+    function test_0_theCommentIsReadOnlyByDefault() {
+        const plain = createTemporaryObject(plainPanelComponent, testCase);
+        verify(plain !== null);
+        compare(plain.commentEditingEnabled, false, "off unless switched on, as the page makes it");
+        const env = setUp();
+        env.panel.commentEditingEnabled = false;
+        const track = tracks(env).find(t => t.filePath && t.comment.length > 0);
+        verify(track !== undefined, "a track with a comment");
+        show(env, track);
+        const editor = findChild(env.panel, "trackCommentEditor");
+        verify(editor.visible, "the comment is shown");
+        compare(editor.editable, false, "but not editable");
+        compare(editor.canEdit, false);
+        mouseMove(editor, 10, editor.height / 2);
+        wait(300);
+        const button = findChild(editor, "commentEditButton");
+        verify(button !== null && !button.visible, "and offers no edit button, even on hover");
+        const star = findChild(env.panel, "ratingStar" + (track.rating === 2 ? 3 : 2));
+        verify(star.enabled, "the rating can still be set");
+        mouseClick(star);
+        verify(env.controller.hasStagedRating(track.filePath));
     }
 
     function test_2_commentEditsInPlace() {
@@ -465,6 +506,7 @@ TestCase {
         const list = findChild(page, "trackListView");
         tryVerify(() => list.count > 1, 120000, "the page lists the stick");
         const panel = findChild(page, "trackDetailPanel");
+        panel.commentEditingEnabled = true;
         for (const how of ["row", "play"]) {
             page.playRow(a);
             realPlayback.stop();
@@ -526,6 +568,7 @@ TestCase {
         const list = findChild(page, "trackListView");
         tryVerify(() => list.count > 1, 120000);
         const panel = findChild(page, "trackDetailPanel");
+        panel.commentEditingEnabled = true;
         page.playRow(a);
         realPlayback.stop();
         tryVerify(() => panel.commentLimit.known === true, 30000);
@@ -637,6 +680,7 @@ TestCase {
         const list = findChild(page, "trackListView");
         tryVerify(() => list.count > 1, 120000);
         const panel = findChild(page, "trackDetailPanel");
+        panel.commentEditingEnabled = true;
         page.playRow(a);
         realPlayback.stop();
         tryVerify(() => panel.commentLimit.known === true, 30000);
