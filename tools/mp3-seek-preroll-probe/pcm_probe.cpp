@@ -8,16 +8,22 @@
 // time n / rate. A WAV seeks to the sample, so a hot cue jump in it has
 // no bit reservoir to lose.
 //
-// Each decoded buffer is placed by its start time: the first one starts
-// at the MP3's start offset (26 ms or so for a LAME file, issue #50), and
-// the WAV gets that much silence in front so the two timelines agree.
+// The decoded buffers are concatenated, deliberately, in the order they
+// come: Qt 6.11.1's QAudioDecoder labels them with a sample counter from 0
+// (SteppingAudioRenderer builds its resampler without a start time,
+// qffmpegaudiodecoder.cpp:28-37), so concatenating is what puts sample n
+// at the seeked player's track time n / rate (align_probe checks that).
+// Should a Qt version ever label them from the stream's timestamps
+// instead, the timestamps would stop agreeing with the count: the probe
+// reports every buffer whose label is off the count ("label
+// disagreements"), and the WAV is still the plain concatenation.
 // The WAV is written as the buffers arrive (header patched at the end),
 // so only one buffer is held at a time; with "memory" as the third
 // argument everything is collected first and written at the end, to
 // compare what that costs.
 //
 // Prints the decode time, the process's peak resident memory before and
-// after (VmHWM), the format, and any gap or overlap between buffers.
+// after (VmHWM), the format, and any label disagreements.
 // Linux only (reads /proc/self/status). No sound device is used.
 // Built by hand, see README.md.
 //
@@ -33,6 +39,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -113,9 +120,8 @@ int main(int argc, char **argv)
     decoder.setSource(QUrl::fromLocalFile(QString::fromUtf8(argv[1])));
     int rate = 0;
     qint64 written = 0;  // frames
-    qint64 gapFrames = 0;
-    qint64 overlapFrames = 0;
-    int gaps = 0;
+    qint64 gapFrames = 0;  // the largest disagreement, in frames
+    int gaps = 0;          // buffers whose label is off the count
     QByteArray held;
     QByteArray chunk;
     bool failed = false;
@@ -150,32 +156,21 @@ int main(int argc, char **argv)
             return;
         }
         const qint64 at = std::llround(buffer.startTime() * static_cast<double>(rate) / 1e6);
-        qsizetype skip = 0;
-        if (at > written) {
-            if (written > 0) {
-                ++gaps;
-                gapFrames += at - written;
-            }
-            emitBytes(QByteArray((at - written) * 4, '\0'));
-            written = at;
-        } else if (at < written) {
-            overlapFrames += written - at;
-            skip = written - at;
+        if (at != written) {
+            ++gaps;
+            gapFrames = std::max(gapFrames, std::abs(at - written));
         }
         const qsizetype frames = buffer.frameCount();
-        if (skip >= frames) {
-            return;
-        }
-        chunk.resize((frames - skip) * 4);
+        chunk.resize(frames * 4);
         auto *dst = reinterpret_cast<qint16 *>(chunk.data());
-        for (qsizetype i = skip; i < frames; ++i) {
+        for (qsizetype i = 0; i < frames; ++i) {
             for (int c = 0; c < 2; ++c) {
                 const float v = std::clamp(sampleAt(buffer, i, c), -1.0F, 1.0F);
                 *dst++ = static_cast<qint16>(std::lrint(v * 32767.0F));
             }
         }
         emitBytes(chunk);
-        written += frames - skip;
+        written += frames;
     });
     QObject::connect(&decoder, &QAudioDecoder::finished, &app, [&] { app.quit(); });
     QObject::connect(&decoder, qOverload<QAudioDecoder::Error>(&QAudioDecoder::error), &app, [&] {
@@ -202,10 +197,9 @@ int main(int argc, char **argv)
     out.write(wavHeader(rate, static_cast<quint32>(dataBytes)));
     out.close();
     std::printf("decoded: %.3f s, %d Hz, first buffer at %.3f ms (%d ch, sample format %d), "
-                "%d gaps (%lld frames) and %lld overlapping frames after it\n",
+                "%d label disagreements (at most %lld frames)\n",
                 written / double(rate), rate, firstStartMs, firstFormat.channelCount(),
-                int(firstFormat.sampleFormat()), gaps, static_cast<long long>(gapFrames),
-                static_cast<long long>(overlapFrames));
+                int(firstFormat.sampleFormat()), gaps, static_cast<long long>(gapFrames));
     std::printf("decode and write: %lld ms, %s; WAV %.1f MB\n", static_cast<long long>(decodeMs),
                 inMemory ? "held in memory" : "streamed to the file", dataBytes / 1e6);
     std::printf("after: VmHWM %s, VmRSS %s\n", statusLine("VmHWM:").c_str(), statusLine("VmRSS:").c_str());
