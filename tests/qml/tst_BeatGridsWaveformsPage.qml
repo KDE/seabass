@@ -1188,6 +1188,7 @@ TestCase {
             }
             // The ground is the text colour faintly over the background:
             // lighter on a dark theme, darker on a light one.
+            verify(tile.beatTicks.length > 0, why + ": tile " + tile.tile + " has its beat marks");
             const ground = Math.abs(median(laneRow) - median(bandRow));
             verify(ground > 0.06, why + ": tile " + tile.tile + " (x " + from + " to " + to
                    + ") has its lane's ground, " + ground.toFixed(3));
@@ -1203,6 +1204,14 @@ TestCase {
         const view = rowWaveformOf(delegateInView(o.page, b04));
         tryVerify(() => view.opensZoom, 30000);
         const popup = findChild(o.page, "waveformZoomPopup");
+        try {
+            lanesOfAPopupFromARow(popup, view);
+        } finally {
+            popup.close();
+            realPlayback.stop();
+        }
+    }
+    function lanesOfAPopupFromARow(popup, view) {
         clickOn(view);
         tryCompare(popup, "opened", true, 10000);
         tryVerify(() => popup.durationMs > 0, 10000);
@@ -1216,7 +1225,6 @@ TestCase {
         }
         popup.close();
         tryCompare(popup, "visible", false);
-        realPlayback.stop();
     }
 
     // A row's read is the track's it was asked for and lands on that row
@@ -1412,8 +1420,15 @@ TestCase {
         const rekordbox = findChild(open, "comparisonRekordbox");
         const engine = findChild(open, "comparisonEngine");
         tryVerify(() => rekordbox.opensZoom && engine.opensZoom, 30000, "both lanes can be opened");
-        // The open row, taller now, scrolled wholly into view.
-        verify(delegateInView(o.page, b04) === open);
+        // The open row, taller now, scrolled to the top of the list (with
+        // larger fonts it can be taller than the list), both lanes in it.
+        const list = findChild(o.page, "trackList");
+        list.positionViewAtIndex(o.page.controller.tracks.indexOf(b04), ListView.Beginning);
+        verify(waitForPolish(o.page.Window.window));
+        tryVerify(() => [rekordbox, engine].every((lane) => {
+            const top = lane.mapToItem(list, 0, 0).y;
+            return top >= 0 && top + lane.height <= list.height;
+        }), 5000, "both lanes are in view");
         compare(rekordbox.pointerShape, Qt.PointingHandCursor);
         compare(engine.pointerShape, Qt.PointingHandCursor);
         const popup = findChild(o.page, "waveformZoomPopup");
