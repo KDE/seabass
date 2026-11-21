@@ -55,6 +55,10 @@
 //           Me" under the id export 128 gives "T73 Renamed", as rekordbox
 //           reused an id in the round: delete and create, saved whole and
 //           with the old playlist left on Engine (testReusedId).
+// reusedrenamed  Not a hardware step (#99): the old playlist of a reused
+//           id in a folder rekordbox renamed in the same export; its delete
+//           is staged before the create and the rename, under the path
+//           Engine has then (testReusedInRenamedFolder).
 //
 // argv[1]: tests/fixtures/testshark_t73, argv[2]: the case.
 
@@ -2926,13 +2930,113 @@ void testReusedId()
     }
 }
 
+// #99, the staging order on the hardware round's bytes: the old playlist
+// of a reused id sits in a folder rekordbox renamed in the same export.
+// The stick as the players left it (export 128, the record at 128), then:
+// rekordbox renames "T73 Folder" to "T73 Folder 2" and makes "T73 Fresh"
+// holding B07; the record and Engine hold "T73 Folder/T73 Old" with B01
+// under the id rekordbox gave "T73 Fresh". The page stages the old
+// playlist's delete directly before "T73 Fresh"'s create, so before the
+// folder's rename: it names the playlist where Engine has it then, "T73
+// Folder/T73 Old". The save lands whole, and nothing is left to offer.
+void testReusedInRenamedFolder()
+{
+    const auto stick = makeStick("t73_reused_renamed", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    std::string error;
+    auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    const d::BaselineTrack *b01 = nullptr;
+    const d::BaselineTrack *b07 = nullptr;
+    for (const auto &track : record->tracks) {
+        if (track.pathKey.find("t73-b01") != std::string::npos) {
+            b01 = &track;
+        } else if (track.pathKey.find("t73-b07") != std::string::npos) {
+            b07 = &track;
+        }
+    }
+    assert(b01 && b07 && b01->pdbId && b07->pdbId);
+    std::uint32_t folderId = 0;
+    std::uint32_t freshId = 0;
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        for (const auto &node : pdb.playlistTree()) {
+            if (node.name == "T73 Folder" && node.isFolder) {
+                folderId = node.id;
+            }
+        }
+        assert(folderId != 0);
+        assert(pdb.renamePlaylist(folderId, "T73 Folder 2"));
+        freshId = pdb.createPlaylist(0, "T73 Fresh", false);
+        assert(pdb.appendPlaylistEntries(freshId, {b07->pdbId}) == 1);
+        assert(pdb.commit());
+    }
+    assert(!record->findPlaylist(freshId));
+    record->playlists.push_back(d::BaselinePlaylist{freshId, folderId, false, "T73 Folder/T73 Old", {b01->pathKey}});
+    assert(seabass::infrastructure::local::writeRekordboxBaseline(stick.root, *record, [](const std::string &) {},
+                                                                    &error));
+    const std::string enginePath = pathToUtf8(stick.engine);
+    assert(seabass::infrastructure::engine::createEnginePlaylist(enginePath, "T73 Folder/T73 Old") > 0);
+    assert(seabass::infrastructure::engine::addToEnginePlaylist(enginePath, "T73 Folder/T73 Old",
+                                                                trackIdOf(stick, "B01")));
+
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    const std::string reusedKey = "reused:" + std::to_string(freshId) + ":T73 Folder/T73 Old";
+    const auto got = listed(controller);
+    for (const auto &row : got) {
+        std::cout << "  lists: " << row << "\n";
+    }
+    const std::multiset<std::string> want{
+        "[x] rename T73 Folder to T73 Folder 2",
+        "[x] delete playlist T73 Folder 2/T73 Old (1)",
+        "[x] create playlist T73 Fresh",
+        "[x] put into T73 Fresh: " + b07->pathKey + " after (first)",
+    };
+    assert(sameList(want, got));
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    LibraryEditSession *session = sessionOf(stick);
+    int deleteAt = -1;
+    int createAt = -1;
+    int renameAt = -1;
+    const auto &pending = session->pendingChanges();
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const QStringList keys = pending[i]->unitKeys();
+        std::cout << "    staged " << i << ": " << pending[i]->description().toStdString() << "\n";
+        if (keys.contains(QString::fromStdString(reusedKey))) {
+            deleteAt = static_cast<int>(i);
+        } else if (keys.contains(QStringLiteral("playlist:%1").arg(freshId)) && createAt < 0) {
+            createAt = static_cast<int>(i);
+        } else if (keys.contains(QStringLiteral("playlist:%1").arg(folderId)) && renameAt < 0) {
+            renameAt = static_cast<int>(i);
+        }
+    }
+    assert(deleteAt >= 0 && createAt == deleteAt + 1 && "the old playlist's delete directly before the create");
+    assert(renameAt > createAt && "both before the folder's rename");
+    waitForSave(session, controller, false);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Old';") == 0);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Folder 2';") == 1);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM PlaylistEntity e JOIN Playlist p ON p.id = e.listId "
+                                        "WHERE p.title = 'T73 Fresh';")
+           == 1);
+    const auto after = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(after && error.empty());
+    assert(after->findPlaylist(freshId) && after->findPlaylist(freshId)->path == "T73 Fresh");
+    assert(!after->findPlaylistByPath("T73 Folder/T73 Old") && !after->findPlaylistByPath("T73 Folder 2/T73 Old"));
+    for (const Row &row : controller.rows()->rows()) {
+        std::cerr << "  then lists: " << describe(row) << "\n";
+    }
+    assert(controller.rows()->rowCount() == 0 && "nothing left after the save");
+    std::cout << "reusedrenamed: the old playlist deleted before its folder's rename, the save whole OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -2967,6 +3071,8 @@ int main(int argc, char **argv)
         testFolderRenameWithEmptyPlaylist();
     } else if (which == "reused") {
         testReusedId();
+    } else if (which == "reusedrenamed") {
+        testReusedInRenamedFolder();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;

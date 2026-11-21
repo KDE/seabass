@@ -399,32 +399,41 @@ What it reuses, and what it must not:
 
   The record is built with `previous` read without the old playlist
   (`keepPreviousItems` takes the reused key for that, at stage time and
-  again after the commit). After the commit:
-  - a save that stopped before the create landed records no playlist
-    under the id rather than the old one;
-  - one that stopped before either half landed (the delete ticked)
-    records the old playlist whole with exactly its own declines under
-    the id, so the next analysis offers both again. The DJ's unticks
-    about the new playlist in that save (a member left out, the create
-    left out) cannot be recorded under the id while it holds the old
-    playlist, and a plan-only key has no place on disk: they are
-    forgotten and asked again;
-  - one that landed the create and not the delete records the new
-    playlist, so no later analysis plans the delete. The save's warning
-    says the old playlist was not deleted and its delete is still staged.
-    The page remembers that delete (`RekordboxExportSyncController`'s
-    leftover deletes) and lists it on every later analysis of the stick,
-    ticked, in place of the Engine-only playlist it deletes: a new stage
-    (another row ticked) stages it again with the rest, Save lands it,
-    and after Discard it is still listed. Unticked in a stage, it is
-    forgotten and the playlist is Engine's own, as above. Only a restart
-    of Seabass before the save forgets it too: then the old playlist
-    stays on Engine as an Engine-only playlist.
-  Option considered and refused: recording the old playlist again in
-  that case. With rekordbox's playlist at the new path already on
-  Engine, the planner pairs the id with it by path before the reuse
-  check runs, and the delete is never planned: the old playlist would
-  become Engine's own without a word.
+  again after the commit).
+
+  The order, delete first: when both are ticked, the page stages the old
+  playlist's delete directly before the new one's create (the plan's
+  usual order puts every create before every delete). The record can
+  hold only one item under the id, so a save that stopped with the new
+  playlist made and the old one still on Engine would leave a state no
+  record describes; delete first, that state cannot arise. Nothing else
+  needs the usual order for this pair: the reuse rule makes sure the
+  paths differ, rekordbox has nothing at the old path, Engine has
+  exactly one item there (and, for a folder, nothing inside it), and the
+  new playlist's parent exists. Staged before this save's renames, the
+  delete names the old playlist where Engine has it then, the path the
+  reused key records. A save the DJ cancels leaves one of three states,
+  each one the record says (a save that fails goes back whole):
+  - neither half landed: the record keeps the old playlist whole, with
+    exactly its own declines under the id, and the next analysis offers
+    both again. The DJ's unticks about the new playlist in that save (a
+    member left out, the create left out) cannot be recorded under the
+    id while it holds the old playlist: they are forgotten and asked
+    again;
+  - the delete landed, the create did not: the record holds nothing
+    under the id, and the next analysis offers the create like that of
+    any new rekordbox playlist, its tracks' adds ticked, nothing in
+    conflict. A member the DJ unticked stays declined: the decline was
+    made about this same new playlist, the only item left under the id;
+  - both landed: as for a save that finished.
+  Left unticked, the delete is the DJ's choice: the create may land
+  alone, and the old playlist is Engine's own from then on, as above.
+
+  A crash after Engine's commit and before the record is written leaves
+  the record holding the old playlist under the id; the save's note of
+  being in progress is still on the stick, so the next session offers
+  Undo Last Save, which puts back m.db and the record together.
+
   Without a baseline a rename is guessed only when parent and members
   agree closely, and the guess is a conflict. An Engine path
   that resolves to more than one playlist
