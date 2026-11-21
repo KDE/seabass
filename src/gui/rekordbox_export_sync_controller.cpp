@@ -977,8 +977,8 @@ void RekordboxExportSyncController::stageSelected()
         const auto e = std::get<PlaylistCreate>(*rows[i].edit);
         if (const auto d = reusedDeleteOf.find(e.pdbId); d != reusedDeleteOf.end()) {
             const std::string oldPath = domain::parseReusedPlaylistItemKey(rows[d->second].header.key)->recordedPath;
-            planned.push_back({{d->second}, true, [enginePath, oldPath](int) -> std::unique_ptr<PendingChange> {
-                                   return deleteEnginePlaylistChange(enginePath, oldPath);
+            planned.push_back({{d->second}, true, [enginePath, oldPath](int hint) -> std::unique_ptr<PendingChange> {
+                                   return deleteEnginePlaylistChange(enginePath, oldPath, hint);
                                }});
             deletedEarly.insert(d->second);
         }
@@ -1125,8 +1125,8 @@ void RekordboxExportSyncController::stageSelected()
             continue;
         }
         const auto e = std::get<PlaylistDelete>(*rows[i].edit);
-        planned.push_back({{i}, true, [enginePath, e](int) -> std::unique_ptr<PendingChange> {
-                               return deleteEnginePlaylistChange(enginePath, e.path);
+        planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
+                               return deleteEnginePlaylistChange(enginePath, e.path, hint);
                            }});
     }
     for (std::size_t i : removals) {

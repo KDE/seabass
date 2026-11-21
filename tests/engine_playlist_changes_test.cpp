@@ -122,7 +122,7 @@ int main(int argc, char **argv)
     auto createThere = std::make_shared<CreateEnginePlaylistChange>(stick.enginePath(), "Playlist 003", 5);
     auto move = std::make_shared<RenameEnginePlaylistChange>(stick.enginePath(), "Playlist 005", "Sync Folder/Moved", 5);
     auto rename = std::make_shared<RenameEnginePlaylistChange>(stick.enginePath(), "Playlist 006", "Playlist 006 renamed", 5);
-    std::shared_ptr<PendingChange> remove(deleteEnginePlaylistChange(stick.enginePath(), "Playlist 007"));
+    std::shared_ptr<PendingChange> remove(deleteEnginePlaylistChange(stick.enginePath(), "Playlist 007", 1));
     assert(createList->id() == QStringLiteral("rekordbox-export-sync:engine-playlist-create:Sync Folder/New List"));
     assert(move->id() == QStringLiteral("rekordbox-export-sync:engine-playlist-rename:Playlist 005"));
     assert(remove->id() == QStringLiteral("rekordbox-export-sync:addcue:delete-playlist:Playlist 007"));
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
                     QStringLiteral("Engine has 2 playlists named \"Twice/Child\""));
         refusedWith(std::make_shared<RenameEnginePlaylistChange>(stick.enginePath(), "Twice/Child", "Once", 1),
                     QStringLiteral("Twice/Child"));
-        refusedWith(std::shared_ptr<PendingChange>(deleteEnginePlaylistChange(stick.enginePath(), "Twice/Child")),
+        refusedWith(std::shared_ptr<PendingChange>(deleteEnginePlaylistChange(stick.enginePath(), "Twice/Child", 1)),
                     QStringLiteral("Engine has 2 playlists named \"Twice/Child\""));
         std::cout << "case 4 (a path two playlists spell: create, rename and delete refuse it) OK\n";
     }

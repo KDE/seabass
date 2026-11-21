@@ -432,7 +432,13 @@ What it reuses, and what it must not:
   A crash after Engine's commit and before the record is written leaves
   the record holding the old playlist under the id; the save's note of
   being in progress is still on the stick, so the next session offers
-  Undo Last Save, which puts back m.db and the record together.
+  Undo Last Save, which puts back m.db and the record together. Without
+  the Undo: if both halves had landed, the next analysis proposes nothing
+  for the pair but the member adds the DJ had unticked, offered again;
+  if only the delete had landed, it raises the general conflict
+  "rekordbox renamed this playlist to ... and Engine no longer has ...",
+  and choosing the create there can bring "Engine took this track out"
+  rows at the sync after it.
 
   Without a baseline a rename is guessed only when parent and members
   agree closely, and the guess is a conflict. An Engine path
