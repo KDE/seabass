@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import SeabassGui
+import "PixelScale.js" as PixelScale
 
 // Sync's Beat Grids & Waveforms page with the real controller, on scratch
 // copies of two fixtures:
@@ -1147,6 +1148,75 @@ TestCase {
         const seen = watcher.recorders[at].seen;
         verify(!seen.some(value => value > 0 && value < 1),
                "shown at once, not blended in: " + JSON.stringify(seen));
+    }
+
+    // The popup opened from a row, with the real player loading the track
+    // as it opens (its length and detail arriving after): every tile in
+    // view has its ruler lane on screen, opened and at every zoom
+    // (Sebastian's screenshot 2026-11-21, a tile without its lane).
+    function verifyPopupLanes(popup, why) {
+        const a = findChild(popup.contentItem, "zoomArea");
+        const s = findChild(popup.contentItem, "waveformStrip");
+        const image = grabImage(testCase);
+        const lane = popup.laneHeight;
+        verify(lane >= 12, why + ": a lane, " + lane);
+        const level = (x, y) => {
+            const p = a.mapToItem(null, x, y);
+            const q = testCase.mapFromItem(null, p.x, p.y);
+            const c = PixelScale.pixel(image, testCase, q.x, q.y);
+            return c.r + c.g + c.b;
+        };
+        const median = (values) => values.sort((x, y) => x - y)[Math.floor(values.length / 2)];
+        let checked = 0;
+        for (let i = 0; i < s.children.length; ++i) {
+            const tile = s.children[i];
+            if (tile.objectName !== "zoomTile") {
+                continue;
+            }
+            // Only the track's own stretch has a lane: not before 0:00.
+            const from = Math.max(0, Math.ceil(popup.stripX + tile.x), Math.ceil(popup.stripX));
+            const to = Math.min(a.width, Math.floor(popup.stripX + tile.x + tile.width),
+                                Math.floor(popup.stripX + popup.durationMs * popup.pxPerMs));
+            if (to - from < 64) {
+                continue;
+            }
+            const laneRow = [];
+            const bandRow = [];
+            for (let x = from + 1; x < to - 1; ++x) {
+                laneRow.push(level(x, Math.round(lane / 2)));
+                bandRow.push(level(x, lane + 2));
+            }
+            // The ground is the text colour faintly over the background:
+            // lighter on a dark theme, darker on a light one.
+            const ground = Math.abs(median(laneRow) - median(bandRow));
+            verify(ground > 0.06, why + ": tile " + tile.tile + " (x " + from + " to " + to
+                   + ") has its lane's ground, " + ground.toFixed(3));
+            ++checked;
+        }
+        verify(checked > 0, why + ": tiles in view");
+    }
+    function o_window() { return testCase.Window.window; }
+    function test_thePopupFromARowHasEveryLane() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const view = rowWaveformOf(delegateInView(o.page, b04));
+        tryVerify(() => view.opensZoom, 30000);
+        const popup = findChild(o.page, "waveformZoomPopup");
+        clickOn(view);
+        tryCompare(popup, "opened", true, 10000);
+        tryVerify(() => popup.durationMs > 0, 10000);
+        wait(800);
+        verifyPopupLanes(popup, "opened");
+        for (const level of [0.1, 0.3, 0.5, 0.7, 0.9, 0.6, 0.2]) {
+            popup.zoomToLevel(level);
+            waitForPolish(o_window());
+            wait(400);
+            verifyPopupLanes(popup, "level " + level);
+        }
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
     }
 
     // A row's read is the track's it was asked for and lands on that row

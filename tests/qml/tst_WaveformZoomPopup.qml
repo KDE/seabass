@@ -932,8 +932,6 @@ TestCase {
         }
     }
 
-    // Ctrl and the wheel while following: zoomed around the line, the
-    // playhead stays under it, and it still follows.
     // Shift and the wheel zoom too, as ctrl does, however the system
     // sends a shifted wheel: up as it was turned, or turned sideways. The
     // slider's tooltip says so.
@@ -957,6 +955,8 @@ TestCase {
         verify(slider.ToolTip.text.indexOf("Shift+scroll") >= 0, "the tooltip says so: " + slider.ToolTip.text);
     }
 
+    // Ctrl and the wheel while following: zoomed around the line, the
+    // playhead stays under it, and it still follows.
     function test_ctrlWheelWhileFollowingZoomsAroundTheLine() {
         const popup = openLoaded(makeFakePlayer({position: 60000}));
         const a = area(popup);
