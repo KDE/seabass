@@ -473,6 +473,95 @@ void testKeepOrder()
     std::cout << "keepPreviousItems (a playlist's order, its members left alone) OK\n";
 }
 
+// #99: rekordbox gave "Warmup"'s id 12 to a new playlist, "Fresh",
+// holding Three. The planner's key for the old playlist is its own,
+// outside the file's grammar; among kept keys it makes the record read
+// the previous one without "Warmup", so a create left out records no
+// playlist 12 at all rather than "Warmup" again. A record that already
+// holds "Fresh" under 12 (a save retried) is read as it is.
+void testReusedPlaylistKey()
+{
+    using seabass::domain::keepPreviousItems;
+    using seabass::domain::parseReusedPlaylistItemKey;
+    using seabass::domain::reusedPlaylistItemKey;
+    const std::string reused = reusedPlaylistItemKey(12, "Warmup");
+    assert(reused == "reused:12:Warmup");
+    assert(!parseItemKey(reused) && "outside the file's grammar");
+    const auto parsed = parseReusedPlaylistItemKey(reused);
+    assert(parsed && parsed->id == 12 && parsed->recordedPath == "Warmup");
+    const auto colon = parseReusedPlaylistItemKey(reusedPlaylistItemKey(7, "Sets: 2026/Peak"));
+    assert(colon && colon->id == 7 && colon->recordedPath == "Sets: 2026/Peak");
+    for (const std::string bad : {"", "reused", "reused:", "reused:12", "reused:12:", "reused:x:Warmup",
+                                  "reused:-1:Warmup", "playlist:12", "member:12:Warmup"}) {
+        assert(!parseReusedPlaylistItemKey(bad));
+    }
+
+    const NextInput in = nextInput();
+    Track threeNow = rekordboxTrack("3", "Contents/C/Three.mp3", {{"Fresh", 0}});
+    const std::vector<Track> now = {in.now[0], in.now[1], threeNow};
+    const std::vector<PlaylistInfo> playlists = {{"Peak Time", false, 11}, {"Fresh", false, 12}};
+    const auto fresh = [&] { return baselineFrom(now, playlists, 200, stickRelative, lowerKey); };
+    assert(fresh().findPlaylist(12)->path == "Fresh");
+
+    // The create of "Fresh" and its member left out. Without the key the
+    // old playlist comes back under the id; with it, nothing does.
+    {
+        RekordboxBaseline next = fresh();
+        keepPreviousItems(next, &in.previous, {"playlist:12", "member:12:" + Three});
+        assert(next.findPlaylist(12) && next.findPlaylist(12)->path == "Warmup");
+    }
+    {
+        RekordboxBaseline next = fresh();
+        keepPreviousItems(next, &in.previous, {"playlist:12", "member:12:" + Three, "order:12", reused});
+        assert(!next.findPlaylist(12) && "neither item of the id");
+        assert(next.findPlaylist(11) && next.tracks.size() == 3 && "nothing else touched");
+    }
+    // Its member left out, the create landed: "Fresh" without Three, and
+    // nothing of "Warmup" (Two) put back under it.
+    {
+        RekordboxBaseline next = fresh();
+        keepPreviousItems(next, &in.previous, {"member:12:" + Three, "member:12:" + Two, reused});
+        assert(next.findPlaylist(12)->path == "Fresh" && next.findPlaylist(12)->members.empty());
+    }
+    // A retry: the record on the stick already holds "Fresh" under 12.
+    {
+        RekordboxBaseline retried = fresh();
+        RekordboxBaseline next = fresh();
+        for (auto &p : next.playlists) {
+            if (p.id == 12) {
+                p.path = "Elsewhere";
+                p.members.clear();
+            }
+        }
+        keepPreviousItems(next, &retried, {"playlist:12", "member:12:" + Three, reused});
+        assert(next.findPlaylist(12)->path == "Fresh" && (next.findPlaylist(12)->members == Members{Three}));
+    }
+
+    // Through nextBaseline: the old playlist's delete declined, the create
+    // declined. No playlist 12, and only the create's decline recorded:
+    // the plan's key never reaches the x lines.
+    const RekordboxBaseline next =
+        nextBaseline(&in.previous, now, playlists, 200, {"playlist:12", "member:12:" + Three, reused}, {},
+                     {{"playlist:12", "h-create"}, {reused, "h-delete"}}, stickRelative, lowerKey);
+    assert(!next.findPlaylist(12));
+    assert(next.declined.count("playlist:12") == 1 && !next.declined.count(reused));
+    for (const auto &[key, state] : next.declined) {
+        assert(parseItemKey(key));
+    }
+    // The delete applied, the create left unanswered: the same.
+    const RekordboxBaseline applied = nextBaseline(&in.previous, now, playlists, 200,
+                                                   {"playlist:12", "member:12:" + Three, reused}, {reused}, {},
+                                                   stickRelative, lowerKey);
+    assert(!applied.findPlaylist(12));
+    // Both applied: rekordbox's "Fresh".
+    const RekordboxBaseline both = nextBaseline(&in.previous, now, playlists, 200,
+                                                {"playlist:12", "member:12:" + Three, reused},
+                                                {"playlist:12", "member:12:" + Three, reused}, {}, stickRelative,
+                                                lowerKey);
+    assert(both.findPlaylist(12)->path == "Fresh" && (both.findPlaylist(12)->members == Members{Three}));
+    std::cout << "a reused id's key: outside the grammar, the old playlist never kept, never declined (#99) OK\n";
+}
+
 void testRecordSeabassWrites()
 {
     const NextInput in = nextInput();
@@ -504,6 +593,7 @@ int main()
     testKeepMemberOrder();
     testKeepOrder();
     testRecordSeabassWrites();
+    testReusedPlaylistKey();
     std::cout << "rekordbox_baseline_test: all passed\n";
     return 0;
 }

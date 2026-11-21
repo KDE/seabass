@@ -80,9 +80,10 @@
 #include "application/use_cases/scan_library.hpp"
 #include "domain/track_matching.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
-#include "nothing_else_running.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
+#include "nothing_else_running.hpp"
 #include "rekordbox_baseline_fixture.hpp"
 #include "scratch_path.hpp"
 
@@ -1200,26 +1201,39 @@ void testDeclinedByDependency(const fs::path &fixture)
 //     deleted playlist's id to a new, unrelated one. The record says id N
 //     was "Reused Old" holding tracks Q, and Engine has "Reused Old"
 //     holding exactly Q; rekordbox's id N is "Playlist 006", which holds
-//     none of Q. The page deletes "Reused Old" (its tracks taken out
-//     first) and creates "Playlist 006" as one item, never renames the one
-//     into the other.
-//     a: saved with the members ticked: "Playlist 006" holds rekordbox's
-//        tracks in rekordbox's order;
-//     b: saved with every membership row unticked: it holds nothing;
-//     both: none of Q under the new name, no "Reused Old" left, and the
-//     record such that the next analysis offers nothing under the id.
-//     c: the pair declined: Engine untouched, the record keeps "Reused
-//        Old" with Q, and the next analysis offers nothing under the id.
-enum class ReusedSave { Members, Bare, Declined };
+//     none of Q. The page deletes "Reused Old" and creates "Playlist 006",
+//     two items (the delete under a key of the plan's own), never renames
+//     the one into the other. Saved:
+//     a: everything ticked: "Playlist 006" holds rekordbox's tracks in
+//        rekordbox's order;
+//     b: the whole Membership section unticked: it holds nothing;
+//     c: the old playlist's delete unticked, the rest ticked: Engine
+//        keeps "Reused Old";
+//     d: the create unticked, the delete ticked: Engine has neither;
+//     e: both unticked: Engine untouched.
+//     Every time: none of Q under the new name, the record holds no
+//     "Reused Old" and nothing but the file's key grammar, the next
+//     analysis offers nothing under the id, and a "Reused Old" left on
+//     Engine is listed as Engine's own playlist. Then (where Engine has
+//     "Playlist 006") rekordbox puts one of Q into it: the page offers
+//     the add, ticked, and nothing says Engine took it out (the defect
+//     the reviews left open: the old playlist's tracks recorded under
+//     the new one).
+enum class ReusedSave { Members, Bare, OldLeft, NewLeft, Declined };
 
 void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
 {
-    const bool withMembers = how == ReusedSave::Members;
-    const char *const names[] = {"export_sync_reused_id", "export_sync_reused_id_bare", "export_sync_reused_id_declined"};
+    const char *const names[] = {"export_sync_reused_id", "export_sync_reused_id_bare", "export_sync_reused_id_old",
+                                 "export_sync_reused_id_new", "export_sync_reused_id_declined"};
+    const char *const letters[] = {"a", "b", "c", "d", "e"};
+    const bool tickDelete = how == ReusedSave::Members || how == ReusedSave::Bare || how == ReusedSave::NewLeft;
+    const bool tickCreate = how == ReusedSave::Members || how == ReusedSave::Bare || how == ReusedSave::OldLeft;
+    const bool tickMembers = how == ReusedSave::Members || how == ReusedSave::OldLeft;
     namespace d = seabass::domain;
     namespace engine = seabass::infrastructure::engine;
     const auto stick =
         testing::makeEngineChangeStick(fixture, names[static_cast<int>(how)]);
+    const std::string letter = letters[static_cast<int>(how)];
     const std::string newName = "Playlist 006";
     const std::string oldName = "Reused Old";
     const std::string enginePath = pathToUtf8(stick.engine);
@@ -1310,6 +1324,7 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
     assert(controller.errorMessage().isEmpty());
     int create = -1;
     int del = -1;
+    std::string oldKey;
     {
         bool renamed = false;
         const auto &rows = rowsOf(controller);
@@ -1327,83 +1342,152 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
             if (const auto *e = std::get_if<d::PlaylistDelete>(&*rows[i].edit); e && e->path == oldName) {
                 del = static_cast<int>(i);
             }
+            if (const auto *m = std::get_if<d::MembershipEdit>(&*rows[i].edit)) {
+                assert(m->playlistPath != oldName && "no row of its own for the old playlist's tracks");
+            }
         }
         assert(!renamed && "no rename of the old playlist into the new one");
         assert(create >= 0 && del >= 0 && "the old playlist deleted, the new one created");
         assert(rows[static_cast<std::size_t>(create)].header.key == key);
-        assert(rows[static_cast<std::size_t>(del)].header.key == key);
+        oldKey = rows[static_cast<std::size_t>(del)].header.key;
+        assert(oldKey == "reused:" + std::to_string(id) + ":" + oldName && "two items: the delete keyed by the plan");
+        assert(!d::parseItemKey(oldKey));
     }
 
     for (const char *section : sections) {
         controller.setSectionIncluded(QString::fromLatin1(section), false);
     }
+    assert(!included(controller, create) && !included(controller, del));
+    if (tickCreate) {
+        controller.setIncluded(create, true);
+        assert(!included(controller, del) && "the delete is an item of its own");
+    }
+    if (tickDelete) {
+        controller.setIncluded(del, true);
+        assert(included(controller, create) == tickCreate && "the create is an item of its own");
+    }
+    if (tickMembers) {
+        for (int m : rowsDependingOn(controller, key)) {
+            controller.setIncluded(m, true);
+        }
+    }
     // What the next analysis may list under the id: nothing.
     const auto underTheId = [&]() {
         int count = 0;
         for (const auto &row : rowsOf(controller)) {
-            if (row.header.key == key || row.header.key.rfind("member:" + std::to_string(id) + ":", 0) == 0) {
+            if (row.header.key == key || row.header.key == oldKey
+                || row.header.key.rfind("member:" + std::to_string(id) + ":", 0) == 0) {
                 std::cerr << "  listed again: " << row.kind.toStdString() << " " << row.header.key << "\n";
                 ++count;
             }
         }
         return count;
     };
-    if (how == ReusedSave::Declined) {
-        controller.stageSelected();
-        assert(controller.errorMessage().isEmpty());
-        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
-        const auto record = testing::readBaseline(stick);
-        assert(record);
-        const auto *kept = record->findPlaylist(id);
-        assert(kept && kept->path == oldName && !kept->folder);
-        if (kept->members != q) {
-            std::cerr << "FAIL: the declined pair records \"" << oldName << "\" with " << kept->members.size()
-                      << " track(s), not its own " << q.size() << "\n";
-        }
-        assert(kept->members == q && "the record keeps the old playlist with its own tracks");
-        assert(testing::rootPlaylistTracks(stick.db, oldName).size() == q.size() && "Engine untouched");
-        assert(underTheId() == 0 && "declined, the pair stays out");
-        std::cout << "case 12c (#99: a declined pair keeps the old playlist and its tracks in the record) OK\n";
-        return;
-    }
-    controller.setIncluded(create, true);
-    assert(included(controller, del) && "one item: the delete goes with the create");
-    if (withMembers) {
-        for (int m : rowsDependingOn(controller, key)) {
-            controller.setIncluded(m, true);
-        }
-    }
     controller.stageSelected();
     assert(controller.errorMessage().isEmpty());
     const QVariantMap summary =
         saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
     assert(summary.value("error").toString().isEmpty());
 
-    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + oldName + "';") == 0);
-    const auto holds = testing::rootPlaylistTracks(stick.db, newName);
-    for (const auto &member : q) {
-        assert(std::find(holds.begin(), holds.end(), engineIdByKey.at(member)) == holds.end()
-               && "none of the old playlist's tracks under the new name");
+    const auto oldLeft = testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + oldName + "';");
+    const auto newMade = testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + newName + "';");
+    assert(oldLeft == (tickDelete ? 0 : 1));
+    assert(newMade == (tickCreate ? 1 : 0));
+    if (!tickDelete) {
+        assert(testing::rootPlaylistTracks(stick.db, oldName).size() == q.size() && "Engine's old playlist untouched");
     }
-    if (withMembers) {
-        // Every track of rekordbox's list, in its order.
-        std::vector<std::string> files;
-        for (const std::int64_t track : holds) {
-            const auto path = testing::sqlRows(stick.db, "SELECT path FROM Track WHERE id = " + std::to_string(track) + ";");
-            assert(path.size() == 1);
-            files.push_back(pathToUtf8(pathFromUtf8(path[0][0]).filename()));
+    if (tickCreate) {
+        const auto holds = testing::rootPlaylistTracks(stick.db, newName);
+        for (const auto &member : q) {
+            assert(std::find(holds.begin(), holds.end(), engineIdByKey.at(member)) == holds.end()
+                   && "none of the old playlist's tracks under the new name");
         }
-        std::cout << "  \"" << newName << "\" holds " << files.size() << " of rekordbox's " << rekordboxFiles.size()
-                  << " tracks\n";
-        assert(files == rekordboxFiles);
-    } else {
-        assert(holds.empty());
+        if (tickMembers) {
+            // Every track of rekordbox's list, in its order.
+            std::vector<std::string> files;
+            for (const std::int64_t track : holds) {
+                const auto path =
+                    testing::sqlRows(stick.db, "SELECT path FROM Track WHERE id = " + std::to_string(track) + ";");
+                assert(path.size() == 1);
+                files.push_back(pathToUtf8(pathFromUtf8(path[0][0]).filename()));
+            }
+            std::cout << "  \"" << newName << "\" holds " << files.size() << " of rekordbox's " << rekordboxFiles.size()
+                      << " tracks\n";
+            assert(files == rekordboxFiles);
+        } else {
+            assert(holds.empty());
+        }
     }
+
+    // The record: rekordbox's playlist under the id or nothing, never the
+    // old one or its tracks, and only keys of the file's grammar.
+    {
+        const auto record = testing::readBaseline(stick);
+        assert(record);
+        const auto *under = record->findPlaylist(id);
+        assert(!under == !tickCreate);
+        if (under) {
+            assert(under->path == newName);
+            for (const auto &member : q) {
+                if (std::find(under->members.begin(), under->members.end(), member) != under->members.end()) {
+                    std::cerr << "FAIL: the record holds " << member << " under \"" << newName << "\"\n";
+                    assert(false);
+                }
+            }
+        }
+        assert(!record->findPlaylistByPath(oldName));
+        for (const auto &[declinedKey, state] : record->declined) {
+            if (!d::parseItemKey(declinedKey)) {
+                std::cerr << "FAIL: the record holds the key \"" << declinedKey << "\"\n";
+                assert(false);
+            }
+        }
+    }
+
     // The page analysed the stick again after the save.
     assert(underTheId() == 0 && "the record is right: nothing under the id again");
-    std::cout << "case 12" << (withMembers ? "a" : "b") << " (#99: a reused rekordbox playlist id deletes the old "
-              << "playlist and creates the new one" << (withMembers ? ", rekordbox's tracks in its order" : ", empty")
-              << ") OK\n";
+    {
+        bool listedAsEngines = false;
+        for (const auto &row : rowsOf(controller)) {
+            assert(row.section != Section::Conflicts || row.title.toStdString().find(oldName) == std::string::npos);
+            if (row.section == Section::EngineOnlyPlaylists && row.title.toStdString() == oldName) {
+                listedAsEngines = true;
+            }
+        }
+        assert(listedAsEngines == !tickDelete && "left on Engine, the old playlist is Engine's own");
+    }
+
+    if (tickCreate) {
+        // rekordbox puts the first of Q into "Playlist 006".
+        const auto *q0 = baseline->findTrack(q[0]);
+        assert(q0 && q0->pdbId != 0);
+        {
+            seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+            assert(pdb.appendPlaylistEntries(id, {q0->pdbId}) == 1);
+            assert(pdb.commit());
+        }
+        analyze(controller, stick);
+        assert(controller.errorMessage().isEmpty());
+        int add = -1;
+        const auto &rows = rowsOf(controller);
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const Row &row = rows[i];
+            if (row.header.key != "member:" + std::to_string(id) + ":" + q[0]) {
+                continue;
+            }
+            std::cout << "  after rekordbox's add: " << row.kind.toStdString() << ": " << row.header.reasonText << "\n";
+            assert(row.header.reasonText.find("took this track out") == std::string::npos
+                   && "nothing says Engine took it out");
+            const auto *m = row.edit ? std::get_if<d::MembershipEdit>(&*row.edit) : nullptr;
+            if (m && m->kind == d::MembershipEdit::Kind::Add && m->playlistPath == newName) {
+                add = static_cast<int>(i);
+            }
+        }
+        assert(add >= 0 && included(controller, add) && "the add is offered, ticked");
+    }
+    std::cout << "case 12" << letter << " (#99: a reused rekordbox playlist id, delete " << (tickDelete ? "ticked" : "unticked")
+              << ", create " << (tickCreate ? "ticked" : "unticked") << ", members "
+              << (tickMembers ? "ticked" : "unticked") << ") OK\n";
 }
 
 // A staged change that cancels the save once it has landed, the way the
@@ -1787,6 +1871,8 @@ int main(int argc, char **argv)
     testEmptyAnswerWithARecord(fixture);
     testReusedPlaylistId(fixture, ReusedSave::Members);
     testReusedPlaylistId(fixture, ReusedSave::Bare);
+    testReusedPlaylistId(fixture, ReusedSave::OldLeft);
+    testReusedPlaylistId(fixture, ReusedSave::NewLeft);
     testReusedPlaylistId(fixture, ReusedSave::Declined);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;

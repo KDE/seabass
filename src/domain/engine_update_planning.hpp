@@ -53,7 +53,10 @@ namespace seabass::domain
 // record falls back to what SyncPlanner::plan decides (Sync Cue Points).
 // A track's cue changes are one CueEdit per direction.
 //
-// Playlists are items by export.pdb id. rekordbox can hold two playlists
+// Playlists are items by export.pdb id, but for a recorded playlist whose
+// id rekordbox certainly gave to another item: its delete is an item of
+// the plan's own (reusedPlaylistItemKey, rekordbox_baseline.hpp), beside
+// the new item's create under the id. rekordbox can hold two playlists
 // with one name at one level; Engine cannot (UNIQUE(title, parentListId)
 // in m.db). rekordbox playlists that share one path form a group. With a
 // baseline, the lowest id of the group the baseline knew at that path is

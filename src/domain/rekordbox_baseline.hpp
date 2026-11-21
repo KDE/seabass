@@ -268,6 +268,29 @@ std::string commentItemKey(const std::string &pathKey);
 // Hot cue by pad, memory cue or loop by rounded position.
 std::string cueItemKey(const std::string &pathKey, const CuePoint &cue);
 
+// A recorded playlist or folder whose rekordbox id rekordbox has since
+// given to another item (#99, the planner's reusedForAnother) is an item
+// of the plan of its own, deleted, beside the create of the new item
+// under playlist:<id>. Its key is the plan's alone:
+//
+//   reused:<id>:<recorded path>
+//
+// It is outside the grammar above (parseItemKey gives nullopt) and never
+// written to a record: rekordbox no longer has the old item, so the next
+// record holds no entry for it, whatever the save did with it. Left
+// unticked, Engine's copy stays as a playlist rekordbox does not know,
+// like any Engine-only playlist. Among the keys of keepPreviousItems and
+// the `offered` of nextBaseline it says that `previous`'s playlist <id>,
+// while still at <recorded path>, is not the item rekordbox now has
+// under <id>.
+struct ReusedPlaylistKey
+{
+    std::uint32_t id = 0;
+    std::string recordedPath;
+};
+std::string reusedPlaylistItemKey(std::uint32_t id, const std::string &recordedPath);
+std::optional<ReusedPlaylistKey> parseReusedPlaylistItemKey(const std::string &text);
+
 // One write Seabass made onto the rekordbox side of a stick (a sync
 // from Engine, a restore, the cue editor), keyed for the baseline.
 struct SeabassWrite
@@ -314,6 +337,11 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 //
 // Tracks and playlists are settled before members, members before
 // orders, and orders before values, whatever the order of `keys`.
+//
+// A reused-id key (reusedPlaylistItemKey) among `keys` puts nothing
+// back: it makes the playlist, member and order keys of its id read
+// `previous` as lacking that playlist while previous still has it at the
+// recorded path, since previous's playlist there is another item.
 void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys);
 
 // The baseline a save of Sync after Rekordbox Export records (plan, "When
@@ -332,6 +360,11 @@ void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previou
 // value `previous` had keeps `previous`'s origin: the value did not
 // change, so neither did who put it there. engineUuid is `previous`'s;
 // recordedAtUnix and writer are left for the writer to fill.
+//
+// A reused-id key in `offered` (reusedPlaylistItemKey) is not an item of
+// the record: whether applied, declined or left, it only makes the
+// items kept from `previous` read previous without the old playlist
+// (keepPreviousItems), and it is never recorded as declined.
 //
 // Seabass's own writes of the same save (restores onto rekordbox) are not
 // known here; the save merges them afterwards (recordSeabassWrites).

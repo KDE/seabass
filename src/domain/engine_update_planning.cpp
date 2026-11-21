@@ -349,7 +349,7 @@ private:
     std::set<std::string> claimedEnginePaths;
     // rekordbox playlist ids the record knows as another item that this
     // one certainly is not (reusedForAnother): the record's item of the
-    // id is planned as deleted, rekordbox's as created.
+    // id is planned as deleted under its own key, rekordbox's as created.
     std::set<std::uint32_t> idsReused;
     // Cue items left out of their rows because the user declined them.
     std::set<std::string> cueSuppressed;
@@ -604,12 +604,16 @@ private:
     // turn into a conflict or a refusal (Engine has exactly one item at
     // the old path, of the same kind, and a playlist there holds exactly
     // the recorded tracks, each one Engine row; a folder holds nothing of
-    // Engine's), and the old tracks can be listed as rows of their own
-    // (removeRowsOfReused), so a record that keeps the pair keeps them.
-    // The create is a plain row at a path whose parent Engine already
-    // has, so it never waits on a rename staged after it, and a new
-    // playlist's every track gets a row of its own, so a record that
-    // keeps the pair takes each one out of the old playlist again.
+    // Engine's). The create is a plain row at a path whose parent Engine
+    // already has, so it never waits on a rename staged after it, and a
+    // new playlist's every track gets a row of its own.
+    //
+    // The two are separate items: the create under playlist:<id>, the
+    // delete under the plan's own key (reusedPlaylistItemKey), which no
+    // record holds. A save records the id as rekordbox's new item (or
+    // nothing, the create left out) and the old playlist not at all, so
+    // nothing of it can land under the new playlist; left on Engine, it
+    // is an Engine-only playlist from then on.
     bool reusedForAnother(const BaselinePlaylist &b, const BaselinePlaylist &r,
                           const std::set<std::string> &rekordboxPaths) const
     {
@@ -669,28 +673,6 @@ private:
             }
         }
         return true;
-    }
-
-    // The recorded tracks of a playlist whose id rekordbox reused, each a
-    // row taking it out of Engine's copy before the delete. The delete
-    // takes them anyway; as rows of their own under the id they are items
-    // the page offers, so a record that keeps the pair (declined, or not
-    // saved) keeps the old playlist with its tracks, not with the new
-    // one's (keepPreviousItems puts back only the items offered).
-    void removeRowsOfReused(const BaselinePlaylist &b, const std::string &enginePath, const std::string &playlistKey)
-    {
-        for (const auto &key : firstOccurrences(b.members)) {
-            MembershipEdit edit;
-            edit.kind = MembershipEdit::Kind::Remove;
-            edit.pdbId = b.id;
-            edit.playlistPath = enginePath;
-            edit.pathKey = key;
-            edit.track = *engineRow(key);
-            edit.header = makeHeader(memberItemKey(b.id, key), true, false, EngineUpdateReason::RekordboxRemoved,
-                                     "rekordbox deleted " + quoted(b.path) + ", which held this track" + since(),
-                                     "member:out", {playlistKey});
-            out.membership.push_back(std::move(edit));
-        }
     }
 
     static std::string playlistState(const BaselinePlaylist *r)
@@ -1135,10 +1117,11 @@ private:
                 return depth(a->path) > depth(b->path);
             });
             for (const BaselinePlaylist *b : gone) {
-                const std::string key = playlistItemKey(b->id);
-                // An id rekordbox reuses is one item with the create of its
-                // new playlist, at rekordbox's state of it.
-                const std::string state = playlistState(idsReused.count(b->id) ? now.findPlaylist(b->id) : nullptr);
+                // An id rekordbox reused: the old item under a key of the
+                // plan's own (reusedForAnother).
+                const std::string key = idsReused.count(b->id) ? reusedPlaylistItemKey(b->id, b->path)
+                                                               : playlistItemKey(b->id);
+                const std::string state = playlistState(nullptr);
                 claimedEnginePaths.insert(b->path);
                 if (countAt(b->path) > 1) {
                     ambiguous(b->id, b->path, state);
@@ -1172,10 +1155,6 @@ private:
                                         std::string("rekordbox deleted this ") + (b->folder ? "folder" : "playlist")
                                             + since(),
                                         state);
-                if (idsReused.count(b->id)) {
-                    // reusedForAnother made sure this is the plain row.
-                    removeRowsOfReused(*b, del.path, key);
-                }
                 out.playlistsToDelete.push_back(std::move(del));
             }
         }

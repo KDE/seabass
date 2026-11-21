@@ -34,8 +34,11 @@ std::runtime_error notRecorded(const std::string &why)
 }  // namespace
 
 RecordRekordboxBaselineChange::RecordRekordboxBaselineChange(std::string stickRoot, domain::RekordboxBaseline next,
-                                                             AppliedBy appliedBy)
-    : m_stickRoot(std::move(stickRoot)), m_next(std::move(next)), m_appliedBy(std::move(appliedBy))
+                                                             AppliedBy appliedBy, std::set<std::string> reusedIds)
+    : m_stickRoot(std::move(stickRoot))
+    , m_next(std::move(next))
+    , m_appliedBy(std::move(appliedBy))
+    , m_reusedIds(std::move(reusedIds))
 {
 }
 
@@ -105,7 +108,10 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                 notLanded.insert(keys.begin(), keys.end());
             }
         }
-        domain::keepPreviousItems(next, previous ? &*previous : nullptr, notLanded);
+        // Put back nothing; they make the rest read the record as the plan did.
+        std::set<std::string> keys = notLanded;
+        keys.insert(m_reusedIds.begin(), m_reusedIds.end());
+        domain::keepPreviousItems(next, previous ? &*previous : nullptr, keys);
         const auto writes = seabassWritesFor(m_stickRoot, after.rekordboxWrites);
         const auto unlisted = domain::recordSeabassWrites(next, writes);
 
