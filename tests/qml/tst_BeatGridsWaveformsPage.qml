@@ -1046,6 +1046,41 @@ TestCase {
         realPlayback.stop();
     }
 
+    Component {
+        id: opacityRecorder
+        Connections {
+            property var seen: []
+            function onOpacityChanged() {
+                seen.push(target.opacity);
+            }
+        }
+    }
+
+    // A row's waveform is blended in when its read comes back, not
+    // switched on: on its way to fully drawn it passes through values in
+    // between. The row's answer is taken away and handed back, which is
+    // what a read coming back does.
+    function test_rowWaveformBlendsIn() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const trackRow = delegateInView(o.page, b01);
+        const view = rowWaveformOf(trackRow);
+        tryVerify(() => view.visible, 30000, "B01's waveform is drawn");
+        tryCompare(view, "opacity", 1, 5000, "and fully");
+
+        trackRow.analysis = ({ready: false});
+        compare(view.visible, false, "no answer, no waveform");
+        tryCompare(view, "opacity", 0, 5000);
+
+        const recorder = createTemporaryObject(opacityRecorder, testCase, {target: view});
+        trackRow.takeAnalysis();
+        compare(view.visible, true, "the answer is back");
+        tryCompare(view, "opacity", 1, 5000, "the waveform ends fully drawn");
+        verify(recorder.seen.some(value => value > 0 && value < 1),
+               "it got there by blending in: " + JSON.stringify(recorder.seen));
+    }
+
     // A row's read is the track's it was asked for and lands on that row
     // only: B01's read, under way when its row is replaced by another
     // playlist's B07 in the same place, is kept for B01 and never drawn on

@@ -725,7 +725,20 @@ Page {
                                 objectName: "rowSourceWaveform"
                                 anchors.fill: parent
                                 readonly property string trackId: trackRow.analysisId
-                                visible: trackRow.analysis.ready === true && rowWaveform.hasWaveform
+                                readonly property bool shown: trackRow.analysis.ready === true && rowWaveform.hasWaveform
+                                visible: rowWaveform.shown
+                                // Blended in when its read comes back, so a
+                                // page of rows filling in does not flicker.
+                                // A row built with its answer already there
+                                // (scrolled back to) shows it at once: a
+                                // Behavior skips the binding's first value.
+                                opacity: rowWaveform.shown ? 1 : 0
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: Theme.arrivalTransitionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
                                 gridStyle: "lines"
                                 columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
                                 trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
