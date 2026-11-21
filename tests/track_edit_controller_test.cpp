@@ -209,5 +209,35 @@ int main(int argc, char **argv)
         std::cout << "case 6 (a library with no catalog path is answered, not read for ever) OK\n";
     }
 
+    // 7. The same, reached while a read of a stick library is still
+    //    running: the read lands for the old paths, is dropped, and the
+    //    pathless answer it settles on reaches the pane (published), not
+    //    the "reading" the switch published.
+    {
+        std::promise<void> entered;
+        std::promise<void> release;
+        std::shared_future<void> released = release.get_future().share();
+        std::atomic<bool> enteredOnce{false};
+        TrackEditController::setIndexBuildGateForTesting([&entered, &enteredOnce, released]() {
+            if (!enteredOnce.exchange(true)) {
+                entered.set_value();
+            }
+            released.wait();
+        });
+        TrackEditController switching;
+        switching.lookUpTrack(pioneer, engine, file);
+        assert(entered.get_future().wait_for(std::chrono::seconds(30)) == std::future_status::ready);
+        switching.lookUpTrack(QString(), QString(), file);
+        assert(switching.commentLimit().value(QStringLiteral("reading")).toBool() && "while the old read runs");
+        TrackEditController::setIndexBuildGateForTesting({});
+        release.set_value();
+        assert(waitFor(&switching, &TrackEditController::commentLimitChanged, [&] {
+            return switching.commentLimit().value(QStringLiteral("failed")).toBool();
+        }) && "the pathless answer is published once the old read lands");
+        assert(!switching.commentLimit().value(QStringLiteral("reading")).toBool());
+        QThreadPool::globalInstance()->waitForDone();
+        std::cout << "case 7 (a switch to no paths mid-read is answered once the read lands) OK\n";
+    }
+
     return 0;
 }

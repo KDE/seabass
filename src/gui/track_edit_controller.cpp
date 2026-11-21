@@ -72,9 +72,12 @@ void TrackEditController::setHoldIndexForTesting(bool hold)
 void TrackEditController::takeRead(IndexRead read)
 {
     if (read.generation != m_generation) {
-        // Read before the stick changed: read it again.
+        // Read before the stick changed: read it again. Published either
+        // way: for a library with no catalog path buildIndex() settles at
+        // once, and the pane must hear it rather than keep "reading".
         m_indexState = IndexState::None;
         buildIndex();
+        publish();
         return;
     }
     if (read.error.empty() && read.index.valid()) {
