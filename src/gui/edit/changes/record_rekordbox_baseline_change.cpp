@@ -8,9 +8,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
-#include "domain/sync_planning.hpp"
 #include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/edit/save_context.hpp"
@@ -115,18 +113,19 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
             }
         }
         std::set<std::string> keys = notLanded;
-        std::vector<std::string> notDeleted;
         for (const auto &reusedKey : m_reusedIds) {
             const auto reused = domain::parseReusedPlaylistItemKey(reusedKey);
             if (!reused) {
                 continue;
             }
             const std::string createKey = domain::playlistItemKey(reused->id);
+            // The page stages the old playlist's delete directly before the
+            // new one's create (stageSelected), so a delete staged and not
+            // landed means the create did not land either.
             const bool deleteStaged = landed.count(reusedKey) || notLanded.count(reusedKey);
             const bool deleteLanded = landed.count(reusedKey) > 0;
-            const bool createLanded = landed.count(createKey) > 0;
             const domain::BaselinePlaylist *old = previous ? previous->findPlaylist(reused->id) : nullptr;
-            if (deleteStaged && !deleteLanded && !createLanded && old && old->path == reused->recordedPath) {
+            if (deleteStaged && !deleteLanded && old && old->path == reused->recordedPath) {
                 // Neither half on the stick: the record keeps the old
                 // playlist whole, as before, so the next analysis finds the
                 // reuse again and offers both halves. With its own declines
@@ -153,17 +152,9 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                 }
                 continue;
             }
-            // Puts back nothing: the rest reads the record as the plan did.
+            // Puts back nothing: the rest reads the record as the plan did
+            // (the old playlist deleted, or left on Engine as the DJ chose).
             keys.insert(reusedKey);
-            if (deleteStaged && !deleteLanded) {
-                // The new playlist landed and the old one's delete did not:
-                // the record can hold only one of them under the id, and
-                // holds the new one, so no later analysis plans the delete.
-                // It stays staged, and the page keeps listing it, ticked
-                // (RekordboxExportSyncController's leftover deletes), until
-                // it is saved or unticked; said here, in the save's warning.
-                notDeleted.push_back(reused->recordedPath);
-            }
         }
         domain::keepPreviousItems(next, previous ? &*previous : nullptr, keys);
         const auto writes = seabassWritesFor(m_stickRoot, after.rekordboxWrites);
@@ -195,18 +186,6 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                          + std::to_string(notLanded.size()) + " item(s) of " + std::to_string(changesNotLanded)
                          + " change(s) that did not land kept as before; " + std::to_string(writes.size() - unlisted.size())
                          + " of Seabass's own write(s) merged");
-        if (!notDeleted.empty()) {
-            // After the record is written: an after-commit hook's exception
-            // is the save's warning (SaveContext::runAfterCommitHooks).
-            const std::string engineName = domain::catalogDisplayName("engine");
-            std::string said;
-            for (const auto &path : notDeleted) {
-                said += std::string(said.empty() ? "" : " ") + "The old playlist \"" + path
-                    + "\" was not deleted from " + engineName + "; its delete is still staged, and saving again "
-                    + "completes it.";
-            }
-            throw std::runtime_error(said);  // logged by runAfterCommitHooks
-        }
     });
 }
 

@@ -618,9 +618,6 @@ void RekordboxExportSyncController::analyze(const QString &stickLabel, const QSt
     if (rekordboxPath + QLatin1Char('\n') + enginePath == analysisKey() && scanServes(analysisKey())) {
         return;  // the analysis this asks for is the one running
     }
-    if (rekordboxPath + QLatin1Char('\n') + enginePath != analysisKey()) {
-        m_leftoverDeletes.clear();  // another stick's
-    }
     m_stickLabel = stickLabel;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
@@ -659,7 +656,6 @@ void RekordboxExportSyncController::onAnalyzeFinished(RekordboxExportSyncAnalysi
         return;
     }
     auto analysis = std::make_shared<RekordboxExportSyncAnalysis>(std::move(result));
-    offerLeftoverDeletes(analysis->proposal);
     m_model.setProposal(analysis->proposal, analysis->stickRoot);
     m_analysis = std::move(analysis);
     // Rows staged before this analysis keep their mark while they are
@@ -671,60 +667,6 @@ void RekordboxExportSyncController::onAnalyzeFinished(RekordboxExportSyncAnalysi
         }
     }
     emit analysisChanged();
-}
-
-// The staged deletes of a reused id's old playlist a save left behind
-// (m_leftoverDeletes), read off the rows before the page is analysed again.
-void RekordboxExportSyncController::rememberLeftoverDeletes()
-{
-    LibraryEditSession *s = session();
-    if (!s) {
-        return;
-    }
-    for (const auto &[planKey, info] : m_stagedByKey) {
-        const int index = indexOfStagedKey(planKey);
-        if (index < 0 || !s->hasChange(info.changeId)) {
-            continue;
-        }
-        const Row &row = m_model.rows()[static_cast<std::size_t>(index)];
-        const auto *del = row.edit ? std::get_if<PlaylistDelete>(&*row.edit) : nullptr;
-        if (del && domain::parseReusedPlaylistItemKey(row.header.key)) {
-            m_leftoverDeletes[row.header.key] = *del;
-        }
-    }
-}
-
-// Each leftover delete whose playlist Engine still has, listed only as an
-// Engine-only playlist, becomes that row's delete again, ticked; one the
-// planner plans itself (the record holds the old playlist again), or whose
-// playlist Engine no longer has, is forgotten.
-void RekordboxExportSyncController::offerLeftoverDeletes(domain::EngineUpdateProposal &proposal)
-{
-    const std::string engineName = domain::catalogDisplayName("engine");
-    for (auto it = m_leftoverDeletes.begin(); it != m_leftoverDeletes.end();) {
-        const std::string &key = it->first;
-        // Only a delete carries a reused id's key.
-        const bool planned = std::any_of(proposal.playlistsToDelete.begin(), proposal.playlistsToDelete.end(),
-                                         [&](const PlaylistDelete &d) { return d.header.key == key; });
-        const auto own = std::find_if(proposal.engineOwnKept.begin(), proposal.engineOwnKept.end(),
-                                      [&](const domain::EngineOwnItem &item) {
-                                          return item.engineOnlyPlaylist && item.playlistPath == it->second.path
-                                              && item.folder == it->second.folder;
-                                      });
-        if (planned || own == proposal.engineOwnKept.end()) {
-            it = m_leftoverDeletes.erase(it);
-            continue;
-        }
-        PlaylistDelete del = it->second;
-        del.engineMembers = own->trackCount;
-        del.header.checkedByDefault = true;
-        del.header.conflict = false;
-        del.header.reasonText = "rekordbox deleted this " + std::string(del.folder ? "folder" : "playlist")
-            + " and gave its id to another; the last save stopped before deleting it from " + engineName;
-        proposal.engineOwnKept.erase(own);
-        proposal.playlistsToDelete.push_back(std::move(del));
-        ++it;
-    }
 }
 
 void RekordboxExportSyncController::reanalyzeAfterUndo()
@@ -788,7 +730,6 @@ void RekordboxExportSyncController::onSessionSaveFinished(const QVariantMap &sum
             : error + (error.endsWith(QLatin1Char('.')) ? QString() : QStringLiteral("."));
         notRemembered.prepend(QStringLiteral("This export was not remembered: "));
     }
-    rememberLeftoverDeletes();
     QStringList still;
     for (const QString &id : std::as_const(m_stagedIds)) {
         if (s && s->hasChange(id)) {
@@ -962,13 +903,6 @@ void RekordboxExportSyncController::stageSelected()
 
     const RekordboxExportSyncAnalysis &analysis = *m_analysis;
     const std::vector<Row> &rows = m_model.rows();
-    // A leftover delete the DJ unticked: left on Engine, as any unticked
-    // delete of a reused id's old playlist.
-    for (const Row &row : rows) {
-        if (!row.included && m_leftoverDeletes.count(row.header.key)) {
-            m_leftoverDeletes.erase(row.header.key);
-        }
-    }
 
     // The ticked rows by what they are, in the model's order.
     std::vector<std::size_t> creates, adds, renames, members, metadataToEngine, cuesToEngine, deletes, removals,
@@ -1020,9 +954,34 @@ void RekordboxExportSyncController::stageSelected()
 
     // The plan's staging order: create playlists, add tracks, renames,
     // memberships, metadata, cues to Engine, playlist deletes, track
-    // removals, restores to rekordbox, record baseline.
+    // removals, restores to rekordbox, record baseline. But for an id
+    // rekordbox reused (#99): the old playlist's delete directly before
+    // the new one's create, when both are ticked. A save that stops
+    // between them then leaves what the record can say: the old playlist
+    // gone and the new one not yet made (nothing under the id), never the
+    // new one made and the old one left (which the record cannot hold
+    // under the id together with the new one). The reuse rule made sure
+    // nothing else needs the old order: the paths differ, rekordbox has
+    // nothing at the old one, Engine has exactly one item there and, for
+    // a folder, nothing inside it. Staged before this save's renames, the
+    // delete names the old playlist where Engine has it now: the path the
+    // reused key records, not the planner's path after the renames.
+    std::map<std::uint32_t, std::size_t> reusedDeleteOf;
+    for (std::size_t i : deletes) {
+        if (const auto reused = domain::parseReusedPlaylistItemKey(rows[i].header.key)) {
+            reusedDeleteOf.emplace(reused->id, i);
+        }
+    }
+    std::set<std::size_t> deletedEarly;
     for (std::size_t i : creates) {
         const auto e = std::get<PlaylistCreate>(*rows[i].edit);
+        if (const auto d = reusedDeleteOf.find(e.pdbId); d != reusedDeleteOf.end()) {
+            const std::string oldPath = domain::parseReusedPlaylistItemKey(rows[d->second].header.key)->recordedPath;
+            planned.push_back({{d->second}, true, [enginePath, oldPath](int) -> std::unique_ptr<PendingChange> {
+                                   return deleteEnginePlaylistChange(enginePath, oldPath);
+                               }});
+            deletedEarly.insert(d->second);
+        }
         planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
                                return std::make_unique<CreateEnginePlaylistChange>(enginePath, e.path, hint);
                            }});
@@ -1162,6 +1121,9 @@ void RekordboxExportSyncController::stageSelected()
         ? tracksForAnalysis(rows, adds, metadataToEngine, cuesToEngine, analysisStaging.stickRoot)
         : std::vector<SyncAnalysisChange::Track>{};
     for (std::size_t i : deletes) {
+        if (deletedEarly.count(i)) {
+            continue;
+        }
         const auto e = std::get<PlaylistDelete>(*rows[i].edit);
         planned.push_back({{i}, true, [enginePath, e](int) -> std::unique_ptr<PendingChange> {
                                return deleteEnginePlaylistChange(enginePath, e.path);
