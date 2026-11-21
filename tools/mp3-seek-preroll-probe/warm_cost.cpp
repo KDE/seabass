@@ -4,22 +4,22 @@
 
 // What a decoder kept warm at every hot cue costs (#92): COUNT extra
 // QMediaPlayers on FILE, each with its own QAudioOutput on the device
-// whose id or description contains DEVICE, each played muted from 200 ms
-// before its cue to the cue and paused there (cues 300 ms apart
-// from 1500 ms on, so eight fit in the probe's four second files). Prints the process's resident memory and thread count
-// before and after, and how long the preparation took. Linux only (reads
-// /proc/self/status). Refuses to start without a matching device:
-// measure-unmute.sh's null sink, or one made by hand. Built by hand, see
-// README.md.
+// whose id is DEVICE, each played muted from 200 ms before its cue to the
+// cue and paused there (cues 300 ms apart from 1500 ms on, so eight fit
+// in the probe's four second files), the cue judged on the player's clock
+// (probe_common.hpp: position() itself steps in 50 ms). Prints the
+// process's resident memory and thread count before and after, and how
+// long the preparation took. Linux only (reads /proc/self/status). Run it
+// with measure-unmute.sh --run, which makes the null sink. Built by hand,
+// see README.md.
 //
 //   warm_cost FILE COUNT DEVICE
 
-#include <QAudioDevice>
+#include "probe_common.hpp"
+
 #include <QAudioOutput>
 #include <QCoreApplication>
 #include <QElapsedTimer>
-#include <QMediaDevices>
-#include <QMediaPlayer>
 #include <QTimer>
 #include <QUrl>
 
@@ -65,15 +65,8 @@ int main(int argc, char **argv)
     }
     const QUrl file = QUrl::fromLocalFile(QString::fromUtf8(argv[1]));
     const int count = std::atoi(argv[2]);
-    QAudioDevice device;
-    for (const QAudioDevice &candidate : QMediaDevices::audioOutputs()) {
-        if (QString::fromUtf8(candidate.id()).contains(QString::fromUtf8(argv[3]))
-            || candidate.description().contains(QString::fromUtf8(argv[3]))) {
-            device = candidate;
-        }
-    }
+    const QAudioDevice device = probe::outputDevice(argv[3]);
     if (device.isNull()) {
-        std::fprintf(stderr, "no output device matches %s\n", argv[3]);
         return 1;
     }
 
@@ -89,6 +82,7 @@ int main(int argc, char **argv)
     {
         std::unique_ptr<QMediaPlayer> player;
         std::unique_ptr<QAudioOutput> output;
+        std::unique_ptr<probe::PlayerClock> clock;
         qint64 cue = 0;
         bool held = false;
     };
@@ -101,7 +95,7 @@ int main(int argc, char **argv)
     QObject::connect(&poll, &QTimer::timeout, &app, [&] {
         for (Warm &w : warm) {
             if (!w.held && w.player->playbackState() == QMediaPlayer::PlayingState
-                && w.player->position() >= w.cue) {
+                && w.clock->positionMs() >= w.cue) {
                 w.player->pause();
                 w.held = true;
                 ++held;
@@ -132,13 +126,17 @@ int main(int argc, char **argv)
                 w.output->setDevice(device);
                 w.output->setMuted(true);
                 w.player->setAudioOutput(w.output.get());
+                w.clock = std::make_unique<probe::PlayerClock>(*w.player);
                 w.cue = 1500 + 300 * i;
                 QMediaPlayer *player = w.player.get();
+                probe::PlayerClock *playerClock = w.clock.get();
                 const qint64 cue = w.cue;
                 QObject::connect(player, &QMediaPlayer::mediaStatusChanged, &app,
-                                 [player, cue](QMediaPlayer::MediaStatus s) {
-                                     if (s == QMediaPlayer::LoadedMedia) {
+                                 [player, playerClock, cue](QMediaPlayer::MediaStatus s) {
+                                     if (s == QMediaPlayer::LoadedMedia
+                                         && player->playbackState() == QMediaPlayer::StoppedState) {
                                          player->setPosition(cue - 200);
+                                         playerClock->reset();
                                          player->play();
                                      }
                                  });
