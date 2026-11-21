@@ -754,11 +754,16 @@ TestCase {
             verify(entry.shown, "\"" + step + "\" was named under the bar");
         }
         verify(totals.length > 0, "the bar had a total");
-        for (const total of totals) {
-            compare(total, totals[0], "one total for the whole check, never replaced");
+        // One verdict each, and the lists written out only for a failure:
+        // a check per tick that names every tick is quadratic work, 50
+        // minutes of it on the Windows shakedown laptop (2026-11-22).
+        const otherTotal = totals.findIndex(total => total !== totals[0]);
+        if (otherTotal >= 0) {
+            fail("one total for the whole check, never replaced: " + JSON.stringify(totals.slice(0, otherTotal + 1)));
         }
-        for (let i = 1; i < counts.length; ++i) {
-            verify(counts[i] >= counts[i - 1], "the count never goes back: " + JSON.stringify(counts));
+        const wentBack = counts.findIndex((count, i) => i > 0 && count < counts[i - 1]);
+        if (wentBack >= 0) {
+            fail("the count never goes back: " + JSON.stringify(counts.slice(Math.max(0, wentBack - 5), wentBack + 1)));
         }
         compare(counts[counts.length - 1], totals[0], "and reaches the end");
     }
