@@ -298,10 +298,12 @@ std::shared_ptr<BeatGridLibrary> runLoad(const QString &rekordboxPath, const QSt
             itemOf[out->plan.items[i].rekordboxTrackId] = static_cast<int>(i);
         }
         std::map<std::string, std::string> engineArt;
+        std::map<std::string, const domain::Track *> engineById;
         for (const domain::Track &t : engineTracks) {
             if (!t.artworkPath.empty()) {
                 engineArt[t.sourceId] = t.artworkPath;
             }
+            engineById[t.sourceId] = &t;
         }
         std::map<std::string, std::vector<std::pair<int, std::string>>> members;
         out->tracks.reserve(rekordboxTracks.size());
@@ -319,7 +321,12 @@ std::shared_ptr<BeatGridLibrary> runLoad(const QString &rekordboxPath, const QSt
             track.cues = t.cues;
             if (const auto item = itemOf.find(t.sourceId); item != itemOf.end()) {
                 track.item = item->second;
-                const auto art = engineArt.find(out->plan.items[static_cast<size_t>(item->second)].engineTrackId);
+                const std::string &engineTrackId = out->plan.items[static_cast<size_t>(item->second)].engineTrackId;
+                if (const auto engineTrack = engineById.find(engineTrackId); engineTrack != engineById.end()) {
+                    track.engineFilePath = engineTrack->second->filePath;
+                    track.engineCues = engineTrack->second->cues;
+                }
+                const auto art = engineArt.find(engineTrackId);
                 if (art != engineArt.end()) {
                     track.fallbackArtworkUrl = toLocalFileUrl(art->second);
                     track.fallbackArtworkPath = art->second;
@@ -1075,6 +1082,29 @@ QVariantMap BeatGridsController::zoomTrack(const QString &rekordboxId) const
         {QStringLiteral("artworkPath"), QString::fromStdString(track->artworkPath)},
         {QStringLiteral("cues"), metadataCueList(track->cues)},
         {QStringLiteral("fallbackArtworkPath"), QString::fromStdString(track->fallbackArtworkPath)},
+    };
+}
+
+QVariantMap BeatGridsController::engineZoomTrack(const QString &rekordboxId) const
+{
+    const BeatGridLibrary::Track *track = libraryTrack(rekordboxId);
+    if (track == nullptr || track->item < 0) {
+        return {};
+    }
+    const std::string &engineTrackId = m_library->plan.items[static_cast<std::size_t>(track->item)].engineTrackId;
+    if (engineTrackId.empty() || m_library->enginePath.isEmpty()) {
+        return {};
+    }
+    return {
+        {QStringLiteral("format"), QStringLiteral("engine")},
+        {QStringLiteral("libraryPath"), m_library->enginePath},
+        {QStringLiteral("sourceId"), QString::fromStdString(engineTrackId)},
+        {QStringLiteral("filePath"), QString::fromStdString(track->engineFilePath)},
+        {QStringLiteral("title"), QString::fromStdString(track->title)},
+        {QStringLiteral("artist"), QString::fromStdString(track->artist)},
+        {QStringLiteral("artworkPath"), QString::fromStdString(track->fallbackArtworkPath)},
+        {QStringLiteral("cues"), metadataCueList(track->engineCues)},
+        {QStringLiteral("fallbackArtworkPath"), QString::fromStdString(track->artworkPath)},
     };
 }
 
