@@ -46,6 +46,7 @@
 #include "infrastructure/work_counters.hpp"
 #include "infrastructure/media/stick_root_scan.hpp"
 #include "infrastructure/database_read_copy.hpp"
+#include "infrastructure/system/process_liveness.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include <chrono>
@@ -1112,16 +1113,28 @@ int main(int argc, char **argv)
         const fs::path stale = temp / (std::string(infrastructure::ReadCopyPrefix) + "left-by-a-crash");
         const fs::path fresh = temp / (std::string(infrastructure::ReadCopyPrefix) + "made-just-now");
         const fs::path other = temp / "seabass-something-else";
-        for (const auto &dir : {stale, fresh, other}) {
+        // Owner-tagged, as copies are named now: one whose process still
+        // runs (this one, made an hour "ago", as another Seabass started
+        // earlier would have) stays whatever its age; one whose process is
+        // gone goes.
+        const fs::path live = temp
+            / (std::string(infrastructure::ReadCopyPrefix) + infrastructure::readCopyOwnerTag() + "1-0");
+        const fs::path orphan = temp / (std::string(infrastructure::ReadCopyPrefix) + "999999999-12345-1-0");
+        assert(!infrastructure::system::isProcessAlive(999999999, 12345) && "no such process");
+        for (const auto &dir : {stale, fresh, other, live, orphan}) {
             fs::create_directories(dir / "rekordbox");
         }
-        fs::last_write_time(stale, infrastructure::readCopiesSince() - std::chrono::hours(1));
-        fs::last_write_time(other, infrastructure::readCopiesSince() - std::chrono::hours(1));
+        for (const auto &dir : {stale, other, live}) {
+            fs::last_write_time(dir, infrastructure::readCopiesSince() - std::chrono::hours(1));
+        }
         (void)buildStickPathIndex(s.pioneerQ(), s.engineQ());
-        assert(!fs::exists(stale) && "a copy older than this process is removed");
+        assert(!fs::exists(stale) && "an untagged copy older than this process is removed");
+        assert(!fs::exists(orphan) && "a copy whose process is gone is removed");
+        assert(fs::exists(live) && "a copy a running process owns stays, however old");
         assert(fs::exists(fresh) && fs::exists(other) && "nothing else is");
         fs::remove_all(fresh);
         fs::remove_all(other);
+        fs::remove_all(live);
         std::cout << "case 18 (reading the stick's index changes no file on it) OK\n";
     }
 

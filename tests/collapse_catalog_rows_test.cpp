@@ -321,6 +321,30 @@ int main()
         std::cout << "case 14 (streaming rows are dropped on both branches) OK\n";
     }
 
+    // OneLibrary's rating and comment (#105) stay out of Clean Up on the
+    // fallback paths as on the collapsed one: an unreadable catalog, and
+    // nothing supplied at all, hand back the browsed OneLibrary rows
+    // without them.
+    {
+        Track ol = row("onelibrary", "ol1", "/stick/Contents/a.mp3", "Sorry", 200.0, 0);
+        ol.rating = 4;
+        ol.comment = "peak time";
+        application::CatalogTracks catalogs;
+        catalogs.oneLibrary = std::vector<Track>{ol};
+
+        auto unreadable = application::collapseForCleanupScan(catalogs, {"rekordbox"}, {ol});
+        assert(!unreadable.collapsedAcrossCatalogs);
+        assert(unreadable.rows.size() == 1);
+        assert(!unreadable.rows[0].rating.has_value());
+        assert(unreadable.rows[0].comment.empty());
+
+        auto nothing = application::collapseForCleanupScan(application::CatalogTracks{}, {}, {ol});
+        assert(!nothing.collapsedAcrossCatalogs);
+        assert(!nothing.rows[0].rating.has_value());
+        assert(nothing.rows[0].comment.empty());
+        std::cout << "case 18 (the fallbacks leave OneLibrary's rating and comment out too) OK\n";
+    }
+
     // Nothing supplied at all falls back rather than reporting a
     // cross-catalog scan that saw nothing -- which would read as "no
     // duplicates on this stick" instead of "this scan was handed nothing".

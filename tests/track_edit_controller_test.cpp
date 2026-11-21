@@ -193,5 +193,21 @@ int main(int argc, char **argv)
         std::cout << "case 5 (a controller destroyed mid-read returns at once and leaks no copy) OK\n";
     }
     registry->discardAll();
+    // 6. A library with neither catalog's path (nothing on a stick to
+    // read) answers at once that nothing can be changed, rather than
+    // saying "reading the stick" for ever.
+    {
+        TrackEditController bare;
+        bare.lookUpTrack(QString(), QString(), file);
+        const QVariantMap info = bare.commentLimit();
+        assert(!info.value(QStringLiteral("reading")).toBool() && "not reading for ever");
+        assert(info.value(QStringLiteral("failed")).toBool());
+        assert(!info.value(QStringLiteral("editable")).toBool());
+        assert(info.value(QStringLiteral("refusal")).toString().contains(QStringLiteral("no rekordbox or Engine")));
+        assert(!bare.setRating(QString(), QString(), file, QStringLiteral("T"), original, stars));
+        assert(bare.errorMessage().contains(QStringLiteral("no rekordbox or Engine")));
+        std::cout << "case 6 (a library with no catalog path is answered, not read for ever) OK\n";
+    }
+
     return 0;
 }

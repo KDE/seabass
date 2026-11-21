@@ -136,9 +136,16 @@ CleanupScanRows collapseForCleanupScan(const CatalogTracks &catalogs,
                      tracks.end());
         return tracks;
     };
+    // The single-catalog fallbacks below hand Clean Up the browsed
+    // format's rows; OneLibrary's carry the rating and comment #105 reads,
+    // which Clean Up must decide without (withoutOneLibraryAnnotations())
+    // on every path, not only the cross-catalog one.
+    auto fallback = [&withoutStreaming](std::vector<domain::Track> tracks) {
+        return withoutStreaming(withoutOneLibraryAnnotations(std::move(tracks)));
+    };
 
     if (!unreadableCatalogs.empty()) {
-        return {withoutStreaming(std::move(singleCatalogRows)), false};
+        return {fallback(std::move(singleCatalogRows)), false};
     }
 
     std::vector<domain::Track> rows;
@@ -158,7 +165,7 @@ CleanupScanRows collapseForCleanupScan(const CatalogTracks &catalogs,
         // collapse would report a cross-catalog scan that saw nothing,
         // which reads as "this stick has no duplicates" rather than "this
         // scan was handed nothing".
-        return {withoutStreaming(std::move(singleCatalogRows)), false};
+        return {fallback(std::move(singleCatalogRows)), false};
     }
     return {collapseCatalogRows(rows), true};
 }

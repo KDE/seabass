@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,7 @@
 #include <system_error>
 
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/system/process_liveness.hpp"
 
 namespace seabass::infrastructure
 {
@@ -29,9 +31,13 @@ namespace seabass::infrastructure
 // SQLite rebuilds the -shm next to the copy. The folder goes with the
 // object.
 //
-// Folders are named ReadCopyPrefix + a serial; one left behind by a crash
-// is removed by removeStaleReadCopies(), only when it is older than this
-// process, so a copy another Seabass is reading is never taken from it.
+// Folders are named ReadCopyPrefix + the owning process's pid and start
+// id + a serial. One left behind by a crash is removed by
+// removeStaleReadCopies() once its owner is gone (isProcessAlive(), the
+// edit locks' test), so a copy another running Seabass is reading is
+// never taken from it, however long ago it was made. A folder whose name
+// carries no owner (an older build's) goes by age instead: older than
+// this process.
 
 inline constexpr const char *ReadCopyPrefix = "seabass-catalog-read-";
 
@@ -57,14 +63,55 @@ inline bool isWalModeSqlite(const std::filesystem::path &db)
     return header[18] == 2 || header[19] == 2;
 }
 
+// "<pid>-<start id>-" after ReadCopyPrefix: this process's part of a
+// read copy's folder name.
+inline std::string readCopyOwnerTag()
+{
+    return std::to_string(system::currentPid()) + "-" + std::to_string(system::currentProcessStartId()) + "-";
+}
+
+// The owner a folder name carries, as {pid, start id}; false for a name
+// that carries none (a folder an older build made).
+inline bool readCopyOwner(const std::string &afterPrefix, std::int64_t &pid, std::uint64_t &startId)
+{
+    const auto firstDash = afterPrefix.find('-');
+    const auto secondDash = firstDash == std::string::npos ? std::string::npos : afterPrefix.find('-', firstDash + 1);
+    const auto thirdDash = secondDash == std::string::npos ? std::string::npos : afterPrefix.find('-', secondDash + 1);
+    // Owner-tagged names have four parts (pid, start id, clock, serial);
+    // an older build's had two (clock, serial).
+    if (thirdDash == std::string::npos) {
+        return false;
+    }
+    try {
+        std::size_t used = 0;
+        pid = std::stoll(afterPrefix.substr(0, firstDash), &used);
+        if (used != firstDash) {
+            return false;
+        }
+        startId = std::stoull(afterPrefix.substr(firstDash + 1, secondDash - firstDash - 1), &used);
+        return used == secondDash - firstDash - 1;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
 inline void removeStaleReadCopies()
 {
     namespace fs = std::filesystem;
     const auto since = readCopiesSince();
+    const std::string prefix = ReadCopyPrefix;
     std::error_code ec;
     for (const auto &entry : fs::directory_iterator(fs::temp_directory_path(ec), ec)) {
         const std::string name = pathToUtf8(entry.path().filename());
-        if (name.rfind(ReadCopyPrefix, 0) != 0 || !entry.is_directory(ec)) {
+        if (name.rfind(prefix, 0) != 0 || !entry.is_directory(ec)) {
+            continue;
+        }
+        std::int64_t pid = 0;
+        std::uint64_t startId = 0;
+        if (readCopyOwner(name.substr(prefix.size()), pid, startId)) {
+            if (!system::isProcessAlive(pid, startId)) {
+                fs::remove_all(entry.path(), ec);
+            }
             continue;
         }
         std::error_code timeEc;
@@ -87,7 +134,7 @@ public:
         readCopiesSince();
         static std::atomic<unsigned> serial{0};
         m_root = fs::temp_directory_path()
-            / (std::string(ReadCopyPrefix)
+            / (std::string(ReadCopyPrefix) + readCopyOwnerTag()
                + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-"
                + std::to_string(serial++));
         m_path = m_root / relative;
