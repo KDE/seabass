@@ -373,14 +373,40 @@ What it reuses, and what it must not:
   whatever the save did: the id holds R's playlist (or nothing, the
   create left out or declined), and nothing of the old playlist's
   tracks can land under the new one. Its tracks get no rows of their
-  own; the delete takes them, as any delete does. Left unticked, the
-  delete means "leave Engine's playlist alone": it stays on Engine as a
-  playlist rekordbox does not know, listed as Engine's own from then on
-  and never offered again, never adopted into the new playlist. The
-  record is built with `previous` read without the old playlist
+  own; the delete takes them, as any delete does. Declines the record
+  holds under the id (`playlist:`, `member:`, `order:`) were made about
+  the old playlist: they suppress nothing of the new item and are not
+  carried into the next record. A track the record declines as a member
+  of the old id counts as one of its tracks for "share none": rekordbox's
+  old playlist held it, so the two are not certainly unrelated, and the
+  id pairs as before (a rename).
+
+  The trade-off, plainly: left unticked, the delete means "leave
+  Engine's playlist alone". The old playlist becomes Engine's own for
+  good: it is listed as Engine's own and is not offered for deletion
+  again. It is never adopted into the new playlist under the id; but a
+  playlist rekordbox later makes at the old path again is paired with
+  it by path, like any rekordbox playlist without a record: rekordbox's
+  tracks are added, ticked, and each track only Engine's copy holds is a
+  conflict ("no earlier record says which side changed it"). Nothing is
+  written over without asking.
+
+  The known reading: a real rename in rekordbox that also replaced every
+  track cannot be told from a deleted playlist whose id went to a new
+  one, and is read as delete plus create. Applied, Engine's playlist
+  loses its identity (it is a new playlist) and its place among its
+  siblings, which the created playlist does not inherit. Accepted.
+
+  The record is built with `previous` read without the old playlist
   (`keepPreviousItems` takes the reused key for that, at stage time and
-  again after the commit, where a save that stopped before the create
-  landed records no playlist under the id rather than the old one).
+  again after the commit). After the commit: a save that stopped before
+  the create landed records no playlist under the id rather than the old
+  one; one that stopped before either half landed (the delete ticked)
+  records the old playlist whole, so the next analysis offers both
+  again; one that landed the create and not the delete records the new
+  playlist and says in the save's warning that the old playlist was not
+  deleted and stays on Engine unless the save is completed (the delete
+  stays staged, and Save again lands it).
   Without a baseline a rename is guessed only when parent and members
   agree closely, and the guess is a conflict. An Engine path
   that resolves to more than one playlist

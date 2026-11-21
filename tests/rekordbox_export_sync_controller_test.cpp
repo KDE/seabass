@@ -1219,16 +1219,106 @@ void testDeclinedByDependency(const fs::path &fixture)
 //     the add, ticked, and nothing says Engine took it out (the defect
 //     the reviews left open: the old playlist's tracks recorded under
 //     the new one).
-enum class ReusedSave { Members, Bare, OldLeft, NewLeft, Declined };
+//     f: as a, the record also declining a rename of "Reused Old" to
+//        "Playlist 006" (a decline of the old item that matches the new
+//        create's state): the create is offered all the same, ticked, and
+//        no decline under the id survives the save.
+//     g: every decline the first save recorded kept, and one more: the
+//        add of one of "Playlist 006"'s tracks into the old playlist
+//        (rekordbox's old playlist held it). Not certain any more: the id
+//        pairs as before the rule, a rename, nothing saved.
+//     h: as a, the DJ's Cancel arriving while "Playlist 006" is created:
+//        the create and its members land, the old playlist's delete does
+//        not. The save says in its warning that "Reused Old" was not
+//        deleted and stays on Engine unless the save is completed; the
+//        record holds the new playlist; Save again lands the delete still
+//        staged, and the record is a's.
+//     i: as a, a cancel arriving after a change staged before both halves
+//        landed: neither half on the stick, the record keeps "Reused Old"
+//        with Q, and the next analysis offers the delete and the create
+//        again.
+enum class ReusedSave {
+    Members,
+    Bare,
+    OldLeft,
+    NewLeft,
+    Declined,
+    RenameDeclined,
+    MemberDeclined,
+    CancelAfterCreate,
+    CancelBeforeBoth
+};
+
+// A staged change, forwarded, that stops the save once it has landed
+// (stopAfter) the way the DJ's Cancel arrives while it is written, through
+// the save's own token. Everything else is the staged change's own.
+class Forwarded final : public PendingChange
+{
+public:
+    Forwarded(std::shared_ptr<PendingChange> staged, bool stopAfter)
+        : m_staged(std::move(staged)), m_stopAfter(stopAfter)
+    {
+    }
+    QString id() const override { return m_staged->id(); }
+    QString description() const override { return m_staged->description(); }
+    QString subject() const override { return m_staged->subject(); }
+    QString unit() const override { return m_staged->unit(); }
+    int unitsWritten() const override { return m_staged->unitsWritten(); }
+    int unitsSkipped() const override { return m_staged->unitsSkipped(); }
+    QString verb() const override { return m_staged->verb(); }
+    QString playlistEdited() const override { return m_staged->playlistEdited(); }
+    QStringList unitKeys() const override { return m_staged->unitKeys(); }
+    QStringList formatsTouched() const override { return m_staged->formatsTouched(); }
+    QString owner() const override { return m_staged->owner(); }
+    std::vector<seabass::gui::BackupTarget> filesToBackup(seabass::gui::SaveContext &ctx) const override
+    {
+        return m_staged->filesToBackup(ctx);
+    }
+    std::vector<seabass::gui::RekordboxWrite> rekordboxWrites() const override { return m_staged->rekordboxWrites(); }
+    void beforeSave(seabass::gui::SaveContext &ctx) override { m_staged->beforeSave(ctx); }
+    seabass::gui::ChangeOutcome apply(seabass::gui::SaveContext &ctx) override
+    {
+        const auto outcome = m_staged->apply(ctx);
+        if (m_stopAfter) {
+            const_cast<seabass::application::CancellationToken &>(ctx.cancel()).cancel();
+        }
+        return outcome;
+    }
+
+private:
+    std::shared_ptr<PendingChange> m_staged;
+    bool m_stopAfter = false;
+};
+
+// Writes nothing and stops the save once it has landed: a change staged
+// before everything else, which the cancel lets land.
+class LandsThenStops final : public PendingChange
+{
+public:
+    QString id() const override { return QStringLiteral("rekordbox-export-sync:test-stop"); }
+    QString description() const override { return QStringLiteral("stops the save"); }
+    QString unit() const override { return QStringLiteral("changes"); }
+    QStringList formatsTouched() const override { return {}; }
+    seabass::gui::ChangeOutcome apply(seabass::gui::SaveContext &ctx) override
+    {
+        const_cast<seabass::application::CancellationToken &>(ctx.cancel()).cancel();
+        return seabass::gui::ChangeOutcome::success();
+    }
+};
 
 void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
 {
-    const char *const names[] = {"export_sync_reused_id", "export_sync_reused_id_bare", "export_sync_reused_id_old",
-                                 "export_sync_reused_id_new", "export_sync_reused_id_declined"};
-    const char *const letters[] = {"a", "b", "c", "d", "e"};
-    const bool tickDelete = how == ReusedSave::Members || how == ReusedSave::Bare || how == ReusedSave::NewLeft;
-    const bool tickCreate = how == ReusedSave::Members || how == ReusedSave::Bare || how == ReusedSave::OldLeft;
-    const bool tickMembers = how == ReusedSave::Members || how == ReusedSave::OldLeft;
+    const char *const names[] = {"export_sync_reused_id",          "export_sync_reused_id_bare",
+                                 "export_sync_reused_id_old",      "export_sync_reused_id_new",
+                                 "export_sync_reused_id_declined", "export_sync_reused_id_rename_declined",
+                                 "export_sync_reused_id_member_declined", "export_sync_reused_id_cancel_after_create",
+                                 "export_sync_reused_id_cancel_before_both"};
+    const char *const letters[] = {"a", "b", "c", "d", "e", "f", "g", "h", "i"};
+    const bool cancelled = how == ReusedSave::CancelAfterCreate || how == ReusedSave::CancelBeforeBoth;
+    const bool all = how == ReusedSave::Members || how == ReusedSave::RenameDeclined || cancelled;
+    const bool tickDelete = all || how == ReusedSave::Bare || how == ReusedSave::NewLeft;
+    const bool tickCreate = all || how == ReusedSave::Bare || how == ReusedSave::OldLeft;
+    const bool tickMembers = all || how == ReusedSave::OldLeft;
     namespace d = seabass::domain;
     namespace engine = seabass::infrastructure::engine;
     const auto stick =
@@ -1301,11 +1391,21 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
     const std::string key = "playlist:" + std::to_string(id);
     reused->path = oldName;
     reused->members = q;
-    // Nothing of id N declined, so the page offers what it plans for it.
-    for (auto it = baseline->declined.begin(); it != baseline->declined.end();) {
-        const bool ofReused = it->first == key || it->first == "order:" + std::to_string(id)
-            || it->first.rfind("member:" + std::to_string(id) + ":", 0) == 0;
-        it = ofReused ? baseline->declined.erase(it) : std::next(it);
+    // Nothing of id N declined, so the page offers what it plans for it
+    // (but g, which keeps the first save's declines and plants one, and f,
+    // which declines the old item's rename to the new name).
+    if (how != ReusedSave::MemberDeclined) {
+        for (auto it = baseline->declined.begin(); it != baseline->declined.end();) {
+            const bool ofReused = it->first == key || it->first == "order:" + std::to_string(id)
+                || it->first.rfind("member:" + std::to_string(id) + ":", 0) == 0;
+            it = ofReused ? baseline->declined.erase(it) : std::next(it);
+        }
+    }
+    if (how == ReusedSave::RenameDeclined) {
+        baseline->declined[key] = d::engineUpdateStateHash("list:" + newName);
+    }
+    if (how == ReusedSave::MemberDeclined) {
+        baseline->declined["member:" + std::to_string(id) + ":" + *rekordboxSet.begin()] = "the add, declined";
     }
     testing::plantBaseline(stick, *baseline);
 
@@ -1322,6 +1422,21 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
 
     analyze(controller, stick);
     assert(controller.errorMessage().isEmpty());
+    if (how == ReusedSave::MemberDeclined) {
+        bool renamed = false;
+        for (const auto &row : rowsOf(controller)) {
+            const auto *rename = row.edit ? std::get_if<d::PlaylistRename>(&*row.edit) : nullptr;
+            renamed = renamed || (rename && rename->fromPath == oldName && rename->toPath == newName);
+            const auto *c = row.edit ? std::get_if<d::PlaylistCreate>(&*row.edit) : nullptr;
+            if (c && c->path == newName) {
+                std::cerr << "FAIL: a playlist rekordbox held one of its tracks in is taken as unrelated\n";
+                assert(false);
+            }
+        }
+        assert(renamed && "not certain: the id pairs as before the rule, a rename");
+        std::cout << "case 12g (#99: a decline says rekordbox's old playlist held a new track: a rename) OK\n";
+        return;
+    }
     int create = -1;
     int del = -1;
     std::string oldKey;
@@ -1347,7 +1462,11 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
             }
         }
         assert(!renamed && "no rename of the old playlist into the new one");
+        if (create < 0 && how == ReusedSave::RenameDeclined) {
+            std::cerr << "FAIL: the create of \"" << newName << "\" is suppressed by the old playlist's decline\n";
+        }
         assert(create >= 0 && del >= 0 && "the old playlist deleted, the new one created");
+        assert(rows[static_cast<std::size_t>(create)].included && "the create is offered ticked");
         assert(rows[static_cast<std::size_t>(create)].header.key == key);
         oldKey = rows[static_cast<std::size_t>(del)].header.key;
         assert(oldKey == "reused:" + std::to_string(id) + ":" + oldName && "two items: the delete keyed by the plan");
@@ -1385,6 +1504,78 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
     };
     controller.stageSelected();
     assert(controller.errorMessage().isEmpty());
+    if (cancelled) {
+        // The staged changes, each forwarded, in the session's order: the
+        // stop after the create (h), or a change before all of them (i).
+        const std::vector<std::shared_ptr<PendingChange>> staged = session->pendingChanges();
+        QStringList ids;
+        int createAt = -1;
+        int deleteAt = -1;
+        for (std::size_t i = 0; i < staged.size(); ++i) {
+            ids << staged[i]->id();
+            if (staged[i]->unitKeys().contains(QString::fromStdString(key)) && createAt < 0) {
+                createAt = static_cast<int>(i);
+            }
+            if (staged[i]->unitKeys().contains(QString::fromStdString(oldKey))) {
+                deleteAt = static_cast<int>(i);
+            }
+        }
+        assert(createAt >= 0 && deleteAt > createAt && "the create staged before the delete");
+        session->unstageAll(ids);
+        std::vector<std::unique_ptr<PendingChange>> restaged;
+        if (how == ReusedSave::CancelBeforeBoth) {
+            restaged.push_back(std::make_unique<LandsThenStops>());
+        }
+        for (std::size_t i = 0; i < staged.size(); ++i) {
+            const bool stop = how == ReusedSave::CancelAfterCreate && static_cast<int>(i) == createAt;
+            restaged.push_back(std::make_unique<Forwarded>(staged[i], stop));
+        }
+        assert(session->stageAll(std::move(restaged)));
+        const QVariantMap first =
+            saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+        std::cout << "  cancelled save: error \"" << first.value("error").toString().toStdString() << "\", warning \""
+                  << first.value("warning").toString().toStdString() << "\"\n";
+        assert(first.value("cancelled").toBool() && first.value("error").toString().isEmpty());
+        const auto record = testing::readBaseline(stick);
+        assert(record);
+        const auto *under = record->findPlaylist(id);
+        if (how == ReusedSave::CancelBeforeBoth) {
+            // Neither half landed: the record as before, the old playlist
+            // whole, and both halves offered again.
+            assert(testing::rootPlaylistTracks(stick.db, oldName).size() == q.size());
+            assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + newName + "';") == 0);
+            if (!under || under->path != oldName) {
+                std::cerr << "FAIL: the record holds id " << id << " as "
+                          << (under ? "\"" + under->path + "\"" : std::string("nothing")) << "\n";
+            }
+            assert(under && under->path == oldName && under->members == q);
+            assert(first.value("warning").toString().isEmpty());
+            bool createAgain = false;
+            bool deleteAgain = false;
+            for (const auto &row : rowsOf(controller)) {
+                createAgain = createAgain || (row.header.key == key && row.kind == QStringLiteral("createPlaylist"));
+                deleteAgain = deleteAgain || row.header.key == oldKey;
+            }
+            assert(createAgain && deleteAgain && "both halves offered again");
+            session->unstageAll(session->pendingIds());
+            std::cout << "case 12i (#99: a cancel before both halves keeps the old playlist in the record, both "
+                         "offered again) OK\n";
+            return;
+        }
+        // The create landed, the delete did not.
+        assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + oldName + "';") == 1);
+        assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + newName + "';") == 1);
+        assert(under && under->path == newName && !record->findPlaylistByPath(oldName));
+        const QString warning = first.value("warning").toString();
+        const QString said = QStringLiteral("The old playlist \"Reused Old\" was not deleted and stays on Engine "
+                                            "unless the save is completed.");
+        if (!warning.contains(said)) {
+            std::cerr << "FAIL: the save does not say the old playlist stays on Engine\n";
+        }
+        assert(warning.contains(said));
+        assert(!warning.contains(QStringLiteral("--")) && !warning.contains(QChar(0x2014)));
+        assert(session->hasChange(staged[static_cast<std::size_t>(deleteAt)]->id()) && "the delete is still staged");
+    }
     const QVariantMap summary =
         saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
     assert(summary.value("error").toString().isEmpty());
@@ -1439,6 +1630,11 @@ void testReusedPlaylistId(const fs::path &fixture, ReusedSave how)
         for (const auto &[declinedKey, state] : record->declined) {
             if (!d::parseItemKey(declinedKey)) {
                 std::cerr << "FAIL: the record holds the key \"" << declinedKey << "\"\n";
+                assert(false);
+            }
+            if (all && (declinedKey == key || declinedKey == "order:" + std::to_string(id)
+                        || declinedKey.rfind("member:" + std::to_string(id) + ":", 0) == 0)) {
+                std::cerr << "FAIL: everything saved, and the record still declines " << declinedKey << "\n";
                 assert(false);
             }
         }
@@ -1874,6 +2070,10 @@ int main(int argc, char **argv)
     testReusedPlaylistId(fixture, ReusedSave::OldLeft);
     testReusedPlaylistId(fixture, ReusedSave::NewLeft);
     testReusedPlaylistId(fixture, ReusedSave::Declined);
+    testReusedPlaylistId(fixture, ReusedSave::RenameDeclined);
+    testReusedPlaylistId(fixture, ReusedSave::MemberDeclined);
+    testReusedPlaylistId(fixture, ReusedSave::CancelAfterCreate);
+    testReusedPlaylistId(fixture, ReusedSave::CancelBeforeBoth);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }

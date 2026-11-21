@@ -364,7 +364,9 @@ void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previou
 // A reused-id key in `offered` (reusedPlaylistItemKey) is not an item of
 // the record: whether applied, declined or left, it only makes the
 // items kept from `previous` read previous without the old playlist
-// (keepPreviousItems), and it is never recorded as declined.
+// (keepPreviousItems), and it is never recorded as declined; nor is any
+// decline `previous` holds for that old playlist (its playlist, member and
+// order keys), which was made about another item.
 //
 // Seabass's own writes of the same save (restores onto rekordbox) are not
 // known here; the save merges them afterwards (recordSeabassWrites).

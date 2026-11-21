@@ -7,7 +7,10 @@
 #include <chrono>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
+#include "domain/sync_planning.hpp"
 #include "gui/edit/changes/owned_change.hpp"
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/edit/save_context.hpp"
@@ -101,16 +104,58 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
 
         domain::RekordboxBaseline next = m_next;
         std::set<std::string> notLanded;
+        std::set<std::string> landed;
         std::size_t changesNotLanded = 0;
         for (const auto &[changeId, keys] : m_appliedBy) {
             if (!after.appliedIds.contains(QString::fromStdString(changeId))) {
                 ++changesNotLanded;
                 notLanded.insert(keys.begin(), keys.end());
+            } else {
+                landed.insert(keys.begin(), keys.end());
             }
         }
-        // Put back nothing; they make the rest read the record as the plan did.
         std::set<std::string> keys = notLanded;
-        keys.insert(m_reusedIds.begin(), m_reusedIds.end());
+        std::vector<std::string> notDeleted;
+        for (const auto &reusedKey : m_reusedIds) {
+            const auto reused = domain::parseReusedPlaylistItemKey(reusedKey);
+            if (!reused) {
+                continue;
+            }
+            const std::string createKey = domain::playlistItemKey(reused->id);
+            const bool deleteStaged = landed.count(reusedKey) || notLanded.count(reusedKey);
+            const bool deleteLanded = landed.count(reusedKey) > 0;
+            const bool createLanded = landed.count(createKey) > 0;
+            const domain::BaselinePlaylist *old = previous ? previous->findPlaylist(reused->id) : nullptr;
+            if (deleteStaged && !deleteLanded && !createLanded && old && old->path == reused->recordedPath) {
+                // Neither half on the stick: the record keeps the old
+                // playlist whole, as before, so the next analysis finds the
+                // reuse again and offers both halves.
+                keys.erase(reusedKey);
+                keys.insert(createKey);
+                keys.insert(domain::orderItemKey(reused->id));
+                for (const auto &member : old->members) {
+                    keys.insert(domain::memberItemKey(reused->id, member));
+                }
+                for (const auto &[declinedKey, state] : previous->declined) {
+                    const auto item = domain::parseItemKey(declinedKey);
+                    if (item && item->playlistId == reused->id
+                        && (item->kind == domain::ItemKey::Kind::Playlist || item->kind == domain::ItemKey::Kind::Member
+                            || item->kind == domain::ItemKey::Kind::Order)) {
+                        next.declined.emplace(declinedKey, state);
+                    }
+                }
+                continue;
+            }
+            // Puts back nothing: the rest reads the record as the plan did.
+            keys.insert(reusedKey);
+            if (deleteStaged && !deleteLanded) {
+                // The new playlist landed and the old one's delete did not:
+                // the record can hold only one of them under the id. The
+                // delete stays staged; said, so a discarded save does not
+                // leave the old playlist on Engine unnoticed.
+                notDeleted.push_back(reused->recordedPath);
+            }
+        }
         domain::keepPreviousItems(next, previous ? &*previous : nullptr, keys);
         const auto writes = seabassWritesFor(m_stickRoot, after.rekordboxWrites);
         const auto unlisted = domain::recordSeabassWrites(next, writes);
@@ -141,6 +186,18 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                          + std::to_string(notLanded.size()) + " item(s) of " + std::to_string(changesNotLanded)
                          + " change(s) that did not land kept as before; " + std::to_string(writes.size() - unlisted.size())
                          + " of Seabass's own write(s) merged");
+        if (!notDeleted.empty()) {
+            // After the record is written: an after-commit hook's exception
+            // is the save's warning (SaveContext::runAfterCommitHooks).
+            const std::string engineName = domain::catalogDisplayName("engine");
+            std::string said;
+            for (const auto &path : notDeleted) {
+                said += std::string(said.empty() ? "" : " ") + "The old playlist \"" + path
+                    + "\" was not deleted and stays on " + engineName + " unless the save is completed.";
+            }
+            ctx.log().record("rekordbox baseline: " + said);
+            throw std::runtime_error(said);
+        }
     });
 }
 

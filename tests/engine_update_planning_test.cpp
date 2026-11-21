@@ -787,8 +787,9 @@ int main()
     // the record as the page makes it), then rekordbox puts A, one of the
     // old playlist's tracks, into "T73 New": the add is offered, ticked,
     // and nothing says Engine took A out.
-    //   own rows: every row about the old playlist but its delete unticked
-    //             (before this fix: its remove rows);
+    // The old playlist has no rows of its own but its delete (its tracks
+    // go with it), so the reviews' "its remove rows unticked" is the
+    // Membership section unticked:
     //   membership: the whole Membership section unticked;
     //   old: the old playlist's delete unticked, the create ticked;
     //   new: the create unticked, the delete ticked;
@@ -800,13 +801,10 @@ int main()
         const std::string oldKey = p.playlistsToDelete[0].header.key;
         const std::string newKey = p.playlistsToCreate[0].header.key;
         assert(newKey == "playlist:2");
-        std::set<std::string> ownRows;
         std::set<std::string> membership;
         for (const auto &m : p.membership) {
             membership.insert(m.header.key);
-            if (m.playlistPath == "T73 Delete Me") {
-                ownRows.insert(m.header.key);
-            }
+            assert(m.playlistPath != "T73 Delete Me" && "the old playlist has no rows of its own");
         }
         struct Variant
         {
@@ -816,7 +814,6 @@ int main()
             bool newCreated;
         };
         const std::vector<Variant> variants = {
-            {"own rows", ownRows, true, true},
             {"membership", membership, true, true},
             {"old", {oldKey}, false, true},
             {"new", {newKey}, true, false},
@@ -883,6 +880,177 @@ int main()
         }
         std::cout << "a reused id saved with parts unticked: the old playlist never in the record, a later add "
                      "offered (#99) OK\n";
+    }
+
+    // #99, declines recorded for the old playlist's id. A declined entry
+    // matches on its key and rekordbox's state, and neither names the
+    // playlist, so the new item under the id must not inherit them.
+    //   a: the record declines the add of z into Warmup (rekordbox's
+    //      Warmup held z and x, Engine's x). rekordbox then deletes Warmup
+    //      and gives id 5 to Peak, z and w. The record alone shares nothing
+    //      with Peak, but rekordbox's Warmup did hold z: not certain, so
+    //      the id pairs as before this rule, a rename, the decline the
+    //      same playlist's (a rename keeps it). Without the decline, the
+    //      rule applies.
+    //   b: the record declines a rename of Warmup to Peak, and the order
+    //      of 5. rekordbox's Peak now holds only w: delete and create, the
+    //      create offered and ticked (the old decline matches its state,
+    //      "list:Peak", but is another item's), the order not suppressed,
+    //      and the record after the save holds no decline under 5.
+    {
+        const auto world = [](bool declinedZ) {
+            World w;
+            w.rekordbox = {rb("1", "Music/X.mp3", {{"Warmup", 0}}), rb("2", "Music/Z.mp3"), rb("3", "Music/W.mp3")};
+            w.engine = {en("e1", "Music/X.mp3", {{"Warmup", 0}}), en("e2", "Music/Z.mp3"), en("e3", "Music/W.mp3")};
+            w.rekordboxPlaylists = {{"Warmup", false, 5}};
+            w.enginePlaylists = {{"Warmup", false, 1}};
+            auto base = baselineOf(w);
+            if (declinedZ) {
+                base.declined["member:5:music/z.mp3"] = engineUpdateStateHash("member:in:after:");
+            }
+            w.rekordbox[0].playlists.clear();
+            w.rekordbox[1].playlists = {{"Peak", 0}};
+            w.rekordbox[2].playlists = {{"Peak", 1}};
+            w.rekordboxPlaylists = {{"Peak", false, 5}};
+            return std::make_pair(w, base);
+        };
+        {
+            const auto [w, base] = world(true);
+            const auto p = plan(w, base);
+            if (!p.playlistsToCreate.empty()) {
+                std::cerr << "FAIL: a playlist rekordbox held z in is taken as unrelated to one holding z\n";
+            }
+            assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].fromPath == "Warmup"
+                   && p.playlistsToRename[0].toPath == "Peak");
+            assert(p.playlistsToCreate.empty() && p.playlistsToDelete.empty());
+            assert(std::count(p.declinedSuppressed.begin(), p.declinedSuppressed.end(), "member:5:music/z.mp3") == 1
+                   && "the same playlist renamed keeps its decline, as before this rule");
+        }
+        {
+            const auto [w, base] = world(false);
+            const auto p = plan(w, base);
+            assert(p.playlistsToDelete.size() == 1 && p.playlistsToCreate.size() == 1 && p.playlistsToRename.empty());
+        }
+        {
+            World w;
+            w.rekordbox = {rb("1", "Music/X.mp3", {{"Warmup", 0}}), rb("2", "Music/W.mp3")};
+            w.engine = {en("e1", "Music/X.mp3", {{"Warmup", 0}}), en("e2", "Music/W.mp3")};
+            w.rekordboxPlaylists = {{"Warmup", false, 5}};
+            w.enginePlaylists = {{"Warmup", false, 1}};
+            auto base = baselineOf(w);
+            base.declined["playlist:5"] = engineUpdateStateHash("list:Peak");
+            base.declined["member:5:music/w.mp3"] = engineUpdateStateHash("member:in:after:");
+            base.declined["order:5"] = "an order declined for Warmup";
+            base.declined["rating:music/x.mp3"] = "kept";
+            w.rekordbox[0].playlists.clear();
+            w.rekordbox[1].playlists = {{"Peak", 0}};
+            w.rekordboxPlaylists = {{"Peak", false, 5}};
+            // A declined member key the new list holds: rekordbox's Warmup
+            // held w. Not certain, as in a: the id pairs as a rename, the
+            // very rename the record declines, so it stays out.
+            {
+                const auto uncertain = plan(w, base);
+                assert(uncertain.playlistsToCreate.empty() && uncertain.playlistsToDelete.empty());
+                assert(uncertain.playlistsToRename.empty());
+                assert(std::count(uncertain.declinedSuppressed.begin(), uncertain.declinedSuppressed.end(),
+                                  "playlist:5")
+                       == 1);
+            }
+            base.declined.erase("member:5:music/w.mp3");
+            const auto p = plan(w, base);
+            assert(p.playlistsToRename.empty() && p.playlistsToDelete.size() == 1);
+            if (p.playlistsToCreate.size() != 1) {
+                std::cerr << "FAIL: the create of Peak is suppressed by a decline recorded for Warmup\n";
+            }
+            assert(p.playlistsToCreate.size() == 1 && p.playlistsToCreate[0].path == "Peak");
+            assert(p.playlistsToCreate[0].header.checkedByDefault);
+            for (const auto &key : p.declinedSuppressed) {
+                assert(key.rfind("playlist:5", 0) != 0 && key.rfind("member:5:", 0) != 0 && key.rfind("order:5", 0) != 0);
+            }
+            World after = w;
+            apply(after, p);
+            const auto record = recordAfterSave(base, w, p);
+            assert(keysOfTheFileGrammar(record));
+            for (const auto &[key, state] : record.declined) {
+                if (key.rfind("playlist:5", 0) == 0 || key.rfind("member:5:", 0) == 0 || key.rfind("order:5", 0) == 0) {
+                    std::cerr << "FAIL: the record carries the stale decline " << key << "\n";
+                }
+                assert(key.rfind("playlist:5", 0) != 0 && key.rfind("member:5:", 0) != 0 && key.rfind("order:5", 0) != 0);
+            }
+            assert(plan(after, record).empty());
+        }
+        std::cout << "declines recorded for a reused id: a rename where rekordbox's list held the track, never "
+                     "inherited by the new item (#99) OK\n";
+    }
+
+    // #99, after the old playlist was left on Engine (its delete unticked):
+    // rekordbox later makes a playlist at the old path again, id 9, with A
+    // and E. Engine's leftover is paired with it by path (the planner's
+    // rule for a playlist with no record), so A is level, E (rekordbox's)
+    // is added, ticked, and B, which only Engine's copy holds and no
+    // record says which side changed, is a conflict. Nothing written over
+    // without asking.
+    {
+        const auto [w, base] = issueWorld(false, 1);
+        const auto p = plan(w, base);
+        const std::string oldKey = p.playlistsToDelete.at(0).header.key;
+        World after = w;
+        apply(after, tickedOnly(p, {oldKey}));
+        const auto record = recordAfterSave(base, w, p, {oldKey});
+        assert(hasPlaylist(after, "T73 Delete Me") && engineOrder(after, "T73 Delete Me").size() == 2);
+        World again = after;
+        again.rekordbox[0].playlists = {{"T73 Delete Me", 0}};
+        again.rekordbox[4].playlists = {{"T73 Delete Me", 1}};
+        again.rekordboxPlaylists.push_back({"T73 Delete Me", false, 9});
+        const auto q = plan(again, record);
+        for (const auto &m : q.membership) {
+            std::cout << "  old path again: " << (m.kind == MembershipEdit::Kind::Add ? "add " : "remove ")
+                      << m.playlistPath << ":" << m.pathKey << " " << (m.header.checkedByDefault ? "ticked" : "unticked")
+                      << "\n";
+        }
+        for (const auto &c : q.conflicts) {
+            std::cout << "  old path again: conflict " << c.header.key << ": " << c.header.reasonText << "\n";
+        }
+        assert(q.playlistsToCreate.empty() && q.playlistsToRename.empty() && q.playlistsToDelete.empty());
+        assert(q.membership.size() == 1 && q.membership[0].kind == MembershipEdit::Kind::Add);
+        assert(q.membership[0].playlistPath == "T73 Delete Me" && q.membership[0].pathKey == "music/e.mp3");
+        assert(q.membership[0].header.checkedByDefault);
+        assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "member:9:music/b.mp3");
+        assert(q.conflicts[0].header.reason == EngineUpdateReason::NoBaselineEngineMember);
+        assert(q.engineOwnKept.empty() && "Engine's leftover is rekordbox's playlist again, not Engine's own");
+        std::cout << "a playlist at the old path again takes Engine's leftover: rekordbox's tracks added, Engine's "
+                     "own a conflict (#99) OK\n";
+    }
+
+    // #99, the known reading: a real rename in rekordbox ("Warmup" to
+    // "Peak", id 5 kept) that also replaced every track cannot be told
+    // from a deleted playlist whose id went to a new one. It is read as
+    // Warmup deleted and Peak created: Engine's playlist loses its
+    // identity and its place among its siblings. Accepted, pinned.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Warmup", 0}}), rb("2", "Music/B.mp3", {{"Warmup", 1}}),
+                       rb("3", "Music/C.mp3"), rb("4", "Music/D.mp3")};
+        w.engine = {en("e1", "Music/A.mp3", {{"Warmup", 0}}), en("e2", "Music/B.mp3", {{"Warmup", 1}}),
+                    en("e3", "Music/C.mp3"), en("e4", "Music/D.mp3")};
+        w.rekordboxPlaylists = {{"Warmup", false, 5}};
+        w.enginePlaylists = {{"Warmup", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox[0].playlists.clear();
+        w.rekordbox[1].playlists.clear();
+        w.rekordbox[2].playlists = {{"Peak", 0}};
+        w.rekordbox[3].playlists = {{"Peak", 1}};
+        w.rekordboxPlaylists = {{"Peak", false, 5}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.empty());
+        assert(p.playlistsToDelete.size() == 1 && p.playlistsToDelete[0].path == "Warmup");
+        assert(p.playlistsToCreate.size() == 1 && p.playlistsToCreate[0].path == "Peak");
+        World after = w;
+        apply(after, p);
+        assert(!hasPlaylist(after, "Warmup") && engineOrder(after, "Peak") == (Deps{"music/c.mp3", "music/d.mp3"}));
+        assert(plan(after, recordAfterSave(base, w, p)).empty());
+        std::cout << "a rename that also replaced every track reads as delete and create, the accepted reading (#99) "
+                     "OK\n";
     }
 
     // #99: Engine's "T73 Delete Me" changed since the record, so its delete
