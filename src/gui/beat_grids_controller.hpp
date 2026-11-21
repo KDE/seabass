@@ -152,6 +152,11 @@ struct BeatGridLibrary
         std::string fallbackArtworkPath;
         double durationMs = 0.0;
         std::vector<domain::CuePoint> cues;
+        // The same for Engine's row of the track, for the popup opened from
+        // the comparison's Engine lane: its file and its cues (empty where
+        // Engine has no row).
+        std::string engineFilePath;
+        std::vector<domain::CuePoint> engineCues;
         // Into plan.items, -1 for a track with no Engine row of its own.
         int item = -1;
     };
@@ -407,6 +412,10 @@ public:
     // libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
     // fallbackArtworkPath}. Empty for a track the library does not have.
     Q_INVOKABLE QVariantMap zoomTrack(const QString &rekordboxId) const;
+    // The same track as Engine has it, for the popup opened from the
+    // comparison's Engine lane: Engine's waveform, grid and cues. Empty
+    // for a track with no Engine row.
+    Q_INVOKABLE QVariantMap engineZoomTrack(const QString &rekordboxId) const;
 
     // Reads the stick holding these two catalogs. A request for the same
     // paths while one runs is served by it.

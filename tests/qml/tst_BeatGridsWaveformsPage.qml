@@ -1260,6 +1260,50 @@ TestCase {
         compare(o.page.openTrackId, "");
     }
 
+    // Each of the open row's waveforms opens the zoomed popup with its own
+    // side's copy of the track: rekordbox's lane rekordbox's, Engine's lane
+    // Engine's (its library, its track id, its file). Neither click closes
+    // the row or ticks it.
+    function test_theComparisonLanesOpenTheirOwnSide() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const open = delegateInView(o.page, b04);
+        clickOn(findChild(open, "rowTitle"));
+        compare(open.expanded, true);
+        const rekordbox = findChild(open, "comparisonRekordbox");
+        const engine = findChild(open, "comparisonEngine");
+        tryVerify(() => rekordbox.opensZoom && engine.opensZoom, 30000, "both lanes can be opened");
+        // The open row, taller now, scrolled wholly into view.
+        verify(delegateInView(o.page, b04) === open);
+        compare(rekordbox.pointerShape, Qt.PointingHandCursor);
+        compare(engine.pointerShape, Qt.PointingHandCursor);
+        const popup = findChild(o.page, "waveformZoomPopup");
+
+        clickOn(rekordbox);
+        tryCompare(popup, "opened", true, 10000, "rekordbox's lane opens the popup");
+        compare(realPlayback.currentFormat, "rekordbox");
+        compare(realPlayback.currentSourceId, b04);
+        popup.close();
+        tryCompare(popup, "visible", false);
+
+        clickOn(engine);
+        tryCompare(popup, "opened", true, 10000, "Engine's lane opens the popup");
+        compare(realPlayback.currentFormat, "engine", "with Engine's copy of the track");
+        const engineTrack = o.c.engineZoomTrack(b04);
+        compare(realPlayback.currentLibraryPath, engineTrack.libraryPath);
+        compare(realPlayback.currentSourceId, engineTrack.sourceId);
+        verify(engineTrack.sourceId.length > 0, "Engine's own id");
+        compare(findChild(popup, "zoomTitle").text, row(o.c, b04).title);
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+
+        compare(open.expanded, true, "the row stays open");
+        compare(o.c.isTicked(b04), false, "and nothing is ticked");
+        compare(Object.keys(o.c.engineZoomTrack("no such track")).length, 0, "an unknown track opens nothing");
+    }
+
     // A delegate built for the row that is already open (scrolled back
     // into view, or the list built again after a read) starts expanded:
     // it still asks for Engine's side and shows the comparison.

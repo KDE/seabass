@@ -641,6 +641,17 @@ Page {
                                 // not missing.
                                 missingText: trackRow.analysis.ready !== true || trackRow.engineSide.ready !== true
                                     ? "Reading..." : "rekordbox has no analysis of this track"
+                                // A click opens rekordbox's waveform zoomed,
+                                // as the row's small one does.
+                                readonly property bool opensZoom: rekordboxLane.ready && rekordboxLane.hasWaveform
+                                    && trackRow.analysis.playable === true && rekordboxLane.trackDurationMs > 0
+                                    && root.playbackController !== null
+                                pointerShape: rekordboxLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onPositionClicked: {
+                                    if (rekordboxLane.opensZoom) {
+                                        zoomPopup.openFor(root.controller.zoomTrack(trackRow.analysisId));
+                                    }
+                                }
                             }
                             Label {
                                 Layout.fillWidth: true
@@ -664,6 +675,19 @@ Page {
                                     : trackRow.engineSide.readFailed === true ? "Engine's analysis could not be read"
                                     : trackRow.engineSide.hasEngineTrack !== true ? "Not in the Engine library"
                                     : "Engine has no waveform for this track"
+                                // A click opens Engine's own copy of the track
+                                // zoomed: its waveform, grid and cues.
+                                readonly property var zoomTrack: engineLane.ready && engineLane.hasWaveform
+                                    ? root.controller.engineZoomTrack(trackRow.engineAskedFor) : ({})
+                                readonly property bool opensZoom: engineLane.zoomTrack.filePath !== undefined
+                                    && engineLane.zoomTrack.filePath.length > 0 && engineLane.trackDurationMs > 0
+                                    && root.playbackController !== null
+                                pointerShape: engineLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onPositionClicked: {
+                                    if (engineLane.opensZoom) {
+                                        zoomPopup.openFor(engineLane.zoomTrack);
+                                    }
+                                }
                             }
                         }
                     ]
