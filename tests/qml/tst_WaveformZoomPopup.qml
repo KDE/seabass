@@ -934,6 +934,29 @@ TestCase {
 
     // Ctrl and the wheel while following: zoomed around the line, the
     // playhead stays under it, and it still follows.
+    // Shift and the wheel zoom too, as ctrl does, however the system
+    // sends a shifted wheel: up as it was turned, or turned sideways. The
+    // slider's tooltip says so.
+    function test_shiftWheelZooms() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const a = area(popup);
+        const x = popup.lineX + 300;
+        for (const delta of [{x: 0, y: 120}, {x: 120, y: 0}]) {
+            const span = popup.shownSpanMs;
+            mouseWheel(a, x, a.height / 2, delta.x, delta.y, Qt.NoButton, Qt.ShiftModifier);
+            verify(popup.shownSpanMs < span, "closer, wheel " + JSON.stringify(delta));
+            // Following the player, as ctrl does: around the line.
+            compare(popup.attached, true, "still following");
+            verify(Math.abs(strip(popup).x + 60000 * popup.pxPerMs - popup.lineX) <= 1, "60 s still under the line");
+        }
+        const span = popup.shownSpanMs;
+        mouseWheel(a, x, a.height / 2, 0, -120, Qt.NoButton, Qt.ShiftModifier);
+        verify(popup.shownSpanMs > span, "turned back, further out");
+        const slider = findChild(popup.contentItem, "zoomSlider");
+        verify(slider !== null);
+        verify(slider.ToolTip.text.indexOf("Shift+scroll") >= 0, "the tooltip says so: " + slider.ToolTip.text);
+    }
+
     function test_ctrlWheelWhileFollowingZoomsAroundTheLine() {
         const popup = openLoaded(makeFakePlayer({position: 60000}));
         const a = area(popup);

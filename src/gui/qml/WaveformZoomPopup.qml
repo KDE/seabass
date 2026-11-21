@@ -462,7 +462,7 @@ SeabassDialog {
                 // While dragged it says how much it shows.
                 ToolTip.visible: pressed || hovered
                 ToolTip.delay: pressed ? 0 : 600
-                ToolTip.text: !pressed ? "Zoom"
+                ToolTip.text: !pressed ? "Zoom, or Shift+scroll over the waveform"
                     : value <= 0.001 ? "Whole track"
                     : Math.round(root.spanAtLevel(value) / root.barMs) + " bars"
                 onMoved: root.followSlider(value)
@@ -652,7 +652,7 @@ SeabassDialog {
                 restoreMode: Binding.RestoreNone
             }
 
-            // The wheel: ctrl zooms, otherwise it scrolls; presses go on
+            // The wheel: shift or ctrl zooms, otherwise it scrolls; presses go on
             // to the Flickable underneath.
             MouseArea {
                 objectName: "zoomWheel"
@@ -683,8 +683,12 @@ SeabassDialog {
                     if (!pixels && !angles) {
                         return;   // nothing to scroll by
                     }
-                    if (wheel.modifiers & Qt.ControlModifier) {
-                        const steps = pixels ? wheel.pixelDelta.y / 50 : wheel.angleDelta.y / 120;
+                    // Shift or ctrl zooms. Shift often turns a wheel
+                    // sideways (macOS, some Linux setups): whichever way
+                    // it comes, up or left is closer.
+                    if (wheel.modifiers & (Qt.ShiftModifier | Qt.ControlModifier)) {
+                        const along = (d) => Math.abs(d.x) > Math.abs(d.y) ? d.x : d.y;
+                        const steps = pixels ? along(wheel.pixelDelta) / 50 : along(wheel.angleDelta) / 120;
                         root.zoomBy(Math.pow(root.zoomStep, steps), wheel.x);
                         return;
                     }
@@ -706,8 +710,7 @@ SeabassDialog {
                         root.scrollBy(-dx);
                         return;
                     }
-                    // A wheel, plain or with shift (which turns it
-                    // sideways): an eighth of the view a notch, on through
+                    // A wheel: an eighth of the view a notch, on through
                     // the track as the wheel turns down.
                     const notches = (Math.abs(wheel.angleDelta.x) > Math.abs(wheel.angleDelta.y)
                                      ? wheel.angleDelta.x : wheel.angleDelta.y) / 120;
