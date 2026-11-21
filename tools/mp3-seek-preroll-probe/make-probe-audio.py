@@ -10,6 +10,8 @@ click.flac/.m4a/.mp3   the same through ffmpeg (FLAC, AAC 192k, LAME 192k)
 toneclick.wav   the same clicks over a 440 Hz tone at 0.15: anything
                 that sounds before a click shows as tone in a recording
 toneclick.mp3   the same through LAME 192k
+toneclick-64k.mp3   the same through LAME 64k (a longer silent stretch
+                after a seek: the reservoir reaches further back)
 
 Needs the ffmpeg command line with libmp3lame.
 """
@@ -54,6 +56,7 @@ def main():
     ffmpeg(click, os.path.join(out, 'click.m4a'), '-c:a', 'aac', '-b:a', '192k')
     ffmpeg(click, os.path.join(out, 'click.mp3'), '-c:a', 'libmp3lame', '-b:a', '192k')
     ffmpeg(tone, os.path.join(out, 'toneclick.mp3'), '-c:a', 'libmp3lame', '-b:a', '192k')
+    ffmpeg(tone, os.path.join(out, 'toneclick-64k.mp3'), '-c:a', 'libmp3lame', '-b:a', '64k')
 
 
 if __name__ == '__main__':
