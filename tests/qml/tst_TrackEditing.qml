@@ -171,11 +171,25 @@ TestCase {
         keyClick(Qt.Key_Delete);
     }
 
+    // The comment's edit button shows while the pointer is over the editor
+    // (a HoverHandler). A move to where the pointer already is, or a pane
+    // laid out again under it, brings no hover: the pointer is taken off
+    // and put back until the button is there.
+    function hoverForEditButton(editor) {
+        const button = findChild(editor, "commentEditButton");
+        verify(button !== null);
+        tryVerify(() => {
+            mouseMove(testCase, 1, 1);
+            mouseMove(editor, 10, editor.height / 2);
+            wait(150);
+            return button.opacity === 1;
+        }, 10000, "hovering shows the edit button");
+        return button;
+    }
+
     function beginEditing(env) {
         const editor = findChild(env.panel, "trackCommentEditor");
-        const button = findChild(editor, "commentEditButton");
-        mouseMove(editor, 10, editor.height / 2);
-        tryCompare(button, "opacity", 1, 2000, "hovering shows the edit button");
+        const button = hoverForEditButton(editor);
         mouseClick(button);
         const field = findChild(editor, "commentField");
         tryCompare(field, "visible", true);
@@ -250,8 +264,7 @@ TestCase {
         const button = findChild(editor, "commentEditButton");
         mouseMove(env.panel, 2, 2);
         tryCompare(button, "opacity", 0, 2000, "the edit button is hidden until hovered");
-        mouseMove(editor, 10, editor.height / 2);
-        tryCompare(button, "opacity", 1, 2000);
+        hoverForEditButton(editor);
         shot(env.panel, "rating-comment-hovered");
         // Escape: nothing staged, the text as it was.
         let field = beginEditing(env);
@@ -512,9 +525,7 @@ TestCase {
             realPlayback.stop();
             tryVerify(() => panel.commentLimit.known === true, 30000);
             const editor = findChild(panel, "trackCommentEditor");
-            mouseMove(editor, 10, editor.height / 2);
-            const button = findChild(editor, "commentEditButton");
-            tryCompare(button, "opacity", 1, 2000);
+            const button = hoverForEditButton(editor);
             mouseClick(button);
             const field = findChild(editor, "commentField");
             tryCompare(field, "visible", true);
@@ -576,9 +587,7 @@ TestCase {
         // there.
         mouseClick(findChild(panel, "ratingStar" + (a.rating === 2 ? 3 : 2)));
         const editor = findChild(panel, "trackCommentEditor");
-        mouseMove(editor, 10, editor.height / 2);
-        tryCompare(findChild(editor, "commentEditButton"), "opacity", 1, 2000);
-        mouseClick(findChild(editor, "commentEditButton"));
+        mouseClick(hoverForEditButton(editor));
         field = findChild(editor, "commentField");
         tryCompare(field, "visible", true);
         verify(field.activeFocus);
