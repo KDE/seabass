@@ -524,9 +524,13 @@ Page {
                         trackRow.ask();
                         trackRow.askEngine();
                     }
+                    // Built and holding what was already read: from now on
+                    // an answer arriving blends in (rowWaveform).
+                    property bool built: false
                     Component.onCompleted: {
                         trackRow.ask();
                         trackRow.askEngine();
+                        trackRow.built = true;
                     }
                     Component.onDestruction: {
                         if (trackRow.askedFor.length > 0) {
@@ -679,8 +683,8 @@ Page {
                                 // zoomed: its waveform, grid and cues.
                                 readonly property var zoomTrack: engineLane.ready && engineLane.hasWaveform
                                     ? root.controller.engineZoomTrack(trackRow.engineAskedFor) : ({})
-                                readonly property bool opensZoom: engineLane.zoomTrack.filePath !== undefined
-                                    && engineLane.zoomTrack.filePath.length > 0 && engineLane.trackDurationMs > 0
+                                readonly property bool opensZoom: trackRow.engineSide.playable === true
+                                    && engineLane.zoomTrack.filePath !== undefined && engineLane.trackDurationMs > 0
                                     && root.playbackController !== null
                                 pointerShape: engineLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onPositionClicked: {
@@ -754,10 +758,12 @@ Page {
                                 // Blended in when its read comes back, so a
                                 // page of rows filling in does not flicker.
                                 // A row built with its answer already there
-                                // (scrolled back to) shows it at once: a
-                                // Behavior skips the binding's first value.
+                                // (scrolled back to) shows it at once: the
+                                // fade is armed only once the row is built
+                                // and has taken what was there.
                                 opacity: rowWaveform.shown ? 1 : 0
                                 Behavior on opacity {
+                                    enabled: trackRow.built
                                     NumberAnimation {
                                         duration: Theme.arrivalTransitionDuration
                                         easing.type: Easing.OutCubic

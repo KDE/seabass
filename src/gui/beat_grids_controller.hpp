@@ -510,6 +510,9 @@ private:
         // The read itself failed (the stick went away, the worker was
         // refused): nothing of Engine's is known.
         bool readFailed = false;
+        // Engine's copy of the audio file is on the stick: its waveform can
+        // be opened zoomed and played (engineZoomTrack()).
+        bool fileThere = false;
         QByteArray columns;
         std::vector<domain::Beat> beats;
         bool beatRateRecorded = true;
