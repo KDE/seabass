@@ -38,9 +38,12 @@ namespace seabass::gui
 //     record's old playlist is not put back under the id; but where the
 //     old playlist's delete was staged and neither it nor the new one's
 //     create landed, the record keeps the old playlist whole, so the next
-//     analysis offers both again; and where the create landed and the
-//     delete did not, the record holds the new playlist and the save's
-//     warning says the old one was not deleted (the delete stays staged);
+//     analysis offers both again (with the old playlist's own declines
+//     under the id, none of this save's about the new one); and where the
+//     create landed and the delete did not, the record holds the new
+//     playlist and the save's warning says the old one was not deleted and
+//     its delete is still staged (the page keeps listing it:
+//     RekordboxExportSyncController's leftover deletes);
 //   - every rekordbox write of the changes that landed is merged as
 //     Seabass's own (the origin ledger, domain::recordSeabassWrites);
 //   - the pdb sequence is export.pdb's as the save left it, re-read, since
