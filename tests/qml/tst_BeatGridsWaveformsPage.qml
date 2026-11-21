@@ -1056,6 +1056,24 @@ TestCase {
         }
     }
 
+    // Puts an opacityRecorder on every row waveform the list makes.
+    Component {
+        id: rowWatcher
+        Connections {
+            property var views: []
+            property var recorders: []
+            function onChildrenChanged() {
+                for (const child of target.children) {
+                    const view = testCase.findChild(child, "rowSourceWaveform");
+                    if (view !== null && views.indexOf(view) < 0) {
+                        views.push(view);
+                        recorders.push(testCase.createTemporaryObject(opacityRecorder, testCase, {target: view}));
+                    }
+                }
+            }
+        }
+    }
+
     // A row's waveform is blended in when its read comes back, not
     // switched on: on its way to fully drawn it passes through values in
     // between. The row's answer is taken away and handed back, which is
@@ -1079,6 +1097,56 @@ TestCase {
         tryCompare(view, "opacity", 1, 5000, "the waveform ends fully drawn");
         verify(recorder.seen.some(value => value > 0 && value < 1),
                "it got there by blending in: " + JSON.stringify(recorder.seen));
+    }
+
+    // Engine's waveform opens only where Engine's audio file is on the
+    // stick, as rekordbox's does: no hand, no popup, for a file gone.
+    function test_engineLaneWithoutItsFileOpensNothing() {
+        const stick = t73();
+        const o = openOn(stick, {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const file = o.c.engineZoomTrack(b04).filePath;
+        verify(file.length > 0 && stickFixture.fileExists(file), "B04's file: " + file);
+        verify(stickFixture.moveFile(file, file + ".gone"), "B04's file is taken off");
+
+        const open = delegateInView(o.page, b04);
+        clickOn(findChild(open, "rowTitle"));
+        compare(open.expanded, true);
+        const engine = findChild(open, "comparisonEngine");
+        tryVerify(() => engine.byteColumns > 0, 30000, "Engine's waveform is drawn");
+        compare(open.engineSide.playable, false);
+        compare(engine.opensZoom, false, "but there is nothing to play");
+        compare(engine.pointerShape, Qt.ArrowCursor, "and no hand");
+    }
+
+    // A row built again for a track whose waveform was read before (the
+    // list built anew, a row scrolled back to) shows it at once: the fade
+    // is for an answer arriving, not one already there.
+    function test_aRowBuiltAgainShowsItsWaveformAtOnce() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const first = rowWaveformOf(delegateInView(o.page, b01));
+        tryVerify(() => first.visible, 30000, "B01's waveform is drawn");
+        tryCompare(first, "opacity", 1, 5000);
+
+        // Every row's waveform is watched from the moment the list makes
+        // the row, before it has taken anything.
+        const list = findChild(o.page, "trackList");
+        const watcher = createTemporaryObject(rowWatcher, testCase, {target: list.contentItem});
+        showPlaylist(o.page, "");
+        waitSettled(o.c);
+        const trackRow = delegateInView(o.page, b01);
+        const again = rowWaveformOf(trackRow);
+        verify(again !== first, "every row is built anew");
+        compare(again.visible, true, "B01's waveform, read before, is there");
+        compare(again.opacity, 1);
+        const at = watcher.views.indexOf(again);
+        verify(at >= 0, "B01's new row was watched from its making");
+        const seen = watcher.recorders[at].seen;
+        verify(!seen.some(value => value > 0 && value < 1),
+               "shown at once, not blended in: " + JSON.stringify(seen));
     }
 
     // A row's read is the track's it was asked for and lands on that row
@@ -1293,6 +1361,8 @@ TestCase {
         const engineTrack = o.c.engineZoomTrack(b04);
         compare(realPlayback.currentLibraryPath, engineTrack.libraryPath);
         compare(realPlayback.currentSourceId, engineTrack.sourceId);
+        verify(realPlayback.currentLibraryPath.endsWith("/Engine Library"),
+               "from the Engine library: " + realPlayback.currentLibraryPath);
         verify(engineTrack.sourceId.length > 0, "Engine's own id");
         compare(findChild(popup, "zoomTitle").text, row(o.c, b04).title);
         popup.close();

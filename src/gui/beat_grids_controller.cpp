@@ -923,12 +923,15 @@ void BeatGridsController::pumpEngineReads()
     // Only the overview Engine draws across the whole track (no detail):
     // all a 2.x or 3.x library keeps, and what the player shows.
     Request::Work work = [enginePath = m_library->enginePath.toStdString(), engineTrackId,
-                          filePath = track->filePath, correctMp3](application::CancellationToken cancel) {
+                          filePath = track->filePath, engineFilePath = track->engineFilePath,
+                          correctMp3](application::CancellationToken cancel) {
         auto out = std::make_shared<EngineAnalysis>();
         out->hasEngineTrack = !engineTrackId.empty() && !enginePath.empty();
         if (!out->hasEngineTrack || cancel.cancelled()) {
             return out;
         }
+        std::error_code ec;
+        out->fileThere = !engineFilePath.empty() && std::filesystem::is_regular_file(pathFromUtf8(engineFilePath), ec);
         if (correctMp3 && domain::hasMp3Extension(filePath)) {
             const infrastructure::audio::Mp3LeadInLook look = infrastructure::audio::lookForMp3LeadIn(filePath);
             out->shiftUnknown = !look.looked;
@@ -989,6 +992,7 @@ QVariantMap BeatGridsController::engineAnalysis(const QString &rekordboxId) cons
     out.insert(QStringLiteral("rekordboxShiftMs"), kept->rekordboxShiftMs);
     out.insert(QStringLiteral("shiftUnknown"), kept->shiftUnknown);
     out.insert(QStringLiteral("readFailed"), kept->readFailed);
+    out.insert(QStringLiteral("playable"), kept->fileThere);
     return out;
 }
 
