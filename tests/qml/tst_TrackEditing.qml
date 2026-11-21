@@ -668,6 +668,25 @@ TestCase {
         tryVerify(() => env.panel.commentLimit.failed === true, 30000);
     }
 
+    // With comment editing off (as in the app), a track with no comment
+    // has no comment block, and the rating's own notes still show: the
+    // failed read in a sentence and Read Again, outside that block.
+    function test_11b_theNotesShowWithoutACommentBlock() {
+        const env = setUp();
+        env.panel.commentEditingEnabled = false;
+        const a = tracks(env).find(t => t.filePath && t.comment.length === 0);
+        verify(a !== undefined, "a track with no comment");
+        verify(stickFixture.writeText(env.stick + "/Engine Library/Database2/m.db", "not a database"),
+               "Engine's database replaced by something unreadable");
+        env.controller.invalidate();
+        env.panel.showFor(a);
+        tryVerify(() => env.panel.commentLimit.failed === true, 30000, "the read fails");
+        verify(!findChild(env.panel, "trackCommentEditor").visible, "no comment block for a track without one");
+        tryVerify(() => findChild(env.panel, "trackEditRefusal").visible, 2000, "the failed read is said");
+        verify(findChild(env.panel, "readStickAgainButton").visible, "and Read Again offered");
+        verify(findChild(env.panel, "ratingStar2").visible, "beside the stars");
+    }
+
     // One read of the stick per save, though the page reads its list again
     // after it; none for switching the catalog shown.
     function test_12_oneReadPerSaveAndNoneForAFormatToggle() {

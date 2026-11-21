@@ -625,6 +625,16 @@ Pane {
                 commitFn: (text, target) => panel.trackEditController.setComment(target.rekordboxPath,
                     target.enginePath, target.filePath, target.title, target.original, text)
             }
+        }
+        // What the edits say about this track, for every track that can be
+        // edited, outside the comment block: that block is shown only for
+        // a comment, while these answer for the rating too.
+        ColumnLayout {
+            objectName: "trackEditNotes"
+            visible: panel.canEditTrack
+                || (panel.trackEditController !== null && panel.trackEditController.errorMessage.length > 0)
+            Layout.fillWidth: true
+            spacing: 2
             // Why this track's rating and comment cannot be changed here.
             Label {
                 objectName: "trackEditRefusal"
