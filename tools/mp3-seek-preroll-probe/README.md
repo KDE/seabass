@@ -15,18 +15,42 @@ whether a pre-roll gets the transient decoded (it does), and how close to
 the cue the unmute can be placed on the player's audio path (not close:
 see below). No fix is in the player; this is what was found instead.
 
+## What each tool answers
+
+| tool | question | needs |
+|---|---|---|
+| `seek_probe` | after a seek, where does the first sound come out of the decoder? | no sound card |
+| `sink_probe` | where does an unmute (modes `tap`, `clock`) land in what the sound server plays? | a null sink |
+| `measure-unmute.sh` | makes the null sink, records it, runs `sink_probe` and `analyse_unmute.py` | PipeWire with its Pulse layer |
+| `analyse_unmute.py` | reads the recordings | Python 3 |
+| `make-probe-audio.py` | writes the probe audio | ffmpeg with libmp3lame |
+
 ## Build and run
 
-    g++ -std=c++17 -fPIC -O1 seek_probe.cpp -o seek_probe $(pkg-config --cflags --libs Qt6Multimedia Qt6Core)
-    g++ -std=c++17 -fPIC -O1 sink_probe.cpp -o sink_probe $(pkg-config --cflags --libs Qt6Multimedia Qt6Core)
-    ./make-probe-audio.py .
-    QT_QPA_PLATFORM=offscreen ./seek_probe tests/fixtures/mp3-click/click-D-lame-44100.mp3 1450
-    ./measure-unmute.sh . toneclick.mp3 1500 40 400 plain tap clock
-    LEAD=22 ./measure-unmute.sh . toneclick.mp3 1500 40 400 clock
+The probes are not part of the CMake build (they need a sound server or
+a null sink, which neither the suite nor CI has). Build them by hand into
+a scratch directory, outside the source tree:
 
-`seek_probe` needs no sound card (QAudioBufferOutput only). `measure-unmute.sh`
-needs PipeWire with its Pulse layer (`pactl`, `pw-record`): it makes a null
-sink for the run, records its monitor and removes it again.
+    src=$PWD/tools/mp3-seek-preroll-probe
+    mkdir -p ~/tmp/mp3-probe && cd ~/tmp/mp3-probe
+    for t in seek_probe sink_probe; do
+        g++ -std=c++17 -fPIC -O1 "$src/$t.cpp" -o "$t" $(pkg-config --cflags --libs Qt6Multimedia Qt6Core)
+    done
+    "$src/make-probe-audio.py" .
+
+Then:
+
+    QT_QPA_PLATFORM=offscreen ./seek_probe toneclick.mp3 1450
+    LC_ALL=C "$src/measure-unmute.sh" . toneclick.mp3 1500 40 400 plain tap clock
+    LC_ALL=C LEAD=22 "$src/measure-unmute.sh" . toneclick.mp3 1500 40 400 clock
+
+Nothing here plays on a real output. `measure-unmute.sh` loads a PipeWire
+null sink (`seabass_probe`) for the run, puts the default output back if
+the new sink took it, records the sink's monitor with `pw-record` and
+unloads the sink when it exits. `sink_probe` takes the device to play on
+as an argument and refuses to start when no output device matches it.
+`LC_ALL=C` keeps the probes' decimal points (QCoreApplication sets the
+locale's).
 
 ## 1. What the decoder delivers after a seek (`seek_probe`)
 
