@@ -154,7 +154,10 @@ Item {
     }
     ToolTip {
         objectName: "commentNoRoomTip"
-        visible: hover.hovered && !root.editing && root.limitKnown && !root.canEdit && text.length > 0
+        // Only where the comment is offered for editing at all: shown
+        // only (editable false), its room is no concern of the reader's.
+        visible: hover.hovered && !root.editing && root.editable && root.limitKnown && !root.canEdit
+            && text.length > 0
         delay: 400
         text: !root.limitKnown ? "" : root.limit.editable !== true ? root.limit.refusal : root.limit.reason
     }
