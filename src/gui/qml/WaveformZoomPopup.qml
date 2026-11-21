@@ -549,13 +549,28 @@ SeabassDialog {
                         columnStartMs: root.hasDetail ? root.detail.startMs || 0 : 0
                         waveformData: root.hasDetail || !root.controller ? [] : root.controller.waveform
                         beatsSelected: true
-                        beatData: root.ticksBetween(tileView.viewStartMs, tileView.viewStartMs + tileView.viewSpanMs)
+                        // Read once the tile is made, as showRuler is.
+                        beatData: tileView.made
+                            ? root.ticksBetween(tileView.viewStartMs, tileView.viewStartMs + tileView.viewSpanMs) : []
                         gridStyle: "ruler"
                         // Evaluated once more in a tile the Repeater is
                         // dropping as the player reports the length (a
                         // real one, opened from a page), when `root` is
-                        // already gone from its context.
-                        showRuler: (root ? root.ticks : []).length > 0
+                        // already gone from its context. And evaluated
+                        // first, as the popup opens, before `root` can be
+                        // reached from a new tile: a binding that found no
+                        // `root` never looks again, and the tile kept no
+                        // lane (Sebastian's screenshot, 2026-11-21). So it
+                        // is decided once the tile is made, and only after
+                        // the change that made it has been handed out in
+                        // full: a binding that starts listening while a
+                        // change is still being sent misses it.
+                        property bool made: false
+                        function markMade() {
+                            tileView.made = true;
+                        }
+                        Component.onCompleted: Qt.callLater(tileView.markMade)
+                        showRuler: tileView.made && root ? root.ticks.length > 0 : false
                         colorScheme: "vivid"
                         // Played or not is shown by the dimming below, which
                         // moves with the playhead without a repaint.
