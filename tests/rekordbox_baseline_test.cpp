@@ -559,6 +559,36 @@ void testReusedPlaylistKey()
                                                 {"playlist:12", "member:12:" + Three, reused}, {}, stickRelative,
                                                 lowerKey);
     assert(both.findPlaylist(12)->path == "Fresh" && (both.findPlaylist(12)->members == Members{Three}));
+
+    // Declines recorded for "Warmup" under 12 are another item's: an item
+    // kept from the previous record does not carry them into the next
+    // one, while the reused key says so. Other declines carry as ever.
+    {
+        RekordboxBaseline previous = in.previous;
+        previous.declined = {{"playlist:12", "h-rename"}, {"member:12:" + Three, "h-add"}, {"order:12", "h-order"},
+                             {"rating:" + Two, "h-old"}};
+        const std::set<std::string> offered = {"playlist:12", "member:12:" + Three, "order:12", "rating:" + Two};
+        const RekordboxBaseline carried =
+            nextBaseline(&previous, now, playlists, 200, offered, {}, {}, stickRelative, lowerKey);
+        assert(carried.declined.size() == 4 && "without the reused key: carried, as for any kept item");
+        std::set<std::string> withReused = offered;
+        withReused.insert(reused);
+        const RekordboxBaseline next =
+            nextBaseline(&previous, now, playlists, 200, withReused, {}, {}, stickRelative, lowerKey);
+        if (next.declined.size() != 1) {
+            for (const auto &[key, state] : next.declined) {
+                std::cerr << "  carried: " << key << "\n";
+            }
+        }
+        assert((next.declined == std::map<std::string, std::string>{{"rating:" + Two, "h-old"}}));
+        // A record that already holds "Fresh" under 12 (a retry): its
+        // declines are Fresh's own and carry.
+        RekordboxBaseline retried = fresh();
+        retried.declined = {{"member:12:" + Three, "h-fresh"}};
+        const RekordboxBaseline again =
+            nextBaseline(&retried, now, playlists, 200, withReused, {}, {}, stickRelative, lowerKey);
+        assert(again.declined.count("member:12:" + Three) == 1);
+    }
     std::cout << "a reused id's key: outside the grammar, the old playlist never kept, never declined (#99) OK\n";
 }
 

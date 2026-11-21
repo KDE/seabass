@@ -597,7 +597,10 @@ private:
     // pairs them as before, a rename or whatever conflict that raises.
     //
     // Certain: two playlists that each hold tracks and share none, or a
-    // playlist and a folder (a rename never turns one into the other).
+    // playlist and a folder (a rename never turns one into the other). A
+    // track the record declines as a member of the old id counts as one
+    // of its tracks: the record lacks it only because the DJ declined it,
+    // and rekordbox's old playlist may well have held it.
     // Two folders still pair by id: they hold no tracks to tell them by.
     //
     // Safe: the delete is a plain row, nothing the deletes below would
@@ -626,7 +629,7 @@ private:
                 return false;
             }
             for (const auto &key : r.members) {
-                if (before.count(key)) {
+                if (before.count(key) || declinedMemberOf(b.id, key)) {
                     return false;
                 }
             }
@@ -673,6 +676,28 @@ private:
             }
         }
         return true;
+    }
+
+    // Whether the record declines `pathKey` as a member of playlist `id`.
+    bool declinedMemberOf(std::uint32_t id, const std::string &pathKey) const
+    {
+        return base && base->declined.count(memberItemKey(id, pathKey)) > 0;
+    }
+
+    // A decline the record holds for the item of a reused id (playlist,
+    // member or order): it was made about the old playlist, and its key
+    // and state do not name the playlist, so it must not touch the new
+    // item under the id.
+    bool declinedForTheOldItem(const std::string &key) const
+    {
+        if (idsReused.empty()) {
+            return false;
+        }
+        const auto parsed = parseItemKey(key);
+        return parsed
+            && (parsed->kind == ItemKey::Kind::Playlist || parsed->kind == ItemKey::Kind::Member
+                || parsed->kind == ItemKey::Kind::Order)
+            && idsReused.count(parsed->playlistId) > 0;
     }
 
     static std::string playlistState(const BaselinePlaylist *r)
@@ -2354,6 +2379,9 @@ private:
             return;
         }
         const auto declined = [&](const std::string &key, const std::string &state) {
+            if (declinedForTheOldItem(key)) {
+                return false;
+            }
             const auto it = base->declined.find(key);
             return it != base->declined.end() && it->second == state;
         };

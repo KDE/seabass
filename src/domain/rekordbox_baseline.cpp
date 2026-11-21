@@ -448,6 +448,23 @@ void keepTrack(RekordboxBaseline &next, const RekordboxBaseline *previous, const
     }
 }
 
+// The ids whose playlist in `previous` is another item than next's (#99):
+// a reused-id key among `keys` while previous still has the playlist at
+// the recorded path.
+std::set<std::uint32_t> otherItemIds(const RekordboxBaseline *previous, const std::set<std::string> &keys)
+{
+    std::set<std::uint32_t> ids;
+    for (const auto &text : keys) {
+        if (const auto reused = parseReusedPlaylistItemKey(text)) {
+            const BaselinePlaylist *recorded = previous ? previous->findPlaylist(reused->id) : nullptr;
+            if (recorded && recorded->path == reused->recordedPath) {
+                ids.insert(reused->id);
+            }
+        }
+    }
+    return ids;
+}
+
 // previous's playlist `id`, or nullptr where it has none or a reused-id
 // key took it out of its view (`otherItem`, keepPreviousItems).
 const BaselinePlaylist *recordedPlaylist(const RekordboxBaseline *previous, std::uint32_t id,
@@ -592,16 +609,10 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys)
 {
     std::vector<std::pair<ItemKey, std::string>> parsed;
-    // Ids whose playlist in `previous` is another item than next's (#99).
-    std::set<std::uint32_t> otherItem;
+    const std::set<std::uint32_t> otherItem = otherItemIds(previous, keys);
     for (const auto &text : keys) {
         if (auto key = parseItemKey(text)) {
             parsed.emplace_back(std::move(*key), text);
-        } else if (const auto reused = parseReusedPlaylistItemKey(text)) {
-            const BaselinePlaylist *recorded = previous ? previous->findPlaylist(reused->id) : nullptr;
-            if (recorded && recorded->path == reused->recordedPath) {
-                otherItem.insert(reused->id);
-            }
         }
     }
     std::stable_sort(parsed.begin(), parsed.end(), [](const auto &a, const auto &b) {
@@ -678,10 +689,21 @@ RekordboxBaseline nextBaseline(const RekordboxBaseline *previous, const std::vec
         }
     }
     if (previous) {
+        // Not the declines of an old playlist whose id rekordbox gave to
+        // another item: they were made about that playlist.
+        const std::set<std::uint32_t> otherItem = otherItemIds(previous, kept);
         for (const auto &[key, hash] : previous->declined) {
-            if (kept.contains(key)) {
-                next.declined.emplace(key, hash);  // a new decline of the same key wins
+            if (!kept.contains(key)) {
+                continue;
             }
+            if (const auto parsed = parseItemKey(key);
+                parsed
+                && (parsed->kind == ItemKey::Kind::Playlist || parsed->kind == ItemKey::Kind::Member
+                    || parsed->kind == ItemKey::Kind::Order)
+                && otherItem.contains(parsed->playlistId)) {
+                continue;
+            }
+            next.declined.emplace(key, hash);  // a new decline of the same key wins
         }
     }
     return next;
