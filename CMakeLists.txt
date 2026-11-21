@@ -770,6 +770,9 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/work_counters.cpp
     src/infrastructure/engine/engine_analysis_state.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
+    # The read copies it makes are named after their process
+    # (database_read_copy.hpp).
+    src/infrastructure/system/process_liveness.cpp
     src/infrastructure/onelibrary/onelibrary_key.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp

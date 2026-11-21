@@ -133,7 +133,16 @@ void TrackEditController::publish()
 
 void TrackEditController::buildIndex()
 {
-    if (m_indexWatcher.isRunning() || m_rekordboxPath.isEmpty() && m_enginePath.isEmpty()) {
+    if (m_indexWatcher.isRunning()) {
+        return;
+    }
+    if (m_rekordboxPath.isEmpty() && m_enginePath.isEmpty()) {
+        // Nothing to read, ever: a library with neither catalog's path.
+        // An answer, not "still reading": the pane says nothing can be
+        // changed here, and why.
+        m_index = {};
+        m_indexState = IndexState::Failed;
+        m_indexError = QStringLiteral("This library has no rekordbox or Engine catalog on a stick, so nothing can be changed here.");
         return;
     }
     m_indexState = IndexState::Building;
