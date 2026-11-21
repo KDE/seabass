@@ -21,6 +21,11 @@
 //           reservoir is intact)
 //   warmtap the same, but paused when the QAudioBufferOutput delivers
 //           the last buffer before the one that holds the cue
+//   live    a jump while playing, as the app usually makes one: play
+//           from $FROM ms (default 2700), and 300 ms later seek to the
+//           cue without pausing. Meant for tonegap files, silent from
+//           2.6 s on: what plays before the jump is silence, so any tone
+//           before the click came from before the cue
 //
 // SOURCE=buffer in the environment reads FILE into memory and hands it to
 // the player with setSourceDevice() (a QBuffer) instead of a URL.
@@ -50,7 +55,7 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     if (argc < 6) {
-        std::fprintf(stderr, "usage: sink_probe FILE CUE_MS plain|tap|clock|warm|warmtap JUMPS DEVICE [GAP_MS]\n");
+        std::fprintf(stderr, "usage: sink_probe FILE CUE_MS plain|tap|clock|warm|warmtap|live JUMPS DEVICE [GAP_MS]\n");
         return 2;
     }
     const QAudioDevice device = probe::outputDevice(argv[5]);
@@ -70,7 +75,7 @@ int main(int argc, char **argv)
     const int gapMs = argc > 6 ? std::atoi(argv[6]) : 500;
     const qint64 lead = qEnvironmentVariableIntValue("LEAD");
     const bool known = mode == QLatin1String("plain") || mode == QLatin1String("tap") || mode == QLatin1String("clock")
-        || mode == QLatin1String("warm") || mode == QLatin1String("warmtap");
+        || mode == QLatin1String("warm") || mode == QLatin1String("warmtap") || mode == QLatin1String("live");
     if (!known) {
         std::fprintf(stderr, "unknown mode %s\n", argv[3]);
         return 2;
@@ -124,6 +129,18 @@ int main(int argc, char **argv)
     std::function<void()> doJump = [&] {
         if (jump++ >= jumps) {
             app.quit();
+            return;
+        }
+        if (mode == QLatin1String("live")) {
+            player.setPosition(qEnvironmentVariableIsSet("FROM") ? qEnvironmentVariableIntValue("FROM") : 2700);
+            player.play();
+            QTimer::singleShot(300, &app, [&] {
+                player.setPosition(cue);
+                QTimer::singleShot(600, &app, [&] {
+                    player.pause();
+                    QTimer::singleShot(gapMs, &app, doJump);
+                });
+            });
             return;
         }
         if (mode == QLatin1String("plain")) {
