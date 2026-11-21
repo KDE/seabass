@@ -198,7 +198,7 @@ inside the buffer the callback fills, not on a period.
 (The DELAY 5, 10 and 15 runs were made before a logging fix: their audio
 and analysis are valid, their count of late splices is not.)
 
-The click is heard on the cue in every jump and nothing before it. But
+The click is heard on the cue in every measured jump and nothing before it. But
 the hand-over is a dropout every time: 8 ms at best, mostly 30. With
 the own start placed to the sample, the offset no longer moves in whole
 periods; it spreads over about 21 ms whatever the delay, because the
