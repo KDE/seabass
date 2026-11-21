@@ -523,6 +523,14 @@ TestCase {
         compare(summary.error, "", JSON.stringify(summary));
         compare(summary.warning, "", JSON.stringify(summary));
         compare(summary.written, summary.total);
+        // The save is confirmed by the toast, in the summary's words, not
+        // by a dialog to close (#97). Looked at here, while it is up: it
+        // hides by itself, and the analysis below can outlast it.
+        const toast = findChild(page, "savedToast");
+        verify(toast !== null, "the page has its confirmation toast");
+        const said = summary.written + " " + summary.unit + " " + summary.verb;
+        tryVerify(() => toast.showing && findChild(toast, "confirmationToastLabel").text === said,
+                  5000, "the toast says the save");
 
         // Analysed again: the record is there, and what is left is what
         // nobody decided, now Engine's own, and the conflicts that remain.
@@ -546,13 +554,6 @@ TestCase {
         const undo = findChild(page.header, "undoLastSaveButton");
         verify(undo.visible, "Undo is offered");
         verify(undo.enabled);
-        // The save is confirmed by the toast, in the summary's words, not
-        // by a dialog to close (#97).
-        const toast = findChild(page, "savedToast");
-        verify(toast !== null, "the page has its confirmation toast");
-        tryCompare(findChild(toast, "confirmationToastLabel"), "text",
-                   summary.written + " " + summary.unit + " " + summary.verb, 5000);
-        verify(toast.showing);
         const dialog = findChild(page, "summaryDialog");
         verify(dialog !== null, "the lookup reaches the host's summary dialog");
         verify(!dialog.visible, "no summary dialog over a save that landed whole");
