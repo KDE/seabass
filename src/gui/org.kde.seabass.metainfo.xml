@@ -13,8 +13,10 @@ SPDX-License-Identifier: CC0-1.0
   <name xml:lang="ca">Seabass</name>
   <name xml:lang="ca-valencia">Seabass</name>
   <name xml:lang="es">Seabass</name>
+  <name xml:lang="he">Seabass</name>
   <name xml:lang="nl">Seabass</name>
   <name xml:lang="pt-BR">Seabass</name>
+  <name xml:lang="sk">Seabass</name>
   <name xml:lang="sr">Seabass</name>
   <name xml:lang="sr-Latn">Seabass</name>
   <name xml:lang="sr-ijekavian">Seabass</name>
@@ -25,8 +27,10 @@ SPDX-License-Identifier: CC0-1.0
   <summary xml:lang="ar">أبقِ مكتبتي rekordbox وEngine DJ على ذاكرة USB متزامنتين</summary>
   <summary xml:lang="ca">Manté les biblioteques de DJ de «rekordbox» i «Engine» en una memòria USB</summary>
   <summary xml:lang="ca-valencia">Manté les biblioteques de DJ de «rekordbox» i «Engine» en una memòria USB</summary>
+  <summary xml:lang="he">שמירה על ספריות rekordbox ו־Engine DJ על כונן USB בלחיצה פשוטה</summary>
   <summary xml:lang="nl">Bewaar de rekordbox- en Engine DJ-bibliotheken op een USB-stick in stap</summary>
   <summary xml:lang="pt-BR">Mantenha as bibliotecas do rekordbox e do Engine DJ em um pendrive sincronizadas</summary>
+  <summary xml:lang="sk">Udržiava knižnice rekordbox a Engine DJ na USB kľúči v súlade</summary>
   <summary xml:lang="sr">Одржавајте усклађеним библиотеке rekordbox‑а и Engine DJ‑а на УСБ стику</summary>
   <summary xml:lang="sr-Latn">Održavajte usklađenim biblioteke rekordbox‑a i Engine DJ‑a na USB stiku</summary>
   <summary xml:lang="sr-ijekavian">Одржавајте усклађеним библиотеке rekordbox‑а и Engine DJ‑а на УСБ стику</summary>
@@ -48,6 +52,7 @@ SPDX-License-Identifier: CC0-1.0
     <p xml:lang="ca-valencia">El Seabass és un quadro d'eines per a memòries USB de DJ. Una memòria preparada tant per als equips Pioneer com per a Denon porta dues o tres còpies independents de la mateixa biblioteca, i no es comuniquen entre si: poseu un «cue» actiu en una i les altres mai se n'assabenten. El Seabass tracta estes còpies com una biblioteca escrita diverses vegades, i les manté íntegres.</p>
     <p xml:lang="nl">Seabass is een toolbox voor USB-sticks die door dj's worden gebruikt. Een USB-stick die is voorbereid voor zowel Pioneer- als Denon-apparatuur bevat twee of drie onafhankelijke kopieën van dezelfde muziekbibliotheek; deze kopieën staan ​​los van elkaar: als u een 'hot cue' instelt in de ene versie, wordt dit niet doorgegeven aan de andere versies. Seabass beschouwt deze kopieën als één bibliotheek die simpelweg meerdere keren is weggeschreven, en zorgt ervoor dat ze consistent blijven.</p>
     <p xml:lang="pt-BR">O Seabass é um conjunto de ferramentas para pendrives de DJ. Um pendrive preparado tanto para equipamentos da Pioneer quanto da Denon contém duas ou três cópias independentes da mesma biblioteca, e elas não se comunicam entre si: se você definir um hot cue em uma, as outras nunca ficarão sabendo. O Seabass trata essas cópias como uma única biblioteca gravada várias vezes e garante que todas permaneçam sincronizadas.</p>
+    <p xml:lang="sk">Seabass je súprava nástrojov pre DJ USB kľúče. Kľúč pripravený pre zariadenia Pioneer aj Denon nesie dve alebo tri nezávislé kópie tej istej knižnice, ktoré spolu nekomunikujú: nastavíte hot cue v jednej a ostatné sa o tom nikdy nedozvedia. Seabass považuje tieto kópie za jednu knižnicu zapísanú niekoľkokrát a udržiava ich v zhode.</p>
     <p xml:lang="sr">Seabass је скуп алатки за ди‑џејске УСБ стикове. Стик припремљен и за Pioneer и за Denon опрему носи две или три независне копије исте библиотеке, које међусобно не комуницирају: поставите брзу ознаку у једној, а остале за то никад неће сазнати. Seabass те копије сматра једном библиотеком уписаном више пута и држи их усклађеним.</p>
     <p xml:lang="sr-Latn">Seabass je skup alatki za di‑džejske USB stikove. Stik pripremljen i za Pioneer i za Denon opremu nosi dve ili tri nezavisne kopije iste biblioteke, koje međusobno ne komuniciraju: postavite brzu oznaku u jednoj, a ostale za to nikad neće saznati. Seabass te kopije smatra jednom bibliotekom upisanom više puta i drži ih usklađenim.</p>
     <p xml:lang="sr-ijekavian">Seabass је скуп алатки за ди‑џејске УСБ стикове. Стик припремљен и за Pioneer и за Denon опрему носи двије или три независне копије исте библиотеке, које међусобно не комуницирају: поставите брзу ознаку у једној, а остале за то никад неће сазнати. Seabass те копије сматра једном библиотеком уписаном више пута и држи их усклађеним.</p>
@@ -59,8 +64,10 @@ SPDX-License-Identifier: CC0-1.0
     <p xml:lang="ca">Característiques:</p>
     <p xml:lang="ca-valencia">Característiques:</p>
     <p xml:lang="es">Funciones:</p>
+    <p xml:lang="he">יכולות:</p>
     <p xml:lang="nl">Mogelijkheden:</p>
     <p xml:lang="pt-BR">Funcionalidades:</p>
+    <p xml:lang="sk">Funkcie:</p>
     <p xml:lang="sr">Могућности:</p>
     <p xml:lang="sr-Latn">Mogućnosti:</p>
     <p xml:lang="sr-ijekavian">Могућности:</p>
@@ -74,6 +81,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Navegueu per la biblioteca en una memòria, amb formes d'ona, «cues» actius i reproducció</li>
       <li xml:lang="nl">Blader door de bibliotheek op een USB-stick, inclusief golfvormen, hot cues en afspeelfuncties</li>
       <li xml:lang="pt-BR">Navegue pela biblioteca em um dispositivo USB, com formas de onda, hot cues e reprodução</li>
+      <li xml:lang="sk">Prehliadanie knižnice na kľúči s priebehmi vĺn, hot cue a prehrávaním</li>
       <li xml:lang="sr">Прегледајте библиотеку на стику, са таласним облицима, брзим ознакама и пуштањем</li>
       <li xml:lang="sr-Latn">Pregledajte biblioteku na stiku, sa talasnim oblicima, brzim oznakama i puštanjem</li>
       <li xml:lang="sr-ijekavian">Прегледајте библиотеку на стику, са таласним облицима, брзим ознакама и пуштањем</li>
@@ -86,6 +94,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Sincronitzeu els punts de «cue» entre els DJ «rekordbox» i l'«Engine»</li>
       <li xml:lang="nl">Synchroniseer cue-punten tussen rekordbox en Engine DJ</li>
       <li xml:lang="pt-BR">Sincronize cue points entre o rekordbox e o Engine DJ</li>
+      <li xml:lang="sk">Synchronizácia cue bodov medzi rekordbox a Engine DJ</li>
       <li xml:lang="sr">Усклађујте тачке ознака између rekordbox‑а и Engine DJ‑а</li>
       <li xml:lang="sr-Latn">Usklađujte tačke oznaka između rekordbox‑a i Engine DJ‑a</li>
       <li xml:lang="sr-ijekavian">Усклађујте тачке ознака између rekordbox‑а и Engine DJ‑а</li>
@@ -98,6 +107,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Còpies de seguretat completes d'una memòria, i restaurar-les a qualsevol unitat</li>
       <li xml:lang="nl">Volledige reservekopieën van een stick maken en deze terugzetten op een willekeurig schijfstation</li>
       <li xml:lang="pt-BR">Backups completos de um dispositivo de armazenamento e sua restauração em qualquer unidade</li>
+      <li xml:lang="sk">Úplné zálohy kľúča a ich obnovenie na ľubovoľnú jednotku</li>
       <li xml:lang="sr">Потпуне резервне копије стика и њихово враћање на било коју јединицу</li>
       <li xml:lang="sr-Latn">Potpune rezervne kopije stika i njihovo vraćanje na bilo koju jedinicu</li>
       <li xml:lang="sr-ijekavian">Потпуне резервне копије стика и њихово враћање на било коју јединицу</li>
@@ -110,6 +120,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Còpies de seguretat dels «cues», les valoracions i altres metadades, i restaurar-les més tard</li>
       <li xml:lang="nl">Maak een reservekopie van cues, beoordelingen en andere metadata en zet deze later weer terug</li>
       <li xml:lang="pt-BR">Faça backup de marcadores, classificações e outros metadados, e restaure-os posteriormente</li>
+      <li xml:lang="sk">Záloha cue bodov, hodnotení a ďalších metadát a ich neskoršie obnovenie</li>
       <li xml:lang="sr">Правите резервне копије ознака, оцена и других метаподатака и касније их вратите</li>
       <li xml:lang="sr-Latn">Pravite rezervne kopije oznaka, ocena i drugih metapodataka i kasnije ih vratite</li>
       <li xml:lang="sr-ijekavian">Правите резервне копије ознака, оцјена и других метаподатака и касније их вратите</li>
@@ -122,6 +133,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Busca i neteja de pistes duplicades, resolent «cues» conflictius a mà</li>
       <li xml:lang="nl">Zoek en verwijder dubbele tracks, en los conflicterende cues handmatig op</li>
       <li xml:lang="pt-BR">Encontre e limpe faixas duplicadas, resolvendo manualmente os pontos de marcação conflitantes</li>
+      <li xml:lang="sk">Vyhľadanie a vyčistenie duplicitných skladieb s ručným riešením konfliktných cue bodov</li>
       <li xml:lang="sr">Нађите и почистите дупликате нумера, уз ручно разрешавање сукобљених ознака</li>
       <li xml:lang="sr-Latn">Nađite i počistite duplikate numera, uz ručno razrešavanje sukobljenih oznaka</li>
       <li xml:lang="sr-ijekavian">Нађите и почистите дупликате нумера, уз ручно разрјешавање сукобљених ознака</li>
@@ -134,6 +146,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Comprovacions de l'estat de la biblioteca que troben i reparen els fitxers que falten</li>
       <li xml:lang="nl">Welzijnscontroles voor bibliotheken die ontbrekende bestanden opsporen en herstellen</li>
       <li xml:lang="pt-BR">Verificações de integridade da biblioteca que localizam e corrigem arquivos ausentes</li>
+      <li xml:lang="sk">Kontroly stavu knižnice, ktoré nájdu a opravia chýbajúce súbory</li>
       <li xml:lang="sr">Провере здравља библиотеке које налазе и поправљају недостајуће фајлове</li>
       <li xml:lang="sr-Latn">Provere zdravlja biblioteke koje nalaze i popravljaju nedostajuće fajlove</li>
       <li xml:lang="sr-ijekavian">Провјере здравља библиотеке које налазе и поправљају недостајуће фајлове</li>
@@ -146,6 +159,7 @@ SPDX-License-Identifier: CC0-1.0
       <li xml:lang="ca-valencia">Estadístiques sobre una biblioteca i controls d'estat per a la pròpia memòria</li>
       <li xml:lang="nl">Statistieken over een bibliotheek en welzijnscontroles voor de stick zelf</li>
       <li xml:lang="pt-BR">Estatísticas sobre uma biblioteca e verificações de integridade do próprio dispositivo</li>
+      <li xml:lang="sk">Štatistiky knižnice a kontroly stavu samotného kľúča</li>
       <li xml:lang="sr">Статистика о библиотеци и провере здравља самог стика</li>
       <li xml:lang="sr-Latn">Statistika o biblioteci i provere zdravlja samog stika</li>
       <li xml:lang="sr-ijekavian">Статистика о библиотеци и провјере здравља самог стика</li>
@@ -162,6 +176,7 @@ SPDX-License-Identifier: CC0-1.0
     <p xml:lang="ca-valencia">El Seabass funciona ja a la biblioteca a la memòria. No fa cap sol·licitud de xarxa a menys que activeu la comprovació d'actualització.</p>
     <p xml:lang="nl">Seabass werkt met de bibliotheek die al op uw stick staat. Er worden geen netwerkverzoeken gedaan, tenzij u de controle op bijwerken inschakelt.</p>
     <p xml:lang="pt-BR">O Seabass trabalha com a biblioteca que já está no seu dispositivo. Ele não faz nenhuma solicitação de rede, a menos que você ative a verificação de atualizações.</p>
+    <p xml:lang="sk">Seabass pracuje s knižnicou, ktorá už je na vašom kľúči. Nevykonáva žiadne sieťové požiadavky, kým nezapnete kontrolu aktualizácií.</p>
     <p xml:lang="sr">Seabass ради над библиотеком која је већ на вашем стику. Не шаље никакве мрежне захтеве осим ако не укључите проверу допуна.</p>
     <p xml:lang="sr-Latn">Seabass radi nad bibliotekom koja je već na vašem stiku. Ne šalje nikakve mrežne zahteve osim ako ne uključite proveru dopuna.</p>
     <p xml:lang="sr-ijekavian">Seabass ради над библиотеком која је већ на вашем стику. Не шаље никакве мрежне захтјеве осим ако не укључите провјеру допуна.</p>
@@ -192,6 +207,7 @@ SPDX-License-Identifier: CC0-1.0
       <caption xml:lang="ca-valencia">La finestra principal amb una memòria USB i què es pot fer amb ella</caption>
       <caption xml:lang="nl">Het hoofdvenster met een USB-stick en de mogelijkheden die deze biedt</caption>
       <caption xml:lang="pt-BR">A janela principal com um pendrive e o que é possível fazer com ele</caption>
+      <caption xml:lang="sk">Hlavné okno s USB kľúčom a tým, čo sa s ním dá robiť</caption>
       <caption xml:lang="sr">Главни прозор са УСБ стиком и оним што се са њим може урадити</caption>
       <caption xml:lang="sr-Latn">Glavni prozor sa USB stikom i onim što se sa njim može uraditi</caption>
       <caption xml:lang="sr-ijekavian">Главни прозор са УСБ стиком и оним што се са њим може урадити</caption>
@@ -207,6 +223,7 @@ SPDX-License-Identifier: CC0-1.0
       <caption xml:lang="ca-valencia">Navegar per una biblioteca, amb una pista en reproducció i els seus «cues» actius</caption>
       <caption xml:lang="nl">Door een bibliotheek bladeren, terwijl een nummer wordt afgespeeld, inclusief de bijbehorende hot cues</caption>
       <caption xml:lang="pt-BR">Navegar por uma biblioteca, com uma faixa em reprodução e seus hot cues</caption>
+      <caption xml:lang="sk">Prehliadanie knižnice s prehrávanou skladbou a jej hot cue</caption>
       <caption xml:lang="sr">Прегледање библиотеке, док се пушта нумера, са њеним брзим ознакама</caption>
       <caption xml:lang="sr-Latn">Pregledanje biblioteke, dok se pušta numera, sa njenim brzim oznakama</caption>
       <caption xml:lang="sr-ijekavian">Прегледање библиотеке, док се пушта нумера, са њеним брзим ознакама</caption>
@@ -222,6 +239,7 @@ SPDX-License-Identifier: CC0-1.0
       <caption xml:lang="ca-valencia">Duplica les pistes i quant espai s'allibera quan les consolida</caption>
       <caption xml:lang="nl">Dubbele nummers en hoeveel ruimte het consolideren ervan oplevert</caption>
       <caption xml:lang="pt-BR">Faixas duplicadas e quanto espaço a consolidação delas libera</caption>
+      <caption xml:lang="sk">Duplicitné skladby a koľko miesta uvoľní ich zlúčenie</caption>
       <caption xml:lang="sr">Дупликати нумера и колико простора ослобађа њихово обједињавање</caption>
       <caption xml:lang="sr-Latn">Duplikati numera i koliko prostora oslobađa njihovo objedinjavanje</caption>
       <caption xml:lang="sr-ijekavian">Дупликати нумера и колико простора ослобађа њихово обједињавање</caption>
@@ -237,6 +255,7 @@ SPDX-License-Identifier: CC0-1.0
       <caption xml:lang="ca-valencia">Estat de la biblioteca, amb les files que es poden reparar</caption>
       <caption xml:lang="nl">Bibliotheekwelzijn, inclusief de rijen die kunnen worden hersteld</caption>
       <caption xml:lang="pt-BR">Integridade da biblioteca, com as linhas que podem ser reparadas</caption>
+      <caption xml:lang="sk">Stav knižnice s riadkami, ktoré sa dajú opraviť</caption>
       <caption xml:lang="sr">Здравље библиотеке, са редовима који се могу поправити</caption>
       <caption xml:lang="sr-Latn">Zdravlje biblioteke, sa redovima koji se mogu popraviti</caption>
       <caption xml:lang="sr-ijekavian">Здравље библиотеке, са редовима који се могу поправити</caption>
@@ -252,6 +271,7 @@ SPDX-License-Identifier: CC0-1.0
       <caption xml:lang="ca-valencia">Còpies de seguretat d'una memòria, cadascuna amb una nota i una acció de restauració</caption>
       <caption xml:lang="nl">Reservekopieën van een stick, elk voorzien van een notitie en een herstelactie</caption>
       <caption xml:lang="pt-BR">Backups de um dispositivo, cada um com uma observação e uma ação de restauração</caption>
+      <caption xml:lang="sk">Zálohy kľúča, každá s poznámkou a akciou Obnoviť</caption>
       <caption xml:lang="sr">Резервне копије стика, свака са белешком и радњом „Врати“</caption>
       <caption xml:lang="sr-Latn">Rezervne kopije stika, svaka sa beleškom i radnjom „Vrati“</caption>
       <caption xml:lang="sr-ijekavian">Резервне копије стика, свака са биљешком и радњом „Врати“</caption>
@@ -280,8 +300,10 @@ SPDX-License-Identifier: CC0-1.0
         <p xml:lang="ar">الإصدار ألفا الثاني من Seabass 0.8.</p>
         <p xml:lang="ca">La segona alfa del Seabass 0.8.</p>
         <p xml:lang="ca-valencia">La segona alfa del Seabass 0.8.</p>
+        <p xml:lang="he">האלפא השנייה של Seabass 0.8.</p>
         <p xml:lang="nl">De tweede alfa-versie van Seabass 0.8.</p>
         <p xml:lang="pt-BR">A segunda versão alfa do Seabass 0.8.</p>
+        <p xml:lang="sk">Druhá alfa verzia Seabass 0.8.</p>
         <p xml:lang="sr">Друго алфа издање Seabass‑а 0.8.</p>
         <p xml:lang="sr-Latn">Drugo alfa izdanje Seabass‑a 0.8.</p>
         <p xml:lang="sr-ijekavian">Друго алфа издање Seabass‑а 0.8.</p>
