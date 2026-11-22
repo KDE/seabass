@@ -644,6 +644,7 @@ add_library(seabass_core STATIC
     src/infrastructure/cleanup/audio_file_walk.cpp
     src/infrastructure/local/duration_cache.cpp
     src/infrastructure/local/silence_cache.cpp
+    src/infrastructure/local/alignment_cache.cpp
     src/infrastructure/local/metadata_cache.cpp
     src/infrastructure/local/metadata_store.cpp
 )
@@ -1843,6 +1844,11 @@ add_executable(file_operation_log_test tests/file_operation_log_test.cpp)
 target_include_directories(file_operation_log_test PRIVATE src tests)
 target_link_libraries(file_operation_log_test PRIVATE seabass_core)
 add_test(NAME file_operation_log_test COMMAND file_operation_log_test)
+
+add_executable(alignment_cache_test tests/alignment_cache_test.cpp)
+target_include_directories(alignment_cache_test PRIVATE src)
+target_link_libraries(alignment_cache_test PRIVATE seabass_core)
+add_test(NAME alignment_cache_test COMMAND alignment_cache_test)
 
 add_executable(silence_cache_test tests/silence_cache_test.cpp)
 target_include_directories(silence_cache_test PRIVATE src)

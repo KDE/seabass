@@ -96,6 +96,9 @@ fs::path stickDurationCache(const fs::path &stickRoot);
 // Separate from the duration cache because it costs a full decode to
 // fill and only a few files per scan ever need it.
 fs::path stickSilenceCache(const fs::path &stickRoot);
+// How far apart pairs of copies of one song are, once measured (local/
+// alignment_cache.hpp). A full decode of both files to fill.
+fs::path stickAlignmentCache(const fs::path &stickRoot);
 
 // ---- on this computer ---------------------------------------------
 // Where everything Seabass keeps on this computer lives.

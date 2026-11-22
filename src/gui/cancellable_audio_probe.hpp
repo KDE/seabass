@@ -58,8 +58,10 @@ private:
 // The same for lining copies up (domain/audio_alignment_probe.hpp), which
 // decodes every copy of every group with cues in full and is by far the
 // longest part of a scan that has any. A cancelled scan stops after the
-// file in flight; nullopt is "unknown", which never moves a cue, and the
+// file in flight; no opinion is "unknown", which never moves a cue, and the
 // scan then ends as cancelled (application::measureDuplicateCueShifts).
+// No opinion, never "does not line up": a cache must not remember a pair
+// as not lining up because the scan was cancelled while it was asked.
 class CancellableAudioAlignmentProbe : public domain::AudioAlignmentProbe
 {
 public:
@@ -69,12 +71,17 @@ public:
     {
     }
 
-    std::optional<double> shiftMs(const std::string &absolutePathA, const std::string &absolutePathB) override
+    Answer align(const std::string &absolutePathA, const std::string &absolutePathB) override
     {
         if (m_inner == nullptr || m_cancel.cancelled()) {
-            return std::nullopt;
+            return Answer::noOpinion();
         }
-        return m_inner->shiftMs(absolutePathA, absolutePathB);
+        return m_inner->align(absolutePathA, absolutePathB);
+    }
+
+    bool answersAtOnce(const std::string &absolutePathA, const std::string &absolutePathB) override
+    {
+        return m_inner != nullptr && m_inner->answersAtOnce(absolutePathA, absolutePathB);
     }
 
     bool sameContent(const std::string &absolutePathA, const std::string &absolutePathB) override

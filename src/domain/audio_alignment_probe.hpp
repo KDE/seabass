@@ -34,17 +34,56 @@ class AudioAlignmentProbe
 public:
     virtual ~AudioAlignmentProbe() = default;
 
+    // What the probe found for one pair, three ways, because they are
+    // kept apart further on: a cache remembers the first two and never
+    // the third.
+    struct Answer
+    {
+        enum class Kind {
+            // The same music, `shiftMs` apart.
+            LinedUp,
+            // Both files were decoded whole and do not line up cleanly
+            // (different edits, a section cut from one, another
+            // recording, music too repetitive to tell one bar from the
+            // next). A property of the two files: asking again gives the
+            // same answer.
+            NotLinedUp,
+            // Nothing could be said this time: no decoder, a file that is
+            // unreadable or gone, a decode that timed out, a cancelled
+            // scan. `unreadableA`/`unreadableB` say when it was a file.
+            NoOpinion,
+        };
+        Kind kind = Kind::NoOpinion;
+        double shiftMs = 0.0;  // LinedUp only
+        bool unreadableA = false;
+        bool unreadableB = false;
+
+        static Answer linedUp(double ms) { return {Kind::LinedUp, ms, false, false}; }
+        static Answer notLinedUp() { return {Kind::NotLinedUp, 0.0, false, false}; }
+        static Answer noOpinion(bool unreadableA = false, bool unreadableB = false)
+        {
+            return {Kind::NoOpinion, 0.0, unreadableA, unreadableB};
+        }
+    };
+
     // Where a sound sits in `b` minus where the same sound sits in `a`,
     // in ms, on the decoder's own timeline: positive when the music in
-    // `b` starts later.
-    //
-    // nullopt is "no opinion", and covers two different things on
-    // purpose: nothing could be said (no decoder in this build, a file
-    // that is unreadable or gone, a decode that timed out, a cancelled
-    // scan) and the two files do not line up cleanly (different edits, a
-    // section cut from one, a different recording). A caller must never
-    // move a cue across a pair it got nullopt for: this feeds writes.
-    virtual std::optional<double> shiftMs(const std::string &absolutePathA, const std::string &absolutePathB) = 0;
+    // `b` starts later. A caller must never move a cue across a pair
+    // whose answer is not LinedUp: this feeds writes.
+    virtual Answer align(const std::string &absolutePathA, const std::string &absolutePathB) = 0;
+
+    // align() as a shift or nothing, for a caller to whom the two kinds
+    // of nothing are the same.
+    std::optional<double> shiftMs(const std::string &absolutePathA, const std::string &absolutePathB)
+    {
+        const Answer answer = align(absolutePathA, absolutePathB);
+        return answer.kind == Answer::Kind::LinedUp ? std::optional<double>(answer.shiftMs) : std::nullopt;
+    }
+
+    // True when align() would answer this pair from what it already
+    // holds, without decoding anything. For a progress bar to spread its
+    // stretch over the pairs that cost something.
+    virtual bool answersAtOnce(const std::string &, const std::string &) { return false; }
 
     // True only when the two files are known to hold the same bytes. Such
     // a pair lines up by definition on every timeline at once, so a caller

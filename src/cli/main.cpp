@@ -567,7 +567,9 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
     // lined up first (domain/duplicate_cue_shift.hpp), and a copy that
     // cannot be is never copied onto. Byte-identical copies need no
     // decoder; anything else needs this build's.
-    auto alignment = seabass::infrastructure::audio::makeAudioAlignmentProbe();
+    // No stick root, so no cache: `scan` reads and writes nothing on the
+    // stick until it asks to (see above), and a cache file is a write.
+    auto alignment = seabass::infrastructure::audio::makeAudioAlignmentProbe({});
     auto plans = ConsolidateDuplicateCues().execute(tracks, nullptr, [&](std::vector<seabass::domain::DuplicateGroup> &groups) {
         seabass::domain::measureCueShifts(groups, alignment.get(), seabass::infrastructure::audio::cueTimelineOffsetMs);
     });

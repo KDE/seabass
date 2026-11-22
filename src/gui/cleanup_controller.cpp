@@ -1082,13 +1082,17 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         // copies of one song are often not sample-aligned: each group
         // with cues is lined up first. See domain/duplicate_cue_shift.hpp.
         {
-            auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+            auto alignment = infrastructure::audio::makeAudioAlignmentProbe(
+                pathToUtf8(pathFromQString(path).parent_path()));
             CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
             application::measureDuplicateCueShifts(groups, &cancellableAlignment,
                                                    infrastructure::audio::cueTimelineOffsetMs, progress, shiftUnits,
                                                    cancel);
             result.pairsNotLinedUp = alignment->unknownCount();
             result.alignmentDecoderMissing = !alignment->hasDecoder();
+            // What was measured is kept for the next scan; a stick that
+            // refuses the write costs only that.
+            alignment->save();
         }
 
         std::vector<domain::DuplicateCleanupPlan> plans;
@@ -1199,12 +1203,14 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
         // their sounds are.
         std::vector<domain::DuplicateGroup> groups(1);
         groups[0].tracks = {*trackA, *trackB};
-        auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+        auto alignment = infrastructure::audio::makeAudioAlignmentProbe(
+            pathToUtf8(pathFromQString(path).parent_path()));
         CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
         application::measureDuplicateCueShifts(groups, &cancellableAlignment, infrastructure::audio::cueTimelineOffsetMs,
                                                progress, shiftUnits, cancel);
         result.pairsNotLinedUp = alignment->unknownCount();
         result.alignmentDecoderMissing = !alignment->hasDecoder();
+        alignment->save();
         result.plans = {domain::DuplicateCleanupPlanner::plan(groups[0])};
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;

@@ -36,15 +36,15 @@ public:
     {
     }
 
-    std::optional<double> shiftMs(const std::string &absolutePathA, const std::string &absolutePathB) override;
+    Answer align(const std::string &absolutePathA, const std::string &absolutePathB) override;
     // filesHaveSameBytes(), remembered for the last pair asked, so asking
-    // this and then shiftMs() about one pair reads the files once.
+    // this and then align() about one pair reads the files once.
     bool sameContent(const std::string &absolutePathA, const std::string &absolutePathB) override;
 
     bool hasDecoder() const { return m_decoder != nullptr; }
-    // What this probe has been asked, for the page to say: pairs found
-    // byte-identical, pairs the decoder lined up, and pairs left unknown
-    // (not lined up, unreadable, or no decoder to ask).
+    // What this probe has been asked: pairs found byte-identical, pairs
+    // the decoder lined up, and pairs left unknown (not lined up,
+    // unreadable, or no decoder to ask).
     int identicalCount() const { return m_identical; }
     int measuredCount() const { return m_measured; }
     int unknownCount() const { return m_unknown; }

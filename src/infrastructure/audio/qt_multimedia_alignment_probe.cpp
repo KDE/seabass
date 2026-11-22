@@ -78,20 +78,21 @@ std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decoded(co
     return samples;
 }
 
-std::optional<double> QtMultimediaAlignmentProbe::shiftMs(const std::string &absolutePathA,
-                                                          const std::string &absolutePathB)
+domain::AudioAlignmentProbe::Answer QtMultimediaAlignmentProbe::align(const std::string &absolutePathA,
+                                                                      const std::string &absolutePathB)
 {
     const auto a = decoded(absolutePathA);
     if (!a) {
-        return std::nullopt;
+        return Answer::noOpinion(true, false);
     }
     const auto b = decoded(absolutePathB);
     if (!b) {
-        return std::nullopt;
+        return Answer::noOpinion(false, true);
     }
-    return domain::alignment::measureShiftMs(
+    const std::optional<double> shift = domain::alignment::measureShiftMs(
         *a, *b, domain::alignment::AnalysisRate,
         domain::alignment::shiftSearchSeconds(domain::MatchingPolicy::compareAudioSeconds()));
+    return shift ? Answer::linedUp(*shift) : Answer::notLinedUp();
 }
 
 std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(const std::string &absoluteFilePath) const

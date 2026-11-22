@@ -41,11 +41,11 @@ public:
 
     bool sameContent(const std::string &a, const std::string &b) override { return same.count({a, b}) > 0; }
 
-    std::optional<double> shiftMs(const std::string &a, const std::string &b) override
+    Answer align(const std::string &a, const std::string &b) override
     {
         ++asked;
         const auto it = answers.find({a, b});
-        return it == answers.end() ? std::nullopt : it->second;
+        return it == answers.end() || !it->second ? Answer::notLinedUp() : Answer::linedUp(*it->second);
     }
 };
 

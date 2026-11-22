@@ -334,7 +334,8 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // another, and copies of one song are often not sample-aligned:
         // each group with cues is lined up before it is planned. See
         // domain/duplicate_cue_shift.hpp.
-        auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+        auto alignment = infrastructure::audio::makeAudioAlignmentProbe(
+            pathToUtf8(pathFromQString(path).parent_path()));
         CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
         auto allPlans = application::ConsolidateDuplicateCues().execute(
             tracks, audioProbe != nullptr ? &cancellableProbe : nullptr,
@@ -348,6 +349,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
             });
         result.pairsNotLinedUp = alignment->unknownCount();
         result.alignmentDecoderMissing = !alignment->hasDecoder();
+        alignment->save();
         std::vector<ConsolidationPlan> actionable;
         for (auto &plan : allPlans) {
             // Unaligned is listed like Conflict: a group a person has to
