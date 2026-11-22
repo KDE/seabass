@@ -13,7 +13,9 @@
 #include <complex>
 #include <iostream>
 #include <numbers>
+#include <optional>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include "domain/audio_alignment.hpp"
@@ -44,6 +46,9 @@ std::vector<float> silence(size_t samples)
 {
     return std::vector<float>(samples, 0.0f);
 }
+
+// The default search: MatchingPolicy's default 10 s plus the margin.
+const double Search = shiftSearchSeconds(10.0);
 
 bool near(double a, double b, double tolerance)
 {
@@ -155,39 +160,116 @@ int main()
         const auto a = noise(200000, 7);
         const double sampleMs = 1000.0 / rate;
 
-        auto shift = measureShiftMs(a, a, rate);
+        auto shift = measureShiftMs(a, a, rate, Search);
         assert(shift && near(*shift, 0.0, 1e-9) && "a file lines up with itself");
 
         // Leading silence: the music in b starts 431 samples later.
-        shift = measureShiftMs(a, concat(silence(431), a), rate);
+        shift = measureShiftMs(a, concat(silence(431), a), rate, Search);
         assert(shift && near(*shift, 431 * sampleMs, 1e-6) && "prepended silence is the shift");
-        shift = measureShiftMs(concat(silence(431), a), a, rate);
+        shift = measureShiftMs(concat(silence(431), a), a, rate, Search);
         assert(shift && near(*shift, -431 * sampleMs, 1e-6) && "and the other way round");
 
         // A different tail moves nothing: the end window is counted from
         // each file's own end and turned back into a shift from the start.
-        shift = measureShiftMs(a, concat(a, noise(14000, 8)), rate);
+        shift = measureShiftMs(a, concat(a, noise(14000, 8)), rate, Search);
         assert(shift && near(*shift, 0.0, 1e-6) && "a longer tail is not a shift");
-        shift = measureShiftMs(a, concat(concat(silence(300), a), noise(9000, 9)), rate);
+        shift = measureShiftMs(a, concat(concat(silence(300), a), noise(9000, 9)), rate, Search);
         assert(shift && near(*shift, 300 * sampleMs, 1e-6) && "lead-in and tail together");
 
         // Not the same music.
-        assert(!measureShiftMs(a, noise(200000, 11), rate) && "another signal does not line up");
+        assert(!measureShiftMs(a, noise(200000, 11), rate, Search) && "another signal does not line up");
 
         // A section cut from the middle of b: the start agrees, the end
         // is 150 ms early, and no one shift is right for every cue.
         std::vector<float> cut(a.begin(), a.begin() + 100000);
         cut.insert(cut.end(), a.begin() + 100300, a.end());
-        assert(!measureShiftMs(a, cut, rate) && "start and end disagree");
+        assert(!measureShiftMs(a, cut, rate, Search) && "start and end disagree");
 
         // Shorter than a window: the windows are the whole files.
         const std::vector<float> shortA(a.begin(), a.begin() + 20000);
-        shift = measureShiftMs(shortA, concat(silence(50), shortA), rate);
+        shift = measureShiftMs(shortA, concat(silence(50), shortA), rate, Search);
         assert(shift && near(*shift, 50 * sampleMs, 1e-6) && "a 10 s file still lines up");
 
         // Under a second: too little to say.
         const std::vector<float> tiny(a.begin(), a.begin() + 1500);
-        assert(!measureShiftMs(tiny, tiny, rate) && "under a second is unknown");
+        assert(!measureShiftMs(tiny, tiny, rate, Search) && "under a second is unknown");
+    }
+
+    // Music made of a repeated bar or beat matches itself one period away
+    // nearly as well as at the true shift, and better by the raw sum, which
+    // grows with the overlap: the old peak picking answered +575 ms, with
+    // all three windows agreeing at 0.99, for copies 1300 ms apart. The
+    // true shift or no answer; never another period's.
+    {
+        // 400 Hz keeps this cheap on a slow runner; the windows are as
+        // long in seconds as ever.
+        constexpr double rate = 400.0;
+        constexpr size_t length = 40000;  // 100 s
+        // `share` of the energy not periodic. a is the track from its
+        // start, b the same track starting `lead` samples into it, so a
+        // sound sits `lead` samples EARLIER in b: shift -lead.
+        auto loopPair = [&](size_t period, size_t lead, double share, unsigned seed) {
+            const auto loop = noise(period, seed);
+            const auto extra = noise(length + lead, seed + 1);
+            const float periodic = static_cast<float>(std::sqrt(1.0 - share));
+            const float other = static_cast<float>(std::sqrt(share));
+            std::vector<float> track(length + lead);
+            for (size_t i = 0; i < track.size(); ++i) {
+                track[i] = periodic * loop[i % period] + other * extra[i];
+            }
+            std::vector<float> a(track.begin(), track.begin() + length);
+            std::vector<float> b(track.begin() + static_cast<long>(lead), track.end());
+            return std::pair{a, b};
+        };
+        const double sampleMs = 1000.0 / rate;
+        auto trueOrUnknown = [&](const std::optional<double> &shift, double expectedMs) {
+            return !shift || near(*shift, expectedMs, sampleMs);
+        };
+
+        // One bar at 128 BPM (1.875 s), 1% not periodic, 1300 ms apart.
+        {
+            const auto [a, b] = loopPair(750, 520, 0.01, 21);
+            const auto shift = measureShiftMs(a, b, rate, Search);
+            assert(trueOrUnknown(shift, -1300.0) && "a bar loop lines up at its true shift or not at all");
+            const auto windows = windowShifts(a, b, rate, Search);
+            assert(windows && windows->size() == 3);
+            for (const auto &window : *windows) {
+                assert((window.ambiguous || near(window.shiftMs, -1300.0, sampleMs))
+                       && "no window settles on a bar away");
+            }
+        }
+        // One beat (0.47 s), 300 ms apart: the next beat is 169 ms the
+        // other way.
+        {
+            const auto [a, b] = loopPair(188, 120, 0.01, 31);
+            assert(trueOrUnknown(measureShiftMs(a, b, rate, Search), -300.0)
+                   && "a beat loop lines up at its true shift or not at all");
+        }
+        // Purely periodic: every period matches exactly as well, and there
+        // is nothing to tell them apart by.
+        {
+            const auto [a, b] = loopPair(750, 520, 0.0, 41);
+            assert(!measureShiftMs(a, b, rate, Search) && "a purely periodic pair is unknown");
+            const auto peak = correlationPeak(a, b, 400);
+            assert(peak && peak->ambiguous && "its peak has rivals");
+        }
+        // Enough that is not periodic, and the true shift is found: the
+        // rival rule does not make every loop-based track unknown.
+        {
+            const auto [a, b] = loopPair(750, 520, 0.3, 51);
+            const auto shift = measureShiftMs(a, b, rate, Search);
+            assert(shift && near(*shift, -1300.0, 1e-6) && "a loop with 30% else in it lines up");
+        }
+        // Further apart than the search reaches: not lined up, even
+        // though the same music is in both.
+        {
+            const auto a = noise(length, 61);
+            const auto b = concat(silence(static_cast<size_t>((Search + 3.0) * rate)), a);
+            assert(!measureShiftMs(a, b, rate, Search) && "a shift past the search is unknown");
+            assert(measureShiftMs(a, b, rate, Search + 5.0) && "and found when the search reaches it");
+        }
+        assert(near(shiftSearchSeconds(10.0), 12.0, 1e-12) && near(shiftSearchSeconds(0.0), 5.0, 1e-12)
+               && "the search is the compare window plus 2 s, at least 5 s");
     }
 
     std::cout << "audio_alignment_test: all assertions passed\n";
