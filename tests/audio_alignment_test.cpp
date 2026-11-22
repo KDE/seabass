@@ -269,6 +269,26 @@ int main()
             assert(!measureShiftMs(a, b, rate, Search) && "a shift past the search is unknown");
             assert(measureShiftMs(a, b, rate, Search + 5.0) && "and found when the search reaches it");
         }
+        // A phrase that comes back every 14 s, with 30% else in it, and the
+        // second copy 15 s later: past the search. Its alias a phrase
+        // nearer, 1 s, is the only one inside it (the next is at -13 s),
+        // and must not be taken for the shift because the true peak was
+        // not looked at.
+        {
+            const size_t phrase = 14 * 400;
+            const auto loop = noise(phrase, 91);
+            const auto extra = noise(length, 92);
+            std::vector<float> song(length);
+            for (size_t i = 0; i < length; ++i) {
+                song[i] = static_cast<float>(std::sqrt(0.7)) * loop[i % phrase]
+                    + static_cast<float>(std::sqrt(0.3)) * extra[i];
+            }
+            const auto later = concat(silence(15 * 400), song);
+            const auto shift = measureShiftMs(song, later, rate, Search);
+            assert(!shift && "an alias inside the search of a shift past it is unknown, never 1 s");
+            const auto found = measureShiftMs(song, later, rate, 20.0);
+            assert(found && near(*found, 15000.0, 1e-6) && "and with the search reaching it, 15 s");
+        }
         assert(near(shiftSearchSeconds(10.0), 12.0, 1e-12) && near(shiftSearchSeconds(0.0), 5.0, 1e-12)
                && "the search is the compare window plus 2 s, at least 5 s");
     }

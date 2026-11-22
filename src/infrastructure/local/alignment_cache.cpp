@@ -72,8 +72,8 @@ std::optional<long long> parseLongLong(const std::string &text)
 
 CachedAudioAlignmentProbe::CachedAudioAlignmentProbe(std::string stickRoot,
                                                      std::unique_ptr<domain::AudioAlignmentProbe> inner,
-                                                     bool innerDecodes)
-    : m_inner(std::move(inner)), m_innerDecodes(innerDecodes && m_inner != nullptr)
+                                                     bool innerDecodes, std::string decoder)
+    : m_inner(std::move(inner)), m_innerDecodes(innerDecodes && m_inner != nullptr), m_decoder(std::move(decoder))
 {
     if (stickRoot.empty()) {
         return;  // nowhere to keep it: every pair goes to `inner`
@@ -111,6 +111,10 @@ CachedAudioAlignmentProbe::CachedAudioAlignmentProbe(std::string stickRoot,
             m_dirty = true;
             continue;
         }
+        const auto decoder = field("decoder");
+        if (!decoder || decoder->empty()) {
+            continue;
+        }
         const auto a = field("a");
         const auto b = field("b");
         const auto result = field("result");
@@ -136,7 +140,7 @@ CachedAudioAlignmentProbe::CachedAudioAlignmentProbe(std::string stickRoot,
         } else {
             continue;
         }
-        m_entries[{*a, *b}] = entry;
+        m_entries[{*decoder, {*a, *b}}] = entry;
     }
 }
 
@@ -199,7 +203,7 @@ const CachedAudioAlignmentProbe::Entry *CachedAudioAlignmentProbe::trusted(const
     if (!pair.usable) {
         return nullptr;
     }
-    const auto it = m_entries.find(pair.key);
+    const auto it = m_entries.find({m_decoder, pair.key});
     if (it == m_entries.end() || !(it->second.a == pair.a) || !(it->second.b == pair.b)) {
         return nullptr;
     }
@@ -211,7 +215,7 @@ void CachedAudioAlignmentProbe::store(const Lookup &pair, Result result, double 
     if (!pair.usable) {
         return;
     }
-    m_entries[pair.key] = Entry{pair.a, pair.b, result, pair.reversed ? -shiftAsAsked : shiftAsAsked};
+    m_entries[{m_decoder, pair.key}] = Entry{pair.a, pair.b, result, pair.reversed ? -shiftAsAsked : shiftAsAsked};
     m_dirty = true;
 }
 
@@ -275,7 +279,7 @@ bool CachedAudioAlignmentProbe::save()
         // A pair either of whose files is cleanly gone is dropped; a stat
         // that errors keeps it (silence_cache.cpp's reasoning).
         bool gone = false;
-        for (const std::string *key : {&it->first.first, &it->first.second}) {
+        for (const std::string *key : {&it->first.second.first, &it->first.second.second}) {
             std::error_code ec;
             const bool present = std::filesystem::exists(pathFromUtf8(m_stickRoot) / pathFromUtf8(*key), ec);
             gone = gone || (!ec && !present);
@@ -286,10 +290,11 @@ bool CachedAudioAlignmentProbe::save()
         }
         const Entry &entry = it->second;
         std::map<std::string, std::string> fields{
-            {"a", it->first.first},
+            {"decoder", it->first.first},
+            {"a", it->first.second.first},
             {"asize", std::to_string(entry.a.sizeBytes)},
             {"amtime", std::to_string(entry.a.mtimeSeconds)},
-            {"b", it->first.second},
+            {"b", it->first.second.second},
             {"bsize", std::to_string(entry.b.sizeBytes)},
             {"bmtime", std::to_string(entry.b.mtimeSeconds)},
             {"method", std::to_string(MethodVersion)},

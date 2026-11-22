@@ -33,6 +33,7 @@
 #include "application/ports/cue_writer.hpp"
 #include "application/ports/library_cleanup_writer.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/track_scope.hpp"
 #include "gui/cancellable_audio_probe.hpp"
@@ -305,7 +306,7 @@ QString alignmentNote(const domain::DuplicateCleanupPlan &plan)
         if (!shift) {
             // Only worth a line when it costs something: a copy with no
             // cues of its own loses nothing by not being lined up.
-            if (!plan.toRemove[i].cues.empty()) {
+            if (!domain::withoutJunkCues(plan.toRemove[i].cues).empty()) {
                 lines << QStringLiteral("%1 could not be lined up with the copy kept, so its cues are not merged.")
                              .arg(copy);
             }

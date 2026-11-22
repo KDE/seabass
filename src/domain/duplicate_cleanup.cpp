@@ -261,14 +261,24 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
             continue;
         }
         const MovedCues moved = movedCues(doomed.cues, *shift, result.survivor.durationSeconds);
-        leftOut.insert(leftOut.end(), moved.leftOutCues.begin(), moved.leftOutCues.end());
+        // A stray cue (junk_cue.hpp) left out is no loss. Judged where the
+        // cue sits on its own copy: once moved, a real cue at 1 s can sit
+        // at -0.2 s, which would read as junk.
+        const MovedCues worthKeeping =
+            movedCues(withoutJunkCues(doomed.cues), *shift, result.survivor.durationSeconds);
+        leftOut.insert(leftOut.end(), worthKeeping.leftOutCues.begin(), worthKeeping.leftOutCues.end());
         merged = LocalRestorePlanner::mergeCues(merged, moved.cues);
     }
     // A cue left out is a loss only if the merge would have added it: one
     // whose pad the survivor already fills, or that another copy brought
     // anyway, costs nothing. Counted once everything else is merged.
-    result.cuesLeftOut =
-        static_cast<int>(LocalRestorePlanner::mergeCues(merged, leftOut).size() - merged.size());
+    // One at a time, so a cue two removed copies both leave out counts
+    // once.
+    std::vector<CuePoint> withLeftOut = merged;
+    for (const CuePoint &cue : leftOut) {
+        withLeftOut = LocalRestorePlanner::mergeCues(withLeftOut, {cue});
+    }
+    result.cuesLeftOut = static_cast<int>(withLeftOut.size() - merged.size());
     result.mergedCuesForSurvivor = std::move(merged);
 
     // Formats by extension, case folded: a group of FLAC and MP3 copies

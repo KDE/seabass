@@ -195,15 +195,13 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
         return z[index].real() / std::sqrt(energyA * energyB);
     };
 
-    // The lags to look at: the range asked for, cut to those with enough
-    // overlap. Overlap shrinks away from the middle on both sides, so
-    // this is one stretch.
+    // Every lag with enough overlap is looked at, not only those in
+    // `range`: a true peak just outside the range would otherwise go
+    // unseen, and an alias of it inside, a phrase away, would win with no
+    // rival to doubt it. Overlap shrinks away from the middle on both
+    // sides, so this is one stretch.
     long long lowest = -(lna - 1);
     long long highest = lnb - 1;
-    if (range) {
-        lowest = std::max(lowest, range->lowest);
-        highest = std::min(highest, range->highest);
-    }
     while (lowest <= highest && overlapAt(lowest) < need) {
         ++lowest;
     }
@@ -223,10 +221,13 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
     }
     const long long bestLag = lowest + static_cast<long long>(best);
 
-    // A rival: any other local peak, or either end of the stretch (a peak
-    // may lie just past it), far enough from the best not to be its own
-    // shoulder and nearly as high.
-    bool ambiguous = coefficient.size() > 1 && (best == 0 || best + 1 == coefficient.size());
+    // Not known when the best lies outside the range asked for (a shift
+    // further out than is believed), or at either end of the stretch (a
+    // peak may lie just past it). A rival: any other local peak anywhere
+    // in the stretch, far enough from the best not to be its own shoulder
+    // and nearly as high.
+    bool ambiguous = (coefficient.size() > 1 && (best == 0 || best + 1 == coefficient.size()))
+        || (range && (bestLag < range->lowest || bestLag > range->highest));
     const double rivalLevel = RivalShare * coefficient[best];
     for (size_t k = 0; k < coefficient.size() && !ambiguous; ++k) {
         const size_t distance = k > best ? k - best : best - k;
@@ -521,14 +522,19 @@ void KeptSamplesBuilder::letGo()
     // window can never be needed.
     const size_t half = m_total / 2;
     const size_t needed = half > m_window / 2 + m_reach ? half - m_window / 2 - m_reach : 0;
-    for (Block &block : m_blocks) {
-        const size_t end = block.start + block.samples.size();
-        if (!block.samples.empty() && block.start >= m_window && end <= needed) {
-            m_held -= block.samples.size();
-            std::vector<float>().swap(block.samples);
-        }
+    // Blocks are in order, the ones let go of already gone: the ones to let
+    // go of now are a run after the first window's, ending at the first
+    // block that reaches `needed`.
+    auto first = m_blocks.begin();
+    while (first != m_blocks.end() && first->start < m_window) {
+        ++first;
     }
-    std::erase_if(m_blocks, [](const Block &block) { return block.samples.empty(); });
+    auto last = first;
+    while (last != m_blocks.end() && last->start + last->samples.size() <= needed) {
+        m_held -= last->samples.size();
+        ++last;
+    }
+    m_blocks.erase(first, last);
 }
 
 KeptSamples KeptSamplesBuilder::finish()

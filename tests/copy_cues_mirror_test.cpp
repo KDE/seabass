@@ -470,10 +470,11 @@ int main()
         for (const auto &[slot, position] : wanted) {
             last = std::max(last, position);
         }
-        // The target ends 100 ms after the source's last cue: moved 250 ms
-        // later, that one cue is past it.
+        // The target ends 100 ms after the source's last cue: moved 1250 ms
+        // later, that one cue is 1.15 s past it, more than the second a
+        // catalog's whole-second length may fall short of the real end.
         op.targets.front().durationSeconds = (last + 100.0) / 1000.0;
-        op.targetShiftMs = {250.0};
+        op.targetShiftMs = {1250.0};
 
         CopyCuesChange change(QStringLiteral("engine"), seabass::gui::pathToQString(engineRoot), QStringLiteral("group"), op);
         assert(change.description().contains(QStringLiteral("moved to match each copy's timing")));
@@ -501,7 +502,7 @@ int main()
                     continue;
                 }
                 assert(found != written.end());
-                assert(std::abs(found->second - (position + 250.0)) < 1.0 && "each cue 250 ms later");
+                assert(std::abs(found->second - (position + 1250.0)) < 1.0 && "each cue 1250 ms later");
             }
             checked = true;
         }
