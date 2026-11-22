@@ -237,7 +237,9 @@ MovedCues movedCues(const std::vector<CuePoint> &cues, double shiftMs, double ta
         return result;
     }
     const double lengthMs = targetSeconds > 0.0 ? targetSeconds * 1000.0 : 0.0;
-    auto inside = [lengthMs](double ms) { return ms >= 0.0 && (lengthMs <= 0.0 || ms <= lengthMs); };
+    auto inside = [lengthMs](double ms) {
+        return ms >= 0.0 && (lengthMs <= 0.0 || ms <= lengthMs + CatalogLengthSlackMs);
+    };
     for (CuePoint cue : cues) {
         cue.positionMs += shiftMs;
         if (cue.isLoop) {
@@ -248,6 +250,7 @@ MovedCues movedCues(const std::vector<CuePoint> &cues, double shiftMs, double ta
         // the player, so it is counted and said instead.
         if (!inside(cue.positionMs) || (cue.isLoop && !inside(cue.loopEndMs))) {
             ++result.leftOut;
+            result.leftOutCues.push_back(cue);
             continue;
         }
         result.cues.push_back(cue);

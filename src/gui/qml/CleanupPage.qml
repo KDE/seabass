@@ -675,6 +675,7 @@ Page {
                 required property string stagedDescription
                 required property string survivorReason
                 required property bool hasCuesOnUnalignedCopy
+                required property int cuesLeftOut
                 required property bool mixedFormats
                 required property string mixedFormatsNote
                 required property string alignmentNote
@@ -809,6 +810,16 @@ Page {
                                     tooltipText: "A copy being removed could not be lined up with the copy kept, so "
                                         + "its cues have no known place on it and are not merged. "
                                         + "Excluded by default; tick to include."
+                                }
+                                StatusBadge {
+                                    objectName: "cuesLeftOutBadge"
+                                    visible: delegateRoot.cuesLeftOut > 0
+                                    label: "cues would be lost"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    tooltipText: delegateRoot.cuesLeftOut + " cue(s) of a copy being removed would land "
+                                        + "outside the copy kept once lined up with it, so they have no place on it and "
+                                        + "are not merged. Excluded by default; tick to include."
                                 }
                                 StatusBadge {
                                     objectName: "mixedFormatsBadge"
