@@ -1078,6 +1078,21 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     set_tests_properties(alignment_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 endif()
 
+# The probe the app uses against pairs whose truth was established without
+# it (tests/fixtures/alignment, tools/make_alignment_fixtures.py). One test
+# per shard of pairs, so they run side by side.
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
+    add_executable(alignment_fixture_test tests/alignment_fixture_test.cpp)
+    target_include_directories(alignment_fixture_test PRIVATE src)
+    target_link_libraries(alignment_fixture_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
+    foreach(_alignment_shard lossless codec loop music long)
+        add_test(NAME alignment_fixture_test_${_alignment_shard} COMMAND alignment_fixture_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${_alignment_shard})
+        set_tests_properties(alignment_fixture_test_${_alignment_shard} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 900)
+    endforeach()
+endif()
+
 # The decoder the player uses, against the click MP3s in
 # tests/fixtures/mp3-click: proves the player's timeline is the one
 # playback_timeline.hpp says it is (#50).
@@ -3883,6 +3898,23 @@ if(TARGET seabass_edit)
         target_link_libraries(copy_cues_mirror_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME copy_cues_mirror_test COMMAND copy_cues_mirror_test)
+
+    # Cues moved between copies of one song land on the sound they marked:
+    # Cues on Duplicate Copies and Clean Up end to end on a scratch Engine
+    # library made of pairs from tests/fixtures/alignment, every written
+    # cue checked against the decoded file.
+    if(TARGET seabass_audio_qt)
+        add_executable(alignment_cue_lands_test tests/alignment_cue_lands_test.cpp)
+        target_include_directories(alignment_cue_lands_test PRIVATE src tests)
+        target_link_libraries(alignment_cue_lands_test PRIVATE seabass_edit seabass_audio_qt DjInterop Qt6::Core ZLIB::ZLIB)
+        if(NOT WIN32)
+            target_link_libraries(alignment_cue_lands_test PRIVATE ${CMAKE_DL_LIBS})
+        endif()
+        add_test(NAME alignment_cue_lands_test COMMAND alignment_cue_lands_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
+        set_tests_properties(alignment_cue_lands_test PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 900)
+    endif()
 
     add_executable(save_backup_discard_under_lock_test tests/save_backup_discard_under_lock_test.cpp)
     target_include_directories(save_backup_discard_under_lock_test PRIVATE src)
