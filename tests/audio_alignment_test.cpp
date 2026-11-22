@@ -14,6 +14,7 @@
 #include <iostream>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <random>
 #include <utility>
 #include <vector>
@@ -270,6 +271,63 @@ int main()
         }
         assert(near(shiftSearchSeconds(10.0), 12.0, 1e-12) && near(shiftSearchSeconds(0.0), 5.0, 1e-12)
                && "the search is the compare window plus 2 s, at least 5 s");
+    }
+
+    // What is kept of a decoded file: never a two hour mix whole. At 50 Hz
+    // so the test is cheap; the windows and the middle's reach are as
+    // long in seconds as ever.
+    {
+        constexpr double rate = 50.0;
+        constexpr size_t hours2 = 7200 * 50;
+        const auto mix = noise(hours2, 71);
+        auto keep = [&](const std::vector<float> &whole, size_t &mostHeld) {
+            KeptSamplesBuilder builder(rate);
+            for (size_t at = 0; at < whole.size(); at += 997) {
+                builder.append(std::span<const float>(whole).subspan(at, std::min<size_t>(997, whole.size() - at)));
+            }
+            mostHeld = builder.mostHeld();
+            return builder.finish();
+        };
+        size_t mostHeld = 0;
+        const KeptSamples kept = keep(mix, mostHeld);
+        assert(kept.total == hours2);
+        // The first window, the middle and its reach on both sides, the
+        // last window: 40 + 220 + 40 s, give or take a sample.
+        const size_t expected = static_cast<size_t>((40.0 + 40.0 + 40.0 + 2 * MiddleReachSeconds) * rate) + 2;
+        assert(kept.bytes() <= expected * sizeof(float) && "five minutes of a two hour mix kept, held at its size");
+        assert(kept.pieces.size() == 3);
+        // Half of what has arrived, the first window, and half a window
+        // and the reach before the middle, give or take a block.
+        assert(mostHeld <= hours2 / 2 + static_cast<size_t>((60.0 + MiddleReachSeconds) * rate) + 3 * 997
+               && "never more than about half of it held while it arrives");
+
+        // Lined up from what was kept exactly as from the whole files.
+        std::vector<float> later(431, 0.0f);
+        later.insert(later.end(), mix.begin(), mix.end() - 431);
+        size_t ignored = 0;
+        const KeptSamples keptLater = keep(later, ignored);
+        assert(alignmentCovers(kept, keptLater, rate));
+        const auto fromKept = measureShiftMs(kept, keptLater, rate, Search);
+        const auto fromWhole = measureShiftMs(mix, later, rate, Search);
+        assert(fromKept && fromWhole && near(*fromKept, *fromWhole, 1e-9) && near(*fromKept, 431 * 1000.0 / rate, 1e-6)
+               && "the kept stretches give the whole files' answer");
+
+        // Copies further apart in length than the middle's reach covers
+        // are not measured at all.
+        std::vector<float> longer = mix;
+        const auto extra = noise(static_cast<size_t>((2 * MiddleReachSeconds + 10.0) * rate), 72);
+        longer.insert(longer.end(), extra.begin(), extra.end());
+        const KeptSamples keptLonger = keep(longer, ignored);
+        assert(!alignmentCovers(kept, keptLonger, rate) && "a middle window outside what was kept is no measurement");
+        std::vector<float> bitLonger = mix;
+        bitLonger.insert(bitLonger.end(), extra.begin(), extra.begin() + static_cast<long>(60 * rate));
+        assert(alignmentCovers(kept, keep(bitLonger, ignored), rate) && "a minute longer is within reach");
+
+        // A file shorter than all of that is kept whole, in one piece.
+        const std::vector<float> song(mix.begin(), mix.begin() + static_cast<long>(200 * rate));
+        const KeptSamples keptSong = keep(song, ignored);
+        assert(keptSong.pieces.size() == 1 && keptSong.pieces[0].samples == song);
+        assert(keptSong.pieces[0].samples.capacity() == song.size());
     }
 
     std::cout << "audio_alignment_test: all assertions passed\n";
