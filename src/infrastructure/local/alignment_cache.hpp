@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -22,7 +23,7 @@ namespace seabass::infrastructure::local
 //
 //   {"a":"Contents/x/Song.mp3","amtime":"1710000000","asize":"8000000",
 //    "b":"Contents/y/Song.flac","bmtime":"1710000500","bsize":"30000000",
-//    "decoder":"ffmpeg qt6.8","method":"3","result":"shift","shift":"21.315000"}
+//    "decoder":"default qt6.8.2","method":"3","result":"shift","shift":"21.315000"}
 //
 // `result` is "shift" (the same music, `shift` ms later in b than in a),
 // "no" (decoded whole, does not line up) or "same" (the same bytes). The
@@ -41,8 +42,11 @@ namespace seabass::infrastructure::local
 //
 // `decoder` names the decoder that measured (its backend and version):
 // another one may start a file a few milliseconds elsewhere (an MP3's or
-// AAC's priming), so a line is trusted only by the decoder that wrote it.
-// Lines of other decoders are kept, for the machine that wrote them.
+// AAC's priming), so a shift or "does not line up" is trusted only by the
+// decoder that wrote it. "Same bytes" needs no decoder, and is written
+// with the decoder "bytes" and trusted by every one, a build without a
+// decoder included. Lines of other decoders are kept, for the machine
+// that wrote them, until either file changes or goes.
 //
 // `method` is MethodVersion when the line was written. A line written by
 // another version of the measurement is ignored and dropped at the next
@@ -60,8 +64,8 @@ public:
     // its own checked in half-second parts.
     static constexpr int MethodVersion = 3;
 
-    // `inner` may be null: then only what is cached is answered. A build
-    // without a decoder still reads what a build with one wrote.
+    // `inner` may be null: then only what is cached is answered, which for
+    // a build without a decoder is pairs of the same bytes.
     // `innerDecodes` says whether `inner` can decode audio at all (as
     // opposed to comparing bytes), for hasDecoder().
     // `decoder` names the decoder behind `inner` (see above).
@@ -117,6 +121,7 @@ private:
         bool usable = false;  // both on the stick, both stat-able, two files
     };
 
+    static std::optional<FileState> stateOf(const std::string &absoluteFilePath);
     std::string relativeKey(const std::string &absoluteFilePath) const;
     Lookup lookup(const std::string &absolutePathA, const std::string &absolutePathB) const;
     const Entry *trusted(const Lookup &pair) const;

@@ -163,7 +163,11 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
 
     const long long lna = static_cast<long long>(na);
     const long long lnb = static_cast<long long>(nb);
-    const long long need = static_cast<long long>(minOverlap);
+    // Lags overlapping by less than half the shorter side are not looked
+    // at, minOverlap or not: a second or two of overlap compares a bar or
+    // two, and in music built of bars pasted one after another those match
+    // as well as the true lag does, a rival everywhere.
+    const long long need = std::max(static_cast<long long>(minOverlap), std::min(lna, lnb) / 2);
     auto overlapAt = [&](long long lag) { return std::min(lna, lnb - lag) - std::max(0LL, -lag); };
 
     // Each side's energy over any stretch, from running sums, so the

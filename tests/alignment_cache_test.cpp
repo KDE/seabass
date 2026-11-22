@@ -285,15 +285,21 @@ int main()
         assert(counter->aligned == 2 && probe.save() && !fs::exists(cacheFile));
     }
 
-    // Without a decoder the cache still answers what a build with one
-    // wrote, and hasDecoder() says there is none.
+    // Without a decoder, only pairs of the same bytes are answered from the
+    // stick: a shift is on the timeline of the decoder that measured it.
     {
-        auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{a, b}] = Answer::linedUp(-4.0); });
+        auto probe = makeProbe(root, [&](CountingProbe &p) {
+            p.answers[{a, b}] = Answer::linedUp(-4.0);
+            p.same.insert({a, twin});
+        });
         probe.cached->align(a, b);
+        assert(probe.cached->sameContent(a, twin));
         probe.cached->save();
-        CachedAudioAlignmentProbe cacheOnly(seabass::pathToUtf8(root), nullptr, true, "test decoder");
+        CachedAudioAlignmentProbe cacheOnly(seabass::pathToUtf8(root), nullptr, true, "none");
         assert(!cacheOnly.hasDecoder());
-        assert(cacheOnly.align(a, b).kind == Kind::LinedUp && "answered from the stick");
+        assert(cacheOnly.sameContent(twin, a) && cacheOnly.align(a, twin).kind == Kind::LinedUp
+               && "the same bytes hold for every decoder");
+        assert(cacheOnly.align(a, b).kind == Kind::NoOpinion && "another decoder's shift is not trusted");
         assert(cacheOnly.align(a, e).kind == Kind::NoOpinion);
     }
 
@@ -312,6 +318,21 @@ int main()
         const auto kept = again.align(a, b);
         assert(kept.kind == Kind::LinedUp && near(kept.shiftMs, -4.0) && "and the first decoder's line is still there");
         assert(readFile(cacheFile).find("another decoder") != std::string::npos);
+    }
+
+    // A line whose file changed is dropped at the next save, whichever
+    // decoder wrote it: nobody will trust it again.
+    {
+        {
+            auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{d, e}] = Answer::linedUp(3.0); });
+            probe.cached->align(d, e);
+            assert(probe.cached->save() && readFile(cacheFile).find("Contents/e/") != std::string::npos);
+        }
+        writeFile(seabass::pathFromUtf8(e), "copy e, re-encoded");
+        auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{a, c}] = Answer::linedUp(1.0); });
+        probe.cached->align(a, c);
+        assert(probe.cached->save());
+        assert(readFile(cacheFile).find("Contents/e/") == std::string::npos && "the stale line is gone");
     }
 
     fs::remove_all(root);

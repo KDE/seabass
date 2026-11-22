@@ -21,6 +21,8 @@
 namespace seabass::infrastructure::local
 {
 
+namespace fs = std::filesystem;
+
 namespace
 {
 
@@ -161,6 +163,23 @@ std::string CachedAudioAlignmentProbe::relativeKey(const std::string &absoluteFi
     return path.substr(m_stickRoot.size() + 1);
 }
 
+std::optional<CachedAudioAlignmentProbe::FileState> CachedAudioAlignmentProbe::stateOf(const std::string &path)
+{
+    std::error_code ec;
+    const auto fsPath = pathFromUtf8(path);
+    const auto size = std::filesystem::file_size(fsPath, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    const auto mtime = std::filesystem::last_write_time(fsPath, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    return FileState{static_cast<long long>(size),
+                     static_cast<long long>(
+                         std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count())};
+}
+
 CachedAudioAlignmentProbe::Lookup CachedAudioAlignmentProbe::lookup(const std::string &absolutePathA,
                                                                     const std::string &absolutePathB) const
 {
@@ -170,23 +189,8 @@ CachedAudioAlignmentProbe::Lookup CachedAudioAlignmentProbe::lookup(const std::s
     if (keyA.empty() || keyB.empty() || keyA == keyB) {
         return pair;
     }
-    auto stat = [](const std::string &path) -> std::optional<FileState> {
-        std::error_code ec;
-        const auto fsPath = pathFromUtf8(path);
-        const auto size = std::filesystem::file_size(fsPath, ec);
-        if (ec) {
-            return std::nullopt;
-        }
-        const auto mtime = std::filesystem::last_write_time(fsPath, ec);
-        if (ec) {
-            return std::nullopt;
-        }
-        return FileState{static_cast<long long>(size),
-                         static_cast<long long>(
-                             std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count())};
-    };
-    const auto stateA = stat(absolutePathA);
-    const auto stateB = stat(absolutePathB);
+    const auto stateA = stateOf(absolutePathA);
+    const auto stateB = stateOf(absolutePathB);
     if (!stateA || !stateB) {
         return pair;
     }
@@ -198,16 +202,24 @@ CachedAudioAlignmentProbe::Lookup CachedAudioAlignmentProbe::lookup(const std::s
     return pair;
 }
 
+namespace
+{
+// The decoder "same bytes" lines are written with: they hold for all.
+const std::string BytesDecoder = "bytes";
+}  // namespace
+
 const CachedAudioAlignmentProbe::Entry *CachedAudioAlignmentProbe::trusted(const Lookup &pair) const
 {
     if (!pair.usable) {
         return nullptr;
     }
-    const auto it = m_entries.find({m_decoder, pair.key});
-    if (it == m_entries.end() || !(it->second.a == pair.a) || !(it->second.b == pair.b)) {
-        return nullptr;
+    for (const std::string *decoder : {&BytesDecoder, &m_decoder}) {
+        const auto it = m_entries.find({*decoder, pair.key});
+        if (it != m_entries.end() && it->second.a == pair.a && it->second.b == pair.b) {
+            return &it->second;
+        }
     }
-    return &it->second;
+    return nullptr;
 }
 
 void CachedAudioAlignmentProbe::store(const Lookup &pair, Result result, double shiftAsAsked)
@@ -215,7 +227,8 @@ void CachedAudioAlignmentProbe::store(const Lookup &pair, Result result, double 
     if (!pair.usable) {
         return;
     }
-    m_entries[{m_decoder, pair.key}] = Entry{pair.a, pair.b, result, pair.reversed ? -shiftAsAsked : shiftAsAsked};
+    m_entries[{result == Result::Same ? BytesDecoder : m_decoder, pair.key}] =
+        Entry{pair.a, pair.b, result, pair.reversed ? -shiftAsAsked : shiftAsAsked};
     m_dirty = true;
 }
 
@@ -276,15 +289,25 @@ bool CachedAudioAlignmentProbe::save()
     }
     std::string out;
     for (auto it = m_entries.begin(); it != m_entries.end();) {
-        // A pair either of whose files is cleanly gone is dropped; a stat
-        // that errors keeps it (silence_cache.cpp's reasoning).
-        bool gone = false;
-        for (const std::string *key : {&it->first.second.first, &it->first.second.second}) {
+        // A pair either of whose files is cleanly gone is dropped, and so
+        // is one either of whose files changed since: no decoder will
+        // trust that line again. A stat that errors keeps it
+        // (silence_cache.cpp's reasoning).
+        bool drop = false;
+        const std::pair<const std::string *, const FileState *> files[] = {
+            {&it->first.second.first, &it->second.a}, {&it->first.second.second, &it->second.b}};
+        for (const auto &[key, stored] : files) {
+            const fs::path path = pathFromUtf8(m_stickRoot) / pathFromUtf8(*key);
             std::error_code ec;
-            const bool present = std::filesystem::exists(pathFromUtf8(m_stickRoot) / pathFromUtf8(*key), ec);
-            gone = gone || (!ec && !present);
+            const bool present = fs::exists(path, ec);
+            if (!ec && !present) {
+                drop = true;
+            } else if (!ec) {
+                const auto now = stateOf(pathToUtf8(path));
+                drop = drop || (now && !(*now == *stored));
+            }
         }
-        if (gone) {
+        if (drop) {
             it = m_entries.erase(it);
             continue;
         }
