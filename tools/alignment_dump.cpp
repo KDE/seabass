@@ -389,12 +389,15 @@ int main(int argc, char **argv)
         const double diagMs = msSince(t);
 
         // Which rule: as cleanShiftMs() and measureOver() apply them.
+        const bool share = windowsShareSamples(ka->total, kb->total, rate);
         std::string reason;
         bool consistent = true;
         if (!product) {
             reason = "window-unmeasurable";
         } else {
             std::vector<std::string> parts;
+            std::vector<std::string> rivals;
+            bool resolved = false;
             for (size_t k = 0; k < product->size() && k < 3; ++k) {
                 const auto &p = (*product)[k];
                 const Diag &d = diags[k];
@@ -402,23 +405,22 @@ int main(int argc, char **argv)
                                           - static_cast<double>(windows[k].startA))
                     * 1000.0 / rate;
                 if (!d.ok || std::abs(diagShift - p.shiftMs) > 1e-6
-                    || p.ambiguous != (d.edge || d.outRange || d.rivalAmb)) {
+                    || p.ambiguous() != (d.edge || d.outRange || d.rivalAmb)) {
                     consistent = false;
                 }
-                if (p.ambiguous) {
-                    if (d.edge) {
-                        parts.push_back("edge" + std::to_string(k));
-                    }
-                    if (d.outRange) {
-                        parts.push_back("outRange" + std::to_string(k));
-                    }
-                    if (d.rivalAmb) {
-                        parts.push_back("rival" + std::to_string(k));
-                    }
+                if (d.edge) {
+                    parts.push_back("edge" + std::to_string(k));
+                }
+                if (d.outRange) {
+                    parts.push_back("outRange" + std::to_string(k));
                 }
                 if (!(p.normalised >= al::MinNormalisedPeak)) {
                     parts.push_back("lowPeak" + std::to_string(k));
                 }
+                if (d.rivalAmb) {
+                    rivals.push_back("rival" + std::to_string(k));
+                }
+                resolved = resolved || p.rivalShare < al::ResolvingRivalShare;
             }
             for (const auto &part : parts) {
                 reason += (reason.empty() ? "" : "+") + part;
@@ -431,6 +433,13 @@ int main(int argc, char **argv)
                 }
                 if (hi - lo > al::MaxDisagreementMs) {
                     reason = "disagree";
+                } else if (share && !rivals.empty()) {
+                    // Windows sharing samples: any rival decides.
+                    for (const auto &rival : rivals) {
+                        reason += (reason.empty() ? "" : "+") + rival;
+                    }
+                } else if (!share && !resolved) {
+                    reason = "noResolvingWindow";
                 } else if (!verdict) {
                     reason = "partCheck";
                 } else {
@@ -438,7 +447,6 @@ int main(int argc, char **argv)
                 }
             }
         }
-        const bool share = windowsShareSamples(ka->total, kb->total, rate);
         std::printf("PAIR %d verdict=%s shiftMs=%.4f reason=%s decodeMs=%.1f corrMs=%.1f diagMs=%.1f na=%zu nb=%zu "
                     "shareSamples=%d consistent=%d\n",
                     index, verdict ? "shift" : "unknown", verdict ? *verdict : std::nan(""), reason.c_str(), decodeMs,

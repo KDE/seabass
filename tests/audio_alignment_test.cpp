@@ -151,6 +151,24 @@ int main()
         clean = cleanShiftMs({{10.0, 0.5}, {10.0, 0.5}, {10.0, 0.5}});
         assert(clean && "0.5 is enough");
         assert(!cleanShiftMs({}) && "no windows, no answer");
+        // Rivals: a beat-only intro and outro have a rival a beat away at
+        // nearly the true lag's coefficient, the middle none. Windows of
+        // their own resolve each other, when every window's own best is
+        // the same lag and one has no rival at ResolvingRivalShare.
+        clean = cleanShiftMs({{21.3, 0.99, 0.9836}, {21.3, 0.98, 0.83}, {21.3, 0.99, 0.9689}});
+        assert(clean && near(*clean, 21.3, 1e-9) && "the clear middle settles the beat-only start and end");
+        assert(!cleanShiftMs({{21.3, 0.99, 0.9836}, {21.3, 0.98, 0.93}, {21.3, 0.99, 0.9689}})
+               && "a window with a rival at 0.93 settles nothing");
+        assert(!cleanShiftMs({{21.3, 0.99, 0.99}, {21.3, 0.98, 0.97}, {21.3, 0.99, 0.96}}) && "every window torn: unknown");
+        assert(!cleanShiftMs({{21.3, 0.99, 0.99}, {521.3, 0.98, 0.5}, {21.3, 0.99, 0.96}})
+               && "the windows' own bests must agree, a rival is never the answer");
+        assert(!cleanShiftMs({{21.3, 0.99, 0.5, false}, {21.3, 0.98, 0.5}, {21.3, 0.99, 0.5}})
+               && "a best on the edge or past the search is no answer");
+        // Windows sharing samples (a short file): one measurement cannot
+        // resolve itself, so any rival at RivalShare is unknown.
+        assert(!cleanShiftMs({{21.3, 0.99, 0.96}, {21.3, 0.99, 0.5}, {21.3, 0.99, 0.5}}, false));
+        assert(cleanShiftMs({{21.3, 0.99, 0.94}, {21.3, 0.99, 0.94}, {21.3, 0.99, 0.94}}, false)
+               && "under RivalShare, a short file is known as before");
     }
 
     // Whole files, at a low analysis rate so the test stays quick: the
@@ -235,7 +253,7 @@ int main()
             const auto windows = windowShifts(a, b, rate, Search);
             assert(windows && windows->size() == 3);
             for (const auto &window : *windows) {
-                assert((window.ambiguous || near(window.shiftMs, -1300.0, sampleMs))
+                assert((window.ambiguous() || near(window.shiftMs, -1300.0, sampleMs))
                        && "no window settles on a bar away");
             }
         }
@@ -301,6 +319,44 @@ int main()
             const auto later = concat(silence(120), song);
             const auto shift = measureShiftMs(song, later, rate, Search);
             assert(shift && near(*shift, 300.0, 1e-6) && "a pasted clip seen over two seconds is no rival");
+        }
+        // A DJ track: a beat-only loop for its first and last 45 s (1% of
+        // it not repeating), music that does not repeat between, 135 s in
+        // all so the three windows are their own. The start and end
+        // windows each have a rival a bar away; the middle settles them.
+        {
+            const size_t total = 135 * 400;
+            const size_t bar = 750;
+            const auto loop = noise(bar, 111);
+            const auto varied = noise(total + 2000, 112);
+            const auto drift = noise(total + 2000, 113);
+            auto track = [&](size_t samples, bool loopAllThrough) {
+                std::vector<float> out(samples);
+                for (size_t i = 0; i < samples; ++i) {
+                    const bool inLoop = loopAllThrough || i < 45 * 400 || i >= samples - 45 * 400;
+                    out[i] = inLoop ? static_cast<float>(std::sqrt(0.99)) * loop[i % bar]
+                            + static_cast<float>(std::sqrt(0.01)) * drift[i]
+                                    : varied[i];
+                }
+                return out;
+            };
+            const auto song = track(total, false);
+            for (const size_t lead : {size_t{8}, size_t{520}}) {  // 20 ms, and 1.3 s: more than a beat
+                const auto later = concat(silence(lead), song);
+                const auto shift = measureShiftMs(song, later, rate, Search);
+                assert(shift && near(*shift, lead * 2.5, 1e-6) && "loop intro and outro, settled by the middle");
+                const auto windows = windowShifts(song, later, rate, Search);
+                assert(windows && (*windows)[0].ambiguous() && (*windows)[2].ambiguous()
+                       && !(*windows)[1].ambiguous() && "the start and end were torn, the middle was not");
+            }
+            // A loop all through: every window torn, unknown.
+            const auto loopy = track(total, true);
+            assert(!measureShiftMs(loopy, concat(silence(8), loopy), rate, Search) && "a loop all through is unknown");
+            // A bar missing from the middle of one copy: the start says 0,
+            // the end a bar early. Unknown.
+            std::vector<float> missing(song.begin(), song.begin() + 67 * 400);
+            missing.insert(missing.end(), song.begin() + 67 * 400 + bar, song.end());
+            assert(!measureShiftMs(song, missing, rate, Search) && "a bar cut from the middle is unknown");
         }
         assert(near(shiftSearchSeconds(10.0), 12.0, 1e-12) && near(shiftSearchSeconds(0.0), 5.0, 1e-12)
                && "the search is the compare window plus 2 s, at least 5 s");

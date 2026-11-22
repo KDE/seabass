@@ -23,7 +23,7 @@ namespace seabass::infrastructure::local
 //
 //   {"a":"Contents/x/Song.mp3","amtime":"1710000000","asize":"8000000",
 //    "b":"Contents/y/Song.flac","bmtime":"1710000500","bsize":"30000000",
-//    "decoder":"default qt6.8.2","method":"3","result":"shift","shift":"21.315000"}
+//    "decoder":"default qt6.8.2","method":"4","result":"shift","shift":"21.315000"}
 //
 // `result` is "shift" (the same music, `shift` ms later in b than in a),
 // "no" (decoded whole, does not line up) or "same" (the same bytes). The
@@ -64,7 +64,9 @@ public:
     // bar or beat away make a window unknown, the search bounded.
     // Version 3: rivals at 0.95, and a file too short for three windows of
     // its own checked in half-second parts.
-    static constexpr int MethodVersion = 3;
+    // Version 4: windows of their own settle each other: a rival vetoes a
+    // pair only when no window is clear of one (ResolvingRivalShare).
+    static constexpr int MethodVersion = 4;
 
     // `inner` may be null: then only what is cached is answered, which for
     // a build without a decoder is pairs of the same bytes.

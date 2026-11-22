@@ -156,11 +156,11 @@ def tones(seed, count, low, high, level):
 
 # ---- the loops ---------------------------------------------------------------
 
-def loop_hits(seed):
-    """The drum sounds, as runs of samples at LOOP_RATE. Each ends inside
-    the bar it starts in, so bar after bar is the same samples."""
+def loop_hits(seed, rate=LOOP_RATE):
+    """The drum sounds, as runs of samples at `rate`. Each ends inside the
+    bar it starts in, so bar after bar is the same samples."""
     rng = np.random.default_rng(seed)
-    r = LOOP_RATE
+    r = rate
 
     def t(seconds):
         return np.arange(int(seconds * r)) / r
@@ -179,31 +179,44 @@ def loop_hits(seed):
     return {"kick": kick, "hat": hat, "open": open_hat, "clap": clap, "stab": stab}
 
 
+# The long loops' kit: kick and stab, tones with silence between them,
+# at 4 kHz: 135 s files, and the directory is to stay small. (The marker
+# bursts' upper tones fold over at that rate; the matched filter that
+# finds them is sampled the same way, so where they are is still exact.)
+TONAL_KIT = ("kick", "stab")
+DJ_RATE = 4000
+# And a quarter as loud: two bits a sample fewer to store, nothing lost to
+# a correlation.
+LOOP_LEVEL = 0.25
+
 # One bar in sixteenths. The stab on the one makes the bar, and not the
 # beat or the half bar, the loop's period.
 PATTERN = {"kick": [0, 4, 8, 12], "hat": [1, 3, 5, 7, 9, 11, 13, 15], "open": [2, 6, 10, 14],
            "clap": [4, 12], "stab": [0]}
 
 
-def render_loop(seconds, start_s=0.0, vary_seed=None):
+def render_loop(seconds, start_s=0.0, vary_seed=None, spread=0.25, ghosts=True, kit=None, rate=LOOP_RATE):
     """The drum loop from `start_s` for `seconds`. With `vary_seed`, every
-    bar differs a little: each hit's level by up to a quarter, and ghost
-    hats here and there. Always rendered from the first bar and then cut,
-    so a varied loop has the same bars whatever stretch of it is asked
-    for."""
-    hits = loop_hits(7)
-    skip = int(round(start_s * LOOP_RATE))
-    n = skip + int(round(seconds * LOOP_RATE))
+    bar differs a little: each hit's level by up to `spread` (a quarter),
+    and with `ghosts` ghost hats here and there. Always rendered from the
+    first bar and then cut, so a varied loop has the same bars whatever
+    stretch of it is asked for. `kit` names the sounds played (all of
+    PATTERN by default): the tonal ones leave silence between hits, which
+    FLAC stores in next to nothing, where noise does not compress."""
+    hits = loop_hits(7, rate)
+    step_samples = int(rate * BAR_S / 16)
+    skip = int(round(start_s * rate))
+    n = skip + int(round(seconds * rate))
     rng = np.random.default_rng(vary_seed) if vary_seed is not None else None
-    out = np.zeros(n + LOOP_RATE)
-    for step in range(n // STEP + 1):
+    out = np.zeros(n + rate)
+    for step in range(n // step_samples + 1):
         in_bar = step % 16
-        at = step * STEP
+        at = step * step_samples
         for name, where in PATTERN.items():
-            level = rng.uniform(0.75, 1.25) if rng is not None else 1.0
-            if in_bar in where:
+            level = rng.uniform(1.0 - spread, 1.0 + spread) if rng is not None else 1.0
+            if in_bar in where and (kit is None or name in kit):
                 out[at:at + len(hits[name])] += 0.6 * level * hits[name]
-        if rng is not None:
+        if rng is not None and ghosts:
             ghost = rng.uniform() < 0.3 and in_bar % 2 == 0
             level = rng.uniform(0.3, 0.6)
             if ghost:
@@ -303,6 +316,10 @@ class File:
         self.samples = samples
         # (from_s, length_s) of the source taken out of this copy.
         self.cut = cut
+        # (at_s, length_s): this copy repeats the `length_s` of the source
+        # before `at_s` there, so everything from `at_s` on is that much
+        # later.
+        self.insert = None
         self.events = {}  # id: decoder time in s, measured
         self.residual_ms = 0.0  # measured minus constructed, the codec's part
         self.mp3_class = "-"
@@ -316,6 +333,12 @@ class File:
         """Where the source's onset sits in this file, or None if it is not
         there whole."""
         t = onset
+        if self.insert is not None:
+            at, length = self.insert
+            if at - EVENT_S < onset < at:
+                return None
+            if onset >= at:
+                t += length
         if self.cut is not None:
             start, length = self.cut
             if start - EVENT_S < onset < start + length:
@@ -456,6 +479,56 @@ def build(out):
     add("L-cut.flac", L, lr, "flac", 0,
         np.concatenate([lbase[:lead(lr, lcut_at * 1000)], lbase[lead(lr, (lcut_at + lcut_len) * 1000):]]),
         cut=(lcut_at, lcut_len))
+
+    # (j) A DJ track: 45 s of a beat-only loop, 45 s of sounds that do not
+    # repeat (tone bursts at irregular times, the markers, with silence
+    # between, which FLAC stores in next to nothing), 45 s of the loop
+    # again, so the start and end windows are all loop and the middle has
+    # none. The loop varies by 3% a bar, so the true lag is the best one
+    # and a bar away is nearly as good: the start and end windows are
+    # torn, the middle settles them. A marker in the intro and one in the
+    # outro, among the loop, for a cue placed there.
+    J_S, J_PART = 135.0, 45.0
+    jrng = np.random.default_rng(1101)
+    jtimes = event_times(jrng, J_PART + 0.5, 2 * J_PART - 0.5, 24, 0.8)
+    jevents = [("j%d" % (i + 1), t, Event(jrng, jrng.uniform(0.6, 1.0))) for i, t in enumerate(jtimes)]
+    jevents.insert(0, ("jintro", 20.3, Event(jrng, 0.6)))
+    jevents.append(("joutro", 2 * J_PART + 20.3, Event(jrng, 0.6)))
+
+    def dj(seconds):
+        t = np.arange(int(round(seconds * DJ_RATE))) / DJ_RATE
+        near = LOOP_LEVEL * render_loop(seconds, vary_seed=1103, spread=0.03, ghosts=False, kit=TONAL_KIT,
+                                        rate=DJ_RATE)
+        middle = (t >= J_PART) & (t < 2 * J_PART)
+        return np.where(middle, 0.0, near)
+
+    jsrc = Source("j", jevents)
+    jbase = dj(J_S) + jsrc.render(DJ_RATE, 0.0, J_S)
+    add("j-ref.flac", jsrc, DJ_RATE, "flac", 0, jbase)
+    for ms in (21, 1300):
+        n = lead(DJ_RATE, ms)
+        add("j-lead%d.flac" % ms, jsrc, DJ_RATE, "flac", n, with_lead(DJ_RATE, jbase, n))
+    # A whole bar missing from the middle of one copy.
+    jcut_at, jcut_len = 66.0, BAR_S
+    add("j-barcut.flac", jsrc, DJ_RATE, "flac", 0,
+        np.concatenate([jbase[:lead(DJ_RATE, jcut_at * 1000)], jbase[lead(DJ_RATE, (jcut_at + jcut_len) * 1000):]]),
+        cut=(jcut_at, jcut_len))
+    # A bar of the intro played twice: the bar before 22 s again at 22 s,
+    # everything from there on a bar later.
+    jins_at = 22.0
+    ins = lead(DJ_RATE, jins_at * 1000)
+    bar = lead(DJ_RATE, BAR_S * 1000)
+    jins = add("j-insert.flac", jsrc, DJ_RATE, "flac", 0,
+               np.concatenate([jbase[:ins], jbase[ins - bar:ins], jbase[ins:]]))
+    jins.insert = (jins_at, BAR_S)
+
+    # (k) The loop all through, 135 s of it: every window torn.
+    ksrc = Source("k", [("kintro", 20.3, Event(np.random.default_rng(1201), 0.6))])
+    kbase = LOOP_LEVEL * render_loop(J_S, vary_seed=1202, spread=0.03, ghosts=False, kit=TONAL_KIT, rate=DJ_RATE) \
+        + ksrc.render(DJ_RATE, 0.0, J_S)
+    add("k-ref.flac", ksrc, DJ_RATE, "flac", 0, kbase)
+    n = lead(DJ_RATE, 21)
+    add("k-lead21.flac", ksrc, DJ_RATE, "flac", n, with_lead(DJ_RATE, kbase, n))
     return files
 
 
@@ -558,10 +631,25 @@ PAIRS = [
      "music after a 3 s silent intro, the intro 675 ms longer"),
     ("intro675-m4a", "music", "d-ref.flac", "d-intro675.m4a", "construct", [],
      "the same, the longer copy as AAC"),
-    ("long-tail", "long", "L-ref.flac", "L-tail.flac", "construct", [],
+    # The long pairs one to a shard, so that each test fits a CI runner
+    # thirty times slower than a desktop under ctest's 300 s.
+    ("long-tail", "long-tail", "L-ref.flac", "L-tail.flac", "construct", [],
      "85 s, 6 s of other bursts added at the end: the end window lines up at 0 too"),
-    ("long-cut", "long", "L-ref.flac", "L-cut.flac", "unknown", [],
+    ("long-cut", "long-cut", "L-ref.flac", "L-cut.flac", "unknown", [],
      "85 s with 400 ms cut out at 42.5 s: the start window says 0, the end -400"),
+    ("dj-21", "dj-21", "j-ref.flac", "j-lead21.flac", "construct", [],
+     "135 s, a loop intro and outro around a middle that does not repeat, 21 ms in front: the start and "
+     "end windows have a rival a bar away at 0.99 of the true lag, the middle settles them"),
+    ("dj-1300", "dj-1300", "j-ref.flac", "j-lead1300.flac", "construct", [],
+     "the same, 1.3 s in front: more than a beat, the start and end torn the same way"),
+    ("dj-barcut", "dj-barcut", "j-ref.flac", "j-barcut.flac", "unknown", [],
+     "the same with a whole bar cut from the middle of one copy: the start says 0, the end -2000"),
+    ("dj-loop", "dj-loop", "k-ref.flac", "k-lead21.flac", "unknown", [],
+     "135 s of the loop all through, 21 ms in front: every window has a rival at 0.99, none settles"),
+    ("dj-insert", "dj-insert", "j-ref.flac", "j-insert.flac", "unknown", [],
+     "a bar of the loop intro played twice at 22 s in one copy: the middle and end say +2000, the start "
+     "window's own best is 0 (a bar away scores 0.9998 of it). Unknown, because every window's own best "
+     "must agree; see README"),
 ]
 
 

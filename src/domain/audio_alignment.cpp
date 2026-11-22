@@ -230,20 +230,22 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
     // peak may lie just past it). A rival: any other local peak anywhere
     // in the stretch, far enough from the best not to be its own shoulder
     // and nearly as high.
-    bool ambiguous = (coefficient.size() > 1 && (best == 0 || best + 1 == coefficient.size()))
-        || (range && (bestLag < range->lowest || bestLag > range->highest));
-    const double rivalLevel = RivalShare * coefficient[best];
-    for (size_t k = 0; k < coefficient.size() && !ambiguous; ++k) {
+    const bool bounded = !(coefficient.size() > 1 && (best == 0 || best + 1 == coefficient.size()))
+        && !(range && (bestLag < range->lowest || bestLag > range->highest));
+    double rival = 0.0;
+    for (size_t k = 0; k < coefficient.size(); ++k) {
         const size_t distance = k > best ? k - best : best - k;
-        if (distance <= rivalSeparation || coefficient[k] < rivalLevel) {
+        if (distance <= rivalSeparation || coefficient[k] <= rival) {
             continue;
         }
         const bool risesFromLeft = k == 0 || coefficient[k] >= coefficient[k - 1];
         const bool fallsToRight = k + 1 == coefficient.size() || coefficient[k] >= coefficient[k + 1];
         if (risesFromLeft && fallsToRight) {
-            ambiguous = true;
+            rival = coefficient[k];
         }
     }
+    const double rivalShare = coefficient[best] > 0.0 ? rival / coefficient[best] : 0.0;
+    const bool ambiguous = !bounded || rivalShare >= RivalShare;
 
     // The coefficient at that lag, straight from the samples: the
     // transform found where to look, and the number that decides
@@ -263,20 +265,28 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
     if (energyA <= 0.0 || energyB <= 0.0) {
         return std::nullopt;
     }
-    return CorrelationPeak{bestLag, cross / std::sqrt(energyA * energyB), ambiguous};
+    return CorrelationPeak{bestLag, cross / std::sqrt(energyA * energyB), ambiguous, rivalShare, bounded};
 }
 
-std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows)
+std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows, bool independent)
 {
     if (windows.empty()) {
         return std::nullopt;
     }
     std::vector<double> shifts;
+    bool resolved = false;
     for (const auto &window : windows) {
-        if (window.ambiguous || !(window.normalised >= MinNormalisedPeak)) {
+        if (!window.bounded || !(window.normalised >= MinNormalisedPeak)) {
             return std::nullopt;
         }
+        if (!independent && window.ambiguous()) {
+            return std::nullopt;
+        }
+        resolved = resolved || window.rivalShare < ResolvingRivalShare;
         shifts.push_back(window.shiftMs);
+    }
+    if (independent && !resolved) {
+        return std::nullopt;
     }
     std::sort(shifts.begin(), shifts.end());
     if (shifts.back() - shifts.front() > MaxDisagreementMs) {
@@ -354,7 +364,7 @@ std::optional<std::vector<WindowShift>> shiftsOver(size_t na, size_t nb, const S
         // From the window back to the files: a sound at window index i
         // in a is at file index startA + i, in b at startB + i + lag.
         const double samples = static_cast<double>(peak->lag) + static_cast<double>(startDifference);
-        shifts.push_back({samples * 1000.0 / rate, peak->normalised, peak->ambiguous});
+        shifts.push_back({samples * 1000.0 / rate, peak->normalised, peak->rivalShare, peak->bounded});
     }
     return shifts;
 }
@@ -456,8 +466,9 @@ std::optional<double> measureOver(size_t na, size_t nb, const SliceA &sliceA, co
     if (!windows) {
         return std::nullopt;
     }
-    const std::optional<double> shift = cleanShiftMs(*windows);
-    if (!shift || !windowsShareSamples(na, nb, rate)) {
+    const bool independent = !windowsShareSamples(na, nb, rate);
+    const std::optional<double> shift = cleanShiftMs(*windows, independent);
+    if (!shift || independent) {
         return shift;
     }
     double weakest = 1.0;
