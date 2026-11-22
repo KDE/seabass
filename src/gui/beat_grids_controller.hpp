@@ -142,14 +142,16 @@ struct BeatGridLibrary
         std::string artist;
         double bpm = 0.0;
         std::string key;
+        // The covers as file URLs (toLocalFileUrl), for the row and for
+        // the player alike: the player bar and the cover art take its
+        // artworkPath as a URL, and a bare path is resolved against the
+        // page's qrc: base and never loads.
         QString artworkUrl;
         QString fallbackArtworkUrl;
         // What the zoomed waveform popup loads into the player: the audio
-        // file (empty where there is none to play), the covers as paths,
-        // the length and rekordbox's cues.
+        // file (empty where there is none to play), the length and
+        // rekordbox's cues.
         std::string filePath;
-        std::string artworkPath;
-        std::string fallbackArtworkPath;
         double durationMs = 0.0;
         std::vector<domain::CuePoint> cues;
         // The same for Engine's row of the track, for the popup opened from
@@ -410,7 +412,8 @@ public:
 
     // The track as WaveformZoomPopup.openFor() takes it: {format,
     // libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
-    // fallbackArtworkPath}. Empty for a track the library does not have.
+    // fallbackArtworkPath}, the two covers as file URLs. Empty for a track
+    // the library does not have.
     Q_INVOKABLE QVariantMap zoomTrack(const QString &rekordboxId) const;
     // The same track as Engine has it, for the popup opened from the
     // comparison's Engine lane: Engine's waveform, grid and cues. Empty

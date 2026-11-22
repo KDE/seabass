@@ -315,7 +315,6 @@ std::shared_ptr<BeatGridLibrary> runLoad(const QString &rekordboxPath, const QSt
             track.bpm = t.bpm;
             track.key = t.key;
             track.artworkUrl = toLocalFileUrl(t.artworkPath);
-            track.artworkPath = t.artworkPath;
             track.filePath = t.filePath;
             track.durationMs = t.durationSeconds > 0.0 ? t.durationSeconds * 1000.0 : 0.0;
             track.cues = t.cues;
@@ -329,7 +328,6 @@ std::shared_ptr<BeatGridLibrary> runLoad(const QString &rekordboxPath, const QSt
                 const auto art = engineArt.find(engineTrackId);
                 if (art != engineArt.end()) {
                     track.fallbackArtworkUrl = toLocalFileUrl(art->second);
-                    track.fallbackArtworkPath = art->second;
                 }
             }
             out->trackIndex[t.sourceId] = out->tracks.size();
@@ -1083,9 +1081,9 @@ QVariantMap BeatGridsController::zoomTrack(const QString &rekordboxId) const
         {QStringLiteral("filePath"), QString::fromStdString(track->filePath)},
         {QStringLiteral("title"), QString::fromStdString(track->title)},
         {QStringLiteral("artist"), QString::fromStdString(track->artist)},
-        {QStringLiteral("artworkPath"), QString::fromStdString(track->artworkPath)},
+        {QStringLiteral("artworkPath"), track->artworkUrl},
         {QStringLiteral("cues"), metadataCueList(track->cues)},
-        {QStringLiteral("fallbackArtworkPath"), QString::fromStdString(track->fallbackArtworkPath)},
+        {QStringLiteral("fallbackArtworkPath"), track->fallbackArtworkUrl},
     };
 }
 
@@ -1106,9 +1104,9 @@ QVariantMap BeatGridsController::engineZoomTrack(const QString &rekordboxId) con
         {QStringLiteral("filePath"), QString::fromStdString(track->engineFilePath)},
         {QStringLiteral("title"), QString::fromStdString(track->title)},
         {QStringLiteral("artist"), QString::fromStdString(track->artist)},
-        {QStringLiteral("artworkPath"), QString::fromStdString(track->fallbackArtworkPath)},
+        {QStringLiteral("artworkPath"), track->fallbackArtworkUrl},
         {QStringLiteral("cues"), metadataCueList(track->engineCues)},
-        {QStringLiteral("fallbackArtworkPath"), QString::fromStdString(track->artworkPath)},
+        {QStringLiteral("fallbackArtworkPath"), track->artworkUrl},
     };
 }
 

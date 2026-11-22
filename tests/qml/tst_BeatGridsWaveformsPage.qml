@@ -1459,6 +1459,44 @@ TestCase {
         compare(Object.keys(o.c.engineZoomTrack("no such track")).length, 0, "an unknown track opens nothing");
     }
 
+    // The zoomed popup loads its track into the player, whose bar takes
+    // artworkPath and fallbackArtworkPath as URLs: a bare path is
+    // resolved against the page's qrc: base and the cover stays empty
+    // (macOS: "qrc:/Volumes/<stick>/PIONEER/Artwork/..."). Both sides, each
+    // with its own cover first and the other's as the fallback; paths with
+    // a space and a non-ASCII letter; no cover stays empty.
+    function fileUrlNames(url, path, what) {
+        verify(url.startsWith("file:///"), what + " is a file URL: " + url);
+        compare(decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1")), path, what);
+    }
+
+    function test_zoomTracksCarryCoversAsFileUrls() {
+        const stick = t73();
+        const rekordboxCover = stick + "/Mörk Borg/a b.jpg";
+        const engineCover = stick + "/Mörk Borg/Engine ö.png";
+        catalogGate.artworkOnEveryRead(rekordboxCover, engineCover);
+        try {
+            const o = openOn(stick);
+            const rekordbox = o.c.zoomTrack(b04);
+            fileUrlNames(rekordbox.artworkPath, rekordboxCover, "rekordbox's cover");
+            fileUrlNames(rekordbox.fallbackArtworkPath, engineCover, "and Engine's as its fallback");
+            const engine = o.c.engineZoomTrack(b04);
+            verify(engine.sourceId.length > 0, "Engine has the track");
+            fileUrlNames(engine.artworkPath, engineCover, "Engine's cover");
+            fileUrlNames(engine.fallbackArtworkPath, rekordboxCover, "and rekordbox's as its fallback");
+        } finally {
+            catalogGate.restore();
+        }
+    }
+
+    function test_zoomTracksWithoutCoversStayEmpty() {
+        const o = openOn(t73());
+        for (const track of [o.c.zoomTrack(b04), o.c.engineZoomTrack(b04)]) {
+            compare(track.artworkPath, "", track.format + ": no cover is no URL");
+            compare(track.fallbackArtworkPath, "", track.format + ": nor a fallback");
+        }
+    }
+
     // A delegate built for the row that is already open (scrolled back
     // into view, or the list built again after a read) starts expanded:
     // it still asks for Engine's side and shows the comparison.
