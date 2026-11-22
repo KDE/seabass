@@ -36,15 +36,17 @@ inline AudioDecoding audioDecoding()
 }
 
 // The decoder a measured shift is on the timeline of, for the stick's
-// cache (local/alignment_cache.hpp): Qt Multimedia's backend, FFmpeg
-// unless QT_MEDIA_BACKEND picks another, and Qt's version, which brings
-// its own FFmpeg. "none" in a build without one.
+// cache (local/alignment_cache.hpp), as far as it can be named: the Qt
+// Multimedia backend asked for (QT_MEDIA_BACKEND), else "default", and the
+// Qt that is running. Which backend Qt then picks, and the FFmpeg a
+// distribution's Qt links, are not visible here: two machines with the
+// same Qt that differ in those share lines. "none" in a build without a
+// decoder.
 inline std::string alignmentDecoderName()
 {
 #ifdef SEABASS_HAVE_QT_AUDIO
     const QByteArray backend = qgetenv("QT_MEDIA_BACKEND");
-    return (backend.isEmpty() ? std::string("ffmpeg") : backend.toStdString()) + " qt" + std::to_string(QT_VERSION_MAJOR)
-        + "." + std::to_string(QT_VERSION_MINOR);
+    return (backend.isEmpty() ? std::string("default") : backend.toStdString()) + " qt" + qVersion();
 #else
     return "none";
 #endif

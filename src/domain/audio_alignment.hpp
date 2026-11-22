@@ -188,8 +188,8 @@ struct LagRange
     long long highest = 0;
 };
 
-// Every lag at which the two overlap by at least `minOverlap` samples is
-// looked at; a best lag outside `range` (when given) is ambiguous, not an
+// Every lag at which the two overlap by at least `minOverlap` samples, and
+// by half the shorter of the two, is looked at; a best lag outside `range` (when given) is ambiguous, not an
 // answer, so a peak outside the range still counts against an alias of it
 // inside. nullopt when there is no such lag, or when either side is silent
 // over the overlap at the peak (nothing to correlate).

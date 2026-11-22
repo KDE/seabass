@@ -289,6 +289,19 @@ int main()
             const auto found = measureShiftMs(song, later, rate, 20.0);
             assert(found && near(*found, 15000.0, 1e-6) && "and with the search reaching it, 15 s");
         }
+        // A 3.75 s clip pasted at the start and again at 37.5 s, in music
+        // that otherwise never repeats, the copies 300 ms apart: seen over
+        // two seconds of overlap at the far end of the start window, the
+        // second clip matches the first exactly. Too little overlap to be a
+        // rival; the pair lines up.
+        {
+            auto song = noise(length, 101);
+            const size_t clip = 1500;
+            std::copy(song.begin(), song.begin() + clip, song.begin() + 15000);
+            const auto later = concat(silence(120), song);
+            const auto shift = measureShiftMs(song, later, rate, Search);
+            assert(shift && near(*shift, 300.0, 1e-6) && "a pasted clip seen over two seconds is no rival");
+        }
         assert(near(shiftSearchSeconds(10.0), 12.0, 1e-12) && near(shiftSearchSeconds(0.0), 5.0, 1e-12)
                && "the search is the compare window plus 2 s, at least 5 s");
     }
