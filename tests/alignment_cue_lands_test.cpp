@@ -140,6 +140,8 @@ struct Case
     std::string source;  // carries the cue
     std::string target;  // carries none
     bool linesUp = true;
+    // The marker to put the cue on; empty for the first both files have.
+    std::string marker = {};
 };
 
 // Where the source's sound at `sourceMs` is in the target near
@@ -345,6 +347,9 @@ int main(int argc, char **argv)
         {"44k-to-48k", "a-ref.flac", "a-48k-lead120.flac"},
         {"loop-1300", "c-ref.flac", "c-lead1300.flac"},
         {"loop-eq-1300", "c-ref.flac", "c-eq-1300.flac"},
+        // A DJ track 1.3 s apart, the cue inside its beat-only loop intro:
+        // the start window is torn a bar either way, the middle settles it.
+        {"dj-intro", "j-ref.flac", "j-lead1300.flac", true, "jintro"},
         {"unaligned", "a-ref.flac", "a-other.flac", false},
     };
 
@@ -366,7 +371,10 @@ int main(int argc, char **argv)
                 marker = id;
             }
         }
-        assert(!marker.empty() && "the pair has a marker to put the cue on");
+        if (!c.marker.empty()) {
+            marker = c.marker;
+        }
+        assert(!marker.empty() && source.markersMs.contains(marker) && "the pair has a marker to put the cue on");
         const double sourceDecoderMs = source.markersMs.at(marker);
 
         // ---- Cues on Duplicate Copies ----
