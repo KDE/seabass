@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -30,6 +31,13 @@ namespace seabass::infrastructure
 // its scratch copies too): the copy holds every committed row, and
 // SQLite rebuilds the -shm next to the copy. The folder goes with the
 // object.
+//
+// A copy always has a -wal beside it, an empty one when the stick has
+// none: macOS's own SQLite (the one the Mac build links, 3.51) refuses a
+// read-only connection to a WAL-mode database whose -wal does not exist,
+// "unable to open database file" at the first statement, where upstream
+// SQLite, so Linux and Windows, makes the -wal itself. A -wal with no
+// frames in it reads as no change: the copy answers from its pages alone.
 //
 // Folders are named ReadCopyPrefix + the owning process's pid and start
 // id + a serial. One left behind by a crash is removed by
@@ -143,11 +151,22 @@ public:
             fs::copy_file(db, m_path);
             fs::path wal = db;
             wal += "-wal";
+            fs::path walCopy = m_path;
+            walCopy += "-wal";
+            // Only a -wal that is not there is "no -wal". A look that
+            // fails (status() reports not_found with `ec` set, so the type
+            // is what tells), or something else under the name, is not:
+            // an empty -wal in its place would lose the rows only the
+            // stick's -wal holds.
             std::error_code ec;
-            if (fs::is_regular_file(wal, ec)) {
-                fs::path walCopy = m_path;
-                walCopy += "-wal";
+            const fs::file_status walStatus = fs::status(wal, ec);
+            if (walStatus.type() == fs::file_type::regular) {
                 fs::copy_file(wal, walCopy);
+            } else if (walStatus.type() != fs::file_type::not_found) {
+                throw std::runtime_error("could not look for " + pathToUtf8(wal) + ": "
+                                         + (ec ? ec.message() : "not a file"));
+            } else if (!std::ofstream(walCopy, std::ios::binary)) {
+                throw std::runtime_error("could not make " + pathToUtf8(walCopy));
             }
         } catch (...) {
             std::error_code ec;

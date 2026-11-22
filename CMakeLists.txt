@@ -2735,6 +2735,14 @@ target_include_directories(filesystem_backup_store_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_test PRIVATE ZLIB::ZLIB)
 add_test(NAME filesystem_backup_store_test COMMAND filesystem_backup_store_test)
 
+# A stick database read from a copy (infrastructure/database_read_copy.hpp):
+# a WAL-mode database without its -wal is read whole from the copy by the
+# platform's SQLite, macOS's included, and the original is not touched.
+add_executable(database_read_copy_test tests/database_read_copy_test.cpp)
+target_link_libraries(database_read_copy_test PRIVATE seabass_core_testing)
+target_include_directories(database_read_copy_test PRIVATE src tests)
+add_test(NAME database_read_copy_test COMMAND database_read_copy_test)
+
 # The store's refusals: a record whose manifest is missing or damaged, an
 # archive gone or replaced by a directory, writes the filesystem refuses.
 add_executable(filesystem_backup_store_error_paths_test tests/filesystem_backup_store_error_paths_test.cpp)
