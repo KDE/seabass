@@ -47,9 +47,24 @@ TestCase {
         }
     }
 
+    // The two audio files the fixture's rows name, written beside the
+    // library copy: "../folderA/Duplicate Song.mp3" and folderB's. The
+    // copies' audio is lined up before any cue crosses between them, and
+    // two files with the same bytes line up with no decoding at all; a
+    // copy with no file, or with other bytes that do not decode, cannot be
+    // lined up, and the group is then not fixable.
+    function writeAudio(library, contentA, contentB) {
+        const stick = library.substring(0, library.lastIndexOf("/"));
+        verify(stickFixture.makeDirectory(stick + "/folderA") && stickFixture.makeDirectory(stick + "/folderB"));
+        verify(stickFixture.writeText(stick + "/folderA/Duplicate Song.mp3", contentA));
+        verify(stickFixture.writeText(stick + "/folderB/Duplicate Song.mp3", contentB));
+        return library;
+    }
+
     function initTestCase() {
         testCase.engineCopy = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
         verify(testCase.engineCopy.length > 0, "the fixture copy must be made");
+        writeAudio(testCase.engineCopy, "the same bytes", "the same bytes");
     }
 
     function findWhere(item, predicate) {
@@ -102,6 +117,7 @@ TestCase {
     function test_aFinishedSaveIsSaidOverTheList() {
         const own = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
         verify(own.length > 0, "the test's own copy must be made");
+        writeAudio(own, "the same bytes", "the same bytes");
         const page = createTemporaryObject(pageComponent, testCase, {width: 960, height: 660, enginePath: own});
         verify(page, "page did not instantiate");
         tryVerify(() => findWhere(page.header, (item) => item.visible && item.text !== undefined
@@ -184,6 +200,53 @@ TestCase {
             }
         }
         check(summaryRow);
+    }
+
+    // Copies whose audio cannot be lined up are listed, not fixable, and
+    // say why: nobody knows where one copy's cues belong on the other.
+    function test_copiesThatCannotBeLinedUpAreNotCopied() {
+        const own = writeAudio(artworkFixture.libraryCopy(testCase.fixtureEngineRoot), "one file", "another file");
+        const page = createTemporaryObject(pageComponent, testCase, {width: 960, height: 660, enginePath: own});
+        verify(page, "page did not instantiate");
+        tryVerify(() => findWhere(page.header, (item) => item.visible && item.text !== undefined
+                                  && /^1 duplicate group/.test(String(item.text))) !== null,
+                  5000, "the group is still listed");
+        const badge = findWhere(page, (item) => item.objectName === "kindBadge");
+        verify(badge, "the group's badge was not found");
+        compare(badge.label, "Not lined up");
+        const note = findWhere(page, (item) => item.objectName === "alignmentNote");
+        verify(note && note.visible, "the group says which copy");
+        compare(note.text, "Copy 2 could not be lined up with copy 1, so no cues are copied to or from it.");
+        const copyButton = findWhere(page, (item) => item.text === "Copy Cues" && item.clicked !== undefined);
+        verify(copyButton === null || !copyButton.visible, "nothing to copy");
+    }
+
+    // Copies that are not sample-aligned are lined up, and the page says
+    // by how much: copy 2's music starts 463 samples (21 ms) later. WAV
+    // files, so no MP3 lead-in comes between the decoder and the cues.
+    function test_aShiftedCopyIsSaid() {
+        const own = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(artworkFixture.setTrackPath(own, 1, "../folderA/Duplicate Song.wav"));
+        verify(artworkFixture.setTrackPath(own, 2, "../folderB/Duplicate Song.wav"));
+        const stick = own.substring(0, own.lastIndexOf("/"));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderA/Duplicate Song.wav", 10, 0, 5));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderB/Duplicate Song.wav", 10, 463, 5));
+        const page = createTemporaryObject(pageComponent, testCase, {width: 960, height: 660, enginePath: own});
+        verify(page, "page did not instantiate");
+        tryVerify(() => findWhere(page, (item) => item.objectName === "alignmentNote" && item.visible) !== null,
+                  20000, "the shift is said");
+        compare(findWhere(page, (item) => item.objectName === "alignmentNote").text,
+                "Copy 2 starts 21 ms later than copy 1, so cues are moved to match.");
+        compare(findWhere(page, (item) => item.objectName === "kindBadge").label, "Fixable");
+    }
+
+    // Copies that line up as they are say nothing about it.
+    function test_copiesThatLineUpSayNothing() {
+        const page = makePage(960);
+        const note = findWhere(page, (item) => item.objectName === "alignmentNote");
+        verify(note !== null, "the note's label is there");
+        verify(!note.visible, "and empty: " + note.text);
+        compare(findWhere(page, (item) => item.objectName === "kindBadge").label, "Fixable");
     }
 
     // One frame round the whole group: the header and, opened, the copies

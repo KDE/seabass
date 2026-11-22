@@ -19,6 +19,19 @@ namespace seabass::domain
 struct DuplicateGroup
 {
     std::vector<Track> tracks;
+
+    // Per copy, parallel to `tracks`: where a sound sits in that copy
+    // minus where it sits in the FIRST copy, in ms on the cue timeline
+    // (rekordbox's, the one Track::cues are held on). nullopt when it
+    // could not be measured or the two do not line up cleanly; the first
+    // copy's own is 0. See duplicate_cue_shift.hpp, which fills it in
+    // after grouping (DuplicateTrackFinder::find() leaves it empty).
+    //
+    // Empty means not measured, which the measuring step leaves only on
+    // a group none of whose copies carries a cue, where nothing can move.
+    // Read empty as "the copies line up": that is also what a group put
+    // together by hand in a test means.
+    std::vector<std::optional<double>> cueShiftMs;
 };
 
 // What to do about one DuplicateGroup's cues, decided without touching
@@ -36,12 +49,21 @@ struct ConsolidationPlan
         AlreadyConsistent,
         // No copy in the group has any cues at all.
         NoCues,
+        // Copies with cues, and some copy whose music could not be lined
+        // up with the others' (DuplicateGroup::cueShiftMs): nothing can
+        // be copied or compared across that pair without guessing where
+        // its cues belong, so like Conflict a human decides.
+        Unaligned,
     };
 
     Kind kind = Kind::NoCues;
     DuplicateGroup group;
     std::optional<Track> source;  // set only for Kind::Unambiguous
     std::vector<Track> targets;   // set only for Kind::Unambiguous
+    // Parallel to targets: what to add to a source cue's position to put
+    // it on that target's timeline (see cueShiftBetween()). Always known
+    // here, because a group with an unknown one is Kind::Unaligned.
+    std::vector<double> targetShiftMs;
 };
 
 // Groups tracks that look like duplicates of each other. Two tracks are

@@ -22,6 +22,7 @@
 
 #include <QString>
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <filesystem>
@@ -428,6 +429,84 @@ int main()
             assert(found && "read back on rekordbox's timeline, the copy is the source");
         }
         std::cout << "case 4 (an Engine copy onto an MP3 is written on Engine's timeline through a scratch copy) OK\n";
+        fs::remove_all(scratch, cleared);
+    }
+
+    // ---- 5. a copy onto a copy whose music starts later is moved to match --
+    // Copies of one song are often not sample-aligned (domain/
+    // duplicate_cue_shift.hpp). The target's music starts 250 ms later,
+    // so every cue lands 250 ms later on it, and the last cue, which would
+    // land past the target's end, is left out and said.
+    {
+        const fs::path scratch = seabass::testing::scratchRoot() / "seabass_copy_cues_engine_shift";
+        std::error_code cleared;
+        fs::remove_all(scratch, cleared);
+        fs::create_directories(scratch);
+        const fs::path engineRoot = scratch / "Engine Library";
+        fs::copy(seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine",
+                 engineRoot, fs::copy_options::recursive);
+
+        DuplicatesCopyOp op;
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engineRoot));
+            const std::vector<Track> tracks = reader.readAll();
+            for (const Track &track : tracks) {
+                if (hotCues(track.cues).size() >= 2) {
+                    op.source = track;
+                    break;
+                }
+            }
+            for (const Track &track : tracks) {
+                if (track.cues.empty() && track.sourceId != op.source.sourceId
+                    && !seabass::domain::hasMp3Extension(track.filePath)) {
+                    op.targets = {track};
+                    break;
+                }
+            }
+        }
+        assert(!op.source.sourceId.empty() && !op.targets.empty());
+        const auto wanted = hotCues(op.source.cues);
+        double last = 0.0;
+        for (const auto &[slot, position] : wanted) {
+            last = std::max(last, position);
+        }
+        // The target ends 100 ms after the source's last cue: moved 250 ms
+        // later, that one cue is past it.
+        op.targets.front().durationSeconds = (last + 100.0) / 1000.0;
+        op.targetShiftMs = {250.0};
+
+        CopyCuesChange change(QStringLiteral("engine"), seabass::gui::pathToQString(engineRoot), QStringLiteral("group"), op);
+        assert(change.description().contains(QStringLiteral("moved to match each copy's timing")));
+        assert(change.description().contains(QStringLiteral("1 cue(s) left out")) && "the cue left out is said");
+        auto &noProgress = seabass::application::NullProgressReporter::instance();
+        CancellationToken token;
+        {
+            SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engineRoot));
+            assert(change.apply(ctx).ok);
+            assert(!ctx.runFinishHooks(true).error);
+        }
+
+        seabass::infrastructure::engine::LibdjinteropEngineReader after(seabass::pathToUtf8(engineRoot));
+        bool checked = false;
+        for (const Track &track : after.readAll()) {
+            if (track.sourceId != op.targets.front().sourceId) {
+                continue;
+            }
+            const auto written = hotCues(track.cues);
+            assert(written.size() + 1 == wanted.size() && "every cue but the one past the end");
+            for (const auto &[slot, position] : wanted) {
+                const auto found = written.find(slot);
+                if (position == last) {
+                    assert(found == written.end() && "the cue past the end is not written");
+                    continue;
+                }
+                assert(found != written.end());
+                assert(std::abs(found->second - (position + 250.0)) < 1.0 && "each cue 250 ms later");
+            }
+            checked = true;
+        }
+        assert(checked);
+        std::cout << "case 5 (a copy onto a shifted copy is moved, and a cue past its end left out) OK\n";
         fs::remove_all(scratch, cleared);
     }
 

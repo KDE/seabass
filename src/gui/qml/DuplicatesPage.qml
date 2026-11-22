@@ -448,6 +448,7 @@ Page {
                 required property string wastedBytesDescription
                 required property bool staged
                 required property string stagedDescription
+                required property string alignmentNote
 
                 property bool expanded: false
 
@@ -489,10 +490,16 @@ Page {
                                     Layout.preferredWidth: 320
                                 }
                                 StatusBadge {
-                                    label: delegateRoot.kind === "unambiguous" ? "Fixable" : "Conflict"
+                                    objectName: "kindBadge"
+                                    label: delegateRoot.kind === "unambiguous" ? "Fixable"
+                                        : delegateRoot.kind === "unaligned" ? "Not lined up" : "Conflict"
                                     badgeColor: delegateRoot.kind === "unambiguous" ? Theme.good : Theme.conflictText
                                     tooltipText: delegateRoot.actionable
-                                        ? "Kept: cues, copied onto the copies missing them.\nUntouched: files, playlists, everything else."
+                                        ? "Kept: cues, copied onto the copies missing them and moved to match each "
+                                          + "copy's timing.\nUntouched: files, playlists, everything else."
+                                        : delegateRoot.kind === "unaligned"
+                                        ? "The copies' audio could not be lined up, so nobody knows where one copy's "
+                                          + "cues belong on another. Nothing is copied.\n\n" + delegateRoot.alignmentNote
                                         : "These copies disagree, so nothing is copied automatically; decide per-track with the "
                                           + "Copy buttons below.\n\n" + root.conflictDetail(delegateRoot.tracks)
                                 }
@@ -523,6 +530,16 @@ Page {
                             }
                             Label {
                                 text: delegateRoot.description
+                                color: Theme.textMuted
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            // What lining the copies up measured: which copy
+                            // starts how much later, or could not be lined up.
+                            Label {
+                                objectName: "alignmentNote"
+                                visible: delegateRoot.alignmentNote.length > 0
+                                text: delegateRoot.alignmentNote
                                 color: Theme.textMuted
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap

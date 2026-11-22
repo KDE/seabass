@@ -74,7 +74,37 @@ struct DuplicateCleanupPlan
     // folded across the whole group), deduplicated -- what the survivor
     // should be written with so cleanup never loses a hot/memory cue
     // that only existed on a copy about to be removed.
+    //
+    // On the survivor's timeline: each removed copy's cues are moved by
+    // that copy's shift first (removedShiftMs), and the survivor's own
+    // cue still wins on a pad both have. A copy whose shift is unknown
+    // contributes nothing here; see hasCuesOnUnalignedCopy.
     std::vector<CuePoint> mergedCuesForSurvivor;
+
+    // Parallel to toRemove: what to add to that copy's cue positions to
+    // put them on the survivor's timeline (DuplicateGroup::cueShiftMs,
+    // through cueShiftBetween()). nullopt when the two could not be
+    // lined up.
+    std::vector<std::optional<double>> removedShiftMs;
+
+    // Cues of the removed copies that, once moved onto the survivor's
+    // timeline, would land before its start or past its end, and so are
+    // not merged. Counted for the page rather than dropped unsaid.
+    int cuesLeftOut = 0;
+
+    // True when a copy about to be removed could not be lined up with
+    // the survivor (its removedShiftMs is nullopt) and carries cues the
+    // survivor lacks. Those cues are NOT merged -- there is no known
+    // place on the survivor to put them, and a cue in the wrong place is
+    // worse than none -- so removing the copy loses them. A sibling of
+    // hasUnpreservableDataAtRisk below, with its own reason on the page:
+    // callers default such a group to excluded the same way.
+    //
+    // "Lacks" is judged by comparing the two cue sets as they are, which
+    // with an unknown shift can call a cue missing that the survivor
+    // holds a little to one side. That errs towards holding the group
+    // back, which is the direction to err in.
+    bool hasCuesOnUnalignedCopy = false;
 
     // "Fill a gap" propagation, not a merge: if the survivor is missing
     // bpm/key/artwork and some other copy in the group has it, that
@@ -134,6 +164,15 @@ struct DuplicateCleanupPlan
     // too, same as `differs`, but with different UI text: this is about
     // per-copy DJ data (usage/opinion), not encode quality.
     bool hasUnpreservableDataAtRisk = false;
+
+    // True when the copies are not all in one file format (by extension,
+    // in any case: FLAC beside MP3, but equally WAV beside AIFF). A DJ
+    // may keep both on purpose, for a player that cannot read one of
+    // them, so a group like this starts excluded like `differs`, with
+    // its own reason. `fileFormats` names them, upper case, in
+    // alphabetical order, for that reason to say.
+    bool mixedFormats = false;
+    std::vector<std::string> fileFormats;
 
     // The unreferenced files (Track::isUnreferenced) among `toRemove`,
     // split into the ones this plan would delete and the ones it refuses

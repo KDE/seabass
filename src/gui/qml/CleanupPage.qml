@@ -35,6 +35,7 @@ Page {
 
     CleanupController {
         id: cleanupController
+        objectName: "cleanupController"
     }
 
     // Escape backs out of staging, the way Escape backs out of anything
@@ -673,6 +674,10 @@ Page {
                 required property bool staged
                 required property string stagedDescription
                 required property string survivorReason
+                required property bool hasCuesOnUnalignedCopy
+                required property bool mixedFormats
+                required property string mixedFormatsNote
+                required property string alignmentNote
 
                 property bool expanded: false
 
@@ -710,6 +715,7 @@ Page {
                             RowLayout {
                                 Layout.fillWidth: true
                                 SeabassCheckBox {
+                                    objectName: "groupIncluded"
                                     checked: delegateRoot.included
                                     enabled: !delegateRoot.staged
                                     onToggled: cleanupController.setIncluded(delegateRoot.index, checked)
@@ -794,6 +800,25 @@ Page {
                                     tooltipText: "The copies' ratings or comments differ, and only one can be kept. "
                                         + "Excluded by default; tick to include."
                                 }
+                                StatusBadge {
+                                    objectName: "cuesNotLinedUpBadge"
+                                    visible: delegateRoot.hasCuesOnUnalignedCopy
+                                    label: "cues would be lost"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    tooltipText: "A copy being removed could not be lined up with the copy kept, so "
+                                        + "its cues have no known place on it and are not merged. "
+                                        + "Excluded by default; tick to include."
+                                }
+                                StatusBadge {
+                                    objectName: "mixedFormatsBadge"
+                                    visible: delegateRoot.mixedFormats
+                                    label: "different formats"
+                                    iconName: "dialog-warning"
+                                    badgeColor: Theme.conflictText
+                                    tooltipText: delegateRoot.mixedFormatsNote
+                                        + " Excluded by default; tick to include."
+                                }
                                 Item { Layout.fillWidth: true }
                                 SeabassIcon {
                                     iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
@@ -810,6 +835,27 @@ Page {
                             Label {
                                 visible: delegateRoot.survivorReason.length > 0
                                 text: delegateRoot.survivorReason
+                                color: Theme.textMuted
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                            // Why a group whose copies mix formats starts
+                            // unticked, in a sentence of its own.
+                            Label {
+                                objectName: "mixedFormatsNote"
+                                visible: delegateRoot.mixedFormatsNote.length > 0
+                                text: delegateRoot.mixedFormatsNote
+                                color: Theme.textMuted
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                            // What lining the copies up measured: a removed
+                            // copy that starts later or earlier than the
+                            // one kept, or could not be lined up with it.
+                            Label {
+                                objectName: "alignmentNote"
+                                visible: delegateRoot.alignmentNote.length > 0
+                                text: delegateRoot.alignmentNote
                                 color: Theme.textMuted
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true

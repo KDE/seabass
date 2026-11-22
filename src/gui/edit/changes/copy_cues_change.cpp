@@ -4,6 +4,7 @@
 
 #include "gui/edit/changes/copy_cues_change.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -11,6 +12,7 @@
 #include <unordered_map>
 
 #include "application/ports/cue_writer.hpp"
+#include "domain/duplicate_cue_shift.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
@@ -99,6 +101,15 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
 CopyCuesChange::CopyCuesChange(QString format, QString path, QString groupKey, DuplicatesCopyOp op)
     : m_format(std::move(format)), m_path(std::move(path)), m_groupKey(std::move(groupKey)), m_op(std::move(op))
 {
+    // Worked out once, here, so what the row says before Save and what
+    // the save writes cannot differ.
+    for (size_t i = 0; i < m_op.targets.size(); ++i) {
+        const double shift = i < m_op.targetShiftMs.size() ? m_op.targetShiftMs[i] : 0.0;
+        domain::MovedCues moved = domain::movedCues(m_op.source.cues, shift, m_op.targets[i].durationSeconds);
+        m_cuesLeftOut += moved.leftOut;
+        m_anyMoved = m_anyMoved || std::abs(shift) >= domain::NegligibleCueShiftMs;
+        m_targetCues.push_back(std::move(moved.cues));
+    }
 }
 
 QString CopyCuesChange::id() const
@@ -110,11 +121,18 @@ QString CopyCuesChange::description() const
 {
     QString from = QString::fromStdString(m_op.source.filename.empty() ? m_op.source.sourceId : m_op.source.filename);
     QString title = QString::fromStdString(m_op.source.title);
-    return QStringLiteral("Copy %1 cue(s) from %2 onto %3 other copy/copies of \"%4\"")
-        .arg(m_op.source.cues.size())
-        .arg(from)
-        .arg(m_op.targets.size())
-        .arg(title);
+    QString text = QStringLiteral("Copy %1 cue(s) from %2 onto %3 other copy/copies of \"%4\"")
+                       .arg(m_op.source.cues.size())
+                       .arg(from)
+                       .arg(m_op.targets.size())
+                       .arg(title);
+    if (m_anyMoved) {
+        text += QStringLiteral(", moved to match each copy's timing");
+    }
+    if (m_cuesLeftOut > 0) {
+        text += QStringLiteral("; %1 cue(s) left out, as they would land outside a copy").arg(m_cuesLeftOut);
+    }
+    return text;
 }
 
 QString CopyCuesChange::verb() const
@@ -161,19 +179,38 @@ ChangeOutcome CopyCuesChange::apply(SaveContext &ctx)
     DuplicatesFormatContext &format = ctx.shared<DuplicatesFormatContext>(
         key, [&]() { return makeContext(ctx, m_format, m_path, oneLibrarySourceIdToPath); });
 
-    for (const auto &target : m_op.targets) {
+    for (size_t i = 0; i < m_op.targets.size(); ++i) {
+        const auto &target = m_op.targets[i];
+        const std::vector<domain::CuePoint> &cues = m_targetCues[i];
+        const double shift = i < m_op.targetShiftMs.size() ? m_op.targetShiftMs[i] : 0.0;
+        const size_t leftOut = m_op.source.cues.size() - cues.size();
+        if (cues.empty() && !m_op.source.cues.empty()) {
+            // Every cue would land off this copy's ends. Writing the empty
+            // set would only take away whatever the copy has.
+            ctx.log().record("copied no cue to track id=" + target.sourceId + ": all "
+                             + std::to_string(leftOut) + " from track id=" + m_op.source.sourceId
+                             + " would land outside it once moved by " + std::to_string(shift) + " ms");
+            continue;
+        }
         for (const auto &file :
              filesWrittenFor(WriteScope{.oneLibraryMirror = true}, {m_format.toStdString(), target.sourceId}, m_path, ctx)) {
             ctx.backupOnce(file, "duplicate-cue-consolidation");
         }
-        format.writer->writeHotCues(target.sourceId, m_op.source.cues);
+        format.writer->writeHotCues(target.sourceId, cues);
         if (format.engineSession) {
             format.engineSession->noteItemApplied();
         }
-        ctx.log().record("copied " + std::to_string(m_op.source.cues.size()) + " cue(s) from track id="
-                         + m_op.source.sourceId + " to track id=" + target.sourceId);
+        std::string line = "copied " + std::to_string(cues.size()) + " cue(s) from track id=" + m_op.source.sourceId
+            + " to track id=" + target.sourceId;
+        if (std::abs(shift) >= domain::NegligibleCueShiftMs) {
+            line += ", moved by " + std::to_string(shift) + " ms to line up with it";
+        }
+        if (leftOut > 0) {
+            line += ", " + std::to_string(leftOut) + " left out (outside the track once moved)";
+        }
+        ctx.log().record(line);
         if (format.mirror && !target.filePath.empty()) {
-            const QString failed = mirrorCuesOrExplain(*format.mirror, target.filePath, m_op.source.cues, ctx,
+            const QString failed = mirrorCuesOrExplain(*format.mirror, target.filePath, cues, ctx,
                                                        "duplicate-cue-consolidation", QStringLiteral("copy the cues"));
             if (!failed.isEmpty()) {
                 return ChangeOutcome::failure(failed);

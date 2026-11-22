@@ -179,11 +179,21 @@ QString CleanupGroupChange::description() const
     // save writes one, and this line is what a person reads in the
     // staged list and in Undo.
     const int newCues = domain::cuesPreservedBy(m_plan);
-    return QStringLiteral("Clean up \"%1\": keep %2, remove %3 cop%4%5")
-        .arg(QString::fromStdString(m_plan.survivor.title), QString::fromStdString(m_plan.survivor.filename))
-        .arg(m_plan.toRemove.size())
-        .arg(m_plan.toRemove.size() == 1 ? "y" : "ies")
-        .arg(newCues > 0 ? QStringLiteral(" (%1 cue(s) preserved)").arg(newCues) : QString());
+    QString text = QStringLiteral("Clean up \"%1\": keep %2, remove %3 cop%4%5")
+                       .arg(QString::fromStdString(m_plan.survivor.title), QString::fromStdString(m_plan.survivor.filename))
+                       .arg(m_plan.toRemove.size())
+                       .arg(m_plan.toRemove.size() == 1 ? "y" : "ies")
+                       .arg(newCues > 0 ? QStringLiteral(" (%1 cue(s) preserved)").arg(newCues) : QString());
+    // The cues this save does NOT carry over, said where the ones it does
+    // are: moved off the kept copy's ends, or on a copy that could not be
+    // lined up with it.
+    if (m_plan.cuesLeftOut > 0) {
+        text += QStringLiteral("; %1 cue(s) left out, as they would land outside the copy kept").arg(m_plan.cuesLeftOut);
+    }
+    if (m_plan.hasCuesOnUnalignedCopy) {
+        text += QStringLiteral("; cues on a copy that could not be lined up are not merged");
+    }
+    return text;
 }
 
 QString CleanupGroupChange::verb() const

@@ -21,6 +21,10 @@ struct DuplicatesCopyOp
 {
     domain::Track source;
     std::vector<domain::Track> targets;
+    // Parallel to targets: what to add to a source cue's position to put
+    // it on that target's timeline (domain::cueShiftBetween()). A target
+    // without an entry is taken to line up with the source as it is.
+    std::vector<double> targetShiftMs;
 };
 
 // One duplicate group: copy the chosen copy's cues onto every other copy.
@@ -42,6 +46,12 @@ private:
     QString m_path;
     QString m_groupKey;
     DuplicatesCopyOp m_op;
+    // Parallel to m_op.targets: the source's cues as they go onto that
+    // target, moved by its shift, without the ones that would land off
+    // either end of it (domain::movedCues()).
+    std::vector<std::vector<domain::CuePoint>> m_targetCues;
+    int m_cuesLeftOut = 0;
+    bool m_anyMoved = false;
 };
 
 }  // namespace seabass::gui

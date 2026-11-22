@@ -5,11 +5,13 @@
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "domain/junk_cue.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <numeric>
 #include <optional>
 
+#include "domain/duplicate_cue_shift.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/track_matching.hpp"
 
@@ -265,10 +267,10 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
     for (auto &track : kept) {
         track.cues = withoutJunkCues(track.cues);
     }
-    std::vector<const Track *> withCues;
-    for (const auto &track : kept) {
-        if (!track.cues.empty()) {
-            withCues.push_back(&track);
+    std::vector<size_t> withCues;
+    for (size_t i = 0; i < kept.size(); ++i) {
+        if (!kept[i].cues.empty()) {
+            withCues.push_back(i);
         }
     }
 
@@ -277,25 +279,57 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
         return result;
     }
 
+    // A copy whose music could not be lined up with the others' has no
+    // known place for anyone's cues. Copying onto it, or from it, or
+    // calling its cues the same as another copy's or different from
+    // them, would all be guesses, so the group goes to a human with the
+    // reason. Only the copies a decision would actually touch count: a
+    // group whose cued copies agree is consistent whatever the copies
+    // without cues measured.
+    const bool everyShiftKnown = std::all_of(group.cueShiftMs.begin(), group.cueShiftMs.end(),
+                                             [](const std::optional<double> &shift) { return shift.has_value(); });
+
     if (withCues.size() == 1) {
+        if (!everyShiftKnown) {
+            result.kind = ConsolidationPlan::Kind::Unaligned;
+            return result;
+        }
+        const size_t source = withCues.front();
         result.kind = ConsolidationPlan::Kind::Unambiguous;
-        result.source = *withCues.front();
-        for (const auto &track : group.tracks) {
-            if (track.sourceId != result.source->sourceId) {
-                result.targets.push_back(track);
+        result.source = kept[source];
+        for (size_t i = 0; i < group.tracks.size(); ++i) {
+            if (i != source) {
+                result.targets.push_back(group.tracks[i]);
+                result.targetShiftMs.push_back(cueShiftBetween(group, source, i).value_or(0.0));
             }
         }
         return result;
     }
 
-    for (size_t i = 1; i < withCues.size(); ++i) {
-        // Half a beat when the two copies agree on a tempo, else the
-        // fallback; a loop only ever equals a loop.
-        if (!cueSetsEqual(withCues[0]->cues, withCues[i]->cues,
-                          cueToleranceMsFor(withCues[0]->bpm, withCues[i]->bpm))) {
-            result.kind = ConsolidationPlan::Kind::Conflict;
+    bool differ = false;
+    const size_t reference = withCues.front();
+    for (size_t k = 1; k < withCues.size(); ++k) {
+        const size_t other = withCues[k];
+        // On the reference copy's timeline: the other copy's cues moved
+        // by the shift between them, so a copy whose music starts 200 ms
+        // later is not called different for having its cues 200 ms later.
+        const std::optional<double> shift = cueShiftBetween(group, other, reference);
+        if (!shift) {
+            result.kind = ConsolidationPlan::Kind::Unaligned;
             return result;
         }
+        // Half a beat when the two copies agree on a tempo, else the
+        // fallback; a loop only ever equals a loop.
+        if (!cueSetsEqual(kept[reference].cues, shiftedCues(kept[other].cues, *shift),
+                          cueToleranceMsFor(kept[reference].bpm, kept[other].bpm))) {
+            differ = true;
+        }
+    }
+    if (differ) {
+        // Conflict offers to copy one copy's cues onto all the others,
+        // and that needs every copy lined up, not only the cued ones.
+        result.kind = everyShiftKnown ? ConsolidationPlan::Kind::Conflict : ConsolidationPlan::Kind::Unaligned;
+        return result;
     }
     result.kind = ConsolidationPlan::Kind::AlreadyConsistent;
     return result;

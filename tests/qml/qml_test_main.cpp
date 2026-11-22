@@ -108,6 +108,7 @@
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <random>
 #include <string>
 #include <system_error>
 
@@ -290,6 +291,70 @@ public:
         }
         sqlite3_close(db);
         return ok ? library : QString();
+    }
+
+    // Points Engine row `trackId` of a library copy at `relativePath`
+    // (Engine's own form, "../folderA/Song.wav"), filename with it: for a
+    // case about which copy is which file, or about the files' formats.
+    Q_INVOKABLE bool setTrackPath(const QString &library, int trackId, const QString &relativePath)
+    {
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
+            != SQLITE_OK) {
+            sqlite3_close(db);
+            return false;
+        }
+        sqlite3_stmt *stmt = nullptr;
+        bool ok = sqlite3_prepare_v2(db, "UPDATE Track SET path = ?1, filename = ?2 WHERE id = ?3;", -1, &stmt, nullptr)
+            == SQLITE_OK;
+        if (ok) {
+            const QByteArray path = relativePath.toUtf8();
+            const QByteArray name = relativePath.section(QLatin1Char('/'), -1).toUtf8();
+            sqlite3_bind_text(stmt, 1, path.constData(), static_cast<int>(path.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, name.constData(), static_cast<int>(name.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 3, trackId);
+            ok = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) == 1;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return ok;
+    }
+
+    // A mono 16-bit WAV at 22050 Hz: `leadSamples` of silence, then
+    // `seconds` of noise from `seed`. Two files of one seed are one piece
+    // of music, the second as many samples later as its lead says.
+    Q_INVOKABLE bool writeNoiseWav(const QString &file, double seconds, int leadSamples, int seed)
+    {
+        const std::uint32_t frames = static_cast<std::uint32_t>(leadSamples + seconds * 22050);
+        std::vector<char> out;
+        auto put = [&out](std::uint32_t value, int bytes) {
+            for (int i = 0; i < bytes; ++i) {
+                out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
+            }
+        };
+        out.insert(out.end(), {'R', 'I', 'F', 'F'});
+        put(36 + frames * 2, 4);
+        out.insert(out.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+        put(16, 4);
+        put(1, 2);
+        put(1, 2);
+        put(22050, 4);
+        put(44100, 4);
+        put(2, 2);
+        put(16, 2);
+        out.insert(out.end(), {'d', 'a', 't', 'a'});
+        put(frames * 2, 4);
+        std::mt19937 rng(static_cast<unsigned>(seed));
+        std::uniform_int_distribution<int> noise(-12000, 12000);
+        for (std::uint32_t i = 0; i < frames; ++i) {
+            const auto sample = static_cast<std::uint16_t>(static_cast<std::int16_t>(i < std::uint32_t(leadSamples) ? 0 : noise(rng)));
+            put(sample, 2);
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(seabass::gui::pathFromQString(file).parent_path(), ec);
+        std::ofstream stream(seabass::gui::pathFromQString(file), std::ios::binary);
+        stream.write(out.data(), static_cast<std::streamsize>(out.size()));
+        return static_cast<bool>(stream);
     }
 
 private:

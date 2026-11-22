@@ -33,4 +33,16 @@ PlaybackShift playbackShiftFor(const std::string &filePath, GridTimeline grid)
     return playbackShiftFor(readMp3LeadIn(filePath), correct, grid);
 }
 
+std::optional<double> cueTimelineOffsetMs(const std::string &filePath)
+{
+    if (!domain::MatchingPolicy::correctMp3CueTiming() || !domain::hasMp3Extension(filePath)) {
+        return 0.0;
+    }
+    const std::optional<domain::Mp3LeadIn> leadIn = readMp3LeadIn(filePath);
+    if (!leadIn) {
+        return std::nullopt;
+    }
+    return domain::engineToRekordboxOffsetMs(*leadIn);
+}
+
 }  // namespace seabass::infrastructure::audio

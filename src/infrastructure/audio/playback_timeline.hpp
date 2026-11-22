@@ -53,4 +53,25 @@ PlaybackShift playbackShiftFor(const std::optional<domain::Mp3LeadIn> &leadIn, b
 // an MP3 by extension) and applies the policy.
 PlaybackShift playbackShiftFor(const std::string &filePath, GridTimeline grid);
 
+// rekordbox's position minus the decoder's for the same instant in this
+// file, in ms: what to add to a time measured on the decoder's timeline
+// (Qt Multimedia's, which is Engine's) to put it on the one cues are held
+// on. What turns a shift between two copies measured by decoding them
+// into a shift between their cues (domain/duplicate_cue_shift.hpp).
+//
+//   * 0 while the correction is off (MatchingPolicy::correctMp3CueTiming):
+//     the same as playbackShiftFor(), which then plays cues exactly
+//     where the libraries hold them, so the decoder's timeline and the
+//     cues' are taken to be one.
+//   * 0 for a file that is not an MP3. ASSUMED, NOT MEASURED: that
+//     rekordbox and the decoder agree on where an M4A, FLAC, WAV or AIFF
+//     file starts has not been checked the way #50 checked MP3s.
+//   * engineToRekordboxOffsetMs() of the lead-in for an MP3.
+//   * nullopt for an MP3 whose lead-in cannot be read. Unlike
+//     playbackShiftFor(), which plays such a file at 0 because the
+//     correction is never worse than none, a shift between two copies
+//     that is up to 52 ms out would be written into cues, and a value
+//     that cannot be known is not guessed.
+std::optional<double> cueTimelineOffsetMs(const std::string &filePath);
+
 }  // namespace seabass::infrastructure::audio

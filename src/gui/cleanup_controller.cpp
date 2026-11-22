@@ -36,6 +36,10 @@
 #include "domain/matching_policy.hpp"
 #include "domain/track_scope.hpp"
 #include "gui/cancellable_audio_probe.hpp"
+#include "application/use_cases/measure_duplicate_cue_shifts.hpp"
+#include "gui/cue_shift_text.hpp"
+#include "infrastructure/audio/alignment_probe_factory.hpp"
+#include "infrastructure/audio/playback_timeline.hpp"
 #include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -270,6 +274,57 @@ QString removedReason(const domain::DuplicateCleanupPlan &plan, size_t i)
     return {};
 }
 
+// "These copies are in different formats (FLAC and MP3). ..." for a
+// group whose copies mix file formats; empty otherwise.
+QString mixedFormatsNote(const domain::DuplicateCleanupPlan &plan)
+{
+    if (!plan.mixedFormats) {
+        return {};
+    }
+    QStringList names;
+    for (const auto &format : plan.fileFormats) {
+        names << QString::fromStdString(format);
+    }
+    const QString last = names.takeLast();
+    const QString listed = names.join(QStringLiteral(", ")) + QStringLiteral(" and ") + last;
+    return QStringLiteral("These copies are in different formats (%1). You may be keeping both on purpose, for "
+                          "players that cannot read one of them.")
+        .arg(listed);
+}
+
+// What lining the copies up measured, a sentence for each removed copy it
+// has something to say about, named as the page names it (shownPaths()).
+QString alignmentNote(const domain::DuplicateCleanupPlan &plan)
+{
+    QStringList lines;
+    const QStringList shown = shownPaths(plan);
+    for (size_t i = 0; i < plan.toRemove.size() && i < plan.removedShiftMs.size(); ++i) {
+        const QString name = shown.value(static_cast<qsizetype>(i) + 1);
+        const QString copy = name.isEmpty() ? QStringLiteral("A copy being removed") : QStringLiteral("\"%1\"").arg(name);
+        const std::optional<double> shift = plan.removedShiftMs[i];
+        if (!shift) {
+            // Only worth a line when it costs something: a copy with no
+            // cues of its own loses nothing by not being lined up.
+            if (!plan.toRemove[i].cues.empty()) {
+                lines << QStringLiteral("%1 could not be lined up with the copy kept, so its cues are not merged.")
+                             .arg(copy);
+            }
+            continue;
+        }
+        // removedShiftMs is what to add to this copy's cues to put them on
+        // the survivor: the survivor's sound is that much later, so this
+        // copy's is that much earlier.
+        if (*shift != 0.0 && !plan.toRemove[i].cues.empty()) {
+            lines << shiftSentence(copy, QStringLiteral("the copy kept"), -*shift);
+        }
+    }
+    if (plan.cuesLeftOut > 0) {
+        lines << QStringLiteral("%1 cue(s) would land outside the copy kept once moved, and are left out.")
+                     .arg(plan.cuesLeftOut);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 }  // namespace
 
 CleanupPlanListModel::CleanupPlanListModel(QObject *parent) : QAbstractListModel(parent) {}
@@ -331,6 +386,14 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
         return survivorReason(plan);
     case StagedDescriptionRole:
         return realIndex < m_stagedDescriptions.size() ? m_stagedDescriptions[realIndex] : QString();
+    case CuesOnUnalignedCopyRole:
+        return plan.hasCuesOnUnalignedCopy;
+    case MixedFormatsRole:
+        return plan.mixedFormats;
+    case MixedFormatsNoteRole:
+        return mixedFormatsNote(plan);
+    case AlignmentNoteRole:
+        return alignmentNote(plan);
     default:
         return {};
     }
@@ -364,6 +427,10 @@ QHash<int, QByteArray> CleanupPlanListModel::roleNames() const
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
         {SurvivorReasonRole, "survivorReason"},
+        {CuesOnUnalignedCopyRole, "hasCuesOnUnalignedCopy"},
+        {MixedFormatsRole, "mixedFormats"},
+        {MixedFormatsNoteRole, "mixedFormatsNote"},
+        {AlignmentNoteRole, "alignmentNote"},
     };
 }
 
@@ -374,12 +441,16 @@ void CleanupPlanListModel::setPlans(std::vector<domain::DuplicateCleanupPlan> pl
     m_included.assign(m_plans.size(), true);
     m_stagedDescriptions.assign(m_plans.size(), QString());
     for (size_t i = 0; i < m_plans.size(); ++i) {
-        // Groups where quality and length disagree, or where a copy
+        // Groups where quality and length disagree, where a copy
         // carries real rating/comment/play-count/last-played data that
-        // would be silently lost, default to excluded -- see
-        // DuplicateCleanupPlan::differs and ::hasUnpreservableDataAtRisk's
-        // own doc comments (deliberately separate flags/reasons).
-        m_included[i] = !m_plans[i].differs && !m_plans[i].hasUnpreservableDataAtRisk;
+        // would be silently lost, where a copy's cues could not be lined
+        // up with the survivor and so would be lost, or whose copies are
+        // in different file formats, default to excluded -- see
+        // DuplicateCleanupPlan::differs, ::hasUnpreservableDataAtRisk,
+        // ::hasCuesOnUnalignedCopy and ::mixedFormats' own doc comments
+        // (deliberately separate flags/reasons).
+        m_included[i] = !m_plans[i].differs && !m_plans[i].hasUnpreservableDataAtRisk
+            && !m_plans[i].hasCuesOnUnalignedCopy && !m_plans[i].mixedFormats;
     }
     m_visibleIndices.resize(m_plans.size());
     for (size_t i = 0; i < m_plans.size(); ++i) {
@@ -879,8 +950,13 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         // One bar (#58): every catalog on the stick the cache still has to
         // read. This page's own is among them, and is a cache hit by the
         // time readAllStickCatalogs() comes to it.
+        // And lining up the copies' audio, counted in pairs nobody knows
+        // until the grouping is done, so planned as a share
+        // (application::cueShiftProgressUnits()).
         const auto readUnits = plannedUnitsForAllStickCatalogs(path.toStdString(), cancel);
-        application::PhasedProgress progress(*reporter, "Looking for duplicates", readUnits.value_or(0));
+        const size_t shiftUnits = application::cueShiftProgressUnits(readUnits.value_or(0));
+        application::PhasedProgress progress(*reporter, "Looking for duplicates",
+                                             readUnits ? *readUnits + shiftUnits : 0);
         std::vector<domain::Track> tracks =
             LibraryCatalogCache::instance().tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
@@ -984,8 +1060,39 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         CancellableAudioContentProbe cancellableProbe(audioProbe.get(), cancel);
         domain::AudioContentProbe *probeForFinder = audioProbe != nullptr ? &cancellableProbe : nullptr;
 
+        std::vector<domain::DuplicateGroup> groups = domain::DuplicateTrackFinder::find(tracks, probeForFinder);
+        if (audioProbe != nullptr) {
+            result.filesAudioCompared = audioProbe->decodedCount();
+            result.filesAudioUnreadable = audioProbe->failedCount();
+            // Asked, and got nothing back for any of them: a decoder
+            // that is linked in but did not load answers instantly and
+            // would otherwise leave both counters at a shape that reads
+            // as "nothing needed comparing".
+            if (result.filesAudioCompared == 0 && result.filesAudioUnreadable > 0) {
+                result.audioComparisonUnavailable = true;
+            }
+            // Explicit rather than left to the destructor, so a stick
+            // that refuses the write is a thing the scan saw rather
+            // than something that happens after it is over. Before the
+            // lining up below, so a scan cancelled there keeps it.
+            audioProbe->save();
+        }
+
+        // Every removed copy's cues are merged onto the survivor, and
+        // copies of one song are often not sample-aligned: each group
+        // with cues is lined up first. See domain/duplicate_cue_shift.hpp.
+        {
+            auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+            CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
+            application::measureDuplicateCueShifts(groups, &cancellableAlignment,
+                                                   infrastructure::audio::cueTimelineOffsetMs, progress, shiftUnits,
+                                                   cancel);
+            result.pairsNotLinedUp = alignment->unknownCount();
+            result.alignmentDecoderMissing = !alignment->hasDecoder();
+        }
+
         std::vector<domain::DuplicateCleanupPlan> plans;
-        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, probeForFinder)) {
+        for (const auto &group : groups) {
             auto plan = domain::DuplicateCleanupPlanner::plan(group);
             if (plan.toRemove.empty()) {
                 continue;
@@ -1023,21 +1130,6 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
             plans.push_back(std::move(plan));
         }
         result.plans = std::move(plans);
-        if (audioProbe != nullptr) {
-            result.filesAudioCompared = audioProbe->decodedCount();
-            result.filesAudioUnreadable = audioProbe->failedCount();
-            // Asked, and got nothing back for any of them: a decoder
-            // that is linked in but did not load answers instantly and
-            // would otherwise leave both counters at a shape that reads
-            // as "nothing needed comparing".
-            if (result.filesAudioCompared == 0 && result.filesAudioUnreadable > 0) {
-                result.audioComparisonUnavailable = true;
-            }
-            // Explicit rather than left to the destructor, so a stick
-            // that refuses the write is a thing the scan saw rather
-            // than something that happens after it is over.
-            audioProbe->save();
-        }
 
         // Sizes from the stick, not from a catalog. Two of the three
         // formats record no file size at all, so every "space saved"
@@ -1076,7 +1168,9 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
         auto &cache = LibraryCatalogCache::instance();
         const auto readUnits =
             cache.plannedUnits(format.toStdString(), path.toStdString(), LibraryCatalogCache::Detail::Full, cancel);
-        application::PhasedProgress progress(*reporter, "Reading the library", readUnits.value_or(0));
+        const size_t shiftUnits = application::cueShiftProgressUnits(readUnits.value_or(0));
+        application::PhasedProgress progress(*reporter, "Reading the library",
+                                             readUnits ? *readUnits + shiftUnits : 0);
         std::vector<domain::Track> tracks = cache.tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
         std::string idA = sourceIdA.toStdString();
@@ -1099,9 +1193,19 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
             return result;
         }
 
-        domain::DuplicateGroup group;
-        group.tracks = {*trackA, *trackB};
-        result.plans = {domain::DuplicateCleanupPlanner::plan(group)};
+        // Declared the same song by a person, not by the finder, and
+        // lined up all the same: the merge moves B's cues onto A or the
+        // other way round, and the person said which tracks, not where
+        // their sounds are.
+        std::vector<domain::DuplicateGroup> groups(1);
+        groups[0].tracks = {*trackA, *trackB};
+        auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+        CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
+        application::measureDuplicateCueShifts(groups, &cancellableAlignment, infrastructure::audio::cueTimelineOffsetMs,
+                                               progress, shiftUnits, cancel);
+        result.pairsNotLinedUp = alignment->unknownCount();
+        result.alignmentDecoderMissing = !alignment->hasDecoder();
+        result.plans = {domain::DuplicateCleanupPlanner::plan(groups[0])};
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;
     } catch (const std::exception &e) {
@@ -1374,6 +1478,17 @@ void CleanupController::onRescanFinished(CleanupTaskResult &&result)
         }
     } else {
         m_audioComparisonNote.clear();
+    }
+    // Copies that could not be lined up are each said on their own group;
+    // this says why when the reason is the build rather than the files.
+    // Word for word what DuplicatesController says.
+    if (result.pairsNotLinedUp > 0 && result.alignmentDecoderMissing) {
+        if (!m_audioComparisonNote.isEmpty()) {
+            m_audioComparisonNote += QLatin1Char(' ');
+        }
+        m_audioComparisonNote += QStringLiteral(
+            "This build cannot decode audio, so copies that are not identical files could not be lined up, "
+            "and no cue is moved between them.");
     }
     m_model.setPlans(std::move(result.plans));
     // Groups staged before this rescan keep their mark if they are still
