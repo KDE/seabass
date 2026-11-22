@@ -72,9 +72,14 @@ public:
     // a build without a decoder is pairs of the same bytes.
     // `innerDecodes` says whether `inner` can decode audio at all (as
     // opposed to comparing bytes), for hasDecoder().
+    // Whether what is measured is written back to the stick. ReadOnly is
+    // for a caller that promises to write nothing there (the command
+    // line's scan): it reads the cache and keeps new answers in memory.
+    enum class Writes { Yes, ReadOnly };
+
     // `decoder` names the decoder behind `inner` (see above).
     CachedAudioAlignmentProbe(std::string stickRoot, std::unique_ptr<domain::AudioAlignmentProbe> inner,
-                              bool innerDecodes, std::string decoder);
+                              bool innerDecodes, std::string decoder, Writes writes = Writes::Yes);
     ~CachedAudioAlignmentProbe() override;
     CachedAudioAlignmentProbe(const CachedAudioAlignmentProbe &) = delete;
     CachedAudioAlignmentProbe &operator=(const CachedAudioAlignmentProbe &) = delete;
@@ -85,7 +90,7 @@ public:
 
     // Writes the cache back atomically when anything changed. False when
     // it could not be written; a caller carries on. Also run by the
-    // destructor.
+    // destructor. Writes nothing, and is true, when ReadOnly.
     bool save();
 
     // Pairs loaded from disk and still held (for the tests).
@@ -136,6 +141,7 @@ private:
     // Keyed by decoder, then the pair.
     std::map<std::pair<std::string, std::pair<std::string, std::string>>, Entry> m_entries;
     std::string m_decoder;
+    Writes m_writes = Writes::Yes;
     std::unique_ptr<domain::AudioAlignmentProbe> m_inner;
     bool m_innerDecodes = false;
     bool m_dirty = false;

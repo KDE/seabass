@@ -77,8 +77,9 @@ std::optional<long long> parseLongLong(const std::string &text)
 
 CachedAudioAlignmentProbe::CachedAudioAlignmentProbe(std::string stickRoot,
                                                      std::unique_ptr<domain::AudioAlignmentProbe> inner,
-                                                     bool innerDecodes, std::string decoder)
-    : m_inner(std::move(inner)), m_innerDecodes(innerDecodes && m_inner != nullptr), m_decoder(std::move(decoder))
+                                                     bool innerDecodes, std::string decoder, Writes writes)
+    : m_inner(std::move(inner)), m_innerDecodes(innerDecodes && m_inner != nullptr), m_decoder(std::move(decoder)),
+      m_writes(writes)
 {
     if (stickRoot.empty()) {
         return;  // nowhere to keep it: every pair goes to `inner`
@@ -289,7 +290,7 @@ domain::AudioAlignmentProbe::Answer CachedAudioAlignmentProbe::align(const std::
 
 bool CachedAudioAlignmentProbe::save()
 {
-    if (!m_dirty || m_cachePath.empty()) {
+    if (!m_dirty || m_cachePath.empty() || m_writes == Writes::ReadOnly) {
         return true;
     }
     std::string out;

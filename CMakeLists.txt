@@ -2971,6 +2971,23 @@ seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_
            "  why: Pad 1 is 514 ms apart \\(more than half a beat at 128 BPM\\): Engine 0:30.765, OneLibrary 0:30.251, and 4 more pads differ\\n"
            "--dry-run: no changes made."
     FORBID "Apply the" "backed up")
+# The scan reads the stick's alignment cache and writes nothing on the
+# stick (tests/cli_scan_alignment_cache.cmake). Needs a decoder: its first
+# half lines two real files up by decoding them.
+if(TARGET seabass_audio_qt)
+    file(STRINGS "${CMAKE_SOURCE_DIR}/src/infrastructure/local/alignment_cache.hpp" _alignment_method
+         REGEX "MethodVersion = [0-9]+;")
+    string(REGEX REPLACE ".*MethodVersion = ([0-9]+).*" "\\1" _alignment_method "${_alignment_method}")
+    add_test(NAME cli_scan_alignment_cache
+        COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>"
+                "-DENGINE=${CMAKE_SOURCE_DIR}/tests/fixtures/duplicate_engine_library"
+                "-DALIGNMENT=${CMAKE_SOURCE_DIR}/tests/fixtures/alignment"
+                "-DSCRATCH=${CMAKE_BINARY_DIR}/test-scratch/cli_scan_alignment_cache"
+                "-DMETHOD=${_alignment_method}" -P ${CMAKE_SOURCE_DIR}/tests/cli_scan_alignment_cache.cmake)
+    set_tests_properties(cli_scan_alignment_cache PROPERTIES
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+endif()
+
 seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
     EXPECT "sync needs at least two catalogs, found: no rekordbox, engine, no onelibrary")
 
