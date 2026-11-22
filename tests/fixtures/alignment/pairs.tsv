@@ -26,5 +26,10 @@ real-1300	loop	c-ref.flac	c-lead1300.flac	1300.0000	-	the same, 1.3 s in front (
 real-eq-1300	loop	c-ref.flac	c-eq-1300.flac	-1300.0000	-	the same loop, equal lengths, the second copy starting 1.3 s further in
 intro675	music	d-ref.flac	d-intro675.flac	675.0113	-	music after a 3 s silent intro, the intro 675 ms longer
 intro675-m4a	music	d-ref.flac	d-intro675.m4a	675.0112	-	the same, the longer copy as AAC
-long-tail	long	L-ref.flac	L-tail.flac	0.0000	-	85 s, 6 s of other bursts added at the end: the end window lines up at 0 too
-long-cut	long	L-ref.flac	L-cut.flac	unknown	-	85 s with 400 ms cut out at 42.5 s: the start window says 0, the end -400
+long-tail	long-tail	L-ref.flac	L-tail.flac	0.0000	-	85 s, 6 s of other bursts added at the end: the end window lines up at 0 too
+long-cut	long-cut	L-ref.flac	L-cut.flac	unknown	-	85 s with 400 ms cut out at 42.5 s: the start window says 0, the end -400
+dj-21	dj-21	j-ref.flac	j-lead21.flac	21.0000	-	135 s, a loop intro and outro around a middle that does not repeat, 21 ms in front: the start and end windows have a rival a bar away at 0.99 of the true lag, the middle settles them
+dj-1300	dj-1300	j-ref.flac	j-lead1300.flac	1300.0000	-	the same, 1.3 s in front: more than a beat, the start and end torn the same way
+dj-barcut	dj-barcut	j-ref.flac	j-barcut.flac	unknown	-	the same with a whole bar cut from the middle of one copy: the start says 0, the end -2000
+dj-loop	dj-loop	k-ref.flac	k-lead21.flac	unknown	-	135 s of the loop all through, 21 ms in front: every window has a rival at 0.99, none settles
+dj-insert	dj-insert	j-ref.flac	j-insert.flac	unknown	-	a bar of the loop intro played twice at 22 s in one copy: the middle and end say +2000, the start window's own best is 0 (a bar away scores 0.9998 of it). Unknown, because every window's own best must agree; see README

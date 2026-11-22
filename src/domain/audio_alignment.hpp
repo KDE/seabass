@@ -46,6 +46,16 @@ inline constexpr double MinOverlapSeconds = 1.0;
 // variation 0.99 (near-eq-1300).
 inline constexpr double RivalSeparationMs = 5.0;
 inline constexpr double RivalShare = 0.95;
+// But a DJ track's intro and outro are often a beat-only loop, and its
+// start and end windows have a rival a beat, a bar or a phrase away at
+// 0.95 to 0.9999 of the true lag, while its middle is clear (on a real
+// stick: 120 of 290 pairs unknown for that alone, every one of them
+// with every window's best on the same lag). Windows of their own (not
+// sharing samples) resolve each other: a pair whose windows' bests all
+// agree is known when at least one window's best rival stays under this
+// stricter share. Every window must still pick that one lag as its own
+// best; a rival is never taken for the answer.
+inline constexpr double ResolvingRivalShare = 0.92;
 // A file too short for three windows of its own gives the same samples
 // to all three, and "the windows agree" then says nothing: a 4.5 s file
 // with 400 ms cut out lined up "cleanly" at 0.71. For such a pair the
@@ -175,10 +185,15 @@ struct CorrelationPeak
     long long lag = 0;
     double normalised = 0.0;
     // Another local peak more than `rivalSeparation` samples away reached
-    // RivalShare of this one, or the best lag lies on the edge of the
-    // lags searched (the true one may be past it). Either way the lag is
-    // not known.
+    // RivalShare of this one, or the best lag is not bounded (below).
+    // Either way this window alone does not know the lag.
     bool ambiguous = false;
+    // The highest such rival as a share of the best (0 with none).
+    double rivalShare = 0.0;
+    // False when the best lag lies on the edge of the lags looked at (the
+    // true one may be past it) or outside the range asked for: not an
+    // answer, whatever the other windows say.
+    bool bounded = true;
 };
 
 // The lags searched, both ends included.
@@ -202,14 +217,20 @@ struct WindowShift
 {
     double shiftMs = 0.0;
     double normalised = 0.0;
-    bool ambiguous = false;
+    double rivalShare = 0.0;
+    bool bounded = true;
+    bool ambiguous() const { return !bounded || rivalShare >= RivalShare; }
 };
 
-// The rule: no window ambiguous, every window's peak at least
-// MinNormalisedPeak and the shifts within MaxDisagreementMs of each
-// other. The median of the three when it holds, nullopt (does not line
-// up) when it does not. An empty list is nullopt too.
-std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows);
+// The rule: every window's best bounded, its peak at least
+// MinNormalisedPeak, and the windows' own bests within MaxDisagreementMs
+// of each other. Then, for windows of their own (`independent`), at least
+// one window with no rival at ResolvingRivalShare; for windows that share
+// samples (a short file), no window ambiguous at all, since one
+// measurement cannot resolve itself. The median of the shifts when it
+// holds, nullopt (does not line up) when it does not. An empty list is
+// nullopt too.
+std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows, bool independent = true);
 
 // The three windows of two decoded files, at `rate`: the first
 // WindowSeconds of each, the WindowSeconds around half of the shorter

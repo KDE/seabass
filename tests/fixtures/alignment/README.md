@@ -73,6 +73,13 @@ Sources, all mono:
   tones with five bursts in them. 11.025 kHz.
 * `L`: forty bursts over 85 s, so the probe's start, middle and end
   windows (40 s each) are different stretches. 11.025 kHz.
+* `j`: a DJ track, 135 s at 4 kHz. 45 s of a beat-only loop (kick and
+  stab, every hit's level varied by up to 3% a bar), 45 s of tone bursts
+  at irregular times with silence between (nothing in it repeats), and
+  45 s of the loop again. The probe's start and end windows are all loop:
+  a bar away scores 0.99 of the true lag there. Its middle window has no
+  rival. One marker in the intro and one in the outro, among the loop.
+* `k`: the same loop for all 135 s, with one marker in it.
 
 | file | what it is |
 |------|------------|
@@ -97,6 +104,10 @@ Sources, all mono:
 | c-eq-1300.flac | a window of the varied loop as long as c-ref, 1.3 s further in |
 | d-ref.flac, d-intro675.flac, d-intro675.m4a | the music, and with the intro 675 ms longer (as FLAC and as AAC) |
 | L-ref.flac, L-tail.flac, L-cut.flac | the long one, with 6 s of other bursts at the end, and with 400 ms cut out at 42.5 s |
+| j-ref.flac, j-lead21.flac, j-lead1300.flac | the DJ track, and with 21 ms and 1.3 s (more than a beat) in front |
+| j-barcut.flac | the DJ track with a whole bar (2 s) cut out of its middle at 66 s |
+| j-insert.flac | the DJ track with the bar before 22 s played twice, in its loop intro |
+| k-ref.flac, k-lead21.flac | the loop all through, and with 21 ms in front |
 
 The answers that are not one number, and why:
 
@@ -105,6 +116,25 @@ The answers that are not one number, and why:
   cue; that is accepted. Any other value is not.
 * `cut-short`, `long-cut`: sounds before the cut are 0 apart, after it
   400 ms. No one shift is right for every cue: unknown.
+* `dj-21`, `dj-1300`: known. The start and end windows each have a rival
+  a bar away at 0.99 of the true lag; the middle window has none, and
+  every window's own best is the true lag. Windows of their own settle
+  each other that way (`ResolvingRivalShare`), the way the copies of a
+  real track with a beat-only intro and outro need.
+* `dj-barcut`: the start says 0, the end a bar early. Unknown.
+* `dj-loop`: every window has a rival a bar away at 0.99 or more; none
+  settles the others. Unknown.
+* `dj-insert`: a bar played twice inside the loop intro of one copy. The
+  middle and end windows say +2000 ms, which is right for every sound
+  from 22 s on. Before 22 s the copies are 0 apart, and inside an exact
+  loop the audio cannot tell where the extra bar went: the bars on either
+  side of the insertion are the same bars, so "a bar inserted at 22 s"
+  and "a bar inserted at 6 s" make the same file. The start window's own
+  best is 0 (+2000 scores 0.9998 of it). The rule takes a shift only when
+  every window's own best agrees, so this is unknown, which is accepted.
+  Had the start window's best been +2000, "known, +2000" would have been
+  accepted as well: what the audio cannot decide, a cue in the loop cannot
+  be wrong about by more than the loop itself repeats.
 * `other`: no shift lines the two up: unknown.
 * `pure-730`: the loop repeats exactly; only the silence in front tells
   the true 730 ms from 730 ms plus or minus a bar. The true value or
