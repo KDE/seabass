@@ -163,10 +163,10 @@ int main()
         // A torn window that cannot tell its best from a rival at all (an
         // exact loop) is no vote: its "agreeing" may be chance, as when a
         // bar was inserted after it and before the middle.
-        assert(!cleanShiftMs({{2000.0, 0.99, 0.99995}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
-               && "a start window tied with its rival does not agree with the middle");
-        assert(cleanShiftMs({{2000.0, 0.99, 0.9998}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
-               && "one whose best stands out, however narrowly, does");
+        assert(!cleanShiftMs({{2000.0, 0.99, 0.9995}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
+               && "a start window all but tied with its rival does not agree with the middle");
+        assert(cleanShiftMs({{2000.0, 0.99, 0.998}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
+               && "one whose best stands out by more than a codec's noise does");
         assert(!cleanShiftMs({{21.3, 0.99, 0.99}, {521.3, 0.98, 0.5}, {21.3, 0.99, 0.96}})
                && "the windows' own bests must agree, a rival is never the answer");
         assert(!cleanShiftMs({{21.3, 0.99, 0.5, false}, {21.3, 0.98, 0.5}, {21.3, 0.99, 0.5}})
