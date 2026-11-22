@@ -107,8 +107,14 @@ std::vector<float> Resampler::finish()
     return std::move(m_out);
 }
 
+double shiftSearchSeconds(double compareAudioSeconds)
+{
+    return std::max(MinShiftSearchSeconds, compareAudioSeconds + ShiftSearchMarginSeconds);
+}
+
 std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::span<const float> b,
-                                               size_t minOverlap)
+                                               size_t minOverlap, std::optional<LagRange> range,
+                                               size_t rivalSeparation)
 {
     const size_t na = a.size();
     const size_t nb = b.size();
@@ -153,23 +159,78 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
     const long long need = static_cast<long long>(minOverlap);
     auto overlapAt = [&](long long lag) { return std::min(lna, lnb - lag) - std::max(0LL, -lag); };
 
-    bool found = false;
-    long long bestLag = 0;
-    double best = 0.0;
-    for (long long lag = -(lna - 1); lag <= lnb - 1; ++lag) {
-        if (overlapAt(lag) < need) {
-            continue;
+    // Each side's energy over any stretch, from running sums, so the
+    // coefficient at every lag costs two subtractions.
+    std::vector<double> energyBeforeA(na + 1, 0.0);
+    std::vector<double> energyBeforeB(nb + 1, 0.0);
+    for (size_t i = 0; i < na; ++i) {
+        energyBeforeA[i + 1] = energyBeforeA[i] + static_cast<double>(a[i]) * static_cast<double>(a[i]);
+    }
+    for (size_t i = 0; i < nb; ++i) {
+        energyBeforeB[i + 1] = energyBeforeB[i] + static_cast<double>(b[i]) * static_cast<double>(b[i]);
+    }
+    // An overlap with less energy than this share of its side's whole is
+    // silence as far as the running sums can tell: their rounding is then
+    // as large as what is left, and the quotient would be noise.
+    constexpr double SilentShare = 1e-9;
+    const double silentA = energyBeforeA[na] * SilentShare;
+    const double silentB = energyBeforeB[nb] * SilentShare;
+    auto coefficientAt = [&](long long lag) {
+        const long long from = std::max(0LL, -lag);
+        const long long to = std::min(lna, lnb - lag);
+        const double energyA = energyBeforeA[static_cast<size_t>(to)] - energyBeforeA[static_cast<size_t>(from)];
+        const double energyB =
+            energyBeforeB[static_cast<size_t>(to + lag)] - energyBeforeB[static_cast<size_t>(from + lag)];
+        if (energyA <= silentA || energyB <= silentB || energyA <= 0.0 || energyB <= 0.0) {
+            return 0.0;
         }
         const size_t index = lag >= 0 ? static_cast<size_t>(lag) : n - static_cast<size_t>(-lag);
-        const double value = z[index].real();
-        if (!found || value > best) {
-            found = true;
-            best = value;
-            bestLag = lag;
+        return z[index].real() / std::sqrt(energyA * energyB);
+    };
+
+    // The lags to look at: the range asked for, cut to those with enough
+    // overlap. Overlap shrinks away from the middle on both sides, so
+    // this is one stretch.
+    long long lowest = -(lna - 1);
+    long long highest = lnb - 1;
+    if (range) {
+        lowest = std::max(lowest, range->lowest);
+        highest = std::min(highest, range->highest);
+    }
+    while (lowest <= highest && overlapAt(lowest) < need) {
+        ++lowest;
+    }
+    while (highest >= lowest && overlapAt(highest) < need) {
+        --highest;
+    }
+    if (lowest > highest) {
+        return std::nullopt;
+    }
+    std::vector<double> coefficient(static_cast<size_t>(highest - lowest + 1));
+    size_t best = 0;
+    for (size_t k = 0; k < coefficient.size(); ++k) {
+        coefficient[k] = coefficientAt(lowest + static_cast<long long>(k));
+        if (coefficient[k] > coefficient[best]) {
+            best = k;
         }
     }
-    if (!found) {
-        return std::nullopt;
+    const long long bestLag = lowest + static_cast<long long>(best);
+
+    // A rival: any other local peak, or either end of the stretch (a peak
+    // may lie just past it), far enough from the best not to be its own
+    // shoulder and nearly as high.
+    bool ambiguous = coefficient.size() > 1 && (best == 0 || best + 1 == coefficient.size());
+    const double rivalLevel = RivalShare * coefficient[best];
+    for (size_t k = 0; k < coefficient.size() && !ambiguous; ++k) {
+        const size_t distance = k > best ? k - best : best - k;
+        if (distance <= rivalSeparation || coefficient[k] < rivalLevel) {
+            continue;
+        }
+        const bool risesFromLeft = k == 0 || coefficient[k] >= coefficient[k - 1];
+        const bool fallsToRight = k + 1 == coefficient.size() || coefficient[k] >= coefficient[k + 1];
+        if (risesFromLeft && fallsToRight) {
+            ambiguous = true;
+        }
     }
 
     // The coefficient at that lag, straight from the samples: the
@@ -190,7 +251,7 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
     if (energyA <= 0.0 || energyB <= 0.0) {
         return std::nullopt;
     }
-    return CorrelationPeak{bestLag, cross / std::sqrt(energyA * energyB)};
+    return CorrelationPeak{bestLag, cross / std::sqrt(energyA * energyB), ambiguous};
 }
 
 std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows)
@@ -200,7 +261,7 @@ std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows)
     }
     std::vector<double> shifts;
     for (const auto &window : windows) {
-        if (!(window.normalised >= MinNormalisedPeak)) {
+        if (window.ambiguous || !(window.normalised >= MinNormalisedPeak)) {
             return std::nullopt;
         }
         shifts.push_back(window.shiftMs);
@@ -214,9 +275,9 @@ std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows)
 }
 
 std::optional<std::vector<WindowShift>> windowShifts(std::span<const float> a, std::span<const float> b,
-                                                     double rate)
+                                                     double rate, double maxShiftSeconds)
 {
-    if (rate <= 0.0) {
+    if (rate <= 0.0 || !(maxShiftSeconds >= 0.0)) {
         return std::nullopt;
     }
     const size_t window = static_cast<size_t>(std::llround(WindowSeconds * rate));
@@ -244,9 +305,16 @@ std::optional<std::vector<WindowShift>> windowShifts(std::span<const float> a, s
         {na - std::min(window, na), std::min(window, na), nb - std::min(window, nb), std::min(window, nb)},
     };
 
+    const long long maxShift = std::llround(maxShiftSeconds * rate);
+    const size_t rivalSeparation = static_cast<size_t>(std::ceil(RivalSeparationMs * rate / 1000.0));
     std::vector<WindowShift> shifts;
     for (const Window &w : windows) {
-        const auto peak = correlationPeak(a.subspan(w.startA, w.lengthA), b.subspan(w.startB, w.lengthB), minOverlap);
+        // The shift is the lag plus where b's window starts minus where
+        // a's does, so the shifts searched are this range of lags.
+        const long long startDifference = static_cast<long long>(w.startB) - static_cast<long long>(w.startA);
+        const LagRange range{-maxShift - startDifference, maxShift - startDifference};
+        const auto peak = correlationPeak(a.subspan(w.startA, w.lengthA), b.subspan(w.startB, w.lengthB), minOverlap,
+                                          range, rivalSeparation);
         if (!peak) {
             return std::nullopt;
         }
@@ -254,14 +322,15 @@ std::optional<std::vector<WindowShift>> windowShifts(std::span<const float> a, s
         // in a is at file index startA + i, in b at startB + i + lag.
         const double samples = static_cast<double>(peak->lag) + static_cast<double>(w.startB)
             - static_cast<double>(w.startA);
-        shifts.push_back({samples * 1000.0 / rate, peak->normalised});
+        shifts.push_back({samples * 1000.0 / rate, peak->normalised, peak->ambiguous});
     }
     return shifts;
 }
 
-std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate)
+std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate,
+                                     double maxShiftSeconds)
 {
-    const auto windows = windowShifts(a, b, rate);
+    const auto windows = windowShifts(a, b, rate, maxShiftSeconds);
     if (!windows) {
         return std::nullopt;
     }

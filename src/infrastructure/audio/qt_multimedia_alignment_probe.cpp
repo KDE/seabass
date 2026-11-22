@@ -18,6 +18,7 @@
 #include <limits>
 
 #include "domain/audio_alignment.hpp"
+#include "domain/matching_policy.hpp"
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 
 namespace seabass::infrastructure::audio
@@ -88,7 +89,9 @@ std::optional<double> QtMultimediaAlignmentProbe::shiftMs(const std::string &abs
     if (!b) {
         return std::nullopt;
     }
-    return domain::alignment::measureShiftMs(*a, *b, domain::alignment::AnalysisRate);
+    return domain::alignment::measureShiftMs(
+        *a, *b, domain::alignment::AnalysisRate,
+        domain::alignment::shiftSearchSeconds(domain::MatchingPolicy::compareAudioSeconds()));
 }
 
 std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(const std::string &absoluteFilePath) const

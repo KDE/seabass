@@ -37,6 +37,19 @@ inline constexpr double MaxDisagreementMs = 2.0;
 // Less overlap than this between two windows at a lag is too little
 // music to call a match on.
 inline constexpr double MinOverlapSeconds = 1.0;
+// Music built from a repeated bar or beat matches itself one bar or one
+// beat away almost as well as at the true shift. A window whose best lag
+// has a rival further away than RivalSeparationMs reaching RivalShare of
+// its coefficient cannot tell the two apart, and says nothing.
+inline constexpr double RivalSeparationMs = 5.0;
+inline constexpr double RivalShare = 0.9;
+// How far apart two copies are looked for: the length window in which
+// audio is compared at all (MatchingPolicy::compareAudioSeconds()) plus
+// a margin, never less than MinShiftSearchSeconds. Measured shifts on a
+// real stick reached 1.3 s. A copy further out than this is not lined up.
+inline constexpr double ShiftSearchMarginSeconds = 2.0;
+inline constexpr double MinShiftSearchSeconds = 5.0;
+double shiftSearchSeconds(double compareAudioSeconds);
 
 // In-place radix-2 FFT. `data.size()` must be a power of two (and not
 // 0). `inverse` runs the inverse transform, scaled by 1/N, so a forward
@@ -76,47 +89,66 @@ private:
 };
 
 // The lag at which `b` best matches `a`, in samples, and how well.
-// lag = index of a sound in b minus its index in a. Only lags at which
-// the two overlap by at least `minOverlap` samples are considered; the
-// peak is the largest raw cross-correlation among them, and
-// `normalised` is the correlation coefficient over the overlap at that
-// lag (1 for identical shapes, 0 for nothing in common).
+// lag = index of a sound in b minus its index in a.
+//
+// The best lag is the one with the highest correlation COEFFICIENT over
+// the overlap (1 for identical shapes, 0 for nothing in common), not the
+// highest raw sum: the raw sum grows with the overlap, so in music made
+// of a repeated bar it favoured the bar nearer lag 0 over the true one.
 struct CorrelationPeak
 {
     long long lag = 0;
     double normalised = 0.0;
+    // Another local peak more than `rivalSeparation` samples away reached
+    // RivalShare of this one, or the best lag lies on the edge of the
+    // lags searched (the true one may be past it). Either way the lag is
+    // not known.
+    bool ambiguous = false;
 };
 
-// nullopt when there is no lag with that much overlap, or when either
-// side is silent over the overlap at the peak (nothing to correlate).
+// The lags searched, both ends included.
+struct LagRange
+{
+    long long lowest = 0;
+    long long highest = 0;
+};
+
+// Only lags inside `range` (every lag when there is none) at which the
+// two overlap by at least `minOverlap` samples are considered. nullopt
+// when there is no such lag, or when either side is silent over the
+// overlap at the peak (nothing to correlate).
 std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::span<const float> b,
-                                               size_t minOverlap);
+                                               size_t minOverlap, std::optional<LagRange> range = std::nullopt,
+                                               size_t rivalSeparation = 1);
 
 // One window's answer, for the rule below and for a test to look at.
 struct WindowShift
 {
     double shiftMs = 0.0;
     double normalised = 0.0;
+    bool ambiguous = false;
 };
 
-// The rule: every window's peak at least MinNormalisedPeak and the
-// shifts within MaxDisagreementMs of each other. The median of the
-// three when it holds, nullopt (does not line up) when it does not. An
-// empty list is nullopt too.
+// The rule: no window ambiguous, every window's peak at least
+// MinNormalisedPeak and the shifts within MaxDisagreementMs of each
+// other. The median of the three when it holds, nullopt (does not line
+// up) when it does not. An empty list is nullopt too.
 std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows);
 
 // The three windows of two decoded files, at `rate`: the first
 // WindowSeconds of each, the WindowSeconds around half of the shorter
 // file in both, and the last WindowSeconds of each. Each window's lag is
 // turned into a shift from the start of the files (an end window's lag
-// counts from where each file's window begins). Files shorter than a
-// window use what they have. nullopt when a window cannot be measured.
+// counts from where each file's window begins), and only shifts within
+// `maxShiftSeconds` either way are searched. Files shorter than a window
+// use what they have. nullopt when a window cannot be measured.
 std::optional<std::vector<WindowShift>> windowShifts(std::span<const float> a, std::span<const float> b,
-                                                     double rate);
+                                                     double rate, double maxShiftSeconds);
 
 // windowShifts() and then cleanShiftMs(): where a sound sits in `b`
 // minus where it sits in `a`, in ms, or nullopt when the two do not line
 // up cleanly.
-std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate);
+std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate,
+                                     double maxShiftSeconds);
 
 }  // namespace seabass::domain::alignment
