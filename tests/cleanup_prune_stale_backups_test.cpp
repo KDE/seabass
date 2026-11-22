@@ -68,6 +68,7 @@
 #include "gui/qt_path.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
+#include "infrastructure/logging/file_operation_log.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "nothing_else_running.hpp"
@@ -112,8 +113,10 @@ std::vector<std::string> messages(const std::string &text)
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
+        // What the run did, not who did it: the line each run opens the log
+        // with (writerLine()) is counted on its own, in case 2.
         const size_t gap = line.find("  ");
-        if (gap != std::string::npos) {
+        if (gap != std::string::npos && line.substr(gap + 2) != seabass::infrastructure::logging::writerLine()) {
             out.push_back(line.substr(gap + 2));
         }
     }
@@ -320,6 +323,12 @@ int main(int argc, char **argv)
         }
     }
     assert(lines.size() == 3);
+    // The run says once, before its first line, which Seabass it is.
+    const std::string added = logAfter.substr(logBefore.size());
+    const std::string writer = "  " + seabass::infrastructure::logging::writerLine();
+    const size_t said = added.find(writer);
+    assert(said != std::string::npos && said < added.find(DeletedLine));
+    assert(added.find(writer, said + 1) == std::string::npos);
     waitForListing(controller, listed);
     expectList(controller, {}, "case 2, afterwards");
     std::cout << "case 2 (pruneStaleBackups removes exactly the listed records, one log line each) OK\n";

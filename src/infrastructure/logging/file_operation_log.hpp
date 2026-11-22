@@ -12,6 +12,15 @@
 namespace seabass::infrastructure::logging
 {
 
+// What every log object writes before its first line: which Seabass is
+// writing, "Seabass 1.1.0 (stable, v1.1.0-3-gabc1234) on Linux". The
+// version, the channel the build came off, the commit where it is known,
+// and the system. A save or a command opens its own log object (a command
+// that writes two libraries opens two, and says it twice), so the log says
+// for each of them which build did it: the way to tell what a stick's
+// rows went through when a later build writes them differently.
+std::string writerLine();
+
 // Appends timestamped lines to a plain text log file.
 //
 // The stream is opened once, on the first line, and kept until this object
