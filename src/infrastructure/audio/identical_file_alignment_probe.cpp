@@ -71,18 +71,15 @@ bool IdenticalFileAlignmentProbe::sameContent(const std::string &absolutePathA, 
     return m_lastSame;
 }
 
-std::optional<double> IdenticalFileAlignmentProbe::shiftMs(const std::string &absolutePathA,
-                                                           const std::string &absolutePathB)
+domain::AudioAlignmentProbe::Answer IdenticalFileAlignmentProbe::align(const std::string &absolutePathA,
+                                                                       const std::string &absolutePathB)
 {
     if (sameContent(absolutePathA, absolutePathB)) {
-        return 0.0;
+        return Answer::linedUp(0.0);
     }
-    std::optional<double> shift;
-    if (m_decoder != nullptr) {
-        shift = m_decoder->shiftMs(absolutePathA, absolutePathB);
-    }
-    ++(shift ? m_measured : m_unknown);
-    return shift;
+    const Answer answer = m_decoder != nullptr ? m_decoder->align(absolutePathA, absolutePathB) : Answer::noOpinion();
+    ++(answer.kind == Answer::Kind::LinedUp ? m_measured : m_unknown);
+    return answer;
 }
 
 }  // namespace seabass::infrastructure::audio

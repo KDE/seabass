@@ -168,6 +168,11 @@ fs::path stickSilenceCache(const fs::path &stickRoot)
     return stickCachesDir(stickRoot) / "silence.jsonl";
 }
 
+fs::path stickAlignmentCache(const fs::path &stickRoot)
+{
+    return stickCachesDir(stickRoot) / "alignment.jsonl";
+}
+
 namespace
 {
 fs::path &localRootOverride()

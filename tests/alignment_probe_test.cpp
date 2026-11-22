@@ -211,6 +211,18 @@ int main(int argc, char **argv)
     assert(!measure(probe, a, tiny, "half a second") && "under a second is unknown");
     assert(!measure(probe, a, garbage, "not audio") && "an unreadable file is unknown");
     assert(!measure(probe, a, at("missing.wav"), "no file") && "a file that is not there is unknown");
+    // The two kinds of unknown are kept apart: a cache keeps the first
+    // and never the second.
+    {
+        using Kind = QtMultimediaAlignmentProbe::Answer::Kind;
+        assert(probe.align(a, different).kind == Kind::NotLinedUp && "another song is decoded and does not line up");
+        assert(probe.align(a, cutMiddle).kind == Kind::NotLinedUp);
+        const auto unreadable = probe.align(a, garbage);
+        assert(unreadable.kind == Kind::NoOpinion && !unreadable.unreadableA && unreadable.unreadableB
+               && "a file that will not decode is no opinion, and says which");
+        const auto missing = probe.align(at("missing.wav"), a);
+        assert(missing.kind == Kind::NoOpinion && missing.unreadableA && !missing.unreadableB);
+    }
 
     // A file in several pairs is decoded once while it is among the last
     // few.
@@ -236,11 +248,11 @@ int main(int argc, char **argv)
         assert(std::filesystem::file_size(seabass::pathFromUtf8(almost)) == std::filesystem::file_size(seabass::pathFromUtf8(a)));
         assert(!seabass::infrastructure::audio::filesHaveSameBytes(a, almost) && "equal sizes are not equal bytes");
 
-        auto everyBuild = seabass::infrastructure::audio::makeAudioAlignmentProbe();
+        auto everyBuild = seabass::infrastructure::audio::makeAudioAlignmentProbe({});
         assert(everyBuild->hasDecoder());
         shift = everyBuild->shiftMs(a, almost);
         assert(shift && near(*shift, 0.0, tolerance) && "a near copy is decoded and lined up");
-        assert(everyBuild->measuredCount() == 1);
+        assert(everyBuild->linedUpCount() == 1 && everyBuild->unknownCount() == 0);
     }
 
     std::cout << "alignment_probe_test: all assertions passed\n";

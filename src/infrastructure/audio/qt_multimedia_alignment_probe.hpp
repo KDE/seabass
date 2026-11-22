@@ -47,7 +47,7 @@ public:
     // Whether this build has a decoding backend that actually loaded.
     static bool decodingAvailable();
 
-    std::optional<double> shiftMs(const std::string &absolutePathA, const std::string &absolutePathB) override;
+    Answer align(const std::string &absolutePathA, const std::string &absolutePathB) override;
 
     // One file, mono, at alignment::AnalysisRate; nullopt when it cannot
     // be decoded whole (refused, unreadable, timed out, a stream whose
