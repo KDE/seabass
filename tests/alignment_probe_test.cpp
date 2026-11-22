@@ -5,10 +5,17 @@
 // The real decoder lining up real files, written here rather than
 // shipped (silence_probe_test's reasoning): one signal, and copies of it
 // with a known number of samples of silence in front, a different tail,
-// a section cut from the middle, at another sample rate and in stereo,
-// beside a different signal altogether. The shift measured must be the
-// one put there, to within a sample or two, and every copy that does not
-// line up must come back unknown.
+// at another sample rate and in stereo, beside a different signal
+// altogether. The shift measured must be the one put there, to within a
+// sample or two, and every copy that does not line up must come back
+// unknown.
+//
+// What this checks is the decoder's timeline, so the files are short:
+// 6 s, under one window, so every window is the whole file. The rule
+// over three different windows (a section cut from the middle, loops) is
+// audio_alignment_test's, on signals made in memory. A CI runner can be
+// thirty times slower per core than a desktop, and this has to fit its
+// timeout there too.
 //
 // Run with --time <a> <b> to time one pair of real files instead.
 
@@ -171,7 +178,7 @@ int main(int argc, char **argv)
     auto at = [&](const char *name) { return seabass::pathToUtf8(seabass::pathFromUtf8(root) / name); };
 
     constexpr int Rate = 44100;
-    constexpr double Seconds = 85.0;  // more than two windows, so start, middle and end differ
+    constexpr double Seconds = 6.0;
     const auto song = music(1);
     const std::vector<double> base = sample(song, Rate, Seconds);
 
@@ -186,9 +193,6 @@ int main(int argc, char **argv)
     }
     const std::string longerTail = writeWav(at("tail.wav"), tail, Rate);
     const std::string different = writeWav(at("different.wav"), sample(music(3), Rate, Seconds), Rate);
-    std::vector<double> cut(base.begin(), base.begin() + 45 * Rate);
-    cut.insert(cut.end(), base.begin() + 45 * Rate + Rate * 3 / 10, base.end());
-    const std::string cutMiddle = writeWav(at("cut.wav"), cut, Rate);
     // The same music sampled at 48 kHz, in stereo, 250 ms later.
     const std::string at48k = writeWav(at("48k.wav"), withLead(12000, sample(song, 48000, Seconds)), 48000, 2);
     const std::string tiny = writeWav(at("tiny.wav"), std::vector<double>(base.begin(), base.begin() + Rate / 2), Rate);
@@ -207,7 +211,6 @@ int main(int argc, char **argv)
     shift = measure(probe, a, at48k, "48 kHz stereo, 250 ms later");
     assert(shift && near(*shift, 250.0, tolerance) && "another rate and channel count line up exactly");
     assert(!measure(probe, a, different, "a different signal") && "another song does not line up");
-    assert(!measure(probe, a, cutMiddle, "a section cut from the middle") && "start and end disagree");
     assert(!measure(probe, a, tiny, "half a second") && "under a second is unknown");
     assert(!measure(probe, a, garbage, "not audio") && "an unreadable file is unknown");
     assert(!measure(probe, a, at("missing.wav"), "no file") && "a file that is not there is unknown");
@@ -216,7 +219,6 @@ int main(int argc, char **argv)
     {
         using Kind = QtMultimediaAlignmentProbe::Answer::Kind;
         assert(probe.align(a, different).kind == Kind::NotLinedUp && "another song is decoded and does not line up");
-        assert(probe.align(a, cutMiddle).kind == Kind::NotLinedUp);
         const auto unreadable = probe.align(a, garbage);
         assert(unreadable.kind == Kind::NoOpinion && !unreadable.unreadableA && unreadable.unreadableB
                && "a file that will not decode is no opinion, and says which");
@@ -224,12 +226,31 @@ int main(int argc, char **argv)
         assert(missing.kind == Kind::NoOpinion && missing.unreadableA && !missing.unreadableB);
     }
 
-    // A file in several pairs is decoded once while it is among the last
-    // few.
+    // A file in several pairs is decoded once while it is among the most
+    // recently used, and what is kept is held to a number of bytes, not
+    // of files.
     {
         const auto first = probe.decoded(a);
         const auto again = probe.decoded(a);
         assert(first && first == again && "the decoded file is reused");
+        assert(probe.cachedBytes() <= (256u << 20));
+
+        const size_t oneFile = first->bytes();
+        // Room for three and a half of a's size; the file with the longer
+        // tail weighs two.
+        const size_t room = oneFile * 3 + oneFile / 2;
+        QtMultimediaAlignmentProbe small(120000, room);
+        const auto keptA = small.decoded(a);
+        small.decoded(lead);
+        assert(small.decoded(a) == keptA && "two files fit");
+        small.decoded(longerTail);
+        assert(small.cachedBytes() <= room && "the least recently used goes when the bytes run out");
+        assert(small.decoded(a) == keptA && "the most recently used stays");
+        assert(small.cachedBytes() == keptA->bytes() + small.decoded(longerTail)->bytes() && "that was lead");
+        QtMultimediaAlignmentProbe tiny(120000, 1);
+        assert(tiny.decoded(a) && tiny.cachedBytes() == oneFile && "one file is kept whatever it weighs");
+        tiny.decoded(lead);
+        assert(tiny.cachedBytes() == tiny.decoded(lead)->bytes() && "and only that one");
     }
 
     // Byte-identical copies need no decoder; anything else needs one.
@@ -243,7 +264,7 @@ int main(int argc, char **argv)
         assert(bytesOnly.identicalCount() == 1 && bytesOnly.measuredCount() == 0 && bytesOnly.unknownCount() == 2);
         // Same size, one byte different: not identical.
         std::vector<double> nudged = base;
-        nudged[Rate * 40] += 0.01;
+        nudged[Rate * 3] += 0.01;
         const std::string almost = writeWav(at("almost.wav"), nudged, Rate);
         assert(std::filesystem::file_size(seabass::pathFromUtf8(almost)) == std::filesystem::file_size(seabass::pathFromUtf8(a)));
         assert(!seabass::infrastructure::audio::filesHaveSameBytes(a, almost) && "equal sizes are not equal bytes");

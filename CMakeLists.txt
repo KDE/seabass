@@ -1073,7 +1073,9 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     target_include_directories(alignment_probe_test PRIVATE src)
     target_link_libraries(alignment_probe_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
     add_test(NAME alignment_probe_test COMMAND alignment_probe_test)
-    set_tests_properties(alignment_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # Decodes real files and cross-correlates them in a Debug build: cheap
+    # here, and given room on a CI runner many times slower per core.
+    set_tests_properties(alignment_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 endif()
 
 # The decoder the player uses, against the click MP3s in
@@ -2152,6 +2154,8 @@ add_executable(audio_alignment_test
     src/domain/audio_alignment.cpp)
 target_include_directories(audio_alignment_test PRIVATE src)
 add_test(NAME audio_alignment_test COMMAND audio_alignment_test)
+# Correlates in a Debug build; room for a CI runner many times slower.
+set_tests_properties(audio_alignment_test PROPERTIES TIMEOUT 300)
 
 add_executable(duplicate_cue_shift_test
     tests/duplicate_cue_shift_test.cpp

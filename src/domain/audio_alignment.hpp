@@ -76,7 +76,11 @@ public:
     Resampler(double inRate, double outRate);
 
     void push(float sample);
-    // Everything still pending, and the samples so far. Call once.
+    // The samples complete so far, handed over and no longer held here,
+    // so a long file need not be held whole while it is decoded.
+    std::vector<float> drain();
+    // Everything still pending, and the samples not drained yet. Call
+    // once.
     std::vector<float> finish();
 
 private:
@@ -87,6 +91,65 @@ private:
     std::deque<double> m_weight;
     std::vector<float> m_out;
 };
+
+// What is kept of one decoded file: only the stretches the three windows
+// below can need, so a two hour mix is never held whole. `total` is the
+// whole file's length in samples; `pieces` are in order and do not
+// overlap, each held at exactly its size.
+struct KeptSamples
+{
+    struct Piece
+    {
+        size_t start = 0;
+        std::vector<float> samples;
+    };
+    size_t total = 0;
+    std::vector<Piece> pieces;
+
+    // Samples [start, start + length), when one piece holds them all.
+    std::optional<std::span<const float>> slice(size_t start, size_t length) const;
+    size_t bytes() const;
+};
+
+// The middle window sits at half of the SHORTER file in both, so in the
+// longer one it is up to half the difference in length from its own
+// middle. The middle kept reaches this far beyond the window on both
+// sides: copies whose lengths differ by up to twice this can be lined
+// up. Further apart than that, a pair is not measured (alignmentCovers()).
+inline constexpr double MiddleReachSeconds = 90.0;
+
+// Collects a decoded file at `rate` as it arrives, letting go of what no
+// window can need as soon as it is sure of it: the middle of the file is
+// at least half of what has arrived, so anything before that, less the
+// reach, and after the first window, is let go. What is held at the
+// most is about half the file; what is kept at the end is the first
+// window, the middle and its reach, and the last window.
+class KeptSamplesBuilder
+{
+public:
+    explicit KeptSamplesBuilder(double rate);
+    void append(std::span<const float> samples);
+    KeptSamples finish();
+    // The most samples held at once so far, for the tests.
+    size_t mostHeld() const { return m_mostHeld; }
+
+private:
+    struct Block
+    {
+        size_t start = 0;
+        std::vector<float> samples;
+    };
+    void letGo();
+    size_t m_window;
+    size_t m_reach;
+    size_t m_total = 0;
+    size_t m_held = 0;
+    size_t m_mostHeld = 0;
+    std::vector<Block> m_blocks;  // in order; a gap where samples were let go
+};
+
+// A whole decoded signal as KeptSamples, for a caller that has it whole.
+KeptSamples keepAll(std::vector<float> samples);
 
 // The lag at which `b` best matches `a`, in samples, and how well.
 // lag = index of a sound in b minus its index in a.
@@ -150,5 +213,17 @@ std::optional<std::vector<WindowShift>> windowShifts(std::span<const float> a, s
 // up cleanly.
 std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate,
                                      double maxShiftSeconds);
+
+// The same over what was kept of two files. Only meaningful when
+// alignmentCovers() holds: a window that was not kept is no answer here.
+std::optional<std::vector<WindowShift>> windowShifts(const KeptSamples &a, const KeptSamples &b, double rate,
+                                                     double maxShiftSeconds);
+std::optional<double> measureShiftMs(const KeptSamples &a, const KeptSamples &b, double rate,
+                                     double maxShiftSeconds);
+
+// True when what was kept of each file holds every window the pair needs.
+// False for copies further apart in length than MiddleReachSeconds
+// allows: that is not "does not line up", it is "not measured".
+bool alignmentCovers(const KeptSamples &a, const KeptSamples &b, double rate);
 
 }  // namespace seabass::domain::alignment

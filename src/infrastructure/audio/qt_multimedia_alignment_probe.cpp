@@ -52,9 +52,18 @@ double sampleValue(const QAudioBuffer &buffer, qsizetype frame, int channel)
 
 }  // namespace
 
-QtMultimediaAlignmentProbe::QtMultimediaAlignmentProbe(int timeoutMs, std::size_t cachedFiles)
-    : m_timeoutMs(timeoutMs), m_cachedFiles(cachedFiles > 0 ? cachedFiles : 1)
+QtMultimediaAlignmentProbe::QtMultimediaAlignmentProbe(int timeoutMs, std::size_t cachedBytes)
+    : m_timeoutMs(timeoutMs), m_cachedBytes(cachedBytes)
 {
+}
+
+std::size_t QtMultimediaAlignmentProbe::cachedBytes() const
+{
+    std::size_t bytes = 0;
+    for (const Entry &entry : m_cache) {
+        bytes += entry.samples ? entry.samples->bytes() : 0;
+    }
+    return bytes;
 }
 
 bool QtMultimediaAlignmentProbe::decodingAvailable()
@@ -62,7 +71,8 @@ bool QtMultimediaAlignmentProbe::decodingAvailable()
     return QtMultimediaSilenceProbe::decodingAvailable();
 }
 
-std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decoded(const std::string &absoluteFilePath)
+std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decoded(
+    const std::string &absoluteFilePath)
 {
     for (auto it = m_cache.begin(); it != m_cache.end(); ++it) {
         if (it->path == absoluteFilePath) {
@@ -72,7 +82,9 @@ std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decoded(co
     }
     auto samples = decode(absoluteFilePath);
     m_cache.push_front({absoluteFilePath, samples});
-    while (m_cache.size() > m_cachedFiles) {
+    // The least recently used go first; the one just decoded stays
+    // whatever it weighs, since the pair being measured needs it.
+    while (m_cache.size() > 1 && cachedBytes() > m_cachedBytes) {
         m_cache.pop_back();
     }
     return samples;
@@ -89,13 +101,20 @@ domain::AudioAlignmentProbe::Answer QtMultimediaAlignmentProbe::align(const std:
     if (!b) {
         return Answer::noOpinion(false, true);
     }
+    // Copies further apart in length than the middle kept of each can
+    // reach are not measured: not "does not line up", which a cache
+    // would keep, but nothing said.
+    if (!domain::alignment::alignmentCovers(*a, *b, domain::alignment::AnalysisRate)) {
+        return Answer::noOpinion();
+    }
     const std::optional<double> shift = domain::alignment::measureShiftMs(
         *a, *b, domain::alignment::AnalysisRate,
         domain::alignment::shiftSearchSeconds(domain::MatchingPolicy::compareAudioSeconds()));
     return shift ? Answer::linedUp(*shift) : Answer::notLinedUp();
 }
 
-std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(const std::string &absoluteFilePath) const
+std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decode(
+    const std::string &absoluteFilePath) const
 {
     if (absoluteFilePath.empty()) {
         return nullptr;
@@ -114,6 +133,7 @@ std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(con
     // QAudioBuffer::startTime(): the silence probe's reasoning, and the
     // one qt_decoder_timeline_test measures the decoder's timeline by.
     std::optional<domain::alignment::Resampler> resampler;
+    domain::alignment::KeptSamplesBuilder kept(domain::alignment::AnalysisRate);
     int sampleRate = 0;
     bool unreadable = false;
 
@@ -152,6 +172,10 @@ std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(con
                 }
                 resampler->push(static_cast<float>(sum / channels));
             }
+            // Handed on buffer by buffer, so what no window can need is
+            // let go of while the rest is still decoding.
+            const std::vector<float> ready = resampler->drain();
+            kept.append(ready);
         }
     });
 
@@ -199,8 +223,10 @@ std::shared_ptr<const std::vector<float>> QtMultimediaAlignmentProbe::decode(con
     if (timedOut || unreadable || !done || decoder.error() != QAudioDecoder::NoError || !resampler) {
         return nullptr;
     }
-    auto samples = std::make_shared<std::vector<float>>(resampler->finish());
-    if (samples->empty()) {
+    const std::vector<float> rest = resampler->finish();
+    kept.append(rest);
+    auto samples = std::make_shared<domain::alignment::KeptSamples>(kept.finish());
+    if (samples->total == 0) {
         return nullptr;
     }
     return samples;
