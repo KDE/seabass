@@ -373,6 +373,24 @@ int main()
                && "a bytes line saying a shift is not read, and so not written back");
     }
 
+    // Read-only (the command line's scan): what is on the stick is read,
+    // what is measured is kept in memory, and nothing is written.
+    {
+        const std::string before = readFile(cacheFile);
+        auto inner = std::make_unique<CountingProbe>();
+        inner->answers[{a, e}] = Answer::linedUp(9.0);
+        CountingProbe *counter = inner.get();
+        {
+            CachedAudioAlignmentProbe readOnly(seabass::pathToUtf8(root), std::move(inner), true, "test decoder",
+                                               CachedAudioAlignmentProbe::Writes::ReadOnly);
+            assert(readOnly.size() > 0 && "the stick's cache is read");
+            assert(readOnly.align(a, e).kind == Kind::LinedUp && readOnly.align(e, a).kind == Kind::LinedUp
+                   && counter->aligned == 1 && "measured once, kept in memory");
+            assert(readOnly.save() && "a save that writes nothing is no failure");
+        }
+        assert(readFile(cacheFile) == before && "and nothing was written, by save() or the destructor");
+    }
+
     fs::remove_all(root);
     std::cout << "alignment_cache_test: all assertions passed\n";
     return 0;

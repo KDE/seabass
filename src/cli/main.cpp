@@ -552,7 +552,8 @@ std::vector<Track> scanEnginePath(const std::string &enginePath)
 // including one the rig points read-only checks at, and including a
 // reference stick nobody meant to touch. Almost every scan finds nothing
 // to consolidate, and one that does still asks before writing.
-void handleDuplicates(const std::string &formatName, const std::vector<Track> &tracks, CueWriter *writer,
+void handleDuplicates(const std::string &formatName, const std::string &stickRoot, const std::vector<Track> &tracks,
+                      CueWriter *writer,
                        BackupStore *backupStore, OperationLog *log,
                        const std::function<std::vector<std::string>(const std::string &)> &filesToBackUpFor,
                        bool autoMode,
@@ -567,9 +568,11 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
     // lined up first (domain/duplicate_cue_shift.hpp), and a copy that
     // cannot be is never copied onto. Byte-identical copies need no
     // decoder; anything else needs this build's.
-    // No stick root, so no cache: `scan` reads and writes nothing on the
-    // stick until it asks to (see above), and a cache file is a write.
-    auto alignment = seabass::infrastructure::audio::makeAudioAlignmentProbe({});
+    // The stick's cache is read, so pairs the app has already measured
+    // are not decoded again, but never written: `scan` writes nothing on
+    // the stick until it asks to (see above), and a cache file is a write.
+    auto alignment = seabass::infrastructure::audio::makeAudioAlignmentProbe(
+        stickRoot, seabass::infrastructure::local::CachedAudioAlignmentProbe::Writes::ReadOnly);
     auto plans = ConsolidateDuplicateCues().execute(tracks, nullptr, [&](std::vector<seabass::domain::DuplicateGroup> &groups) {
         seabass::domain::measureCueShifts(groups, alignment.get(), seabass::infrastructure::audio::cueTimelineOffsetMs);
     });
@@ -3195,8 +3198,8 @@ int main(int argc, char **argv)
                     log.record(std::string("rekordbox: OneLibrary cue mirror failed: ") + e.what());
                 }
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose,
-                             mirrorCopy);
+            handleDuplicates(heading, seabass::pathToUtf8(stickRoot), tracks, &writer, &backupStore, &log,
+                             filesToBackUpFor, autoMode, takeLocks, verbose, mirrorCopy);
         }
 
         bool multipleEngine = scanTargets.engineTargets.size() > 1;
@@ -3221,7 +3224,8 @@ int main(int argc, char **argv)
             auto filesToBackUpFor = [engineDbFile](const std::string &) -> std::vector<std::string> {
                 return {engineDbFile};
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose);
+            handleDuplicates(heading, seabass::pathToUtf8(stickRoot), tracks, &writer, &backupStore, &log,
+                             filesToBackUpFor, autoMode, takeLocks, verbose);
         }
     } catch (const std::exception &e) {
         Console::error(e.what());

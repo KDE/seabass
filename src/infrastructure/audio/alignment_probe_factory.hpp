@@ -65,7 +65,10 @@ inline std::string alignmentDecoderName()
 // In front of both, the stick's own record of pairs already measured
 // (local/alignment_cache.hpp), so a second scan decodes nothing it has
 // decoded before. `stickRoot` empty is no cache: every pair is measured.
-inline std::unique_ptr<local::CachedAudioAlignmentProbe> makeAudioAlignmentProbe(const std::string &stickRoot)
+// `writes` ReadOnly reads the stick's cache and writes nothing back.
+inline std::unique_ptr<local::CachedAudioAlignmentProbe> makeAudioAlignmentProbe(
+    const std::string &stickRoot,
+    local::CachedAudioAlignmentProbe::Writes writes = local::CachedAudioAlignmentProbe::Writes::Yes)
 {
     std::unique_ptr<domain::AudioAlignmentProbe> decoder;
 #ifdef SEABASS_HAVE_QT_AUDIO
@@ -75,7 +78,8 @@ inline std::unique_ptr<local::CachedAudioAlignmentProbe> makeAudioAlignmentProbe
 #endif
     const bool decodes = decoder != nullptr;
     return std::make_unique<local::CachedAudioAlignmentProbe>(
-        stickRoot, std::make_unique<IdenticalFileAlignmentProbe>(std::move(decoder)), decodes, alignmentDecoderName());
+        stickRoot, std::make_unique<IdenticalFileAlignmentProbe>(std::move(decoder)), decodes, alignmentDecoderName(),
+        writes);
 }
 
 }  // namespace seabass::infrastructure::audio
