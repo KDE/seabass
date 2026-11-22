@@ -319,7 +319,8 @@ QString alignmentNote(const domain::DuplicateCleanupPlan &plan)
         }
     }
     if (plan.cuesLeftOut > 0) {
-        lines << QStringLiteral("%1 cue(s) would land outside the copy kept once moved, and are left out.")
+        lines << QStringLiteral("%1 cue(s) of a copy being removed would land outside the copy kept once moved "
+                                "onto it, and are lost if this group is cleaned up.")
                      .arg(plan.cuesLeftOut);
     }
     return lines.join(QLatin1Char('\n'));
@@ -388,6 +389,8 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
         return realIndex < m_stagedDescriptions.size() ? m_stagedDescriptions[realIndex] : QString();
     case CuesOnUnalignedCopyRole:
         return plan.hasCuesOnUnalignedCopy;
+    case CuesLeftOutRole:
+        return plan.cuesLeftOut;
     case MixedFormatsRole:
         return plan.mixedFormats;
     case MixedFormatsNoteRole:
@@ -428,6 +431,7 @@ QHash<int, QByteArray> CleanupPlanListModel::roleNames() const
         {StagedDescriptionRole, "stagedDescription"},
         {SurvivorReasonRole, "survivorReason"},
         {CuesOnUnalignedCopyRole, "hasCuesOnUnalignedCopy"},
+        {CuesLeftOutRole, "cuesLeftOut"},
         {MixedFormatsRole, "mixedFormats"},
         {MixedFormatsNoteRole, "mixedFormatsNote"},
         {AlignmentNoteRole, "alignmentNote"},
@@ -445,12 +449,13 @@ void CleanupPlanListModel::setPlans(std::vector<domain::DuplicateCleanupPlan> pl
         // carries real rating/comment/play-count/last-played data that
         // would be silently lost, where a copy's cues could not be lined
         // up with the survivor and so would be lost, or whose copies are
-        // in different file formats, default to excluded -- see
+        // in different file formats, or where cues would land off the copy
+        // kept once moved onto it, default to excluded -- see
         // DuplicateCleanupPlan::differs, ::hasUnpreservableDataAtRisk,
-        // ::hasCuesOnUnalignedCopy and ::mixedFormats' own doc comments
+        // ::hasCuesOnUnalignedCopy, ::cuesLeftOut and ::mixedFormats' own doc comments
         // (deliberately separate flags/reasons).
         m_included[i] = !m_plans[i].differs && !m_plans[i].hasUnpreservableDataAtRisk
-            && !m_plans[i].hasCuesOnUnalignedCopy && !m_plans[i].mixedFormats;
+            && !m_plans[i].hasCuesOnUnalignedCopy && m_plans[i].cuesLeftOut == 0 && !m_plans[i].mixedFormats;
     }
     m_visibleIndices.resize(m_plans.size());
     for (size_t i = 0; i < m_plans.size(); ++i) {

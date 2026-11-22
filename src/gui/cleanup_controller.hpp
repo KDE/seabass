@@ -69,6 +69,11 @@ public:
         // and carries cues it lacks (DuplicateCleanupPlan::
         // hasCuesOnUnalignedCopy): those cues would be lost.
         CuesOnUnalignedCopyRole,
+        // Cues of a removed copy that would land off the copy kept once
+        // moved onto it, and that the merge would have added
+        // (DuplicateCleanupPlan::cuesLeftOut): lost if the group is
+        // cleaned up.
+        CuesLeftOutRole,
         // The copies are in more than one file format
         // (DuplicateCleanupPlan::mixedFormats), and the sentence that
         // names them.

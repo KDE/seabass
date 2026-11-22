@@ -307,13 +307,20 @@ int main(int argc, char **argv)
     // a cue that lands off either end is left out and counted.
     {
         const std::vector<CuePoint> cues = {hot(1, 100), memory(5000), loop(199000, 199950), hot(2, 199900)};
-        auto moved = movedCues(cues, 500.0, 200.0);
+        auto moved = movedCues(cues, 1500.0, 200.0);
         assert(moved.leftOut == 2 && moved.cues.size() == 2 && "the loop's end and the late hot cue fall off the end");
-        assert(near(moved.cues[0].positionMs, 600.0) && near(moved.cues[1].positionMs, 5500.0));
+        assert(moved.leftOutCues.size() == 2 && near(moved.leftOutCues[1].positionMs, 201400.0));
+        assert(near(moved.cues[0].positionMs, 1600.0) && near(moved.cues[1].positionMs, 6500.0));
+        // A catalog's length is whole seconds: up to one past it is still
+        // on the track.
+        moved = movedCues(cues, 500.0, 200.0);
+        assert(moved.leftOut == 0 && moved.cues.size() == 4 && "half a second past the recorded length is kept");
+        moved = movedCues({hot(1, 199000)}, 2001.0, 200.0);
+        assert(moved.leftOut == 1 && "a second and a millisecond past is not");
         moved = movedCues(cues, -200.0, 200.0);
         assert(moved.leftOut == 1 && moved.cues.size() == 3 && "the hot cue at 0.1 s falls off the start");
         assert(near(moved.cues[1].positionMs, 198800.0) && near(moved.cues[1].loopEndMs, 199750.0));
-        moved = movedCues(cues, 500.0, 0.0);
+        moved = movedCues(cues, 1500.0, 0.0);
         assert(moved.leftOut == 0 && "a length nobody knows bounds only the start");
         moved = movedCues({hot(1, 100)}, -0.9, 200.0);
         assert(moved.leftOut == 0 && near(moved.cues[0].positionMs, 100.0) && "under 1 ms nothing moves");
@@ -396,6 +403,30 @@ int main(int argc, char **argv)
         assert(plan.cuesLeftOut == 1 && plan.mergedCuesForSurvivor.size() == 1);
         assert(near(plan.mergedCuesForSurvivor[0].positionMs, 8850.0));
     }
+    // Left out counts only what the merge would have added: a removed
+    // pad 1 that lands off the start is no loss when the survivor has a
+    // pad 1 of its own; a memory cue there is.
+    {
+        auto group = measured({copy("s", "/s/s.mp3", {hot(1, 9000)}, 200.0, 320),
+                               copy("d", "/s/d.mp3", {hot(1, 100)}, 200.0, 128)},
+                              {0.0, 150.0});
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.cuesLeftOut == 0 && "the survivor's pad 1 wins anyway: nothing lost");
+        group.tracks[1].cues = {hot(1, 100), memory(120)};
+        plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.cuesLeftOut == 1 && "the memory cue would have been added: a real loss");
+    }
+    // A stray cue at 0:00 (junk) on a copy that cannot be lined up is no
+    // loss.
+    {
+        auto group = measured({copy("s", "/s/s.mp3", {hot(1, 5000)}, 200.0, 320),
+                               copy("d", "/s/d.mp3", {memory(0.0)}, 200.0, 128)},
+                              {0.0, std::nullopt});
+        assert(!DuplicateCleanupPlanner::plan(group).hasCuesOnUnalignedCopy && "a stray cue is not a loss");
+        group.tracks[1].cues = {memory(0.0), memory(60000)};
+        assert(DuplicateCleanupPlanner::plan(group).hasCuesOnUnalignedCopy && "a real one beside it is");
+    }
+
     // A removed copy that could not be lined up gives nothing, and the
     // group says so when that copy had cues the survivor lacks.
     {

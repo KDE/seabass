@@ -83,14 +83,21 @@ std::optional<double> cueShiftBetween(const DuplicateGroup &group, size_t from, 
 // for comparing two copies' cue sets on one timeline, never for writing.
 std::vector<CuePoint> shiftedCues(const std::vector<CuePoint> &cues, double shiftMs);
 
+// How far past a catalog's length a cue may land and still be on the
+// track: rekordbox stores lengths in whole seconds, so the real end can
+// be up to a second after the one recorded.
+inline constexpr double CatalogLengthSlackMs = 1000.0;
+
 // Cues as they are to be written onto another copy: moved by `shiftMs`,
-// without any that would land before 0 or past the target's length
-// (both ends of a loop must land inside it). `targetSeconds` of 0 is a
-// length not known, and only the start is checked then. A shift under
-// NegligibleCueShiftMs moves nothing and leaves nothing out.
+// without any that would land before 0 or more than CatalogLengthSlackMs
+// past the target's length (both ends of a loop must land inside it).
+// `targetSeconds` of 0 is a length not known, and only the start is
+// checked then. A shift under NegligibleCueShiftMs moves nothing and
+// leaves nothing out. `leftOutCues` are the ones left out, as moved.
 struct MovedCues
 {
     std::vector<CuePoint> cues;
+    std::vector<CuePoint> leftOutCues;
     int leftOut = 0;
 };
 MovedCues movedCues(const std::vector<CuePoint> &cues, double shiftMs, double targetSeconds);

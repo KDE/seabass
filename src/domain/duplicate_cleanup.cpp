@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "domain/duplicate_cue_shift.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/local_restore.hpp"
 #include "domain/matching_policy.hpp"
 
@@ -240,6 +241,7 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
     // sound. The survivor's own cues are where they belong already and
     // go in first, so its cue wins on a pad both have.
     std::vector<CuePoint> merged = result.survivor.cues;
+    std::vector<CuePoint> leftOut;
     for (size_t i = 0; i < group.tracks.size(); ++i) {
         if (i == survivorIndex) {
             continue;
@@ -249,17 +251,24 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
         const Track &doomed = group.tracks[i];
         if (!shift) {
             // Unsure means not merged. Whether that loses anything is
-            // asked of the survivor's own cues, as they stand.
-            if (LocalRestorePlanner::mergeCues(result.survivor.cues, doomed.cues).size()
+            // asked of the survivor's own cues, as they stand, and only
+            // of the copy's cues worth keeping: a stray memory cue at
+            // 0:00 (junk_cue.hpp) is no loss.
+            if (LocalRestorePlanner::mergeCues(result.survivor.cues, withoutJunkCues(doomed.cues)).size()
                 > result.survivor.cues.size()) {
                 result.hasCuesOnUnalignedCopy = true;
             }
             continue;
         }
         const MovedCues moved = movedCues(doomed.cues, *shift, result.survivor.durationSeconds);
-        result.cuesLeftOut += moved.leftOut;
+        leftOut.insert(leftOut.end(), moved.leftOutCues.begin(), moved.leftOutCues.end());
         merged = LocalRestorePlanner::mergeCues(merged, moved.cues);
     }
+    // A cue left out is a loss only if the merge would have added it: one
+    // whose pad the survivor already fills, or that another copy brought
+    // anyway, costs nothing. Counted once everything else is merged.
+    result.cuesLeftOut =
+        static_cast<int>(LocalRestorePlanner::mergeCues(merged, leftOut).size() - merged.size());
     result.mergedCuesForSurvivor = std::move(merged);
 
     // Formats by extension, case folded: a group of FLAC and MP3 copies

@@ -304,6 +304,27 @@ TestCase {
         compare(findChild(page, "cleanupController").includedCount, 0);
     }
 
+    // The removed copy's music starts 1.2 s later than the kept copy's, so
+    // its hot cue at 1 s would land 0.2 s before the kept copy starts: the
+    // kept copy has no cue of its own to stand in for it, so that is a real
+    // loss, said, and the group starts unticked. The kept copy is the
+    // larger file, by 2 s more of the same music at its end.
+    function test_aCueThatWouldLandOffTheKeptCopyHoldsTheGroupBack() {
+        const library = groupPage("folderA/Duplicate Song.wav", "folderB/Duplicate Song.wav");
+        const stick = library.substring(0, library.lastIndexOf("/"));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderA/Duplicate Song.wav", 12, 0, 7));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderB/Duplicate Song.wav", 10, 26460, 7));
+        const page = openGroupPage(library);
+        verify(findByObjectName(page, "cuesLeftOutBadge").visible, "the loss is said");
+        verify(!findByObjectName(page, "cuesNotLinedUpBadge").visible, "the copies did line up");
+        const note = findByObjectName(page, "alignmentNote");
+        verify(note && note.text.indexOf("1 cue(s) of a copy being removed would land outside the copy kept") >= 0,
+               "the note says how many: " + (note ? note.text : ""));
+        const box = groupCheckBox(page);
+        verify(box && !box.checked, "the group starts unticked");
+        compare(findChild(page, "cleanupController").includedCount, 0);
+    }
+
     // Copies in two formats may be kept on purpose: listed, unticked, the
     // reason said, and ticking it works as for any group.
     function test_copiesInDifferentFormatsStartUnticked() {

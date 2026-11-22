@@ -88,8 +88,11 @@ struct DuplicateCleanupPlan
     std::vector<std::optional<double>> removedShiftMs;
 
     // Cues of the removed copies that, once moved onto the survivor's
-    // timeline, would land before its start or past its end, and so are
-    // not merged. Counted for the page rather than dropped unsaid.
+    // timeline, would land before its start or past its end (more than a
+    // second past the length its catalog records), and so are not merged.
+    // Only the ones the merge would have added: a cue whose pad the
+    // survivor already fills is no loss. More than none is a real loss,
+    // and callers start such a group excluded, with its own reason.
     int cuesLeftOut = 0;
 
     // True when a copy about to be removed could not be lined up with
