@@ -201,6 +201,48 @@ TestCase {
         }
     }
 
+    // What a group's cards hand the player when Play is pressed carries
+    // the cover as a file URL: the player bar takes artworkPath as one,
+    // and a bare path resolved against its qrc: base never loads (macOS:
+    // "qrc:/Volumes/<stick>/PIONEER/Artwork/..."). A cover with a space
+    // and a non-ASCII letter in its path, and no cover at all, which stays
+    // empty rather than becoming "file://" of nothing.
+    function test_aCopysCoverIsAFileUrl_data() {
+        return [
+            {tag: "cover", cover: "/Mörk Borg/a b.jpg"},
+            {tag: "no cover", cover: ""},
+        ];
+    }
+
+    function test_aCopysCoverIsAFileUrl(data) {
+        const engineCopy = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(engineCopy.length > 0, "the fixture copy must be made");
+        const cover = data.cover.length > 0 ? engineCopy + data.cover : "";
+        catalogGate.artworkOnEveryRead("", cover);
+        try {
+            const page = createTemporaryObject(enginePageComponent, testCase,
+                                               {width: 1000, height: 700, enginePath: engineCopy});
+            verify(page, "page did not instantiate");
+            const list = findByObjectName(page, "plansList");
+            tryCompare(list, "count", 1, 5000, "the scan never showed the fixture's group");
+            const group = findWhere(list, (item) => item.survivor !== undefined && item.toRemove !== undefined);
+            verify(group, "the group's delegate was not found");
+            const copies = [group.survivor].concat(group.toRemove);
+            compare(copies.length, 2, "the survivor and the copy it removes");
+            for (const copy of copies) {
+                if (cover.length === 0) {
+                    compare(copy.artworkPath, "", "no cover is no URL");
+                    continue;
+                }
+                verify(copy.artworkPath.startsWith("file:///"), "a file URL: " + copy.artworkPath);
+                compare(decodeURIComponent(copy.artworkPath.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1")),
+                        cover, "naming the cover's file");
+            }
+        } finally {
+            catalogGate.restore();
+        }
+    }
+
     // Scrolling the groups folds the header's description away and keeps
     // its controls. Twelve more groups than the fixture's one, at a
     // typical window, so the list has somewhere to scroll to.

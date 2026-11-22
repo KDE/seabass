@@ -43,6 +43,7 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/local_file_url.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "gui/onelibrary_cue_writer_adapter.hpp"
 #include "application/phased_progress.hpp"
@@ -133,7 +134,9 @@ QVariantMap trackSummary(const domain::Track &t, const QString &shownPath = {})
     m["artist"] = QString::fromStdString(t.artist);
     m["filePath"] = QString::fromStdString(t.filePath);
     m["shownPath"] = shownPath;
-    m["artworkPath"] = QString::fromStdString(t.artworkPath);
+    // A file URL, as every map the player loads from carries it: the
+    // player bar resolves a bare path against its qrc: base.
+    m["artworkPath"] = toLocalFileUrl(t.artworkPath);
     m["bitrate"] = t.bitrate;
     m["durationMs"] = t.durationSeconds * 1000.0;
     m["sizeBytes"] = static_cast<qulonglong>(t.fileSizeBytes);

@@ -1785,6 +1785,36 @@ public:
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(m_caches.back().get());
     }
 
+    // Every catalog read as the real readers read it, and then every track
+    // of that format names `rekordboxArt` or `engineArt` as its cover
+    // (empty for none): a cover path a fixture without covers cannot
+    // give, such as one with a space and a non-ASCII letter in it. The
+    // file need not exist; only the path is read. Undone by restore().
+    Q_INVOKABLE void artworkOnEveryRead(const QString &rekordboxArt, const QString &engineArt)
+    {
+        restore();
+        const std::string rekordbox = rekordboxArt.toStdString();
+        const std::string engine = engineArt.toStdString();
+        auto real = seabass::gui::LibraryCatalogCache::realStageForTesting();
+        auto stage = [real, rekordbox, engine](seabass::gui::LibraryCatalogCache::Detail detail,
+                                               const std::string &format, const std::string &path,
+                                               std::vector<seabass::domain::Track> &tracks,
+                                               seabass::gui::LibraryCatalogCache::StageNotes &notes,
+                                               seabass::application::ProgressReporter &progress,
+                                               seabass::application::CancellationToken cancel) {
+            real(detail, format, path, tracks, notes, progress, cancel);
+            if (format != "rekordbox" && format != "engine") {
+                return;
+            }
+            for (auto &track : tracks) {
+                track.artworkPath = format == "rekordbox" ? rekordbox : engine;
+            }
+        };
+        m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(
+            stage, seabass::gui::LibraryCatalogCache::realMtimeForTesting()));
+        seabass::gui::LibraryCatalogCache::setInstanceForTesting(m_caches.back().get());
+    }
+
     // Rows in the metadata store that are other recordings of the same
     // lengths as this hold's tracks: titles and artists of their own and,
     // like the held tracks, no filename. A store that lives across runs
