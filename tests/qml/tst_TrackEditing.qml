@@ -122,6 +122,20 @@ TestCase {
         waitForPolish(testCase.Window.window);
     }
 
+    // Stages another rating for `track` with a click on a star of the
+    // page's panel. The star is clicked where it is laid out, and the click
+    // is seen to have staged the rating: a save with nothing staged never
+    // reports, and a wait for it says nothing about a click that missed
+    // (the nightly lane, 2026-11-22, two minutes into "the save finished").
+    function clickStarOnThePage(panel, track, session) {
+        waitForPolish(testCase.Window.window);
+        const star = findChild(panel, "ratingStar" + (track.rating === 2 ? 3 : 2));
+        tryVerify(() => star !== null && star.visible && star.enabled, 30000, "the stars are there and editable");
+        const staged = session.pendingCount;
+        mouseClick(star);
+        tryVerify(() => session.pendingCount === staged + 1, 5000, "the click staged the rating");
+    }
+
     // The track whose export.pdb comment has the most room, in an ASCII
     // field (asciiOnly true) or a UTF-16 one.
     function roomiest(env, asciiOnly) {
@@ -585,7 +599,8 @@ TestCase {
         tryVerify(() => panel.commentLimit.known === true, 30000);
         // Something staged first, so the Save button and its shortcut are
         // there.
-        mouseClick(findChild(panel, "ratingStar" + (a.rating === 2 ? 3 : 2)));
+        clickStarOnThePage(panel, a, EditSessionRegistry.sessionFor(
+            EditSessionRegistry.libraryIdForPath(env.stick + "/PIONEER")));
         const editor = findChild(panel, "trackCommentEditor");
         mouseClick(hoverForEditButton(editor));
         field = findChild(editor, "commentField");
@@ -713,9 +728,9 @@ TestCase {
         realPlayback.stop();
         tryVerify(() => panel.commentLimit.known === true, 30000);
         const controller = page.trackEditController;
-        mouseClick(findChild(panel, "ratingStar" + (a.rating === 2 ? 3 : 2)));
-        const before = controller.indexBuildsForTesting;
         const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(env.stick + "/PIONEER"));
+        clickStarOnThePage(panel, a, session);
+        const before = controller.indexBuildsForTesting;
         let summary = null;
         const done = (result) => { summary = result; };
         session.saveFinished.connect(done);
