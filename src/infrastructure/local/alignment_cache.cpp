@@ -26,6 +26,9 @@ namespace fs = std::filesystem;
 namespace
 {
 
+// The decoder "same bytes" lines are written with: they hold for all.
+const std::string BytesDecoder = "bytes";
+
 std::string normalizeSeparators(std::string path)
 {
     for (auto &c : path) {
@@ -129,6 +132,11 @@ CachedAudioAlignmentProbe::CachedAudioAlignmentProbe(std::string stickRoot,
             continue;
         }
         Entry entry{{*sizeA, *mtimeA}, {*sizeB, *mtimeB}, Result::Shift, 0.0};
+        // A "bytes" line is trusted by every decoder, so it may only say
+        // the same bytes.
+        if (*decoder == BytesDecoder && *result != "same") {
+            continue;
+        }
         if (*result == "same") {
             entry.result = Result::Same;
         } else if (*result == "no") {
@@ -175,9 +183,12 @@ std::optional<CachedAudioAlignmentProbe::FileState> CachedAudioAlignmentProbe::s
     if (ec) {
         return std::nullopt;
     }
+    // As Unix time: each standard library counts file times from an epoch
+    // of its own, and a stick goes between machines.
+    const auto unixTime = std::chrono::file_clock::to_sys(mtime);
     return FileState{static_cast<long long>(size),
                      static_cast<long long>(
-                         std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count())};
+                         std::chrono::duration_cast<std::chrono::seconds>(unixTime.time_since_epoch()).count())};
 }
 
 CachedAudioAlignmentProbe::Lookup CachedAudioAlignmentProbe::lookup(const std::string &absolutePathA,
@@ -201,12 +212,6 @@ CachedAudioAlignmentProbe::Lookup CachedAudioAlignmentProbe::lookup(const std::s
     pair.usable = true;
     return pair;
 }
-
-namespace
-{
-// The decoder "same bytes" lines are written with: they hold for all.
-const std::string BytesDecoder = "bytes";
-}  // namespace
 
 const CachedAudioAlignmentProbe::Entry *CachedAudioAlignmentProbe::trusted(const Lookup &pair) const
 {
@@ -293,6 +298,9 @@ bool CachedAudioAlignmentProbe::save()
         // is one either of whose files changed since: no decoder will
         // trust that line again. A stat that errors keeps it
         // (silence_cache.cpp's reasoning).
+        // Only this machine's decoder's lines, and "bytes" lines, are
+        // judged: another machine's sizes and times are its own to check.
+        const bool ours = it->first.first == m_decoder || it->first.first == BytesDecoder;
         bool drop = false;
         const std::pair<const std::string *, const FileState *> files[] = {
             {&it->first.second.first, &it->second.a}, {&it->first.second.second, &it->second.b}};
@@ -302,7 +310,7 @@ bool CachedAudioAlignmentProbe::save()
             const bool present = fs::exists(path, ec);
             if (!ec && !present) {
                 drop = true;
-            } else if (!ec) {
+            } else if (!ec && ours) {
                 const auto now = stateOf(pathToUtf8(path));
                 drop = drop || (now && !(*now == *stored));
             }

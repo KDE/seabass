@@ -46,7 +46,9 @@ namespace seabass::infrastructure::local
 // decoder that wrote it. "Same bytes" needs no decoder, and is written
 // with the decoder "bytes" and trusted by every one, a build without a
 // decoder included. Lines of other decoders are kept, for the machine
-// that wrote them, until either file changes or goes.
+// that wrote them, until either file goes; this decoder's own lines, and
+// "bytes" lines, also go once either file changes. An mtime is stored as
+// Unix time, whatever the standard library's file clock counts from.
 //
 // `method` is MethodVersion when the line was written. A line written by
 // another version of the measurement is ignored and dropped at the next

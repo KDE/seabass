@@ -335,6 +335,44 @@ int main()
         assert(readFile(cacheFile).find("Contents/e/") == std::string::npos && "the stale line is gone");
     }
 
+    // Another machine's lines are its own to judge: one whose times do not
+    // match here (another clock, another time zone on FAT) is kept by a
+    // save here. And a "bytes" line may only say the same bytes.
+    {
+        const std::string foreign =
+            "{\"a\":\"Contents/a/Song.mp3\",\"amtime\":\"1\",\"asize\":\"6\",\"b\":\"Contents/c/Song.flac\","
+            "\"bmtime\":\"1\",\"bsize\":\"21\",\"decoder\":\"elsewhere\",\"method\":\""
+            + std::to_string(CachedAudioAlignmentProbe::MethodVersion) + "\",\"result\":\"shift\",\"shift\":\"5.0\"}\n";
+        // With the real files' sizes and times, so only its saying a shift
+        // keeps it out.
+        auto state = [](const std::string &path) {
+            const fs::path p = seabass::pathFromUtf8(path);
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::file_clock::to_sys(fs::last_write_time(p)).time_since_epoch());
+            return std::pair{std::to_string(fs::file_size(p)), std::to_string(seconds.count())};
+        };
+        const auto [sizeA, timeA] = state(a);
+        const auto [sizeD, timeD] = state(d);
+        const std::string forged = "{\"a\":\"Contents/a/Song.mp3\",\"amtime\":\"" + timeA + "\",\"asize\":\"" + sizeA
+            + "\",\"b\":\"Contents/d/Song.mp3\",\"bmtime\":\"" + timeD + "\",\"bsize\":\"" + sizeD
+            + "\",\"decoder\":\"bytes\",\"method\":\"" + std::to_string(CachedAudioAlignmentProbe::MethodVersion)
+            + "\",\"result\":\"shift\",\"shift\":\"5.0\"}\n";
+        writeFile(cacheFile, readFile(cacheFile) + foreign + forged);
+        {
+            CachedAudioAlignmentProbe reader(seabass::pathToUtf8(root), nullptr, true, "none");
+            assert(reader.align(a, d).kind == Kind::NoOpinion && "a bytes line saying a shift is not trusted");
+        }
+        auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{b, c}] = Answer::linedUp(2.0); });
+        probe.cached->align(b, c);
+        assert(probe.cached->save());
+        const std::string text = readFile(cacheFile);
+        assert(text.find("\"decoder\":\"elsewhere\"") != std::string::npos && "another machine's line is kept");
+        assert(text.find("\"decoder\":\"bytes\",\"method\":\"" + std::to_string(CachedAudioAlignmentProbe::MethodVersion)
+                         + "\",\"result\":\"shift\"")
+                   == std::string::npos
+               && "a bytes line saying a shift is not read, and so not written back");
+    }
+
     fs::remove_all(root);
     std::cout << "alignment_cache_test: all assertions passed\n";
     return 0;
