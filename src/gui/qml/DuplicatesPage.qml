@@ -584,7 +584,11 @@ Page {
                             model: delegateRoot.tracks
                             delegate: TrackWaveformCard {
                                 required property var modelData
+                                required property int index
                                 track: modelData
+                                // The number the alignment note calls this
+                                // copy by ("Copy 2 starts 21 ms later...").
+                                statusBadgeText: "COPY " + (index + 1)
                                 formatLabelText: root.formatLabel(root.format)
                                 showPlaylists: true
                                 actionButtonText: delegateRoot.kind === "conflict" ? "Use These" : ""

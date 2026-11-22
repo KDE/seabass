@@ -82,7 +82,7 @@ struct DuplicateCleanupPlan
     std::vector<CuePoint> mergedCuesForSurvivor;
 
     // Parallel to toRemove: what to add to that copy's cue positions to
-    // put them on the survivor's timeline (DuplicateGroup::cueShiftMs,
+    // put them on the survivor's timeline (DuplicateGroup::cueShifts,
     // through cueShiftBetween()). nullopt when the two could not be
     // lined up.
     std::vector<std::optional<double>> removedShiftMs;

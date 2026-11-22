@@ -286,15 +286,21 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
     // reason. Only the copies a decision would actually touch count: a
     // group whose cued copies agree is consistent whatever the copies
     // without cues measured.
-    const bool everyShiftKnown = std::all_of(group.cueShiftMs.begin(), group.cueShiftMs.end(),
-                                             [](const std::optional<double> &shift) { return shift.has_value(); });
+    auto everyShiftKnownFrom = [&](size_t from) {
+        for (size_t i = 0; i < group.tracks.size(); ++i) {
+            if (!cueShiftBetween(group, from, i)) {
+                return false;
+            }
+        }
+        return true;
+    };
 
     if (withCues.size() == 1) {
-        if (!everyShiftKnown) {
+        const size_t source = withCues.front();
+        if (!everyShiftKnownFrom(source)) {
             result.kind = ConsolidationPlan::Kind::Unaligned;
             return result;
         }
-        const size_t source = withCues.front();
         result.kind = ConsolidationPlan::Kind::Unambiguous;
         result.source = kept[source];
         for (size_t i = 0; i < group.tracks.size(); ++i) {
@@ -328,7 +334,8 @@ ConsolidationPlan DuplicateCueConsolidator::plan(const DuplicateGroup &group)
     if (differ) {
         // Conflict offers to copy one copy's cues onto all the others,
         // and that needs every copy lined up, not only the cued ones.
-        result.kind = everyShiftKnown ? ConsolidationPlan::Kind::Conflict : ConsolidationPlan::Kind::Unaligned;
+        result.kind =
+            everyShiftKnownFrom(reference) ? ConsolidationPlan::Kind::Conflict : ConsolidationPlan::Kind::Unaligned;
         return result;
     }
     result.kind = ConsolidationPlan::Kind::AlreadyConsistent;

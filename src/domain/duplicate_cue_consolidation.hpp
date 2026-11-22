@@ -20,18 +20,25 @@ struct DuplicateGroup
 {
     std::vector<Track> tracks;
 
-    // Per copy, parallel to `tracks`: where a sound sits in that copy
-    // minus where it sits in the FIRST copy, in ms on the cue timeline
-    // (rekordbox's, the one Track::cues are held on). nullopt when it
-    // could not be measured or the two do not line up cleanly; the first
-    // copy's own is 0. See duplicate_cue_shift.hpp, which fills it in
-    // after grouping (DuplicateTrackFinder::find() leaves it empty).
-    //
-    // Empty means not measured, which the measuring step leaves only on
-    // a group none of whose copies carries a cue, where nothing can move.
-    // Read empty as "the copies line up": that is also what a group put
-    // together by hand in a test means.
-    std::vector<std::optional<double>> cueShiftMs;
+    // Whether the copies' audio was lined up (duplicate_cue_shift.hpp,
+    // measureCueShifts()). DuplicateTrackFinder::find() leaves it false.
+    // Not measured is NOT "the copies line up": every path that moves or
+    // compares cues between two different files treats it as unknown
+    // (cueShiftBetween()). Only one file listed twice lines up unmeasured.
+    bool cueShiftsMeasured = false;
+
+    // Once measured, per copy, parallel to `tracks`: where a sound sits in
+    // that copy minus where it sits in copy `anchor`, in ms on the cue
+    // timeline (rekordbox's, the one Track::cues are held on). Copies with
+    // the same anchor are lined up with each other; copies with different
+    // anchors, or with no shift (nullopt: could not be read or measured,
+    // or did not line up), are not. The anchor's own shift is {anchor, 0}.
+    struct CueShift
+    {
+        size_t anchor = 0;
+        double ms = 0.0;
+    };
+    std::vector<std::optional<CueShift>> cueShifts;
 };
 
 // What to do about one DuplicateGroup's cues, decided without touching
@@ -50,7 +57,7 @@ struct ConsolidationPlan
         // No copy in the group has any cues at all.
         NoCues,
         // Copies with cues, and some copy whose music could not be lined
-        // up with the others' (DuplicateGroup::cueShiftMs): nothing can
+        // up with the others' (DuplicateGroup::cueShifts): nothing can
         // be copied or compared across that pair without guessing where
         // its cues belong, so like Conflict a human decides.
         Unaligned,

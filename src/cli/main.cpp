@@ -593,10 +593,10 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                 std::ostringstream line;
                 line << "  id=" << t.sourceId << "  " << t.filename << "  [" << t.durationSeconds << "s]  cues="
                      << t.cues.size();
-                if (i > 0 && i < plan.group.cueShiftMs.size()) {
+                if (i > 0 && plan.group.cueShiftsMeasured) {
                     const auto shift = seabass::domain::cueShiftBetween(plan.group, 0, i);
                     if (!shift) {
-                        line << "  shift=unknown";
+                        line << "  shift=unknown against the first";
                     } else {
                         line << "  shift=" << *shift << "ms";
                     }
@@ -632,9 +632,12 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                            "\" has duplicate copies whose audio could not be lined up (not touching their cues):");
             for (size_t i = 0; i < plan.group.tracks.size(); ++i) {
                 const Track &t = plan.group.tracks[i];
-                const bool known = i == 0 || seabass::domain::cueShiftBetween(plan.group, 0, i).has_value();
+                bool known = false;
+                for (size_t j = 0; j < plan.group.tracks.size() && !known; ++j) {
+                    known = j != i && seabass::domain::cueShiftBetween(plan.group, j, i).has_value();
+                }
                 Console::info("  id=" + t.sourceId + "  cues=" + std::to_string(t.cues.size())
-                              + (known ? "" : "  (could not be lined up with the first copy)"));
+                              + (known ? "" : "  (could not be lined up with any other copy)"));
             }
             if (!alignment->hasDecoder()) {
                 Console::info("  this build cannot decode audio, so only identical files can be lined up.");

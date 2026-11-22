@@ -67,6 +67,7 @@ public:
         SurvivorRole,  // {sourceId, title, artist, filePath}, or an empty map when there's no survivor
         BrokenTracksRole,  // QVariantList of {sourceId, title, artist, filePath}
         CueMergeNeededRole,
+        CuesCannotBeLinedUpRole,
         // This issue's repair/deletion is staged in the edit session.
         StagedRole,
         StagedDescriptionRole,

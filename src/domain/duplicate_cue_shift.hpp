@@ -41,32 +41,42 @@ using CueTimelineOffset = std::function<std::optional<double>(const std::string 
 // not measured.
 bool groupCarriesCues(const DuplicateGroup &group);
 
-// How many pairs measureCueShifts() will hand the probe for these
-// groups: one per copy after the first, in each group that carries cues.
-// For a progress bar, counted before any of them is measured.
-size_t cueShiftPairsToMeasure(const std::vector<DuplicateGroup> &groups);
+// How many pairs measureCueShifts() is expected to hand the probe that
+// the probe cannot answer at once (AudioAlignmentProbe::answersAtOnce()):
+// one per copy after the first that is another file, in each group that
+// carries cues, less those already known. For a progress bar, counted
+// before any of them is measured; more are asked when a copy cannot be
+// read and another takes its place as the reference.
+size_t cueShiftPairsToMeasure(const std::vector<DuplicateGroup> &groups, AudioAlignmentProbe *probe = nullptr);
 
-// Fills each group's cueShiftMs: every copy against the first, so the
-// shift between any two copies is the difference of theirs. A group with
-// no cues is left unmeasured (empty).
+// Fills each group's cue shifts and marks it measured. A group with no
+// cues is left unmeasured: nothing in it can move.
+//
+//   * One file listed twice, and copies the probe knows hold the same
+//     bytes (AudioAlignmentProbe::sameContent()), line up at 0 with no
+//     measuring and no offsets: those are equal for equal bytes even when
+//     neither can be read. Always, whatever else in the group is unknown.
+//   * Every other copy is measured against a reference: the first copy
+//     that can be, in group order. When the reference turns out to be
+//     unreadable, or its offset unknowable, the next copy takes its place.
+//     A copy that can be measured against nothing stays unknown.
 //
 // The shift on the cue timeline is the decoder's shift plus offset(b)
-// minus offset(a). A copy at the same path as the first, or that the probe
-// knows holds the same bytes (AudioAlignmentProbe::sameContent()), is 0
-// with no measuring and no offsets: those are equal for equal bytes even
-// when neither can be read. Without a probe, or when the probe or either
-// offset has no answer, that copy's shift is unknown, never 0.
+// minus offset(a). Without a probe, or when the probe or either offset
+// has no answer, the shift is unknown, never 0.
 //
-// `measured` is called once per pair handed to the probe, for progress.
-// Cancelling is the probe's business (it stops answering), and leaves
-// unknowns, which no caller turns into a cue movement.
+// `measured` is called once per pair handed to the probe's align(), with
+// whether it cost a decode (false when the probe answered at once), for
+// progress. Cancelling is the probe's business (it stops answering), and
+// leaves unknowns, which no caller turns into a cue movement.
 void measureCueShifts(std::vector<DuplicateGroup> &groups, AudioAlignmentProbe *probe,
-                      const CueTimelineOffset &offset, const std::function<void()> &measured = {});
+                      const CueTimelineOffset &offset, const std::function<void(bool costly)> &measured = {});
 
 // What to add to a cue of copy `from` to put it on copy `to`'s timeline:
-// shift(to) - shift(from), 0 when that is under NegligibleCueShiftMs,
-// nullopt when either is unknown. A group not measured (empty
-// cueShiftMs) answers 0: see DuplicateGroup.
+// 0 for one copy or one file listed twice; otherwise, in a measured group,
+// shift(to) - shift(from) when both are known against one anchor, 0 when
+// that is under NegligibleCueShiftMs. nullopt for anything else, a group
+// not measured included.
 std::optional<double> cueShiftBetween(const DuplicateGroup &group, size_t from, size_t to);
 
 // Every position (and loop end) moved by `shiftMs`, nothing left out:

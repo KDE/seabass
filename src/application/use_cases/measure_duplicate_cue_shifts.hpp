@@ -28,8 +28,10 @@ inline size_t cueShiftProgressUnits(size_t readUnits)
 }
 
 // domain::measureCueShifts() as one stretch of a scan's single bar
-// (#58): announced as `units` units, ticked in proportion as each pair is
-// measured. Cancelling reaches the decoding through the probe (it stops
+// (#58): announced as `units` units, ticked in proportion as each pair
+// that costs a decode is measured. Pairs the probe answers at once (its
+// cache on the stick) move the bar not at all, so a warm cache crosses
+// the stretch at once rather than spreading a long wait over nothing. Cancelling reaches the decoding through the probe (it stops
 // answering, see gui/cancellable_audio_probe.hpp), and this then throws
 // OperationCancelled so the scan ends as cancelled rather than reporting
 // copies it never measured as not lining up.
@@ -37,12 +39,19 @@ inline void measureDuplicateCueShifts(std::vector<domain::DuplicateGroup> &group
                                       domain::AudioAlignmentProbe *probe, const domain::CueTimelineOffset &offset,
                                       ProgressReporter &progress, size_t units, const CancellationToken &cancel)
 {
-    const size_t pairs = domain::cueShiftPairsToMeasure(groups);
+    const size_t pairs = domain::cueShiftPairsToMeasure(groups, probe);
     progress.start("Lining up the copies' audio...", units);
+    if (pairs == 0) {
+        progress.tick(units);
+    }
     size_t done = 0;
-    domain::measureCueShifts(groups, probe, offset, [&]() {
-        ++done;
-        progress.tick(pairs > 0 ? done * units / pairs : units);
+    domain::measureCueShifts(groups, probe, offset, [&](bool costly) {
+        if (costly && pairs > 0) {
+            ++done;
+            // A reference that could not be read makes more pairs than
+            // were planned; the bar waits at the end of its stretch.
+            progress.tick(std::min(units, done * units / pairs));
+        }
     });
     progress.finish();
     cancel.throwIfCancelled();

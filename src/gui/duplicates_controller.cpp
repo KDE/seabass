@@ -84,20 +84,61 @@ std::uint64_t wastedBytes(const ConsolidationPlan &plan)
     return known >= 2 ? total - largest : 0;
 }
 
-// What lining the copies up measured, in the order the page lists them:
-// one sentence for each copy shifted against the first, or that could not
-// be lined up with it. Empty for a group whose copies line up as they are.
+// What lining the copies up measured, in the order the page lists them
+// and numbered as its cards are ("COPY 2"): for each copy, its shift
+// against the first copy it lines up with, or that it lines up with none.
+// Copies that line up only among themselves are said as such. Empty for a
+// group whose copies all line up as they are, or that was not measured.
 QString alignmentNote(const domain::DuplicateGroup &group)
 {
+    if (!group.cueShiftsMeasured) {
+        return {};
+    }
+    const size_t n = group.tracks.size();
+    auto partnerOf = [&](size_t i) -> std::optional<size_t> {
+        for (size_t j = 0; j < n; ++j) {
+            if (j != i && domain::cueShiftBetween(group, j, i)) {
+                return j;
+            }
+        }
+        return std::nullopt;
+    };
+    // The first copy of the first set that lines up at all: what the
+    // others are said against when they do not line up with it.
+    std::optional<size_t> firstLinedUp;
+    for (size_t i = 0; i < n && !firstLinedUp; ++i) {
+        if (partnerOf(i)) {
+            firstLinedUp = i;
+        }
+    }
+    // Nothing lines up with anything: one sentence for the group.
+    if (!firstLinedUp) {
+        return n == 2 ? QStringLiteral("Copy 2 could not be lined up with copy 1, so no cues are copied between them.")
+                      : QStringLiteral("None of the copies could be lined up with another, so no cues are copied "
+                                       "between them.");
+    }
     QStringList lines;
-    for (size_t i = 1; i < group.tracks.size() && i < group.cueShiftMs.size(); ++i) {
+    for (size_t i = 0; i < n; ++i) {
         const QString copy = QStringLiteral("Copy %1").arg(i + 1);
-        const std::optional<double> shift = domain::cueShiftBetween(group, 0, i);
-        if (!shift) {
-            lines << QStringLiteral("%1 could not be lined up with copy 1, so no cues are copied to or from it.")
+        const std::optional<size_t> partner = partnerOf(i);
+        if (!partner) {
+            lines << QStringLiteral("%1 could not be lined up with any other copy, so no cues are copied to or from it.")
                          .arg(copy);
-        } else if (*shift != 0.0) {
-            lines << shiftSentence(copy, QStringLiteral("copy 1"), *shift);
+            continue;
+        }
+        if (*partner < i) {
+            const double shift = *domain::cueShiftBetween(group, *partner, i);
+            if (shift != 0.0) {
+                lines << shiftSentence(copy, QStringLiteral("copy %1").arg(*partner + 1), shift);
+            }
+            continue;
+        }
+        // The first of its own set: worth a line only when that set is
+        // not the first one.
+        if (firstLinedUp && *firstLinedUp != i && !domain::cueShiftBetween(group, *firstLinedUp, i)) {
+            lines << QStringLiteral("%1 could not be lined up with copy %2, so no cues are copied between them.")
+                         .arg(copy)
+                         .arg(*firstLinedUp + 1);
         }
     }
     return lines.join(QLatin1Char('\n'));

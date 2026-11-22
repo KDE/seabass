@@ -40,6 +40,10 @@ struct LibraryConsistencyIssue
     std::vector<Track> brokenGroup;      // every broken-file row folded into this issue
     std::optional<Track> survivor;       // set for Repairable/Conflict
     std::vector<CuePoint> survivorCues;  // set only when the survivor needs a cue write
+    // Conflict only: not because the cues differ, but because a broken
+    // row's cues would have to cross to the survivor's file, and a file
+    // that is gone cannot be lined up with another.
+    bool cuesCannotBeLinedUp = false;
 };
 
 // Pure classification: no filesystem or database access. Callers split a
