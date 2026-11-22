@@ -1096,14 +1096,24 @@ int main(int argc, char **argv)
         // m.db switched to WAL mode: still untouched, and still read whole.
         fs::remove(wal);
         fs::remove(pathFromUtf8(s.oneLibraryDb() + "-shm"));
-        assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "PRAGMA journal_mode=WAL;"));
-        assert(infrastructure::isWalModeSqlite(s.mdb()) && "m.db is in WAL mode now");
-        const auto walIndex = buildStickPathIndex(s.pioneerQ(), s.engineQ());
+        // A path Engine lists, read before the switch: once m.db is in
+        // WAL mode with no -wal beside it (the switch's connection took
+        // the -wal with it when it closed), macOS's SQLite cannot open
+        // it read-only in place, which is the very case the index reads
+        // from a copy for (database_read_copy.hpp).
         const auto engineRows = infrastructure::engine::engineTrackPaths(pathToUtf8(s.engine));
         assert(!engineRows.empty());
+        assert(seabass::testing::sqlExec(pathToUtf8(s.mdb()), "PRAGMA journal_mode=WAL;"));
+        assert(infrastructure::isWalModeSqlite(s.mdb()) && "m.db is in WAL mode now");
+        assert(!fs::exists(pathFromUtf8(pathToUtf8(s.mdb()) + "-wal")) && "and has no -wal beside it");
+        const auto walIndex = buildStickPathIndex(s.pioneerQ(), s.engineQ());
         const std::string engineFile =
             pathToUtf8((s.engine / pathFromUtf8(engineRows.front().second)).lexically_normal());
         assert(walIndex.rowsFor(engineFile).engine.state == CatalogRows::State::Listed && "WAL m.db read whole");
+        // Still none: the index read the copy, not the stick. Were a
+        // -wal here now, the measurement below would copy it and never
+        // meet the bare-copy case the index reads from a copy for.
+        assert(!fs::exists(pathFromUtf8(pathToUtf8(s.mdb()) + "-wal")) && "the index build wrote no -wal");
         assert(measure(s.stick, "the same, OneLibrary without a -wal and m.db in WAL mode")
                && "a lookup leaves a WAL-mode m.db and a -wal-less OneLibrary as they were");
         // A copy a crashed run left in the temporary folder goes when the
