@@ -477,7 +477,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
 
     const std::vector<CuePoint> hotX = cuesOfKind(x.cues, CuePoint::Kind::Hot);
     const std::vector<CuePoint> memoryX = cuesOfKind(x.cues, CuePoint::Kind::Memory);
-    const EngineCueTranslation translation = translateCuesForEngine(x.cues, e.cues, toleranceMs, e.cueTimelineShiftMs);
+    const EngineCueTranslation translation = translateCuesForEngine(x.cues, e.cues, toleranceMs, e.engineCueWriteShiftMs);
     const CuesFromEngine seen = cuesFromEngine(e.cues, x.cues, toleranceMs);
     result.cuesLeftOut = translation.leftOut;
 
@@ -623,7 +623,7 @@ SyncPlan planWithEngine(const SyncMatch &original, const SyncMatch &match, bool 
                 mainOnly.push_back(cue);
             }
         }
-        ifXWins = keepExistingColours(translateCuesForEngine(x.cues, mainOnly, toleranceMs, e.cueTimelineShiftMs).cues,
+        ifXWins = keepExistingColours(translateCuesForEngine(x.cues, mainOnly, toleranceMs, e.engineCueWriteShiftMs).cues,
                                       e.cues, toleranceMs);
         std::vector<CuePoint> hotFromEngine = seen.hotCues;
         for (const auto &pad : seen.uncertain) {

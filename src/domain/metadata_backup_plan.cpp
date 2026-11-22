@@ -180,6 +180,13 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         proposal.cuesConflict =
             !storedCues.empty() && !stickCues.empty() && !cueSetsEqual(storedCues, stickCues, toleranceMs);
         proposal.cuesOffered = takeIncomingCues(stickCues, storedCues, stickModifiedAt, storedAt, toleranceMs);
+        // The store's own decision on correcting the cue timing: it leaves
+        // strays out of both sides for this comparison too. (Its merge
+        // rule above, takeIncomingCues and the conflict, still compares
+        // its stored list as it is, strays and all.)
+        proposal.cueTimingCorrected = !proposal.cuesOffered
+            && cuesWithMisreadTimingCorrected(stick, stickCues, storedCues, stored->storedEngineCueShiftMs, toleranceMs)
+                   .has_value();
 
         // ---- rating ----
         proposal.ratingConflict = stick.rating && stored->rating && *stick.rating != *stored->rating;

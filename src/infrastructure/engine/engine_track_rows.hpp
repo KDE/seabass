@@ -232,6 +232,20 @@ struct EngineCueBlobs
 {
     application::EngineSqlValue quickCues;
     application::EngineSqlValue loops;
+    // The row's thirdPartySourceId is 1: Engine's rekordbox import made it
+    // and no player has loaded it since, so its cues are still on
+    // rekordbox's timeline (see EngineAnalysisRowAccess::write()). False on
+    // a schema without the column.
+    bool rekordboxImportMark = false;
+};
+
+// A row's cues replaced in the transaction that writes its analysis: what
+// was read (readCueBlobs()) and what goes in its place. The write fails
+// when the row no longer holds `before`, or no longer carries the mark.
+struct EngineCueRewrite
+{
+    EngineCueBlobs before;
+    EngineCueBlobs after;
 };
 
 // readEngineAnalysisRow() and writeEngineAnalysisColumns() for many rows
@@ -251,17 +265,24 @@ public:
     // The row's cue blobs, over the reads' connection. nullopt with *error
     // when the database or the row cannot be read.
     [[nodiscard]] std::optional<EngineCueBlobs> readCueBlobs(std::int64_t trackId, std::string *error);
-    // clearThirdPartySource: also set the row's thirdPartySourceId to NULL,
-    // in the same transaction. The column is 1 on a row Engine's rekordbox
-    // import made and no player has loaded: on the first load the player
+    // clearThirdPartySource: also set the row's thirdPartySourceId to NULL
+    // where it is 1, in the same transaction; any other value is left.
+    // The column is 1 on a row Engine's rekordbox import made and no
+    // player has loaded: on the first load the player
     // takes the row's cues and grid for rekordbox's timeline, moves them
     // about 52 ms earlier for an MP3 (the cues for good, the grid for that
     // load), and sets the column to NULL (Prime 4 on Engine OS 5.3.0 and
     // Prime Go+ on 5.0.4, 2026-11-22). A row whose grid is already on
     // Engine's timeline must not carry it. Nothing is done on a schema
-    // without the column.
+    // without the column, or on a row without the mark.
+    //
+    // cues: also replace the row's cue blobs, in the same transaction, for
+    // a marked row whose cues are moved onto Engine's timeline as the mark
+    // goes. Only with clearThirdPartySource, and only on a schema with the
+    // column; false with *error otherwise.
     [[nodiscard]] bool write(std::int64_t trackId, const application::EngineAnalysisColumns &columns,
-                             std::string *error, bool clearThirdPartySource = false);
+                             std::string *error, bool clearThirdPartySource = false,
+                             const EngineCueRewrite *cues = nullptr);
 
 private:
     struct Connections;

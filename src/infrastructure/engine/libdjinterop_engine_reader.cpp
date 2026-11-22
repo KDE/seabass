@@ -31,6 +31,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <sqlite3.h>
 
@@ -639,6 +640,66 @@ std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &e
     return result;
 }
 
+// The ids of the rows that carry the mark of Engine's rekordbox import:
+// thirdPartySourceId = 1, on a row that import made and no player has
+// loaded since. Their cues are on rekordbox's timeline still, unmoved
+// (measured on a real stick, 2026-11-22: on every such row each Engine
+// hot cue equals rekordbox's position to 1 ms, MP3 and M4A alike); the
+// player moves them about 52 ms earlier on the row's first load and drops
+// the mark. In Track on 2.18 to 2.21 (PerformanceData is a view there
+// before 2.20), in PerformanceData on 3.x, where the cue blobs are. None
+// on a schema without the column, or without a Database2/m.db (1.x).
+// Raw SQLite: libdjinterop's high-level track API does not expose it.
+std::unordered_set<int64_t> readRekordboxImportMarks(const std::string &engineLibraryPath)
+{
+    std::unordered_set<int64_t> result;
+    const std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    std::error_code existsError;
+    if (!std::filesystem::exists(pathFromUtf8(dbPath), existsError) && !existsError) {
+        return result;
+    }
+    sqlite3 *db = nullptr;
+    const auto fail = [&db, &dbPath](const std::string &what) {
+        const std::string message = db ? sqlite3_errmsg(db) : "out of memory";
+        if (db) {
+            sqlite3_close(db);
+        }
+        throw std::runtime_error(what + " " + dbPath + ": " + message);
+    };
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        fail("could not open");
+    }
+    sqlite3_busy_timeout(db, 5000);
+    std::string sql;
+    try {
+        // The table the cue blobs are in, as EngineAnalysisRowAccess finds it.
+        const bool inTrack = hasColumn(db, "Track", "trackData");
+        const char *table = inTrack ? "Track" : "PerformanceData";
+        if (!hasColumn(db, table, "thirdPartySourceId")) {
+            sqlite3_close(db);
+            return result;
+        }
+        sql = inTrack ? "SELECT id FROM Track WHERE thirdPartySourceId = 1"
+                      : "SELECT trackId FROM PerformanceData WHERE thirdPartySourceId = 1";
+    } catch (const std::exception &e) {
+        fail(std::string("could not list the columns (") + e.what() + ") of");
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        fail("could not read the rekordbox import marks in");
+    }
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        result.insert(sqlite3_column_int64(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        fail("could not read the rekordbox import marks in");
+    }
+    sqlite3_close(db);
+    return result;
+}
+
 // 44.1 kHz is by far the most common sample rate for the compressed
 // audio these libraries hold; for a row that records none, falling back
 // to it gives a position that's very likely close to right, instead of
@@ -779,7 +840,7 @@ std::optional<double> LibdjinteropEngineReader::rateFromSource(const domain::Tra
     return rate;
 }
 
-double LibdjinteropEngineReader::shiftFromSource(const domain::Track &track)
+double LibdjinteropEngineReader::fileShiftFromSource(const domain::Track &track)
 {
     if (!m_leadInSource || !shiftsCueTimeline(track.filePath, track.streamingSource, m_correctThisPass)) {
         return 0.0;
@@ -800,10 +861,57 @@ void LibdjinteropEngineReader::takeCorrectionSetting()
     m_correctThisPass = m_correctHandedIn.value_or(domain::MatchingPolicy::correctMp3CueTiming());
 }
 
+bool LibdjinteropEngineReader::onRekordboxTimeline(const domain::Track &track) const
+{
+    if (m_rekordboxTimelineRows.empty()) {
+        return false;
+    }
+    try {
+        return m_rekordboxTimelineRows.contains(std::stoll(track.sourceId));
+    } catch (const std::logic_error &) {
+        return false;  // not a row id: not a track of this catalog
+    }
+}
+
+void LibdjinteropEngineReader::takeRekordboxImportMarks()
+{
+    m_rekordboxTimelineRows.clear();
+    // Not caught, as readStreamingSources() is not: without the marks a
+    // marked row's cues would read on the wrong timeline, and the cue
+    // writer, which acts on the mark, would write them back that way and
+    // take the mark off. The pass fails instead.
+    try {
+        m_rekordboxTimelineRows = readRekordboxImportMarks(m_engineLibraryPath);
+    } catch (const application::OperationCancelled &) {
+        throw;
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("could not tell which tracks Engine's rekordbox import left unplayed: ")
+                                 + e.what());
+    }
+}
+
 void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
 {
     takeCorrectionSetting();
-    fillRatesFromSource(tracks);
+    // The mark belongs to the cue positions as they were read: a row keeps
+    // what readTracks() decided (Track::engineCuesOnRekordboxTimeline)
+    // unless its cues are read again here, and only then is the mark read,
+    // over the database fillRatesFromSource() has just recovered. A pass
+    // that reads no row again opens nothing. A mark that cannot be read
+    // fails the pass, as in readTracks().
+    const std::vector<domain::Track *> reRead = fillRatesFromSource(tracks);
+    if (!reRead.empty()) {
+        takeRekordboxImportMarks();
+        // Flag and write shift only on rows with cues: a row read again
+        // with none has neither.
+        for (domain::Track *track : reRead) {
+            track->engineCuesOnRekordboxTimeline = !track->cues.empty() && onRekordboxTimeline(*track);
+            if (track->cues.empty()) {
+                track->cueTimelineShiftMs = 0.0;
+                track->engineCueWriteShiftMs = 0.0;
+            }
+        }
+    }
     // Every cued MP3 row asked again: the source here may be a better
     // answer than the one readTracks() had (the catalog cache's Cues
     // stage checks what its Tracks stage took from the cache unchecked).
@@ -816,19 +924,22 @@ void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
     for (auto &track : tracks) {
         m_cancel.throwIfCancelled();
         if (!track.cues.empty()) {
-            const double shift = shiftFromSource(track);
+            const double fileShift = fileShiftFromSource(track);
+            const double shift = track.engineCuesOnRekordboxTimeline ? 0.0 : fileShift;
             shiftCuePositions(track.cues, shift - track.cueTimelineShiftMs);
             track.cueTimelineShiftMs = shift;
+            track.engineCueWriteShiftMs = fileShift;
         }
         m_progress->tick(++processed);
     }
     m_progress->finish();
 }
 
-void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &tracks)
+std::vector<domain::Track *> LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &tracks)
 {
+    std::vector<domain::Track *> reRead;
     if (!m_sampleRateSource) {
-        return;
+        return reRead;
     }
     // Only the rows read with cues: a row with none has nothing a rate
     // would move, and is not looked up at all.
@@ -839,7 +950,7 @@ void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &t
         }
     }
     if (cued.empty()) {
-        return;
+        return reRead;
     }
     int failures = 0;
     try {
@@ -850,7 +961,7 @@ void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &t
         const std::string busy = recoverEnginePendingJournals(m_engineLibraryPath, std::chrono::seconds(10));
         if (!busy.empty()) {
             m_progress->warn("the sample rates of unanalysed tracks were not looked up: " + busy + " is locked");
-            return;
+            return reRead;
         }
         auto db = djinterop::engine::load_database(m_engineLibraryPath);
         for (domain::Track *track : cued) {
@@ -883,6 +994,7 @@ void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &t
                 // Read again as Engine stores them: fillCues() puts the
                 // lead-in shift back on.
                 track->cueTimelineShiftMs = 0.0;
+                reRead.push_back(track);
             } catch (const application::OperationCancelled &) {
                 throw;
             } catch (const std::exception &) {
@@ -893,12 +1005,13 @@ void LibdjinteropEngineReader::fillRatesFromSource(std::vector<domain::Track> &t
         throw;
     } catch (const std::exception &e) {
         m_progress->warn(std::string("the sample rates of unanalysed tracks were not looked up: ") + e.what());
-        return;
+        return reRead;
     }
     if (failures > 0) {
         m_progress->warn(std::to_string(failures)
                          + " unanalysed tracks keep their cues at 44.1 kHz: their rows could not be read again");
     }
+    return reRead;
 }
 
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
@@ -1002,6 +1115,8 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
     } catch (const std::exception &e) {
         m_progress->warn(std::string("could not read track edit times: ") + e.what());
     }
+
+    takeRekordboxImportMarks();
 
     m_progress->start("Scanning Engine tracks", allTracks.size());
     size_t processed = 0;
@@ -1107,7 +1222,9 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
             }
         }
         if (!track.cues.empty()) {
-            track.cueTimelineShiftMs = shiftFromSource(track);
+            track.engineCuesOnRekordboxTimeline = onRekordboxTimeline(track);
+            track.engineCueWriteShiftMs = fileShiftFromSource(track);
+            track.cueTimelineShiftMs = track.engineCuesOnRekordboxTimeline ? 0.0 : track.engineCueWriteShiftMs;
             shiftCuePositions(track.cues, track.cueTimelineShiftMs);
         }
 

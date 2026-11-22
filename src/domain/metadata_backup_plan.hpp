@@ -89,6 +89,12 @@ struct MetadataBackupProposal
     // you back up from a different stick than last time, which would put
     // the whole library on a list whose entire purpose is to be short.
     bool identityRefresh = false;
+    // The stored cues are this track's as an earlier build misread them
+    // (domain::cuesWithMisreadTimingCorrected()): the same cues, stored
+    // a lead-in shift late. Storing takes their places from this reading
+    // and leaves every label and colour; it is not an authored change, so
+    // only when the cues are not offered otherwise.
+    bool cueTimingCorrected = false;
 
     // A track the store would keep as it is: every field either matches
     // or lost to the stored copy. Kept out of the list the page shows,
@@ -98,7 +104,7 @@ struct MetadataBackupProposal
     bool offersAnything() const
     {
         return isNew || cuesOffered || ratingOffered || commentOffered || playCountOffered || playlistsOffered
-            || artworkOffered || identityRefresh;
+            || artworkOffered || identityRefresh || cueTimingCorrected;
     }
 
     // How many cues storing would add, for a sentence a person reads.

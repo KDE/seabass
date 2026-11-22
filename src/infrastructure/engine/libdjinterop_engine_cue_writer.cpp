@@ -128,6 +128,31 @@ djinterop::pad_color padColor(const std::string &color, int slot)
     return defaultPadColor(slot);
 }
 
+// The rules for what the lead-in shift (#50) puts at or before Engine's 0,
+// shared by writeCues() and the move of a marked row's stored cues
+// (movedOntoEngineTimeline()). Each takes a position already moved by the
+// shift, in milliseconds or in samples alike.
+//
+// A hot cue, and a loop's start, is clamped to 0.
+double clampedToStart(double moved)
+{
+    return std::max(0.0, moved);
+}
+
+// A loop whose clamped ends meet or cross was emptied by the shift: it is
+// left out. Only one the shift emptied: a loop that came empty stays.
+bool loopEmptiedByShift(double movedStart, double movedEnd, double start, double end)
+{
+    return clampedToStart(movedEnd) <= clampedToStart(movedStart) && end > start;
+}
+
+// A main cue moved to 0 or before is left out: Engine reads one at 0 as no
+// main cue at all.
+bool mainCueSurvivesShift(double moved)
+{
+    return moved > 0.0;
+}
+
 }  // namespace
 
 LibdjinteropEngineCueWriter::LibdjinteropEngineCueWriter(std::string engineLibraryPath)
@@ -236,20 +261,52 @@ void LibdjinteropEngineCueWriter::writeHotCuesAtSampleRate(const std::string &tr
     writeCues(trackSourceId, cues, sampleRateHz);
 }
 
-double LibdjinteropEngineCueWriter::shiftMsOf(djinterop::track &track)
+void LibdjinteropEngineCueWriter::writeEngineStoredCues(const std::string &trackSourceId,
+                                                         const std::vector<domain::CuePoint> &cues)
+{
+    writeCues(trackSourceId, cues, std::nullopt, CuePositions::EngineStored);
+}
+
+std::optional<double> LibdjinteropEngineCueWriter::knownShiftMsOf(djinterop::track &track)
 {
     std::string relative;
     try {
         relative = track.relative_path();
     } catch (const std::exception &) {
-        // No path names no file: nothing to shift by.
+        // No path names no file: what it is cannot be told.
     }
-    if (relative.empty() || !m_leadInSource) {
+    if (relative.empty()) {
+        return std::nullopt;
+    }
+    // A file that is not an MP3 has no lead-in to correct for: none,
+    // whatever the setting.
+    if (!domain::hasMp3Extension(relative)) {
         return 0.0;
+    }
+    if (!m_leadInSource) {
+        return std::nullopt;
     }
     const std::string &audioRoot = m_audioRoot.empty() ? m_engineLibraryPath : m_audioRoot;
     const std::string filePath = pathToUtf8((pathFromUtf8(audioRoot) / pathFromUtf8(relative)).lexically_normal());
-    return shiftsCueTimeline(filePath, {}) ? engineCueShiftMs(m_leadInSource(filePath)) : 0.0;
+    // An MP3 with the correction off is moved by nothing, but its true
+    // shift is not known.
+    if (!shiftsCueTimeline(filePath, {})) {
+        return std::nullopt;
+    }
+    const std::optional<domain::Mp3LeadIn> leadIn = m_leadInSource(filePath);
+    // A lead-in with no rate says nothing (engineToRekordboxOffsetMs()
+    // gives 0 for it); one with a rate may say 0, and that is known.
+    if (!leadIn || leadIn->sampleRate <= 0) {
+        return std::nullopt;
+    }
+    return engineCueShiftMs(leadIn);
+}
+
+double LibdjinteropEngineCueWriter::shiftMsOf(djinterop::track &track)
+{
+    // What is taken off positions: 0 when the shift is not known, as
+    // before the difference was told apart.
+    return knownShiftMsOf(track).value_or(0.0);
 }
 
 double LibdjinteropEngineCueWriter::cueTimelineShiftMs(const std::string &trackSourceId)
@@ -263,7 +320,7 @@ double LibdjinteropEngineCueWriter::cueTimelineShiftMs(const std::string &trackS
 
 void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
                                              const std::vector<domain::CuePoint> &cues,
-                                             std::optional<double> knownSampleRate)
+                                             std::optional<double> knownSampleRate, CuePositions positions)
 {
     auto &db = database();
 
@@ -305,8 +362,13 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     //   - a memory cue is left out and counted (see below), because
     //     Engine reads a main cue at 0 as no cue at all.
     // Create Engine Library applies the same rule (applyCuesToSnapshot).
-    const double shiftMs = shiftMsOf(*track);
-    const auto toSamples = [&](double rekordboxMs) { return std::max(0.0, (rekordboxMs - shiftMs) / 1000.0 * sampleRate); };
+    // Asked once: the shift, and whether it is known at all (for the mark,
+    // below). Positions Engine stored are taken as they are, and the file
+    // is not asked.
+    const bool asStored = positions == CuePositions::EngineStored;
+    const std::optional<double> knownShiftMs = asStored ? std::nullopt : knownShiftMsOf(*track);
+    const double shiftMs = knownShiftMs.value_or(0.0);
+    const auto toSamples = [&](double rekordboxMs) { return clampedToStart((rekordboxMs - shiftMs) / 1000.0 * sampleRate); };
 
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
     // Engine's hot loops are a separate 8-slot array (loop_at()/loops()),
@@ -347,7 +409,7 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
             if (!domain::engineCanHoldMemoryCue(cue)) {
                 continue;
             }
-            if (cue.positionMs - shiftMs <= 0.0) {
+            if (!mainCueSurvivesShift(cue.positionMs - shiftMs)) {
                 ++m_memoryCuesDroppedByLeadInShift;
                 if (m_drops) {
                     ++m_drops->memoryCues;
@@ -368,7 +430,7 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
             double endOffset = toSamples(cue.loopEndMs);
             // Only a loop the shift emptied: one handed in empty is
             // written as given, as before.
-            if (endOffset <= startOffset && cue.loopEndMs > cue.positionMs) {
+            if (loopEmptiedByShift(startOffset, endOffset, cue.positionMs, cue.loopEndMs)) {
                 ++m_loopsDroppedByLeadInShift;
                 if (m_drops) {
                     ++m_drops->loops;
@@ -405,6 +467,50 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     track->set_main_cue(earliestMemoryCueMs
                             ? std::optional<double>(toSamples(*earliestMemoryCueMs))
                             : std::nullopt);
+    // Every cue on the row is on Engine's timeline now, so the mark of
+    // Engine's rekordbox import goes: left on, the player would move what
+    // was just written about 52 ms earlier on the row's first load. After
+    // the cues, as libdjinterop gives no transaction over the three
+    // columns above; a failure here says the cues are in and the mark is
+    // not, rather than pass for a write that did all it should.
+    //
+    // Only when the shift taken off is known (a file that is not an MP3,
+    // or an MP3 whose lead-in was read with the correction on). Unknown,
+    // nothing was taken off and the cues sit where they were given, on
+    // rekordbox's timeline: the mark stays, and the player moves them.
+    // Positions Engine stored are no answer to whose timeline they are on:
+    // the mark stays as it was.
+    try {
+        if (!asStored && knownShiftMs) {
+            takeOffRekordboxImportMark(track->id());
+        }
+    } catch (const std::exception &e) {
+        throw std::runtime_error("the cues of track id=" + trackSourceId
+                                 + " were written, but the mark of Engine's rekordbox import could not be taken off ("
+                                 + e.what() + "): the player will move them on its first load");
+    }
+}
+
+void LibdjinteropEngineCueWriter::takeOffRekordboxImportMark(std::int64_t id)
+{
+    (void)database();
+    if (!m_tables) {
+        return;
+    }
+    // Only the value 1 is the mark; any other is left as it is. Read
+    // first: a row without the mark is not written, so its edit time (a
+    // trigger on PerformanceData updates it) moves only with its cues.
+    if (m_tables->v3) {
+        auto performance = m_tables->v3->performance_data();
+        if (performance.get_third_party_source_id(id) == 1) {
+            performance.set_third_party_source_id(id, std::nullopt);
+        }
+    } else if (m_tables->v2) {
+        auto rows = m_tables->v2->track();
+        if (rows.get_third_party_source_id(id) == 1) {
+            rows.set_third_party_source_id(id, std::nullopt);
+        }
+    }
 }
 
 void LibdjinteropEngineCueWriter::setLastPlayedAt(const std::string &trackSourceId,
@@ -655,6 +761,126 @@ RowFlags flagsOf(const EngineAnalysisColumns &c, const std::optional<BeatDataBlo
     return flags;
 }
 
+using QuickCuesBlob = djinterop::engine::v3::quick_cues_blob;
+using LoopsBlob = djinterop::engine::v3::loops_blob;
+
+// A cue column that holds something: not NULL, not an empty blob.
+bool holdsCues(const EngineSqlValue &value)
+{
+    return !value.isNull() && !(value.type == EngineSqlValue::Type::Blob && value.bytes.empty());
+}
+
+// The loops column decoded, nothing when it is not a blob or does not
+// decode. Not compressed, so decoded as it is.
+std::optional<LoopsBlob> decodedLoops(const EngineSqlValue &value)
+{
+    if (value.type != EngineSqlValue::Type::Blob) {
+        return std::nullopt;
+    }
+    try {
+        return LoopsBlob::from_blob(bytesOf(value.bytes));
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+// Whether the row holds a cue of any kind: a hot cue, a loop, or a main
+// cue. "No main cue" is sample -1 as the player writes it and 0 as
+// writeCues() does, so only one past the start counts. Cues that cannot be
+// read (a damaged blob) count as cues: nothing is known about them.
+bool carriesCues(const EngineCueBlobs &blobs)
+{
+    if (holdsCues(blobs.quickCues)) {
+        // Through the guard every stored blob goes through: libdjinterop's
+        // inflate does not come back from every damaged one.
+        const auto quickCues = decoded<QuickCuesBlob>(blobs.quickCues);
+        if (!quickCues || quickCues->adjusted_main_cue > 0.0
+            || std::any_of(quickCues->quick_cues.begin(), quickCues->quick_cues.end(), [](const auto &cue) {
+                   return cue.sample_offset != djinterop::engine::v3::QUICK_CUE_SAMPLE_OFFSET_EMPTY;
+               })) {
+            return true;
+        }
+    }
+    if (holdsCues(blobs.loops)) {
+        const auto loops = decodedLoops(blobs.loops);
+        return !loops || std::any_of(loops->loops.begin(), loops->loops.end(), [](const auto &loop) {
+            return loop.is_start_set || loop.is_end_set;
+        });
+    }
+    return false;
+}
+
+// A marked row's stored cues, on rekordbox's timeline, moved onto Engine's:
+// `shiftSamples` earlier, under writeCues()' rules (clampedToStart() and the
+// two beside it). Labels, colours and empty slots stay as they are; only a
+// blob whose cues move is encoded again. Nothing when a blob that holds
+// cues does not decode.
+struct MovedCues
+{
+    EngineCueBlobs blobs;
+    int memoryCuesDropped = 0;
+    int loopsDropped = 0;
+};
+
+std::optional<MovedCues> movedOntoEngineTimeline(const EngineCueBlobs &stored, double shiftSamples)
+{
+    MovedCues moved{stored, 0, 0};
+    if (holdsCues(stored.quickCues)) {
+        std::optional<QuickCuesBlob> quickCues = decoded<QuickCuesBlob>(stored.quickCues);
+        if (!quickCues) {
+            return std::nullopt;
+        }
+        const QuickCuesBlob before = *quickCues;
+        for (auto &cue : quickCues->quick_cues) {
+            // A set hot cue; -1 is an empty slot.
+            if (cue.sample_offset >= 0.0) {
+                cue.sample_offset = clampedToStart(cue.sample_offset - shiftSamples);
+            }
+        }
+        // Both main cues as writeCues() sets them: one past the start moves
+        // or, moved to the start or before, is none (0).
+        for (double *mainCue : {&quickCues->adjusted_main_cue, &quickCues->default_main_cue}) {
+            if (*mainCue > 0.0) {
+                const double to = *mainCue - shiftSamples;
+                if (!mainCueSurvivesShift(to) && mainCue == &quickCues->adjusted_main_cue) {
+                    ++moved.memoryCuesDropped;
+                }
+                *mainCue = mainCueSurvivesShift(to) ? to : 0.0;
+            }
+        }
+        if (!(*quickCues == before)) {
+            moved.blobs.quickCues = EngineSqlValue::ofBlob(textOf(quickCues->to_blob()));
+        }
+    }
+    if (holdsCues(stored.loops)) {
+        std::optional<LoopsBlob> loops = decodedLoops(stored.loops);
+        if (!loops) {
+            return std::nullopt;
+        }
+        const LoopsBlob before = *loops;
+        for (auto &loop : loops->loops) {
+            const double start = loop.start_sample_offset;
+            const double end = loop.end_sample_offset;
+            if (loop.is_start_set && loop.is_end_set && start >= 0.0 && end >= 0.0
+                && loopEmptiedByShift(start - shiftSamples, end - shiftSamples, start, end)) {
+                loop = djinterop::engine::v3::loop_blob::empty();
+                ++moved.loopsDropped;
+                continue;
+            }
+            if (loop.is_start_set && start >= 0.0) {
+                loop.start_sample_offset = clampedToStart(start - shiftSamples);
+            }
+            if (loop.is_end_set && end >= 0.0) {
+                loop.end_sample_offset = clampedToStart(end - shiftSamples);
+            }
+        }
+        if (!(*loops == before)) {
+            moved.blobs.loops = EngineSqlValue::ofBlob(textOf(loops->to_blob()));
+        }
+    }
+    return moved;
+}
+
 }  // namespace
 
 // The row's analysis as stored, and, read only where it is wanted, its
@@ -736,47 +962,72 @@ LibdjinteropEngineCueWriter::RowNow LibdjinteropEngineCueWriter::readRowNow(std:
     return now;
 }
 
-bool LibdjinteropEngineCueWriter::carriesCues(std::int64_t id)
+struct LibdjinteropEngineCueWriter::GridMarkPlan
 {
-    using QuickCues = djinterop::engine::v3::quick_cues_blob;
-    using Loops = djinterop::engine::v3::loops_blob;
+    bool takeOffMark = false;
+    std::optional<EngineCueRewrite> cues;
+    int memoryCuesDropped = 0;
+    int loopsDropped = 0;
+};
+
+LibdjinteropEngineCueWriter::GridMarkPlan
+LibdjinteropEngineCueWriter::planMarkWithGrid(std::int64_t id, const EngineAnalysisColumns &after,
+                                              std::optional<double> knownShift)
+{
+    GridMarkPlan plan;
     std::string error;
     const auto blobs = rowAccess().readCueBlobs(id, &error);
     if (!blobs) {
-        return true;
+        // Nothing known about the row's cues: they and the mark stay.
+        return plan;
     }
-    const auto holds = [](const EngineSqlValue &value) {
-        return !value.isNull() && !(value.type == EngineSqlValue::Type::Blob && value.bytes.empty());
-    };
-    if (holds(blobs->quickCues)) {
-        // Through the guard every stored blob goes through: libdjinterop's
-        // inflate does not come back from every damaged one.
-        const auto quickCues = decoded<QuickCues>(blobs->quickCues);
-        if (!quickCues || quickCues->adjusted_main_cue > 0.0
-            || std::any_of(quickCues->quick_cues.begin(), quickCues->quick_cues.end(), [](const auto &cue) {
-                   return cue.sample_offset != djinterop::engine::v3::QUICK_CUE_SAMPLE_OFFSET_EMPTY;
-               })) {
-            return true;
-        }
+    if (!carriesCues(*blobs)) {
+        plan.takeOffMark = true;
+        return plan;
     }
-    if (holds(blobs->loops)) {
-        if (blobs->loops.type != EngineSqlValue::Type::Blob) {
-            return true;
-        }
-        try {
-            // Not compressed, so decoded as it is.
-            const Loops loops = Loops::from_blob(bytesOf(blobs->loops.bytes));
-            return std::any_of(loops.loops.begin(), loops.loops.end(),
-                               [](const auto &loop) { return loop.is_start_set || loop.is_end_set; });
-        } catch (const std::exception &) {
-            return true;
-        }
+    if (!blobs->rekordboxImportMark) {
+        // No mark (or one whose meaning is not known): the cues are left
+        // exactly as they are.
+        return plan;
     }
-    return false;
+    // The rate the row's cues are counted at, as the reader takes it: the
+    // analysis record's, else the beat data's (the file's, for a row the
+    // grid was made for at the file's rate). Neither: not moved.
+    double rate = 0.0;
+    if (const auto record = decoded<TrackDataBlob>(after.trackData);
+        record && record->sample_rate > 0.0 && std::isfinite(record->sample_rate)) {
+        rate = record->sample_rate;
+    } else if (const auto beatData = decoded<BeatDataBlob>(after.beatData);
+               beatData && beatData->sample_rate > 0.0 && std::isfinite(beatData->sample_rate)) {
+        rate = beatData->sample_rate;
+    }
+    if (!(rate > 0.0)) {
+        return plan;
+    }
+    // What writeCues() takes off this row's positions, as the caller
+    // asked it with the grid. Not known (an MP3 whose lead-in cannot be
+    // read, or the correction off): the cues and the mark stay, and the
+    // player moves them.
+    if (!knownShift || !std::isfinite(*knownShift)) {
+        return plan;
+    }
+    const double shiftMs = *knownShift;
+    const auto moved = movedOntoEngineTimeline(*blobs, shiftMs / 1000.0 * rate);
+    if (!moved) {
+        return plan;
+    }
+    plan.takeOffMark = true;
+    // A shift of 0 moves nothing, and nothing is written but the mark.
+    if (!(moved->blobs.quickCues == blobs->quickCues) || !(moved->blobs.loops == blobs->loops)) {
+        plan.cues = EngineCueRewrite{*blobs, moved->blobs};
+        plan.memoryCuesDropped = moved->memoryCuesDropped;
+        plan.loopsDropped = moved->loopsDropped;
+    }
+    return plan;
 }
 
 void LibdjinteropEngineCueWriter::writeColumns(std::int64_t id, const EngineAnalysisColumns &before,
-                                               const EngineAnalysisColumns &after)
+                                               const EngineAnalysisColumns &after, std::optional<double> knownShiftMs)
 {
     if (before.isAnalyzed == after.isAnalyzed && before.isBeatGridLocked == after.isBeatGridLocked
         && before.bpm == after.bpm && before.bpmAnalyzed == after.bpmAnalyzed && before.key == after.key
@@ -785,9 +1036,18 @@ void LibdjinteropEngineCueWriter::writeColumns(std::int64_t id, const EngineAnal
         return;
     }
     const bool gridWritten = !after.beatData.isNull() && !(before.beatData == after.beatData);
+    const GridMarkPlan plan = gridWritten ? planMarkWithGrid(id, after, knownShiftMs) : GridMarkPlan{};
+    // The grid, the moved cues and the mark in one transaction: a failure
+    // leaves the row as it was, cues, mark and all.
     std::string error;
-    if (!rowAccess().write(id, after, &error, gridWritten && !carriesCues(id))) {
+    if (!rowAccess().write(id, after, &error, plan.takeOffMark, plan.cues ? &*plan.cues : nullptr)) {
         throw std::runtime_error("could not write the row's analysis: " + error);
+    }
+    m_memoryCuesDroppedByLeadInShift += plan.memoryCuesDropped;
+    m_loopsDroppedByLeadInShift += plan.loopsDropped;
+    if (m_drops) {
+        m_drops->memoryCues += plan.memoryCuesDropped;
+        m_drops->loops += plan.loopsDropped;
     }
 }
 
@@ -840,8 +1100,10 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     // The grid comes on rekordbox's timeline, as the cues do, and moves
     // onto Engine's by the same shift. A beat the shift puts before the
     // start is dropped; the line through the others still reaches back
-    // past it.
-    const double shiftMs = shiftMsOf(*track);
+    // past it. Whether the shift is known goes with the grid to
+    // writeColumns(), for the row's mark.
+    const std::optional<double> knownShiftMs = knownShiftMsOf(*track);
+    const double shiftMs = knownShiftMs.value_or(0.0);
     std::vector<domain::Beat> beats = rekordboxBeats;
     for (domain::Beat &beat : beats) {
         beat.timeMs -= shiftMs;
@@ -889,7 +1151,7 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
         keepBeforeWrite(id, options.keepKey, keep, now, apply, false);
         EngineAnalysisColumns after = now.columns;
         apply(after);
-        writeColumns(id, now.columns, after);
+        writeColumns(id, now.columns, after, knownShiftMs);
         return plan.result;
     }
 
@@ -946,7 +1208,7 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     keepBeforeWrite(id, options.keepKey, KeepFacts{}, now, apply, false);
     EngineAnalysisColumns after = now.columns;
     apply(after);
-    writeColumns(id, now.columns, after);
+    writeColumns(id, now.columns, after, knownShiftMs);
     return result;
 }
 
@@ -1022,8 +1284,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     // The grid on Engine's timeline, as writeBeatGrid() puts it. The shift
     // can mean reading the file's start, so only when a grid is wanted.
     std::vector<domain::Beat> beats = analysis.beats;
+    std::optional<double> knownShiftMs;
     if (options.grids) {
-        const double shiftMs = shiftMsOf(*track);
+        knownShiftMs = knownShiftMsOf(*track);
+        const double shiftMs = knownShiftMs.value_or(0.0);
         for (domain::Beat &beat : beats) {
             beat.timeMs -= shiftMs;
         }
@@ -1159,7 +1423,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         // entry recognises as Seabass's own (keepBeforeWrite()).
         EngineAnalysisColumns after = now.columns;
         apply(after);
-        writeColumns(id, now.columns, after);
+        writeColumns(id, now.columns, after, knownShiftMs);
         if (fileWrite) {
             putOverviewFile(result.overviewFileRelativePath, *fileWrite);
         }
@@ -1294,7 +1558,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     }
     EngineAnalysisColumns after = now.columns;
     apply(after);
-    writeColumns(id, now.columns, after);
+    writeColumns(id, now.columns, after, knownShiftMs);
     return result;
 }
 

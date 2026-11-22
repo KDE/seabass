@@ -25,6 +25,7 @@
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
+#include <djinterop/engine/v3/engine_library.hpp>
 
 #include "domain/mp3_lead_in.hpp"
 #include "domain/track.hpp"
@@ -213,6 +214,14 @@ int main(int argc, char **argv)
     infrastructure::engine::LibdjinteropEngineCueWriter engineWriter(engineLibrary);
     engineWriter.setLeadInSource([](const std::string &) { return std::optional<domain::Mp3LeadIn>{}; });
     engineWriter.writeHotCuesAtSampleRate(en->sourceId, {hot(1, 5000.0), hot(2, 10000.0)}, 44100.0);
+    // The fixture's rows carry the mark of Engine's rekordbox import
+    // (thirdPartySourceId 1), which says their cues are on rekordbox's
+    // timeline still, and the reader reads them unshifted. A writer whose
+    // shift is not known leaves the mark, so it is taken off here: these
+    // positions are planted as Engine's own.
+    djinterop::engine::v3::engine_library::load(engineLibrary)
+        .performance_data()
+        .set_third_party_source_id(std::stoll(en->sourceId), std::nullopt);
     // rekordbox: pad A where Engine has it raw, pad B where a right
     // correction puts Engine's (to the ms rekordbox stores).
     infrastructure::rekordbox::RekordboxCueWriter rekordboxWriter(pioneer);

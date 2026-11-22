@@ -31,6 +31,15 @@
 //    row the player still takes for unanalysed.
 // 8. Engine 2.18: the same in the Track table; 1.x: UnsupportedSchema.
 // 9. A real Denon overview file decodes with the code that encodes ours.
+// 10. A grid takes the mark of Engine's rekordbox import off a row; a
+//     marked MP3 row with cues whose shift is not known keeps cues and
+//     mark, a file that is not an MP3 loses the mark with its cues byte
+//     for byte, cues that cannot be read keep cues and mark.
+// 11. With a shift, a marked row's cues move onto Engine's timeline with
+//     the grid, under the cue writer's rules; an unmarked row's do not.
+// 12. writeHotCues() takes the mark off too when its shift is known, on
+//     3.x and on 2.18, and leaves it when not; a value
+//     other than 1 stays through it and through a grid.
 //
 // usage: libdjinterop_engine_analysis_import_test <tests/fixtures>
 
@@ -53,13 +62,17 @@
 #include <djinterop/engine/v2/engine_library.hpp>
 #include <djinterop/engine/v3/beat_data_blob.hpp>
 #include <djinterop/engine/v3/engine_library.hpp>
+#include <djinterop/engine/v3/loops_blob.hpp>
 #include <djinterop/engine/v3/overview_waveform_data_blob.hpp>
+#include <djinterop/engine/v3/quick_cues_blob.hpp>
 #include <djinterop/engine/v3/track_data_blob.hpp>
 #include <sqlite3.h>
 #include <zlib.h>
 
 #include "domain/beat_grid.hpp"
 #include "domain/engine_overview.hpp"
+#include "domain/matching_policy.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
@@ -75,6 +88,8 @@ using Waveform = AnalysisImportResult::Waveform;
 using BeatData = djinterop::engine::v3::beat_data_blob;
 using TrackData = djinterop::engine::v3::track_data_blob;
 using Overview = djinterop::engine::v3::overview_waveform_data_blob;
+using QuickCuesBlob = djinterop::engine::v3::quick_cues_blob;
+using LoopsBlob = djinterop::engine::v3::loops_blob;
 
 namespace
 {
@@ -846,8 +861,13 @@ int main(int argc, char **argv)
     // player that loads a marked row for the first time takes its grid and
     // cues for rekordbox's timeline and moves them about 52 ms earlier (the
     // Prime 4 and the Prime Go+, 2026-11-22). A grid written here is on
-    // Engine's timeline already, so the mark goes with it; a row with a
-    // cue keeps it, since that cue may still wait for the player.
+    // Engine's timeline already, so the mark goes with it. A marked row's
+    // cues are moved onto Engine's timeline in the same write, by the shift
+    // the cue writer takes off, when that shift is known. Here it is not
+    // (unshiftedWriter(): no MP3's lead-in reads), so a marked MP3 row
+    // with cues keeps cues and mark, for the player to move; a file that
+    // is not an MP3 has a known shift of 0, and loses the mark with its
+    // cues byte for byte. A row whose cues cannot be read keeps both.
     {
         const Copy copy = freshCopy("rekordbox-import-mark");
         constexpr std::int64_t kUnanalysedWithHotCue = 17;
@@ -890,7 +910,7 @@ int main(int argc, char **argv)
         }
         const auto others = [&] {
             auto marks = rows(copy.mdb, "SELECT trackId, quote(thirdPartySourceId) FROM PerformanceData");
-            for (const std::int64_t id : {kUnanalysed, kAnalysed, kAnalysedToo}) {
+            for (const std::int64_t id : {kUnanalysed, kAnalysed, kAnalysedToo, std::int64_t{618}}) {
                 marks.erase(id);
             }
             return marks;
@@ -918,19 +938,48 @@ int main(int argc, char **argv)
         check(gridOnly.outcome == Outcome::Written, "a grid written alone");
         check(mark(kAnalysedToo) == "NULL", "takes the mark off too: " + mark(kAnalysedToo));
 
-        // A row with a cue: the grid is written (the beat data changes),
-        // and the mark stays.
+        // An MP3 row with readable cues and no known shift: the grid is
+        // written, cues and mark stay.
         for (const auto &[id, what] : std::vector<std::pair<std::int64_t, std::string>>{
                  {kUnanalysedWithHotCue, "an unanalysed row with a hot cue"},
                  {kAnalysedWithHotCue, "an analysed row with a hot cue"},
                  {kWithLoopOnly, "a row with a loop alone"},
-                 {kWithMainCueOnly, "a row with a main cue alone"},
-                 {kWithDamagedCues, "a row whose cues cannot be read"},
-                 {kWithCutShortCues, "a row whose cues are cut short"}}) {
+                 {kWithMainCueOnly, "a row with a main cue alone"}}) {
             const auto beatDataBefore = perf(copy.mdb, id, "beatData");
+            const auto quickCuesBefore = perf(copy.mdb, id, "quickCues");
+            const auto loopsBefore = perf(copy.mdb, id, "loops");
             const auto cued = writer.importAnalysis(std::to_string(id), analysis, options);
             check(cued.grid.outcome == Outcome::Written && perf(copy.mdb, id, "beatData") != beatDataBefore,
                   what + " gets the grid");
+            check(perf(copy.mdb, id, "quickCues") == quickCuesBefore && perf(copy.mdb, id, "loops") == loopsBefore,
+                  what + " keeps its cues byte for byte");
+            check(mark(id) == "1", what + ", its shift not known, keeps the mark: " + mark(id));
+        }
+        // A file that is not an MP3: its shift is 0, known. Row 618 (hot
+        // cues and a loop, marked) named an .m4a in this copy.
+        {
+            constexpr std::int64_t kNotAnMp3 = 618;
+            exec(copy.mdb, "UPDATE Track SET path = replace(path, '.mp3', '.m4a') WHERE id = 618;");
+            check(mark(kNotAnMp3) == "1", "row 618 carries the mark");
+            const auto quickCuesBefore = perf(copy.mdb, kNotAnMp3, "quickCues");
+            const auto loopsBefore = perf(copy.mdb, kNotAnMp3, "loops");
+            const auto cued = writer.importAnalysis(std::to_string(kNotAnMp3), analysis, options);
+            check(cued.grid.outcome == Outcome::Written, "a marked M4A row with cues gets the grid");
+            check(perf(copy.mdb, kNotAnMp3, "quickCues") == quickCuesBefore
+                      && perf(copy.mdb, kNotAnMp3, "loops") == loopsBefore,
+                  "and keeps its cues byte for byte");
+            check(mark(kNotAnMp3) == "NULL", "and loses the mark: " + mark(kNotAnMp3));
+        }
+        // Cues that cannot be read: written around, cues and mark left.
+        for (const auto &[id, what] : std::vector<std::pair<std::int64_t, std::string>>{
+                 {kWithDamagedCues, "a row whose cues cannot be read"},
+                 {kWithCutShortCues, "a row whose cues are cut short"}}) {
+            const auto beatDataBefore = perf(copy.mdb, id, "beatData");
+            const auto quickCuesBefore = perf(copy.mdb, id, "quickCues");
+            const auto cued = writer.importAnalysis(std::to_string(id), analysis, options);
+            check(cued.grid.outcome == Outcome::Written && perf(copy.mdb, id, "beatData") != beatDataBefore,
+                  what + " gets the grid");
+            check(perf(copy.mdb, id, "quickCues") == quickCuesBefore, what + " keeps its cues");
             check(mark(id) == "1", what + " keeps the mark: " + mark(id));
         }
 
@@ -941,7 +990,299 @@ int main(int argc, char **argv)
         check(mark(kUnanalysedToo) == "1", "leaves the mark: " + mark(kUnanalysedToo));
 
         check(others() == othersBefore, "no other row's mark changed");
+        check(writer.memoryCuesDroppedByLeadInShift() == 0 && writer.loopsDroppedByLeadInShift() == 0,
+              "nothing left out without a shift");
         std::cout << "case 10 (the mark of Engine's rekordbox import) done\n";
+    }
+
+    // 11. The same with a shift: the writer is told the rows' MP3s have a
+    // LAME lead-in, so a marked row's cues move 51.18 ms earlier as the
+    // grid goes in, under writeHotCues()' rules (a hot cue clamped at 0, a
+    // loop the shift empties left out, a loop's start clamped, a main cue
+    // moved to 0 or before left out), labels and colours as they were. A
+    // row without the mark keeps its cues byte for byte.
+    {
+        const Copy copy = freshCopy("rekordbox-import-mark-shifted");
+        const auto leadIn =
+            infrastructure::audio::readMp3LeadIn(pathToUtf8(g_fixtures / "mp3-lead-in" / "lame-cbr-44100.mp3"));
+        check(leadIn.has_value(), "the LAME fixture's lead-in reads");
+        LibdjinteropEngineCueWriter writer(pathToUtf8(copy.root));
+        int asked = 0;
+        writer.setLeadInSource([&](const std::string &) {
+            ++asked;
+            return leadIn;
+        });
+        const auto mark = [&](std::int64_t id) {
+            return column(copy.mdb, "PerformanceData", "trackId", id, "thirdPartySourceId");
+        };
+        constexpr std::int64_t kUnanalysedWithHotCue = 17;
+        constexpr std::int64_t kAnalysedWithHotCue = 69;
+        constexpr std::int64_t kHotCueAndLoop = 618;
+        constexpr std::int64_t kWithLoopOnly = 30;
+        constexpr std::int64_t kWithMainCueOnly = 377;
+        // Cues made for the edges: a hot cue and a loop inside the shift,
+        // a loop that starts inside it and ends after, a main cue inside it.
+        constexpr std::int64_t kAtTheStart = 45;
+        constexpr std::int64_t kWithDamagedCues = 3;
+        // A loop alone and no mark.
+        constexpr std::int64_t kUnmarkedWithLoop = 36;
+        exec(copy.mdb, "UPDATE PerformanceData SET thirdPartySourceId = 1 WHERE trackId IN (30, 377, 45);"
+                       "UPDATE PerformanceData SET quickCues = x'0102' WHERE trackId = 3;");
+        check(mark(kUnmarkedWithLoop) == "NULL" && mark(kHotCueAndLoop) == "1", "the fixture's marks for 36 and 618");
+        {
+            auto library = djinterop::engine::v3::engine_library::load(pathToUtf8(copy.root));
+            auto performance = library.performance_data();
+            QuickCuesBlob quickCues = performance.get_quick_cues(kAtTheStart);
+            quickCues.quick_cues[0] = {"near", 1000.0, djinterop::pad_color{1, 2, 3, 255}};
+            quickCues.adjusted_main_cue = 2000.0;
+            quickCues.default_main_cue = 2000.0;
+            performance.set_quick_cues(kAtTheStart, quickCues);
+            LoopsBlob loops = performance.get_loops(kAtTheStart);
+            loops.loops[0] = {"emptied", 500.0, 2000.0, true, true, djinterop::pad_color{4, 5, 6, 255}};
+            loops.loops[1] = {"clamped", 1000.0, 50000.0, true, true, djinterop::pad_color{7, 8, 9, 255}};
+            performance.set_loops(kAtTheStart, loops);
+        }
+        const double shiftMs = writer.cueTimelineShiftMs(std::to_string(kHotCueAndLoop));
+        check(std::abs(shiftMs - 2257 * 1000.0 / 44100) < 1e-6, "the rows shift by LAME's 51.18 ms: " + std::to_string(shiftMs));
+
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(120.0, 480.0, 200000.0);
+        analysis.threeBandPreview = synthetic(1200, 3, 12);
+        analysis.scrollEntries = 30000;
+        analysis.bpm = 125.0;
+        AnalysisImportOptions options;
+        options.fileSampleRateHz = 44100.0;
+
+        // The row's rate as the reader counts its cues: the analysis
+        // record's once the grid is in.
+        const auto rateOf = [&](std::int64_t id) {
+            return TrackData::from_blob(perf(copy.mdb, id, "trackData")).sample_rate;
+        };
+        const auto movedBy = [](double samples, double shift) { return std::max(0.0, samples - shift); };
+        for (const auto &[id, what] : std::vector<std::pair<std::int64_t, std::string>>{
+                 {kUnanalysedWithHotCue, "an unanalysed row with a hot cue"},
+                 {kAnalysedWithHotCue, "an analysed row with a hot cue"},
+                 {kHotCueAndLoop, "a row with a hot cue and a loop"},
+                 {kWithLoopOnly, "a row with a loop alone"},
+                 {kWithMainCueOnly, "a row with a main cue alone"}}) {
+            const auto quickCuesBlobBefore = perf(copy.mdb, id, "quickCues");
+            const QuickCuesBlob quickBefore = QuickCuesBlob::from_blob(quickCuesBlobBefore);
+            const LoopsBlob loopsBefore = LoopsBlob::from_blob(perf(copy.mdb, id, "loops"));
+            const int askedBefore = asked;
+            const auto cued = writer.importAnalysis(std::to_string(id), analysis, options);
+            check(cued.grid.outcome == Outcome::Written, what + " gets the grid");
+            check(asked - askedBefore == 1, what + ": the file's start read once for grid and cues, not "
+                                                + std::to_string(asked - askedBefore) + " times");
+            check(mark(id) == "NULL", what + " loses the mark: " + mark(id));
+            const double shift = shiftMs / 1000.0 * rateOf(id);
+            const QuickCuesBlob quickAfter = QuickCuesBlob::from_blob(perf(copy.mdb, id, "quickCues"));
+            const LoopsBlob loopsAfter = LoopsBlob::from_blob(perf(copy.mdb, id, "loops"));
+            bool moved = quickAfter.quick_cues.size() == quickBefore.quick_cues.size()
+                && loopsAfter.loops.size() == loopsBefore.loops.size();
+            int cues = 0;
+            for (std::size_t i = 0; moved && i < quickBefore.quick_cues.size(); ++i) {
+                const auto &b = quickBefore.quick_cues[i];
+                const auto &a = quickAfter.quick_cues[i];
+                const double want = b.sample_offset < 0.0 ? b.sample_offset : movedBy(b.sample_offset, shift);
+                cues += b.sample_offset >= 0.0 ? 1 : 0;
+                moved = std::abs(a.sample_offset - want) < 1e-6 && a.label == b.label && a.color == b.color;
+            }
+            for (std::size_t i = 0; moved && i < loopsBefore.loops.size(); ++i) {
+                const auto &b = loopsBefore.loops[i];
+                const auto &a = loopsAfter.loops[i];
+                if (!b.is_start_set && !b.is_end_set) {
+                    moved = a == b;
+                    continue;
+                }
+                ++cues;
+                moved = std::abs(a.start_sample_offset - movedBy(b.start_sample_offset, shift)) < 1e-6
+                    && std::abs(a.end_sample_offset - movedBy(b.end_sample_offset, shift)) < 1e-6 && a.label == b.label
+                    && a.color == b.color && a.is_start_set && a.is_end_set;
+            }
+            if (quickBefore.adjusted_main_cue > 0.0) {
+                ++cues;
+                moved = moved && std::abs(quickAfter.adjusted_main_cue - (quickBefore.adjusted_main_cue - shift)) < 1e-6;
+            } else {
+                moved = moved && quickAfter.adjusted_main_cue == quickBefore.adjusted_main_cue;
+            }
+            check(moved && cues > 0, what + ": every cue " + std::to_string(shift) + " samples earlier, labels and colours kept");
+            check(quickAfter.extra_data == quickBefore.extra_data && loopsAfter.extra_data == loopsBefore.extra_data,
+                  what + ": what follows the cues kept");
+        }
+
+        // The edges, at 44.1 kHz: 2257 samples.
+        {
+            const auto cued = writer.importAnalysis(std::to_string(kAtTheStart), analysis, options);
+            check(cued.grid.outcome == Outcome::Written && mark(kAtTheStart) == "NULL",
+                  "the row with cues at the start gets the grid and loses the mark");
+            const double shift = shiftMs / 1000.0 * rateOf(kAtTheStart);
+            check(std::abs(shift - 2257.0) < 1e-6, "2257 samples at the row's rate");
+            const QuickCuesBlob quickAfter = QuickCuesBlob::from_blob(perf(copy.mdb, kAtTheStart, "quickCues"));
+            const LoopsBlob loopsAfter = LoopsBlob::from_blob(perf(copy.mdb, kAtTheStart, "loops"));
+            check(quickAfter.quick_cues[0].sample_offset == 0.0 && quickAfter.quick_cues[0].label == "near",
+                  "a hot cue inside the shift is clamped to 0");
+            check(quickAfter.adjusted_main_cue == 0.0 && quickAfter.default_main_cue == 0.0,
+                  "a main cue inside the shift is left out (0, no main cue)");
+            check(!loopsAfter.loops[0].is_start_set && !loopsAfter.loops[0].is_end_set
+                      && loopsAfter.loops[0].start_sample_offset == -1.0,
+                  "a loop the shift empties is left out");
+            check(loopsAfter.loops[1].start_sample_offset == 0.0 && loopsAfter.loops[1].end_sample_offset == 50000.0 - 2257.0
+                      && loopsAfter.loops[1].label == "clamped",
+                  "a loop that starts inside the shift: its start clamped, its end moved");
+            check(writer.memoryCuesDroppedByLeadInShift() == 1 && writer.loopsDroppedByLeadInShift() == 1,
+                  "the main cue and the loop left out are counted: "
+                      + std::to_string(writer.memoryCuesDroppedByLeadInShift()) + ", "
+                      + std::to_string(writer.loopsDroppedByLeadInShift()));
+        }
+
+        // Cues that cannot be read: left, with the mark.
+        {
+            const auto quickCuesBefore = perf(copy.mdb, kWithDamagedCues, "quickCues");
+            const auto loopsBefore = perf(copy.mdb, kWithDamagedCues, "loops");
+            const auto cued = writer.importAnalysis(std::to_string(kWithDamagedCues), analysis, options);
+            check(cued.grid.outcome == Outcome::Written, "the row with damaged cues gets the grid");
+            check(perf(copy.mdb, kWithDamagedCues, "quickCues") == quickCuesBefore
+                      && perf(copy.mdb, kWithDamagedCues, "loops") == loopsBefore && mark(kWithDamagedCues) == "1",
+                  "and keeps its cues and the mark: " + mark(kWithDamagedCues));
+        }
+
+        // No mark: the cues are not the grid copy's to move.
+        {
+            const auto quickCuesBefore = perf(copy.mdb, kUnmarkedWithLoop, "quickCues");
+            const auto loopsBefore = perf(copy.mdb, kUnmarkedWithLoop, "loops");
+            const auto beatDataBefore = perf(copy.mdb, kUnmarkedWithLoop, "beatData");
+            const auto cued = writer.importAnalysis(std::to_string(kUnmarkedWithLoop), analysis, options);
+            check(cued.grid.outcome == Outcome::Written && perf(copy.mdb, kUnmarkedWithLoop, "beatData") != beatDataBefore,
+                  "an unmarked row with a loop gets the grid");
+            check(perf(copy.mdb, kUnmarkedWithLoop, "quickCues") == quickCuesBefore
+                      && perf(copy.mdb, kUnmarkedWithLoop, "loops") == loopsBefore
+                      && mark(kUnmarkedWithLoop) == "NULL",
+                  "and keeps its cues byte for byte, with no mark");
+        }
+        std::cout << "case 11 (a marked row's cues moved onto Engine's timeline with the grid) done\n";
+    }
+
+    // 12. writeHotCues() takes the mark off the row it writes when the
+    // shift it took off is known: every cue there is on Engine's timeline
+    // then. Known: an MP3 whose lead-in reads, or a file that is not an
+    // MP3 (0). Not known (an MP3 whose lead-in does not read, or with the
+    // correction off): the cues are written as before and the mark stays,
+    // for the player to move them. A row without the mark is left without
+    // one, and no other row's mark changes. On 3.x in PerformanceData, on
+    // 2.18 in Track.
+    {
+        const Copy copy = freshCopy("rekordbox-import-mark-cues");
+        const auto mark = [&](std::int64_t id) {
+            return column(copy.mdb, "PerformanceData", "trackId", id, "thirdPartySourceId");
+        };
+        constexpr std::int64_t kMarked = 17;
+        constexpr std::int64_t kUnmarked = 30;
+        check(mark(kMarked) == "1" && mark(kUnmarked) == "NULL", "the fixture's marks for 17 and 30");
+        constexpr std::int64_t kMarkedCorrectionOff = 69;
+        constexpr std::int64_t kMarkedNotAnMp3 = 377;
+        exec(copy.mdb, "UPDATE PerformanceData SET thirdPartySourceId = 1 WHERE trackId = 377;"
+                       "UPDATE Track SET path = replace(path, '.mp3', '.m4a') WHERE id = 377;");
+        const auto marks = [&] {
+            auto all = rows(copy.mdb, "SELECT trackId, quote(thirdPartySourceId) FROM PerformanceData");
+            all.erase(kMarked);
+            all.erase(kMarkedNotAnMp3);
+            return all;
+        };
+        const auto othersBefore = marks();
+        domain::CuePoint hot;
+        hot.kind = domain::CuePoint::Kind::Hot;
+        hot.hotCueNumber = 1;
+        hot.positionMs = 5000.0;
+        const auto leadIn =
+            infrastructure::audio::readMp3LeadIn(pathToUtf8(g_fixtures / "mp3-lead-in" / "lame-cbr-44100.mp3"));
+        check(leadIn.has_value(), "the LAME fixture's lead-in reads");
+        LibdjinteropEngineCueWriter shiftedWriter(pathToUtf8(copy.root));
+        shiftedWriter.setLeadInSource([&](const std::string &) { return leadIn; });
+        auto writer = unshiftedWriter(pathToUtf8(copy.root));
+
+        writer.writeHotCues(std::to_string(kMarked), {hot});
+        check(mark(kMarked) == "1", "3.x: an MP3 whose lead-in does not read keeps the mark: " + mark(kMarked));
+        {
+            auto db = djinterop::engine::load_database(pathToUtf8(copy.root));
+            const auto written = db.track_by_id(kMarked)->hot_cues().at(0);
+            const auto rate = db.track_by_id(kMarked)->sample_rate().value_or(44100.0);
+            check(written && std::abs(written->sample_offset - 5000.0 / 1000.0 * rate) < 1e-6,
+                  "3.x: and its cue is written where it was given, as before");
+        }
+        domain::MatchingPolicy::setCorrectMp3CueTiming(false);
+        shiftedWriter.writeHotCues(std::to_string(kMarkedCorrectionOff), {hot});
+        domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+        check(mark(kMarkedCorrectionOff) == "1",
+              "3.x: an MP3 written with the correction off keeps the mark: " + mark(kMarkedCorrectionOff));
+        shiftedWriter.writeHotCues(std::to_string(kMarked), {hot});
+        check(mark(kMarked) == "NULL", "3.x: an MP3 whose lead-in reads loses the mark: " + mark(kMarked));
+        writer.writeHotCues(std::to_string(kMarkedNotAnMp3), {hot});
+        check(mark(kMarkedNotAnMp3) == "NULL",
+              "3.x: a file that is not an MP3 (shift 0, known) loses the mark: " + mark(kMarkedNotAnMp3));
+        shiftedWriter.writeHotCues(std::to_string(kUnmarked), {hot});
+        check(mark(kUnmarked) == "NULL", "3.x: an unmarked row stays without: " + mark(kUnmarked));
+        check(marks() == othersBefore, "3.x: no other row's mark changed");
+
+        // Only 1 is the mark: a row holding another value keeps it through
+        // a cue write and through a grid, with cues or without.
+        constexpr std::int64_t kOtherValueWithCues = 69;
+        constexpr std::int64_t kOtherValueNoCues = kAnalysed;
+        exec(copy.mdb, "UPDATE PerformanceData SET thirdPartySourceId = 2 WHERE trackId IN (69, 6, 618);");
+        shiftedWriter.writeHotCues("618", {hot});
+        check(mark(618) == "2", "3.x: writeHotCues leaves thirdPartySourceId 2: " + mark(618));
+        {
+            LibdjinteropEngineCueWriter shifted(pathToUtf8(copy.root));
+            shifted.setLeadInSource([&](const std::string &) { return leadIn; });
+            RekordboxAnalysis analysis;
+            analysis.beats = constantGrid(120.0, 480.0, 200000.0);
+            analysis.threeBandPreview = synthetic(1200, 3, 13);
+            analysis.scrollEntries = 30000;
+            AnalysisImportOptions options;
+            options.fileSampleRateHz = 44100.0;
+            const auto quickCuesBefore = perf(copy.mdb, kOtherValueWithCues, "quickCues");
+            const auto loopsBefore = perf(copy.mdb, kOtherValueWithCues, "loops");
+            check(shifted.importAnalysis(std::to_string(kOtherValueWithCues), analysis, options).grid.outcome
+                      == Outcome::Written,
+                  "3.x: a row with cues and thirdPartySourceId 2 gets the grid");
+            check(mark(kOtherValueWithCues) == "2" && perf(copy.mdb, kOtherValueWithCues, "quickCues") == quickCuesBefore
+                      && perf(copy.mdb, kOtherValueWithCues, "loops") == loopsBefore,
+                  "3.x: and keeps its cues and the 2: " + mark(kOtherValueWithCues));
+            check(shifted.writeBeatGrid(std::to_string(kOtherValueNoCues), analysis.beats).outcome == Outcome::Written,
+                  "3.x: a row without cues and thirdPartySourceId 2 gets the grid");
+            check(mark(kOtherValueNoCues) == "2", "3.x: and keeps the 2: " + mark(kOtherValueNoCues));
+        }
+
+        const fs::path dir = testing::scratchRoot() / "engine_analysis_import" / "schema-2-cues";
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        const std::string root = pathToUtf8(dir / "Engine Library");
+        std::int64_t markedId = 0;
+        std::int64_t unmarkedId = 0;
+        {
+            auto db = djinterop::engine::create_database(root, djinterop::engine::engine_schema::schema_2_18_0);
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Subject";
+            // Not MP3s: a shift of 0, known, so the unshifted writer
+            // takes the mark off.
+            snapshot.relative_path = "subject.wav";
+            snapshot.sample_rate = 44100.0;
+            markedId = db.create_track(snapshot).id();
+            snapshot.relative_path = "other.wav";
+            unmarkedId = db.create_track(snapshot).id();
+        }
+        const std::string mdb = pathToUtf8(dir / "Engine Library" / "Database2" / "m.db");
+        exec(mdb, "UPDATE Track SET thirdPartySourceId = 1 WHERE id = " + std::to_string(markedId));
+        const auto mark2 = [&](std::int64_t id) { return column(mdb, "Track", "id", id, "thirdPartySourceId"); };
+        check(mark2(markedId) == "1" && mark2(unmarkedId) == "NULL", "2.18: one row marked");
+        auto writer2 = unshiftedWriter(root);
+        writer2.writeHotCues(std::to_string(markedId), {hot});
+        check(mark2(markedId) == "NULL", "2.18: a marked row loses the mark with its cues: " + mark2(markedId));
+        writer2.writeHotCues(std::to_string(unmarkedId), {hot});
+        check(mark2(unmarkedId) == "NULL", "2.18: an unmarked row stays without: " + mark2(unmarkedId));
+        exec(mdb, "UPDATE Track SET thirdPartySourceId = 2 WHERE id = " + std::to_string(unmarkedId));
+        writer2.writeHotCues(std::to_string(unmarkedId), {hot});
+        check(mark2(unmarkedId) == "2", "2.18: writeHotCues leaves thirdPartySourceId 2: " + mark2(unmarkedId));
+        std::cout << "case 12 (writeHotCues takes the mark off) done\n";
     }
 
     if (failures == 0) {

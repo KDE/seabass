@@ -18,6 +18,9 @@
 // carry the shift the reader added then (0 for a store written before it
 // recorded one: Engine's own positions). Restored to Engine they land on
 // the sample they were read from, whatever the correction setting is now.
+// Cues read from a row Engine's rekordbox import left unplayed are on
+// rekordbox's timeline: stored as such, restored to Engine the file's
+// shift earlier with the mark gone, and to rekordbox as they are.
 //
 // Usage: engine_save_lead_in_test FIXTURE_DIR (tests/fixtures/mp3-lead-in)
 
@@ -32,11 +35,13 @@
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
+#include <djinterop/engine/v2/engine_library.hpp>
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/track.hpp"
+#include "domain/metadata_backup_plan.hpp"
 #include "domain/metadata_restore.hpp"
 #include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
@@ -44,7 +49,10 @@
 #include "gui/edit/save_loop.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/local/metadata_store.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
@@ -254,6 +262,179 @@ int main(int argc, char **argv)
         seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(false);
         assert(std::abs(pioneerCues(5000.0 + shiftMs, shiftMs) - 5000.0) < 1e-9 && "the setting off: Engine's");
         seabass::domain::MatchingPolicy::setCorrectMp3CueTiming(true);
+    }
+
+    // A row Engine's rekordbox import left unplayed (thirdPartySourceId
+    // 1), captured into the metadata store and restored. Its hot cue is
+    // stored at rekordbox's 5000 ms (220500 samples), unmoved, as that
+    // import leaves it. Read as stored, it goes into the store as on
+    // rekordbox's timeline (no Engine shift); restored to Engine, the
+    // writer takes the file's 51.18 ms off and the mark goes, and to
+    // rekordbox it is written as it is.
+    {
+        const fs::path markedStick = seabass::testing::scratchRoot() / "seabass_engine_save_lead_in_test_marked";
+        fs::remove_all(markedStick);
+        const fs::path markedLibrary = markedStick / "Engine Library";
+        fs::create_directories(markedLibrary);
+        const fs::path markedFile = markedLibrary / "song.mp3";
+        fs::copy_file(fixtures / "lame-cbr-44100.mp3", markedFile);
+        Track song = bare;
+        song.filePath = seabass::pathToUtf8(markedFile);
+        const auto created = seabass::infrastructure::engine::EngineSchemaGeneration::V2;
+        const auto made = seabass::infrastructure::engine::EngineLibraryCreator::create(
+            seabass::pathToUtf8(markedLibrary), {song}, created);
+        assert(made.errorMessage.empty() && made.tracksCreated == 1);
+        const std::string libraryPath = seabass::pathToUtf8(markedLibrary);
+        const std::int64_t rowId = [&] {
+            auto db = djinterop::engine::load_database(libraryPath);
+            return db.tracks().front().id();
+        }();
+        const std::string id = std::to_string(rowId);
+        auto setMark = [&](std::optional<std::int64_t> value) {
+            djinterop::engine::v2::engine_library::load(libraryPath).track().set_third_party_source_id(rowId, value);
+        };
+        auto markOf = [&] {
+            return djinterop::engine::v2::engine_library::load(libraryPath).track().get_third_party_source_id(rowId);
+        };
+        auto storedHotCue = [&] {
+            auto db = djinterop::engine::load_database(libraryPath);
+            const auto hot = db.tracks().front().hot_cues();
+            assert(!hot.empty() && hot[0]);
+            return hot[0]->sample_offset;
+        };
+        // Written as the import leaves it: no shift taken off, then marked.
+        auto writeUnmoved = [&](const std::vector<CuePoint> &cues) {
+            seabass::infrastructure::engine::LibdjinteropEngineCueWriter raw(libraryPath);
+            raw.setLeadInSource([](const std::string &) { return std::optional<seabass::domain::Mp3LeadIn>(); });
+            raw.writeHotCues(id, cues);
+            setMark(1);
+        };
+        writeUnmoved({CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"}});
+        assert(std::abs(storedHotCue() - original) < 1e-3 && markOf() == 1);
+
+        auto readStick = [&] {
+            seabass::infrastructure::engine::LibdjinteropEngineReader reader(libraryPath);
+            auto tracks = reader.readTracks();
+            assert(tracks.size() == 1);
+            return tracks.front();
+        };
+        const Track captured = readStick();
+        assert(captured.cues.size() == 1 && std::abs(captured.cues[0].positionMs - 5000.0) < 1e-6);
+        assert(captured.cueTimelineShiftMs == 0.0 && captured.engineCuesOnRekordboxTimeline);
+
+        const fs::path storePath = markedStick / "local" / "metadata.db";
+        std::vector<Track> stored;
+        {
+            seabass::infrastructure::local::MetadataStore store(storePath);
+            seabass::infrastructure::local::MetadataSource source;
+            source.stickRoot = markedStick;
+            source.libraryId = "library-marked";
+            source.stickLabel = "MARKED";
+            source.catalogModifiedAt = 1'700'000'000;
+            store.store({captured}, source, noProgress, seabass::application::CancellationToken::none());
+            stored = store.readAll();
+        }
+        assert(stored.size() == 1 && stored.front().cues.size() == 1);
+        std::cout << "marked row stored with shift "
+                  << (stored.front().storedEngineCueShiftMs ? std::to_string(*stored.front().storedEngineCueShiftMs)
+                                                            : std::string("none"))
+                  << "\n";
+        assert(!stored.front().storedEngineCueShiftMs.has_value() && "on rekordbox's timeline, like rekordbox's own");
+
+        // The same row in a store an earlier build filled: it added the
+        // file's shift to the cue and recorded it. Taken in again as read
+        // now, the stored cue is put at its place on rekordbox's timeline
+        // with no shift, and the restore below is made from that store.
+        {
+            seabass::infrastructure::local::MetadataStore earlier(markedStick / "local" / "metadata-earlier.db");
+            seabass::infrastructure::local::MetadataSource source;
+            source.stickRoot = markedStick;
+            source.libraryId = "library-marked";
+            source.stickLabel = "MARKED";
+            source.catalogModifiedAt = 1'700'000'000;
+            Track misread = captured;
+            misread.engineCuesOnRekordboxTimeline = false;
+            misread.cueTimelineShiftMs = shiftMs;
+            misread.cues[0].positionMs += shiftMs;
+            earlier.store({misread}, source, noProgress, seabass::application::CancellationToken::none());
+            const auto before = earlier.readAll();
+            assert(before.size() == 1 && before.front().storedEngineCueShiftMs
+                   && std::abs(*before.front().storedEngineCueShiftMs - shiftMs) < 1e-9);
+            source.catalogModifiedAt = 1'700'000'100;
+            // As the backup page does it: the plan offers the track, and
+            // what it offers is stored.
+            const auto plan = seabass::domain::planMetadataBackup({captured}, before, source.catalogModifiedAt);
+            assert(plan.proposals.size() == 1 && plan.proposals.front().cueTimingCorrected);
+            earlier.store({plan.proposals.front().stickTrack}, source, noProgress,
+                          seabass::application::CancellationToken::none());
+            stored = earlier.readAll();
+        }
+        assert(stored.size() == 1 && stored.front().cues.size() == 1);
+        std::cout << "earlier store, retaken: cue at " << stored.front().cues[0].positionMs << " ms, shift "
+                  << (stored.front().storedEngineCueShiftMs ? std::to_string(*stored.front().storedEngineCueShiftMs)
+                                                            : std::string("none"))
+                  << "\n";
+        assert(std::abs(stored.front().cues[0].positionMs - 5000.0) < 1e-9);
+        assert(!stored.front().storedEngineCueShiftMs.has_value());
+
+        // The stick loses the cue (the row still marked) and the store
+        // offers it back.
+        writeUnmoved({});
+        Track stickNow = readStick();
+        assert(stickNow.cues.empty());
+        auto proposals = seabass::domain::planMetadataRestore({stickNow}, stored, 0);
+        assert(proposals.size() == 1 && proposals.front().cuesOffered);
+        assert(!proposals.front().cuesEngineShiftMs.has_value());
+
+        seabass::application::CancellationToken markedToken;
+        const QString markedRoot = pathToQString(markedLibrary);
+        {
+            SaveContext markedCtx(markedToken, noProgress, {}, {}, markedRoot);
+            std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RestoreMetadataChange>(
+                QStringLiteral("engine"), markedRoot, QString::fromStdString(id), proposals.front())};
+            const SaveLoopResult restored = runSaveLoop(changes, markedCtx);
+            if (!restored.error.isEmpty()) {
+                std::cerr << "restore failed: " << restored.error.toStdString() << "\n";
+            }
+            assert(restored.error.isEmpty() && restored.appliedIds.size() == 1);
+        }
+        std::cout << "marked row restored to Engine: " << storedHotCue() << " (want " << original - 2257.0
+                  << "), mark " << (markOf() ? std::to_string(*markOf()) : std::string("NULL")) << "\n";
+        assert(std::abs(storedHotCue() - (original - 2257.0)) < 1e-3);
+        assert(!markOf().has_value());
+        const Track afterRestore = readStick();
+        assert(std::abs(afterRestore.cues[0].positionMs - 5000.0) < 1e-6 && !afterRestore.engineCuesOnRekordboxTimeline);
+
+        seabass::domain::MetadataRestoreProposal toPioneer = proposals.front();
+        toPioneer.stickTrack.sourceId = "1";
+        RestoreMetadataChange pioneer(QStringLiteral("rekordbox"), QStringLiteral("/nowhere/PIONEER"),
+                                      QStringLiteral("1"), toPioneer);
+        const auto writes = pioneer.rekordboxWrites();
+        assert(writes.size() == 1 && writes.front().cues && writes.front().cues->size() == 1);
+        std::cout << "marked row restored to rekordbox: " << writes.front().cues->front().positionMs << " ms\n";
+        assert(std::abs(writes.front().cues->front().positionMs - 5000.0) < 1e-9);
+
+        // A stored copy taken from Engine (it carries the shift it was
+        // read with) restored onto a row that carries the mark: put back
+        // as Engine had it, the shift taken off, and the mark left. Whose
+        // timeline such a copy is on cannot be told.
+        writeUnmoved({});
+        assert(markOf() == 1);
+        seabass::domain::MetadataRestoreProposal fromEngine = proposals.front();
+        fromEngine.cues = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0 + shiftMs, "#ff0000", "drop"}};
+        fromEngine.cuesEngineShiftMs = shiftMs;
+        {
+            SaveContext engineCtx(markedToken, noProgress, {}, {}, markedRoot);
+            std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RestoreMetadataChange>(
+                QStringLiteral("engine"), markedRoot, QString::fromStdString(id), fromEngine)};
+            const SaveLoopResult restored = runSaveLoop(changes, engineCtx);
+            assert(restored.error.isEmpty() && restored.appliedIds.size() == 1);
+        }
+        std::cout << "Engine-origin copy restored onto a marked row: " << storedHotCue() << " (want " << original
+                  << "), mark " << (markOf() ? std::to_string(*markOf()) : std::string("NULL")) << "\n";
+        assert(std::abs(storedHotCue() - original) < 1e-3 && "stored minus the stored shift");
+        assert(markOf() == 1 && "the mark left as it was");
+        fs::remove_all(markedStick);
     }
 
     fs::remove_all(restoreStick);

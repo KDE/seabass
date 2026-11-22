@@ -60,6 +60,9 @@ QString changeSummaryOf(const MetadataBackupProposal &proposal)
     if (proposal.artworkOffered) {
         parts << QStringLiteral("cover");
     }
+    if (proposal.cueTimingCorrected) {
+        parts << QStringLiteral("cue timing");
+    }
     if (proposal.identityRefresh) {
         // Last, and one word: it is the least interesting reason a row
         // is here, and the commonest one to be here alongside.
@@ -133,6 +136,9 @@ QString storesSummaryOf(const MetadataBackupProposal &proposal)
     }
     if (proposal.artworkOffered) {
         parts << QStringLiteral("cover art");
+    }
+    if (proposal.cueTimingCorrected) {
+        parts << QStringLiteral("the stored cues' timing, corrected");
     }
     if (parts.isEmpty()) {
         // A row can be here for its identity alone: the store knows the

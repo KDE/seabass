@@ -49,6 +49,9 @@ constexpr const char *Context = "metadata store";
 // (Track::cueTimelineShiftMs); NULL for cues from anywhere else. Rows
 // earlier versions took in from Engine are marked 0: Engine's own
 // positions, which is what the reader returned before the shift existed.
+// Cues from an Engine row that carries the mark of Engine's rekordbox
+// import (Track::engineCuesOnRekordboxTimeline) are on rekordbox's
+// timeline as stored, and are NULL like any other catalog's.
 constexpr int SchemaVersion = 4;
 
 // Whether `table` has `column`, so a migration adds it only once: a
@@ -935,11 +938,14 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         }
 
         // A memory cue sitting at 0:00 is a stray press, not authored
-        // work (domain/junk_cue.hpp). It does not come in here: not into
-        // the stored cue list, not into the count that decides which
-        // side has more, and so never back out onto a stick through a
-        // restore -- which would put back exactly what Library Health
-        // had just cleaned off.
+        // work (domain/junk_cue.hpp). An incoming one does not come in
+        // here: not into what is stored, not into the incoming count that
+        // decides which side has more, and so never back out onto a stick
+        // through a restore -- which would put back exactly what Library
+        // Health had just cleaned off. storedCues is the row as stored,
+        // which may still hold strays an older build took in: the merge
+        // rule compares it as it is; the cue timing correction below
+        // leaves them out.
         const std::vector<CuePoint> incomingCues = domain::withoutJunkCues(track.cues);
         summary.cuesAtStartLeftOut += static_cast<int>(track.cues.size() - incomingCues.size());
 
@@ -963,6 +969,28 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         const bool writePlayCount =
             domain::takeIncomingPlayCount(track.playCount, storedPlayCount, source.catalogModifiedAt,
                                            storedModifiedAt);
+
+        // Cues an earlier build misread on a row Engine's rekordbox import
+        // left unplayed (domain::cuesWithMisreadTimingCorrected()): the
+        // rule keeps the stored copy, which compares equal, and a restore
+        // to Engine would put it back late. Only the places and the shift
+        // are taken from this reading (NULL, on rekordbox's timeline);
+        // every label and colour stays as stored. Not authored work, so
+        // authored_at does not move. The backup plan offers such a track
+        // by the same function (MetadataBackupProposal::cueTimingCorrected).
+        std::optional<std::vector<CuePoint>> retimedCues;
+        if (exists && !writeCues && track.format == "engine" && track.engineCuesOnRekordboxTimeline) {
+            Stmt shiftNow(m_db, "SELECT cue_engine_shift_ms IS NOT NULL, cue_engine_shift_ms FROM tracks WHERE id = ?");
+            shiftNow.bindInt64(1, id);
+            if (shiftNow.step() && shiftNow.columnInt(0) != 0) {
+                // Strays left out of the stored side as of the incoming one
+                // (an older build stored them): they are not compared, and
+                // not written back, as a cue write never writes them.
+                retimedCues = domain::cuesWithMisreadTimingCorrected(track, incomingCues,
+                                                                     domain::withoutJunkCues(storedCues),
+                                                                     shiftNow.columnDouble(1), cueToleranceMs);
+            }
+        }
 
         // A track the rule decided against on at least one group: the
         // stick offered something, the store already had something else,
@@ -1145,33 +1173,26 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
 
         if (writeCues) {
             Stmt shift(m_db, "UPDATE tracks SET cue_engine_shift_ms = ? WHERE id = ?");
-            if (track.format == "engine") {
+            // Cues from a row Engine's rekordbox import left unplayed are
+            // on rekordbox's timeline as stored: recorded as such (NULL),
+            // not as Engine's own positions (0), which a restore would
+            // write back unmoved onto a row that no longer has the mark.
+            if (track.format == "engine" && !track.engineCuesOnRekordboxTimeline) {
                 shift.bind(1, track.cueTimelineShiftMs);
             } else {
                 shift.bindNull(1);
             }
             shift.bindInt64(2, id);
             shift.run();
-            Stmt clear(m_db, "DELETE FROM cues WHERE track_id = ?");
-            clear.bindInt64(1, id);
-            clear.run();
-            Stmt insert(m_db, R"sql(
-                INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, is_loop, loop_end_ms)
-                VALUES (?,?,?,?,?,?,?,?)
-            )sql");
-            for (const auto &cue : incomingCues) {
-                insert.reset();
-                insert.bindInt64(1, id);
-                insert.bind(2, kindToText(cue.kind));
-                insert.bind(3, cue.hotCueNumber);
-                insert.bind(4, cue.positionMs);
-                insert.bind(5, cue.color);
-                insert.bind(6, cue.comment);
-                insert.bind(7, cue.isLoop ? 1 : 0);
-                insert.bind(8, cue.loopEndMs);
-                insert.run();
-                summary.cuesStored++;
-            }
+            replaceCues(id, incomingCues);
+            summary.cuesStored += static_cast<int>(incomingCues.size());
+        }
+
+        if (retimedCues) {
+            Stmt shift(m_db, "UPDATE tracks SET cue_engine_shift_ms = NULL WHERE id = ?");
+            shift.bindInt64(1, id);
+            shift.run();
+            replaceCues(id, *retimedCues);
         }
 
         // Playlist membership is authored but not conflicting: it is a
@@ -1199,7 +1220,10 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             // tracks seen. A track that both took something new and kept
             // something old counts as updated: "skipped" reads as
             // "nothing of yours was replaced", and it has to stay true.
-            const bool wroteSomething = writeCues || writeRating || writeComment || writePlayCount;
+            // The cue timing corrected is a change to the row, if not an
+            // authored one.
+            const bool wroteSomething =
+                writeCues || writeRating || writeComment || writePlayCount || retimedCues.has_value();
             const bool keptSomething = (cuesConflict && !writeCues) || (ratingConflict && !writeRating) ||
                 (commentConflict && !writeComment) || (playCountConflict && !writePlayCount);
             if (wroteSomething) {
@@ -1219,6 +1243,29 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
 }
 
 // ---- reading --------------------------------------------------------
+
+void MetadataStore::replaceCues(std::int64_t trackId, const std::vector<CuePoint> &cues)
+{
+    Stmt clear(m_db, "DELETE FROM cues WHERE track_id = ?");
+    clear.bindInt64(1, trackId);
+    clear.run();
+    Stmt insert(m_db, R"sql(
+        INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, is_loop, loop_end_ms)
+        VALUES (?,?,?,?,?,?,?,?)
+    )sql");
+    for (const auto &cue : cues) {
+        insert.reset();
+        insert.bindInt64(1, trackId);
+        insert.bind(2, kindToText(cue.kind));
+        insert.bind(3, cue.hotCueNumber);
+        insert.bind(4, cue.positionMs);
+        insert.bind(5, cue.color);
+        insert.bind(6, cue.comment);
+        insert.bind(7, cue.isLoop ? 1 : 0);
+        insert.bind(8, cue.loopEndMs);
+        insert.run();
+    }
+}
 
 std::vector<CuePoint> MetadataStore::cuesFor(std::int64_t trackId)
 {
