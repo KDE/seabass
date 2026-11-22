@@ -41,8 +41,20 @@ inline constexpr double MinOverlapSeconds = 1.0;
 // beat away almost as well as at the true shift. A window whose best lag
 // has a rival further away than RivalSeparationMs reaching RivalShare of
 // its coefficient cannot tell the two apart, and says nothing.
+// 0.95: a loop with some variation in it scored its true lag 1.000 and
+// its best rival 0.93 (tests/fixtures/alignment, real-620), one with 1%
+// variation 0.99 (near-eq-1300).
 inline constexpr double RivalSeparationMs = 5.0;
-inline constexpr double RivalShare = 0.9;
+inline constexpr double RivalShare = 0.95;
+// A file too short for three windows of its own gives the same samples
+// to all three, and "the windows agree" then says nothing: a 4.5 s file
+// with 400 ms cut out lined up "cleanly" at 0.71. For such a pair the
+// overlap at the shift found is checked in parts of PartSeconds, and
+// every part must correlate at PartShare of the window's coefficient. A
+// cut anywhere leaves the part it falls in matching at another lag. Strict
+// on purpose: for a short file, unknown is always an acceptable answer.
+inline constexpr double PartSeconds = 0.5;
+inline constexpr double PartShare = 0.9;
 // How far apart two copies are looked for: the length window in which
 // audio is compared at all (MatchingPolicy::compareAudioSeconds()) plus
 // a margin, never less than MinShiftSearchSeconds. Measured shifts on a

@@ -22,7 +22,7 @@ namespace seabass::infrastructure::local
 //
 //   {"a":"Contents/x/Song.mp3","amtime":"1710000000","asize":"8000000",
 //    "b":"Contents/y/Song.flac","bmtime":"1710000500","bsize":"30000000",
-//    "method":"2","result":"shift","shift":"21.315000"}
+//    "method":"3","result":"shift","shift":"21.315000"}
 //
 // `result` is "shift" (the same music, `shift` ms later in b than in a),
 // "no" (decoded whole, does not line up) or "same" (the same bytes). The
@@ -51,7 +51,9 @@ class CachedAudioAlignmentProbe : public domain::AudioAlignmentProbe
 public:
     // Version 2: lags picked by the correlation coefficient, rivals one
     // bar or beat away make a window unknown, the search bounded.
-    static constexpr int MethodVersion = 2;
+    // Version 3: rivals at 0.95, and a file too short for three windows of
+    // its own checked in half-second parts.
+    static constexpr int MethodVersion = 3;
 
     // `inner` may be null: then only what is cached is answered. A build
     // without a decoder still reads what a build with one wrote.

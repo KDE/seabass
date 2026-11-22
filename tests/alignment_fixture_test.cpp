@@ -182,7 +182,10 @@ std::string describe(const std::optional<double> &got)
 // few ms of the one the manifest gives, at which the 80 ms from each
 // marker's onset correlate best (either polarity), to a fraction of a
 // sample. Returned as that lag minus the manifest's, in ms.
-std::optional<double> agreementErrorMs(const std::vector<float> &a, const std::vector<float> &b, double atMsA,
+// Over what the probe kept of each file (alignment::KeptSamples): a
+// marker in a stretch that was not kept is not checked.
+std::optional<double> agreementErrorMs(const seabass::domain::alignment::KeptSamples &keptA,
+                                       const seabass::domain::alignment::KeptSamples &keptB, double atMsA,
                                        double atMsB)
 {
     const double rate = seabass::domain::alignment::AnalysisRate;
@@ -190,15 +193,19 @@ std::optional<double> agreementErrorMs(const std::vector<float> &a, const std::v
     const long long ib = std::llround(atMsB * rate / 1000.0);
     const long long length = std::llround(0.08 * rate);
     const long long search = std::llround(0.003 * rate);
-    if (ia < 0 || ia + length > static_cast<long long>(a.size()) || ib - search < 0
-        || ib + search + length > static_cast<long long>(b.size())) {
+    if (ia < 0 || ib - search < 0) {
+        return std::nullopt;
+    }
+    const auto a = keptA.slice(static_cast<size_t>(ia), static_cast<size_t>(length));
+    const auto b = keptB.slice(static_cast<size_t>(ib - search), static_cast<size_t>(2 * search + length));
+    if (!a || !b) {
         return std::nullopt;
     }
     std::vector<double> corr;
     for (long long j = -search; j <= search; ++j) {
         double cross = 0.0;
         for (long long i = 0; i < length; ++i) {
-            cross += static_cast<double>(a[static_cast<size_t>(ia + i)]) * b[static_cast<size_t>(ib + j + i)];
+            cross += static_cast<double>((*a)[static_cast<size_t>(i)]) * (*b)[static_cast<size_t>(search + j + i)];
         }
         corr.push_back(cross);
     }
@@ -277,7 +284,8 @@ int main(int argc, char **argv)
     }
     assert(!pairs.empty() && "the shard names at least one pair");
 
-    auto probe = seabass::infrastructure::audio::makeAudioAlignmentProbe();
+    // No stick root, so no cache: every pair is measured.
+    auto probe = seabass::infrastructure::audio::makeAudioAlignmentProbe({});
     assert(probe->hasDecoder());
     // The same decoder again, for the samples the probe correlates: the
     // agreement check reads them.
@@ -385,8 +393,8 @@ int main(int argc, char **argv)
             std::vector<seabass::domain::DuplicateGroup> groups(1);
             groups[0].tracks = {first, copy};
             seabass::domain::measureCueShifts(groups, probe.get(), seabass::infrastructure::audio::cueTimelineOffsetMs);
-            assert(groups[0].cueShiftMs.size() == 2);
-            const std::optional<double> got = groups[0].cueShiftMs[1];
+            assert(groups[0].cueShiftsMeasured);
+            const std::optional<double> got = seabass::domain::cueShiftBetween(groups[0], 0, 1);
             const bool ok = accepts(accepted, got);
             if (!ok) {
                 ++failures;

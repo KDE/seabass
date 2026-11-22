@@ -273,6 +273,31 @@ int main()
                && "the search is the compare window plus 2 s, at least 5 s");
     }
 
+    // A file shorter than three windows gives all three the same samples,
+    // so their agreeing proves nothing: the shift must hold in each third
+    // of the overlap too. A cut anywhere is unknown; a clean shift and a
+    // silent intro are not.
+    {
+        constexpr double rate = 2000.0;
+        const auto song = noise(9000, 81);  // 4.5 s
+        const double sampleMs = 1000.0 / rate;
+        // 400 ms cut out at 1.6 s: sounds before it 0 apart, after it 400.
+        std::vector<float> cut(song.begin(), song.begin() + 3200);
+        cut.insert(cut.end(), song.begin() + 4000, song.end());
+        assert(!measureShiftMs(song, cut, rate, Search) && "a cut short file is unknown");
+        assert(!measureShiftMs(cut, song, rate, Search) && "either way round");
+        // 100 ms cut out near the end: the start lines up nearly all over.
+        std::vector<float> nicked(song.begin(), song.begin() + 8400);
+        nicked.insert(nicked.end(), song.begin() + 8600, song.end());
+        assert(!measureShiftMs(song, nicked, rate, Search) && "a small cut near the end is unknown too");
+        // Shifted whole, and with a silent intro: lined up.
+        const auto shift = measureShiftMs(song, concat(silence(1300), song), rate, Search);
+        assert(shift && near(*shift, 1300 * sampleMs, 1e-6) && "a short file with 650 ms in front lines up");
+        const auto intro = concat(silence(3000), song);
+        const auto later = measureShiftMs(intro, concat(silence(1350), intro), rate, Search);
+        assert(later && near(*later, 1350 * sampleMs, 1e-6) && "a silent intro is passed over, not held against it");
+    }
+
     // What is kept of a decoded file: never a two hour mix whole. At 50 Hz
     // so the test is cheap; the windows and the middle's reach are as
     // long in seconds as ever.
