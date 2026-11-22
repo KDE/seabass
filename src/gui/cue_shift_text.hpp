@@ -8,6 +8,8 @@
 
 #include <cmath>
 
+#include "infrastructure/audio/alignment_probe_factory.hpp"
+
 namespace seabass::gui
 {
 
@@ -31,6 +33,24 @@ inline QString shiftSentence(const QString &copy, const QString &other, double m
 {
     return QStringLiteral("%1 starts %2 %3 than %4, so cues are moved to match.")
         .arg(copy, shiftAmountText(ms), ms > 0 ? QStringLiteral("later") : QStringLiteral("earlier"), other);
+}
+
+// Why copies that are not identical files could not be lined up, when
+// the reason is this computer rather than the files; empty when audio can
+// be decoded here.
+inline QString noDecoderSentence(infrastructure::audio::AudioDecoding decoding)
+{
+    switch (decoding) {
+    case infrastructure::audio::AudioDecoding::NotInThisBuild:
+        return QStringLiteral("This build cannot decode audio, so copies that are not identical files could not be "
+                              "lined up, and no cue is moved between them.");
+    case infrastructure::audio::AudioDecoding::DidNotLoad:
+        return QStringLiteral("The audio decoder did not load on this computer, so copies that are not identical "
+                              "files could not be lined up, and no cue is moved between them.");
+    case infrastructure::audio::AudioDecoding::Available:
+        break;
+    }
+    return {};
 }
 
 }  // namespace seabass::gui

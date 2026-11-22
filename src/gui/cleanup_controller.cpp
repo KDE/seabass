@@ -1094,7 +1094,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
                                                    infrastructure::audio::cueTimelineOffsetMs, progress, shiftUnits,
                                                    cancel);
             result.pairsNotLinedUp = alignment->unknownCount();
-            result.alignmentDecoderMissing = !alignment->hasDecoder();
+            result.alignmentDecoding = infrastructure::audio::audioDecoding();
             // What was measured is kept for the next scan; a stick that
             // refuses the write costs only that.
             alignment->save();
@@ -1214,7 +1214,7 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
         application::measureDuplicateCueShifts(groups, &cancellableAlignment, infrastructure::audio::cueTimelineOffsetMs,
                                                progress, shiftUnits, cancel);
         result.pairsNotLinedUp = alignment->unknownCount();
-        result.alignmentDecoderMissing = !alignment->hasDecoder();
+        result.alignmentDecoding = infrastructure::audio::audioDecoding();
         alignment->save();
         result.plans = {domain::DuplicateCleanupPlanner::plan(groups[0])};
     } catch (const application::OperationCancelled &) {
@@ -1493,13 +1493,12 @@ void CleanupController::onRescanFinished(CleanupTaskResult &&result)
     // Copies that could not be lined up are each said on their own group;
     // this says why when the reason is the build rather than the files.
     // Word for word what DuplicatesController says.
-    if (result.pairsNotLinedUp > 0 && result.alignmentDecoderMissing) {
+    const QString noDecoder = noDecoderSentence(result.alignmentDecoding);
+    if (result.pairsNotLinedUp > 0 && !noDecoder.isEmpty()) {
         if (!m_audioComparisonNote.isEmpty()) {
             m_audioComparisonNote += QLatin1Char(' ');
         }
-        m_audioComparisonNote += QStringLiteral(
-            "This build cannot decode audio, so copies that are not identical files could not be lined up, "
-            "and no cue is moved between them.");
+        m_audioComparisonNote += noDecoder;
     }
     m_model.setPlans(std::move(result.plans));
     // Groups staged before this rescan keep their mark if they are still

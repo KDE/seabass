@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/cue_shift_text.hpp"
 #include "infrastructure/audio/alignment_probe_factory.hpp"
 #include "infrastructure/audio/identical_file_alignment_probe.hpp"
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
@@ -274,6 +275,19 @@ int main(int argc, char **argv)
         shift = everyBuild->shiftMs(a, almost);
         assert(shift && near(*shift, 0.0, tolerance) && "a near copy is decoded and lined up");
         assert(everyBuild->linedUpCount() == 1 && everyBuild->unknownCount() == 0);
+    }
+
+    // Why copies could not be lined up, said truthfully: a build without
+    // a decoder and a decoder that did not load are two different things.
+    {
+        using seabass::infrastructure::audio::AudioDecoding;
+        assert(seabass::infrastructure::audio::audioDecoding() == AudioDecoding::Available);
+        assert(seabass::gui::noDecoderSentence(AudioDecoding::Available).isEmpty());
+        const QString notBuilt = seabass::gui::noDecoderSentence(AudioDecoding::NotInThisBuild);
+        const QString notLoaded = seabass::gui::noDecoderSentence(AudioDecoding::DidNotLoad);
+        assert(notBuilt.startsWith(QStringLiteral("This build cannot decode audio")));
+        assert(!notLoaded.contains(QStringLiteral("This build")) && notLoaded.contains(QStringLiteral("did not load"))
+               && "a decoder that did not load is not a build without one");
     }
 
     std::cout << "alignment_probe_test: all assertions passed\n";

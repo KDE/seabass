@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "infrastructure/audio/alignment_probe_factory.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "gui/qt_progress_reporter.hpp"
@@ -107,10 +108,10 @@ struct DuplicatesTaskResult
     bool audioComparisonUnavailable = false;
 
     // Lining the copies up (domain/duplicate_cue_shift.hpp): pairs that
-    // could not be lined up, and whether that is because this build has
-    // no decoder to compare anything that is not byte-identical.
+    // could not be lined up, and whether audio can be decoded here at all,
+    // and if not, why (not in this build, or its decoder did not load).
     int pairsNotLinedUp = 0;
-    bool alignmentDecoderMissing = false;
+    infrastructure::audio::AudioDecoding alignmentDecoding = infrastructure::audio::AudioDecoding::Available;
 };
 
 // One "copy source's cues onto these targets" operation -- applyOne() and

@@ -639,8 +639,16 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                 Console::info("  id=" + t.sourceId + "  cues=" + std::to_string(t.cues.size())
                               + (known ? "" : "  (could not be lined up with any other copy)"));
             }
-            if (!alignment->hasDecoder()) {
+            switch (seabass::infrastructure::audio::audioDecoding()) {
+            case seabass::infrastructure::audio::AudioDecoding::NotInThisBuild:
                 Console::info("  this build cannot decode audio, so only identical files can be lined up.");
+                break;
+            case seabass::infrastructure::audio::AudioDecoding::DidNotLoad:
+                Console::info("  the audio decoder did not load on this computer, so only identical files can be "
+                              "lined up.");
+                break;
+            case seabass::infrastructure::audio::AudioDecoding::Available:
+                break;
             }
             continue;
         }

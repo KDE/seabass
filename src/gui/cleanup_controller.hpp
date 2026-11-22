@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/audio/alignment_probe_factory.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "gui/async_request.hpp"
 #include "gui/edit/direct_write_hold.hpp"
@@ -280,10 +281,10 @@ struct CleanupTaskResult
 
     // Lining the copies up before their cues are merged (domain/
     // duplicate_cue_shift.hpp): pairs that could not be lined up, and
-    // whether that is because this build has no decoder for anything that
-    // is not byte-identical.
+    // whether audio can be decoded here at all, and if not, why (not in
+    // this build, or its decoder did not load).
     int pairsNotLinedUp = 0;
-    bool alignmentDecoderMissing = false;
+    infrastructure::audio::AudioDecoding alignmentDecoding = infrastructure::audio::AudioDecoding::Available;
 };
 
 // Result of a background pending-deletion apply task, see
