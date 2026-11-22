@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/alignment_cache.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
@@ -348,7 +349,7 @@ int main()
         auto state = [](const std::string &path) {
             const fs::path p = seabass::pathFromUtf8(path);
             const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::file_clock::to_sys(fs::last_write_time(p)).time_since_epoch());
+                seabass::infrastructure::toSystemClock(fs::last_write_time(p)).time_since_epoch());
             return std::pair{std::to_string(fs::file_size(p)), std::to_string(seconds.count())};
         };
         const auto [sizeA, timeA] = state(a);

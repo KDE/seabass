@@ -244,7 +244,9 @@ std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::sp
             rival = coefficient[k];
         }
     }
-    const double rivalShare = coefficient[best] > 0.0 ? rival / coefficient[best] : 0.0;
+    // A best at or under 0 has nothing to stand out from: no rival share
+    // could make it a vote (and its peak fails MinNormalisedPeak anyway).
+    const double rivalShare = coefficient[best] > 0.0 ? rival / coefficient[best] : 1.0;
     const bool ambiguous = !bounded || rivalShare >= RivalShare;
 
     // The coefficient at that lag, straight from the samples: the
@@ -280,6 +282,10 @@ std::optional<double> cleanShiftMs(const std::vector<WindowShift> &windows, bool
             return std::nullopt;
         }
         if (!independent && window.ambiguous()) {
+            return std::nullopt;
+        }
+        // A window that cannot tell its best from a rival does not vote.
+        if (independent && window.rivalShare >= TornWindowCeiling) {
             return std::nullopt;
         }
         resolved = resolved || window.rivalShare < ResolvingRivalShare;

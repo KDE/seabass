@@ -160,6 +160,13 @@ int main()
         assert(!cleanShiftMs({{21.3, 0.99, 0.9836}, {21.3, 0.98, 0.93}, {21.3, 0.99, 0.9689}})
                && "a window with a rival at 0.93 settles nothing");
         assert(!cleanShiftMs({{21.3, 0.99, 0.99}, {21.3, 0.98, 0.97}, {21.3, 0.99, 0.96}}) && "every window torn: unknown");
+        // A torn window that cannot tell its best from a rival at all (an
+        // exact loop) is no vote: its "agreeing" may be chance, as when a
+        // bar was inserted after it and before the middle.
+        assert(!cleanShiftMs({{2000.0, 0.99, 0.99995}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
+               && "a start window tied with its rival does not agree with the middle");
+        assert(cleanShiftMs({{2000.0, 0.99, 0.9998}, {2000.0, 0.98, 0.5}, {2000.0, 0.99, 0.5}})
+               && "one whose best stands out, however narrowly, does");
         assert(!cleanShiftMs({{21.3, 0.99, 0.99}, {521.3, 0.98, 0.5}, {21.3, 0.99, 0.96}})
                && "the windows' own bests must agree, a rival is never the answer");
         assert(!cleanShiftMs({{21.3, 0.99, 0.5, false}, {21.3, 0.98, 0.5}, {21.3, 0.99, 0.5}})

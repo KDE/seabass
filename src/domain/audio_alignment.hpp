@@ -56,6 +56,19 @@ inline constexpr double RivalShare = 0.95;
 // stricter share. Every window must still pick that one lag as its own
 // best; a rival is never taken for the answer.
 inline constexpr double ResolvingRivalShare = 0.92;
+// A torn window still votes with its own best, and so it must be able to
+// tell its best from its rivals at all. Over a loop that repeats sample
+// for sample, the true lag and a bar away score the same, and which one
+// comes out on top is chance: measured, an exact loop against its own MP3
+// or AAC 21 ms later had every rival at 1.00000 and its best on another
+// bar in five windows of six. A copy with a bar inserted between the
+// start window and the middle would then have its start window "agree"
+// with the middle's +1 bar, and every cue before the insertion moved a
+// bar. So a torn window whose rival reaches this share of its best is no
+// vote: the pair is unknown. A loop that varies by 3% a bar scored its
+// rivals at 0.9998, and its true lag stayed on top through both codecs:
+// a codec lowers every lag's coefficient alike.
+inline constexpr double TornWindowCeiling = 0.9999;
 // A file too short for three windows of its own gives the same samples
 // to all three, and "the windows agree" then says nothing: a 4.5 s file
 // with 400 ms cut out lined up "cleanly" at 0.71. For such a pair the
@@ -225,7 +238,8 @@ struct WindowShift
 // The rule: every window's best bounded, its peak at least
 // MinNormalisedPeak, and the windows' own bests within MaxDisagreementMs
 // of each other. Then, for windows of their own (`independent`), at least
-// one window with no rival at ResolvingRivalShare; for windows that share
+// one window with no rival at ResolvingRivalShare and no torn window with
+// a rival at TornWindowCeiling; for windows that share
 // samples (a short file), no window ambiguous at all, since one
 // measurement cannot resolve itself. The median of the shifts when it
 // holds, nullopt (does not line up) when it does not. An empty list is

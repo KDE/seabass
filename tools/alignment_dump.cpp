@@ -398,6 +398,7 @@ int main(int argc, char **argv)
             std::vector<std::string> parts;
             std::vector<std::string> rivals;
             bool resolved = false;
+            std::vector<std::string> ties;
             for (size_t k = 0; k < product->size() && k < 3; ++k) {
                 const auto &p = (*product)[k];
                 const Diag &d = diags[k];
@@ -421,6 +422,9 @@ int main(int argc, char **argv)
                     rivals.push_back("rival" + std::to_string(k));
                 }
                 resolved = resolved || p.rivalShare < al::ResolvingRivalShare;
+                if (p.rivalShare >= al::TornWindowCeiling) {
+                    ties.push_back("tied" + std::to_string(k));
+                }
             }
             for (const auto &part : parts) {
                 reason += (reason.empty() ? "" : "+") + part;
@@ -437,6 +441,12 @@ int main(int argc, char **argv)
                     // Windows sharing samples: any rival decides.
                     for (const auto &rival : rivals) {
                         reason += (reason.empty() ? "" : "+") + rival;
+                    }
+                } else if (!share && !ties.empty()) {
+                    // A window that cannot tell its best from a rival is
+                    // no vote.
+                    for (const auto &tie : ties) {
+                        reason += (reason.empty() ? "" : "+") + tie;
                     }
                 } else if (!share && !resolved) {
                     reason = "noResolvingWindow";

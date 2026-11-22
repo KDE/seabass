@@ -522,6 +522,26 @@ def build(out):
                np.concatenate([jbase[:ins], jbase[ins - bar:ins], jbase[ins:]]))
     jins.insert = (jins_at, BAR_S)
 
+    # (x) The DJ track with a loop that repeats sample for sample, and one
+    # copy with a bar played twice at 42 s: after the start window, before
+    # the middle one. The middle and end say +2000; the start window's
+    # true lag is 0, but over an exact loop +2000 scores the same, and
+    # which comes out on top is chance. Unknown, never +2000 by luck.
+    # Markers in the middle only: one in the loop would make it inexact.
+    xsrc = Source("x", [e for e in jevents if e[0] not in ("jintro", "joutro")])
+
+    def dj_exact(seconds):
+        t = np.arange(int(round(seconds * DJ_RATE))) / DJ_RATE
+        exact = LOOP_LEVEL * render_loop(seconds, kit=TONAL_KIT, rate=DJ_RATE)
+        return np.where((t >= J_PART) & (t < 2 * J_PART), 0.0, exact)
+
+    xbase = dj_exact(J_S) + xsrc.render(DJ_RATE, 0.0, J_S)
+    add("x-ref.flac", xsrc, DJ_RATE, "flac", 0, xbase)
+    xins_at = 42.0
+    xi = lead(DJ_RATE, xins_at * 1000)
+    xins = add("x-insert.flac", xsrc, DJ_RATE, "flac", 0, np.concatenate([xbase[:xi], xbase[xi - bar:xi], xbase[xi:]]))
+    xins.insert = (xins_at, BAR_S)
+
     # (k) The loop all through, 135 s of it: every window torn.
     ksrc = Source("k", [("kintro", 20.3, Event(np.random.default_rng(1201), 0.6))])
     kbase = LOOP_LEVEL * render_loop(J_S, vary_seed=1202, spread=0.03, ghosts=False, kit=TONAL_KIT, rate=DJ_RATE) \
@@ -646,6 +666,10 @@ PAIRS = [
      "the same with a whole bar cut from the middle of one copy: the start says 0, the end -2000"),
     ("dj-loop", "dj-loop", "k-ref.flac", "k-lead21.flac", "unknown", [],
      "135 s of the loop all through, 21 ms in front: every window has a rival at 0.99, none settles"),
+    ("dj-gap-insert", "dj-gap-insert", "x-ref.flac", "x-insert.flac", "unknown", [],
+     "a loop that repeats sample for sample, and a bar played twice at 42 s in one copy, between the start "
+     "and middle windows: the middle and end say +2000, the start window cannot tell 0 from +2000 (its rival "
+     "scores 1.0000 of its best), so it is no vote and the pair is unknown; see README"),
     ("dj-insert", "dj-insert", "j-ref.flac", "j-insert.flac", "unknown", [],
      "a bar of the loop intro played twice at 22 s in one copy: the middle and end say +2000, the start "
      "window's own best is 0 (a bar away scores 0.9998 of it). Unknown, because every window's own best "
