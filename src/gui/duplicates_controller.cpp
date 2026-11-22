@@ -389,7 +389,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
                                                        shiftUnits, cancel);
             });
         result.pairsNotLinedUp = alignment->unknownCount();
-        result.alignmentDecoderMissing = !alignment->hasDecoder();
+        result.alignmentDecoding = infrastructure::audio::audioDecoding();
         alignment->save();
         std::vector<ConsolidationPlan> actionable;
         for (auto &plan : allPlans) {
@@ -524,13 +524,12 @@ void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &re
     }
     // Copies that could not be lined up are each said on their own row;
     // this says why when the reason is the build rather than the files.
-    if (result.pairsNotLinedUp > 0 && result.alignmentDecoderMissing) {
+    const QString noDecoder = noDecoderSentence(result.alignmentDecoding);
+    if (result.pairsNotLinedUp > 0 && !noDecoder.isEmpty()) {
         if (!m_audioComparisonNote.isEmpty()) {
             m_audioComparisonNote += QLatin1Char(' ');
         }
-        m_audioComparisonNote += QStringLiteral(
-            "This build cannot decode audio, so copies that are not identical files could not be lined up, "
-            "and no cue is moved between them.");
+        m_audioComparisonNote += noDecoder;
     }
 }
 

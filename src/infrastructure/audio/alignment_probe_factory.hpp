@@ -17,6 +17,21 @@
 namespace seabass::infrastructure::audio
 {
 
+// Whether audio can be decoded here, and if not, why: a build without Qt
+// Multimedia, or one whose decoding backend did not load on this
+// computer. Two different things to tell a person: the second is not
+// "this build cannot".
+enum class AudioDecoding { NotInThisBuild, DidNotLoad, Available };
+
+inline AudioDecoding audioDecoding()
+{
+#ifdef SEABASS_HAVE_QT_AUDIO
+    return QtMultimediaAlignmentProbe::decodingAvailable() ? AudioDecoding::Available : AudioDecoding::DidNotLoad;
+#else
+    return AudioDecoding::NotInThisBuild;
+#endif
+}
+
 // The one place that decides which AudioAlignmentProbe a caller gets, so
 // Cues on Duplicate Copies, Clean Up and the CLI line copies up by one
 // rule (silence_probe_factory.hpp exists for the same reason).
