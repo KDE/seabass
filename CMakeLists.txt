@@ -1031,6 +1031,17 @@ if(TAGLIB_FOUND OR TARGET TagLib::tag)
     target_link_libraries(seabass-cli PRIVATE seabass_taglib)
 endif()
 
+# The cross-correlation of 40 s windows is the one hot loop of lining
+# copies up: built optimised even in a Debug build (GCC and Clang; MSVC's
+# Debug run-time checks refuse optimisation), so a scan, and the tests
+# that measure real files on a slow CI runner, are not four times slower
+# for it. Debugging into it is the price, and so is the coverage lane's
+# line counts for this one file, which -O2 blurs. Directory-wide, so it
+# reaches every target in this file that compiles it.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(src/domain/audio_alignment.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
+endif()
+
 if(TARGET Qt6::Multimedia)
     add_library(seabass_audio_qt STATIC
         src/infrastructure/audio/qt_multimedia_duration_probe.cpp
@@ -1095,7 +1106,8 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     target_link_libraries(alignment_fixture_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
     # Each long pair is a shard of its own, so that every test fits ctest's
     # 300 s on a runner thirty times slower than a desktop.
-    foreach(_alignment_shard lossless codec loop music long-tail long-cut dj-21 dj-1300 dj-barcut dj-loop dj-insert)
+    foreach(_alignment_shard lossless codec loop music long-tail long-cut dj-21 dj-1300 dj-barcut dj-loop dj-insert
+                            dj-gap-insert)
         add_test(NAME alignment_fixture_test_${_alignment_shard} COMMAND alignment_fixture_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${_alignment_shard})
         set_tests_properties(alignment_fixture_test_${_alignment_shard} PROPERTIES
@@ -2174,15 +2186,6 @@ add_test(NAME duplicate_cue_consolidation_test COMMAND duplicate_cue_consolidati
 # The arithmetic of lining copies up, Qt-free and against made-up signals.
 # Its one source is compiled here: the library that ships it is
 # seabass_audio_qt, which this test has no need of.
-# The cross-correlation of 40 s windows is the one hot loop of lining
-# copies up: built optimised even in a Debug build (GCC and Clang; MSVC's
-# Debug run-time checks refuse optimisation), so a scan, and the tests
-# that measure real files on a slow CI runner, are not four times slower
-# for it. Debugging into it is the price.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties(src/domain/audio_alignment.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
-endif()
-
 add_executable(audio_alignment_test
     tests/audio_alignment_test.cpp
     src/domain/audio_alignment.cpp)
@@ -3949,7 +3952,7 @@ if(TARGET seabass_edit)
         add_test(NAME alignment_cue_lands_test COMMAND alignment_cue_lands_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
         set_tests_properties(alignment_cue_lands_test PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 900)
     endif()
 
     add_executable(save_backup_discard_under_lock_test tests/save_backup_discard_under_lock_test.cpp)

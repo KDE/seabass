@@ -32,4 +32,5 @@ dj-21	dj-21	j-ref.flac	j-lead21.flac	21.0000	-	135 s, a loop intro and outro aro
 dj-1300	dj-1300	j-ref.flac	j-lead1300.flac	1300.0000	-	the same, 1.3 s in front: more than a beat, the start and end torn the same way
 dj-barcut	dj-barcut	j-ref.flac	j-barcut.flac	unknown	-	the same with a whole bar cut from the middle of one copy: the start says 0, the end -2000
 dj-loop	dj-loop	k-ref.flac	k-lead21.flac	unknown	-	135 s of the loop all through, 21 ms in front: every window has a rival at 0.99, none settles
+dj-gap-insert	dj-gap-insert	x-ref.flac	x-insert.flac	unknown	-	a loop that repeats sample for sample, and a bar played twice at 42 s in one copy, between the start and middle windows: the middle and end say +2000, the start window cannot tell 0 from +2000 (its rival scores 1.0000 of its best), so it is no vote and the pair is unknown; see README
 dj-insert	dj-insert	j-ref.flac	j-insert.flac	unknown	-	a bar of the loop intro played twice at 22 s in one copy: the middle and end say +2000, the start window's own best is 0 (a bar away scores 0.9998 of it). Unknown, because every window's own best must agree; see README

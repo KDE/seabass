@@ -80,6 +80,7 @@ Sources, all mono:
   a bar away scores 0.99 of the true lag there. Its middle window has no
   rival. One marker in the intro and one in the outro, among the loop.
 * `k`: the same loop for all 135 s, with one marker in it.
+* `x`: `j` with a loop that repeats sample for sample (no variation).
 
 | file | what it is |
 |------|------------|
@@ -108,6 +109,7 @@ Sources, all mono:
 | j-barcut.flac | the DJ track with a whole bar (2 s) cut out of its middle at 66 s |
 | j-insert.flac | the DJ track with the bar before 22 s played twice, in its loop intro |
 | k-ref.flac, k-lead21.flac | the loop all through, and with 21 ms in front |
+| x-ref.flac, x-insert.flac | `x`, and with the bar before 42 s played twice (between the start and middle windows) |
 
 The answers that are not one number, and why:
 
@@ -133,8 +135,19 @@ The answers that are not one number, and why:
   best is 0 (+2000 scores 0.9998 of it). The rule takes a shift only when
   every window's own best agrees, so this is unknown, which is accepted.
   Had the start window's best been +2000, "known, +2000" would have been
-  accepted as well: what the audio cannot decide, a cue in the loop cannot
-  be wrong about by more than the loop itself repeats.
+  accepted as well, but only because the bar went in inside the start
+  window: what the audio cannot decide, a cue in the loop cannot be wrong
+  about by more than the loop itself repeats.
+* `dj-gap-insert`: the same edit, but at 42 s, after the start window and
+  before the middle one, in a loop that repeats sample for sample. Now
+  +2000 is wrong for every sound between 40 s and 42 s, and the start
+  window cannot tell: its true lag 0 and +2000 score the same, and which
+  comes out on top is chance. A window whose rival reaches
+  `TornWindowCeiling` (0.9999) of its best is no vote, so this is
+  unknown whichever lag the start window happens to pick. (With these files the start window's pick lands on the edge of the
+  lags it looks at, which makes it unknown before the ceiling is asked;
+  audio_alignment_test holds the ceiling itself to a tied window that
+  picked the agreeing lag.)
 * `other`: no shift lines the two up: unknown.
 * `pure-730`: the loop repeats exactly; only the silence in front tells
   the true 730 ms from 730 ms plus or minus a bar. The true value or

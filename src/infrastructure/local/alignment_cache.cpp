@@ -14,6 +14,7 @@
 #include <system_error>
 
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/flat_json.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -186,7 +187,7 @@ std::optional<CachedAudioAlignmentProbe::FileState> CachedAudioAlignmentProbe::s
     }
     // As Unix time: each standard library counts file times from an epoch
     // of its own, and a stick goes between machines.
-    const auto unixTime = std::chrono::file_clock::to_sys(mtime);
+    const auto unixTime = toSystemClock(mtime);
     return FileState{static_cast<long long>(size),
                      static_cast<long long>(
                          std::chrono::duration_cast<std::chrono::seconds>(unixTime.time_since_epoch()).count())};
