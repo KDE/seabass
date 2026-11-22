@@ -7,6 +7,9 @@
 #include <set>
 
 #include "domain/duplicate_cue_consolidation.hpp"
+#include "domain/cue_tolerance.hpp"
+#include "domain/junk_cue.hpp"
+#include "domain/track_matching.hpp"
 
 namespace seabass::domain
 {
@@ -59,10 +62,28 @@ std::vector<LibraryConsistencyIssue> LibraryConsistencyChecker::check(const std:
 
         ConsolidationPlan cuePlan = DuplicateCueConsolidator::plan(group);
         LibraryConsistencyIssue issue;
+        // The broken rows' files are gone, so their audio can never be
+        // lined up with the survivor's, and the survivor is always another
+        // file: a cue of theirs has no known place on it (DuplicateGroup::
+        // cueShiftsMeasured). When a broken row carries cues worth keeping
+        // that the survivor does not already hold as they stand, the row
+        // goes to a person like a conflict, rather than having them copied
+        // over unmoved or thrown away with the row. A row whose cues the
+        // survivor holds already (a file moved, its old row left behind)
+        // crosses nothing and is repaired as before.
+        const std::vector<CuePoint> survivorCues = withoutJunkCues(survivor.cues);
+        bool brokenAddsCues = false;
+        for (const auto &t : brokenInGroup) {
+            const std::vector<CuePoint> cues = withoutJunkCues(t.cues);
+            brokenAddsCues = brokenAddsCues
+                || (!cues.empty() && !cueSetsEqual(survivorCues, cues, cueToleranceMsFor(survivor.bpm, t.bpm)));
+        }
+        const bool cuesWouldCross = cuePlan.kind == ConsolidationPlan::Kind::Unaligned && brokenAddsCues;
         issue.brokenGroup = std::move(brokenInGroup);
         issue.survivor = survivor;
-        if (cuePlan.kind == ConsolidationPlan::Kind::Conflict) {
+        if (cuePlan.kind == ConsolidationPlan::Kind::Conflict || cuesWouldCross) {
             issue.kind = LibraryConsistencyIssue::Kind::Conflict;
+            issue.cuesCannotBeLinedUp = cuesWouldCross;
         } else {
             issue.kind = LibraryConsistencyIssue::Kind::Repairable;
             // Only a real write if the authoritative cue set turned out

@@ -53,6 +53,15 @@ bool hasTrack(const std::vector<Track> &tracks, const std::string &id)
     return false;
 }
 
+// The copies in these cases are taken as sample-aligned: measured, every
+// one at 0 ms from the first. Lining copies up is duplicate_cue_shift_test's.
+DuplicateGroup linedUp(DuplicateGroup group)
+{
+    group.cueShiftsMeasured = true;
+    group.cueShifts.assign(group.tracks.size(), DuplicateGroup::CueShift{0, 0.0});
+    return group;
+}
+
 }  // namespace
 
 int main()
@@ -60,7 +69,7 @@ int main()
     // Higher bitrate, same duration -> that copy survives, no disagreement.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 128, 3'200'000), makeTrack("b", 200.0, 320, 8'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "b");
         assert(plan.toRemove.size() == 1 && plan.toRemove[0].sourceId == "a");
         assert(!plan.differs);
@@ -72,7 +81,7 @@ int main()
     // copy, but flagged for review rather than silently auto-applied.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 260.0, 128, 4'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.differs);
         std::cout << "case 2 (quality vs length disagree -> differs=true) OK\n";
@@ -82,7 +91,7 @@ int main()
     // as "differs" since there's no real quality signal to disagree with.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 0, 3'000'000), makeTrack("b", 260.0, 0, 3'500'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "b");
         assert(!plan.differs);
         std::cout << "case 3 (bitrate unknown -> falls back to duration, never differs) OK\n";
@@ -105,7 +114,7 @@ int main()
         };
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000, survivorCues),
                                makeTrack("b", 200.0, 128, 3'000'000, removedCues)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.mergedCuesForSurvivor.size() == 4);  // 2 original + hot slot 2 + far memory cue
         std::cout << "case 4 (cue merge: adds gaps, never duplicates) OK\n";
@@ -115,7 +124,7 @@ int main()
     // to remove.
     {
         DuplicateGroup group{{makeTrack("solo", 200.0, 320, 8'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "solo");
         assert(plan.toRemove.empty());
         assert(!plan.differs);
@@ -125,7 +134,7 @@ int main()
     // Tie on bitrate -- longer duration wins the tie-break.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 210.0, 320, 8'100'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "b");
         assert(hasTrack(plan.toRemove, "a"));
         std::cout << "case 6 (tied bitrate -> longer duration wins tie-break) OK\n";
@@ -142,7 +151,7 @@ int main()
         b.key = "Fm";
         b.artworkPath = "/stick/art/b.jpg";
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.bpmForSurvivor.has_value() && *plan.bpmForSurvivor == 128.0);
         assert(plan.bpmDonorSourceId == "b");
@@ -165,7 +174,7 @@ int main()
         b.key = "Fm";
         b.artworkPath = "/stick/art/b.jpg";
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(!plan.bpmForSurvivor.has_value());
         assert(!plan.keyForSurvivor.has_value());
@@ -176,7 +185,7 @@ int main()
     // Neither copy has bpm/key/artwork -- nothing to propagate, no crash.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.bpmForSurvivor.has_value());
         assert(!plan.keyForSurvivor.has_value());
         assert(!plan.artworkPathForSurvivor.has_value());
@@ -194,7 +203,7 @@ int main()
         b.bpm = 128.0;
         b.artworkPath = "/home/user/Seabass/metadata/engine-artwork/u/at-x/cover.jpg";
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.bpmForSurvivor.has_value());
         assert(!plan.artworkPathForSurvivor.has_value());
@@ -211,7 +220,7 @@ int main()
         b.playCount = 5;
         Track c = makeTrack("c", 200.0, 128, 3'000'000);
         DuplicateGroup group{{a, b, c}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.playCountForSurvivor.has_value() && *plan.playCountForSurvivor == 12);
         assert(!plan.hasUnpreservableDataAtRisk);
@@ -224,7 +233,7 @@ int main()
         a.playCount = 7;
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(!plan.playCountForSurvivor.has_value());
         std::cout << "case 9c (nothing to add when only the survivor was played) OK\n";
@@ -241,12 +250,12 @@ int main()
         b.lastPlayedAt = t0 + hours(48);
         Track c = makeTrack("c", 200.0, 128, 3'000'000);
         c.lastPlayedAt = t0 + hours(24);
-        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{a, b, c}});
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(DuplicateGroup{{a, b, c}}));
         assert(plan.survivor.sourceId == "a");
         assert(plan.lastPlayedAtForSurvivor.has_value() && *plan.lastPlayedAtForSurvivor == t0 + hours(48));
         Track d = makeTrack("d", 200.0, 128, 3'000'000);
         d.lastPlayedAt = t0 - hours(1);
-        auto older = DuplicateCleanupPlanner::plan(DuplicateGroup{{a, d}});
+        auto older = DuplicateCleanupPlanner::plan(linedUp(DuplicateGroup{{a, d}}));
         assert(!older.lastPlayedAtForSurvivor.has_value());
         std::cout << "case 9d (last played is the latest of any copy) OK\n";
     }
@@ -260,7 +269,7 @@ int main()
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         b.rating = 2;
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.hasUnpreservableDataAtRisk);
         assert(!plan.differs);
         std::cout << "case 10 (differing ratings -> hasUnpreservableDataAtRisk, not differs) OK\n";
@@ -273,7 +282,7 @@ int main()
         a.rating = 5;
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 11 (only one copy has a rating: not at risk) OK\n";
     }
@@ -287,7 +296,7 @@ int main()
         b.rating = 4;
         b.comment = "banger";
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 12 (agreeing rating/comment: not at risk) OK\n";
     }
@@ -299,7 +308,7 @@ int main()
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         b.comment = "meh";
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.hasUnpreservableDataAtRisk);
         std::cout << "case 13 (differing comment -> hasUnpreservableDataAtRisk) OK\n";
     }
@@ -316,7 +325,7 @@ int main()
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         b.playCount = 3;
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 14 (differing playCount alone does NOT flag) OK\n";
     }
@@ -326,7 +335,7 @@ int main()
         Track b = makeTrack("b", 200.0, 128, 3'000'000);
         b.lastPlayedAt = std::chrono::system_clock::time_point{std::chrono::seconds{2000}};
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 15 (differing lastPlayedAt alone does NOT flag) OK\n";
     }
@@ -340,7 +349,7 @@ int main()
         b.rating = 2;
         b.playCount = 3;
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.hasUnpreservableDataAtRisk);
         std::cout << "case 15b (rating still flags alongside play counts) OK\n";
     }
@@ -355,7 +364,7 @@ int main()
         Track b = makeTrack("b", 260.0, 128, 4'000'000);  // lower bitrate, longer
         b.rating = 4;
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.differs);
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 16 (differs without hasUnpreservableDataAtRisk: flags are independent) OK\n";
@@ -375,7 +384,7 @@ int main()
         Track b = makeTrack("b", 200.0, 128, 3'000'000);  // lower bitrate -> doomed, has a rating
         b.rating = 5;
         DuplicateGroup group{{a, b}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.hasUnpreservableDataAtRisk);
         std::cout << "case 17 (only a DOOMED copy has a rating: flagged as at risk, not silently kept) OK\n";
@@ -392,7 +401,7 @@ int main()
         Track catalogued = makeTrack("row", 200.0, 128, 3'000'000);
         Track stray = makeStray("/stick/Contents/song.mp3", 200.0, 320, 8'000'000);
         DuplicateGroup group{{catalogued, stray}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "row");
         assert(plan.unreferencedFilesToDelete.size() == 1);
         assert(plan.unreferencedFilesToDelete[0].sourceId == "/stick/Contents/song.mp3");
@@ -417,7 +426,7 @@ int main()
     {
         DuplicateGroup group{{makeStray("/stick/Contents/a.mp3", 200.0, 128, 3'000'000),
                                makeStray("/stick/Contents/b.mp3", 200.0, 320, 8'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "/stick/Contents/b.mp3");
         assert(plan.unreferencedFilesToDelete.size() == 1);
         assert(plan.unreferencedFilesToDelete[0].sourceId == "/stick/Contents/a.mp3");
@@ -428,7 +437,7 @@ int main()
     // not a file -- it must never appear in either stray list.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.toRemove.size() == 1);
         assert(plan.unreferencedFilesToDelete.empty());
         assert(plan.unreferencedFilesHeldBack.empty());
@@ -445,7 +454,7 @@ int main()
         catalogued.durationIsEstimated = true;
         Track stray = makeStray("/stick/Contents/song.mp3", 201.0, 128, 3'000'000);
         DuplicateGroup group{{catalogued, stray}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "row");
         assert(plan.unreferencedFilesToDelete.empty());
         assert(plan.unreferencedFilesHeldBack.size() == 1);
@@ -459,7 +468,7 @@ int main()
         Track catalogued = makeTrack("row", 200.0, 320, 8'000'000);
         Track stray = makeStray("/stick/Contents/song.mp3", 260.0, 128, 4'000'000);
         DuplicateGroup group{{catalogued, stray}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.differs);
         assert(plan.unreferencedFilesToDelete.empty());
         assert(plan.unreferencedFilesHeldBack.size() == 1);
@@ -480,7 +489,7 @@ int main()
         b.rating = 2;
         Track stray = makeStray("/stick/Contents/song.mp3", 200.0, 192, 4'000'000);
         DuplicateGroup group{{a, b, stray}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.hasUnpreservableDataAtRisk);
         assert(plan.survivor.sourceId == "a");
         assert(plan.unreferencedFilesToDelete.size() == 1);
@@ -495,7 +504,7 @@ int main()
         Track catalogued = makeTrack("row", 200.0, 320, 8'000'000);
         Track stray = makeStray("/stick/Contents/song.mp3", 200.0, 128, 3'000'000);
         DuplicateGroup group{{catalogued, stray}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.hasUnpreservableDataAtRisk);
         std::cout << "case 24 (a stray file never trips hasUnpreservableDataAtRisk) OK\n";
     }
@@ -514,7 +523,7 @@ int main()
         drop.filePath = "/stick/Contents/a-1.mp3";
         drop.catalogRows = {{"rekordbox", "rb-2"}, {"engine", "en-2"}};
         DuplicateGroup group{{keep, drop}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "rb-1");
         assert(!plan.wouldStrandAFormat);
         assert(plan.toRemove.size() == 1 && plan.toRemove[0].catalogRows.size() == 2);
@@ -534,7 +543,7 @@ int main()
         drop.filePath = "/stick/Contents/a-1.mp3";
         drop.catalogRows = {{"engine", "en-2"}};
         DuplicateGroup group{{keep, drop}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "rb-1");
         assert(plan.wouldStrandAFormat);
         std::cout << "case 26 (a removal that would strand a format is held) OK\n";
@@ -544,7 +553,7 @@ int main()
     // and must see exactly the behaviour it always did.
     {
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.wouldStrandAFormat);
         std::cout << "case 27 (no catalogRows: the rule cannot fire) OK\n";
     }
@@ -558,7 +567,7 @@ int main()
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 3'000'000), makeTrack("b", 200.0, 256, 2'500'000)}};
         group.tracks[0].format = "engine";
         group.tracks[1].format = "engine";
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         auto catalogs = catalogsWrittenBy(plan);
         assert(catalogs.size() == 1);
         assert(catalogs[0] == "engine");
@@ -571,7 +580,7 @@ int main()
         group.tracks[0].format = "rekordbox";
         group.tracks[1].format = "rekordbox";
         group.tracks[1].catalogRows = {{"rekordbox", "drop"}, {"engine", "e7"}, {"onelibrary", "o9"}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         auto catalogs = catalogsWrittenBy(plan);
         assert(catalogs.size() == 3);
         assert(catalogs[0] == "rekordbox");
@@ -585,7 +594,7 @@ int main()
         group.tracks[0].format = "engine";
         group.tracks[1].format = "engine";
         group.tracks[1].isUnreferenced = true;
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(catalogsWrittenBy(plan).empty());
         std::cout << "case 22 (a stray file writes to no catalog) OK\n";
     }
@@ -599,7 +608,7 @@ int main()
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
         group.tracks[0].format = "rekordbox";
         group.tracks[1].format = "rekordbox";
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
 
         auto rekordbox = writeTargetsFor(plan, "rekordbox");
         assert(rekordbox.survivorSourceId == plan.survivor.sourceId);
@@ -627,7 +636,7 @@ int main()
         group.tracks[0].catalogRows = {{"rekordbox", "rb-keep"}, {"engine", "en-keep"}};
         group.tracks[1].format = "rekordbox";
         group.tracks[1].catalogRows = {{"rekordbox", "rb-drop"}, {"engine", "en-drop"}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
 
         auto rekordbox = writeTargetsFor(plan, "rekordbox");
         assert(rekordbox.survivorSourceId == "rb-keep");
@@ -654,7 +663,7 @@ int main()
         group.tracks[0].catalogRows = {{"rekordbox", "rb-keep"}, {"onelibrary", "ol-keep"}, {"onelibrary", "ol-keep-2"}};
         group.tracks[1].format = "rekordbox";
         group.tracks[1].catalogRows = {{"rekordbox", "rb-drop"}, {"onelibrary", "ol-drop"}, {"onelibrary", "ol-drop-2"}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
 
         auto onelibrary = writeTargetsFor(plan, "onelibrary");
         assert(onelibrary.survivorSourceId == "ol-keep");
@@ -676,7 +685,7 @@ int main()
         group.tracks[0].catalogRows = {{"rekordbox", "rb-keep"}};
         group.tracks[1].format = "rekordbox";
         group.tracks[1].catalogRows = {{"rekordbox", "rb-drop"}, {"engine", "en-drop"}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
 
         auto engine = writeTargetsFor(plan, "engine");
         assert(engine.survivorSourceId.empty());
@@ -699,7 +708,7 @@ int main()
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
         group.tracks[0].catalogRows = {{"rekordbox", "rb-keep"}, {"engine", "en-keep"}};
         group.tracks[1].catalogRows = {{"rekordbox", "rb-drop"}, {"engine", "en-drop"}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(!plan.wouldStrandAFormat);
         for (const auto &format : catalogsWrittenBy(plan)) {
             assert(canWriteWholeCatalog(writeTargetsFor(plan, format)));
@@ -966,7 +975,7 @@ int main()
     {
         DuplicateGroup group{{identicalCopy("lesser", "/stick/Contents/d01.mp3", {"Warmup"}),
                               identicalCopy("more", "/stick/Contents/d01-1.mp3", {"Warmup", "Peak"})}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "more");
         assert(plan.survivorChosenBy == SurvivorRule::MorePlaylists);
         std::cout << "case 31 (identical copies: the one in more playlists is kept) OK\n";
@@ -977,7 +986,7 @@ int main()
     {
         DuplicateGroup group{{identicalCopy("twice", "/stick/Contents/d01-1.mp3", {"Warmup", "Warmup"}),
                               identicalCopy("once", "/stick/Contents/d01.mp3", {"Warmup"})}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "once");
         assert(plan.survivorChosenBy == SurvivorRule::ShorterPath);
         std::cout << "case 32 (as many playlists: the shorter path is kept; a repeat is one playlist) OK\n";
@@ -987,7 +996,7 @@ int main()
     {
         DuplicateGroup group{{identicalCopy("b", "/stick/Contents/b/d01.mp3", {}),
                               identicalCopy("a", "/stick/Contents/a/d01.mp3", {})}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "a");
         assert(plan.survivorChosenBy == SurvivorRule::PathOrder);
         std::cout << "case 33 (as long a path: the one that sorts first is kept) OK\n";
@@ -1001,7 +1010,7 @@ int main()
         Track worse = identicalCopy("worse", "/stick/Contents/d01.mp3", {"Warmup", "Peak"});
         worse.bitrate = 192;
         DuplicateGroup group{{worse, better}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "better");
         assert(plan.survivorChosenBy == SurvivorRule::Bitrate);
         std::cout << "case 34 (audio rules come before the tie-breaks) OK\n";
@@ -1015,7 +1024,7 @@ int main()
         low.bitrate = 128;
         DuplicateGroup group{{identicalCopy("plain", "/stick/Contents/d01.mp3", {}), low,
                               identicalCopy("listed", "/stick/Contents/d01-1.mp3", {"Warmup"})}};
-        auto plan = DuplicateCleanupPlanner::plan(group);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(group));
         assert(plan.survivor.sourceId == "listed");
         assert(plan.toRemove.size() == 2 && plan.removedBy.size() == 2);
         assert(plan.toRemove[0].sourceId == "plain" && plan.removedBy[0] == SurvivorRule::MorePlaylists);
@@ -1039,7 +1048,7 @@ int main()
         Track sCopy = identicalCopy("S", "/stick/Contents/s.mp3", {});
         sCopy.durationSeconds = 300.0;
         sCopy.fileSizeBytes = 9'000'000;
-        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{r, x, sCopy}});
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(DuplicateGroup{{r, x, sCopy}}));
         assert(plan.survivor.sourceId == "S");
         assert(plan.toRemove[0].sourceId == "R" && plan.removedBy[0] == SurvivorRule::NotDirectly);
         assert(plan.toRemove[1].sourceId == "X" && plan.removedBy[1] == SurvivorRule::FileSize);
@@ -1056,7 +1065,7 @@ int main()
         Track reexport = identicalCopy("reexport", "/stick/Contents/d01-1.mp3", {});
         reexport.bitrate = 0;
         reexport.durationSeconds = original.durationSeconds + 0.0004;
-        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{reexport, original}});
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(DuplicateGroup{{reexport, original}}));
         assert(plan.survivor.sourceId == "original");
         assert(plan.survivorChosenBy == SurvivorRule::ShorterPath);
         std::cout << "case 35c (no bitrate: lengths within the tolerance are the same length) OK\n";
@@ -1064,25 +1073,25 @@ int main()
 
     // The reasons for the other paths through the planner.
     {
-        assert(DuplicateCleanupPlanner::plan(DuplicateGroup{{makeTrack("solo", 200.0, 320, 1)}}).survivorChosenBy ==
+        assert(DuplicateCleanupPlanner::plan(linedUp(DuplicateGroup{{makeTrack("solo", 200.0, 320, 1)}})).survivorChosenBy ==
                SurvivorRule::OnlyCopy);
 
         DuplicateGroup longer{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 210.0, 320, 8'000'000)}};
-        assert(DuplicateCleanupPlanner::plan(longer).survivorChosenBy == SurvivorRule::Duration);
+        assert(DuplicateCleanupPlanner::plan(linedUp(longer)).survivorChosenBy == SurvivorRule::Duration);
 
         DuplicateGroup larger{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 320, 9'000'000)}};
-        assert(DuplicateCleanupPlanner::plan(larger).survivorChosenBy == SurvivorRule::FileSize);
+        assert(DuplicateCleanupPlanner::plan(linedUp(larger)).survivorChosenBy == SurvivorRule::FileSize);
 
         // A stray with a higher bitrate still loses to the catalogued copy.
         DuplicateGroup catalogued{{makeStray("stray", 200.0, 320, 8'000'000), makeTrack("row", 200.0, 128, 3'000'000)}};
-        auto plan = DuplicateCleanupPlanner::plan(catalogued);
+        auto plan = DuplicateCleanupPlanner::plan(linedUp(catalogued));
         assert(plan.survivor.sourceId == "row");
         assert(plan.survivorChosenBy == SurvivorRule::OnlyCatalogued);
 
         // Nothing at all to tell them apart: the first listed, and said so.
         DuplicateGroup same{{identicalCopy("first", "/stick/Contents/d01.mp3", {}),
                              identicalCopy("second", "/stick/Contents/d01.mp3", {})}};
-        auto unbroken = DuplicateCleanupPlanner::plan(same);
+        auto unbroken = DuplicateCleanupPlanner::plan(linedUp(same));
         assert(unbroken.survivor.sourceId == "first");
         assert(unbroken.survivorChosenBy == SurvivorRule::Unbroken);
         std::cout << "case 36 (every rule is reported as the one that decided) OK\n";

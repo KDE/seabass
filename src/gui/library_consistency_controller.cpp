@@ -181,6 +181,8 @@ QVariant LibraryConsistencyIssueListModel::data(const QModelIndex &index, int ro
     }
     case CueMergeNeededRole:
         return !issue.survivorCues.empty();
+    case CuesCannotBeLinedUpRole:
+        return issue.cuesCannotBeLinedUp;
     case StagedRole:
         return static_cast<size_t>(index.row()) < m_stagedDescriptions.size()
             && !m_stagedDescriptions[static_cast<size_t>(index.row())].isEmpty();
@@ -200,6 +202,7 @@ QHash<int, QByteArray> LibraryConsistencyIssueListModel::roleNames() const
         {SurvivorRole, "survivor"},
         {BrokenTracksRole, "brokenTracks"},
         {CueMergeNeededRole, "cueMergeNeeded"},
+        {CuesCannotBeLinedUpRole, "cuesCannotBeLinedUp"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
     };

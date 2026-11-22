@@ -23,6 +23,15 @@ Track makeTrack(std::string id, std::string filename, double duration, std::vect
     return t;
 }
 
+// The copies in these cases are taken as sample-aligned: measured, every
+// one at 0 ms from the first. Lining copies up is duplicate_cue_shift_test's.
+DuplicateGroup linedUp(DuplicateGroup group)
+{
+    group.cueShiftsMeasured = true;
+    group.cueShifts.assign(group.tracks.size(), DuplicateGroup::CueShift{0, 0.0});
+    return group;
+}
+
 int main()
 {
     // A stray cue never travels and never counts. One copy has a hot cue
@@ -40,7 +49,7 @@ int main()
         };
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.size() == 1);
-        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        auto plan = DuplicateCueConsolidator::plan(linedUp(groups[0]));
         assert(plan.kind == ConsolidationPlan::Kind::Unambiguous && "a copy with only a stray cue has no cues");
         assert(plan.source->sourceId == "1");
         assert(plan.source->cues.size() == 1 && "the stray cue is not copied along");
@@ -53,7 +62,7 @@ int main()
         };
         groups = DuplicateTrackFinder::find(agree);
         assert(groups.size() == 1);
-        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::AlreadyConsistent);
+        assert(DuplicateCueConsolidator::plan(linedUp(groups[0])).kind == ConsolidationPlan::Kind::AlreadyConsistent);
     }
 
     // Case 1: unambiguous -- one copy has cues, other doesn't.
@@ -65,7 +74,7 @@ int main()
         };
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.size() == 1);
-        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        auto plan = DuplicateCueConsolidator::plan(linedUp(groups[0]));
         assert(plan.kind == ConsolidationPlan::Kind::Unambiguous);
         assert(plan.source->sourceId == "1");
         assert(plan.targets.size() == 1 && plan.targets[0].sourceId == "2");
@@ -82,7 +91,7 @@ int main()
         };
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.size() == 1);
-        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        auto plan = DuplicateCueConsolidator::plan(linedUp(groups[0]));
         assert(plan.kind == ConsolidationPlan::Kind::Conflict);
         std::cout << "case 2 (conflict) OK\n";
     }
@@ -97,7 +106,7 @@ int main()
         };
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.size() == 1);
-        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        auto plan = DuplicateCueConsolidator::plan(linedUp(groups[0]));
         assert(plan.kind == ConsolidationPlan::Kind::AlreadyConsistent);
         std::cout << "case 3 (already consistent) OK\n";
     }
@@ -140,7 +149,7 @@ int main()
         auto groups = DuplicateTrackFinder::find(tracks);
         assert(groups.size() == 1);
         assert(groups[0].tracks.size() == 2);
-        auto plan = DuplicateCueConsolidator::plan(groups[0]);
+        auto plan = DuplicateCueConsolidator::plan(linedUp(groups[0]));
         assert(plan.kind == ConsolidationPlan::Kind::Unambiguous);
         std::cout << "case 6 (different filename, same title+artist -> grouped) OK\n";
     }
@@ -297,7 +306,7 @@ int main()
             };
             auto groups = DuplicateTrackFinder::find(tracks);
             assert(groups.size() == 1);
-            assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::Conflict);
+            assert(DuplicateCueConsolidator::plan(linedUp(groups[0])).kind == ConsolidationPlan::Kind::Conflict);
         }
         // Half a beat when the copies agree on a tempo.
         std::vector<Track> tracks = {
@@ -306,10 +315,10 @@ int main()
         };
         tracks[0].bpm = tracks[1].bpm = 128.0;
         auto groups = DuplicateTrackFinder::find(tracks);
-        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::AlreadyConsistent);
+        assert(DuplicateCueConsolidator::plan(linedUp(groups[0])).kind == ConsolidationPlan::Kind::AlreadyConsistent);
         tracks[1].bpm = 0.0;
         groups = DuplicateTrackFinder::find(tracks);
-        assert(DuplicateCueConsolidator::plan(groups[0]).kind == ConsolidationPlan::Kind::Conflict);
+        assert(DuplicateCueConsolidator::plan(linedUp(groups[0])).kind == ConsolidationPlan::Kind::Conflict);
         std::cout << "case loop (a loop is never the cue at its start; half a beat with a tempo) OK\n";
     }
 

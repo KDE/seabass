@@ -216,7 +216,17 @@ TestCase {
         compare(badge.label, "Not lined up");
         const note = findWhere(page, (item) => item.objectName === "alignmentNote");
         verify(note && note.visible, "the group says which copy");
-        compare(note.text, "Copy 2 could not be lined up with copy 1, so no cues are copied to or from it.");
+        compare(note.text, "Copy 2 could not be lined up with copy 1, so no cues are copied between them.");
+        // The numbers the note uses are on the copies' cards, once the
+        // group is opened.
+        const group = findWhere(page, (item) => item.expanded !== undefined && item.alignmentNote !== undefined);
+        verify(group, "the group was not found");
+        group.expanded = true;
+        waitForPolish(page);
+        verify(findWhere(page, (item) => item.visible && item.statusBadgeText === "COPY 1") !== null,
+               "copy 1 is not numbered on the page");
+        verify(findWhere(page, (item) => item.visible && item.statusBadgeText === "COPY 2") !== null,
+               "copy 2 is not numbered on the page");
         const copyButton = findWhere(page, (item) => item.text === "Copy Cues" && item.clicked !== undefined);
         verify(copyButton === null || !copyButton.visible, "nothing to copy");
     }

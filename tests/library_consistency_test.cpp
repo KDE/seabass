@@ -59,9 +59,11 @@ int main()
         std::cout << "case 1 (broken row with a cue-free healthy sibling) OK\n";
     }
 
-    // Case 2: the broken row has cues the survivor doesn't, Repairable,
-    // but survivorCues carries what needs to be written onto the
-    // survivor before removing the broken row.
+    // Case 2: the broken row has cues the survivor doesn't. Its file is
+    // gone, so where they belong on the survivor's audio cannot be known
+    // (the two are different files, never lined up): not copied over
+    // unmoved, and not thrown away with the row either. A conflict, for a
+    // person, that says why.
     {
         CuePoint hotCue{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"};
         Track survivor = makeTrack("392", "17_Joris Voorn, Underworld-Too Little Too La.mp3", "Too Little Too Late",
@@ -72,10 +74,26 @@ int main()
         auto issues = LibraryConsistencyChecker::check({survivor}, {broken});
         const auto *issue = findIssueContaining(issues, "644");
         assert(issue != nullptr);
-        assert(issue->kind == LibraryConsistencyIssue::Kind::Repairable);
-        assert(issue->survivorCues.size() == 1);
-        assert(issue->survivorCues[0].comment == "drop");
-        std::cout << "case 2 (broken row's cues get merged onto the survivor) OK\n";
+        assert(issue->kind == LibraryConsistencyIssue::Kind::Conflict);
+        assert(issue->cuesCannotBeLinedUp && "held back because the cues would cross, not because they differ");
+        assert(issue->survivorCues.empty() && "nothing is written onto another file unmoved");
+        std::cout << "case 2 (a broken row's cues are not copied onto another file) OK\n";
+    }
+
+    // Case 2b: a file moved, its old row left behind with the same cues as
+    // the new one. Nothing would cross: repaired as before, nothing written.
+    {
+        CuePoint hotCue{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"};
+        Track survivor = makeTrack("392", "17_Joris Voorn, Underworld-Too Little Too La.mp3", "Too Little Too Late",
+                                    "Joris Voorn, Underworld", 300.0, {hotCue});
+        Track broken = makeTrack("644", "10_Joris Voorn, Underworld-Too Little Too La.mp3", "Too Little Too Late",
+                                   "Joris Voorn, Underworld", 300.0, {hotCue});
+        auto issues = LibraryConsistencyChecker::check({survivor}, {broken});
+        const auto *issue = findIssueContaining(issues, "644");
+        assert(issue != nullptr);
+        assert(issue->kind == LibraryConsistencyIssue::Kind::Repairable && !issue->cuesCannotBeLinedUp);
+        assert(issue->survivorCues.empty());
+        std::cout << "case 2b (an old row with the survivor's own cues is repaired) OK\n";
     }
 
     // Case 3: survivor and broken row both have cues, and they genuinely

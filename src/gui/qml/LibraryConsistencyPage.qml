@@ -346,6 +346,7 @@ HealthCheckPage {
             required property var survivor
             required property var brokenTracks
             required property bool cueMergeNeeded
+            required property bool cuesCannotBeLinedUp
             required property bool staged
             required property string stagedDescription
 
@@ -404,6 +405,15 @@ HealthCheckPage {
                                     t += " Its cues will be merged onto that copy first.";
                                 }
                                 return t;
+                            }
+                            if (issueDelegate.kind === "conflict" && issueDelegate.cuesCannotBeLinedUp) {
+                                const brokenCues = issueDelegate.brokenTracks.length > 0
+                                    ? root.cueSummary(issueDelegate.brokenTracks[0]) : "no cues";
+                                return "Matches existing copy \"" + issueDelegate.survivor.title + " - "
+                                    + issueDelegate.survivor.artist + "\", but this row's file is gone, so its cues "
+                                    + "cannot be lined up with that copy's audio and would land in the wrong place: "
+                                    + "kept copy has " + root.cueSummary(issueDelegate.survivor) + "; broken row had "
+                                    + brokenCues + ". Not auto-repaired: use Resolve above to review them.";
                             }
                             if (issueDelegate.kind === "conflict") {
                                 var brokenSummary = issueDelegate.brokenTracks.length > 0

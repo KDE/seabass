@@ -32,18 +32,31 @@ namespace
 {
 
 // Answers from a table, keyed by the pair, and counts what it was asked.
+// A file in `unreadable` is no opinion, and says which side it was.
 class TableProbe : public AudioAlignmentProbe
 {
 public:
     std::map<std::pair<std::string, std::string>, std::optional<double>> answers;
     std::set<std::pair<std::string, std::string>> same;
+    std::set<std::string> unreadable;
+    std::set<std::pair<std::string, std::string>> atOnce;
+    std::vector<std::pair<std::string, std::string>> askedPairs;
     int asked = 0;
 
-    bool sameContent(const std::string &a, const std::string &b) override { return same.count({a, b}) > 0; }
+    bool sameContent(const std::string &a, const std::string &b) override
+    {
+        return same.count({a, b}) > 0 || same.count({b, a}) > 0;
+    }
+
+    bool answersAtOnce(const std::string &a, const std::string &b) override { return atOnce.count({a, b}) > 0; }
 
     Answer align(const std::string &a, const std::string &b) override
     {
         ++asked;
+        askedPairs.emplace_back(a, b);
+        if (unreadable.count(a) > 0 || unreadable.count(b) > 0) {
+            return Answer::noOpinion(unreadable.count(a) > 0, unreadable.count(b) > 0);
+        }
         const auto it = answers.find({a, b});
         return it == answers.end() || !it->second ? Answer::notLinedUp() : Answer::linedUp(*it->second);
     }
@@ -89,12 +102,23 @@ bool near(double a, double b)
 
 const CueTimelineOffset noOffset = [](const std::string &) { return std::optional<double>(0.0); };
 
+// A group measured by hand: each copy's shift against copy 1, nullopt
+// for a copy not lined up with it.
 DuplicateGroup measured(std::vector<Track> tracks, std::vector<std::optional<double>> shifts)
 {
     DuplicateGroup group;
     group.tracks = std::move(tracks);
-    group.cueShiftMs = std::move(shifts);
+    group.cueShiftsMeasured = true;
+    for (const auto &shift : shifts) {
+        group.cueShifts.push_back(shift ? std::optional<DuplicateGroup::CueShift>({0, *shift}) : std::nullopt);
+    }
     return group;
+}
+
+// Whether two copies of a measured group line up, and how far apart.
+std::optional<double> between(const DuplicateGroup &group, size_t from, size_t to)
+{
+    return cueShiftBetween(group, from, to);
 }
 
 }  // namespace
@@ -114,19 +138,24 @@ int main(int argc, char **argv)
         TableProbe probe;
         probe.answers[{"/s/a.mp3", "/s/b.mp3"}] = 21.3;
         probe.answers[{"/s/a.mp3", "/s/c.mp3"}] = std::nullopt;
+        probe.atOnce.insert({"/s/a.mp3", "/s/c.mp3"});
+        assert(cueShiftPairsToMeasure(groups, &probe) == 1 && "a pair the probe answers at once costs nothing");
         int ticks = 0;
-        measureCueShifts(groups, &probe, noOffset, [&]() { ++ticks; });
-        assert(ticks == 2 && probe.asked == 2);
-        assert(groups[0].cueShiftMs.size() == 3);
-        assert(groups[0].cueShiftMs[0] && near(*groups[0].cueShiftMs[0], 0.0));
-        assert(groups[0].cueShiftMs[1] && near(*groups[0].cueShiftMs[1], 21.3));
-        assert(!groups[0].cueShiftMs[2] && "no answer is unknown, never 0");
-        assert(groups[1].cueShiftMs.empty() && "a group without cues is left unmeasured");
+        int costly = 0;
+        measureCueShifts(groups, &probe, noOffset, [&](bool cost) {
+            ++ticks;
+            costly += cost ? 1 : 0;
+        });
+        assert(ticks == 2 && costly == 1 && probe.asked == 2);
+        assert(groups[0].cueShiftsMeasured && groups[0].cueShifts.size() == 3);
+        assert(near(*between(groups[0], 0, 1), 21.3));
+        assert(!between(groups[0], 0, 2) && !between(groups[0], 1, 2) && "no answer is unknown, never 0");
+        assert(!groups[1].cueShiftsMeasured && "a group without cues is left unmeasured");
     }
 
     // The decoder's shift is turned onto the cue timeline with each file's
-    // own offset, and an offset that cannot be known makes the shift
-    // unknown.
+    // own offset, and a copy whose offset cannot be known is not decoded
+    // at all: it could be lined up with nothing.
     {
         std::vector<DuplicateGroup> groups(1);
         groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/b.mp3", {}),
@@ -144,8 +173,9 @@ int main(int argc, char **argv)
             return std::nullopt;
         };
         measureCueShifts(groups, &probe, offsets);
-        assert(groups[0].cueShiftMs[1] && near(*groups[0].cueShiftMs[1], 10.0 + 25.0 - 51.18));
-        assert(!groups[0].cueShiftMs[2] && "an offset nobody knows is a shift nobody knows");
+        assert(near(*between(groups[0], 0, 1), 10.0 + 25.0 - 51.18));
+        assert(!between(groups[0], 0, 2) && "an offset nobody knows is a shift nobody knows");
+        assert(probe.asked == 1 && "and that copy is not decoded");
     }
 
     // Two files with the same bytes line up on every timeline, even when
@@ -158,28 +188,90 @@ int main(int argc, char **argv)
         probe.same.insert({"/s/a.mp3", "/s/b.mp3"});
         probe.answers[{"/s/a.mp3", "/s/c.mp3"}] = 0.0;
         const CueTimelineOffset unreadable = [](const std::string &) { return std::optional<double>(); };
-        int ticks = 0;
-        measureCueShifts(groups, &probe, unreadable, [&]() { ++ticks; });
-        assert(groups[0].cueShiftMs[1] && near(*groups[0].cueShiftMs[1], 0.0) && "the same bytes need no offsets");
-        assert(!groups[0].cueShiftMs[2] && "decoded alike, but the offsets are needed and unknown");
-        assert(ticks == 2 && probe.asked == 1 && "the identical pair is not decoded");
+        measureCueShifts(groups, &probe, unreadable);
+        assert(near(*between(groups[0], 0, 1), 0.0) && "the same bytes need no offsets");
+        assert(!between(groups[0], 0, 2) && !between(groups[0], 1, 2) && "anything else needs them");
+        assert(probe.asked == 0 && "nothing decoded: no offset could be known");
     }
 
     // One file listed twice needs no probe; without a probe anything else
-    // is unknown.
+    // is unknown, and so is a copy with no file.
     {
         std::vector<DuplicateGroup> groups(1);
         groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/a.mp3", {}),
                             copy("3", "/s/b.mp3", {}), copy("4", "", {})};
         measureCueShifts(groups, nullptr, noOffset);
-        assert(groups[0].cueShiftMs[1] && near(*groups[0].cueShiftMs[1], 0.0) && "the same path is the same file");
-        assert(!groups[0].cueShiftMs[2] && "no probe, no answer");
-        assert(!groups[0].cueShiftMs[3] && "no file, no answer");
+        assert(near(*between(groups[0], 0, 1), 0.0) && "the same path is the same file");
+        assert(!between(groups[0], 0, 2) && "no probe, no answer");
+        assert(!between(groups[0], 0, 3) && !between(groups[0], 2, 3) && "no file, no answer");
     }
 
-    // Between two copies: the difference of their shifts against the
-    // first; under 1 ms is none; an unknown either side is unknown; a group
-    // never measured lines up as it is.
+    // Copy 1 cannot be read: the next copy is the reference, and the
+    // others line up with it and with each other.
+    {
+        std::vector<DuplicateGroup> groups(1);
+        groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/b.mp3", {hot(1, 1030)}),
+                            copy("3", "/s/c.mp3", {}), copy("4", "/s/d.mp3", {})};
+        TableProbe probe;
+        probe.unreadable.insert("/s/a.mp3");
+        probe.answers[{"/s/b.mp3", "/s/c.mp3"}] = 30.0;
+        probe.answers[{"/s/b.mp3", "/s/d.mp3"}] = -12.0;
+        measureCueShifts(groups, &probe, noOffset);
+        assert(!between(groups[0], 0, 1) && !between(groups[0], 0, 2) && "copy 1 lines up with nothing");
+        assert(near(*between(groups[0], 1, 2), 30.0) && near(*between(groups[0], 2, 3), -42.0)
+               && "the others against copy 2, and so against each other");
+        assert(probe.asked == 3 && probe.askedPairs[0].first == "/s/a.mp3" && probe.askedPairs[1].first == "/s/b.mp3"
+               && "copy 1 asked once, then copy 2 as the reference");
+    }
+
+    // A copy that cannot be read is skipped; the reference stays.
+    {
+        std::vector<DuplicateGroup> groups(1);
+        groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/b.mp3", {}),
+                            copy("3", "/s/c.mp3", {})};
+        TableProbe probe;
+        probe.unreadable.insert("/s/b.mp3");
+        probe.answers[{"/s/a.mp3", "/s/c.mp3"}] = 5.0;
+        measureCueShifts(groups, &probe, noOffset);
+        assert(!between(groups[0], 0, 1) && near(*between(groups[0], 0, 2), 5.0));
+        assert(probe.asked == 2 && "copy 2 is asked once and copy 1 stays the reference");
+    }
+
+    // Copy 1's offset cannot be known: the next copy is the reference
+    // before anything is decoded.
+    {
+        std::vector<DuplicateGroup> groups(1);
+        groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/b.flac", {}),
+                            copy("3", "/s/c.flac", {})};
+        TableProbe probe;
+        probe.answers[{"/s/b.flac", "/s/c.flac"}] = 7.0;
+        const CueTimelineOffset noMp3 = [](const std::string &path) {
+            return path.ends_with(".mp3") ? std::optional<double>() : std::optional<double>(0.0);
+        };
+        measureCueShifts(groups, &probe, noMp3);
+        assert(probe.asked == 1 && probe.askedPairs[0].first == "/s/b.flac");
+        assert(near(*between(groups[0], 1, 2), 7.0) && !between(groups[0], 0, 1));
+    }
+
+    // Byte-identical copies line up with each other always, whatever
+    // else in the group cannot be read: copies 1 and 3 here, while copy 2
+    // and copy 1's decoder both fail.
+    {
+        std::vector<DuplicateGroup> groups(1);
+        groups[0].tracks = {copy("1", "/s/a.mp3", {hot(1, 1000)}), copy("2", "/s/b.mp3", {}),
+                            copy("3", "/s/c.mp3", {})};
+        TableProbe probe;
+        probe.same.insert({"/s/a.mp3", "/s/c.mp3"});
+        probe.unreadable.insert("/s/a.mp3");
+        probe.unreadable.insert("/s/b.mp3");
+        measureCueShifts(groups, &probe, noOffset);
+        assert(near(*between(groups[0], 0, 2), 0.0) && "the same bytes line up");
+        assert(!between(groups[0], 0, 1) && !between(groups[0], 2, 1));
+    }
+
+    // Between two copies: the difference of their shifts against one
+    // anchor; under 1 ms is none; an unknown either side is unknown, and
+    // so are two copies anchored apart.
     {
         const auto group = measured({copy("1", "/a", {}), copy("2", "/b", {}), copy("3", "/c", {}), copy("4", "/d", {})},
                                     {0.0, 150.0, std::nullopt, 150.6});
@@ -187,9 +279,28 @@ int main(int argc, char **argv)
         assert(near(*cueShiftBetween(group, 1, 0), -150.0));
         assert(near(*cueShiftBetween(group, 1, 3), 0.0) && "0.6 ms is no shift");
         assert(!cueShiftBetween(group, 0, 2) && !cueShiftBetween(group, 2, 1));
+        auto apart = group;
+        apart.cueShifts[3] = DuplicateGroup::CueShift{2, 0.0};
+        apart.cueShifts[2] = DuplicateGroup::CueShift{2, 0.0};
+        assert(near(*cueShiftBetween(apart, 2, 3), 0.0) && !cueShiftBetween(apart, 1, 3) && "another anchor");
+    }
+    // Not measured is not lined up: between two different files it is
+    // unknown; only one file listed twice lines up unmeasured.
+    {
         DuplicateGroup unmeasured;
-        unmeasured.tracks = group.tracks;
-        assert(near(*cueShiftBetween(unmeasured, 0, 1), 0.0));
+        unmeasured.tracks = {copy("1", "/a", {hot(1, 1000)}), copy("2", "/b", {}), copy("3", "/a", {})};
+        assert(!cueShiftBetween(unmeasured, 0, 1) && "two files, not measured: unknown");
+        assert(near(*cueShiftBetween(unmeasured, 0, 2), 0.0) && "one file twice");
+        assert(DuplicateCueConsolidator::plan(unmeasured).kind == ConsolidationPlan::Kind::Unaligned
+               && "nothing is copied onto a file not lined up");
+        unmeasured.tracks[1].cues = {hot(1, 1000)};
+        assert(DuplicateCueConsolidator::plan(unmeasured).kind == ConsolidationPlan::Kind::Unaligned
+               && "nor compared with one");
+        DuplicateGroup forCleanup;
+        forCleanup.tracks = {copy("s", "/s/s.mp3", {}, 200.0, 320), copy("d", "/s/d.mp3", {hot(2, 7000)}, 200.0, 128)};
+        const auto plan = DuplicateCleanupPlanner::plan(forCleanup);
+        assert(plan.removedShiftMs.size() == 1 && !plan.removedShiftMs[0] && plan.hasCuesOnUnalignedCopy
+               && plan.mergedCuesForSurvivor.empty() && "Clean Up merges nothing across files not measured");
     }
 
     // Moving cues onto another copy: positions and both loop ends move, and
@@ -227,9 +338,8 @@ int main(int argc, char **argv)
                                      copy("2", "/b", {hot(1, 12000), memory(62000)})};
         assert(DuplicateCueConsolidator::plan(measured(tracks, {0.0, 2000.0})).kind
                == ConsolidationPlan::Kind::AlreadyConsistent);
-        DuplicateGroup asTheyAre;
-        asTheyAre.tracks = tracks;
-        assert(DuplicateCueConsolidator::plan(asTheyAre).kind == ConsolidationPlan::Kind::Conflict);
+        assert(DuplicateCueConsolidator::plan(measured(tracks, {0.0, 0.0})).kind == ConsolidationPlan::Kind::Conflict
+               && "read as they are, a conflict");
         assert(DuplicateCueConsolidator::plan(measured(tracks, {0.0, 4000.0})).kind
                == ConsolidationPlan::Kind::Conflict && "lined up and still different is a conflict");
     }
