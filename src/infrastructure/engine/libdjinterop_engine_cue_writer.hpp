@@ -296,8 +296,22 @@ private:
     RowNow readRowNow(std::int64_t id, bool withOverviewFile);
     // The columns of `after` into the row in one transaction, when any
     // differs from `before`. Throws when it cannot.
+    //
+    // A grid written here is on Engine's timeline already, so with it the
+    // row loses the mark of Engine's rekordbox import (thirdPartySourceId,
+    // see EngineAnalysisRowAccess::write): left on, the player draws the
+    // grid about 52 ms early on the row's first load. Not when the row
+    // carries cues (carriesCues()): those may still be on rekordbox's
+    // timeline, waiting for the player to move them, and the mark is what
+    // makes it do so.
     void writeColumns(std::int64_t id, const application::EngineAnalysisColumns &before,
                       const application::EngineAnalysisColumns &after);
+    // Whether the row holds a cue of any kind: a hot cue, a loop, or a
+    // main cue. "No main cue" is sample -1 as the player writes it and 0
+    // as writeCues() does, so only one past the start counts. Cues that
+    // cannot be read (a damaged blob, a failed read) count as cues: nothing
+    // is known about them, and they must not cost the row its grid.
+    bool carriesCues(std::int64_t id);
     // The overview file written (bytes) or taken away (none), through the
     // sink or the remover where there is one.
     void putOverviewFile(const std::string &relativePath, const std::optional<std::string> &bytes);

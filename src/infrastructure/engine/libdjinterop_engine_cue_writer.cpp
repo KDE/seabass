@@ -21,6 +21,8 @@
 #include <zlib.h>
 #include <djinterop/engine/v2/engine_library.hpp>
 #include <djinterop/engine/v3/engine_library.hpp>
+#include <djinterop/engine/v3/loops_blob.hpp>
+#include <djinterop/engine/v3/quick_cues_blob.hpp>
 
 #include "domain/engine_overview.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
@@ -734,6 +736,45 @@ LibdjinteropEngineCueWriter::RowNow LibdjinteropEngineCueWriter::readRowNow(std:
     return now;
 }
 
+bool LibdjinteropEngineCueWriter::carriesCues(std::int64_t id)
+{
+    using QuickCues = djinterop::engine::v3::quick_cues_blob;
+    using Loops = djinterop::engine::v3::loops_blob;
+    std::string error;
+    const auto blobs = rowAccess().readCueBlobs(id, &error);
+    if (!blobs) {
+        return true;
+    }
+    const auto holds = [](const EngineSqlValue &value) {
+        return !value.isNull() && !(value.type == EngineSqlValue::Type::Blob && value.bytes.empty());
+    };
+    if (holds(blobs->quickCues)) {
+        // Through the guard every stored blob goes through: libdjinterop's
+        // inflate does not come back from every damaged one.
+        const auto quickCues = decoded<QuickCues>(blobs->quickCues);
+        if (!quickCues || quickCues->adjusted_main_cue > 0.0
+            || std::any_of(quickCues->quick_cues.begin(), quickCues->quick_cues.end(), [](const auto &cue) {
+                   return cue.sample_offset != djinterop::engine::v3::QUICK_CUE_SAMPLE_OFFSET_EMPTY;
+               })) {
+            return true;
+        }
+    }
+    if (holds(blobs->loops)) {
+        if (blobs->loops.type != EngineSqlValue::Type::Blob) {
+            return true;
+        }
+        try {
+            // Not compressed, so decoded as it is.
+            const Loops loops = Loops::from_blob(bytesOf(blobs->loops.bytes));
+            return std::any_of(loops.loops.begin(), loops.loops.end(),
+                               [](const auto &loop) { return loop.is_start_set || loop.is_end_set; });
+        } catch (const std::exception &) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void LibdjinteropEngineCueWriter::writeColumns(std::int64_t id, const EngineAnalysisColumns &before,
                                                const EngineAnalysisColumns &after)
 {
@@ -743,8 +784,9 @@ void LibdjinteropEngineCueWriter::writeColumns(std::int64_t id, const EngineAnal
         && before.beatData == after.beatData) {
         return;
     }
+    const bool gridWritten = !after.beatData.isNull() && !(before.beatData == after.beatData);
     std::string error;
-    if (!rowAccess().write(id, after, &error)) {
+    if (!rowAccess().write(id, after, &error, gridWritten && !carriesCues(id))) {
         throw std::runtime_error("could not write the row's analysis: " + error);
     }
 }

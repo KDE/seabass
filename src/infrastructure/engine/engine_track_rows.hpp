@@ -226,6 +226,14 @@ struct EngineAnalysisRow
 [[nodiscard]] std::optional<EngineAnalysisRow> readEngineAnalysisRow(const std::string &databaseFile,
                                                                      std::int64_t trackId, std::string *error);
 
+// A row's cues as stored: the quickCues blob (hot cues and the main cue)
+// and the loops blob, each NULL where the row has none.
+struct EngineCueBlobs
+{
+    application::EngineSqlValue quickCues;
+    application::EngineSqlValue loops;
+};
+
 // readEngineAnalysisRow() and writeEngineAnalysisColumns() for many rows
 // of one database, each over a connection opened on first use and held
 // (read-only for the reads, read-write for the writes), not one per call.
@@ -240,8 +248,20 @@ public:
     EngineAnalysisRowAccess &operator=(const EngineAnalysisRowAccess &) = delete;
 
     [[nodiscard]] std::optional<EngineAnalysisRow> read(std::int64_t trackId, std::string *error);
+    // The row's cue blobs, over the reads' connection. nullopt with *error
+    // when the database or the row cannot be read.
+    [[nodiscard]] std::optional<EngineCueBlobs> readCueBlobs(std::int64_t trackId, std::string *error);
+    // clearThirdPartySource: also set the row's thirdPartySourceId to NULL,
+    // in the same transaction. The column is 1 on a row Engine's rekordbox
+    // import made and no player has loaded: on the first load the player
+    // takes the row's cues and grid for rekordbox's timeline, moves them
+    // about 52 ms earlier for an MP3 (the cues for good, the grid for that
+    // load), and sets the column to NULL (Prime 4 on Engine OS 5.3.0 and
+    // Prime Go+ on 5.0.4, 2026-11-22). A row whose grid is already on
+    // Engine's timeline must not carry it. Nothing is done on a schema
+    // without the column.
     [[nodiscard]] bool write(std::int64_t trackId, const application::EngineAnalysisColumns &columns,
-                             std::string *error);
+                             std::string *error, bool clearThirdPartySource = false);
 
 private:
     struct Connections;

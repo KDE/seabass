@@ -17,6 +17,7 @@
 #include "domain/engine_cue_translation.hpp"
 #include "domain/junk_cue.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -777,6 +778,10 @@ struct EngineAnalysisRowAccess::Connections
     std::unique_ptr<Connection> writer;
     std::optional<bool> readerBlobsInTrack;
     std::optional<bool> writerBlobsInTrack;
+    // Whether the table the writer finds the blobs in has a
+    // thirdPartySourceId column (2.18 on: Track to 2.21, PerformanceData in
+    // 3.x). Looked up once.
+    std::optional<bool> writerHasThirdPartySource;
     // The reader's row query, prepared once; the library's uuid, read once.
     sqlite3_stmt *rowQuery = nullptr;
     std::optional<std::string> libraryUuid;
@@ -868,8 +873,52 @@ std::optional<EngineAnalysisRow> EngineAnalysisRowAccess::read(std::int64_t trac
     return row;
 }
 
+std::optional<EngineCueBlobs> EngineAnalysisRowAccess::readCueBlobs(std::int64_t trackId, std::string *error)
+{
+    if (error == nullptr) {
+        throw std::invalid_argument("readCueBlobs: the error out-parameter is required");
+    }
+    error->clear();
+    auto &c = *m_connections;
+    if (!c.reader) {
+        auto opened = std::make_unique<Connection>(m_file, SQLITE_OPEN_READONLY);
+        if (!opened->ok()) {
+            *error = "could not open " + m_file + ": " + opened->why();
+            return std::nullopt;
+        }
+        c.reader = std::move(opened);
+    }
+    const Connection &db = *c.reader;
+    if (!c.readerBlobsInTrack) {
+        c.readerBlobsInTrack = blobsInTrack(db, error);
+        if (!c.readerBlobsInTrack) {
+            return std::nullopt;
+        }
+    }
+    const char *sql = *c.readerBlobsInTrack ? "SELECT quickCues, loops FROM Track WHERE id = ?1;"
+                                            : "SELECT quickCues, loops FROM PerformanceData WHERE trackId = ?1;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db.handle(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        *error = "could not read the cues of track id=" + std::to_string(trackId) + ": " + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    sqlite3_bind_int64(stmt, 1, trackId);
+    const int step = sqlite3_step(stmt);
+    if (step != SQLITE_ROW) {
+        *error = step == SQLITE_DONE ? "no cues row for track id=" + std::to_string(trackId) + " in " + m_file
+                                     : "could not read the cues of track id=" + std::to_string(trackId) + ": "
+                + sqlite3_errmsg(db.handle());
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
+    EngineCueBlobs blobs{columnValue(stmt, 0), columnValue(stmt, 1)};
+    sqlite3_finalize(stmt);
+    return blobs;
+}
+
 bool EngineAnalysisRowAccess::write(std::int64_t trackId, const application::EngineAnalysisColumns &columns,
-                                    std::string *error)
+                                    std::string *error, bool clearThirdPartySource)
 {
     if (error == nullptr) {
         throw std::invalid_argument("writeEngineAnalysisColumns: the error out-parameter is required");
@@ -888,6 +937,15 @@ bool EngineAnalysisRowAccess::write(std::int64_t trackId, const application::Eng
     if (!c.writerBlobsInTrack) {
         c.writerBlobsInTrack = blobsInTrack(db, error);
         if (!c.writerBlobsInTrack) {
+            return false;
+        }
+    }
+    const char *blobTable = *c.writerBlobsInTrack ? "Track" : "PerformanceData";
+    if (clearThirdPartySource && !c.writerHasThirdPartySource) {
+        try {
+            c.writerHasThirdPartySource = hasColumn(db.handle(), blobTable, "thirdPartySourceId");
+        } catch (const std::exception &e) {
+            *error = e.what();
             return false;
         }
     }
@@ -935,6 +993,13 @@ bool EngineAnalysisRowAccess::write(std::int64_t trackId, const application::Eng
              "WHERE id = ?6;",
              {&columns.isAnalyzed, &columns.isBeatGridLocked, &columns.bpm, &columns.bpmAnalyzed, &columns.key})) {
         return fail();
+    }
+    if (clearThirdPartySource && *c.writerHasThirdPartySource) {
+        if (!run(std::string("UPDATE ") + blobTable + " SET thirdPartySourceId = NULL WHERE "
+                     + (*c.writerBlobsInTrack ? "id" : "trackId") + " = ?1;",
+                 {})) {
+            return fail();
+        }
     }
     if (!db.exec("COMMIT;", error)) {
         return fail();
