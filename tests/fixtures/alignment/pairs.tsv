@@ -1,0 +1,30 @@
+# id	shard	a	b	shift_ms	also_accepted	why
+lead21	lossless	a-ref.flac	a-lead21.flac	20.9977	-	926 samples (21 ms) of silence put in front
+lead46	lossless	a-ref.flac	a-lead46.flac	46.0091	-	2029 samples (46 ms) of silence put in front
+lead160-wav	lossless	a-ref.wav	a-lead160.wav	160.0000	-	160 ms of silence in front, WAV at 11.025 kHz
+lead675	lossless	a-ref.flac	a-lead675.flac	675.0113	-	675 ms of silence in front
+lead1300	lossless	a-ref.flac	a-lead1300.flac	1300.0000	-	1.3 s of silence in front
+trim300	lossless	a-ref.flac	a-trim300.flac	-300.0000	-	the first 300 ms taken off
+tail	lossless	a-ref.flac	a-tail.flac	0.0000	-	2 s of other bursts added at the end, the start untouched
+gain6	lossless	a-ref.flac	a-gain6.flac	0.0000	-	6 dB quieter, nothing moved
+rate48k	lossless	a-ref.flac	a-48k-lead120.flac	120.0000	-	the same signal sampled at 48 kHz, 120 ms of silence in front
+invert	lossless	a-ref.flac	a-invert.flac	0.0000	unknown	polarity inverted: every sound is where it was, so 0 is right; a probe that looks only for positive correlation may say unknown, which moves no cue
+other	lossless	a-ref.flac	a-other.flac	unknown	-	a different signal of the same length: no shift lines them up
+cut-short	lossless	a-ref.flac	a-cut.flac	unknown	-	400 ms cut out at 1.6 s of 4.5 s: sounds before it are 0 apart, after it 400 ms; no one shift is right, and the file is too short for separate windows
+mp3B	codec	a-ref.flac	a-ref-B.mp3	0.0002	-	ffmpeg's MP3 (Lavc Info frame, class B) of the same samples: what the decoder adds or trims
+mp3A	codec	a-ref.flac	a-lead46-A.mp3	71.0659	-	libmp3lame without an Info frame (class A), 46 ms in front: the encoder delay is not trimmed
+mp3B-mp3D	codec	a-ref-B.mp3	a-lead21-D.mp3	20.9975	-	class B against libmp3lame with a LAME tag (class D), 21 ms in front
+mp3A-m4a	codec	a-lead46-A.mp3	a-ref.m4a	-71.0659	-	class A MP3 against AAC in MP4
+m4a-m4a	codec	a-ref.m4a	a-lead160.m4a	160.0000	-	two AAC copies, 160 ms apart
+mp3D-m4a	codec	a-lead21-D.mp3	a-lead160.m4a	139.0023	-	class D MP3 against AAC, 139 ms apart before the codecs
+wav-mp3B	codec	a-lead160.wav	a-ref-B.mp3	-159.9998	-	11.025 kHz WAV against a 44.1 kHz MP3
+pure-730	loop	b-ref.flac	b-lead730.flac	730.0000	unknown	an exactly repeating loop, 730 ms of silence in front (not a multiple of its bar or beat): only the silence tells the true shift, so unknown is accepted too
+pure-bar	loop	b-ref.flac	b-bar.flac	unknown	0|2000	an exactly repeating loop with one more bar in front: b-bar from 0 s is b-ref sample for sample, and from 2 s on too. 2000 ms is how it was made and 0 puts every cue on the same samples, so both are right, and unknown is accepted
+near-eq-1300	loop	n-ref.flac	n-eq-1300.flac	-1300.0000	unknown	the loop with 1% of its energy not repeating, equal lengths, the second copy starting 1.3 s further in (the review's case): the true shift is -1300 ms; a bar either side correlates at 0.99 of it, so unknown is accepted too
+real-620	loop	c-ref.flac	c-lead620.flac	620.0000	-	a varied loop with bursts and a pad, 620 ms in front (more than a beat)
+real-1300	loop	c-ref.flac	c-lead1300.flac	1300.0000	-	the same, 1.3 s in front (more than half a bar)
+real-eq-1300	loop	c-ref.flac	c-eq-1300.flac	-1300.0000	-	the same loop, equal lengths, the second copy starting 1.3 s further in
+intro675	music	d-ref.flac	d-intro675.flac	675.0113	-	music after a 3 s silent intro, the intro 675 ms longer
+intro675-m4a	music	d-ref.flac	d-intro675.m4a	675.0112	-	the same, the longer copy as AAC
+long-tail	long	L-ref.flac	L-tail.flac	0.0000	-	85 s, 6 s of other bursts added at the end: the end window lines up at 0 too
+long-cut	long	L-ref.flac	L-cut.flac	unknown	-	85 s with 400 ms cut out at 42.5 s: the start window says 0, the end -400
