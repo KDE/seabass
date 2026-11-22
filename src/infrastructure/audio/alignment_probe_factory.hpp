@@ -11,6 +11,9 @@
 #include "infrastructure/local/alignment_cache.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
+#include <QByteArray>
+#include <QtGlobal>
+
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 #endif
 
@@ -29,6 +32,21 @@ inline AudioDecoding audioDecoding()
     return QtMultimediaAlignmentProbe::decodingAvailable() ? AudioDecoding::Available : AudioDecoding::DidNotLoad;
 #else
     return AudioDecoding::NotInThisBuild;
+#endif
+}
+
+// The decoder a measured shift is on the timeline of, for the stick's
+// cache (local/alignment_cache.hpp): Qt Multimedia's backend, FFmpeg
+// unless QT_MEDIA_BACKEND picks another, and Qt's version, which brings
+// its own FFmpeg. "none" in a build without one.
+inline std::string alignmentDecoderName()
+{
+#ifdef SEABASS_HAVE_QT_AUDIO
+    const QByteArray backend = qgetenv("QT_MEDIA_BACKEND");
+    return (backend.isEmpty() ? std::string("ffmpeg") : backend.toStdString()) + " qt" + std::to_string(QT_VERSION_MAJOR)
+        + "." + std::to_string(QT_VERSION_MINOR);
+#else
+    return "none";
 #endif
 }
 
@@ -55,7 +73,7 @@ inline std::unique_ptr<local::CachedAudioAlignmentProbe> makeAudioAlignmentProbe
 #endif
     const bool decodes = decoder != nullptr;
     return std::make_unique<local::CachedAudioAlignmentProbe>(
-        stickRoot, std::make_unique<IdenticalFileAlignmentProbe>(std::move(decoder)), decodes);
+        stickRoot, std::make_unique<IdenticalFileAlignmentProbe>(std::move(decoder)), decodes, alignmentDecoderName());
 }
 
 }  // namespace seabass::infrastructure::audio

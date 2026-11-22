@@ -22,7 +22,7 @@ namespace seabass::infrastructure::local
 //
 //   {"a":"Contents/x/Song.mp3","amtime":"1710000000","asize":"8000000",
 //    "b":"Contents/y/Song.flac","bmtime":"1710000500","bsize":"30000000",
-//    "method":"3","result":"shift","shift":"21.315000"}
+//    "decoder":"ffmpeg qt6.8","method":"3","result":"shift","shift":"21.315000"}
 //
 // `result` is "shift" (the same music, `shift` ms later in b than in a),
 // "no" (decoded whole, does not line up) or "same" (the same bytes). The
@@ -38,6 +38,11 @@ namespace seabass::infrastructure::local
 //
 // Never stored: no opinion (no decoder, a file that would not decode, a
 // timeout, a cancelled scan). That is about the moment, not the files.
+//
+// `decoder` names the decoder that measured (its backend and version):
+// another one may start a file a few milliseconds elsewhere (an MP3's or
+// AAC's priming), so a line is trusted only by the decoder that wrote it.
+// Lines of other decoders are kept, for the machine that wrote them.
 //
 // `method` is MethodVersion when the line was written. A line written by
 // another version of the measurement is ignored and dropped at the next
@@ -59,8 +64,9 @@ public:
     // without a decoder still reads what a build with one wrote.
     // `innerDecodes` says whether `inner` can decode audio at all (as
     // opposed to comparing bytes), for hasDecoder().
+    // `decoder` names the decoder behind `inner` (see above).
     CachedAudioAlignmentProbe(std::string stickRoot, std::unique_ptr<domain::AudioAlignmentProbe> inner,
-                              bool innerDecodes);
+                              bool innerDecodes, std::string decoder);
     ~CachedAudioAlignmentProbe() override;
     CachedAudioAlignmentProbe(const CachedAudioAlignmentProbe &) = delete;
     CachedAudioAlignmentProbe &operator=(const CachedAudioAlignmentProbe &) = delete;
@@ -118,7 +124,9 @@ private:
 
     std::string m_stickRoot;
     std::filesystem::path m_cachePath;
-    std::map<std::pair<std::string, std::string>, Entry> m_entries;
+    // Keyed by decoder, then the pair.
+    std::map<std::pair<std::string, std::pair<std::string, std::string>>, Entry> m_entries;
+    std::string m_decoder;
     std::unique_ptr<domain::AudioAlignmentProbe> m_inner;
     bool m_innerDecodes = false;
     bool m_dirty = false;

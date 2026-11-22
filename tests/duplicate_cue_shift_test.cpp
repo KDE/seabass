@@ -396,25 +396,34 @@ int main(int argc, char **argv)
     // A removed cue that lands before the survivor's start is left out and
     // counted.
     {
-        const auto group = measured({copy("s", "/s/s.mp3", {}, 200.0, 320), copy("d", "/s/d.mp3", {memory(100), memory(9000)}, 200.0, 128)},
-                                    {0.0, 150.0});
+        const auto group = measured({copy("s", "/s/s.mp3", {}, 200.0, 320), copy("d", "/s/d.mp3", {memory(1200), memory(9000)}, 200.0, 128)},
+                                    {0.0, 1500.0});
         const auto plan = DuplicateCleanupPlanner::plan(group);
-        assert(plan.survivor.sourceId == "s" && near(*plan.removedShiftMs[0], -150.0));
-        assert(plan.cuesLeftOut == 1 && plan.mergedCuesForSurvivor.size() == 1);
-        assert(near(plan.mergedCuesForSurvivor[0].positionMs, 8850.0));
+        assert(plan.survivor.sourceId == "s" && near(*plan.removedShiftMs[0], -1500.0));
+        assert(plan.cuesLeftOut == 1 && plan.mergedCuesForSurvivor.size() == 1
+               && "a real cue at 1.2 s lands at -0.3 s: a loss, not junk");
+        assert(near(plan.mergedCuesForSurvivor[0].positionMs, 7500.0));
     }
     // Left out counts only what the merge would have added: a removed
     // pad 1 that lands off the start is no loss when the survivor has a
     // pad 1 of its own; a memory cue there is.
     {
         auto group = measured({copy("s", "/s/s.mp3", {hot(1, 9000)}, 200.0, 320),
-                               copy("d", "/s/d.mp3", {hot(1, 100)}, 200.0, 128)},
-                              {0.0, 150.0});
+                               copy("d", "/s/d.mp3", {hot(1, 1100)}, 200.0, 128)},
+                              {0.0, 1500.0});
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(plan.cuesLeftOut == 0 && "the survivor's pad 1 wins anyway: nothing lost");
-        group.tracks[1].cues = {hot(1, 100), memory(120)};
+        group.tracks[1].cues = {hot(1, 1100), memory(120)};
         plan = DuplicateCleanupPlanner::plan(group);
-        assert(plan.cuesLeftOut == 1 && "the memory cue would have been added: a real loss");
+        assert(plan.cuesLeftOut == 0 && "a memory cue under a second in is a stray one (junk): no loss");
+        group.tracks[1].cues = {hot(1, 1100), hot(3, 1200)};
+        plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.cuesLeftOut == 1 && "pad 3 would have been added: a real loss");
+        // Two removed copies leaving out the same pad 3 lose one cue, not two.
+        group.tracks.push_back(copy("e", "/s/e.mp3", {hot(3, 1250)}, 200.0, 128));
+        group.cueShifts.push_back(DuplicateGroup::CueShift{0, 1500.0});
+        plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.cuesLeftOut == 1 && "one pad 3, counted once");
     }
     // A stray cue at 0:00 (junk) on a copy that cannot be lined up is no
     // loss.

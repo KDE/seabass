@@ -98,7 +98,8 @@ Probe makeProbe(const fs::path &root, const std::function<void(CountingProbe &)>
     fill(*inner);
     Probe probe;
     probe.counter = inner.get();
-    probe.cached = std::make_unique<CachedAudioAlignmentProbe>(seabass::pathToUtf8(root), std::move(inner), true);
+    probe.cached = std::make_unique<CachedAudioAlignmentProbe>(seabass::pathToUtf8(root), std::move(inner), true,
+                                                                "test decoder");
     return probe;
 }
 
@@ -182,7 +183,7 @@ int main()
         assert(text.find("\"result\":\"same\"") != std::string::npos);
         assert(text.find("Contents/d/") == std::string::npos && text.find("Contents/e/") == std::string::npos
                && "no line for a pair with no opinion");
-        assert(text.find(root.string()) == std::string::npos && "paths are relative to the stick");
+        assert(text.find(seabass::pathToUtf8(root)) == std::string::npos && "paths are relative to the stick");
     }
 
     // Stale: either file's size or mtime moved, and the pair is measured
@@ -279,7 +280,7 @@ int main()
         auto inner = std::make_unique<CountingProbe>();
         inner->answers[{a, b}] = Answer::linedUp(1.0);
         CountingProbe *counter = inner.get();
-        CachedAudioAlignmentProbe probe({}, std::move(inner), true);
+        CachedAudioAlignmentProbe probe({}, std::move(inner), true, "test decoder");
         assert(probe.align(a, b).kind == Kind::LinedUp && probe.align(a, b).kind == Kind::LinedUp);
         assert(counter->aligned == 2 && probe.save() && !fs::exists(cacheFile));
     }
@@ -290,10 +291,27 @@ int main()
         auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{a, b}] = Answer::linedUp(-4.0); });
         probe.cached->align(a, b);
         probe.cached->save();
-        CachedAudioAlignmentProbe cacheOnly(seabass::pathToUtf8(root), nullptr, true);
+        CachedAudioAlignmentProbe cacheOnly(seabass::pathToUtf8(root), nullptr, true, "test decoder");
         assert(!cacheOnly.hasDecoder());
         assert(cacheOnly.align(a, b).kind == Kind::LinedUp && "answered from the stick");
         assert(cacheOnly.align(a, e).kind == Kind::NoOpinion);
+    }
+
+    // Another decoder may start a file elsewhere: what one wrote, another
+    // does not trust, and keeps for it.
+    {
+        auto inner = std::make_unique<CountingProbe>();
+        inner->answers[{a, b}] = Answer::linedUp(-3.0);
+        CountingProbe *counter = inner.get();
+        {
+            CachedAudioAlignmentProbe other(seabass::pathToUtf8(root), std::move(inner), true, "another decoder");
+            assert(other.align(a, b).kind == Kind::LinedUp && counter->aligned == 1 && "not trusted from another");
+            assert(other.save());
+        }
+        CachedAudioAlignmentProbe again(seabass::pathToUtf8(root), nullptr, true, "test decoder");
+        const auto kept = again.align(a, b);
+        assert(kept.kind == Kind::LinedUp && near(kept.shiftMs, -4.0) && "and the first decoder's line is still there");
+        assert(readFile(cacheFile).find("another decoder") != std::string::npos);
     }
 
     fs::remove_all(root);

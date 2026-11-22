@@ -343,6 +343,16 @@ int main(int argc, char **argv)
             worst = std::max(worst, std::abs(*error));
         }
         if (checked == 0) {
+            // A pair with markers in both files that checked none of them
+            // checked nothing: a fail, not a pass.
+            bool shared = false;
+            for (const auto &entry : fa.markersMs) {
+                shared = shared || fb.markersMs.contains(entry.first);
+            }
+            if (shared) {
+                ++failures;
+                std::cout << "  " << pair.id << ": no shared marker could be checked  FAIL\n";
+            }
             continue;
         }
         const bool ok = worst <= AgreementToleranceMs;

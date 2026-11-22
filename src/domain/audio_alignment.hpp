@@ -157,7 +157,7 @@ private:
     size_t m_total = 0;
     size_t m_held = 0;
     size_t m_mostHeld = 0;
-    std::vector<Block> m_blocks;  // in order; a gap where samples were let go
+    std::deque<Block> m_blocks;  // in order; a gap where samples were let go
 };
 
 // A whole decoded signal as KeptSamples, for a caller that has it whole.
@@ -188,10 +188,11 @@ struct LagRange
     long long highest = 0;
 };
 
-// Only lags inside `range` (every lag when there is none) at which the
-// two overlap by at least `minOverlap` samples are considered. nullopt
-// when there is no such lag, or when either side is silent over the
-// overlap at the peak (nothing to correlate).
+// Every lag at which the two overlap by at least `minOverlap` samples is
+// looked at; a best lag outside `range` (when given) is ambiguous, not an
+// answer, so a peak outside the range still counts against an alias of it
+// inside. nullopt when there is no such lag, or when either side is silent
+// over the overlap at the peak (nothing to correlate).
 std::optional<CorrelationPeak> correlationPeak(std::span<const float> a, std::span<const float> b,
                                                size_t minOverlap, std::optional<LagRange> range = std::nullopt,
                                                size_t rivalSeparation = 1);
