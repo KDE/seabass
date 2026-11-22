@@ -8,6 +8,7 @@
 #include <cmath>
 #include <utility>
 
+#include "domain/duplicate_cue_shift.hpp"
 #include "domain/local_restore.hpp"
 #include "domain/matching_policy.hpp"
 
@@ -121,6 +122,24 @@ size_t longestOf(const std::vector<Track> &tracks)
 // value in the whole group, but removing that doomed copy still
 // silently discards the only copy of it. That's a real loss and must be
 // flagged, even though nothing in the group technically "disagrees".
+// The extension of a path, upper case and without the dot: "FLAC" for
+// "x/Song.flac". Empty when there is none.
+std::string upperExtension(const std::string &path)
+{
+    const auto slash = path.find_last_of("/\\");
+    const auto dot = path.find_last_of('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash) || dot + 1 >= path.size()) {
+        return {};
+    }
+    std::string extension = path.substr(dot + 1);
+    for (char &c : extension) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return extension;
+}
+
 template<typename Get>
 bool losesDataFromRemoval(const Track &survivor, const std::vector<Track> &toRemove, Get get)
 {
@@ -215,14 +234,45 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
         }
     }
 
+    // Each removed copy's cues onto the survivor's timeline before they
+    // are merged: the copies of one song are often not sample-aligned,
+    // and a cue merged at its old position lands that far from its
+    // sound. The survivor's own cues are where they belong already and
+    // go in first, so its cue wins on a pad both have.
     std::vector<CuePoint> merged = result.survivor.cues;
     for (size_t i = 0; i < group.tracks.size(); ++i) {
         if (i == survivorIndex) {
             continue;
         }
-        merged = LocalRestorePlanner::mergeCues(merged, group.tracks[i].cues);
+        const std::optional<double> shift = cueShiftBetween(group, i, survivorIndex);
+        result.removedShiftMs.push_back(shift);
+        const Track &doomed = group.tracks[i];
+        if (!shift) {
+            // Unsure means not merged. Whether that loses anything is
+            // asked of the survivor's own cues, as they stand.
+            if (LocalRestorePlanner::mergeCues(result.survivor.cues, doomed.cues).size()
+                > result.survivor.cues.size()) {
+                result.hasCuesOnUnalignedCopy = true;
+            }
+            continue;
+        }
+        const MovedCues moved = movedCues(doomed.cues, *shift, result.survivor.durationSeconds);
+        result.cuesLeftOut += moved.leftOut;
+        merged = LocalRestorePlanner::mergeCues(merged, moved.cues);
     }
     result.mergedCuesForSurvivor = std::move(merged);
+
+    // Formats by extension, case folded: a group of FLAC and MP3 copies
+    // may be kept that way on purpose. See mixedFormats.
+    for (const auto &track : group.tracks) {
+        const std::string extension = upperExtension(track.filePath);
+        if (!extension.empty()
+            && std::find(result.fileFormats.begin(), result.fileFormats.end(), extension) == result.fileFormats.end()) {
+            result.fileFormats.push_back(extension);
+        }
+    }
+    std::sort(result.fileFormats.begin(), result.fileFormats.end());
+    result.mixedFormats = result.fileFormats.size() > 1;
 
     // Fill-a-gap propagation: only when the survivor itself lacks the
     // field, and only the first donor found (deterministic group order)
@@ -421,19 +471,30 @@ std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std:
         return {};
     }
 
+    // Each removed copy's cues moved onto the survivor's timeline first,
+    // as mergedCuesForSurvivor's are; a copy that could not be lined up
+    // gives nothing (see hasCuesOnUnalignedCopy).
     std::vector<CuePoint> wanted = survivorRow->cues;
-    for (const auto &doomed : plan.toRemove) {
+    for (size_t k = 0; k < plan.toRemove.size(); ++k) {
+        const Track &doomed = plan.toRemove[k];
+        const std::optional<double> shift = k < plan.removedShiftMs.size() ? plan.removedShiftMs[k] : 0.0;
+        if (!shift) {
+            continue;
+        }
+        auto onSurvivor = [&](const std::vector<CuePoint> &cues) {
+            return movedCues(cues, *shift, plan.survivor.durationSeconds).cues;
+        };
         if (doomed.catalogRows.empty()) {
             // An uncollapsed copy is still a row in its own catalog --
             // the same fallback rowIdIn() and catalogsWrittenBy() make.
             if (doomed.format == format) {
-                wanted = LocalRestorePlanner::mergeCues(wanted, doomed.cues);
+                wanted = LocalRestorePlanner::mergeCues(wanted, onSurvivor(doomed.cues));
             }
             continue;
         }
         for (const auto &row : doomed.catalogRows) {
             if (row.format == format) {
-                wanted = LocalRestorePlanner::mergeCues(wanted, row.cues);
+                wanted = LocalRestorePlanner::mergeCues(wanted, onSurvivor(row.cues));
             }
         }
     }

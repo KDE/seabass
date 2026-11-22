@@ -243,6 +243,85 @@ TestCase {
         }
     }
 
+    // The fixture's group with its rows pointed at other files: the row
+    // that carries the cue (id 1) at folderB, and folderA's file made the
+    // larger by each case, so folderB is the copy removed and its cue has
+    // to cross.
+    function groupPage(pathA, pathB) {
+        const library = artworkFixture.libraryCopy(testCase.fixtureEngineRoot);
+        verify(library.length > 0, "the fixture copy must be made");
+        verify(artworkFixture.setTrackPath(library, 2, "../" + pathA));
+        verify(artworkFixture.setTrackPath(library, 1, "../" + pathB));
+        return library;
+    }
+
+    function openGroupPage(library) {
+        const page = createTemporaryObject(enginePageComponent, testCase,
+                                           {width: 960, height: 660, enginePath: library});
+        verify(page, "page did not instantiate");
+        tryVerify(() => shownText(page, "Keep") !== null, 20000, "the scan never showed the group");
+        waitForRendering(page);
+        return page;
+    }
+
+    function groupCheckBox(page) {
+        return findByObjectName(page, "groupIncluded");
+    }
+
+    // The kept copy carries 463 samples (21 ms) of silence the removed
+    // one does not, which also makes it the larger file and so the one
+    // kept: the removed copy's music starts 21 ms earlier, its cue is
+    // moved to match, and the group says so.
+    function test_aShiftedCopyIsSaid() {
+        const library = groupPage("folderA/Duplicate Song.wav", "folderB/Duplicate Song.wav");
+        const stick = library.substring(0, library.lastIndexOf("/"));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderA/Duplicate Song.wav", 10, 463, 5));
+        verify(artworkFixture.writeNoiseWav(stick + "/folderB/Duplicate Song.wav", 10, 0, 5));
+        const page = openGroupPage(library);
+        const note = findByObjectName(page, "alignmentNote");
+        verify(note && note.visible, "the shift is said");
+        compare(note.text, "\"folderB/Duplicate Song.wav\" starts 21 ms earlier than the copy kept, so cues are moved to match.");
+        verify(!findByObjectName(page, "cuesNotLinedUpBadge").visible);
+        verify(!findByObjectName(page, "mixedFormatsBadge").visible);
+    }
+
+    // A removed copy that cannot be lined up keeps its cue to itself: the
+    // group says the cue would be lost and starts unticked.
+    function test_cuesOnACopyThatCannotBeLinedUpHoldTheGroupBack() {
+        const library = groupPage("folderA/Duplicate Song.wav", "folderB/Duplicate Song.wav");
+        const stick = library.substring(0, library.lastIndexOf("/"));
+        verify(stickFixture.makeDirectory(stick + "/folderA") && stickFixture.makeDirectory(stick + "/folderB"));
+        // The kept copy's file is the larger: the larger file is kept.
+        verify(stickFixture.writeText(stick + "/folderA/Duplicate Song.wav", "another file"));
+        verify(stickFixture.writeText(stick + "/folderB/Duplicate Song.wav", "one file"));
+        const page = openGroupPage(library);
+        verify(findByObjectName(page, "cuesNotLinedUpBadge").visible, "the loss is said");
+        compare(findByObjectName(page, "alignmentNote").text,
+                "\"folderB/Duplicate Song.wav\" could not be lined up with the copy kept, so its cues are not merged.");
+        const box = groupCheckBox(page);
+        verify(box, "the group's checkbox");
+        verify(!box.checked, "and the group starts unticked");
+        compare(findChild(page, "cleanupController").includedCount, 0);
+    }
+
+    // Copies in two formats may be kept on purpose: listed, unticked, the
+    // reason said, and ticking it works as for any group.
+    function test_copiesInDifferentFormatsStartUnticked() {
+        const library = groupPage("folderA/Duplicate Song.flac", "folderB/Duplicate Song.mp3");
+        const page = openGroupPage(library);
+        verify(findByObjectName(page, "mixedFormatsBadge").visible);
+        const note = findByObjectName(page, "mixedFormatsNote");
+        verify(note && note.visible);
+        compare(note.text, "These copies are in different formats (FLAC and MP3). You may be keeping both on purpose, "
+                + "for players that cannot read one of them.");
+        const controller = findChild(page, "cleanupController");
+        const box = groupCheckBox(page);
+        verify(box && !box.checked, "starts unticked");
+        compare(controller.includedCount, 0);
+        mouseClick(box);
+        tryCompare(controller, "includedCount", 1, 2000, "ticking it includes it");
+    }
+
     // Scrolling the groups folds the header's description away and keeps
     // its controls. Twelve more groups than the fixture's one, at a
     // typical window, so the list has somewhere to scroll to.

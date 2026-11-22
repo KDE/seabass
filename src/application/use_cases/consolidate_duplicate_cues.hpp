@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include "domain/audio_content_probe.hpp"
@@ -27,11 +28,23 @@ public:
     // not is not a preference, it is two pages disagreeing about what is
     // on the stick. Null (the CLI, which has no Preferences to read)
     // compares stored lengths alone.
-    std::vector<domain::ConsolidationPlan> execute(const std::vector<domain::Track> &tracks,
-                                                     domain::AudioContentProbe *probe = nullptr)
+    //
+    // `lineUp` runs between grouping and planning, and is where the
+    // caller fills in each group's cue shifts (domain/duplicate_cue_shift
+    // .hpp): the plan compares and copies cues across copies, so it must
+    // see them. Without one every group is planned as if its copies were
+    // sample-aligned, which only a caller with no audio files to measure
+    // (a test) has any business doing.
+    std::vector<domain::ConsolidationPlan> execute(
+        const std::vector<domain::Track> &tracks, domain::AudioContentProbe *probe = nullptr,
+        const std::function<void(std::vector<domain::DuplicateGroup> &)> &lineUp = {})
     {
+        std::vector<domain::DuplicateGroup> groups = domain::DuplicateTrackFinder::find(tracks, probe);
+        if (lineUp) {
+            lineUp(groups);
+        }
         std::vector<domain::ConsolidationPlan> plans;
-        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, probe)) {
+        for (const auto &group : groups) {
             plans.push_back(domain::DuplicateCueConsolidator::plan(group));
         }
         return plans;

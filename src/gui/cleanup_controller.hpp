@@ -65,6 +65,19 @@ public:
         // Why this copy is the one kept, in a sentence: whether the
         // copies really differ, or are identical and a tie was broken.
         SurvivorReasonRole,
+        // A copy being removed could not be lined up with the survivor
+        // and carries cues it lacks (DuplicateCleanupPlan::
+        // hasCuesOnUnalignedCopy): those cues would be lost.
+        CuesOnUnalignedCopyRole,
+        // The copies are in more than one file format
+        // (DuplicateCleanupPlan::mixedFormats), and the sentence that
+        // names them.
+        MixedFormatsRole,
+        MixedFormatsNoteRole,
+        // What lining the copies up measured: a sentence for each removed
+        // copy that is shifted against the survivor, could not be lined up
+        // with it, or would have cues land off its ends. Empty otherwise.
+        AlignmentNoteRole,
     };
 
     explicit CleanupPlanListModel(QObject *parent = nullptr);
@@ -116,9 +129,10 @@ public:
 private:
     std::vector<domain::DuplicateCleanupPlan> m_plans;
     std::vector<QString> m_stagedDescriptions;  // empty = not staged; parallel to m_plans
-    // Parallel to m_plans, default true unless the plan differs (see
-    // DuplicateCleanupPlan::differs' own doc comment for why that
-    // defaults to excluded).
+    // Parallel to m_plans, default true unless the plan differs, has
+    // data at risk, has cues on a copy that could not be lined up, or
+    // mixes file formats (see those flags in DuplicateCleanupPlan for why
+    // each defaults to excluded).
     std::vector<bool> m_included;
     // Indices into m_plans/m_included that pass the current filter, in
     // order, what QML's row-based data()/setData() actually iterate.
@@ -258,6 +272,13 @@ struct CleanupTaskResult
     // the others hold -- see runRescanTask() for why that forbids
     // collapsing rather than merely reducing what is found.
     bool collapsedAcrossCatalogs = false;
+
+    // Lining the copies up before their cues are merged (domain/
+    // duplicate_cue_shift.hpp): pairs that could not be lined up, and
+    // whether that is because this build has no decoder for anything that
+    // is not byte-identical.
+    int pairsNotLinedUp = 0;
+    bool alignmentDecoderMissing = false;
 };
 
 // Result of a background pending-deletion apply task, see

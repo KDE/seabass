@@ -13,11 +13,17 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "application/ports/cue_writer.hpp"
 #include "application/use_cases/consolidate_duplicate_cues.hpp"
+#include "application/use_cases/measure_duplicate_cue_shifts.hpp"
+#include "domain/duplicate_cue_shift.hpp"
 #include "domain/matching_policy.hpp"
 #include "gui/cancellable_audio_probe.hpp"
+#include "gui/cue_shift_text.hpp"
+#include "infrastructure/audio/alignment_probe_factory.hpp"
+#include "infrastructure/audio/playback_timeline.hpp"
 #include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -78,6 +84,40 @@ std::uint64_t wastedBytes(const ConsolidationPlan &plan)
     return known >= 2 ? total - largest : 0;
 }
 
+// What lining the copies up measured, in the order the page lists them:
+// one sentence for each copy shifted against the first, or that could not
+// be lined up with it. Empty for a group whose copies line up as they are.
+QString alignmentNote(const domain::DuplicateGroup &group)
+{
+    QStringList lines;
+    for (size_t i = 1; i < group.tracks.size() && i < group.cueShiftMs.size(); ++i) {
+        const QString copy = QStringLiteral("Copy %1").arg(i + 1);
+        const std::optional<double> shift = domain::cueShiftBetween(group, 0, i);
+        if (!shift) {
+            lines << QStringLiteral("%1 could not be lined up with copy 1, so no cues are copied to or from it.")
+                         .arg(copy);
+        } else if (*shift != 0.0) {
+            lines << shiftSentence(copy, QStringLiteral("copy 1"), *shift);
+        }
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+// Cues an Unambiguous plan's copy would leave out, summed over its
+// targets: those that land off a target's ends once moved onto it.
+int cuesLeftOut(const ConsolidationPlan &plan)
+{
+    if (!plan.source) {
+        return 0;
+    }
+    int leftOut = 0;
+    for (size_t i = 0; i < plan.targets.size(); ++i) {
+        const double shift = i < plan.targetShiftMs.size() ? plan.targetShiftMs[i] : 0.0;
+        leftOut += domain::movedCues(plan.source->cues, shift, plan.targets[i].durationSeconds).leftOut;
+    }
+    return leftOut;
+}
+
 }  // namespace
 
 ConsolidationPlanListModel::ConsolidationPlanListModel(QObject *parent) : QAbstractListModel(parent) {}
@@ -99,15 +139,27 @@ QVariant ConsolidationPlanListModel::data(const QModelIndex &index, int role) co
     const auto &plan = m_plans[row];
     switch (role) {
     case KindRole:
-        return plan.kind == ConsolidationPlan::Kind::Unambiguous ? QStringLiteral("unambiguous")
-                                                                   : QStringLiteral("conflict");
+        if (plan.kind == ConsolidationPlan::Kind::Unambiguous) {
+            return QStringLiteral("unambiguous");
+        }
+        return plan.kind == ConsolidationPlan::Kind::Unaligned ? QStringLiteral("unaligned")
+                                                                 : QStringLiteral("conflict");
     case FilenameRole:
         return QString::fromStdString(plan.group.tracks.empty() ? "" : plan.group.tracks.front().filename);
     case DescriptionRole:
         if (plan.kind == ConsolidationPlan::Kind::Unambiguous) {
-            return QString("%1 cue(s) on one copy, missing on %2 other copy/copies")
-                .arg(plan.source->cues.size())
-                .arg(plan.targets.size());
+            QString text = QString("%1 cue(s) on one copy, missing on %2 other copy/copies")
+                               .arg(plan.source->cues.size())
+                               .arg(plan.targets.size());
+            if (const int leftOut = cuesLeftOut(plan); leftOut > 0) {
+                text += QStringLiteral(". %1 cue(s) would land outside a copy once moved, and are left out of it")
+                            .arg(leftOut);
+            }
+            return text;
+        }
+        if (plan.kind == ConsolidationPlan::Kind::Unaligned) {
+            return QStringLiteral("The copies' audio could not be lined up, so their cues cannot be copied or "
+                                  "compared; not touching them");
         }
         return QString("%1 copies have different cues, not touching them").arg(plan.group.tracks.size());
     case ActionableRole:
@@ -152,6 +204,8 @@ QVariant ConsolidationPlanListModel::data(const QModelIndex &index, int role) co
         return row < m_stagedDescriptions.size() && !m_stagedDescriptions[row].isEmpty();
     case StagedDescriptionRole:
         return row < m_stagedDescriptions.size() ? m_stagedDescriptions[row] : QString();
+    case AlignmentNoteRole:
+        return alignmentNote(plan.group);
     default:
         return {};
     }
@@ -168,6 +222,7 @@ QHash<int, QByteArray> ConsolidationPlanListModel::roleNames() const
         {WastedBytesRole, "wastedBytesDescription"},
         {StagedRole, "staged"},
         {StagedDescriptionRole, "stagedDescription"},
+        {AlignmentNoteRole, "alignmentNote"},
     };
 }
 
@@ -225,11 +280,15 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
     try {
         // One bar (#58): the read the cache still has to make, then the
         // grouping, which has no count and is one unit at the end.
+        // Then lining up the copies' audio, which is counted in pairs
+        // nobody knows before the grouping, and so is planned as a share
+        // (application::cueShiftProgressUnits()).
         auto &cache = LibraryCatalogCache::instance();
         const auto readUnits = cache.plannedUnits(format.toStdString(), path.toStdString(),
                                                   LibraryCatalogCache::Detail::Full, cancel);
+        const size_t shiftUnits = application::cueShiftProgressUnits(readUnits.value_or(0));
         application::PhasedProgress progress(*reporter, "Looking for duplicates",
-                                             readUnits ? *readUnits + 1 : 0);
+                                             readUnits ? *readUnits + 1 + shiftUnits : 0);
         std::vector<domain::Track> tracks =
             cache.tracksFor(format.toStdString(), path.toStdString(), progress, cancel);
 
@@ -258,9 +317,10 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // here and which the finder itself knows nothing about. See
         // CancellableAudioContentProbe.
         CancellableAudioContentProbe cancellableProbe(audioProbe.get(), cancel);
-        auto allPlans = application::ConsolidateDuplicateCues().execute(
-            tracks, audioProbe != nullptr ? &cancellableProbe : nullptr);
-        if (audioProbe != nullptr) {
+        auto recordAudioComparison = [&]() {
+            if (audioProbe == nullptr) {
+                return;
+            }
             result.filesAudioCompared = audioProbe->decodedCount();
             result.filesAudioUnreadable = audioProbe->failedCount();
             if (result.filesAudioCompared == 0 && result.filesAudioUnreadable > 0) {
@@ -269,10 +329,32 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
             // Explicit rather than left to the destructor: a stick that
             // refuses the write is a thing this scan saw.
             audioProbe->save();
-        }
+        };
+        // Every cue this page copies or compares crosses from one copy to
+        // another, and copies of one song are often not sample-aligned:
+        // each group with cues is lined up before it is planned. See
+        // domain/duplicate_cue_shift.hpp.
+        auto alignment = infrastructure::audio::makeAudioAlignmentProbe();
+        CancellableAudioAlignmentProbe cancellableAlignment(alignment.get(), cancel);
+        auto allPlans = application::ConsolidateDuplicateCues().execute(
+            tracks, audioProbe != nullptr ? &cancellableProbe : nullptr,
+            [&](std::vector<domain::DuplicateGroup> &groups) {
+                // Before the long part, so a scan cancelled while lining
+                // up still keeps what the grouping measured.
+                recordAudioComparison();
+                application::measureDuplicateCueShifts(groups, &cancellableAlignment,
+                                                       infrastructure::audio::cueTimelineOffsetMs, progress,
+                                                       shiftUnits, cancel);
+            });
+        result.pairsNotLinedUp = alignment->unknownCount();
+        result.alignmentDecoderMissing = !alignment->hasDecoder();
         std::vector<ConsolidationPlan> actionable;
         for (auto &plan : allPlans) {
-            if (plan.kind == ConsolidationPlan::Kind::Unambiguous || plan.kind == ConsolidationPlan::Kind::Conflict) {
+            // Unaligned is listed like Conflict: a group a person has to
+            // look at, and one that vanished from the page would read as
+            // a duplicate the scan never found.
+            if (plan.kind == ConsolidationPlan::Kind::Unambiguous || plan.kind == ConsolidationPlan::Kind::Conflict
+                || plan.kind == ConsolidationPlan::Kind::Unaligned) {
                 actionable.push_back(std::move(plan));
             }
         }
@@ -397,6 +479,16 @@ void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &re
     } else {
         m_audioComparisonNote.clear();
     }
+    // Copies that could not be lined up are each said on their own row;
+    // this says why when the reason is the build rather than the files.
+    if (result.pairsNotLinedUp > 0 && result.alignmentDecoderMissing) {
+        if (!m_audioComparisonNote.isEmpty()) {
+            m_audioComparisonNote += QLatin1Char(' ');
+        }
+        m_audioComparisonNote += QStringLiteral(
+            "This build cannot decode audio, so copies that are not identical files could not be lined up, "
+            "and no cue is moved between them.");
+    }
 }
 
 void DuplicatesController::onRescanFinished(DuplicatesTaskResult &&result)
@@ -449,7 +541,7 @@ void DuplicatesController::applyOne(int index)
     if (plan.kind != ConsolidationPlan::Kind::Unambiguous) {
         return;
     }
-    stageCopy(index, {*plan.source, plan.targets});
+    stageCopy(index, {*plan.source, plan.targets, plan.targetShiftMs});
 }
 
 void DuplicatesController::copyFromTrack(int index, const QString &sourceTrackId)
@@ -466,22 +558,35 @@ void DuplicatesController::copyFromTrack(int index, const QString &sourceTrackId
     const auto &group = plans[static_cast<size_t>(index)].group;
 
     std::string wantedId = sourceTrackId.toStdString();
-    const domain::Track *source = nullptr;
-    std::vector<domain::Track> targets;
-    for (const auto &track : group.tracks) {
-        if (track.sourceId == wantedId) {
-            source = &track;
+    std::optional<size_t> source;
+    for (size_t i = 0; i < group.tracks.size(); ++i) {
+        if (group.tracks[i].sourceId == wantedId) {
+            source = i;
         }
     }
     if (!source) {
         return;
     }
-    for (const auto &track : group.tracks) {
-        if (track.sourceId != source->sourceId) {
-            targets.push_back(track);
+    // Each target gets the chosen copy's cues moved onto its own timing.
+    // A copy that could not be lined up has no known place for them, and
+    // a person choosing which copy's cues to keep is not choosing where
+    // the sounds are, so that is refused rather than guessed.
+    std::vector<domain::Track> targets;
+    std::vector<double> shifts;
+    for (size_t i = 0; i < group.tracks.size(); ++i) {
+        if (group.tracks[i].sourceId == group.tracks[*source].sourceId) {
+            continue;
         }
+        const std::optional<double> shift = domain::cueShiftBetween(group, *source, i);
+        if (!shift) {
+            setErrorMessage(QStringLiteral("These copies could not be lined up, so cues cannot be copied between "
+                                           "them without guessing where they belong."));
+            return;
+        }
+        targets.push_back(group.tracks[i]);
+        shifts.push_back(*shift);
     }
-    stageCopy(index, {*source, std::move(targets)});
+    stageCopy(index, {group.tracks[*source], std::move(targets), std::move(shifts)});
 }
 
 void DuplicatesController::applyAllUnambiguous()
@@ -495,7 +600,7 @@ void DuplicatesController::applyAllUnambiguous()
     int staged = 0;
     for (size_t i = 0; i < plans.size(); ++i) {
         if (plans[i].kind == ConsolidationPlan::Kind::Unambiguous) {
-            stageCopy(static_cast<int>(i), {*plans[i].source, plans[i].targets});
+            stageCopy(static_cast<int>(i), {*plans[i].source, plans[i].targets, plans[i].targetShiftMs});
             staged++;
             if (session() && !session()->lockHeld()) {
                 return;  // refused at the first one; no point trying the rest

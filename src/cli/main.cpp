@@ -72,7 +72,10 @@
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
+#include "domain/duplicate_cue_shift.hpp"
+#include "infrastructure/audio/alignment_probe_factory.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
+#include "infrastructure/audio/playback_timeline.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
@@ -559,7 +562,15 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                        const std::function<void(const Track &, const std::vector<seabass::domain::CuePoint> &)>
                            &afterWrite = {})
 {
-    auto plans = ConsolidateDuplicateCues().execute(tracks);
+    // Copies of one song are often not sample-aligned, and every cue this
+    // copies crosses from one copy to another: each group with cues is
+    // lined up first (domain/duplicate_cue_shift.hpp), and a copy that
+    // cannot be is never copied onto. Byte-identical copies need no
+    // decoder; anything else needs this build's.
+    auto alignment = seabass::infrastructure::audio::makeAudioAlignmentProbe();
+    auto plans = ConsolidateDuplicateCues().execute(tracks, nullptr, [&](std::vector<seabass::domain::DuplicateGroup> &groups) {
+        seabass::domain::measureCueShifts(groups, alignment.get(), seabass::infrastructure::audio::cueTimelineOffsetMs);
+    });
     if (plans.empty()) {
         return;
     }
@@ -575,10 +586,19 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
         for (const auto &plan : plans) {
             const Track &first = plan.group.tracks.front();
             Console::info("group " + std::to_string(++n) + ": " + first.title + " (" + first.artist + ")");
-            for (const auto &t : plan.group.tracks) {
+            for (size_t i = 0; i < plan.group.tracks.size(); ++i) {
+                const Track &t = plan.group.tracks[i];
                 std::ostringstream line;
                 line << "  id=" << t.sourceId << "  " << t.filename << "  [" << t.durationSeconds << "s]  cues="
                      << t.cues.size();
+                if (i > 0 && i < plan.group.cueShiftMs.size()) {
+                    const auto shift = seabass::domain::cueShiftBetween(plan.group, 0, i);
+                    if (!shift) {
+                        line << "  shift=unknown";
+                    } else {
+                        line << "  shift=" << *shift << "ms";
+                    }
+                }
                 Console::info(line.str());
             }
         }
@@ -604,6 +624,21 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
         }
 
         ensureHeading();
+
+        if (plan.kind == ConsolidationPlan::Kind::Unaligned) {
+            Console::warn("\"" + plan.group.tracks.front().filename +
+                           "\" has duplicate copies whose audio could not be lined up (not touching their cues):");
+            for (size_t i = 0; i < plan.group.tracks.size(); ++i) {
+                const Track &t = plan.group.tracks[i];
+                const bool known = i == 0 || seabass::domain::cueShiftBetween(plan.group, 0, i).has_value();
+                Console::info("  id=" + t.sourceId + "  cues=" + std::to_string(t.cues.size())
+                              + (known ? "" : "  (could not be lined up with the first copy)"));
+            }
+            if (!alignment->hasDecoder()) {
+                Console::info("  this build cannot decode audio, so only identical files can be lined up.");
+            }
+            continue;
+        }
 
         if (plan.kind == ConsolidationPlan::Kind::Conflict) {
             Console::warn("\"" + plan.group.tracks.front().filename +
@@ -636,7 +671,16 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
             locks = acquireLocks();
         }
 
-        for (const auto &target : plan.targets) {
+        for (size_t targetIndex = 0; targetIndex < plan.targets.size(); ++targetIndex) {
+            const Track &target = plan.targets[targetIndex];
+            const double shift = targetIndex < plan.targetShiftMs.size() ? plan.targetShiftMs[targetIndex] : 0.0;
+            const seabass::domain::MovedCues moved =
+                seabass::domain::movedCues(plan.source->cues, shift, target.durationSeconds);
+            if (moved.cues.empty()) {
+                Console::info("  copied nothing to id=" + target.sourceId + ": all " + std::to_string(moved.leftOut)
+                              + " cue(s) would land outside it once moved by " + std::to_string(shift) + " ms.");
+                continue;
+            }
             if (backupStore) {
                 auto files = filesToBackUpFor(target.sourceId);
                 files.erase(std::remove_if(files.begin(), files.end(),
@@ -654,18 +698,26 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                 }
             }
 
-            writer->writeHotCues(target.sourceId, plan.source->cues);
-            Console::info("  copied " + std::to_string(plan.source->cues.size()) + " cue(s) from \"" +
-                           plan.source->filename + "\" (id=" + plan.source->sourceId + ") to id=" + target.sourceId);
+            writer->writeHotCues(target.sourceId, moved.cues);
+            std::string how;
+            if (shift != 0.0) {
+                how += ", moved by " + std::to_string(shift) + " ms to line up with it";
+            }
+            if (moved.leftOut > 0) {
+                how += ", " + std::to_string(moved.leftOut) + " left out (outside the track once moved)";
+            }
+            Console::info("  copied " + std::to_string(moved.cues.size()) + " cue(s) from \"" +
+                           plan.source->filename + "\" (id=" + plan.source->sourceId + ") to id=" + target.sourceId
+                           + how);
             if (log) {
-                log->record(formatName + ": copied " + std::to_string(plan.source->cues.size()) +
+                log->record(formatName + ": copied " + std::to_string(moved.cues.size()) +
                              " cue(s) from track id=" + plan.source->sourceId + " (\"" + plan.source->title +
-                             "\") to track id=" + target.sourceId);
+                             "\") to track id=" + target.sourceId + how);
             }
             if (afterWrite) {
-                afterWrite(target, plan.source->cues);
+                afterWrite(target, moved.cues);
             }
-            totalCuesCopied += plan.source->cues.size();
+            totalCuesCopied += moved.cues.size();
             targetsWritten++;
         }
         groupsConsolidated++;

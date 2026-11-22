@@ -501,12 +501,14 @@ add_library(seabass_core STATIC
     src/application/phased_progress.cpp
     src/application/use_cases/advise_stick_backup.cpp
     src/domain/duplicate_cue_consolidation.cpp
+    src/domain/duplicate_cue_shift.cpp
     src/domain/filesystem_compatibility.cpp
     src/domain/fuzzy_matcher.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
     src/infrastructure/audio/playback_timeline.cpp
+    src/infrastructure/audio/identical_file_alignment_probe.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/moved_files.cpp
@@ -702,6 +704,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/summarize_engine_update.cpp
     src/domain/engine_overview.cpp
     src/domain/duplicate_cue_consolidation.cpp
+    src/domain/duplicate_cue_shift.cpp
     src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
@@ -1030,7 +1033,12 @@ endif()
 if(TARGET Qt6::Multimedia)
     add_library(seabass_audio_qt STATIC
         src/infrastructure/audio/qt_multimedia_duration_probe.cpp
-        src/infrastructure/audio/qt_multimedia_silence_probe.cpp)
+        src/infrastructure/audio/qt_multimedia_silence_probe.cpp
+        src/infrastructure/audio/qt_multimedia_alignment_probe.cpp
+        # Qt-free arithmetic, but its one caller is the probe above, and
+        # a static seabass_core listed before this library on a link line
+        # could not supply it.
+        src/domain/audio_alignment.cpp)
     target_include_directories(seabass_audio_qt PUBLIC src)
     target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia)
     target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_QT_AUDIO)
@@ -1055,6 +1063,16 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     # No display, no audio device: the probe decodes to buffers and
     # never opens an output.
     set_tests_properties(silence_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# Lining up copies of a song with the real decoder, against files the test
+# writes (domain/audio_alignment_probe.hpp).
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
+    add_executable(alignment_probe_test tests/alignment_probe_test.cpp)
+    target_include_directories(alignment_probe_test PRIVATE src)
+    target_link_libraries(alignment_probe_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
+    add_test(NAME alignment_probe_test COMMAND alignment_probe_test)
+    set_tests_properties(alignment_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # The decoder the player uses, against the click MP3s in
@@ -2119,6 +2137,22 @@ add_executable(duplicate_cue_consolidation_test
 target_link_libraries(duplicate_cue_consolidation_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cue_consolidation_test PRIVATE src)
 add_test(NAME duplicate_cue_consolidation_test COMMAND duplicate_cue_consolidation_test)
+
+# The arithmetic of lining copies up, Qt-free and against made-up signals.
+# Its one source is compiled here: the library that ships it is
+# seabass_audio_qt, which this test has no need of.
+add_executable(audio_alignment_test
+    tests/audio_alignment_test.cpp
+    src/domain/audio_alignment.cpp)
+target_include_directories(audio_alignment_test PRIVATE src)
+add_test(NAME audio_alignment_test COMMAND audio_alignment_test)
+
+add_executable(duplicate_cue_shift_test
+    tests/duplicate_cue_shift_test.cpp
+    src/domain/duplicate_cleanup.cpp)
+target_link_libraries(duplicate_cue_shift_test PRIVATE seabass_core_testing)
+target_include_directories(duplicate_cue_shift_test PRIVATE src)
+add_test(NAME duplicate_cue_shift_test COMMAND duplicate_cue_shift_test ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
 
 add_executable(duplicate_cleanup_test
     src/domain/duplicate_cleanup.cpp

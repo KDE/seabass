@@ -29,7 +29,7 @@ namespace seabass::gui
 class LibraryEditSession;
 
 // Read-only Qt list model over the consolidation plans DuplicatesController
-// last computed. Only Unambiguous (fixable) and Conflict (informational)
+// last computed. Only Unambiguous (fixable), Conflict and Unaligned (informational)
 // plans are exposed -- NoCues/AlreadyConsistent groups need no attention,
 // same filtering cli/main.cpp's handleDuplicates applies.
 class ConsolidationPlanListModel : public QAbstractListModel, public StagedPlanModel
@@ -50,6 +50,10 @@ public:
         // will happen on Save, and from which copy.
         StagedRole,
         StagedDescriptionRole,
+        // What lining the copies up measured, a sentence per copy that is
+        // shifted or could not be lined up; empty when they all line up
+        // as they are.
+        AlignmentNoteRole,
     };
 
     explicit ConsolidationPlanListModel(QObject *parent = nullptr);
@@ -101,6 +105,12 @@ struct DuplicatesTaskResult
     int filesAudioCompared = 0;
     int filesAudioUnreadable = 0;
     bool audioComparisonUnavailable = false;
+
+    // Lining the copies up (domain/duplicate_cue_shift.hpp): pairs that
+    // could not be lined up, and whether that is because this build has
+    // no decoder to compare anything that is not byte-identical.
+    int pairsNotLinedUp = 0;
+    bool alignmentDecoderMissing = false;
 };
 
 // One "copy source's cues onto these targets" operation -- applyOne() and
