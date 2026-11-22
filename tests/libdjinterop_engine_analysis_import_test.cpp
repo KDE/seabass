@@ -757,6 +757,8 @@ int main(int argc, char **argv)
         const std::string mdb = pathToUtf8(dir / "Engine Library" / "Database2" / "m.db");
         std::string error;
         check(markForDeviceAnalysis(mdb, {unanalysedId}, &error) == 1, "2.18: a row made unanalysed: " + error);
+        // Both rows as Engine's rekordbox import leaves them (case 10).
+        exec(mdb, "UPDATE Track SET thirdPartySourceId = 1");
 
         RekordboxAnalysis analysis;
         analysis.beats = constantGrid(250.0, 480.0, 120000.0);
@@ -775,6 +777,9 @@ int main(int argc, char **argv)
               "2.18: the overview in the Track table");
         const auto completed = writer.importAnalysis(std::to_string(unanalysedId), analysis, options);
         check(completed.completedRow, "2.18: an unanalysed row completed");
+        check(column(mdb, "Track", "id", analysedId, "thirdPartySourceId") == "NULL"
+                  && column(mdb, "Track", "id", unanalysedId, "thirdPartySourceId") == "NULL",
+              "2.18: both rows lose the mark of Engine's rekordbox import, in the Track table");
         check(library.track().get_is_analyzed(unanalysedId), "2.18: flagged analysed");
         const auto raw = inflated(blobOf(mdb, "Track", "id", unanalysedId, "trackData"));
         check(raw.size() == 44, "2.18: the record ends after the loudness, " + std::to_string(raw.size()) + " bytes");
@@ -835,6 +840,108 @@ int main(int argc, char **argv)
         check(ours.substr(0, 4) == real.substr(0, 4) && inflated(asBytes(ours)).size() == 3099,
               "ours has the same header and raw length");
         std::cout << "case 9 (overview file container) done\n";
+    }
+
+    // 10. The mark of Engine's rekordbox import (thirdPartySourceId = 1). A
+    // player that loads a marked row for the first time takes its grid and
+    // cues for rekordbox's timeline and moves them about 52 ms earlier (the
+    // Prime 4 and the Prime Go+, 2026-11-22). A grid written here is on
+    // Engine's timeline already, so the mark goes with it; a row with a
+    // cue keeps it, since that cue may still wait for the player.
+    {
+        const Copy copy = freshCopy("rekordbox-import-mark");
+        constexpr std::int64_t kUnanalysedWithHotCue = 17;
+        constexpr std::int64_t kAnalysedWithHotCue = 69;
+        const auto mark = [&](std::int64_t id) {
+            return column(copy.mdb, "PerformanceData", "trackId", id, "thirdPartySourceId");
+        };
+        for (const std::int64_t id :
+             {kUnanalysed, kUnanalysedToo, kAnalysed, kAnalysedToo, kUnanalysedWithHotCue, kAnalysedWithHotCue}) {
+            check(mark(id) == "1", "the fixture's row " + std::to_string(id) + " carries the mark");
+        }
+        // Rows with a loop alone, a main cue alone, and cues that cannot be
+        // read, each given the mark.
+        constexpr std::int64_t kWithLoopOnly = 30;
+        constexpr std::int64_t kWithMainCueOnly = 377;
+        constexpr std::int64_t kWithDamagedCues = 3;
+        // A stream that does not end within the blob: libdjinterop's own
+        // inflate never comes back from this one.
+        constexpr std::int64_t kWithCutShortCues = 4;
+        exec(copy.mdb, "UPDATE PerformanceData SET thirdPartySourceId = 1 WHERE trackId IN (30, 377);"
+                       "UPDATE PerformanceData SET quickCues = x'0102' WHERE trackId = 3;"
+                       "UPDATE PerformanceData SET quickCues = x'00000064789c63' WHERE trackId = 4;");
+        {
+            auto db = djinterop::engine::load_database(pathToUtf8(copy.root));
+            const auto cuesOf = [&](std::int64_t id) {
+                const auto track = *db.track_by_id(id);
+                const auto hotCues = track.hot_cues();
+                const auto loops = track.loops();
+                const auto set = [](const auto &slot) { return slot.has_value(); };
+                const auto mainCue = track.main_cue();
+                return std::string(std::any_of(hotCues.begin(), hotCues.end(), set) ? "H" : "-")
+                    + (std::any_of(loops.begin(), loops.end(), set) ? "L" : "-") + (mainCue && *mainCue > 0.0 ? "M" : "-");
+            };
+            check(cuesOf(kUnanalysed) == "---" && cuesOf(kAnalysed) == "---" && cuesOf(kAnalysedToo) == "---",
+                  "the rows that lose the mark carry no cue");
+            check(cuesOf(kUnanalysedWithHotCue).front() == 'H' && cuesOf(kAnalysedWithHotCue).front() == 'H',
+                  "the hot-cue rows carry one");
+            check(cuesOf(kWithLoopOnly) == "-L-", "row 30 carries a loop alone: " + cuesOf(kWithLoopOnly));
+            check(cuesOf(kWithMainCueOnly) == "--M", "row 377 a main cue alone: " + cuesOf(kWithMainCueOnly));
+        }
+        const auto others = [&] {
+            auto marks = rows(copy.mdb, "SELECT trackId, quote(thirdPartySourceId) FROM PerformanceData");
+            for (const std::int64_t id : {kUnanalysed, kAnalysed, kAnalysedToo}) {
+                marks.erase(id);
+            }
+            return marks;
+        };
+        const auto othersBefore = others();
+
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(120.0, 480.0, 200000.0);
+        analysis.threeBandPreview = synthetic(1200, 3, 11);
+        analysis.scrollEntries = 30000;
+        analysis.bpm = 125.0;
+        AnalysisImportOptions options;
+        options.fileSampleRateHz = 44100.0;
+        auto writer = unshiftedWriter(pathToUtf8(copy.root));
+
+        const auto completed = writer.importAnalysis(std::to_string(kUnanalysed), analysis, options);
+        check(completed.completedRow && completed.grid.outcome == Outcome::Written, "a row completed with a grid");
+        check(mark(kUnanalysed) == "NULL", "loses the mark: " + mark(kUnanalysed));
+
+        const auto replaced = writer.importAnalysis(std::to_string(kAnalysed), analysis, options);
+        check(replaced.grid.outcome == Outcome::Written, "an analysed row given rekordbox's grid");
+        check(mark(kAnalysed) == "NULL", "loses the mark: " + mark(kAnalysed));
+
+        const auto gridOnly = writer.writeBeatGrid(std::to_string(kAnalysedToo), analysis.beats);
+        check(gridOnly.outcome == Outcome::Written, "a grid written alone");
+        check(mark(kAnalysedToo) == "NULL", "takes the mark off too: " + mark(kAnalysedToo));
+
+        // A row with a cue: the grid is written (the beat data changes),
+        // and the mark stays.
+        for (const auto &[id, what] : std::vector<std::pair<std::int64_t, std::string>>{
+                 {kUnanalysedWithHotCue, "an unanalysed row with a hot cue"},
+                 {kAnalysedWithHotCue, "an analysed row with a hot cue"},
+                 {kWithLoopOnly, "a row with a loop alone"},
+                 {kWithMainCueOnly, "a row with a main cue alone"},
+                 {kWithDamagedCues, "a row whose cues cannot be read"},
+                 {kWithCutShortCues, "a row whose cues are cut short"}}) {
+            const auto beatDataBefore = perf(copy.mdb, id, "beatData");
+            const auto cued = writer.importAnalysis(std::to_string(id), analysis, options);
+            check(cued.grid.outcome == Outcome::Written && perf(copy.mdb, id, "beatData") != beatDataBefore,
+                  what + " gets the grid");
+            check(mark(id) == "1", what + " keeps the mark: " + mark(id));
+        }
+
+        AnalysisImportOptions waveformOnly = options;
+        waveformOnly.grids = false;
+        const auto noGrid = writer.importAnalysis(std::to_string(kUnanalysedToo), analysis, waveformOnly);
+        check(noGrid.grid.outcome == Outcome::NotRequested, "an import that asks for no grid");
+        check(mark(kUnanalysedToo) == "1", "leaves the mark: " + mark(kUnanalysedToo));
+
+        check(others() == othersBefore, "no other row's mark changed");
+        std::cout << "case 10 (the mark of Engine's rekordbox import) done\n";
     }
 
     if (failures == 0) {
