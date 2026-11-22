@@ -21,15 +21,21 @@
 //     reads the lead-in from the real library's audio, not the copy's.
 //   - so does a reader of a copy given the real library as its audio
 //     root (a stick backup read beside the live stick).
+//   - a row Engine's rekordbox import left unplayed (thirdPartySourceId
+//     1) is read as stored; written back, its cues are stored the shift
+//     earlier, the mark goes, and they read back the same.
 //
 // Usage: libdjinterop_engine_mp3_lead_in_test <fixture dir>
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 #include <djinterop/djinterop.hpp>
+#include <sqlite3.h>
 
 #include "application/use_cases/scan_library.hpp"
 #include "domain/matching_policy.hpp"
@@ -179,6 +185,119 @@ void assertStored(const Raw &r, double shiftMs, double samplesPerMs = 44.1)
     assert(near(r.loopStart, (10000.0 - shiftMs) * samplesPerMs, 1e-3));
     assert(near(r.loopEnd, (14000.0 - shiftMs) * samplesPerMs, 1e-3));
     assert(near(r.mainCue, (8000.0 - shiftMs) * samplesPerMs, 1e-3));
+}
+
+// A copy of the anonymized fixture's Engine library (schema 3.0.2,
+// written by Denon), never the fixture itself. Its rows' files are not
+// there: the lead-in comes from lameLeadIn().
+struct FixtureCopy
+{
+    Library lib;
+    std::string mdb;
+};
+
+FixtureCopy fixtureCopy(const std::string &caseName)
+{
+    FixtureCopy copy;
+    copy.lib.root = seabass::testing::scratchRoot() / "seabass_engine_mp3_lead_in_test" / seabass::pathFromUtf8(caseName)
+        / "Engine Library";
+    fs::remove_all(copy.lib.root.parent_path());
+    fs::create_directories(copy.lib.root.parent_path());
+    fs::copy(g_fixtures.parent_path() / "anonymized_library" / "engine", copy.lib.root, fs::copy_options::recursive);
+    copy.mdb = seabass::pathToUtf8(copy.lib.root / "Database2" / "m.db");
+    return copy;
+}
+
+// Every row's MP3 told the LAME fixture's lead-in: 51.18 ms.
+LibdjinteropEngineReader::LeadInSource lameLeadIn()
+{
+    const auto leadIn = seabass::infrastructure::audio::readMp3LeadIn(
+        seabass::pathToUtf8(g_fixtures / "lame-cbr-44100.mp3"));
+    assert(leadIn);
+    return [leadIn](const std::string &) { return leadIn; };
+}
+
+// thirdPartySourceId of a 3.x row: 1, or 0 for NULL.
+std::int64_t markOf(const std::string &mdb, std::int64_t id)
+{
+    sqlite3 *db = nullptr;
+    sqlite3_open_v2(mdb.c_str(), &db, SQLITE_OPEN_READONLY, nullptr);
+    sqlite3_stmt *stmt = nullptr;
+    sqlite3_prepare_v2(db, "SELECT ifnull(thirdPartySourceId, 0) FROM PerformanceData WHERE trackId = ?1", -1, &stmt,
+                       nullptr);
+    sqlite3_bind_int64(stmt, 1, id);
+    std::int64_t mark = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        mark = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return mark;
+}
+
+void setMark(const std::string &mdb, std::int64_t id, bool marked)
+{
+    sqlite3 *db = nullptr;
+    sqlite3_open_v2(mdb.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+    const std::string sql = std::string("UPDATE PerformanceData SET thirdPartySourceId = ") + (marked ? "1" : "NULL")
+        + " WHERE trackId = " + std::to_string(id);
+    const int done = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+    assert(done == SQLITE_OK);
+    (void)done;
+    sqlite3_close(db);
+}
+
+// The row's stored rate as the reader takes it, 44.1 kHz when it has none.
+double storedRate(const Library &lib, const std::string &id)
+{
+    auto db = djinterop::engine::load_database(seabass::pathToUtf8(lib.root));
+    const auto rate = db.track_by_id(std::stoll(id))->sample_rate();
+    return rate && *rate > 0.0 ? *rate : 44100.0;
+}
+
+// Every stored offset of the row: set hot cues, both ends of set loops,
+// the main cue when there is one.
+std::vector<double> rawAll(const Library &lib, const std::string &id)
+{
+    auto db = djinterop::engine::load_database(seabass::pathToUtf8(lib.root));
+    auto track = db.track_by_id(std::stoll(id));
+    std::vector<double> out;
+    for (const auto &hot : track->hot_cues()) {
+        if (hot && hot->sample_offset >= 0.0) {
+            out.push_back(hot->sample_offset);
+        }
+    }
+    for (const auto &loop : track->loops()) {
+        if (loop && loop->start_sample_offset >= 0.0 && loop->end_sample_offset >= 0.0) {
+            out.push_back(loop->start_sample_offset);
+            out.push_back(loop->end_sample_offset);
+        }
+    }
+    if (const auto main = track->main_cue(); main && *main > 0.0) {
+        out.push_back(*main);
+    }
+    return out;
+}
+
+// The row's first set hot cue: its pad (1 to 8) and stored offset.
+std::pair<int, double> firstHotCue(const Library &lib, const std::string &id)
+{
+    auto db = djinterop::engine::load_database(seabass::pathToUtf8(lib.root));
+    const auto hot = db.track_by_id(std::stoll(id))->hot_cues();
+    for (std::size_t i = 0; i < hot.size(); ++i) {
+        if (hot[i] && hot[i]->sample_offset >= 0.0) {
+            return {static_cast<int>(i) + 1, hot[i]->sample_offset};
+        }
+    }
+    return {0, -1.0};
+}
+
+const Track &trackOf(const std::vector<Track> &tracks, std::int64_t id)
+{
+    const auto found = std::find_if(tracks.begin(), tracks.end(),
+                                    [&](const Track &t) { return t.sourceId == std::to_string(id); });
+    assert(found != tracks.end());
+    return *found;
 }
 
 }  // namespace
@@ -616,6 +735,240 @@ int main(int argc, char **argv)
                                           [](const std::string &) { return std::optional<double>(); });
         assert(near(raw(blind, readOne(blind).sourceId).hotCue, 50.0 * 44.1, 1e-6));
         std::cout << "case 16 (Create Engine Library: a WAV at the source's rate, else 44.1 kHz) OK\n";
+    }
+
+    // Case 17: a row Engine's rekordbox import made and no player has
+    // loaded (thirdPartySourceId = 1) holds its cues on rekordbox's
+    // timeline already: read as stored, cueTimelineShiftMs 0, by
+    // readTracks() and by fillCues() alike. The same row with the mark
+    // taken off reads moved by the file's shift. A copy of the anonymized
+    // fixture (schema 3.0.2, its MP3s told a LAME lead-in), row 69: an
+    // analysed MP3 with hot cues, marked.
+    {
+        const FixtureCopy copy = fixtureCopy("marked-read");
+        const std::int64_t id = 69;
+        const auto [pad, storedOffset] = firstHotCue(copy.lib, std::to_string(id));
+        const double rate = storedRate(copy.lib, std::to_string(id));
+        assert(pad > 0 && rate > 0.0);
+        assert(markOf(copy.mdb, id) == 1);
+        const double storedMs = storedOffset / rate * 1000.0;
+
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(copy.lib.root));
+        reader.setLeadInSource(lameLeadIn());
+        const Track marked = trackOf(reader.readTracks(), id);
+        const CuePoint *hot = find(marked.cues, CuePoint::Kind::Hot, pad, false);
+        assert(hot);
+        std::cout << "case 17: marked row's hot cue " << pad << " read at " << hot->positionMs << " ms, stored "
+                  << storedMs << " ms\n";
+        assert(near(hot->positionMs, storedMs, 1e-6));
+        assert(marked.cueTimelineShiftMs == 0.0);
+        assert(marked.engineCuesOnRekordboxTimeline);
+        // The writer still takes the file's shift off: the planners' shift.
+        assert(near(marked.engineCueWriteShiftMs, LameShiftMs));
+        // Only rows with cues say so.
+        const Track uncued = trackOf(reader.readTracks(), 1);
+        assert(uncued.cues.empty() && !uncued.engineCuesOnRekordboxTimeline);
+
+        // fillCues() on what a reader with no lead-in read (the catalog
+        // cache's Tracks stage), by a reader of its own (its Cues stage):
+        // still as stored.
+        LibdjinteropEngineReader blind(seabass::pathToUtf8(copy.lib.root));
+        blind.setLeadInSource([](const std::string &) { return std::optional<seabass::domain::Mp3LeadIn>(); });
+        std::vector<Track> tracks = blind.readTracks();
+        LibdjinteropEngineReader seeing(seabass::pathToUtf8(copy.lib.root));
+        seeing.setLeadInSource(lameLeadIn());
+        seeing.fillCues(tracks);
+        const Track filled = trackOf(tracks, id);
+        assert(near(find(filled.cues, CuePoint::Kind::Hot, pad, false)->positionMs, storedMs, 1e-6));
+        assert(filled.cueTimelineShiftMs == 0.0);
+        assert(filled.engineCuesOnRekordboxTimeline);
+
+        setMark(copy.mdb, id, false);
+        const Track unmarked = trackOf(reader.readTracks(), id);
+        std::cout << "case 17: unmarked, read at " << find(unmarked.cues, CuePoint::Kind::Hot, pad, false)->positionMs
+                  << " ms\n";
+        assert(near(find(unmarked.cues, CuePoint::Kind::Hot, pad, false)->positionMs, storedMs + LameShiftMs, 1e-6));
+        assert(near(unmarked.cueTimelineShiftMs, LameShiftMs));
+        assert(!unmarked.engineCuesOnRekordboxTimeline);
+        // fillCues() over what was read while the row was marked: the mark
+        // goes with the positions read, so a row whose cues fillCues() does
+        // not read again keeps the flag and its positions, whatever the
+        // mark says now.
+        LibdjinteropEngineReader later(seabass::pathToUtf8(copy.lib.root));
+        later.setLeadInSource(lameLeadIn());
+        later.fillCues(tracks);
+        const Track refilled = trackOf(tracks, id);
+        assert(near(find(refilled.cues, CuePoint::Kind::Hot, pad, false)->positionMs, storedMs, 1e-6));
+        assert(refilled.engineCuesOnRekordboxTimeline && refilled.cueTimelineShiftMs == 0.0);
+        assert(near(refilled.engineCueWriteShiftMs, LameShiftMs) && near(filled.engineCueWriteShiftMs, LameShiftMs));
+
+        // A row whose cues fillCues() does read again (row 17 records no
+        // sample rate, so a sample rate source has them read at the
+        // file's) takes the mark as it is then.
+        const std::int64_t unrated = 17;
+        const auto [unratedPad, unratedOffset] = firstHotCue(copy.lib, std::to_string(unrated));
+        assert(unratedPad > 0 && markOf(copy.mdb, unrated) == 1);
+        std::vector<Track> again = reader.readTracks();
+        assert(trackOf(again, unrated).engineCuesOnRekordboxTimeline);
+        setMark(copy.mdb, unrated, false);
+        // Row 73, also marked and without a stored rate, loses its cues
+        // before they are read again (a writer whose shift is not known
+        // leaves its mark): read again with none, it carries neither the
+        // flag nor a shift, as no row without cues does.
+        const std::int64_t emptied = 73;
+        assert(markOf(copy.mdb, emptied) == 1);
+        assert(trackOf(again, emptied).engineCuesOnRekordboxTimeline
+               && near(trackOf(again, emptied).engineCueWriteShiftMs, LameShiftMs));
+        {
+            LibdjinteropEngineCueWriter clearing(seabass::pathToUtf8(copy.lib.root));
+            clearing.setLeadInSource([](const std::string &) { return std::optional<seabass::domain::Mp3LeadIn>(); });
+            clearing.writeHotCues(std::to_string(emptied), {});
+        }
+        LibdjinteropEngineReader rated(seabass::pathToUtf8(copy.lib.root));
+        rated.setLeadInSource(lameLeadIn());
+        rated.setSampleRateSource([](const std::string &) { return std::optional<double>(44100.0); });
+        rated.fillCues(again);
+        const Track reRead = trackOf(again, unrated);
+        std::cout << "case 17: re-read row's hot cue " << unratedPad << " at "
+                  << find(reRead.cues, CuePoint::Kind::Hot, unratedPad, false)->positionMs << " ms\n";
+        assert(!reRead.engineCuesOnRekordboxTimeline && "the mark as it is now");
+        assert(near(find(reRead.cues, CuePoint::Kind::Hot, unratedPad, false)->positionMs,
+                    unratedOffset / 44100.0 * 1000.0 + LameShiftMs, 1e-6));
+        const Track emptiedRow = trackOf(again, emptied);
+        assert(emptiedRow.cues.empty() && markOf(copy.mdb, emptied) == 1);
+        assert(!emptiedRow.engineCuesOnRekordboxTimeline && emptiedRow.cueTimelineShiftMs == 0.0
+               && emptiedRow.engineCueWriteShiftMs == 0.0 && "no flag and no shift on a row without cues");
+        std::cout << "case 17 (a marked row's cues are read as stored, an unmarked row's moved) OK\n";
+    }
+
+    // Case 18: round trip on a marked row. Read (as stored), written back
+    // as read (writeHotCues takes the file's shift off and the mark with
+    // it), read again: the same positions to within a sample, stored that
+    // shift earlier, and no mark. Row 618 of the fixture: a hot cue and a
+    // loop, marked.
+    {
+        const FixtureCopy copy = fixtureCopy("marked-round-trip");
+        const std::int64_t id = 618;
+        const std::string sourceId = std::to_string(id);
+        assert(markOf(copy.mdb, id) == 1);
+        const double rate = storedRate(copy.lib, sourceId);
+        const auto storedBefore = rawAll(copy.lib, sourceId);
+        assert(!storedBefore.empty());
+
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(copy.lib.root));
+        reader.setLeadInSource(lameLeadIn());
+        const Track before = trackOf(reader.readTracks(), id);
+        assert(before.cueTimelineShiftMs == 0.0);
+        assert(std::any_of(before.cues.begin(), before.cues.end(), [](const CuePoint &c) { return c.isLoop; }));
+
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(copy.lib.root));
+        writer.setLeadInSource(lameLeadIn());
+        writer.writeHotCues(sourceId, before.cues);
+        assert(markOf(copy.mdb, id) == 0);
+
+        const auto storedAfter = rawAll(copy.lib, sourceId);
+        assert(storedAfter.size() == storedBefore.size());
+        const double shiftSamples = LameShiftMs / 1000.0 * rate;
+        for (std::size_t i = 0; i < storedBefore.size(); ++i) {
+            std::cout << "case 18: stored " << storedBefore[i] << " -> " << storedAfter[i] << " samples\n";
+            assert(near(storedAfter[i], storedBefore[i] - shiftSamples, 1e-3));
+        }
+
+        const Track after = trackOf(reader.readTracks(), id);
+        assert(near(after.cueTimelineShiftMs, LameShiftMs));
+        assert(after.cues.size() == before.cues.size());
+        const double oneSampleMs = 1000.0 / rate;
+        for (const CuePoint &cue : before.cues) {
+            const CuePoint *again = find(after.cues, cue.kind, cue.hotCueNumber, cue.isLoop);
+            assert(again);
+            assert(near(again->positionMs, cue.positionMs, oneSampleMs));
+            if (cue.isLoop) {
+                assert(near(again->loopEndMs, cue.loopEndMs, oneSampleMs));
+            }
+        }
+        std::cout << "case 18 (a marked row read, written back, read again) OK\n";
+    }
+
+    // Case 19: the marks cannot be read. Without them a row's cues would
+    // read on the wrong timeline, and a write would put them back that
+    // way: the pass fails rather than read on. fillCues() reads the marks
+    // only for rows whose cues it reads again, so a pass that reads none
+    // again opens nothing and does not fail; one that does, fails. The
+    // copy's m.db is replaced by bytes that are not a database: before
+    // fillCues() for the first, while it reads (at its second sample rate
+    // asked, after a first row's cues are read again) for the second.
+    {
+        const FixtureCopy copy = fixtureCopy("marks-unreadable");
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(copy.lib.root));
+        reader.setLeadInSource(lameLeadIn());
+        std::vector<Track> tracks = reader.readTracks();
+        const auto damage = [&] {
+            std::ofstream damaged(seabass::pathFromUtf8(copy.mdb), std::ios::binary | std::ios::trunc);
+            damaged << std::string(4096, 'x');
+        };
+
+        // Nothing to read again: only the rows that record a sample rate,
+        // with a sample rate source as the catalog cache's Cues stage
+        // has. fillRatesFromSource() cannot open the damaged database,
+        // says so once and reads nothing again; no mark is read, and the
+        // pass does not fail.
+        const FixtureCopy quietCopy = fixtureCopy("marks-unread");
+        std::vector<Track> quietTracks;
+        for (const Track &t : tracks) {
+            if (!t.cueRateUnverified) {
+                quietTracks.push_back(t);
+            }
+        }
+        assert(!quietTracks.empty());
+        {
+            std::ofstream damaged(seabass::pathFromUtf8(quietCopy.mdb), std::ios::binary | std::ios::trunc);
+            damaged << std::string(4096, 'x');
+        }
+        struct Warnings : seabass::application::ProgressReporter
+        {
+            std::vector<std::string> said;
+            void start(const std::string &, size_t) override {}
+            void tick(size_t) override {}
+            void finish() override {}
+            void warn(const std::string &message) override { said.push_back(message); }
+        };
+        Warnings warnings;
+        LibdjinteropEngineReader quiet(seabass::pathToUtf8(quietCopy.lib.root));
+        quiet.setProgressReporter(warnings);
+        quiet.setLeadInSource(lameLeadIn());
+        int quietAsked = 0;
+        quiet.setSampleRateSource([&](const std::string &) {
+            ++quietAsked;
+            return std::optional<double>(44100.0);
+        });
+        quiet.fillCues(quietTracks);  // throws if it read the marks
+        for (const auto &w : warnings.said) {
+            std::cout << "case 19: warned: " << w << "\n";
+        }
+        assert(quietAsked == 0);
+        assert(warnings.said.size() == 1
+               && warnings.said.front().rfind("the sample rates of unanalysed tracks were not looked up: ", 0) == 0);
+        std::cout << "case 19: a pass that reads no cues again reads no mark\n";
+
+        LibdjinteropEngineReader later(seabass::pathToUtf8(copy.lib.root));
+        later.setLeadInSource(lameLeadIn());
+        int asked = 0;
+        later.setSampleRateSource([&](const std::string &) {
+            if (++asked == 2) {
+                damage();
+            }
+            return std::optional<double>(44100.0);
+        });
+        bool failed = false;
+        try {
+            later.fillCues(tracks);
+        } catch (const std::exception &e) {
+            failed = true;
+            std::cout << "case 19: fillCues failed: " << e.what() << "\n";
+        }
+        assert(asked >= 2);
+        assert(failed && "the pass fails when the marks cannot be read");
+        std::cout << "case 19 (marks that cannot be read fail the pass that needs them) OK\n";
     }
 
     MatchingPolicy::reset();

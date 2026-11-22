@@ -4,9 +4,11 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <djinterop/pad_color.hpp>
@@ -94,6 +96,21 @@ public:
     // cache (CachedSampleRates::leadInOf). readTracks() asks per cued
     // MP3 row; fillCues() asks again and moves a row whose answer
     // changed by the difference.
+    //
+    // Not a row that carries the mark of Engine's rekordbox import
+    // (thirdPartySourceId = 1, read from m.db once per pass): its cues are
+    // on rekordbox's timeline as stored, so none is added and its
+    // cueTimelineShiftMs is 0, which keeps that field "what the reader
+    // added" for the library fingerprint and the metadata store. The cue
+    // writer still takes the file's shift off what it writes there, and
+    // takes the mark off with it (writeHotCues()), so the next read adds
+    // the shift to positions that are then on Engine's timeline. Every
+    // cued row also carries the file's shift as Track::engineCueWriteShiftMs,
+    // mark or not: what the writer takes off, for the planners. Such a row
+    // with cues reads with Track::engineCuesOnRekordboxTimeline set by
+    // readTracks(); fillCues() keeps that, as the mark goes with the
+    // positions read, and decides it again only for a row whose cues it
+    // reads again. When the marks cannot be read the pass fails.
     void setLeadInSource(LeadInSource source) { m_leadInSource = std::move(source); }
 
     // Whether the correction is on is taken once per pass: at the start
@@ -137,10 +154,20 @@ public:
 
 private:
     std::optional<double> rateFromSource(const domain::Track &track);
-    double shiftFromSource(const domain::Track &track);
+    // The file's shift as the source answers it, whatever the mark: what
+    // the cue writer takes off a position written to the row
+    // (Track::engineCueWriteShiftMs). 0 when it cannot be told.
+    double fileShiftFromSource(const domain::Track &track);
     // The track's audio file under the audio root (setAudioRoot()).
     std::string audioFileOf(const domain::Track &track) const;
-    void fillRatesFromSource(std::vector<domain::Track> &tracks);
+    // The tracks whose cues it read again, at their file's rate.
+    std::vector<domain::Track *> fillRatesFromSource(std::vector<domain::Track> &tracks);
+    // The marked rows (see setLeadInSource()), read at the start of a
+    // pass; none, with a warning, when they cannot be read.
+    void takeRekordboxImportMarks();
+    // Whether this pass found the mark on the track's row.
+    bool onRekordboxTimeline(const domain::Track &track) const;
+    std::unordered_set<std::int64_t> m_rekordboxTimelineRows;
 
     std::string m_engineLibraryPath;
     std::string m_audioRoot;

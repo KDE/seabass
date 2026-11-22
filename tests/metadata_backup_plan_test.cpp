@@ -583,5 +583,48 @@ int main()
         std::cout << "case tempo (half a beat of the agreed tempo, else 60 ms) OK\n";
     }
 
+    // ---- stored cues an earlier build misread ------------------------------
+    // A row Engine's rekordbox import left unplayed holds its cues on
+    // rekordbox's timeline. An earlier build added the file's shift to
+    // them and stored them that late with that shift. The same row read
+    // now (flagged, positions as stored) compares equal within the
+    // tolerance, so the cues are not offered, but the track is: its stored
+    // cue timing is corrected, and it is not counted as already current.
+    // Not flagged, or a cue moved by more than the stored shift (a DJ's
+    // nudge within the tolerance): already current, as before.
+    {
+        const double shiftMs = 2257.0 * 1000.0 / 44100.0;
+        Track stored = storedTrack("Misread");
+        stored.bpm = 128.0;
+        stored.cues = {hotCue(1, 5000.0 + shiftMs)};
+        stored.storedEngineCueShiftMs = shiftMs;
+        Track stick = stickTrack("Misread");
+        stick.bpm = 128.0;
+        stick.format = "engine";
+        stick.engineCuesOnRekordboxTimeline = true;
+        stick.cues = {hotCue(1, 5000.0)};
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenRecently);
+        assert(plan.alreadyCurrent == 0 && plan.proposals.size() == 1);
+        const auto &p = plan.proposals.front();
+        assert(p.cueTimingCorrected && !p.cuesOffered && !p.cuesConflict && p.offersAnything());
+
+        Track unflagged = stick;
+        unflagged.engineCuesOnRekordboxTimeline = false;
+        const auto plain = planMetadataBackup({unflagged}, {stored}, StickWrittenRecently);
+        assert(plain.alreadyCurrent == 1 && plain.proposals.empty() && "not flagged: already current");
+
+        Track nudged = stored;
+        nudged.cues = {hotCue(1, 5120.0 + shiftMs)};
+        const auto moved = planMetadataBackup({stick}, {nudged}, StickWrittenRecently);
+        assert(moved.alreadyCurrent == 1 && moved.proposals.empty() && "a cue moved 120 ms is an edit, kept");
+
+        Track fromRekordbox = stored;
+        fromRekordbox.storedEngineCueShiftMs.reset();
+        const auto rekordbox = planMetadataBackup({stick}, {fromRekordbox}, StickWrittenRecently);
+        assert(rekordbox.alreadyCurrent == 1 && "a stored copy on rekordbox's timeline needs nothing");
+        std::cout << "case misread (stored cue timing an earlier build misread is offered for correction) OK\n";
+    }
+
     return 0;
 }

@@ -65,7 +65,7 @@ inline std::string withoutTrailingNuls(std::string text)
 // The sync planner and the Engine cue writer share this one rule, so what
 // the planner expects Engine to end up with is what the writer stores.
 //
-// `shiftMs` is the Engine track's Track::cueTimelineShiftMs (#50): a cue
+// `shiftMs` is the Engine track's Track::engineCueWriteShiftMs (#50): a cue
 // on rekordbox's timeline lands at positionMs - shiftMs on Engine's, so
 // one inside an MP3's lead-in lands at or before Engine's 0 and is as
 // unrepresentable as one at 0:00.
@@ -214,13 +214,37 @@ struct Track
     // whether or not the reader could see the audio file, and the same
     // as before the correction existed.
     double cueTimelineShiftMs = 0.0;
+    // An Engine row with cues that carries the mark of Engine's rekordbox
+    // import (thirdPartySourceId = 1): its cues are stored on rekordbox's
+    // timeline, not Engine's, so the reader added nothing to them
+    // (cueTimelineShiftMs 0) and they need no taking back to rekordbox.
+    // The metadata store records such cues as on rekordbox's timeline
+    // (storedEngineCueShiftMs unset), so a restore to Engine has the
+    // writer take the file's shift off and one to rekordbox writes them as
+    // they are. False for every other row.
+    bool engineCuesOnRekordboxTimeline = false;
+    // What the Engine cue writer takes off a position written to this row:
+    // the file's lead-in shift as the reader found it (#50), 0 when it
+    // could not tell or the file is not an MP3. The same as
+    // cueTimelineShiftMs on every row but one with
+    // engineCuesOnRekordboxTimeline, where the reader added nothing and
+    // the writer still takes the file's shift off. The planners predict
+    // what Engine ends up with by it (translateCuesForEngine()). Set by
+    // the Engine reader on rows with cues only, since asking costs a read
+    // of the file's start per MP3: on a row without cues it is 0, as
+    // cueTimelineShiftMs always is there, so a planner predicts no shift
+    // for cues written onto such a row though the writer takes the file's
+    // off (one in an MP3's first ~52 ms may then be planned as a main cue
+    // the writer leaves out). 0 on every other track.
+    double engineCueWriteShiftMs = 0.0;
     // A track read from the metadata store (MetadataStore::readAll):
     // when its cues were taken in from an Engine catalog, the
     // cueTimelineShiftMs they were read with, so the Engine position of
     // a cue is positionMs minus this; 0 for cues the store took in
     // before it recorded the shift, which are Engine's positions as
-    // stored. Nothing when the cues came from any other catalog, on
-    // rekordbox's timeline already. Unset on every track a catalog
+    // stored. Nothing when the cues came from any other catalog, or from
+    // an Engine row with engineCuesOnRekordboxTimeline: on rekordbox's
+    // timeline already. Unset on every track a catalog
     // reader returns.
     std::optional<double> storedEngineCueShiftMs;
 

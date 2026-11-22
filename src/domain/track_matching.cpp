@@ -302,4 +302,40 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
     return true;
 }
 
+std::optional<std::vector<CuePoint>> cuesMovedToPlacesOf(const std::vector<CuePoint> &existing,
+                                                         const std::vector<CuePoint> &incoming, double toleranceMs,
+                                                         double offsetMs, double withinMs)
+{
+    if (!cueSetsEqual(existing, incoming, toleranceMs)) {
+        return std::nullopt;
+    }
+    std::vector<CuePoint> moved = sortedCues(existing);
+    const std::vector<CuePoint> places = sortedCues(incoming);
+    for (size_t i = 0; i < moved.size(); ++i) {
+        const bool apart = std::abs(moved[i].positionMs - offsetMs - places[i].positionMs) <= withinMs
+            && (!moved[i].isLoop || std::abs(moved[i].loopEndMs - offsetMs - places[i].loopEndMs) <= withinMs);
+        if (!apart) {
+            return std::nullopt;
+        }
+    }
+    for (size_t i = 0; i < moved.size(); ++i) {
+        moved[i].positionMs = places[i].positionMs;
+        moved[i].loopEndMs = places[i].loopEndMs;
+    }
+    return moved;
+}
+
+std::optional<std::vector<CuePoint>> cuesWithMisreadTimingCorrected(const Track &incoming,
+                                                                    const std::vector<CuePoint> &incomingCues,
+                                                                    const std::vector<CuePoint> &storedCues,
+                                                                    std::optional<double> storedShiftMs,
+                                                                    double toleranceMs)
+{
+    if (incoming.format != "engine" || !incoming.engineCuesOnRekordboxTimeline || !storedShiftMs
+        || storedCues.empty()) {
+        return std::nullopt;
+    }
+    return cuesMovedToPlacesOf(storedCues, incomingCues, toleranceMs, *storedShiftMs, MisreadCueWithinMs);
+}
+
 }  // namespace seabass::domain

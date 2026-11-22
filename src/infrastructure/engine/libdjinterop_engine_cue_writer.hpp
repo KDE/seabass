@@ -94,7 +94,26 @@ public:
     };
     void countLeadInShiftDropsInto(std::shared_ptr<LeadInShiftDrops> drops) { m_drops = std::move(drops); }
 
+    // The complete set of the row's cues, given on rekordbox's timeline
+    // and stored on Engine's, the file's shift taken off. On a row that
+    // carries the mark of Engine's rekordbox import (thirdPartySourceId,
+    // see EngineAnalysisRowAccess::write()) the mark goes too, once the
+    // cues are in, when that shift is known (knownShiftMsOf()): left on,
+    // the player takes the cues written here for rekordbox's and moves
+    // them about 52 ms earlier, for good, on the row's first load.
+    // libdjinterop writes each column in a statement of its own, so a
+    // failure to take the mark off comes after the cues are written; it
+    // throws, saying so. Engine 1.x has no such column.
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
+
+    // The complete set of the row's cues as Engine's own stored positions:
+    // nothing taken off, and the mark left exactly as it is. For a caller
+    // putting back positions it holds as Engine stored them (Restore
+    // Metadata, from a stored copy taken from Engine), which cannot say
+    // whose timeline they were on: a copy an earlier build took from a
+    // marked row holds rekordbox's positions, one taken from a played row
+    // Engine's. Left with the mark it had, the row is as before the write.
+    void writeEngineStoredCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues);
 
     // The same write at a sample rate the caller read from the audio file,
     // for a row that does not record one: a row waiting for the player's
@@ -285,6 +304,13 @@ public:
 
 private:
     double shiftMsOf(djinterop::track &track);
+    // The shift a write takes off this row's positions, when it is known:
+    // 0 for a file that is not an MP3, the lead-in's for an MP3 read with
+    // the correction on. Nothing for an MP3 whose lead-in cannot be read
+    // or with the correction off, or a row that names no file: shiftMsOf()
+    // takes 0 off those, and their cues may still be on rekordbox's
+    // timeline, so a write never takes the mark off them.
+    std::optional<double> knownShiftMsOf(djinterop::track &track);
     std::string databaseFile() const;
     // setOverviewFileRoot()'s folder, else the library's.
     std::string overviewFileRoot() const;
@@ -300,18 +326,25 @@ private:
     // A grid written here is on Engine's timeline already, so with it the
     // row loses the mark of Engine's rekordbox import (thirdPartySourceId,
     // see EngineAnalysisRowAccess::write): left on, the player draws the
-    // grid about 52 ms early on the row's first load. Not when the row
-    // carries cues (carriesCues()): those may still be on rekordbox's
-    // timeline, waiting for the player to move them, and the mark is what
-    // makes it do so.
+    // grid about 52 ms early on the row's first load. A marked row's cues
+    // are on rekordbox's timeline (measured: every hot cue on such a row
+    // equals rekordbox's position to 1 ms), so where it carries any
+    // (carriesCues()) they are moved onto Engine's in the same transaction,
+    // by the shift writeCues() takes off and under its rules
+    // (movedOntoEngineTimeline()), and the mark goes. Where they cannot be
+    // read safely, or the row's sample rate is not known, cues and mark
+    // stay as they are: the player is then the one to move them. A row
+    // without the mark keeps its cues byte for byte.
+    // `knownShiftMs`: knownShiftMsOf() for the row, which the caller has
+    // asked already for the grid; only read when a grid is written.
     void writeColumns(std::int64_t id, const application::EngineAnalysisColumns &before,
-                      const application::EngineAnalysisColumns &after);
-    // Whether the row holds a cue of any kind: a hot cue, a loop, or a
-    // main cue. "No main cue" is sample -1 as the player writes it and 0
-    // as writeCues() does, so only one past the start counts. Cues that
-    // cannot be read (a damaged blob, a failed read) count as cues: nothing
-    // is known about them, and they must not cost the row its grid.
-    bool carriesCues(std::int64_t id);
+                      const application::EngineAnalysisColumns &after, std::optional<double> knownShiftMs);
+    // What writeColumns() does with the mark and the cues of a row given a
+    // grid: the mark taken off or not, and the cues to put in their place.
+    struct GridMarkPlan;
+    // `knownShift`: knownShiftMsOf() for the row, as the caller asked it.
+    GridMarkPlan planMarkWithGrid(std::int64_t id, const application::EngineAnalysisColumns &after,
+                                  std::optional<double> knownShift);
     // The overview file written (bytes) or taken away (none), through the
     // sink or the remover where there is one.
     void putOverviewFile(const std::string &relativePath, const std::optional<std::string> &bytes);
@@ -346,8 +379,19 @@ private:
     };
     Keep keepBeforeWrite(std::int64_t id, const std::string &keepKey, const KeepFacts &facts, const RowNow &row,
                          const std::function<void(application::EngineAnalysisColumns &)> &apply, bool previewOnly);
+    // How the cues handed to writeCues() are placed.
+    enum class CuePositions {
+        // On rekordbox's timeline: the file's shift taken off, the mark
+        // taken off when that shift is known.
+        Rekordbox,
+        // Engine's own stored positions: written as given, the mark left.
+        EngineStored,
+    };
     void writeCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
-                   std::optional<double> knownSampleRate);
+                   std::optional<double> knownSampleRate, CuePositions positions = CuePositions::Rekordbox);
+    // thirdPartySourceId set to NULL where it is 1 (the mark), through the
+    // library's tables (one connection with database()). Nothing on 1.x.
+    void takeOffRekordboxImportMark(std::int64_t id);
 
     // The open library, kept rather than reopened per call.
     //

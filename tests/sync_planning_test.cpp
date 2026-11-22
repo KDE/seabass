@@ -626,6 +626,7 @@ int main()
         Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""}});
         e.format = "engine";
         e.cueTimelineShiftMs = 51.18;
+        e.engineCueWriteShiftMs = 51.18;
         auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
         for (const auto &cue : plan.cuesToApply) {
             assert(cue.kind != CuePoint::Kind::Memory && "a memory cue inside the lead-in is never the main cue");
@@ -644,6 +645,37 @@ int main()
         }
         assert((mains == std::vector<double>{60000.0}) && "the main cue is the earliest past the lead-in");
         std::cout << "case (a memory cue inside the MP3 lead-in is never planned as the main cue) OK\n";
+        MatchingPolicy::reset();
+    }
+
+    // The same on a row Engine's rekordbox import left unplayed: the
+    // reader added nothing to its cues (cueTimelineShiftMs 0), but the
+    // writer still takes the file's 51.18 ms off whatever it writes there
+    // (Track::engineCueWriteShiftMs). A memory cue at 20 ms is never
+    // planned as the main cue, which the writer would leave out.
+    {
+        MatchingPolicy::set(MatchingPolicy::DefaultExactMatchSeconds, MatchingPolicy::DefaultCompareAudioSeconds,
+                            false);
+        const CuePoint early{CuePoint::Kind::Memory, 0, 20.0, "", ""};
+        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""}, early});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 30000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.engineCuesOnRekordboxTimeline = true;
+        e.cueTimelineShiftMs = 0.0;
+        e.engineCueWriteShiftMs = 51.18;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        for (const auto &cue : plan.cuesToApply) {
+            assert(cue.kind != CuePoint::Kind::Memory && "the 20 ms cue is never the main cue on a marked row");
+        }
+        // As a memory cue inside an unmarked row's lead-in: it takes a free
+        // pad, like one at 0:00, rather than being planned as a main cue
+        // the writer would drop.
+        const bool onAPad = std::any_of(plan.cuesToApply.begin(), plan.cuesToApply.end(), [](const CuePoint &c) {
+            return c.kind == CuePoint::Kind::Hot && c.positionMs == 20.0;
+        });
+        assert(onAPad && "it takes a pad, as on an unmarked row");
+        std::cout << "case (a marked row: the plan takes the writer's shift, not the reader's) OK\n";
         MatchingPolicy::reset();
     }
 

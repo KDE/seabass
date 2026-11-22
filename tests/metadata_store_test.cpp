@@ -19,6 +19,7 @@
 
 #include <sqlite3.h>
 
+#include "domain/metadata_backup_plan.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/local/metadata_store.hpp"
@@ -1628,6 +1629,183 @@ int main()
         assert(oldEngine && *oldEngine == 0.0 && "an Engine row from before the column holds raw positions");
         assert(!shiftOf(reopened, "Rekordbox Row").has_value());
         std::cout << "case 34 (an Engine row records the shift its cues carry; older ones read as raw) OK\n";
+    }
+
+    // ---- case 35: cues an earlier build misread on a marked Engine row --
+    //
+    // A row Engine's rekordbox import left unplayed holds its cues on
+    // rekordbox's timeline. An earlier build added the file's shift to
+    // them anyway and stored them that much late, with that shift. The
+    // same row read now (Track::engineCuesOnRekordboxTimeline) compares
+    // equal within the tolerance: its places replace the stored ones and
+    // the shift goes (NULL), labels, colours and authored_at stay. A
+    // reading without the flag changes nothing; a real difference is the
+    // merge rule's, as ever. Through the backup plan, as the page backs up:
+    // the plan offers what store() is then given.
+    {
+        const fs::path db = root / "engine-retime" / "metadata.db";
+        const double shiftMs = 2257.0 * 1000.0 / 44100.0;
+        auto oldReading = [&](const std::string &title, double positionMs) {
+            Track t = sampleTrack(stick, "Contents/Retime/" + title + ".mp3", title);
+            t.format = "engine";
+            t.cueTimelineShiftMs = shiftMs;
+            CuePoint cue = hotCue(1, positionMs + shiftMs, "#00FF00");
+            cue.comment = "drop";
+            t.cues = {cue};
+            return t;
+        };
+        auto newReading = [&](const std::string &title, std::vector<CuePoint> cues, bool flagged) {
+            Track t = sampleTrack(stick, "Contents/Retime/" + title + ".mp3", title);
+            t.format = "engine";
+            t.cueTimelineShiftMs = flagged ? 0.0 : shiftMs;
+            t.engineCuesOnRekordboxTimeline = flagged;
+            t.cues = std::move(cues);
+            return t;
+        };
+        auto rowOf = [](MetadataStore &metadata, const std::string &title) {
+            for (const Track &t : metadata.readAll()) {
+                if (t.title == title) {
+                    return t;
+                }
+            }
+            assert(false && "row not found");
+            return Track();
+        };
+        auto authoredAt = [&](const std::string &title) {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(db).c_str(), &raw) == SQLITE_OK);
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(raw, "SELECT authored_at FROM tracks WHERE title = ?", -1, &stmt, nullptr);
+            sqlite3_bind_text(stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+            std::string at;
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+            }
+            sqlite3_finalize(stmt);
+            sqlite3_close(raw);
+            return at;
+        };
+        auto ageAuthored = [&] {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(db).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "UPDATE tracks SET authored_at = '2020-01-01T00:00:00Z'", nullptr, nullptr,
+                                nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        };
+        MetadataStore metadata(db);
+        // A backup as the page runs it: planned against the store, and
+        // only the tracks the plan offers handed to store().
+        seabass::infrastructure::local::MetadataBackupSummary lastSummary;
+        auto backUp = [&](const Track &incoming, std::int64_t catalogModifiedAt) {
+            const auto plan = seabass::domain::planMetadataBackup({incoming}, metadata.readAll(), catalogModifiedAt);
+            std::vector<Track> staged;
+            for (const auto &proposal : plan.proposals) {
+                staged.push_back(proposal.stickTrack);
+            }
+            lastSummary = {};
+            if (!staged.empty()) {
+                lastSummary = store(metadata, staged, sourceFor(stick, "RV2", catalogModifiedAt));
+            }
+            return plan;
+        };
+        // "Nudged": a copy stored from another stick, shift and all, whose
+        // cue a DJ moved 120 ms (within the tolerance) after it was read.
+        store(metadata,
+              {oldReading("Misread", 5000.0), oldReading("Differs", 5000.0), oldReading("Unflagged", 5000.0),
+               oldReading("Nudged", 5120.0), oldReading("Stray", 5000.0)},
+              sourceFor(stick, "RV2", CatalogOld));
+        // "Stray": as an older build stored it, with a stray memory cue
+        // before the start beside the misread one (a store took those in
+        // before they were kept out).
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(db).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw,
+                                "INSERT INTO cues (track_id, kind, hot_number, position_ms) "
+                                "SELECT id, 'memory', 0, -1 FROM tracks WHERE title = 'Stray'",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        ageAuthored();
+        {
+            const Track stored = rowOf(metadata, "Misread");
+            assert(stored.storedEngineCueShiftMs && std::abs(*stored.storedEngineCueShiftMs - shiftMs) < 1e-9);
+            assert(std::abs(stored.cues.at(0).positionMs - (5000.0 + shiftMs)) < 1e-9);
+        }
+
+        // (1) Flagged, the same cue at its place on rekordbox's timeline,
+        // with no colour and no label of its own.
+        CuePoint plain = hotCue(1, 5000.0, "");
+        {
+            const auto plan = backUp(newReading("Misread", {plain}, true), CatalogMid);
+            assert(plan.proposals.size() == 1 && plan.proposals.front().cueTimingCorrected
+                   && !plan.proposals.front().cuesOffered && "offered as cue timing to correct");
+            assert(lastSummary.tracksUpdated == 1 && lastSummary.tracksUnchanged == 0
+                   && "the corrected track counts as changed");
+            const Track stored = rowOf(metadata, "Misread");
+            std::cout << "case 35: misread cue now at " << stored.cues.at(0).positionMs << " ms, shift "
+                      << (stored.storedEngineCueShiftMs ? std::to_string(*stored.storedEngineCueShiftMs) : "none")
+                      << "\n";
+            assert(stored.cues.size() == 1 && std::abs(stored.cues[0].positionMs - 5000.0) < 1e-9);
+            assert(!stored.storedEngineCueShiftMs.has_value());
+            assert(stored.cues[0].color == "#00FF00" && stored.cues[0].comment == "drop" && "label and colour kept");
+            assert(authoredAt("Misread") == "2020-01-01T00:00:00Z" && "not the DJ's edit");
+        }
+
+        // (2) The same reading without the flag: nothing changes.
+        {
+            const auto plan = backUp(newReading("Unflagged", {plain}, false), CatalogMid);
+            assert(plan.proposals.empty() && plan.alreadyCurrent == 1);
+            const Track stored = rowOf(metadata, "Unflagged");
+            assert(std::abs(stored.cues.at(0).positionMs - (5000.0 + shiftMs)) < 1e-9);
+            assert(stored.storedEngineCueShiftMs && std::abs(*stored.storedEngineCueShiftMs - shiftMs) < 1e-9);
+            assert(authoredAt("Unflagged") == "2020-01-01T00:00:00Z");
+        }
+
+        // (1b) The same with a stray stored beside it: the stray is not
+        // compared, and the correction leaves it out, as a cue write would.
+        {
+            assert(rowOf(metadata, "Stray").cues.size() == 2);
+            const auto plan = backUp(newReading("Stray", {plain}, true), CatalogMid);
+            assert(plan.proposals.size() == 1 && plan.proposals.front().cueTimingCorrected);
+            const Track stored = rowOf(metadata, "Stray");
+            assert(stored.cues.size() == 1 && std::abs(stored.cues[0].positionMs - 5000.0) < 1e-9);
+            assert(!stored.storedEngineCueShiftMs.has_value());
+        }
+
+        // (2b) Flagged and within the tolerance, but not by the stored
+        // shift: a real edit, not a misreading. Left as stored.
+        {
+            const auto plan = backUp(newReading("Nudged", {plain}, true), CatalogMid);
+            assert(plan.proposals.empty() && plan.alreadyCurrent == 1);
+            const Track stored = rowOf(metadata, "Nudged");
+            std::cout << "case 35: nudged cue stays at " << stored.cues.at(0).positionMs << " ms\n";
+            assert(std::abs(stored.cues.at(0).positionMs - (5120.0 + shiftMs)) < 1e-9 && "the nudged cue kept");
+            assert(stored.storedEngineCueShiftMs && std::abs(*stored.storedEngineCueShiftMs - shiftMs) < 1e-9);
+        }
+
+        // (3) Flagged, but a cue beyond the tolerance: the merge rule's.
+        // An older catalog loses, so the stored copy stays as it was; a
+        // newer one wins, and its cues come in on rekordbox's timeline.
+        const std::vector<CuePoint> elsewhere = {hotCue(1, 9000.0, "")};
+        {
+            const auto plan = backUp(newReading("Differs", elsewhere, true), 1'500'000'000);
+            assert(plan.proposals.empty() && "the stored copy wins, nothing offered");
+            const Track stored = rowOf(metadata, "Differs");
+            assert(std::abs(stored.cues.at(0).positionMs - (5000.0 + shiftMs)) < 1e-9 && "the stored copy kept");
+            assert(stored.storedEngineCueShiftMs && std::abs(*stored.storedEngineCueShiftMs - shiftMs) < 1e-9);
+        }
+        {
+            const auto plan = backUp(newReading("Differs", elsewhere, true), CatalogNewest);
+            assert(plan.proposals.size() == 1 && plan.proposals.front().cuesOffered
+                   && !plan.proposals.front().cueTimingCorrected);
+            const Track stored = rowOf(metadata, "Differs");
+            assert(std::abs(stored.cues.at(0).positionMs - 9000.0) < 1e-9 && "the newer catalog's cue");
+            assert(!stored.storedEngineCueShiftMs.has_value());
+        }
+        std::cout << "case 35 (cues an earlier build misread on a marked Engine row are put right) OK\n";
     }
 
     return 0;

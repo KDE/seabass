@@ -96,6 +96,36 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
 bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b,
                   double toleranceMs = CueFallbackToleranceMs);
 
+// `existing` with each cue moved to the place of its partner in `incoming`
+// (position and loop end), everything else of it (kind, pad, colour,
+// comment) as it was. The partners are the ones cueSetsEqual() pairs, so
+// nothing when it would call the two sets different, and nothing unless
+// every partner sits `offsetMs` before its cue to within `withinMs` (both
+// ends of a loop): the same cues read that far apart, not cues moved.
+std::optional<std::vector<CuePoint>> cuesMovedToPlacesOf(const std::vector<CuePoint> &existing,
+                                                         const std::vector<CuePoint> &incoming, double toleranceMs,
+                                                         double offsetMs, double withinMs);
+
+// A stored copy of an Engine row's cues as an earlier build misread them,
+// and what the metadata store keeps in their place. A row Engine's
+// rekordbox import left unplayed holds its cues on rekordbox's timeline;
+// before the mark was known the reader added the file's lead-in shift to
+// them anyway, so the store holds them that much late with that shift
+// beside them (or at 0, before it recorded the shift). The same row read
+// now (`incoming` an Engine track with engineCuesOnRekordboxTimeline,
+// `incomingCues` its cues as the store takes them) is the same cues: the
+// stored ones moved to its places (cuesMovedToPlacesOf()), when every one
+// of them is exactly the stored shift later, to MisreadCueWithinMs. A cue
+// moved since by more than that is an edit, not a misreading: nothing.
+// Nothing too when the stored copy carries no Engine shift
+// (`storedShiftMs`), has no cues, or the sets differ.
+inline constexpr double MisreadCueWithinMs = 2.0;
+std::optional<std::vector<CuePoint>> cuesWithMisreadTimingCorrected(const Track &incoming,
+                                                                    const std::vector<CuePoint> &incomingCues,
+                                                                    const std::vector<CuePoint> &storedCues,
+                                                                    std::optional<double> storedShiftMs,
+                                                                    double toleranceMs);
+
 // The same cues, with any colour the target already had put back where
 // the incoming cue has none.
 //

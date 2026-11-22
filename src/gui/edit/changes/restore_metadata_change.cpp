@@ -33,15 +33,15 @@ namespace
 
 constexpr const char *LogTag = "metadata-restore";
 
-// The proposal's cues on rekordbox's timeline, where every cue writer
-// takes them (#50). Cues the store took in from Engine carry the shift
-// the Engine reader had added then (0 for ones stored before the store
-// recorded it: Engine's own positions); the Engine position is theirs
-// minus that. `targetShiftMs` is the shift the target's own reader adds
-// for this file today, by the same rule and the same setting: what the
-// Engine writer will take off again, or for a rekordbox catalog the
-// distance between the two timelines. Cues from any other catalog are
-// on rekordbox's timeline already and go as they are.
+// The proposal's cues on the target's timeline (#50). Cues the store took
+// in from Engine carry the shift the Engine reader had added then (0 for
+// ones stored before the store recorded it: Engine's own positions); the
+// Engine position is theirs minus that. `targetShiftMs` is what the
+// target is to get on top of that: 0 for Engine's own positions (put back
+// with writeEngineStoredCues()), or for a rekordbox catalog the shift its
+// reader adds for this file today, the distance between the two
+// timelines. Cues from any other catalog are on rekordbox's timeline
+// already and go as they are.
 std::vector<domain::CuePoint> cuesOnTargetTimeline(const domain::MetadataRestoreProposal &proposal,
                                                    double targetShiftMs)
 {
@@ -511,14 +511,23 @@ ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
     // exists to protect.
     bool wroteIntoWriteRoot = false;
     if (m_proposal.cuesOffered) {
+        auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(writer.writer.get());
         std::vector<domain::CuePoint> cues;
-        if (auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(writer.writer.get())) {
-            cues = cuesOnTargetTimeline(m_proposal,
-                                        m_proposal.cuesEngineShiftMs ? engine->cueTimelineShiftMs(sourceId) : 0.0);
+        if (engine && m_proposal.cuesEngineShiftMs) {
+            // A stored copy taken from Engine goes back where Engine had
+            // it: the shift it was read with taken off, the positions
+            // written as Engine's own. Whose timeline those were on is not
+            // known (a copy an earlier build took from a row Engine's
+            // rekordbox import left unplayed holds rekordbox's), so the
+            // row's mark is left as it is.
+            cues = cuesOnTargetTimeline(m_proposal, 0.0);
+            engine->writeEngineStoredCues(sourceId, cues);
         } else {
-            cues = cuesForPioneer(m_proposal);
+            // On rekordbox's timeline: an Engine writer takes the file's
+            // shift off (and the mark with it, when that is known).
+            cues = engine ? m_proposal.cues : cuesForPioneer(m_proposal);
+            writer.writer->writeHotCues(sourceId, cues);
         }
-        writer.writer->writeHotCues(sourceId, cues);
         // Counted, because FormatWriteSession throws a scratch copy away
         // on a cancel when nothing was applied to it. Engine and
         // OneLibrary cues are written INTO that copy, so leaving them

@@ -210,6 +210,8 @@ public:
     std::filesystem::path artworkDir() const;
 
 private:
+    // The row's whole cue list replaced by `cues`.
+    void replaceCues(std::int64_t trackId, const std::vector<domain::CuePoint> &cues);
     void openAndMigrate();
 
     std::filesystem::path m_databasePath;
