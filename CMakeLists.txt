@@ -1048,6 +1048,14 @@ if(TARGET Qt6::Multimedia)
     target_link_libraries(seabass-cli PRIVATE seabass_audio_qt)
 endif()
 
+# Diagnostic, not a test, so built with tests off too: what the audio
+# alignment makes of each pair of copies, window by window, and which rule
+# made a pair unknown (real files, or tests/fixtures/alignment).
+if(TARGET seabass_audio_qt)
+    add_executable(alignment_dump tools/alignment_dump.cpp)
+    target_link_libraries(alignment_dump PRIVATE seabass_audio_qt seabass_core)
+endif()
+
 # The two tests of the Qt audio probes sit here, beside the library they
 # test, rather than in the suite at the end of the file, so they say
 # SEABASS_TESTS themselves: without it a package build (-DSEABASS_TESTS=OFF)
