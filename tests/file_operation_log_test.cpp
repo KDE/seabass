@@ -26,10 +26,12 @@
 
 #include "infrastructure/logging/file_operation_log.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "seabass_version.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
 using seabass::infrastructure::logging::FileOperationLog;
+using seabass::infrastructure::logging::writerLine;
 
 namespace
 {
@@ -87,8 +89,31 @@ int main()
 
         assert(fs::exists(logFile));
         const auto lines = linesOf(logFile);
-        assert(lines.size() == 1);
-        assert(looksLikeARecordOf(lines[0], "wrote export.pdb"));
+        assert(lines.size() == 2);
+        assert(looksLikeARecordOf(lines[0], writerLine()));
+        assert(looksLikeARecordOf(lines[1], "wrote export.pdb"));
+    }
+
+    // Which Seabass wrote: its version, channel and system, before the
+    // first line of every log object, so of every save.
+    {
+        const std::string line = writerLine();
+        assert(line.starts_with(std::string("Seabass ") + seabass::version::Number + " (" + seabass::version::Channel));
+        const std::string commit = seabass::version::Commit;
+        const std::string build = std::string(seabass::version::Channel) + (commit.empty() ? "" : ", " + commit);
+        assert(line.starts_with(std::string("Seabass ") + seabass::version::Number + " (" + build + ") on "));
+        assert(line.size() > line.find(") on ") + 5);
+        assert(line.find('\n') == std::string::npos);
+    }
+
+    // A log nothing is recorded in writes nothing, the writer's line
+    // included: opening one must not create a file on a stick.
+    {
+        const fs::path logFile = root / "silent" / "operations.log";
+        {
+            FileOperationLog log(seabass::pathToUtf8(logFile));
+        }
+        assert(!fs::exists(logFile));
     }
 
     // Lines from one log object, in the order they were recorded. The
@@ -102,10 +127,11 @@ int main()
         log.record("third");
 
         const auto lines = linesOf(logFile);
-        assert(lines.size() == 3);
-        assert(looksLikeARecordOf(lines[0], "first"));
-        assert(looksLikeARecordOf(lines[1], "second"));
-        assert(looksLikeARecordOf(lines[2], "third"));
+        assert(lines.size() == 4);
+        assert(looksLikeARecordOf(lines[0], writerLine()));
+        assert(looksLikeARecordOf(lines[1], "first"));
+        assert(looksLikeARecordOf(lines[2], "second"));
+        assert(looksLikeARecordOf(lines[3], "third"));
     }
 
     // A later run appends to what the earlier one left. This is a
@@ -124,9 +150,11 @@ int main()
         }
 
         const auto lines = linesOf(logFile);
-        assert(lines.size() == 2);
-        assert(looksLikeARecordOf(lines[0], "run one"));
-        assert(looksLikeARecordOf(lines[1], "run two"));
+        assert(lines.size() == 4);
+        assert(looksLikeARecordOf(lines[0], writerLine()));
+        assert(looksLikeARecordOf(lines[1], "run one"));
+        assert(looksLikeARecordOf(lines[2], writerLine()));
+        assert(looksLikeARecordOf(lines[3], "run two"));
     }
 
     // Two logs open on the same file at once, which is two Seabass
@@ -143,10 +171,14 @@ int main()
         }
 
         const auto lines = linesOf(logFile);
-        assert(lines.size() == 6);
-        for (int i = 0; i < 3; ++i) {
-            assert(looksLikeARecordOf(lines[i * 2], "from A " + std::to_string(i)));
-            assert(looksLikeARecordOf(lines[i * 2 + 1], "from B " + std::to_string(i)));
+        assert(lines.size() == 8);
+        assert(looksLikeARecordOf(lines[0], writerLine()));
+        assert(looksLikeARecordOf(lines[1], "from A 0"));
+        assert(looksLikeARecordOf(lines[2], writerLine()));
+        assert(looksLikeARecordOf(lines[3], "from B 0"));
+        for (int i = 1; i < 3; ++i) {
+            assert(looksLikeARecordOf(lines[2 + i * 2], "from A " + std::to_string(i)));
+            assert(looksLikeARecordOf(lines[3 + i * 2], "from B " + std::to_string(i)));
         }
     }
 
@@ -185,9 +217,10 @@ int main()
         log.record("two\nlines");
 
         const auto lines = linesOf(logFile);
-        assert(lines.size() == 2);
-        assert(looksLikeARecordOf(lines[0], "two"));
-        assert(lines[1] == "lines");  // no timestamp: it is not a record of its own
+        assert(lines.size() == 3);
+        assert(looksLikeARecordOf(lines[0], writerLine()));
+        assert(looksLikeARecordOf(lines[1], "two"));
+        assert(lines[2] == "lines");  // no timestamp: it is not a record of its own
     }
 
     fs::remove_all(root, ec);
