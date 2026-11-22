@@ -65,10 +65,12 @@ inline constexpr double ResolvingRivalShare = 0.92;
 // start window and the middle would then have its start window "agree"
 // with the middle's +1 bar, and every cue before the insertion moved a
 // bar. So a torn window whose rival reaches this share of its best is no
-// vote: the pair is unknown. A loop that varies by 3% a bar scored its
-// rivals at 0.9998, and its true lag stayed on top through both codecs:
-// a codec lowers every lag's coefficient alike.
-inline constexpr double TornWindowCeiling = 0.9999;
+// vote: the pair is unknown. How close is too close is set by the noise
+// a lossy copy adds to the gap between the true lag and an alias: over a
+// 40 s window about 1e-4 to 3e-4. 0.999 leaves ten times that. (A loop
+// varying 3% a bar scored its rivals at 0.9998 and kept its true lag on
+// top through MP3 and AAC once, but with too little margin to rely on.)
+inline constexpr double TornWindowCeiling = 0.999;
 // A file too short for three windows of its own gives the same samples
 // to all three, and "the windows agree" then says nothing: a 4.5 s file
 // with 400 ms cut out lined up "cleanly" at 0.71. For such a pair the

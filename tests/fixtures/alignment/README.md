@@ -143,11 +143,12 @@ The answers that are not one number, and why:
   +2000 is wrong for every sound between 40 s and 42 s, and the start
   window cannot tell: its true lag 0 and +2000 score the same, and which
   comes out on top is chance. A window whose rival reaches
-  `TornWindowCeiling` (0.9999) of its best is no vote, so this is
-  unknown whichever lag the start window happens to pick. (With these files the start window's pick lands on the edge of the
-  lags it looks at, which makes it unknown before the ceiling is asked;
-  audio_alignment_test holds the ceiling itself to a tied window that
-  picked the agreeing lag.)
+  `TornWindowCeiling` (0.999) of its best is no vote, so this is unknown
+  whichever lag the start window happens to pick. (With these files the
+  start window's pick lands on the edge of the lags it looks at, which
+  makes it unknown before the ceiling is asked; audio_alignment_test
+  holds the ceiling itself to a tied window that picked the agreeing
+  lag.)
 * `other`: no shift lines the two up: unknown.
 * `pure-730`: the loop repeats exactly; only the silence in front tells
   the true 730 ms from 730 ms plus or minus a bar. The true value or
