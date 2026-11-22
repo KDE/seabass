@@ -366,6 +366,105 @@ auto keptSlicer(const KeptSamples &kept)
     return [&kept](size_t start, size_t length) { return kept.slice(start, length); };
 }
 
+// Whether two of a pair's windows share samples in either file: then they
+// are not three looks at the music, and agreeing proves nothing.
+bool windowsShareSamples(size_t na, size_t nb, double rate)
+{
+    const std::vector<Window> windows = windowsFor(na, nb, rate);
+    auto overlap = [](size_t startX, size_t lengthX, size_t startY, size_t lengthY) {
+        return startX < startY + lengthY && startY < startX + lengthX;
+    };
+    for (size_t i = 0; i < windows.size(); ++i) {
+        for (size_t j = i + 1; j < windows.size(); ++j) {
+            if (overlap(windows[i].startA, windows[i].lengthA, windows[j].startA, windows[j].lengthA)
+                || overlap(windows[i].startB, windows[i].lengthB, windows[j].startB, windows[j].lengthB)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// The overlap of the two files at `shiftMs`, in parts of PartSeconds (at
+// least three), each part with sound in it correlating at least `floor`.
+// A part all but silent on either side (under a hundredth of its share of
+// the energy: a silent intro) says nothing either way and is passed over,
+// but at least two parts must have sound. False too when the files were
+// not kept whole.
+template<typename SliceA, typename SliceB>
+bool holdsInEveryPart(size_t na, size_t nb, const SliceA &sliceA, const SliceB &sliceB, double shiftMs, double rate,
+                      double floor)
+{
+    const auto a = sliceA(0, na);
+    const auto b = sliceB(0, nb);
+    if (!a || !b) {
+        return false;
+    }
+    const long long lag = std::llround(shiftMs * rate / 1000.0);
+    const long long from = std::max(0LL, -lag);
+    const long long to = std::min(static_cast<long long>(na), static_cast<long long>(nb) - lag);
+    const long long partLength = std::max(1LL, std::llround(PartSeconds * rate));
+    const long long parts = std::max(3LL, (to - from) / partLength);
+    if (to - from < parts) {
+        return false;
+    }
+    struct Sums
+    {
+        double cross = 0.0, energyA = 0.0, energyB = 0.0;
+    };
+    std::vector<Sums> sums(static_cast<size_t>(parts));
+    Sums all;
+    for (long long k = 0; k < parts; ++k) {
+        const long long begin = from + k * (to - from) / parts;
+        const long long end = from + (k + 1) * (to - from) / parts;
+        Sums &part = sums[static_cast<size_t>(k)];
+        for (long long i = begin; i < end; ++i) {
+            const double x = (*a)[static_cast<size_t>(i)];
+            const double y = (*b)[static_cast<size_t>(i + lag)];
+            part.cross += x * y;
+            part.energyA += x * x;
+            part.energyB += y * y;
+        }
+        all.energyA += part.energyA;
+        all.energyB += part.energyB;
+    }
+    constexpr double SilentShare = 0.01;
+    const double share = 1.0 / static_cast<double>(parts);
+    int heard = 0;
+    for (const Sums &part : sums) {
+        if (part.energyA <= SilentShare * share * all.energyA || part.energyB <= SilentShare * share * all.energyB) {
+            continue;
+        }
+        ++heard;
+        if (part.cross / std::sqrt(part.energyA * part.energyB) < floor) {
+            return false;
+        }
+    }
+    return heard >= 2;
+}
+
+template<typename SliceA, typename SliceB>
+std::optional<double> measureOver(size_t na, size_t nb, const SliceA &sliceA, const SliceB &sliceB, double rate,
+                                  double maxShiftSeconds)
+{
+    const auto windows = shiftsOver(na, nb, sliceA, sliceB, rate, maxShiftSeconds);
+    if (!windows) {
+        return std::nullopt;
+    }
+    const std::optional<double> shift = cleanShiftMs(*windows);
+    if (!shift || !windowsShareSamples(na, nb, rate)) {
+        return shift;
+    }
+    double weakest = 1.0;
+    for (const WindowShift &window : *windows) {
+        weakest = std::min(weakest, window.normalised);
+    }
+    if (!holdsInEveryPart(na, nb, sliceA, sliceB, *shift, rate, PartShare * weakest)) {
+        return std::nullopt;
+    }
+    return shift;
+}
+
 }  // namespace
 
 std::optional<std::span<const float>> KeptSamples::slice(size_t start, size_t length) const
@@ -494,11 +593,7 @@ std::optional<std::vector<WindowShift>> windowShifts(const KeptSamples &a, const
 
 std::optional<double> measureShiftMs(const KeptSamples &a, const KeptSamples &b, double rate, double maxShiftSeconds)
 {
-    const auto windows = windowShifts(a, b, rate, maxShiftSeconds);
-    if (!windows) {
-        return std::nullopt;
-    }
-    return cleanShiftMs(*windows);
+    return measureOver(a.total, b.total, keptSlicer(a), keptSlicer(b), rate, maxShiftSeconds);
 }
 
 bool alignmentCovers(const KeptSamples &a, const KeptSamples &b, double rate)
@@ -517,11 +612,7 @@ bool alignmentCovers(const KeptSamples &a, const KeptSamples &b, double rate)
 std::optional<double> measureShiftMs(std::span<const float> a, std::span<const float> b, double rate,
                                      double maxShiftSeconds)
 {
-    const auto windows = windowShifts(a, b, rate, maxShiftSeconds);
-    if (!windows) {
-        return std::nullopt;
-    }
-    return cleanShiftMs(*windows);
+    return measureOver(a.size(), b.size(), wholeSlicer(a), wholeSlicer(b), rate, maxShiftSeconds);
 }
 
 }  // namespace seabass::domain::alignment

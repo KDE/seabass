@@ -235,15 +235,17 @@ int main()
     // from the file at the next save.
     {
         std::string text = readFile(cacheFile);
-        for (size_t at = text.find("\"method\":\"2\""); at != std::string::npos; at = text.find("\"method\":\"2\"")) {
-            text.replace(at, 12, "\"method\":\"1\"");
+        const std::string current = "\"method\":\"" + std::to_string(CachedAudioAlignmentProbe::MethodVersion) + "\"";
+        const std::string older = "\"method\":\"" + std::to_string(CachedAudioAlignmentProbe::MethodVersion - 1) + "\"";
+        for (size_t at = text.find(current); at != std::string::npos; at = text.find(current)) {
+            text.replace(at, current.size(), older);
         }
         writeFile(cacheFile, text);
         auto probe = makeProbe(root, [&](CountingProbe &p) { p.answers[{a, b}] = Answer::linedUp(-4.0); });
         assert(probe.cached->size() == 0 && "lines of another method are not trusted");
         assert(probe.cached->align(a, b).kind == Kind::LinedUp && probe.counter->aligned == 1);
         assert(probe.cached->save());
-        assert(readFile(cacheFile).find("\"method\":\"1\"") == std::string::npos && "and are dropped");
+        assert(readFile(cacheFile).find(older) == std::string::npos && "and are dropped");
     }
 
     // A damaged cache is an empty one: garbage lines cost their pair, a
@@ -251,7 +253,8 @@ int main()
     {
         const std::string good = readFile(cacheFile);
         writeFile(cacheFile, "not json at all\n{\"a\":\"Contents/a/Song.mp3\",\"b\":\n\x01\x02\x03\n" + good
-                                 + "{\"a\":\"z\",\"b\":\"a\",\"method\":\"2\",\"result\":\"shift\",\"shift\":\"x\"}\n");
+                                 + "{\"a\":\"z\",\"b\":\"a\",\"method\":\"" + std::to_string(CachedAudioAlignmentProbe::MethodVersion)
+                                 + "\",\"result\":\"shift\",\"shift\":\"x\"}\n");
         auto probe = makeProbe(root, [](CountingProbe &) {});
         assert(probe.cached->size() == 1 && "only the good line");
         assert(probe.cached->align(a, b).kind == Kind::LinedUp && probe.counter->aligned == 0);

@@ -293,8 +293,10 @@ public:
         const double markerInTarget = m_files.at(c.target).markersMs.at(marker);
         const auto source = m_samples.decoded(seabass::pathToUtf8(m_fixtures / seabass::pathFromUtf8(c.source)));
         const auto decodedTarget = m_samples.decoded(target.filePath);
-        assert(source && decodedTarget);
-        const auto found = findNear(*source, sourceDecoderMs, *decodedTarget, onDecoder, 5.0);
+        // The fixtures are short enough to be kept whole, in one piece.
+        assert(source && decodedTarget && source->pieces.size() == 1 && decodedTarget->pieces.size() == 1);
+        const auto found = findNear(source->pieces[0].samples, sourceDecoderMs, decodedTarget->pieces[0].samples,
+                                    onDecoder, 5.0);
         const double fromMarker = onDecoder - markerInTarget;
         const bool ok = std::abs(fromMarker) <= LandsWithinMs && found && std::abs(found->offsetMs) <= LandsWithinMs
             && found->normalised >= 0.97 && raw && std::abs(*raw - onDecoder) <= LandsWithinMs;
@@ -332,7 +334,8 @@ int main(int argc, char **argv)
     const fs::path fixtures = seabass::pathFromUtf8(argv[1]);
     const auto files = readFiles(fixtures);
     Checker checker(fixtures, files);
-    auto probe = seabass::infrastructure::audio::makeAudioAlignmentProbe();
+    // No stick root, so no cache: every pair is measured.
+    auto probe = seabass::infrastructure::audio::makeAudioAlignmentProbe({});
     assert(probe->hasDecoder());
 
     const std::vector<Case> cases = {
