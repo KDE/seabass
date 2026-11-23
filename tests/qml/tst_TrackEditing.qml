@@ -38,7 +38,8 @@ TestCase {
             height: 880
             addCueController: ({statusMessage: "", errorMessage: "", busy: false, pendingRevision: 0})
             playbackController: ({waveformFor: function() { return []; },
-                                  beatTicksFor: function() { return []; }})
+                                  beatTicksFor: function() { return []; },
+                                  cuesOnGridTimeline: (format, path, cues) => cues})
             format: "rekordbox"
             // Off in the app (ratings only, 2026-11-21); these tests keep
             // the comment editor covered for when it is switched on.
@@ -53,7 +54,8 @@ TestCase {
             height: 880
             addCueController: ({statusMessage: "", errorMessage: "", busy: false, pendingRevision: 0})
             playbackController: ({waveformFor: function() { return []; },
-                                  beatTicksFor: function() { return []; }})
+                                  beatTicksFor: function() { return []; },
+                                  cuesOnGridTimeline: (format, path, cues) => cues})
             format: "rekordbox"
         }
     }

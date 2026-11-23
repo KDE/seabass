@@ -17,10 +17,28 @@ TestCase {
 
     readonly property string clickFile: Qt.resolvedUrl("../fixtures/mp3-click/click-D-lame-44100.mp3").toString()
         .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
+    // A file that is there but is no audio: an Engine track's popup detail
+    // cannot be made from it, and Engine's stored waveform stands in.
+    readonly property string undecodableFile: Qt.resolvedUrl("tst_WaveformBeatGridEngine.qml").toString()
+        .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
 
     Component {
         id: playerComponent
         PlaybackController {}
+    }
+    Component {
+        id: detailSpyComponent
+        SignalSpy { signalName: "detailWaveformChanged" }
+    }
+    // Asks for the loaded track's popup detail and waits for the answer,
+    // which comes off the GUI thread.
+    function askForDetail(player) {
+        const spy = createTemporaryObject(detailSpyComponent, testCase, {target: player});
+        player.requestDetailWaveform();
+        if (spy.count === 0) {
+            spy.wait(30000);
+        }
+        return player.detailWaveform;
     }
 
     function library() {
@@ -119,8 +137,8 @@ TestCase {
         verify(engineGridFixture.setRow(lib.path, 44100, 120));
         verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
         const player = createTemporaryObject(playerComponent, testCase);
-        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
-        player.requestDetailWaveform();
+        player.load("engine", lib.path, lib.id, testCase.undecodableFile, "Grid", "An Artist", "", [], "", false);
+        askForDetail(player);
         compare(player.detailWaveform.columns.byteLength, 1024 * 3, "the first opening's detail");
         compare(new Uint8Array(player.detailWaveform.columns)[0], 128, "at the level it was written at");
         player.releaseDetailWaveform();   // closed
@@ -134,6 +152,119 @@ TestCase {
         const level = () => player.detailWaveform.columns && player.detailWaveform.columns.byteLength > 0
             ? new Uint8Array(player.detailWaveform.columns)[0] : -1;
         tryVerify(() => level() === 64, 10000, "read again after the write, as the write left it");
+        player.stop();
+    }
+
+    // An Engine track's popup detail is made from its audio, on Engine's
+    // timeline, as a Denon player makes its own: 150 columns a second, not
+    // the stored overview's 1024 for the whole track. The click file's
+    // click is at 1.500 s on Engine's timeline (qt_decoder_timeline_test),
+    // so in column 225, with silence a tenth of a second either side.
+    function test_anEngineDetailIsMadeFromTheAudio() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const player = createTemporaryObject(playerComponent, testCase);
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        const detail = askForDetail(player);
+        compare(detail.columns.byteLength, 450 * 3, "three seconds at 150 columns a second");
+        fuzzyCompare(detail.msPerColumn, 1000 / 150, 1e-9);
+        compare(detail.startMs, 0, "on Engine's timeline, where its grid is");
+        const bytes = new Uint8Array(detail.columns);
+        const loudest = (c) => Math.max(bytes[3 * c], bytes[3 * c + 1], bytes[3 * c + 2]);
+        let peak = -1;
+        for (let c = 0; c < 450; ++c) {
+            if (peak < 0 || loudest(c) > loudest(peak)) {
+                peak = c;
+            }
+        }
+        verify(Math.abs(peak - 225) <= 1, "the click in column " + peak);
+        compare(loudest(225 - 15), 0, "silence before it");
+        compare(loudest(225 + 15), 0, "and after it");
+        player.stop();
+    }
+
+    // Where the audio cannot be decoded, Engine's stored waveform is the
+    // detail, as it always was: a file that is not audio, and one that is
+    // not there (load() then reads no analysis, and the popup's read does).
+    function test_withoutAudioTheStoredWaveformStays_data() {
+        return [{tag: "not audio", file: testCase.undecodableFile},
+                {tag: "missing", file: "/nonexistent/none.mp3"}];
+    }
+    function test_withoutAudioTheStoredWaveformStays(data) {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const player = createTemporaryObject(playerComponent, testCase);
+        player.load("engine", lib.path, lib.id, data.file, "Grid", "An Artist", "", [], "", false);
+        const detail = askForDetail(player);
+        compare(detail.columns.byteLength, 1024 * 3, "the stored waveform's 1024 entries");
+        compare(new Uint8Array(detail.columns)[0], 128, "at the level it was written at");
+        player.stop();
+    }
+
+    // The audio detail is kept for the session, per file as it is: asked
+    // for again it is not decoded again, a rewritten file (a new time, a
+    // new size) is, the last four files are kept and no more, and a file
+    // that could not be decoded is not tried again either.
+    function test_theAudioDetailIsKeptPerFile() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const player = createTemporaryObject(playerComponent, testCase);
+        const copy = (n) => lib.path + "/click-" + n + ".mp3";
+        const detailOf = (file) => {
+            player.load("engine", lib.path, lib.id, file, "Grid", "An Artist", "", [], "", false);
+            return askForDetail(player);
+        };
+        verify(stickFixture.copyFile(testCase.clickFile, copy(0)));
+        compare(detailOf(copy(0)).columns.byteLength, 450 * 3);
+        compare(player.audioDetailDecodes(), 1);
+        compare(detailOf(copy(0)).columns.byteLength, 450 * 3, "the same again");
+        compare(player.audioDetailDecodes(), 1, "without a decode");
+        verify(stickFixture.touch(copy(0)));
+        detailOf(copy(0));
+        compare(player.audioDetailDecodes(), 2, "a new modification time is decoded again");
+        const other = testCase.clickFile.replace("click-D-lame-44100", "click-A-notag-44100");
+        verify(stickFixture.copyKeepingTime(other, copy(0)), "another size, the same time");
+        detailOf(copy(0));
+        compare(player.audioDetailDecodes(), 3, "and so is a new size");
+
+        for (let n = 1; n <= 4; ++n) {
+            verify(stickFixture.copyFile(testCase.clickFile, copy(n)));
+            detailOf(copy(n));
+        }
+        compare(player.audioDetailDecodes(), 7, "four more files");
+        detailOf(copy(4));
+        compare(player.audioDetailDecodes(), 7, "the last one still kept");
+        detailOf(copy(0));
+        compare(player.audioDetailDecodes(), 8, "the fifth one back is not");
+
+        compare(detailOf(testCase.undecodableFile).columns.byteLength, 1024 * 3, "not audio: the stored waveform");
+        compare(player.audioDetailDecodes(), 9);
+        compare(detailOf(testCase.undecodableFile).columns.byteLength, 1024 * 3);
+        compare(player.audioDetailDecodes(), 9, "a file that could not be decoded is not tried again");
+        player.stop();
+    }
+
+    // While a library is being written nothing is read, the audio file
+    // included: the stored overview load() read is shown, and the detail
+    // from the audio comes once the write is over.
+    function test_duringAWriteTheOverviewThenTheAudio() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const player = createTemporaryObject(playerComponent, testCase);
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        player.libraryBusy = true;
+        player.requestDetailWaveform();
+        compare(player.detailWaveform.columns.byteLength, 1024 * 3, "the stored overview, at once");
+        compare(player.audioDetailDecodes(), 0, "and no decode during the write");
+        const spy = createTemporaryObject(detailSpyComponent, testCase, {target: player});
+        player.libraryBusy = false;
+        tryVerify(() => player.detailWaveform.columns && player.detailWaveform.columns.byteLength === 450 * 3,
+                  30000, "the audio's once the write is over");
+        compare(player.audioDetailDecodes(), 1);
         player.stop();
     }
 
@@ -207,9 +338,9 @@ TestCase {
         const player = createTemporaryObject(playerComponent, testCase);
         compare(player.waveformFor("engine", lib.path, lib.id).length, 0, "no waveform from it");
         compare(player.beatGridFor("engine", lib.path, lib.id).length, 121, "the grid all the same");
-        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        player.load("engine", lib.path, lib.id, testCase.undecodableFile, "Grid", "An Artist", "", [], "", false);
         compare(player.waveform.length, 0, "nor on load");
-        player.requestDetailWaveform();
+        askForDetail(player);
         compare(player.detailWaveform.columns.byteLength, 0, "nor for the popup");
         player.stop();
     }
@@ -230,10 +361,10 @@ TestCase {
         const player = createTemporaryObject(playerComponent, testCase);
         verify(player.waveformFor("engine", lib.path, lib.id).length > 0, "the waveform still shows");
         compare(player.beatGridFor("engine", lib.path, lib.id).length, 0, "no grid");
-        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        player.load("engine", lib.path, lib.id, testCase.undecodableFile, "Grid", "An Artist", "", [], "", false);
         verify(player.waveform.length > 0, "on load too");
         compare(player.beatTicksAt(60000, 1200).length, 0, "and no grid there");
-        player.requestDetailWaveform();
+        askForDetail(player);
         compare(player.detailWaveform.columns.byteLength, 1024 * 3, "the popup's detail");
         compare(player.detailWaveform.msPerColumn, 0, "without a spacing of its own");
         player.stop();

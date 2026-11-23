@@ -66,6 +66,7 @@ TestCase {
             // What the details pane asks for, set by the tests that show one.
             property var waveformFor: null
             property var beatTicksFor: null
+            function cuesOnGridTimeline(format, path, cues) { return cues; }
             // Quiet columns, a fifth of the height, 150 a second: the lines
             // behind them show above and below.
             property var detail: {
@@ -252,6 +253,7 @@ TestCase {
             property var loads: []
             property var waveformFor: null
             property var beatTicksFor: null
+            function cuesOnGridTimeline(format, path, cues) { return cues; }
             signal seeked(real positionMs)
             function beatTicksAt(durationMs, widthPx) { return []; }
             function load(format, libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
@@ -610,6 +612,113 @@ TestCase {
     }
 
     // ---- What it draws -------------------------------------------------
+
+    // Each library's detail in its own player's colours. A rekordbox
+    // track in rekordbox's three-band colours ("vivid"); an Engine track
+    // as a Denon player draws it ("engine"): the bands as layers mirrored
+    // around the centre line, each as tall as its own band, low under mid
+    // under high, in Engine's blue, green and white.
+    function columnsOf(low, mid, high) {
+        const n = Math.floor(testCase.trackMs * 150 / 1000);
+        const buffer = new ArrayBuffer(n * 3);
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < n * 3; i += 3) {
+            bytes[i] = low;
+            bytes[i + 1] = mid;
+            bytes[i + 2] = high;
+        }
+        return {columns: buffer, msPerColumn: 1000 / 150, startMs: 0};
+    }
+    function test_eachLibraryInItsOwnColours_data() {
+        return [{tag: "rekordbox", format: "rekordbox", scheme: "vivid"},
+                {tag: "engine", format: "engine", scheme: "engine"}];
+    }
+    function test_eachLibraryInItsOwnColours(data) {
+        const player = makeFakePlayer({position: 60000, currentFormat: data.format});
+        player.detail = columnsOf(230, 128, 51);
+        const popup = openLoaded(player);
+        compare(popup.colorScheme, data.scheme);
+        waitForTiles(popup);
+        for (const tile of tiles(popup)) {
+            compare(tile.colorScheme, data.scheme, "every tile");
+        }
+        if (data.format !== "engine") {
+            return;
+        }
+        const a = area(popup);
+        const x = Math.round(popup.lineX + 40);
+        const tile = tiles(popup).find((t) => {
+            const p = t.mapFromItem(a, x, 0);
+            return p.x >= 0 && p.x < t.width;
+        });
+        verify(tile !== undefined, "a tile right of the position line");
+        const image = grabImage(testCase);
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-zoom-popup-engine-colours.png");
+        }
+        const tileX = tile.mapFromItem(a, x, 0).x;
+        const centre = tile.waveTop + tile.waveHeight / 2;
+        // Columns are drawn a pixel apart at most zooms: of a few pixels
+        // side by side at one height, the one nearest the colour wanted.
+        const distance = (c, want) => Math.max(Math.abs(c.r - want.r), Math.abs(c.g - want.g), Math.abs(c.b - want.b));
+        const near = (dy, want, what) => {
+            let best = null;
+            for (let dx = 0; dx <= 3; dx += 0.5) {
+                const p = tile.mapToItem(testCase, tileX + dx, centre + dy);
+                const c = PixelScale.pixel(image, testCase, p.x, p.y);
+                if (best === null || distance(c, want) < distance(best, want)) {
+                    best = c;
+                }
+            }
+            verify(distance(best, want) < 0.04, what + ": got " + best.r + "," + best.g + "," + best.b);
+        };
+        // Half-heights: high 0.1, mid 0.25, low 0.45 of the band.
+        const h = tile.waveHeight;
+        near(0.05 * h, Theme.waveformEngineHigh, "the core is the high band");
+        near(-0.18 * h, Theme.waveformEngineMid, "around it the mid band");
+        near(0.38 * h, Theme.waveformEngineLow, "outside it the low band");
+    }
+
+    // Engine's layers are one continuous envelope, as on the player: no
+    // gap between columns where a column is wider than a pixel (rekordbox's
+    // three-band columns keep theirs). Columns of 50 ms at the closest
+    // zoom are several pixels wide.
+    function test_engineColumnsMeetWithoutAGap() {
+        const player = makeFakePlayer({position: 60000, currentFormat: "engine"});
+        const wide = columnsOf(230, 128, 51);
+        const n = Math.floor(testCase.trackMs / 50);
+        wide.columns = wide.columns.slice(0, n * 3);
+        wide.msPerColumn = 50;
+        player.detail = wide;
+        const popup = openLoaded(player);
+        for (let i = 0; i < 12; ++i) {
+            popup.zoomIn();
+        }
+        waitForTiles(popup);
+        const barPx = 50 * popup.pxPerMs;
+        verify(barPx >= 4, "columns several pixels wide: " + barPx);
+        const a = area(popup);
+        const image = grabImage(testCase);
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-zoom-popup-engine-no-gap.png");
+        }
+        const want = Theme.waveformEngineHigh;
+        // Across three columns, right of the position line, on the centre
+        // line, every half pixel.
+        const fromX = popup.lineX + 30;
+        for (let x = fromX; x < fromX + 3 * barPx; x += 0.5) {
+            const tile = tiles(popup).find((t) => {
+                const p = t.mapFromItem(a, x, 0);
+                return p.x >= 0 && p.x < t.width;
+            });
+            verify(tile !== undefined);
+            const local = tile.mapFromItem(a, x, 0);
+            const p = tile.mapToItem(testCase, local.x, tile.waveTop + tile.waveHeight / 2);
+            const c = PixelScale.pixel(image, testCase, p.x, p.y);
+            verify(Math.max(Math.abs(c.r - want.r), Math.abs(c.g - want.g), Math.abs(c.b - want.b)) < 0.04,
+                   "no gap at " + (x - fromX) + " px: got " + c.r + "," + c.g + "," + c.b);
+        }
+    }
 
     // At a zoom where every beat fits: a faint line at every beat behind
     // the waveform, a tall tick with its number at every bar in the lane.
@@ -986,21 +1095,29 @@ TestCase {
         compare(findChild(bar, "waveformZoomPopup").visible, false, "no popup");
     }
 
-    // Engine: the waveform load() read is all there is (2.x and 3.x keep
-    // only the overview), so the popup is handed it without the library
-    // being opened again: changed in the database after the load, the
-    // popup still gets what was loaded.
+    // Engine: where the audio cannot be decoded (the detail is made from
+    // it otherwise, tst_WaveformBeatGridEngine), the waveform load() read
+    // is all there is (2.x and 3.x keep only the overview), so the popup
+    // is handed it without the library being opened again: changed in
+    // the database after the load, the popup still gets what was loaded.
     function test_anEngineTracksDetailIsWhatLoadRead() {
         const lib = engineGridFixture.library();
         verify(lib.length > 0);
         const id = engineGridFixture.trackId(lib);
         verify(engineGridFixture.setWaveform(lib, 1024, 128));
         const player = createTemporaryObject(realPlayer, testCase);
-        player.load("engine", lib, id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        const notAudio = Qt.resolvedUrl("tst_WaveformZoomPopup.qml").toString()
+            .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1");
+        player.load("engine", lib, id, notAudio, "Grid", "An Artist", "", [], "", false);
         verify(engineGridFixture.setWaveform(lib, 512, 64));
+        const answered = createTemporaryObject(spyComponent, testCase,
+                                               {target: player, signalName: "detailWaveformChanged"});
         player.requestDetailWaveform();
+        if (answered.count === 0) {
+            answered.wait(30000);
+        }
         const detail = player.detailWaveform;
-        compare(detail.columns.byteLength, 1024 * 3, "the 1024 entries the load read, at once");
+        compare(detail.columns.byteLength, 1024 * 3, "the 1024 entries the load read");
         fuzzyCompare(detail.msPerColumn, 60000 / 1024, 1e-6);
         compare(new Uint8Array(detail.columns)[0], 128);
         player.stop();

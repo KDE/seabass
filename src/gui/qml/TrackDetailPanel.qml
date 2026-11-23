@@ -679,7 +679,9 @@ Pane {
             objectName: "trackDetailPanelWaveform"
             Layout.fillWidth: true
             Layout.preferredHeight: 80
-            cueData: panel.trackCues
+            // On the timeline of the grid drawn below: an Engine MP3's cues
+            // are held on rekordbox's, its grid is on Engine's (#50).
+            cueData: panel.playbackController.cuesOnGridTimeline(panel.format, panel.trackFilePath, panel.trackCues)
             trackDurationMs: panel.trackDurationMs
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.

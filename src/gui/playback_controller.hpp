@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <list>
 #include <map>
 #include <memory>
 
@@ -238,15 +239,34 @@ public:
     // (the player keeps time by that grid, but nothing draws it as fact).
     // Bind with trackSerial so a new track is laid out again.
     Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
-    // Asks for the loaded track's detailWaveform. Engine's is what load()
-    // read and is there at once; rekordbox's scrolling waveform is read
-    // off the GUI thread (AsyncRequest), never while a library is being
-    // written (asked again once the write is over), and dropped if
-    // another track has been loaded by the time it arrives.
+    // Asks for the loaded track's detailWaveform, read off the GUI thread
+    // (AsyncRequest), never while a library is being written (asked again
+    // once the write is over), and dropped if another track has been
+    // loaded by the time it arrives. rekordbox's is its scrolling waveform
+    // (PWV7, else PWV3). Engine stores nothing finer than an overview, so
+    // an Engine track's is made from its audio file on Engine's timeline,
+    // as a Denon player makes its own (qt_multimedia_detail_waveform.hpp),
+    // and kept for the session for the last few files (m_audioDetails);
+    // where the file cannot be decoded it is Engine's stored waveform, as
+    // it always was. While a library is being written the stored one
+    // load() read is handed over at once, and the audio's follows once
+    // the write is over.
     Q_INVOKABLE void requestDetailWaveform();
     // The popup has closed: what it asked for is no longer wanted, and a
     // write ending does not read it again for nobody.
     Q_INVOKABLE void releaseDetailWaveform();
+    // How many audio files this controller has decoded (or tried to) for
+    // an Engine track's detail: for the tests of its cache.
+    Q_INVOKABLE int audioDetailDecodes() const { return m_audioDetailDecodes; }
+
+    // A track's cues as a page holds them (on rekordbox's timeline, see
+    // playback_timeline.hpp) moved onto the timeline of the beat grid
+    // beatTicksFor() draws for that track: for an Engine MP3 Engine's,
+    // by the same shift the player moves them by; for a rekordbox track
+    // they are on its grid's timeline already and come back as given.
+    // What the details pane draws, so a cue sits on the beat it marks.
+    Q_INVOKABLE QVariantList cuesOnGridTimeline(const QString &format, const QString &filePath,
+                                                const QVariantList &cues) const;
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
@@ -383,9 +403,47 @@ private:
     static constexpr size_t MaximumKeptDetailColumns = 4096;
     int m_durationSerial = -1;
     void markDurationKnown();
-    void setDetailWaveform(const domain::DetailWaveform &detail, int serial);
+    // `columns` as detailWaveform hands them over: three bytes a column.
+    void setDetailWaveform(const QByteArray &columns, double msPerColumn, int serial);
     void dropDetailWaveform();
-    AsyncRequest<domain::DetailWaveform> m_detailRequest{this, nullptr};
+    // An audio file's detail as made from it, or that it could not be
+    // made, for the file as it was when it was decoded: its size and
+    // modification time are read in the worker, before the decode, so
+    // that a file rewritten during it is never kept under its new time.
+    struct AudioDetailEntry
+    {
+        QString path;
+        qint64 size = -1;
+        qint64 modifiedMs = 0;
+        bool failed = false;
+        QByteArray columns;
+        double msPerColumn = 0.0;
+    };
+    // What the worker hands back, the columns already as bytes.
+    struct DetailRead
+    {
+        QByteArray columns;
+        double msPerColumn = 0.0;
+        // Set where the worker decoded the audio file (or tried to):
+        // what to keep in m_audioDetails, success or failure.
+        std::shared_ptr<const AudioDetailEntry> decoded;
+    };
+    AsyncRequest<DetailRead> m_detailRequest{this, nullptr};
+    // The loaded track's audio file, for an Engine track's detail.
+    QString m_currentFilePath;
+    // Details made from audio files this session, most recently used
+    // first, the last MaximumAudioDetails files: opening the popup on the
+    // same track again does not decode it again, and a file that could
+    // not be decoded is not tried (and waited for) again either. Three
+    // bytes a column at 150 a second: about 160 KB for six minutes, 3.2
+    // MB for a two-hour mix. The worker checks an entry against the file
+    // (size and modification time) before using it; nothing is looked at
+    // on the GUI thread.
+    std::list<std::shared_ptr<const AudioDetailEntry>> m_audioDetails;
+    static constexpr std::size_t MaximumAudioDetails = 4;
+    std::shared_ptr<const AudioDetailEntry> audioDetailFor(const QString &filePath);
+    void keepAudioDetail(std::shared_ptr<const AudioDetailEntry> entry);
+    int m_audioDetailDecodes = 0;
     int m_trackSerial = 0;
     QString m_errorMessage;
     // One read of a track's analysis, for waveformFor() and

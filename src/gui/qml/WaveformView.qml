@@ -183,9 +183,12 @@ Canvas {
         ? Math.min(Theme.beatRulerMaximumHeight,
                    Math.max(Theme.beatRulerMinimumHeight, Math.round(root.height * Theme.beatRulerHeightRatio)))
         : 0
-    // The band colours: "classic" as every view has drawn them, or
+    // The band colours: "classic" as every view has drawn them;
     // "vivid", the brighter, more contrasted CDJ-style colours of the
-    // zoomed popup. See Theme.waveformRgb().
+    // zoomed popup on a rekordbox track (see Theme.waveformRgb()); or
+    // "engine", the zoomed popup on an Engine track, drawn as a Denon
+    // player draws it: the three bands as layers, each as tall as its own
+    // band, low first and high on top (Theme.waveformEngine*).
     property string colorScheme: "classic"
     // How opaque a bar not yet played is; a played one is opaque.
     property real unplayedOpacity: 0.62
@@ -378,7 +381,15 @@ Canvas {
         const pxPerMs = w / spanMs;
         const barW = colMs * pxPerMs;
         const vivid = root.colorScheme === "vivid";
+        const engine = root.colorScheme === "engine";
+        const engineFill = (c) => "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + ","
+            + Math.round(c.b * 255) + ",";
+        const engineLow = engineFill(Theme.waveformEngineLow);
+        const engineMid = engineFill(Theme.waveformEngineMid);
+        const engineHigh = engineFill(Theme.waveformEngineHigh);
         const unplayed = root.unplayedOpacity;
+        // Engine's columns, drawn after they are all known (below).
+        const engineBars = [];
         // A bar is drawn over the ground, never over a line: its own
         // rectangle is cleared first, so a translucent (unplayed) bar
         // shows the ground through it and not the grid.
@@ -392,6 +403,11 @@ Canvas {
             // without a seam at a fractional scale.
             const left = root.at(x);
             const right = Math.max(left + 1 / root.dpr, root.at(x + width));
+            if (engine) {
+                engineBars.push({left: left, right: right, y: y, barH: barH, low: low, mid: mid, high: high,
+                                 alpha: alpha});
+                return;
+            }
             ctx.clearRect(left, y, right - left, barH);
             ctx.fillStyle = "rgba(" + c.r + "," + c.g + "," + c.b + "," + alpha + ")";
             ctx.fillRect(left, y, right - left, barH);
@@ -401,6 +417,9 @@ Canvas {
         const first = Math.max(0, Math.floor((startMs - firstMs) / colMs) - 1);
         const last = Math.min(n - 1, Math.ceil((startMs + spanMs - firstMs) / colMs) + 1);
         if (barW >= 1) {
+            // A pixel between columns, except in Engine's layers: a
+            // player draws them as one continuous envelope.
+            const gap = engine ? 0 : 1;
             for (let i = first; i <= last; i++) {
                 const ms = firstMs + i * colMs;
                 const x = (ms - startMs) * pxPerMs;
@@ -411,7 +430,7 @@ Canvas {
                     const col = root.columnAt(i);
                     low = col.low; mid = col.mid; high = col.high;
                 }
-                bar(x, Math.max(1, barW - 1), low, mid, high, played(ms));
+                bar(x, Math.max(1, barW - gap), low, mid, high, played(ms));
             }
         } else {
             // More than one column to a pixel: each pixel draws the
@@ -438,6 +457,33 @@ Canvas {
                 }
                 bar(px, 1, low, mid, high, played(msFrom));
             }
+        }
+
+        // Engine's layers: every column's ground cleared first, then the
+        // low layer of every column, the mid, the high, each reaching a
+        // device pixel into the next column. Neighbours then overlap in
+        // their own colour instead of meeting on a pixel both only partly
+        // cover, which showed as a seam between every two columns where
+        // the canvas's scale is not the one the edges were snapped to.
+        if (engine && engineBars.length > 0) {
+            const reach = 1 / root.dpr;
+            for (const b of engineBars) {
+                ctx.clearRect(b.left, b.y, b.right - b.left, b.barH);
+            }
+            const layer = (band, fill) => {
+                for (const b of engineBars) {
+                    const value = b[band];
+                    if (value <= 0) {
+                        continue;
+                    }
+                    const layerH = Math.max(1, value * h);
+                    ctx.fillStyle = fill + b.alpha + ")";
+                    ctx.fillRect(b.left, top + (h - layerH) / 2, b.right - b.left + reach, layerH);
+                }
+            };
+            layer("low", engineLow);
+            layer("mid", engineMid);
+            layer("high", engineHigh);
         }
 
         // The sliced grid: cut out of the bars, then a short mark at the

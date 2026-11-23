@@ -171,6 +171,16 @@ QtObject {
     readonly property color waveformVividMid: "#ff9a1a"
     readonly property color waveformVividHigh: "#ffffff"
     readonly property real waveformVividQuietBrightness: 0.35
+    // "Engine" (the zoomed popup on an Engine track): how a Denon player
+    // with Engine OS draws its scrolling waveform, three layers mirrored
+    // around the centre line, each as tall as its own band, the low one
+    // first and the high one on top: a blue envelope, green inside it, a
+    // white core. Sampled from photos of a Prime 4 on Engine OS 5.x
+    // (the most saturated pixels, against the screen's glare); not
+    // official values.
+    readonly property color waveformEngineLow: "#0b99e8"
+    readonly property color waveformEngineMid: "#23d581"
+    readonly property color waveformEngineHigh: "#e4eeee"
     // How much of the ground lies over the part of a zoomed waveform
     // already played: the part ahead of the playhead is what a DJ reads.
     readonly property real waveformPlayedShade: 0.45

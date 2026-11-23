@@ -1047,10 +1047,12 @@ if(TARGET Qt6::Multimedia)
         src/infrastructure/audio/qt_multimedia_duration_probe.cpp
         src/infrastructure/audio/qt_multimedia_silence_probe.cpp
         src/infrastructure/audio/qt_multimedia_alignment_probe.cpp
-        # Qt-free arithmetic, but its one caller is the probe above, and
-        # a static seabass_core listed before this library on a link line
-        # could not supply it.
-        src/domain/audio_alignment.cpp)
+        src/infrastructure/audio/qt_multimedia_detail_waveform.cpp
+        # Qt-free arithmetic, but their one caller is each a decoder
+        # above, and a static seabass_core listed before this library on
+        # a link line could not supply them.
+        src/domain/audio_alignment.cpp
+        src/domain/audio_detail_waveform.cpp)
     target_include_directories(seabass_audio_qt PUBLIC src)
     target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia)
     target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_QT_AUDIO)
@@ -1125,6 +1127,17 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     add_test(NAME qt_decoder_timeline_test COMMAND qt_decoder_timeline_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
     set_tests_properties(qt_decoder_timeline_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# An Engine track's scrolling waveform made from its audio, on Engine's
+# timeline, against the beat-click MP3s in tests/fixtures/beat-click.
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
+    add_executable(audio_detail_waveform_test tests/audio_detail_waveform_test.cpp)
+    target_include_directories(audio_detail_waveform_test PRIVATE src)
+    target_link_libraries(audio_detail_waveform_test PRIVATE seabass_audio_qt seabass_mp3_lead_in Qt6::Core)
+    add_test(NAME audio_detail_waveform_test COMMAND audio_detail_waveform_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/beat-click)
+    set_tests_properties(audio_detail_waveform_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 if(SEABASS_GUI AND Qt6_FOUND)
@@ -2374,6 +2387,11 @@ set_tests_properties(beat_grid_test PROPERTIES LABELS "integration")
 
 # The scrolling waveform the zoomed popup draws (#104), from analysis
 # files made byte by byte: the fixtures carry no waveform sections.
+# The audio detail's columns and bands with no decoder (Qt-free).
+add_executable(audio_detail_builder_test src/domain/audio_detail_waveform.cpp tests/audio_detail_builder_test.cpp)
+target_include_directories(audio_detail_builder_test PRIVATE src)
+add_test(NAME audio_detail_builder_test COMMAND audio_detail_builder_test)
+
 add_executable(detail_waveform_test tests/detail_waveform_test.cpp)
 target_include_directories(detail_waveform_test PRIVATE src)
 target_link_libraries(detail_waveform_test PRIVATE seabass_core)
