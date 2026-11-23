@@ -21,7 +21,7 @@
 //     after 8.9 s whose loudest band passes 0.1) is the column that sample
 //     falls in: exactly for the WAV, give or take one for an MP3 (see
 //     checkFile());
-//   * between that click and the next the columns are near silent;
+//   * after it the bands decay, and are near silent before the next;
 //   * 150 columns a second.
 //
 //   audio_detail_waveform_test FIXTURE_DIR
@@ -170,13 +170,22 @@ void checkFile(const std::string &path, const std::string &name, long leadSample
     check(std::labs(attack - expectedColumn) <= attackTolerance,
           name + ": the 9.000 s click's attack in column " + std::to_string(attack) + ", expected "
               + std::to_string(expectedColumn));
-    double between = 0.0;
+    // After the click the bands decay as a swell (their release), never
+    // rising again before the next click, and are near silent by the end
+    // of the half second between clicks.
     const double clickSeconds = static_cast<double>(clickSample) / rate;
-    for (auto c = static_cast<std::size_t>((clickSeconds + 0.1) * ColumnsPerSecond);
+    bool decays = true;
+    for (auto c = static_cast<std::size_t>(attack + 2);
          c < static_cast<std::size_t>((clickSeconds + 0.45) * ColumnsPerSecond) && c < detail.columns.size(); ++c) {
+        decays = decays && loudest(c) <= loudest(c - 1) + 1e-9;
+    }
+    check(decays, name + ": the bands decay after the click");
+    double between = 0.0;
+    for (auto c = static_cast<std::size_t>((clickSeconds + 0.38) * ColumnsPerSecond);
+         c < static_cast<std::size_t>((clickSeconds + 0.46) * ColumnsPerSecond) && c < detail.columns.size(); ++c) {
         between = std::max(between, loudest(c));
     }
-    check(between < 0.02, name + ": silence between clicks, loudest band " + std::to_string(between));
+    check(between < 0.02, name + ": silence before the next click, loudest band " + std::to_string(between));
 }
 
 }  // namespace

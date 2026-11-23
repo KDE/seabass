@@ -4,8 +4,9 @@
 
 // domain::AudioDetailWaveformBuilder on its own, no decoder: sample s is
 // in column floor(s * 150 / rate) at any rate (also one 150 does not
-// divide), the last column is kept however short, silence stays silence,
-// and no samples give no columns.
+// divide), a click's bands then decay at their release, the last column
+// is kept however short, silence stays silence, and no samples give no
+// columns.
 
 #include <algorithm>
 #include <cmath>
@@ -75,6 +76,34 @@ int main()
                                                     + std::to_string(detail.columns.size()));
             check(std::abs(detail.msPerColumn - 1000.0 / 150.0) < 1e-12, "150 columns a second");
         }
+    }
+
+    // After an onset each band falls away as a swell, not at once: the
+    // columns after a click shrink step by step (no drop to 0 in the next
+    // column), at the band's release, and are gone half a second later.
+    // The click's own column is unmoved (the impulse checks above).
+    for (const int rate : {44100, 48000}) {
+        std::vector<float> samples(static_cast<std::size_t>(rate), 0.0F);
+        const std::size_t at = static_cast<std::size_t>(rate / 4);
+        samples[at] = 1.0F;
+        const DetailWaveform detail = build(rate, samples);
+        const std::size_t c = at * 150 / static_cast<std::size_t>(rate);
+        const std::string r = "rate " + std::to_string(rate) + ": ";
+        check(detail.columns[c - 1].high == 0.0 && detail.columns[c].high == 1.0, r + "the click lights its column only");
+        // The high band, 40 ms: 6.67 ms a column is a factor of about
+        // exp(-6.67 / 40) = 0.85 a column.
+        const double perColumn = std::exp(-(1000.0 / 150.0) / AudioDetailWaveformBuilder::HighReleaseMs);
+        for (std::size_t k = 1; k <= 6; ++k) {
+            const double before = detail.columns[c + k - 1].high;
+            const double now = detail.columns[c + k].high;
+            check(now > 0.0 && now < before, r + "column " + std::to_string(k) + " after the click is lower but not 0");
+            // From one whole column to the next; the click's own column
+            // holds it partway in, so the first step is shorter.
+            check(k == 1 || std::abs(now / before - perColumn) < 0.01,
+                  r + "and falls at the release: " + std::to_string(now / before) + " against "
+                      + std::to_string(perColumn));
+        }
+        check(loudest(detail, c + 75) < 0.001, r + "half a second later it is gone");
     }
 
     // A last column that is short: 294 samples a column at 44.1 kHz, then 6

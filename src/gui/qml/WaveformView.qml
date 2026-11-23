@@ -388,7 +388,8 @@ Canvas {
         const engineMid = engineFill(Theme.waveformEngineMid);
         const engineHigh = engineFill(Theme.waveformEngineHigh);
         const unplayed = root.unplayedOpacity;
-        // Engine's columns, drawn after they are all known (below).
+        // Engine's columns (or pixels), drawn as outlines once all are
+        // known (below).
         const engineBars = [];
         // A bar is drawn over the ground, never over a line: its own
         // rectangle is cleared first, so a translucent (unplayed) bar
@@ -404,8 +405,7 @@ Canvas {
             const left = root.at(x);
             const right = Math.max(left + 1 / root.dpr, root.at(x + width));
             if (engine) {
-                engineBars.push({left: left, right: right, y: y, barH: barH, low: low, mid: mid, high: high,
-                                 alpha: alpha});
+                engineBars.push({left: left, right: right, low: low, mid: mid, high: high});
                 return;
             }
             ctx.clearRect(left, y, right - left, barH);
@@ -459,31 +459,53 @@ Canvas {
             }
         }
 
-        // Engine's layers: every column's ground cleared first, then the
-        // low layer of every column, the mid, the high, each reaching a
-        // device pixel into the next column. Neighbours then overlap in
-        // their own colour instead of meeting on a pixel both only partly
-        // cover, which showed as a seam between every two columns where
-        // the canvas's scale is not the one the edges were snapped to.
+        // Engine's layers, as a player draws them: each band one filled,
+        // antialiased outline mirrored around the centre line, low, then
+        // mid, then high on top. The upper edge runs through the columns'
+        // values at their left edges: where a value falls it slopes down
+        // from the column before, and where it rises it steps up straight
+        // at the column's own left edge (on the device grid), so an
+        // attack is never drawn earlier than the column it is in. What
+        // the outlines cover is cleared first, so no grid line shows
+        // through; drawn at unplayedOpacity throughout (the popup shows
+        // what has played by its shade).
         if (engine && engineBars.length > 0) {
-            const reach = 1 / root.dpr;
-            for (const b of engineBars) {
-                ctx.clearRect(b.left, b.y, b.right - b.left, b.barH);
-            }
-            const layer = (band, fill) => {
+            const centre = top + h / 2;
+            const outline = (valueOf) => {
+                const upper = [];
+                let previous = -1;
                 for (const b of engineBars) {
-                    const value = b[band];
-                    if (value <= 0) {
-                        continue;
+                    const half = Math.max(0, valueOf(b)) * h / 2;
+                    if (previous >= 0 && half > previous) {
+                        upper.push({x: b.left, y: centre - previous});
                     }
-                    const layerH = Math.max(1, value * h);
-                    ctx.fillStyle = fill + b.alpha + ")";
-                    ctx.fillRect(b.left, top + (h - layerH) / 2, b.right - b.left + reach, layerH);
+                    upper.push({x: b.left, y: centre - half});
+                    previous = half;
                 }
+                const end = engineBars[engineBars.length - 1].right;
+                upper.push({x: end, y: centre - previous});
+                ctx.beginPath();
+                ctx.moveTo(upper[0].x, centre);
+                for (const p of upper) {
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.lineTo(end, centre);
+                for (let k = upper.length - 1; k >= 0; --k) {
+                    ctx.lineTo(upper[k].x, 2 * centre - upper[k].y);
+                }
+                ctx.closePath();
             };
-            layer("low", engineLow);
-            layer("mid", engineMid);
-            layer("high", engineHigh);
+            ctx.save();
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.fillStyle = "rgba(0,0,0,1)";
+            outline((b) => Math.max(b.low, b.mid, b.high));
+            ctx.fill();
+            ctx.restore();
+            for (const [band, fill] of [["low", engineLow], ["mid", engineMid], ["high", engineHigh]]) {
+                ctx.fillStyle = fill + unplayed + ")";
+                outline((b) => b[band]);
+                ctx.fill();
+            }
         }
 
         // The sliced grid: cut out of the bars, then a short mark at the

@@ -180,7 +180,10 @@ TestCase {
         }
         verify(Math.abs(peak - 225) <= 1, "the click in column " + peak);
         compare(loudest(225 - 15), 0, "silence before it");
-        compare(loudest(225 + 15), 0, "and after it");
+        // After it the bands decay as a swell (their release), and are gone
+        // well before the next click at 2.5 s.
+        verify(loudest(225 + 15) > 0 && loudest(225 + 15) < loudest(peak), "decaying 100 ms after it");
+        compare(loudest(225 + 90), 0, "and gone 600 ms after it");
         player.stop();
     }
 
