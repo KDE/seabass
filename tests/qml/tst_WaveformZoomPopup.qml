@@ -679,6 +679,94 @@ TestCase {
         near(0.38 * h, Theme.waveformEngineLow, "outside it the low band");
     }
 
+    // Engine's bands are drawn as antialiased outlines through the
+    // columns' values, not as a rectangle a column: a kick is a straight
+    // attack at its column's left edge and a sloped decay after it. 50 ms
+    // columns of a sawtooth in the high band only: every tenth column at
+    // 250, then 25 less each column.
+    function sawtooth() {
+        const n = Math.floor(testCase.trackMs / 50);
+        const buffer = new ArrayBuffer(n * 3);
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < n; ++i) {
+            bytes[3 * i + 2] = 250 - 25 * (i % 10);
+        }
+        return {columns: buffer, msPerColumn: 50, startMs: 0};
+    }
+    function test_engineBandsAreOutlinesWithStraightAttacks() {
+        const player = makeFakePlayer({position: 60000, currentFormat: "engine"});
+        player.detail = sawtooth();
+        const popup = openLoaded(player);
+        for (let i = 0; i < 12; ++i) {
+            popup.zoomIn();
+        }
+        waitForTiles(popup);
+        const a = area(popup);
+        const pxPerMs = popup.pxPerMs;
+        verify(50 * pxPerMs >= 6, "columns several pixels wide: " + 50 * pxPerMs);
+        const image = grabImage(testCase);
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-zoom-popup-engine-outline.png");
+        }
+        const tileAt = (x) => tiles(popup).find((t) => {
+            const p = t.mapFromItem(a, x, 0);
+            return p.x >= 0 && p.x < t.width;
+        });
+        const want = Theme.waveformEngineHigh;
+        const ground = (x) => {
+            const t = tileAt(x);
+            const p = t.mapToItem(testCase, t.mapFromItem(a, x, 0).x, t.waveTop + 1);
+            return PixelScale.pixel(image, testCase, p.x, p.y);
+        };
+        const distance = (c, d) => Math.max(Math.abs(c.r - d.r), Math.abs(c.g - d.g), Math.abs(c.b - d.b));
+        // The half-height of the high layer at area x: from the top of the
+        // band down, the first pixel nearer the layer's colour than the
+        // ground's. And whether a pixel on the way was neither (a blend:
+        // the edge is antialiased).
+        const edgeAt = (x) => {
+            const t = tileAt(x);
+            const local = t.mapFromItem(a, x, 0).x;
+            const centre = t.waveTop + t.waveHeight / 2;
+            const g = ground(x);
+            let blended = false;
+            for (let y = t.waveTop; y <= centre; y += 0.5) {
+                const p = t.mapToItem(testCase, local, y);
+                const c = PixelScale.pixel(image, testCase, p.x, p.y);
+                if (distance(c, want) > 0.08 && distance(c, g) > 0.08) {
+                    blended = true;
+                }
+                if (distance(c, want) < distance(c, g)) {
+                    return {half: (centre - y) / (t.waveHeight / 2), blended: blended};
+                }
+            }
+            return {half: 0, blended: blended};
+        };
+        const xOf = (ms) => popup.stripX + ms * pxPerMs;
+        // The first rise (a column at 250) well right of the position line.
+        let k = Math.ceil((popup.lineX + 40 - popup.stripX) / pxPerMs / 50);
+        k += (10 - k % 10) % 10;
+        const rise = xOf(k * 50);
+        verify(rise + 9 * 50 * pxPerMs < a.width, "the tooth on screen");
+        const tolerance = 2 / tileAt(rise).waveHeight;
+        // Straight up at the column's left edge, within a device pixel.
+        const dpr = Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1;
+        fuzzyCompare(edgeAt(rise - 1.5 / dpr).half, 25 / 255, 0.03, "just before the attack: the last decay");
+        const colPx = 50 * pxPerMs;
+        const after = 1.5 / dpr;
+        fuzzyCompare(edgeAt(rise + after).half, (250 - 25 * after / colPx) / 255, tolerance + 0.01,
+                     "just after it: the attack's height, already sloping down");
+        // Halfway through a falling column, halfway between its value and
+        // the next one's: a slope, not a step.
+        let anyBlend = false;
+        for (let j = 1; j <= 7; ++j) {
+            const mid = edgeAt(rise + (j + 0.5) * 50 * pxPerMs);
+            fuzzyCompare(mid.half, (250 - 25 * j - 12.5) / 255, tolerance + 0.01,
+                         "halfway through column " + j + " of the decay");
+            anyBlend = anyBlend || mid.blended;
+        }
+        verify(anyBlend, "the sloped edge is antialiased");
+    }
+
     // Engine's layers are one continuous envelope, as on the player: no
     // gap between columns where a column is wider than a pixel (rekordbox's
     // three-band columns keep theirs). Columns of 50 ms at the closest
