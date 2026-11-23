@@ -271,7 +271,19 @@ ListView {
         checkable: root.checkable
         checkState: root.checkable && root.checkRevision >= 0 ? root.checkStateOf(index === 0 ? "" : modelData) : Qt.Unchecked
         checkEnabled: root.checkable && root.checksEnabled && root.checkRevision >= 0 && root.checkEnabledFor(index === 0 ? "" : modelData)
-        checkTooltip: index === 0 ? "Tick every track" : "Tick every track of this playlist"
+        // What the box shows, in words, and what a click does next: the
+        // half-filled box of a playlist with some of its tracks ticked was
+        // not clear by itself.
+        checkTooltip: {
+            const what = index === 0 ? "tracks" : "tracks of this playlist";
+            if (checkState === Qt.Checked) {
+                return "All " + what + " are ticked. Click to untick them all.";
+            }
+            if (checkState === Qt.PartiallyChecked) {
+                return "Some " + what + " are ticked. Click to tick them all.";
+            }
+            return "No " + what + " are ticked. Click to tick them all.";
+        }
         onCheckToggled: checked => root.playlistCheckToggled(index === 0 ? "" : modelData, checked)
         thumbnailSource: isNew ? "" : ((root.scanController.playlistThumbnails || {})[index === 0 ? "" : modelData] ?? "")
         // The summary's part: the pointer on a row that has one, a
