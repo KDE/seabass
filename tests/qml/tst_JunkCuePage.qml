@@ -26,7 +26,12 @@ TestCase {
     when: windowShown
 
     AppSettingsController { id: realAppSettings }
-    PlaybackController { id: realPlayback }
+    // Bound as Main.qml binds the app's one player: nothing is read
+    // while a library is being written (see tst_CleanupPage).
+    PlaybackController {
+        id: realPlayback
+        libraryBusy: EditSessionRegistry.anyWriting
+    }
 
     Component {
         id: pageComponent

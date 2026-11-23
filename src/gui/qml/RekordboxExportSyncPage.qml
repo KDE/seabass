@@ -1391,14 +1391,15 @@ Page {
                                                 Layout.fillWidth: true
                                                 Layout.preferredHeight: 40
                                                 opacity: strip.modelData.written ? 0.75 : 1.0
-                                                waveformData: root.playbackController
+                                                // analysisRevision: asked again when a write ends.
+                                                waveformData: root.playbackController && root.playbackController.analysisRevision !== -1
                                                     ? root.playbackController.waveformFor(strip.modelData.side,
                                                         root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
                                                     : []
                                                 // The same cached read as the waveform's,
                                                 // only the beats drawn at this width.
                                                 beatsSelected: true
-                                                beatData: root.playbackController
+                                                beatData: root.playbackController && root.playbackController.analysisRevision !== -1
                                                     ? root.playbackController.beatTicksFor(strip.modelData.side,
                                                         root.pathForFormat(strip.modelData.side), strip.modelData.sourceId,
                                                         strip.modelData.durationMs, width)

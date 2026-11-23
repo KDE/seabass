@@ -22,7 +22,14 @@ TestCase {
     visible: true
     when: windowShown
 
-    PlaybackController { id: realPlayback }
+    // Bound as Main.qml binds the app's one player: no analysis is read
+    // while a library is being written. Unbound, the rows' waveform reads
+    // during the save met its Engine writer, which failed "database is
+    // locked" and rolled the save back.
+    PlaybackController {
+        id: realPlayback
+        libraryBusy: EditSessionRegistry.anyWriting
+    }
     AppSettingsController { id: realAppSettings }
 
     Component {

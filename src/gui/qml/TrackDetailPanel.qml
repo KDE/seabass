@@ -208,6 +208,20 @@ Pane {
         return panel.addCueController.pendingCuesFor(panel.trackSourceId);
     }
 
+    // The waveform is set when a track is shown, not bound: asked again
+    // when a write ends (analysisRevision), since during one the player
+    // reads nothing and a write may have replaced it.
+    Connections {
+        target: panel.playbackController
+        ignoreUnknownSignals: true
+        function onAnalysisRevisionChanged() {
+            if (panel.trackSourceId.length > 0) {
+                waveformView.waveformData = panel.playbackController.waveformFor(
+                    panel.format, panel.libraryPath, panel.trackSourceId);
+            }
+        }
+    }
+
     // Once a cue is staged, the panel's own trackCues (a snapshot from
     // when the track was shown) is patched locally so the new marker
     // shows up on the waveform immediately; the page's track list is
@@ -686,7 +700,8 @@ Pane {
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.
             beatsSelected: true
-            beatData: panel.trackSourceId.length > 0
+            // analysisRevision: asked again when a write ends.
+            beatData: panel.trackSourceId.length > 0 && panel.playbackController.analysisRevision !== -1
                 ? panel.playbackController.beatTicksFor(panel.format, panel.libraryPath, panel.trackSourceId,
                                                         panel.trackDurationMs, width)
                 : []

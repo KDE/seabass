@@ -198,12 +198,13 @@ Page {
             objectName: "trackDetailWaveform"
             Layout.fillWidth: true
             Layout.preferredHeight: 120
-            waveformData: root.track
+            // analysisRevision: asked again when a write ends.
+            waveformData: root.track && root.playbackController.analysisRevision !== -1
                 ? root.playbackController.waveformFor(root.format, root.libraryPath, root.track.sourceId) : []
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.
             beatsSelected: true
-            beatData: root.track
+            beatData: root.track && root.playbackController.analysisRevision !== -1
                 ? root.playbackController.beatTicksFor(root.format, root.libraryPath, root.track.sourceId,
                                                        root.track.durationSeconds * 1000, width)
                 : []

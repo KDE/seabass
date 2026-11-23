@@ -129,6 +129,33 @@ TestCase {
         compare(player.beatTicksFor("engine", lib.path, lib.id, 60000, 1200).length, 0, "read again after the sticks changed");
     }
 
+    // Nothing is read while a library is being written: Engine's analysis
+    // comes out of m.db, and a row reading it in the middle of a save held
+    // the lock the save's own writer then failed on ("database is
+    // locked", the save rolled back; Clean Up on Windows). What was kept
+    // before is still answered; the rest is asked again once the write
+    // ends, which analysisRevision tells a binding.
+    function test_nothingIsReadWhileALibraryIsWritten() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        const player = createTemporaryObject(playerComponent, testCase);
+        const kept = player.beatGridFor("engine", lib.path, lib.id);
+        compare(kept.length, 121, "read before the write");
+        const other = engineGridFixture.library();
+        const otherId = engineGridFixture.trackId(other);
+        verify(engineGridFixture.setRow(other, 44100, 120));
+        const revision = player.analysisRevision;
+        player.libraryBusy = true;
+        compare(player.beatGridFor("engine", lib.path, lib.id).length, 121, "what was kept is still answered");
+        compare(player.beatGridFor("engine", other, otherId).length, 0, "beatGridFor reads nothing during a write");
+        compare(player.beatTicksFor("engine", other, otherId, 60000, 1200).length, 0, "nor beatTicksFor");
+        compare(player.waveformFor("engine", other, otherId).length, 0, "nor waveformFor");
+        compare(player.analysisRevision, revision, "and nothing was dropped yet");
+        player.libraryBusy = false;
+        verify(player.analysisRevision > revision, "a binding is told to ask again");
+        compare(player.beatGridFor("engine", other, otherId).length, 121, "and then it is read");
+    }
+
     // A popup closed and opened again finds its detail already delivered;
     // a write that ends after that still gets it read again, from the
     // library as the write left it, not the copy load() read before it.

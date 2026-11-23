@@ -41,7 +41,12 @@ TestCase {
 
     // The player a row's waveform loads its track into, as Main.qml hands
     // the page one; a test that opens the zoomed popup passes it.
-    PlaybackController { id: realPlayback }
+    // Bound as Main.qml binds the app's one player: nothing is read
+    // while a library is being written (see tst_CleanupPage).
+    PlaybackController {
+        id: realPlayback
+        libraryBusy: EditSessionRegistry.anyWriting
+    }
 
     function fixture(name) {
         const url = Qt.resolvedUrl("../fixtures/" + name).toString();
