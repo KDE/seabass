@@ -372,6 +372,82 @@ music the method was made for. The raw beats are nearer the dynamic
 grid than the constant grid is, which says the two follow the same
 onsets, not that either is right.
 
+## What the literature says
+
+Read for the two errors that would not yield to tuning: a tempo taken
+for its half or double, and the beat taken for the beat between.
+
+- **A tempo or its double is not in the audio alone.** Percival and
+  Tzanetakis (2014) score tempo candidates with pulse trains much as
+  the analyser folds the track, and find their raw answer right on 52
+  percent of 4011 files, half the true tempo on 33 and double on 5. An
+  oracle that knew when to double would reach 85. Their best decider is
+  a threshold (double anything under 71.9 BPM, 78 percent right); a
+  support vector machine on three features of the tempo histogram does
+  no better (76). Schreiber and Mueller (2017) treat it as
+  classification after the fact, with a random forest on a
+  "log beat spectrum" in five frequency bands plus spectral and
+  temporal flatness, trained on a separate collection; it lifts their
+  own estimator from 69 to 77 percent. Both need labelled tracks by the
+  thousand, and the classifier is specific to the estimator it corrects.
+- **DJ software settles it with a setting.** Gaertner (2013) compared
+  Traktor, Serato Scratch Live, Cross, Torq and Virtual DJ with
+  academic trackers on 2324 club tracks. Cross and Scratch Live offer
+  only tempo ranges of exactly one octave (75 to 150, 68 to 135), "a
+  simple but working approach"; Traktor offers nine such and one wide
+  range, and restricted to 68 to 135 it had the tempo right on 90
+  percent of the tracks against 78 when allowed 60 to 200, "which
+  shows that automatically picking the right tempo octave is still an
+  open issue". rekordbox has the same
+  setting; the references here were made with 70 to 180, which is more
+  than an octave and leaves 70 to 90 against 140 to 180 to rekordbox's
+  own judgement. That is where the analyser disagrees with it.
+- **Which moment is the beat depends on the genre.** Laroche (2003)
+  measured the energy at the beat, the half beat and the quarter beats
+  on tracks with known grids: the beat collects the most everywhere
+  except in reggae, whose half beat is "often stronger than the
+  downbeat" (snare and guitar chords), and Latin music, whose third
+  quarter beat is. He weights a template 1 on the beat, 0.65 on the
+  half beat, 0.2 on the quarters. Hockman, Davies and Fujinaga (2012),
+  for jungle and drum and bass, sum the five lowest of 40 bands of an
+  onset function because "drum types found at downbeats are likely to
+  be kick drums": the same reasoning as leaving out the band above
+  5 kHz here.
+- **The state of the art is a neural network at 20 ms.** "Beat This!"
+  (Foscarin, Schlueter, Widmer, 2024; code and weights under the MIT
+  licence) reaches 89 percent beat F1 on GTZAN with 2 or 20 million
+  parameters and gives a value every 20 ms, picked to the frame. That
+  is seven times coarser than the 3 ms this plan counts as matching
+  rekordbox, so it cannot place a grid, but it can say which side of
+  the beat and which octave: a third opinion for the tracks on which
+  the analyser and rekordbox differ. A 2026 failure analysis of such
+  trackers ("The SMC Blind Spot") finds them "confident but wrong" on
+  expressive music, with octave errors on 8 percent of a hard set.
+- **Small timing errors are a matter of sampling.** Laroche again: the
+  beat slightly off "can be minimized to an arbitrary level if the
+  energy flux signal is sampled fast enough"; the tempo and the
+  subdivision are the errors that matter. That matches what was found
+  here: the offset is a calibration, the gross errors are the work.
+
+What follows for the analyser: a tempo range as a setting, as
+rekordbox and every DJ program has it, since the audio will not say;
+a classifier for the octave only with far more labelled varied music
+than the 54 tuning tracks there are; and a neural tracker run beside
+the benchmark as a third opinion, not shipped.
+
+Sources: Percival and Tzanetakis, "Streamlined Tempo Estimation Based
+on Autocorrelation and Cross-correlation With Pulses", IEEE/ACM TASLP
+22(12), 2014. Schreiber and Mueller, "A Post-Processing Procedure for
+Improving Music Tempo Estimates Using Supervised Learning", ISMIR 2017.
+Gaertner, "Tempo Detection of Urban Music Using Tatum Grid Non-Negative
+Matrix Factorization", ISMIR 2013. Laroche, "Efficient Tempo and Beat
+Tracking in Audio Recordings", JAES 51(4), 2003. Hockman, Davies and
+Fujinaga, "One in the Jungle: Downbeat Detection in Hardcore, Jungle,
+and Drum and Bass", ISMIR 2012. Foscarin, Schlueter and Widmer, "Beat
+This! Accurate Beat Tracking Without DBN Postprocessing", ISMIR 2024,
+arXiv 2407.21658. Ahn, Hwang and Jung, "The SMC Blind Spot", arXiv
+2605.12287, 2026.
+
 ## Phase 3, in order
 
 1. Done: who is right on the tracks half a beat apart (above). The
