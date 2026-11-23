@@ -18,12 +18,13 @@ namespace seabass::domain
 // beats, and an onset function that hears them puts the grid there.
 //
 // The tempo: the lag at which the onset function repeats, scored together
-// with its multiples, sharpened on the repeats 4, 16 and 64 beats away,
+// with its multiples and a preference for tempos near 128 BPM, sharpened
+// on the repeats 4, 16 and 64 beats away,
 // each of which says the period that many times finer. That lag and its
 // relatives (half, two thirds, three quarters, four thirds, three halves,
 // double) are then each tried as the beat: the one at which the whole
-// track folds sharpest is it, with a preference for tempos near 128 BPM
-// to decide between a tempo and its double.
+// track folds sharpest is it, with a wide preference around 128 BPM to
+// decide between a tempo and its double. Tempos from 60 to 200 BPM.
 //
 // The place of the beat: the onset function folded onto one beat over the
 // whole track has most of its weight there (the weight within 30 ms, not
@@ -43,13 +44,36 @@ namespace seabass::domain
 // each next window of eight beats corrects the grid when its peak is
 // clearly the beat the grid expects; where it is not (a breakdown, a
 // fill) the grid goes on at the curve's tempo and the beats in between
-// are spaced evenly.
+// are spaced evenly. Each followed beat is then set on its own onset
+// where it has a clear one within 25 ms.
 //
 // What it does not do yet: say which beat starts the bar (beatInBar is
 // 0), or refine the beat on the samples of the transient.
 class SeabassGridAnalyser : public GridAnalyser
 {
 public:
+    // A followed grid is given out this much earlier than the place the
+    // onsets peak at. Calibration against rekordbox, whose own two ways of
+    // analysing differ by as much: measured against the start of the hit
+    // in the audio on 100 tracks of varied music, its straight grids sit
+    // 4.9 ms before it at the median and inside the hit on a quarter of
+    // the tracks, its beat-by-beat grids 6.2 ms before it and inside the
+    // hit on none. Our straight grids are 2 ms earlier than its straight
+    // ones as they are; our followed grids were 3.4 ms later than its
+    // beat-by-beat ones. Early is the safe side: a late grid cuts a
+    // quantised loop into the kick.
+    static constexpr double FollowedGridEarlierMs = 3.0;
+
+    // A straight grid is given out this much later than the place the
+    // onsets peak at. Calibration against rekordbox's straight grids on
+    // the tuning half of a collection of 1475 tracks: as measured, ours
+    // sit 2.2 ms before its grids at the median, tightly (half of the
+    // tracks between 2.9 and 1.4 ms), so that the 3 ms inside which a
+    // grid counts as rekordbox's cuts a quarter of them off. 0.7 ms later
+    // the middle track is 1.5 ms early, nine tracks in ten are still
+    // early, and no more are late by over 3 ms than before.
+    static constexpr double StraightGridLaterMs = 0.7;
+
     std::string name() const override { return "seabass"; }
     GridAnalysis analyse(PcmSource &source) override;
 };

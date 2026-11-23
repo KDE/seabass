@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -79,8 +80,15 @@ void movingPreset(const std::string &name, double within8, double within20)
     const synth::SynthTrack track = synth::renderSynthTrack(*synth::synthPreset(name));
     const GridAnalysis analysis = analysed(track);
     check(analysis.error.empty(), name + ": no error");
-    const BeatGridComparison c = compareBeatGrids(analysis.beats, track.beats);
+    // Against the truth, the followed grid put back by what it is set
+    // early by: that is calibration against rekordbox and not a distance
+    // from the beat.
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, track.beats, SeabassGridAnalyser::FollowedGridEarlierMs);
     check(c.tempo == TempoRelation::Same, name + ": the same tempo as the truth, beat for beat");
+    // And as it is given out, it is that much earlier.
+    const BeatGridComparison given = compareBeatGrids(analysis.beats, track.beats);
+    within(given.offset.medianMs - c.offset.medianMs, -SeabassGridAnalyser::FollowedGridEarlierMs - 1e-6,
+           -SeabassGridAnalyser::FollowedGridEarlierMs + 1e-6, name + ": given out 3 ms early");
     check(c.candidateShape.kind == GridShapeKind::Moving, name + ": a grid that moves");
     within(c.hits.within8Ms, within8, 1.0, name + ": true beats with one of ours within 8 ms");
     within(c.hits.within20Ms, within20, 1.0, name + ": true beats with one of ours within 20 ms");
@@ -220,10 +228,148 @@ void spikeBetweenTheBeats(double clickLoudness, const std::string &what)
     within(c.offset.medianMs, -40.0, 70.0, what + ": the grid on the kick, in ms from where it starts");
 }
 
+// A kick: a body at 60 Hz that dies away in a seventh of a second, and a
+// click on its first samples.
+void addKick(std::vector<float> &audio, int rate, double at, double loud = 0.8)
+{
+    const double pi = 3.14159265358979;
+    const auto from = static_cast<std::size_t>(at * rate);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(0.4 * rate) && from + i < audio.size(); ++i) {
+        const double t = static_cast<double>(i) / rate;
+        const double body = std::exp(-t / 0.15) * std::sin(2.0 * pi * 60.0 * t);
+        const double click = std::exp(-t / 0.004) * std::sin(2.0 * pi * 1800.0 * t);
+        audio[from + i] += static_cast<float>(loud * (0.8 * body + 0.3 * click));
+    }
+}
+
+// A chord stab: 400 and 800 Hz for a twelfth of a second.
+void addStab(std::vector<float> &audio, int rate, double at, double loud = 0.5)
+{
+    const double pi = 3.14159265358979;
+    const auto from = static_cast<std::size_t>(at * rate);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(0.2 * rate) && from + i < audio.size(); ++i) {
+        const double t = static_cast<double>(i) / rate;
+        const double shape = (1.0 - std::exp(-t / 0.002)) * std::exp(-t / 0.08);
+        audio[from + i] += static_cast<float>(loud * shape * 0.5 * (std::sin(2.0 * pi * 400.0 * t) + std::sin(2.0 * pi * 800.0 * t)));
+    }
+}
+
+// A kick on every beat and nothing between them, at tempos whose half
+// period repeats nowhere: the lag that scores best by its multiples is
+// then one the track does not repeat at itself, and the grid must still
+// be made.
+void slowAndSparse()
+{
+    const int rate = 44100;
+    for (const double bpm : {62.0, 70.0, 76.0}) {
+        std::vector<float> audio(static_cast<std::size_t>(rate) * 60, 0.0f);
+        std::vector<Beat> truth;
+        int k = 0;
+        for (double at = 0.3; at < 59.0; at += 60.0 / bpm, ++k) {
+            addKick(audio, rate, at);
+            truth.push_back({at * 1000.0, k % 4 + 1});
+        }
+        InMemoryPcmSource source(audio, rate);
+        SeabassGridAnalyser analyser;
+        const GridAnalysis analysis = analyser.analyse(source);
+        const std::string name = "a kick alone at " + std::to_string(static_cast<int>(bpm)) + " BPM";
+        check(!analysis.beats.empty(), name + ": a grid");
+        const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+        check(c.tempo == TempoRelation::Same, name + ": its tempo");
+        within(c.offset.medianMs, -15.0, 15.0, name + ": on the kick");
+    }
+}
+
+// Tones and hum: a level, held. No onsets, no grid; also where the tone is
+// low enough that its square ripples under the envelope's smoothing, and
+// where it has been through 16 bits.
+void heldTones()
+{
+    const int rate = 44100;
+    const double pi = 3.14159265358979;
+    SeabassGridAnalyser analyser;
+    for (const double hz : {50.0, 60.0, 110.0, 200.0, 220.0, 1000.0}) {
+        for (const bool sixteenBits : {false, true}) {
+            std::vector<float> tone(static_cast<std::size_t>(rate) * 20);
+            for (std::size_t i = 0; i < tone.size(); ++i) {
+                const double value = 0.5 * std::sin(2.0 * pi * hz * static_cast<double>(i) / rate);
+                tone[i] = static_cast<float>(sixteenBits ? std::round(value * 32767.0) / 32767.0 : value);
+            }
+            InMemoryPcmSource source(tone, rate);
+            const GridAnalysis analysis = analyser.analyse(source);
+            check(analysis.beats.empty(), "a tone at " + std::to_string(static_cast<int>(hz)) + " Hz"
+                                              + (sixteenBits ? " in 16 bits" : "") + ": no beats");
+        }
+    }
+}
+
+// Noise has nothing regular in it: whatever grid comes out, the analyser
+// is not sure of it.
+void noiseIsUnsure()
+{
+    const int rate = 44100;
+    std::uint32_t state = 362436069u;
+    std::vector<float> noise(static_cast<std::size_t>(rate) * 60);
+    for (float &sample : noise) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        sample = static_cast<float>(static_cast<double>(state) / 4294967296.0 - 0.5);
+    }
+    InMemoryPcmSource source(noise, rate);
+    SeabassGridAnalyser analyser;
+    within(analyser.analyse(source).confidence, 0.0, 0.2, "noise: not sure of its grid");
+}
+
+// Sections of 64 beats that answer each other half a beat apart: the kick
+// alone, then stabs between the beats alone, by turns. The track repeats
+// 63.5 and 64.5 beats away as well as 64, and the tempo is still 126.
+void sectionsThatAnswer()
+{
+    const int rate = 44100;
+    const double period = 60.0 / 126.0;
+    std::vector<float> audio(static_cast<std::size_t>((5 * 64 * period + 1.0) * rate), 0.0f);
+    std::vector<Beat> truth;
+    for (int k = 0; k < 5 * 64; ++k) {
+        const double beat = 0.2 + k * period;
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        if ((k / 64) % 2 == 0) {
+            addKick(audio, rate, beat);
+        } else {
+            addStab(audio, rate, beat + period / 2.0);
+        }
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+    check(c.tempo == TempoRelation::Same, "sections that answer each other: the tempo of the track");
+    within(static_cast<double>(analysis.beats.size()), 5 * 64 - 6.0, 5 * 64 + 6.0,
+           "sections that answer each other: as many beats as the track has");
+}
+
+// One sample that is no number does not cost the track its grid.
+void aSampleThatIsNoNumber()
+{
+    synth::SynthTrack track = synth::renderSynthTrack(*synth::synthPreset("house-124"));
+    track.samples[track.samples.size() / 3] = std::numeric_limits<float>::quiet_NaN();
+    track.samples[track.samples.size() / 2] = std::numeric_limits<float>::infinity();
+    const GridAnalysis analysis = analysed(track);
+    check(analysis.error.empty(), "a sample that is no number: not an error");
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, track.beats);
+    check(c.tempo == TempoRelation::Same, "a sample that is no number: the grid all the same");
+    within(c.offset.medianMs, -6.0, 0.0, "a sample that is no number: on the beat");
+}
+
 }  // namespace
 
 int main()
 {
+    slowAndSparse();
+    heldTones();
+    noiseIsUnsure();
+    sectionsThatAnswer();
+    aSampleThatIsNoNumber();
     spikeBetweenTheBeats(0.15, "a tick between the beats");
     spikeBetweenTheBeats(0.5, "a loud tick between the beats");
     nothingRegular();
