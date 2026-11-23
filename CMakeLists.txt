@@ -5027,6 +5027,10 @@ endif()
 add_executable(beat_grid_probe tools/beat_grid_probe.cpp)
 target_include_directories(beat_grid_probe PRIVATE src)
 target_link_libraries(beat_grid_probe PRIVATE seabass_core SQLite::SQLite3)
+# --anlz reads the audio file's own sample count, as the page does.
+if(TARGET seabass_taglib)
+    target_link_libraries(beat_grid_probe PRIVATE seabass_taglib)
+endif()
 
 # Calibration check for the rekordbox-to-Denon overview conversion: runs
 # domain/engine_overview over reference tracks made by the measuring
