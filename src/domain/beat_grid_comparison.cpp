@@ -152,6 +152,35 @@ std::size_t nearestIndex(const std::vector<double> &times, double t)
                                          : static_cast<std::size_t>(above - times.begin());
 }
 
+// For the drift: a run of reference beats whose offsets to the candidate
+// follow one from the other, each with its time and that offset.
+struct Stretch
+{
+    std::vector<double> times;
+    std::vector<double> offsets;
+};
+
+// Whether the candidate has the beat that continues `stretch` at the
+// reference beat at `time`: the one nearest the place the stretch's last
+// offset puts it, when it is within a quarter of the reference's beat
+// there. No two grids of one tempo move apart that fast, and a quarter is
+// as far from "the same beat" as from "the beat between". The beat is
+// then added to the stretch.
+bool continueStretch(Stretch &stretch, const std::vector<double> &candidate, double time, double referencePeriod)
+{
+    if (stretch.offsets.empty()) {
+        return false;
+    }
+    const double expected = time + stretch.offsets.back();
+    const double found = candidate[nearestIndex(candidate, expected)];
+    if (std::abs(found - expected) > referencePeriod / 4.0) {
+        return false;
+    }
+    stretch.times.push_back(time);
+    stretch.offsets.push_back(found - time);
+    return true;
+}
+
 TempoRelation classifyRatio(double ratio)
 {
     struct Named
@@ -248,10 +277,11 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
     const double spanEnd = c.back() + halfLastGap;
 
     std::vector<double> offsets;
-    // For the drift: each compared reference beat's time and its offset
-    // to the candidate beat that continues the offset before it.
-    std::vector<double> followedTimes;
-    std::vector<double> followedOffsets;
+    // For the drift: the stretches that were followed, in time order,
+    // the one being followed now, and the one that may be beginning.
+    std::vector<Stretch> stretches;
+    Stretch followed;
+    Stretch beginning;
     std::vector<double> ratios;
     std::array<int, 4> turns{};
     std::size_t hits1 = 0;
@@ -265,9 +295,32 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
         const std::size_t j = nearestIndex(c, r[i]);
         const double offset = c[j] - r[i];
         offsets.push_back(offset);
-        const std::size_t follow = followedOffsets.empty() ? j : nearestIndex(c, r[i] + followedOffsets.back());
-        followedTimes.push_back(r[i]);
-        followedOffsets.push_back(c[follow] - r[i]);
+        const double referencePeriod =
+            r.size() < 2 ? 0.0 : (i + 1 < r.size() ? r[i + 1] - r[i] : r[i] - r[i - 1]);
+        // The stretch being followed goes on where the candidate has the
+        // beat that continues it. Where it has not, the beat is left out
+        // of it: a hole in the candidate, a stray beat, the candidate on
+        // the off-beat for a while. Such beats may be a new stretch
+        // beginning: one starts at a reference beat the candidate has a
+        // beat within half a beat of, and starts again at the next such
+        // beat that does not go on it. Once it has eight beats, two bars,
+        // the candidate has moved for good; it becomes the stretch that
+        // is followed and the one before it is closed. A stretch that was
+        // beginning is dropped when the followed one goes on after all.
+        constexpr std::size_t BeatsOfANewStretch = 8;
+        if (continueStretch(followed, c, r[i], referencePeriod)) {
+            beginning = Stretch{};
+        } else if (continueStretch(beginning, c, r[i], referencePeriod)) {
+            if (beginning.offsets.size() >= BeatsOfANewStretch) {
+                if (!followed.offsets.empty()) {
+                    stretches.push_back(std::move(followed));
+                }
+                followed = std::move(beginning);
+                beginning = Stretch{};
+            }
+        } else if (std::abs(offset) <= referencePeriod / 2.0) {
+            beginning = Stretch{{r[i]}, {offset}};
+        }
         const double magnitude = std::abs(offset);
         // A hair over each bound still counts: an offset of exactly 1 ms
         // between two grids comes out of the arithmetic a few ulps either
@@ -281,7 +334,6 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
         if (r.size() < 2) {
             continue;
         }
-        const double referencePeriod = i + 1 < r.size() ? r[i + 1] - r[i] : r[i] - r[i - 1];
         // The candidate's period where this reference beat falls: the gap
         // around it, or the nearest one off either end.
         if (c.size() >= 2) {
@@ -334,25 +386,47 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
         result.tempo = classifyRatio(result.tempoRatio);
     }
 
+    // The drift: the slope of the longest stretch, over the time from the
+    // first followed beat to the last.
+    if (!followed.offsets.empty()) {
+        stretches.push_back(std::move(followed));
+    }
+    const auto longest =
+        std::max_element(stretches.begin(), stretches.end(), [](const Stretch &a, const Stretch &b) {
+            return a.offsets.size() < b.offsets.size();
+        });
+    // Said only when that stretch is at least half of what was followed:
+    // the slope of a small part of a track, taken for all of it, is
+    // mostly the scatter of that part's beats.
+    std::size_t followedBeats = 0;
+    for (const Stretch &stretch : stretches) {
+        followedBeats += stretch.offsets.size();
+    }
     constexpr std::size_t FewestBeatsForDrift = 10;
-    if (result.tempo == TempoRelation::Same && followedOffsets.size() >= FewestBeatsForDrift) {
+    if (result.tempo == TempoRelation::Same && longest != stretches.end()
+        && longest->offsets.size() >= FewestBeatsForDrift && 2 * longest->offsets.size() >= followedBeats) {
+        const std::vector<double> &followedTimes = longest->times;
+        const std::vector<double> &followedOffsets = longest->offsets;
         const std::size_t fifth = followedOffsets.size() / 5;
         const auto first = followedOffsets.begin();
         const auto last = followedOffsets.end();
         const double startOffset = medianOf(std::vector<double>(first, first + static_cast<std::ptrdiff_t>(fifth)));
         const double endOffset = medianOf(std::vector<double>(last - static_cast<std::ptrdiff_t>(fifth), last));
-        // The two medians stand for the middle of each fifth.
+        // Each median offset stands at the median time of its fifth, not
+        // at the middle of its span: the two differ where beats were left
+        // out and where the reference's tempo moves.
+        const auto firstTime = followedTimes.begin();
+        const auto lastTime = followedTimes.end();
         const double startTime =
-            (followedTimes[0] + followedTimes[fifth - 1]) / 2.0;
-        const double endTime =
-            (followedTimes[followedTimes.size() - fifth] + followedTimes.back()) / 2.0;
+            medianOf(std::vector<double>(firstTime, firstTime + static_cast<std::ptrdiff_t>(fifth)));
+        const double endTime = medianOf(std::vector<double>(lastTime - static_cast<std::ptrdiff_t>(fifth), lastTime));
         if (endTime > startTime) {
             const double slope = (endOffset - startOffset) / (endTime - startTime);
             const double middleOffset = (startOffset + endOffset) / 2.0;
             const double middleTime = (startTime + endTime) / 2.0;
             result.drift.known = true;
-            result.drift.startMs = middleOffset + slope * (followedTimes.front() - middleTime);
-            result.drift.endMs = middleOffset + slope * (followedTimes.back() - middleTime);
+            result.drift.startMs = middleOffset + slope * (stretches.front().times.front() - middleTime);
+            result.drift.endMs = middleOffset + slope * (stretches.back().times.back() - middleTime);
             result.drift.ms = result.drift.endMs - result.drift.startMs;
         }
     }

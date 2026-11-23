@@ -9,6 +9,7 @@
 // rekordbox stores it, ramps and steps, and grids with nothing in them.
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -335,7 +336,8 @@ void cover()
 }  // namespace
 
 // The drift over the track: a tempo a little off, an offset that grows
-// past half a beat, a plain shift, stray beats, and where it is unknown.
+// past half a beat, a plain shift, stray beats, stretches without beats,
+// jumps, and where it is unknown.
 void drift()
 {
     // 128 against 128.01 BPM over 768 beats (six minutes): the candidate's
@@ -370,6 +372,204 @@ void drift()
         stray[i].timeMs += 40.0;
     }
     near(compareBeatGrids(stray, reference).drift.ms, expected, 0.2, "drift: stray beats do not move it");
+
+    // A stretch the candidate has no beats for (a tracker that gives none
+    // in a breakdown) is stepped over: the drift is the one the beats on
+    // both sides of it show, not the width of the gap. The same with one
+    // beat missing, and against a reference in whole milliseconds.
+    auto gapped = fast;
+    gapped.erase(gapped.begin() + 300, gapped.begin() + 340);
+    const auto overGap = compareBeatGrids(gapped, reference);
+    near(overGap.drift.ms, expected, 1e-6, "drift: a gap in the candidate is not drift");
+    near(overGap.drift.startMs, 0.0, 1e-6, "drift: the start is exact with a gap");
+    auto oneMissing = fast;
+    oneMissing.erase(oneMissing.begin() + 400);
+    near(compareBeatGrids(oneMissing, reference).drift.ms, expected, 1e-6, "drift: one missing beat is not drift");
+    near(compareBeatGrids(gapped, roundedToMs(reference)).drift.ms, expected, 0.1,
+         "drift: a gap against whole milliseconds");
+
+    // One beat, 20 beats of nothing, then the grid, against a reference
+    // that starts five beats before that one: the first reference beats
+    // have nothing within half a beat and start no offset.
+    auto lateStart = fast;
+    lateStart.erase(lateStart.begin() + 1, lateStart.begin() + 21);
+    const auto earlyReference = constantGrid(100.0 - 5.0 * 60000.0 / 128.0, 128.0, 773);
+    const auto fromGap = compareBeatGrids(lateStart, earlyReference);
+    // Followed from that one beat, the sixth of the reference, to the end.
+    near(fromGap.drift.ms, expected, 1e-6, "drift: measured from the first beat that has a partner");
+    near(fromGap.drift.startMs, 0.0, 1e-6, "drift: a reference that starts in a gap is not whole beats out");
+
+    // A stretch at half the tempo: every other beat of it has no partner.
+    auto halfStretch = fast;
+    for (int k = 398; k > 300; k -= 2) {
+        halfStretch.erase(halfStretch.begin() + k);
+    }
+    near(compareBeatGrids(halfStretch, reference).drift.ms, expected, 1e-6, "drift: a stretch at half the tempo");
+
+    // Forty beats on the off-beat and back, as a tracker does through a
+    // breakdown: two jumps of half a beat, neither of them drift, whichever
+    // side of the half each falls on. The candidate a little fast, then a
+    // little slow. The beats behind the forty are the longest stretch and
+    // give the slope.
+    const double beat = 60000.0 / 128.0;
+    const auto slow = constantGrid(100.0, 127.99, 768);
+    const double expectedSlow = 767.0 * (60000.0 / 127.99 - 60000.0 / 128.0);
+    for (const double side : {0.5, -0.5}) {
+        auto offBeatFast = fast;
+        auto offBeatSlow = slow;
+        for (std::size_t k = 300; k < 340; ++k) {
+            offBeatFast[k].timeMs += side * beat;
+            offBeatSlow[k].timeMs += side * beat;
+        }
+        near(compareBeatGrids(offBeatFast, reference).drift.ms, expected, 1e-6,
+             "drift: on the off-beat and back, a little fast");
+        near(compareBeatGrids(offBeatSlow, reference).drift.ms, expectedSlow, 1e-6,
+             "drift: on the off-beat and back, a little slow");
+    }
+
+    // Five beats on the off-beat are too few for a stretch of their own:
+    // they are left out and the one stretch goes on behind them.
+    auto shortOff = fast;
+    for (std::size_t k = 300; k < 305; ++k) {
+        shortOff[k].timeMs += 0.5 * beat;
+    }
+    near(compareBeatGrids(shortOff, reference).drift.ms, expected, 1e-6, "drift: five beats on the off-beat");
+
+    // That the five are left out and not made a stretch shows where the
+    // tempo changes behind them: exact up to them, a little fast after.
+    // One stretch of 763 beats, whose fifths are 152 beats: the first all
+    // exact, the last around beat 691.5, which is 387.5 beats into the
+    // fast part and 616 beats after the middle of the first. Cut at the
+    // five, the longest stretch would be the fast part alone, and the
+    // drift that of a track fast all the way.
+    const double aBeat = 60000.0 / 128.01 - 60000.0 / 128.0;
+    auto exactThenFast = reference;
+    for (std::size_t k = 300; k < 305; ++k) {
+        exactThenFast[k].timeMs += 0.5 * beat;
+    }
+    for (std::size_t k = 305; k < exactThenFast.size(); ++k) {
+        exactThenFast[k].timeMs += static_cast<double>(k - 304) * aBeat;
+    }
+    near(compareBeatGrids(exactThenFast, reference).drift.ms, 387.5 * aBeat * 767.0 / 616.0, 1e-6,
+         "drift: five beats on the off-beat do not cut the stretch");
+
+    // Twice five beats on the off-beat, a hundred beats apart: the second
+    // five do not go on from the first five, which were dropped when the
+    // stretch went on behind them. Exact up to the second five, a little
+    // fast after: one stretch of 758 beats with fifths of 151, the last
+    // around beat 692, 288 beats into the fast part and 617 after the
+    // middle of the first.
+    auto twiceOff = reference;
+    for (const std::size_t from : {300u, 400u}) {
+        for (std::size_t k = from; k < from + 5; ++k) {
+            twiceOff[k].timeMs += 0.5 * beat;
+        }
+    }
+    for (std::size_t k = 405; k < twiceOff.size(); ++k) {
+        twiceOff[k].timeMs += static_cast<double>(k - 404) * aBeat;
+    }
+    near(compareBeatGrids(twiceOff, reference).drift.ms, 288.0 * aBeat * 767.0 / 617.0, 1e-6,
+         "drift: twice on the off-beat is not one stretch there");
+
+    // A candidate that goes onto the off-beat and stays there, and one
+    // that is there from the first beat to the last. Of that one the
+    // reference's first beat lies before the candidate begins, so it is
+    // followed from the second.
+    auto staysOff = fast;
+    for (std::size_t k = 400; k < staysOff.size(); ++k) {
+        staysOff[k].timeMs += 0.5 * beat;
+    }
+    near(compareBeatGrids(staysOff, reference).drift.ms, expected, 1e-6, "drift: a jump that stays is not drift");
+    const auto allOff = compareBeatGrids(shifted(fast, 0.5 * beat), reference);
+    near(allOff.drift.ms, 766.0 * aBeat, 1e-6, "drift: half a beat out all the way");
+    near(allOff.drift.startMs, 0.5 * beat + aBeat, 1e-6, "drift: half a beat out at the start");
+
+    // The longest stretch decides. 200 beats that run away fast, then a
+    // jump onto the off-beat and 568 beats at the tempo of `fast`: its
+    // slope, over the whole track.
+    auto twoTempos = constantGrid(100.0, 128.5, 200);
+    for (std::size_t k = 200; k < fast.size(); ++k) {
+        twoTempos.push_back({fast[k].timeMs + 0.5 * beat, fast[k].beatInBar});
+    }
+    near(compareBeatGrids(twoTempos, reference).drift.ms, expected, 1e-6, "drift: the longest stretch decides");
+
+    // No stretch with half of the beats followed, no drift said: 250
+    // beats, 250 on the off-beat, 268 back.
+    auto inThirds = fast;
+    for (std::size_t k = 250; k < 500; ++k) {
+        inThirds[k].timeMs += 0.5 * beat;
+    }
+    check(!compareBeatGrids(inThirds, reference).drift.known, "drift: unknown without a stretch of half the track");
+
+    // Where a jump begins: the second half of the grid moved by a fifth of
+    // a beat is followed (a step, which the line through the two fifths
+    // reads a quarter large: 767 beats over the 615 between the fifths'
+    // middles); moved by three tenths it is a jump and none of it drift.
+    auto stepped = fast;
+    auto jumped = fast;
+    for (std::size_t k = 400; k < stepped.size(); ++k) {
+        stepped[k].timeMs += 0.2 * beat;
+        jumped[k].timeMs += 0.3 * beat;
+    }
+    near(compareBeatGrids(stepped, reference).drift.ms, expected + 0.2 * beat * 767.0 / 615.0, 1e-6,
+         "drift: a fifth of a beat is followed");
+    near(compareBeatGrids(jumped, reference).drift.ms, expected, 1e-6, "drift: three tenths of a beat is a jump");
+
+    // One beat thrown far off, one thrown a hair under and a hair over a
+    // quarter of a beat, and a first beat thrown off: the track starts at
+    // its second beat. A thrown beat that is followed moves the median of
+    // its fifth by one beat's drift at most.
+    for (const double thrown : {150.0, 117.18, -117.18, -200.0}) {
+        auto oneStray = fast;
+        oneStray[400].timeMs += thrown;
+        near(compareBeatGrids(oneStray, reference).drift.ms, expected, 0.2, "drift: one beat thrown off");
+    }
+    auto straySeed = fast;
+    straySeed[0].timeMs += 150.0;
+    const auto fromSecond = compareBeatGrids(straySeed, reference);
+    near(fromSecond.drift.ms, 766.0 * aBeat, 1e-6, "drift: a first beat thrown off is not the start");
+    near(fromSecond.drift.startMs, aBeat, 1e-6, "drift: the start is the second beat's offset");
+
+    // A hole where the candidate is already more than half a beat early:
+    // the beats behind it go on the stretch, not on a new one.
+    auto earlyAndGapped = constantGrid(100.0, 128.2, 772);
+    earlyAndGapped.erase(earlyAndGapped.begin() + 400, earlyAndGapped.begin() + 460);
+    near(compareBeatGrids(earlyAndGapped, reference).drift.ms, 767.0 * (60000.0 / 128.2 - 60000.0 / 128.0), 1e-6,
+         "drift: a hole behind half a beat of drift");
+
+    // A slower candidate that ends inside the reference: whole beats of
+    // its difference to the reference, one for each beat followed.
+    const double slower = 60000.0 / 127.0 - 60000.0 / 128.0;
+    const double beatsFollowed = compareBeatGrids(constantGrid(100.0, 127.0, 760), reference).drift.ms / slower;
+    near(beatsFollowed, std::round(beatsFollowed), 1e-6, "drift: whole beats on a candidate that ends early");
+    check(beatsFollowed > 755.0 && beatsFollowed < 767.0, "drift: nearly all of a candidate that ends early");
+
+    // A tracker's beats: every beat up to 8 ms off, five thrown far off,
+    // forty on the off-beat. The same numbers every run.
+    auto jittery = fast;
+    std::uint32_t state = 12345;
+    for (Beat &b : jittery) {
+        state = state * 1664525u + 1013904223u;
+        b.timeMs += (static_cast<double>(state >> 8) / 16777216.0 - 0.5) * 16.0;
+    }
+    for (const std::size_t k : {100u, 250u, 420u, 600u, 700u}) {
+        jittery[k].timeMs += 150.0;
+    }
+    for (std::size_t k = 300; k < 340; ++k) {
+        jittery[k].timeMs += 0.5 * beat;
+    }
+    near(compareBeatGrids(jittery, reference).drift.ms, expected, 6.0, "drift: a tracker's beats");
+
+    // A reference whose tempo moves, and the same grid stretched by one
+    // part in two thousand: the offset grows with the time, not with the
+    // beat number, and the drift is that part of the reference's length.
+    const auto ramp = rampGrid();
+    auto stretched = ramp;
+    for (Beat &b : stretched) {
+        b.timeMs = ramp.front().timeMs + (b.timeMs - ramp.front().timeMs) * 1.0005;
+    }
+    near(compareBeatGrids(stretched, ramp).drift.ms, 0.0005 * (ramp.back().timeMs - ramp.front().timeMs), 1e-6,
+         "drift: on a reference whose tempo moves");
 
     // Half the tempo, or too few beats: not said.
     check(!compareBeatGrids(constantGrid(100.0, 64.0, 384), reference).drift.known, "drift: unknown at half tempo");

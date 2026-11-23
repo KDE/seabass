@@ -102,21 +102,54 @@ struct BarTurn
     std::size_t counted = 0;
 };
 
-// How far the candidate runs away from the reference over the track: the
-// offset at the end of the compared stretch minus the offset at its
-// start, in ms. A tempo that is a little off shows here and nowhere else:
-// 0.01 BPM at 128 is 28 ms after six minutes, on a grid whose first beats
-// are exact. Each reference beat is held to the candidate beat that
-// continues the offset of the beat before it, so an offset that grows
-// past half a beat is followed and not wrapped back. The slope is taken
-// between the median offset of the first fifth of the beats and that of
-// the last fifth, so stray beats do not move it. Known only where the two
-// have the same tempo and at least ten beats were compared.
+// How far the candidate runs away from the reference over the track, in
+// ms: what a tempo that is a little off adds up to. 0.01 BPM at 128 is
+// 28 ms after six minutes, on a grid whose first beats are exact, and it
+// shows here and nowhere else.
+//
+// The offset is followed from beat to beat, in stretches. A reference
+// beat goes on a stretch when the candidate beat nearest the place the
+// stretch's last offset puts it is within a quarter of a beat (of the
+// reference's beat there); so an offset that grows past half a beat is
+// followed and not wrapped back. A reference beat that does not go on is
+// left out: one in a hole of the candidate (a tracker that gave no beats
+// for a while, a stretch at half the tempo), one with a stray beat, the
+// ones of a short while on the off-beat. The stretch goes on after them
+// where the candidate is back within a quarter of a beat of its last
+// offset. Drift across what was left out counts as long as it stays
+// under that quarter.
+//
+// A new stretch begins at a reference beat the candidate has a beat
+// within half a beat of, begins again at the next such beat that does
+// not go on it, and takes the place of the stretch before it once it has
+// eight beats: the candidate has then moved for good (onto the off-beat,
+// or back from a long while there), which is a jump and not drift. A
+// candidate that moves on by a whole beat at once is not seen to move:
+// the stretch finds a beat at its place and goes on.
+//
+// The drift is the slope of the longest stretch, over the time from the
+// first followed beat of the track to the last. The slope is that of the
+// line through the median offset of the stretch's first fifth and that
+// of its last, each at the median time of its beats, so a few beats
+// thrown off move it by a beat's worth of drift at most. Where the
+// longest stretch is not the whole track, this takes the rest to run at
+// the tempo it has. A step inside a stretch (the candidate sliding on by
+// a part of a beat, a quarter at a time or less, and staying there) is
+// not a line: it comes out a quarter larger than it is when the stretch
+// is the whole track, and larger still when it is not.
+//
+// Known only where the two have the same tempo and the longest stretch
+// has at least ten beats and at least half of all the beats followed: the
+// slope of a small part of a track says little about the whole. The
+// reference is taken to have every beat: a hole in the reference is
+// taken for one long beat.
 struct Drift
 {
     bool known = false;
     double ms = 0.0;
-    // The followed offset at the start and at the end of the stretch.
+    // The longest stretch's line at the first and at the last followed
+    // beat of the track: the candidate's offset there where that stretch
+    // reaches it.
     double startMs = 0.0;
     double endMs = 0.0;
 };
