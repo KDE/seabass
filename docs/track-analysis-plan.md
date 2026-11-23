@@ -76,6 +76,15 @@ Per pair of grids (candidate, reference), after a shift the caller gives:
   around it (the scatter), the 95th percentile and the maximum of the
   absolute value;
 - **hit rate** at 1, 3, 8 and 20 ms;
+- **drift**: how far the candidate runs away from the reference from
+  the start of the track to its end, in ms: what a tempo that is a
+  little off adds up to (0.01 BPM at 128 is 28 ms after six minutes, on
+  a grid whose first beats are exact). The offset is followed from beat
+  to beat in stretches. A hole in the candidate, a stray beat and a
+  jump of more than a quarter of a beat (a while on the off-beat) are
+  not drift; the slope of the longest stretch is taken over the whole
+  track. Said only at the same tempo, and when one stretch has half of
+  the beats followed;
 - **tempo relation**: same, half, double, two thirds, three halves, other,
   from the ratio of the local beat periods, so it holds on a moving grid;
 - **bar**: by how many beats the candidate's bar is turned against the
@@ -121,46 +130,47 @@ reference's, in ms. `qm-raw` is the tracker's beat list as it comes,
 Against the true grid. median and scatter: the offset's median and its
 median absolute deviation; then the share of true beats within 1, 3, 8
 and 20 ms; the tempo relation; the found grid's shape; the mean tempo,
-first beat to last, of the truth and of the found grid.
+first beat to last, of the truth and of the found grid; the drift in ms.
+The tracks are 77 to 152 seconds long.
 
-| preset | analyser | median | scatter | 1 ms | 3 ms | 8 ms | 20 ms | tempo | shape | true BPM | found BPM |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| house-124 | qm-raw | -3.7 | 3.7 | 0.11 | 0.31 | 0.68 | 0.86 | same | moving | 124.000 | 124.483 |
-| house-124 | mixxx-constant | -3.6 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 |
-| house-124 | mixxx-constant-unrounded | -3.6 | 1.0 | 0.00 | 0.35 | 1.00 | 1.00 | same | constant | 124.000 | 124.004 |
-| trance-137.98 | qm-raw | +0.1 | 210.4 | 0.06 | 0.16 | 0.35 | 0.43 | same | moving | 137.980 | 138.330 |
-| trance-137.98 | mixxx-constant | +210.4 | 3.5 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 137.980 | 138.000 |
-| trance-137.98 | mixxx-constant-unrounded | +216.1 | 0.6 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 137.980 | 137.977 |
-| drift-122 | qm-raw | -4.3 | 3.8 | 0.11 | 0.31 | 0.65 | 0.79 | same | moving | 122.047 | 122.006 |
-| drift-122 | mixxx-constant | -71.4 | 66.3 | 0.04 | 0.11 | 0.20 | 0.30 | same | constant | 122.047 | 121.667 |
-| drift-122 | mixxx-constant-unrounded | -24.6 | 113.3 | 0.01 | 0.12 | 0.19 | 0.25 | same | constant | 122.047 | 121.561 |
-| ramp-100-125 | qm-raw | -4.2 | 3.9 | 0.09 | 0.25 | 0.66 | 0.85 | same | moving | 115.216 | 115.887 |
-| ramp-100-125 | mixxx-constant | -7.3 | 41.7 | 0.01 | 0.02 | 0.40 | 0.42 | other | constant | 115.216 | 125.000 |
-| ramp-100-125 | mixxx-constant-unrounded | -6.9 | 40.4 | 0.01 | 0.01 | 0.40 | 0.42 | other | constant | 115.216 | 124.994 |
-| step-120-126 | qm-raw | -3.3 | 4.0 | 0.14 | 0.38 | 0.64 | 0.86 | same | moving | 124.218 | 124.708 |
-| step-120-126 | mixxx-constant | -6.2 | 71.4 | 0.00 | 0.00 | 0.32 | 0.35 | other | constant | 124.218 | 120.000 |
-| step-120-126 | mixxx-constant-unrounded | -6.1 | 72.8 | 0.00 | 0.00 | 0.32 | 0.34 | other | constant | 124.218 | 119.996 |
-| alternating-127.5-128 | qm-raw | -2.3 | 227.6 | 0.03 | 0.12 | 0.31 | 0.43 | same | moving | 127.715 | 128.048 |
-| alternating-127.5-128 | mixxx-constant | -200.8 | 19.2 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 127.715 | 127.667 |
-| alternating-127.5-128 | mixxx-constant-unrounded | -206.4 | 17.2 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 127.715 | 127.684 |
-| live-drummer-96 | qm-raw | -1.8 | 4.4 | 0.12 | 0.39 | 0.74 | 0.99 | same | moving | 96.151 | 96.173 |
-| live-drummer-96 | mixxx-constant | +1.1 | 101.7 | 0.03 | 0.09 | 0.23 | 0.32 | same | constant | 96.151 | 95.333 |
-| live-drummer-96 | mixxx-constant-unrounded | +0.2 | 99.7 | 0.03 | 0.12 | 0.23 | 0.32 | same | constant | 96.151 | 95.316 |
-| breakbeat-swing-132 | qm-raw | -1.2 | 3.8 | 0.13 | 0.38 | 0.75 | 0.81 | same | moving | 132.000 | 131.705 |
-| breakbeat-swing-132 | mixxx-constant | -2.3 | 0.0 | 0.00 | 1.00 | 1.00 | 1.00 | same | constant | 132.000 | 132.000 |
-| breakbeat-swing-132 | mixxx-constant-unrounded | -2.2 | 0.3 | 0.00 | 1.00 | 1.00 | 1.00 | same | constant | 132.000 | 131.999 |
-| long-breakdown-126 | qm-raw | -3.4 | 6.2 | 0.08 | 0.21 | 0.48 | 0.60 | same | moving | 126.000 | 126.315 |
-| long-breakdown-126 | mixxx-constant | -3.9 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 126.000 | 126.000 |
-| long-breakdown-126 | mixxx-constant-unrounded | -3.9 | 0.1 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 126.000 | 126.000 |
-| drumless-intro-128 | qm-raw | -3.7 | 8.6 | 0.07 | 0.17 | 0.39 | 0.53 | same | moving | 128.000 | 125.986 |
-| drumless-intro-128 | mixxx-constant | -5.3 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 128.000 | 128.000 |
-| drumless-intro-128 | mixxx-constant-unrounded | -2.4 | 3.5 | 0.15 | 0.43 | 0.90 | 1.00 | same | constant | 128.000 | 128.020 |
-| house-124-48k | qm-raw | -3.2 | 3.5 | 0.14 | 0.33 | 0.72 | 0.85 | same | moving | 124.000 | 124.479 |
-| house-124-48k | mixxx-constant | -3.3 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 |
-| house-124-48k | mixxx-constant-unrounded | -3.3 | 0.1 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 |
-| halftime-174 | qm-raw | +1.3 | 172.4 | 0.07 | 0.20 | 0.43 | 0.50 | half | moving | 174.000 | 87.018 |
-| halftime-174 | mixxx-constant | +341.7 | 0.0 | 0.00 | 0.00 | 0.50 | 0.50 | half | constant | 174.000 | 87.000 |
-| halftime-174 | mixxx-constant-unrounded | +0.1 | 172.4 | 0.10 | 0.25 | 0.50 | 0.50 | half | constant | 174.000 | 87.011 |
+| preset | analyser | median | scatter | 1 ms | 3 ms | 8 ms | 20 ms | tempo | shape | true BPM | found BPM | drift |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| house-124 | qm-raw | -3.7 | 3.7 | 0.11 | 0.31 | 0.68 | 0.86 | same | moving | 124.000 | 124.483 | -600.2 |
+| house-124 | mixxx-constant | -3.6 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 | 0.0 |
+| house-124 | mixxx-constant-unrounded | -3.6 | 1.0 | 0.00 | 0.35 | 1.00 | 1.00 | same | constant | 124.000 | 124.004 | -3.8 |
+| trance-137.98 | qm-raw | +0.1 | 210.4 | 0.06 | 0.16 | 0.35 | 0.43 | same | moving | 137.980 | 138.330 | -273.8 |
+| trance-137.98 | mixxx-constant | +210.4 | 3.5 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 137.980 | 138.000 | -14.0 |
+| trance-137.98 | mixxx-constant-unrounded | +216.1 | 0.6 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 137.980 | 137.977 | +2.3 |
+| drift-122 | qm-raw | -4.3 | 3.8 | 0.11 | 0.31 | 0.65 | 0.79 | same | moving | 122.047 | 122.006 | +0.5 |
+| drift-122 | mixxx-constant | -71.4 | 66.3 | 0.04 | 0.11 | 0.20 | 0.30 | same | constant | 122.047 | 121.667 | +275.1 |
+| drift-122 | mixxx-constant-unrounded | -24.6 | 113.3 | 0.01 | 0.12 | 0.19 | 0.25 | same | constant | 122.047 | 121.561 | +371.0 |
+| ramp-100-125 | qm-raw | -4.2 | 3.9 | 0.09 | 0.25 | 0.66 | 0.85 | same | moving | 115.216 | 115.887 | -600.8 |
+| ramp-100-125 | mixxx-constant | -7.3 | 41.7 | 0.01 | 0.02 | 0.40 | 0.42 | other | constant | 115.216 | 125.000 | - |
+| ramp-100-125 | mixxx-constant-unrounded | -6.9 | 40.4 | 0.01 | 0.01 | 0.40 | 0.42 | other | constant | 115.216 | 124.994 | - |
+| step-120-126 | qm-raw | -3.3 | 4.0 | 0.14 | 0.38 | 0.64 | 0.86 | same | moving | 124.218 | 124.708 | -594.8 |
+| step-120-126 | mixxx-constant | -6.2 | 71.4 | 0.00 | 0.00 | 0.32 | 0.35 | other | constant | 124.218 | 120.000 | - |
+| step-120-126 | mixxx-constant-unrounded | -6.1 | 72.8 | 0.00 | 0.00 | 0.32 | 0.34 | other | constant | 124.218 | 119.996 | - |
+| alternating-127.5-128 | qm-raw | -2.3 | 227.6 | 0.03 | 0.12 | 0.31 | 0.43 | same | moving | 127.715 | 128.048 | -297.2 |
+| alternating-127.5-128 | mixxx-constant | -200.8 | 19.2 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 127.715 | 127.667 | +74.8 |
+| alternating-127.5-128 | mixxx-constant-unrounded | -206.4 | 17.2 | 0.00 | 0.00 | 0.00 | 0.00 | same | constant | 127.715 | 127.684 | +61.1 |
+| live-drummer-96 | qm-raw | -1.8 | 4.4 | 0.12 | 0.39 | 0.74 | 0.99 | same | moving | 96.151 | 96.173 | +1.7 |
+| live-drummer-96 | mixxx-constant | +1.1 | 101.7 | 0.03 | 0.09 | 0.23 | 0.32 | same | constant | 96.151 | 95.333 | +834.8 |
+| live-drummer-96 | mixxx-constant-unrounded | +0.2 | 99.7 | 0.03 | 0.12 | 0.23 | 0.32 | same | constant | 96.151 | 95.316 | +855.2 |
+| breakbeat-swing-132 | qm-raw | -1.2 | 3.8 | 0.13 | 0.38 | 0.75 | 0.81 | same | moving | 132.000 | 131.705 | +280.3 |
+| breakbeat-swing-132 | mixxx-constant | -2.3 | 0.0 | 0.00 | 1.00 | 1.00 | 1.00 | same | constant | 132.000 | 132.000 | 0.0 |
+| breakbeat-swing-132 | mixxx-constant-unrounded | -2.2 | 0.3 | 0.00 | 1.00 | 1.00 | 1.00 | same | constant | 132.000 | 131.999 | +1.0 |
+| long-breakdown-126 | qm-raw | -3.4 | 6.2 | 0.08 | 0.21 | 0.48 | 0.60 | same | moving | 126.000 | 126.315 | -587.7 |
+| long-breakdown-126 | mixxx-constant | -3.9 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 126.000 | 126.000 | 0.0 |
+| long-breakdown-126 | mixxx-constant-unrounded | -3.9 | 0.1 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 126.000 | 126.000 | +0.5 |
+| drumless-intro-128 | qm-raw | -3.7 | 8.6 | 0.07 | 0.17 | 0.39 | 0.53 | same | moving | 128.000 | 125.986 | +289.8 |
+| drumless-intro-128 | mixxx-constant | -5.3 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 128.000 | 128.000 | 0.0 |
+| drumless-intro-128 | mixxx-constant-unrounded | -2.4 | 3.5 | 0.15 | 0.43 | 0.90 | 1.00 | same | constant | 128.000 | 128.020 | -14.0 |
+| house-124-48k | qm-raw | -3.2 | 3.5 | 0.14 | 0.33 | 0.72 | 0.85 | same | moving | 124.000 | 124.479 | -600.2 |
+| house-124-48k | mixxx-constant | -3.3 | 0.0 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 | 0.0 |
+| house-124-48k | mixxx-constant-unrounded | -3.3 | 0.1 | 0.00 | 0.00 | 1.00 | 1.00 | same | constant | 124.000 | 124.000 | +0.4 |
+| halftime-174 | qm-raw | +1.3 | 172.4 | 0.07 | 0.20 | 0.43 | 0.50 | half | moving | 174.000 | 87.018 | - |
+| halftime-174 | mixxx-constant | +341.7 | 0.0 | 0.00 | 0.00 | 0.50 | 0.50 | half | constant | 174.000 | 87.000 | - |
+| halftime-174 | mixxx-constant-unrounded | +0.1 | 172.4 | 0.10 | 0.25 | 0.50 | 0.50 | half | constant | 174.000 | 87.011 | - |
 
 What the table says:
 
@@ -181,7 +191,17 @@ What the table says:
 - Half-time drum and bass is read at half the tempo (87 BPM) by all
   three.
 - The rounding moves the 137.98 BPM track onto 138.000, a whole-number
-  answer for a fractional track.
+  answer for a fractional track: 14 ms of drift in 97 seconds, where
+  the unrounded 137.977 drifts 2.
+- The raw tracker has more beats than the track: 228 for the 224 of
+  house-124. Before the breakdown it runs fast for five beats (441 ms
+  apart for 484), which puts it on the off-beat; after it, it runs fast
+  for five more and is on the beat again, one beat ahead. Its drift of
+  about 600 ms there is that beat (a step in the offset is read a
+  quarter large), on ramp-100-125, step-120-126 and long-breakdown-126
+  too; about half a beat on four more presets. Only on the two tracks
+  with no breakdown and a tempo that moves slowly (drift-122,
+  live-drummer-96) does it keep count.
 
 Key (`qm-key` against the preset's stated key): right on the two major
 presets ramp-100-125 (D) and drumless-intro-128 (G); every minor preset
@@ -191,7 +211,116 @@ relative C sharp minor.
 
 ### Real music
 
-Not run yet. `analysis_benchmark audio <stick> --analyser all --half tuning --jobs 3`
-on a stick that holds a rekordbox export with its audio gives the tables
-for this section; the held-back half stays unseen until an analyser is
-tuned.
+rekordbox's grids are the reference here, and they are its automatic
+analysis, not corrected by hand: a difference can be rekordbox's error.
+Truth exists only for the generated tracks. The audio is private (tier
+3); what is written here is numbers.
+
+#### The collection: 1475 tracks
+
+A rekordbox collection of mostly house and techno, analysed by
+rekordbox 7.2.18 in its normal mode: 1312 MP3 and 163 M4A files, every
+rekordbox grid constant, 90.4 percent of them at a whole-number tempo
+(within 0.005 BPM). `analysis_benchmark audio <track list> --analyser all
+--half all --jobs 14`, 13 minutes. Both halves: these are the baseline's
+figures and nothing was tuned on them.
+
+One outcome a track, the first that holds:
+
+| outcome | qm-raw | mixxx-constant | mixxx-constant-unrounded |
+|---|---|---|---|
+| another tempo (half, double, two thirds, other) | 25 (1.7 %) | 29 (2.0 %) | 29 (2.0 %) |
+| the same tempo, half a beat out | 299 (20.3 %) | 606 (41.1 %) | 608 (41.2 %) |
+| on the beat, more than 10 ms from rekordbox | 137 (9.3 %) | 68 (4.6 %) | 64 (4.3 %) |
+| within 10 ms, drifts more than 10 ms | 721 (48.9 %) | 40 (2.7 %) | 183 (12.4 %) |
+| within 3 ms, no such drift | 137 (9.3 %) | 351 (23.8 %) | 267 (18.1 %) |
+| 3 to 10 ms, no such drift | 156 (10.6 %) | 381 (25.8 %) | 324 (22.0 %) |
+
+"Half a beat out" is a median offset of more than three tenths of a
+beat. The three things scored apart:
+
+- **Spread between tracks** (mixxx-constant, the 840 tracks on the
+  beat): the median offset is 3.0 ms early, half of the tracks between
+  4.3 and 1.6 ms early, nine in ten between 13.4 ms early and 3.9 ms
+  late. 87 percent are early. Late by more than 3 ms: 47 tracks (3.2
+  percent of all), by more than 10 ms: 21.
+- **Drift over the track** (the 1446 tracks at rekordbox's tempo):
+  with the rounding the median is 0.6 ms, within 3 ms on 88.7 percent,
+  within 10 ms on 92.5; without it the median is 5.6 ms, within 3 ms on
+  29.1 percent, within 10 ms on 70.5. The raw tracker: median 313 ms,
+  within 10 ms on 29.3 percent.
+- **Gross errors**: the first two rows of the table.
+
+The tempo itself, against rekordbox's, on those 1446 tracks:
+
+| within | mixxx-constant | mixxx-constant-unrounded |
+|---|---|---|
+| 0.001 BPM | 79.0 % | 13.2 % |
+| 0.005 BPM | 92.9 % | 77.4 % |
+| 0.01 BPM | 94.7 % | 89.5 % |
+| 0.05 BPM | 97.9 % | 98.0 % |
+
+A track of the median length (334 seconds) at 128 BPM drifts 10 ms at
+0.004 BPM. On the 130 of them whose rekordbox tempo is not a whole
+number, the drift stays within 10 ms on 37.7 percent with the rounding
+and on 41.5 without.
+
+Key (`qm-key` against rekordbox's): the same on 53.6 percent; the
+parallel key on 9.4, a fifth down on 8.2, the relative key on 4.9, a
+fifth up on 3.7, something else on 20.1.
+
+What it says:
+
+- The phase is the main error, not the tempo: two tracks in five are
+  half a beat from rekordbox with a constant grid, one in five with the
+  raw beats. Who is right is not known yet; the next step measures the
+  audio at both grids on every one of them.
+- Where the phase agrees the grid is early by 3 ms, and tightly so. A
+  constant brings the median to rekordbox's; early is the safe side (a
+  late grid cuts a quantised loop into the kick).
+- The method does not measure the tempo well enough to leave it
+  unrounded: 0.002 BPM off at the median, 0.011 at the ninth decile,
+  against the 0.004 that 10 ms needs. Rounding to the whole number
+  repairs that on this collection, nine tenths of which is at a whole
+  number, and helps nothing on the tracks that are not. The rule above
+  (no whole-number rule) stands as decided; what the numbers ask for is
+  a tempo measured over the whole track to a few thousandths, and
+  rounding only where the measurement cannot tell the two apart.
+- The raw tracker loses count: of the 1443 tracks it covers from end
+  to end, 271 have rekordbox's number of beats. Its drift is beats
+  gained or lost on the way, as on the generated tracks, not a tempo
+  that is off. This tracker's beat list is not usable as a grid without
+  a fit on top.
+
+#### The variety list: 104 tracks, provisional
+
+105 FLAC files (98 at 44.1 kHz, 7 second copies at 48 kHz) in 20
+groups picked for what breaks an analyser: live drummers, breakbeat,
+garage, drum and bass, half-time, hip-hop, reggae, odd metres, tempo
+changes, no drums, jazz, very fast, very slow, long breakdowns. One has
+no rekordbox grid. rekordbox analysed them in its normal mode, which
+gives every track one constant tempo, so on the groups whose tempo
+moves the reference is constant by construction; the list is being
+analysed again in dynamic mode, and the figures by group wait for that.
+
+For now, mixxx-constant on all 104: another tempo on 24 (23.1
+percent), half a beat out on 8, on the beat but more than 10 ms off on
+27, drifting on 26, within 10 ms and steady on 19 (18.3 percent,
+against 49.6 on the collection). The key is rekordbox's on 43.3
+percent. The collection flatters the method: it is the music the
+method was made for.
+
+## Phase 3, in order
+
+1. Who is right on the tracks half a beat apart: the energy of the low
+   band at rekordbox's beats and at ours, over the whole track, for each
+   of the 606. `analysis_benchmark --beats` writes the grids for it.
+2. The worklist: every track that differs, by kind (half a beat,
+   another tempo, more than 10 ms, drift), by row id.
+3. The analyser: the tempo over the whole track to a few thousandths of
+   a BPM, the phase from the low band with both half-beat phases
+   compared, the beat refined on the transient to the sample, a
+   confidence so that an unsure track is flagged. Tuned on the tuning
+   half, judged on the held-back half and on the generated tracks.
+4. The same tables after every change. A change that moves no number
+   is not kept.
