@@ -484,6 +484,7 @@ target_include_directories(seabass_mp3_lead_in PUBLIC src)
 add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
+    src/domain/beat_grid_comparison.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
@@ -715,6 +716,7 @@ add_library(seabass_core_testing STATIC
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
     src/domain/beat_grid.cpp
+    src/domain/beat_grid_comparison.cpp
     src/infrastructure/audio/playback_timeline.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
@@ -1059,6 +1061,7 @@ if(TARGET Qt6::Multimedia)
         src/infrastructure/audio/qt_multimedia_alignment_probe.cpp
         src/infrastructure/audio/qt_multimedia_detail_waveform.cpp
         src/infrastructure/audio/player_start_guard.cpp
+        src/infrastructure/audio/qt_multimedia_pcm_source.cpp
         # Qt-free arithmetic, but their one caller is each a decoder
         # above, and a static seabass_core listed before this library on
         # a link line could not supply them.
@@ -5337,6 +5340,70 @@ target_link_libraries(make_engine_library PRIVATE seabass_core SQLite::SQLite3)
 # its header): read with TagLib when the build has it.
 if(TARGET seabass_taglib)
     target_link_libraries(make_engine_library PRIVATE seabass_taglib)
+endif()
+
+# Track analysis (docs/track-analysis-plan.md). Synthetic tracks with a
+# known grid, made when a test or the benchmark runs: a library for tools
+# and tests, never shipped. Rendering is the hot loop of every test that
+# uses one, so it is built optimised even in a Debug build, as the
+# cross-correlation above is.
+add_library(seabass_synth_track STATIC tools/synth_track/synth_track.cpp)
+target_include_directories(seabass_synth_track PUBLIC src tools)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(tools/synth_track/synth_track.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
+endif()
+add_executable(synth_track tools/synth_track/synth_track_main.cpp)
+target_link_libraries(synth_track PRIVATE seabass_synth_track)
+
+# The grid comparison on grids whose answer is known by construction.
+add_executable(beat_grid_comparison_test tests/beat_grid_comparison_test.cpp)
+target_link_libraries(beat_grid_comparison_test PRIVATE seabass_core_testing)
+target_include_directories(beat_grid_comparison_test PRIVATE src)
+add_test(NAME beat_grid_comparison_test COMMAND beat_grid_comparison_test)
+
+# The synthetic tracks against their own description: the same seed gives
+# the same track, the grid follows the tempo programme, and the drums are
+# in the audio where the grid says.
+add_executable(synth_track_test tests/synth_track_test.cpp)
+target_link_libraries(synth_track_test PRIVATE seabass_synth_track)
+add_test(NAME synth_track_test COMMAND synth_track_test)
+
+# Phase 1's benchmark: rekordbox's grids against Engine's on a stick, and
+# every registered analyser against synthetic tracks. Reads only. The
+# test runs its self-check: an oracle that answers the true grid moved by
+# a set amount must come back as exactly that shift, constant grids and
+# moving ones alike.
+add_executable(analysis_benchmark tools/analysis_benchmark.cpp)
+target_include_directories(analysis_benchmark PRIVATE src tools)
+target_link_libraries(analysis_benchmark PRIVATE seabass_core seabass_synth_track)
+add_test(NAME analysis_benchmark_synth_check COMMAND analysis_benchmark synth --preset all --shift-ms 7.25 --check)
+add_test(NAME analysis_benchmark_synth_check_negative COMMAND analysis_benchmark synth --preset all --shift-ms -0.5
+    --check)
+# The libraries mode on a scratch stick with a planted MP3 and grid: the
+# lead-in correction applied, the planted residual found, the stick left
+# as it was.
+add_executable(analysis_benchmark_libraries_test tests/analysis_benchmark_libraries_test.cpp)
+target_include_directories(analysis_benchmark_libraries_test PRIVATE src tests)
+target_link_libraries(analysis_benchmark_libraries_test PRIVATE seabass_core)
+add_test(NAME analysis_benchmark_libraries_test COMMAND analysis_benchmark_libraries_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click/click-D-lame-44100.mp3
+    $<TARGET_FILE:analysis_benchmark>)
+set_tests_properties(analysis_benchmark_libraries_test PROPERTIES LABELS "integration"
+    ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+# The decoder behind the PcmSource port, against the click MP3s, the
+# alignment WAVs and a synthetic track written as a WAV. Scratch files go
+# to the build tree, not /tmp.
+if(TARGET seabass_audio_qt)
+    add_executable(qt_multimedia_pcm_source_test tests/qt_multimedia_pcm_source_test.cpp)
+    target_include_directories(qt_multimedia_pcm_source_test PRIVATE src)
+    target_link_libraries(qt_multimedia_pcm_source_test PRIVATE seabass_audio_qt seabass_synth_track seabass_mp3_lead_in
+        Qt6::Core)
+    add_test(NAME qt_multimedia_pcm_source_test COMMAND qt_multimedia_pcm_source_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment
+        ${CMAKE_BINARY_DIR}/test-scratch)
+    set_tests_properties(qt_multimedia_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # Hardware probe for Copy Beat Grids: a grid of the caller's making on one

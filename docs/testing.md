@@ -1010,6 +1010,36 @@ every cleaning and sync function:
 work counts, not wall-clock seconds, because timing is a property of the
 medium and not of the data.
 
+## Track analysis: synthetic tracks and the grid benchmark
+
+Beat grid analysis is measured against grids whose truth is known
+(`docs/track-analysis-plan.md`). Two tools, both built with the tests:
+
+    synth_track --list
+    synth_track --preset ramp-100-125 --out ramp.wav --grid ramp.tsv
+
+renders one of the synthetic tracks (`tools/synth_track/`: a simple dance
+track with kick, snare or clap, hats, bass and pads, whose tempo may stay
+put, drift, ramp, step or alternate, whose drummer may scatter around
+the beat) as a 16-bit mono WAV, and writes its true grid one beat a line.
+`synth_track_test` checks that the kicks in the audio sit within 1 ms of
+that grid. Tests render what they need when they run; nothing is
+committed.
+
+    analysis_benchmark synth --preset all --shift-ms 7.25 --check
+    analysis_benchmark libraries <stick root> --tsv out.tsv [--audio-root DIR]
+
+The first runs every registered analyser over the synthetic tracks and
+scores it against the truth (`domain/beat_grid_comparison.hpp`); with
+only the oracle registered, `--check` proves the arithmetic (ctest runs
+it). The second compares the Engine grid with rekordbox's on every track
+a stick holds in both, rekordbox's put on Engine's timeline with the
+player's lead-in code, Engine minus rekordbox. It reads only: the
+catalog files are copied to a scratch folder and opened there. An MP3's
+lead-in is read from its audio under `--audio-root` (the stick root by
+default); a stick copy without audio shows MP3 rows uncorrected and says
+so in the `timeline` column.
+
 ## Measuring write performance
 
 Benchmarking a save against real removable media has its own traps (a USB
