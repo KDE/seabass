@@ -552,6 +552,28 @@ int main()
         check(onlyWaveforms.grids.notRequested == 9 && onlyWaveforms.grids.total() == 9
                   && onlyWaveforms.grids.ledgerEntries.empty(),
               "grids not asked for are their own bucket, and nothing for the ledger");
+
+        // The waveform the player drew: off by default and handed on as
+        // asked; left alone, it is a bucket of its own, the row still
+        // written for its grid.
+        check(!AnalysisCopyOptions{}.overwritePlayerWaveforms && !AnalysisImportOptions{}.overwritePlayerWaveforms,
+              "writing over the player's waveform is off by default");
+        for (const bool over : {false, true}) {
+            FakeAnalysisWriter players;
+            players.answers = {{"1", {Outcome::Written, Waveform::PlayersWaveform, false, false}},
+                               {"2", {Outcome::AlreadySame, Waveform::PlayersWaveform, false, false}}};
+            BeatGridCopyPlan two;
+            two.items = {plan.items[0], plan.items[1]};
+            AnalysisCopyOptions asked;
+            asked.overwritePlayerWaveforms = over;
+            const AnalysisCopyResult kept = copyRekordboxAnalysis(two, source, players, {}, asked);
+            check(kept.waveforms.playersWaveform == 2 && kept.waveforms.written == 0 && kept.waveforms.total() == 2,
+                  "the player's waveforms counted as left alone");
+            check(kept.rowsWritten == 1 && kept.grids.written == 1, "the row with a grid to write still written");
+            for (const auto &[id, call] : players.calls) {
+                check(call.overwritePlayerWaveforms == over, "overwritePlayerWaveforms handed on to row " + id);
+            }
+        }
         std::cout << "case 7 (whole analysis) done\n";
     }
 

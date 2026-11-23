@@ -379,6 +379,15 @@ private:
     };
     Keep keepBeforeWrite(std::int64_t id, const std::string &keepKey, const KeepFacts &facts, const RowNow &row,
                          const std::function<void(application::EngineAnalysisColumns &)> &apply, bool previewOnly);
+    // The overview column of an analysed row holds a waveform the player
+    // drew (AnalysisImportOptions::overwritePlayerWaveforms): any value
+    // but NULL or an overview of no points, unless it is known to be
+    // Seabass's own, by the kept store (an entry for the row whose
+    // original's overview is another and whose analysis is one Seabass
+    // knows) or, with no entry, by the ledger (a row Seabass completed:
+    // both its grids the ledger's grid, as keepBeforeWrite() reasons).
+    bool holdsPlayersWaveform(std::int64_t id, const std::string &keepKey, const RowNow &row,
+                              const std::optional<std::string> &ledgerGrid);
     // How the cues handed to writeCues() are placed.
     enum class CuePositions {
         // On rekordbox's timeline: the file's shift taken off, the mark

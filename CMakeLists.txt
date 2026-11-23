@@ -2932,7 +2932,9 @@ endfunction()
 
 seabass_cli_test(cli_help EXIT 0 ARGS --help
     EXPECT "Usage" "seabass-cli scan .--rekordbox" "seabass-cli sync --rekordbox"
-           "seabass-cli sync-after-export .--rekordbox" "  sync-after-export  Compares")
+           "seabass-cli sync-after-export .--rekordbox" "  sync-after-export  Compares"
+           "  --overwrite-player-waveforms  copy-beatgrids --waveforms: write over the\n"
+           "default: such a waveform is left alone.\n")
 seabass_cli_test(cli_no_command EXIT 1 ARGS --verbose EXPECT "Usage")
 seabass_cli_test(cli_unknown_command EXIT 1 ARGS frobnicate EXPECT "unknown command: frobnicate" "Usage")
 seabass_cli_test(cli_unknown_option EXIT 1 ARGS scan --bogus EXPECT "unknown option: --bogus")
@@ -3157,8 +3159,10 @@ seabass_cli_test(cli_copy_beatgrids_bad_unanalysed EXIT 1 ARGS copy-beatgrids --
 # m-after-R1b.db): 11 rows, 5 analysed by a player, 6 not; the rekordbox
 # export has the colour preview and the scrolling waveform (.EXT) for all
 # 11 and no .2EX, and the audio heads give TagLib the files' rates. So the
-# check finds all 11 grids and waveforms to write and the 6 unanalysed rows
-# to complete. The dry run changes nothing. The run backs Engine up (the
+# check finds all 11 grids to write and the 6 unanalysed rows to complete;
+# the 5 waveforms the player drew are left alone (6 waveforms to write),
+# unless --overwrite-player-waveforms is given (all 11). The dry runs
+# change nothing. The run, with --overwrite-player-waveforms, backs Engine up (the
 # overview files it creates noted absent in that backup, so a restore
 # takes them away), writes, and engine_analysis_rows then decodes what it
 # left: 11 rows analysed, each record 68 bytes, each overview 1024 points,
@@ -3184,14 +3188,25 @@ if(TARGET seabass_taglib)
         COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_dry} UNCHANGED_TREE ${_cli_an_dry}
         ARGS copy-beatgrids --dry-run --waveforms --rekordbox ${_cli_an_dry}/PIONEER --engine "${_cli_an_dry}/Engine Library"
         EXPECT "matched tracks:    11\\n"
-               "\\ncopy-beatgrids preview\\n  would be written: +11\\n  total: +11\\n  waveforms that would be written: 11\\n  waveforms total: +11\\n  rows that would be completed: +6\\n"
+               "waveforms the player drew: left alone\\n"
+               "\\ncopy-beatgrids preview\\n  would be written: +11\\n  total: +11\\n  waveforms that would be written: 6\\n  player's waveform, left alone: +5\\n  waveforms total: +11\\n  rows that would be completed: +6\\n"
                "--dry-run: no changes made."
         FORBID "backed up" "copy-beatgrids summary" "rows completed:" "\\n  written:")
+    set(_cli_an_dry_over "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis_dry_run_overwrite")
+    seabass_cli_test(cli_copy_analysis_dry_run_overwrite EXIT 0
+        COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_dry_over} UNCHANGED_TREE ${_cli_an_dry_over}
+        ARGS copy-beatgrids --dry-run --waveforms --overwrite-player-waveforms --rekordbox ${_cli_an_dry_over}/PIONEER
+             --engine "${_cli_an_dry_over}/Engine Library"
+        EXPECT "waveforms the player drew: written over\\n"
+               "\\ncopy-beatgrids preview\\n  would be written: +11\\n  total: +11\\n  waveforms that would be written: 11\\n  waveforms total: +11\\n  rows that would be completed: +6\\n"
+               "--dry-run: no changes made."
+        FORBID "backed up" "copy-beatgrids summary" "left alone: +")
+    set_tests_properties(cli_copy_analysis_dry_run_overwrite PROPERTIES FIXTURES_REQUIRED cli_t73_stick)
 
     set(_cli_an_run "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_copy_analysis")
     seabass_cli_test(cli_copy_analysis_run EXIT 0
         COPY_FROM ${_cli_t73} COPY_TO ${_cli_an_run}
-        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
+        ARGS copy-beatgrids --auto --waveforms --overwrite-player-waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
         EXPECT "rows that would be completed: +6\\n"
                "backed up Engine to [^\\n]*.Seabass.backups.[0-9T]+-copy-beatgrids\\n"
                "\\ncopy-beatgrids summary\\n  written: +11\\n  total: +11\\n  waveforms written: +11\\n  waveforms total: +11\\n  rows completed: +6\\n  Engine's own analysis kept: +5\\n"
@@ -3212,7 +3227,7 @@ if(TARGET seabass_taglib)
     set_tests_properties(cli_copy_analysis_backup_manifest PROPERTIES FIXTURES_REQUIRED cli_copy_analysis_copy
         PASS_REGULAR_EXPRESSION "Database2/m.db\t[^\n]*\n${_cli_an_absent}${_cli_an_kept}$")
     seabass_cli_test(cli_copy_analysis_again EXIT 0 UNCHANGED_TREE ${_cli_an_run}
-        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
+        ARGS copy-beatgrids --auto --waveforms --overwrite-player-waveforms --rekordbox ${_cli_an_run}/PIONEER --engine "${_cli_an_run}/Engine Library"
         EXPECT "\\n  would be written: +0\\n  already the same: +11\\n  total: +11\\n  waveforms that would be written: 0\\n  waveforms already the same: +11\\n  waveforms total: +11\\n  rows that would be completed: +0\\n"
                "nothing would be written: no changes made."
         FORBID "backed up" "failed" "copy-beatgrids summary")
@@ -3228,7 +3243,7 @@ if(TARGET seabass_taglib)
              --rekordbox ${_cli_an_pl}/PIONEER --engine "${_cli_an_pl}/Engine Library"
         EXPECT "--playlist: 5 track\\(s\\) kept, 6 left out\\n"
                "overview files: left out \\(for testing on hardware\\)"
-               "\\ncopy-beatgrids summary\\n  written: +5\\n  total: +5\\n  left out by --playlist: +6\\n  waveforms written: +5\\n  waveforms total: +5\\n  rows completed: +4\\n"
+               "\\ncopy-beatgrids summary\\n  written: +5\\n  total: +5\\n  left out by --playlist: +6\\n  waveforms written: +4\\n  player's waveform, left alone: +1\\n  waveforms total: +5\\n  rows completed: +4\\n"
         FORBID "failed")
     set_tests_properties(cli_copy_analysis_playlist PROPERTIES FIXTURES_REQUIRED cli_t73_stick
         FIXTURES_SETUP cli_copy_analysis_playlist_copy)
@@ -3245,7 +3260,7 @@ if(TARGET seabass_taglib)
     set(_cli_rs "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_restore_analysis")
     seabass_cli_test(cli_restore_analysis_copy EXIT 0
         COPY_FROM ${_cli_t73} COPY_TO ${_cli_rs}
-        ARGS copy-beatgrids --auto --waveforms --rekordbox ${_cli_rs}/PIONEER --engine "${_cli_rs}/Engine Library"
+        ARGS copy-beatgrids --auto --waveforms --overwrite-player-waveforms --rekordbox ${_cli_rs}/PIONEER --engine "${_cli_rs}/Engine Library"
         EXPECT "Engine's own analysis kept: +5\\n")
     seabass_cli_test(cli_restore_analysis_dry_run EXIT 0 UNCHANGED_TREE ${_cli_rs}
         ARGS copy-beatgrids --restore-engine-analysis --dry-run --rekordbox ${_cli_rs}/PIONEER
@@ -3316,6 +3331,8 @@ seabass_cli_test(cli_restore_with_waveforms EXIT 1 ARGS copy-beatgrids --restore
     EXPECT "copy nothing: they do not go with --waveforms")
 seabass_cli_test(cli_copy_analysis_options_alone EXIT 1 ARGS copy-beatgrids --zero-loudness
     EXPECT "--no-overview-file and --zero-loudness only go with --waveforms")
+seabass_cli_test(cli_copy_analysis_overwrite_alone EXIT 1 ARGS copy-beatgrids --overwrite-player-waveforms
+    EXPECT "--overwrite-player-waveforms only goes with --waveforms")
 
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).

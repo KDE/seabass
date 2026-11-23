@@ -238,11 +238,13 @@ class BeatGridsController : public QObject
     Q_PROPERTY(QString shownPlaylist READ shownPlaylist WRITE setShownPlaylist NOTIFY shownPlaylistChanged)
     Q_PROPERTY(QAbstractListModel *tracks READ tracks CONSTANT)
 
-    // What to copy, and whether over a grid set on the player. Both parts
-    // on by default; the last off.
+    // What to copy, and whether over a grid set on the player and over a
+    // waveform the player drew. Both parts on by default; the last two off.
     Q_PROPERTY(bool grids READ grids WRITE setGrids NOTIFY optionsChanged)
     Q_PROPERTY(bool waveforms READ waveforms WRITE setWaveforms NOTIFY optionsChanged)
     Q_PROPERTY(bool replaceEngineEdits READ replaceEngineEdits WRITE setReplaceEngineEdits NOTIFY optionsChanged)
+    Q_PROPERTY(bool replacePlayerWaveforms READ replacePlayerWaveforms WRITE setReplacePlayerWaveforms
+                   NOTIFY optionsChanged)
 
     // Moves whenever a tick does, for bindings that ask playlistCheckState().
     Q_PROPERTY(int tickRevision READ tickRevision NOTIFY ticksChanged)
@@ -326,6 +328,8 @@ public:
     void setWaveforms(bool on);
     bool replaceEngineEdits() const { return m_options.overwriteEngineEdits; }
     void setReplaceEngineEdits(bool on);
+    bool replacePlayerWaveforms() const { return m_options.overwritePlayerWaveforms; }
+    void setReplacePlayerWaveforms(bool on);
     int tickRevision() const { return m_tickRevision; }
     bool previewBusy() const { return m_preview.busy(); }
     int previewCurrent() const { return m_previewCurrent; }
@@ -537,6 +541,8 @@ private:
         int completed = 0;
         int rows = 0;
         int leftAlone = 0;
+        // Rows with a part to copy whose waveform the player drew stays.
+        int playersWaveforms = 0;
         int kept = 0;
         int restorable = 0;
         int analysed = 0;

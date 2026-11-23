@@ -128,6 +128,7 @@ void printUsage()
     Console::info("  seabass-cli copy-beatgrids --rekordbox [PATH] --engine [PATH] [--dry-run] [--auto]");
     Console::info("                 [--unanalysed skip|fill|fill-lock] [--overwrite-engine-edits]");
     Console::info("                 [--track NAME] [--playlist NAME] [--waveforms]");
+    Console::info("                 [--overwrite-player-waveforms]");
     Console::info("                 [--no-overview-file] [--zero-loudness]");
     Console::info("                 [--restore-engine-analysis | --let-player-analyse]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
@@ -169,9 +170,11 @@ void printUsage()
     Console::info("           how many grids would be written, then asks before writing (unless");
     Console::info("           --auto; --dry-run stops after the check), and backs up Engine first.");
     Console::info("           With --waveforms (an experiment) it copies rekordbox's whole analysis:");
-    Console::info("           the waveform replaces the player's, and a track the player has not");
-    Console::info("           analysed is completed (grid, waveform, key and tempo) when rekordbox");
-    Console::info("           has all of it, so the player need not analyse it.");
+    Console::info("           the waveform goes where the player has drawn none (a waveform the");
+    Console::info("           player drew is left alone unless --overwrite-player-waveforms is");
+    Console::info("           given), and a track the player has not analysed is completed (grid,");
+    Console::info("           waveform, key and tempo) when rekordbox has all of it, so the player");
+    Console::info("           need not analyse it.");
     Console::info("           Exits 1 if a track could not be written.");
     Console::info("  backups  Lists the backups seabass-cli has made on a stick (see \"Backups\"");
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
@@ -261,9 +264,13 @@ void printUsage()
     Console::info("                      rekordbox playlist (its whole path, or its own name;");
     Console::info("                      case-insensitive). Repeatable.");
     Console::info("  --waveforms         copy-beatgrids only, an experiment: copy rekordbox's");
-    Console::info("                      waveform too, in place of the player's, and complete the");
-    Console::info("                      tracks the player has not analysed from rekordbox's");
-    Console::info("                      analysis. Not with --unanalysed fill or fill-lock.");
+    Console::info("                      waveform too, where the player has drawn none, and");
+    Console::info("                      complete the tracks the player has not analysed from");
+    Console::info("                      rekordbox's analysis. Not with --unanalysed fill or");
+    Console::info("                      fill-lock.");
+    Console::info("  --overwrite-player-waveforms  copy-beatgrids --waveforms: write over the");
+    Console::info("                      waveform the player drew. Off by");
+    Console::info("                      default: such a waveform is left alone.");
     Console::info("  --no-overview-file  copy-beatgrids --waveforms, for testing on hardware:");
     Console::info("                      leave out the overview file the player keeps beside");
     Console::info("                      its database (Database2/OverviewData).");
@@ -1900,6 +1907,8 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 struct AnalysisImportArgs
 {
     bool waveforms = false;
+    // With waveforms: also over the waveform the player drew.
+    bool overwritePlayerWaveforms = false;
     // For testing on hardware: no overview file, zero loudness.
     bool skipOverviewFile = false;
     bool zeroLoudness = false;
@@ -2154,7 +2163,8 @@ int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan,
 // and is not taken for an edit on the player.
 //
 // With --waveforms (an experiment) the whole analysis goes through
-// importAnalysis(): rekordbox's waveform replaces the player's, and a row
+// importAnalysis(): rekordbox's waveform goes where the player drew none
+// (over the player's with --overwrite-player-waveforms), and a row
 // the player has not analysed is completed when everything it needs is
 // there, so the player need not analyse it.
 int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
@@ -2280,7 +2290,9 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     Console::info("");
     Console::info("Copies rekordbox's beat grid into the grid the player plays by; Engine's own analysis is kept.");
     if (waveforms) {
-        Console::info("  waveforms: rekordbox's replace the player's (an experiment)");
+        Console::info(std::string("  waveforms: rekordbox's where the player has drawn none (an experiment); "
+                                  "waveforms the player drew: ")
+                      + (analysisArgs.overwritePlayerWaveforms ? "written over" : "left alone"));
         Console::info("  tracks the player has not analysed: completed from rekordbox's analysis where it has all of it"
                       " (an experiment)");
         if (analysisArgs.skipOverviewFile) {
@@ -2355,6 +2367,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         if (waveforms) {
             app::AnalysisCopyOptions o;
             o.overwriteEngineEdits = overwriteEngineEdits;
+            o.overwritePlayerWaveforms = analysisArgs.overwritePlayerWaveforms;
             o.previewOnly = previewOnly;
             o.skipOverviewFile = analysisArgs.skipOverviewFile;
             o.zeroLoudness = analysisArgs.zeroLoudness;
@@ -2419,6 +2432,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
             line("waveform, Engine too old:", w.unsupportedLibrary);
             line("waveform, cannot be kept:", w.cannotKeep);
             line("waveform, row unreadable:", w.rowUnreadable);
+            line("player's waveform, left alone:", w.playersWaveform);
             line("waveforms failed:", w.failed);
             line("waveforms not reached:", w.notReached);
             line("waveforms total:", w.total(), true);
@@ -2996,6 +3010,8 @@ int main(int argc, char **argv)
             overwriteEngineEdits = true;
         } else if (arg == "--waveforms") {
             analysisArgs.waveforms = true;
+        } else if (arg == "--overwrite-player-waveforms") {
+            analysisArgs.overwritePlayerWaveforms = true;
         } else if (arg == "--restore-engine-analysis") {
             analysisArgs.restoreEngineAnalysis = true;
         } else if (arg == "--let-player-analyse") {
@@ -3082,6 +3098,10 @@ int main(int argc, char **argv)
         }
         if (!analysisArgs.waveforms && (analysisArgs.skipOverviewFile || analysisArgs.zeroLoudness)) {
             Console::error("--no-overview-file and --zero-loudness only go with --waveforms");
+            return 1;
+        }
+        if (!analysisArgs.waveforms && analysisArgs.overwritePlayerWaveforms) {
+            Console::error("--overwrite-player-waveforms only goes with --waveforms");
             return 1;
         }
         return runCopyBeatGridsCommand(rekordboxPath, enginePath, autoMode, dryRun, force, unanalysed,

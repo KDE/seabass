@@ -225,7 +225,8 @@ private:
 // the player has not analysed, one this very save created included, is
 // completed all or nothing, so only with both parts asked for; a grid
 // locked or moved on the player is never replaced (overwriteEngineEdits
-// is always off) and is counted as left alone.
+// is always off) and is counted as left alone, and neither is a waveform
+// the player drew (overwritePlayerWaveforms always off).
 //
 // There is no preview behind it: rekordbox's analysis is read, and a row
 // the save creates is found by its file (it has no id until

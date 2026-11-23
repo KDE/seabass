@@ -120,6 +120,8 @@ QString waveformWords(application::AnalysisImportResult::Waveform waveform)
         return QStringLiteral("Engine's analysis cannot be kept");
     case Waveform::RowUnreadable:
         return QStringLiteral("analysed or not cannot be read");
+    case Waveform::PlayersWaveform:
+        return QStringLiteral("drawn by the player");
     }
     return QStringLiteral("unknown");
 }
@@ -322,7 +324,7 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
     if (row.leftForPlayer) {
         // What kept it from being completed, when it is more than one part
         // asked for alone: the part that was missing.
-        if (result.waveform == Waveform::NoSampleCount) {
+        if (result.waveform == Waveform::NoSampleCount || result.waveform == Waveform::PlayersWaveform) {
             row.leftForPlayerBecause = waveformWords(result.waveform);
         } else if (result.grid.outcome == Outcome::NoSampleRate || result.grid.outcome == Outcome::NoSourceGrid) {
             row.leftForPlayerBecause = gridWords(result.grid.outcome);
@@ -342,7 +344,9 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
         result.waveform == Waveform::NoSourceWaveform || result.waveform == Waveform::NotRequested;
     const bool gridSame = result.grid.outcome == Outcome::AlreadySame || result.grid.outcome == Outcome::NotRequested;
     const bool waveformSame = result.waveform == Waveform::AlreadySame || result.waveform == Waveform::NotRequested;
-    if (gridNone && waveformNone) {
+    if (result.waveform == Waveform::PlayersWaveform && (gridNone || gridSame)) {
+        row.otherReason = QStringLiteral("its waveform drawn by the player");
+    } else if (gridNone && waveformNone) {
         row.noRekordboxAnalysis = true;
     } else if (gridSame && waveformSame) {
         row.alreadySame = true;
@@ -569,10 +573,11 @@ SyncAnalysisChange::SyncAnalysisChange(QString owner, QString rekordboxPath, QSt
     , m_itemCountHint(itemCountHint)
     , m_declaresFiles(declaresFiles)
 {
-    // Never a preview, and never over the DJ's own grid: there is no box
-    // for that in a sync.
+    // Never a preview, and never over the DJ's own grid or the waveform the
+    // player drew: there is no box for either in a sync.
     m_options.previewOnly = false;
     m_options.overwriteEngineEdits = false;
+    m_options.overwritePlayerWaveforms = false;
     m_options.skipOverviewFile = false;
     m_options.zeroLoudness = false;
 }

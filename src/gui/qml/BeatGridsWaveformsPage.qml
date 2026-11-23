@@ -14,7 +14,7 @@ import "common/SaveSummary.js" as SaveSummary
 // own analysis is not always as good; replacing it is the point.
 //
 // Top to bottom: what the page does, what to copy (beat grids, waveforms,
-// and whether over grids set on the player), what the ticked tracks would
+// and whether over grids set on the player and waveforms it drew), what the ticked tracks would
 // get and the action that stages it; then rekordbox's playlists, each with
 // a box that ticks all of it, beside the tracks of the one shown, in its
 // order, each with a box of its own. Nothing is ticked at first.
@@ -189,14 +189,13 @@ Page {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Theme.conflictText
-                    // What is replaced and what is not, as the three boxes
-                    // below have it, and the way back.
+                    // What is replaced and what is not, as the boxes below
+                    // have it, and the way back.
                     text: "Experimental: the beat grid and the waveform are converted from rekordbox's, and "
                         + "the conversion has been checked on a player with test tracks only. The grid goes "
-                        + "beside Engine's own, the waveform takes the place of the player's, and a grid "
-                        + "locked or changed on the player is replaced only when you tick that box. Seabass "
-                        + "keeps the player's own analysis on the stick first, so Restore Engine's Analysis "
-                        + "can put it back."
+                        + "beside Engine's own; a grid locked or changed on the player, and a waveform the "
+                        + "player drew, are replaced only when you tick their box. Seabass keeps the "
+                        + "player's own analysis on the stick first, so Restore Engine's Analysis can put it back."
                 }
 
                 // What to copy. The boxes themselves on the page's left line.
@@ -233,7 +232,7 @@ Page {
                         ToolTip.visible: hovered
                         ToolTip.delay: 400
                         ToolTip.text: root.staged ? "Unstage to change what is copied"
-                            : "rekordbox's waveform replaces the one the player drew"
+                            : "rekordbox's waveform, for a track the player has drawn none of"
                         onToggled: {
                             root.controller.waveforms = checked;
                             checked = Qt.binding(() => root.controller.waveforms);
@@ -252,6 +251,22 @@ Page {
                         onToggled: {
                             root.controller.replaceEngineEdits = checked;
                             checked = Qt.binding(() => root.controller.replaceEngineEdits);
+                        }
+                    }
+                    SeabassCheckBox {
+                        objectName: "replaceWaveformsCheckBox"
+                        width: Math.min(implicitWidth, optionsRow.width)
+                        text: "Also replace waveforms the player drew"
+                        checked: root.controller.replacePlayerWaveforms
+                        // Only for a copy of the waveforms.
+                        enabled: root.ticksEnabled && root.controller.waveforms
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: root.staged ? "Unstage to change what is copied"
+                            : "Off, a waveform the player drew is left as it is"
+                        onToggled: {
+                            root.controller.replacePlayerWaveforms = checked;
+                            checked = Qt.binding(() => root.controller.replacePlayerWaveforms);
                         }
                     }
                 }
