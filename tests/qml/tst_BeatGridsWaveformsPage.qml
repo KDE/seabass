@@ -310,6 +310,21 @@ TestCase {
     // Ticking a playlist's box ticks its tracks, and the summary counts
     // what the controller's previews say of them: 5 grids and 5 waveforms,
     // 4 of the 5 completed (B04 is analysed already).
+    // The note under the title says what the copy replaces and what it
+    // does not, and that the player's own analysis is kept: it used to
+    // say the page replaces the player's analysis, which is the third
+    // box's doing for a grid and nobody's without a way back.
+    function test_theExperimentalNoteSaysWhatIsReplacedAndKept() {
+        const o = openOn(t73());
+        const note = findChild(o.page, "experimentalLabel");
+        verify(note !== null && note.visible, "the note is on the page");
+        verify(note.text.startsWith("Experimental: the beat grid and the waveform are converted"), note.text);
+        verify(note.text.includes("The grid goes beside Engine's own"), note.text);
+        verify(note.text.includes("replaced only when you tick that box"), note.text);
+        verify(note.text.includes("keeps the player's own analysis on the stick first"), note.text);
+        verify(note.text.includes("Restore Engine's Analysis can put it back"), note.text);
+    }
+
     function test_tickingAPlaylistTicksItsTracks() {
         const o = openOn(t73());
         waitSettled(o.c);

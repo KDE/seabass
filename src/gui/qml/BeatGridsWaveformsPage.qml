@@ -189,8 +189,14 @@ Page {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Theme.conflictText
-                    text: "Experimental: this replaces analysis a Denon player made with one converted from "
-                        + "rekordbox, and the conversion has not yet been confirmed on a player."
+                    // What is replaced and what is not, as the three boxes
+                    // below have it, and the way back.
+                    text: "Experimental: the beat grid and the waveform are converted from rekordbox's, and "
+                        + "the conversion has been checked on a player with test tracks only. The grid goes "
+                        + "beside Engine's own, the waveform takes the place of the player's, and a grid "
+                        + "locked or changed on the player is replaced only when you tick that box. Seabass "
+                        + "keeps the player's own analysis on the stick first, so Restore Engine's Analysis "
+                        + "can put it back."
                 }
 
                 // What to copy. The boxes themselves on the page's left line.
