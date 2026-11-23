@@ -47,6 +47,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -1160,6 +1161,145 @@ int main(int argc, char **argv)
                   "and keeps its cues byte for byte, with no mark");
         }
         std::cout << "case 11 (a marked row's cues moved onto Engine's timeline with the grid) done\n";
+    }
+
+    // 11b. The same move against what a player did. A Prime 4 (Engine OS
+    // 5.3.0) loaded a marked row once and stored every hot cue and both
+    // ends of its loop 2292 samples earlier, the main cue (not set) left
+    // at 0, labels and colours kept (tests/fixtures/prime4-first-load).
+    // Seabass, told the same shift, leaves the row as the player did: a
+    // loop moves with the hot cues, by the same amount.
+    {
+        const Copy copy = freshCopy("prime4-first-load");
+        const fs::path capture = g_fixtures / "prime4-first-load";
+        const auto bytesOf = [&](const char *name) {
+            std::ifstream in(capture / name, std::ios::binary);
+            const std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            std::vector<std::byte> out(raw.size());
+            std::transform(raw.begin(), raw.end(), out.begin(), [](char c) { return static_cast<std::byte>(c); });
+            return out;
+        };
+        const auto hexOf = [](const std::vector<std::byte> &bytes) {
+            static const char digits[] = "0123456789abcdef";
+            std::string hex;
+            for (const std::byte b : bytes) {
+                hex += digits[std::to_integer<int>(b) >> 4];
+                hex += digits[std::to_integer<int>(b) & 15];
+            }
+            return hex;
+        };
+        const auto markedQuick = bytesOf("marked-quickCues.bin");
+        const auto markedLoops = bytesOf("marked-loops.bin");
+        const auto loadedQuick = bytesOf("loaded-quickCues.bin");
+        const auto loadedLoops = bytesOf("loaded-loops.bin");
+        check(!markedQuick.empty() && !markedLoops.empty() && !loadedQuick.empty() && !loadedLoops.empty(),
+              "the captured row's four columns are in the fixture");
+
+        if (markedQuick.empty() || markedLoops.empty() || loadedQuick.empty() || loadedLoops.empty()) {
+            std::cerr << "case 11b: no capture to compare with\n";
+            return 1;
+        }
+
+        // What the capture itself says, so the comparison below is one
+        // against a row that holds hot cues and a loop, moved alike.
+        const QuickCuesBlob quickMarked = QuickCuesBlob::from_blob(markedQuick);
+        const QuickCuesBlob quickLoaded = QuickCuesBlob::from_blob(loadedQuick);
+        const LoopsBlob loopsMarked = LoopsBlob::from_blob(markedLoops);
+        const LoopsBlob loopsLoaded = LoopsBlob::from_blob(loadedLoops);
+        constexpr double kPlayerShift = 2292.0;
+        check(quickMarked.quick_cues.size() == quickLoaded.quick_cues.size() && !loopsMarked.loops.empty()
+                  && loopsMarked.loops.size() == loopsLoaded.loops.size(),
+              "the capture holds the same slots before and after the load");
+        if (failures > 0) {
+            return 1;
+        }
+        int hotCues = 0;
+        for (std::size_t i = 0; i < quickMarked.quick_cues.size(); ++i) {
+            if (quickMarked.quick_cues[i].sample_offset >= 0.0) {
+                ++hotCues;
+                check(std::abs(quickMarked.quick_cues[i].sample_offset - quickLoaded.quick_cues[i].sample_offset
+                               - kPlayerShift) < 1e-6,
+                      "the player moved hot cue " + std::to_string(i + 1) + " 2292 samples earlier");
+            }
+        }
+        check(hotCues == 3, "the captured row has three hot cues: " + std::to_string(hotCues));
+        check(loopsMarked.loops[0].is_start_set && loopsMarked.loops[0].is_end_set
+                  && std::abs(loopsMarked.loops[0].start_sample_offset - loopsLoaded.loops[0].start_sample_offset
+                              - kPlayerShift) < 1e-6
+                  && std::abs(loopsMarked.loops[0].end_sample_offset - loopsLoaded.loops[0].end_sample_offset
+                              - kPlayerShift) < 1e-6,
+              "the player moved both ends of the loop 2292 samples earlier, as the hot cues");
+        check(quickMarked.adjusted_main_cue == 0.0 && quickLoaded.adjusted_main_cue == 0.0
+                  && quickLoaded.default_main_cue == quickMarked.default_main_cue,
+              "the player left the main cue, which was not set, alone");
+
+        // The captured row onto a marked MP3 row of the fixture.
+        constexpr std::int64_t kRow = 69;
+        exec(copy.mdb, "UPDATE PerformanceData SET thirdPartySourceId = 1, quickCues = x'" + hexOf(markedQuick)
+                           + "', loops = x'" + hexOf(markedLoops) + "' WHERE trackId = 69;");
+        check(perf(copy.mdb, kRow, "quickCues") == markedQuick && perf(copy.mdb, kRow, "loops") == markedLoops,
+              "the captured cues are on the row");
+
+        // A lead-in made up to give the player's 2292 samples at 44.1 kHz:
+        // rekordbox plays the tag frame (1152), Engine trims the delay and
+        // 529 more (611 + 529). Not the captured file's own, which the
+        // model gives 1105 (the fixture's README): this case holds how the
+        // row is moved, not by how much.
+        domain::Mp3LeadIn leadIn;
+        leadIn.infoFrame = true;
+        leadIn.tag = domain::Mp3LeadIn::Tag::Lame;
+        leadIn.lameCrcValid = true;
+        leadIn.encoderDelay = 611;
+        leadIn.infoFrameModeMatchesAudio = true;
+        leadIn.sampleRate = 44100;
+        leadIn.samplesPerFrame = 1152;
+        LibdjinteropEngineCueWriter writer(pathToUtf8(copy.root));
+        writer.setLeadInSource([&](const std::string &) { return std::optional<domain::Mp3LeadIn>(leadIn); });
+        const double shiftMs = writer.cueTimelineShiftMs(std::to_string(kRow));
+        check(std::abs(shiftMs - kPlayerShift * 1000.0 / 44100) < 1e-6,
+              "the row shifts by the player's 2292 samples: " + std::to_string(shiftMs) + " ms");
+
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(130.0, 480.0, 200000.0);
+        analysis.threeBandPreview = synthetic(1200, 3, 12);
+        analysis.scrollEntries = 30000;
+        analysis.bpm = 130.0;
+        AnalysisImportOptions options;
+        options.fileSampleRateHz = 44100.0;
+        const auto cued = writer.importAnalysis(std::to_string(kRow), analysis, options);
+        check(cued.grid.outcome == Outcome::Written, "the captured row gets the grid");
+        check(column(copy.mdb, "PerformanceData", "trackId", kRow, "thirdPartySourceId") == "NULL",
+              "and loses the mark, as on the player");
+        check(std::abs(TrackData::from_blob(perf(copy.mdb, kRow, "trackData")).sample_rate - 44100.0) < 1e-9,
+              "the row counts at 44.1 kHz, the capture's rate");
+
+        const QuickCuesBlob quickAfter = QuickCuesBlob::from_blob(perf(copy.mdb, kRow, "quickCues"));
+        const LoopsBlob loopsAfter = LoopsBlob::from_blob(perf(copy.mdb, kRow, "loops"));
+        bool asThePlayer = quickAfter.quick_cues.size() == quickLoaded.quick_cues.size()
+            && loopsAfter.loops.size() == loopsLoaded.loops.size();
+        for (std::size_t i = 0; asThePlayer && i < quickLoaded.quick_cues.size(); ++i) {
+            const auto &want = quickLoaded.quick_cues[i];
+            const auto &got = quickAfter.quick_cues[i];
+            asThePlayer = std::abs(got.sample_offset - want.sample_offset) < 1e-6 && got.label == want.label
+                && got.color == want.color;
+            check(asThePlayer, "hot cue slot " + std::to_string(i + 1) + " as the player stored it: "
+                                   + std::to_string(got.sample_offset) + " for " + std::to_string(want.sample_offset));
+        }
+        for (std::size_t i = 0; asThePlayer && i < loopsLoaded.loops.size(); ++i) {
+            const auto &want = loopsLoaded.loops[i];
+            const auto &got = loopsAfter.loops[i];
+            asThePlayer = std::abs(got.start_sample_offset - want.start_sample_offset) < 1e-6
+                && std::abs(got.end_sample_offset - want.end_sample_offset) < 1e-6 && got.is_start_set == want.is_start_set
+                && got.is_end_set == want.is_end_set && got.label == want.label && got.color == want.color;
+            check(asThePlayer, "loop slot " + std::to_string(i + 1) + " as the player stored it: "
+                                   + std::to_string(got.start_sample_offset) + " to " + std::to_string(got.end_sample_offset));
+        }
+        check(asThePlayer && quickAfter.adjusted_main_cue == quickLoaded.adjusted_main_cue
+                  && quickAfter.default_main_cue == quickLoaded.default_main_cue
+                  && quickAfter.is_main_cue_adjusted == quickLoaded.is_main_cue_adjusted
+                  && quickAfter.extra_data == quickLoaded.extra_data && loopsAfter.extra_data == loopsLoaded.extra_data,
+              "the row's cues, loop and main cue are what the Prime 4 left");
+        std::cout << "case 11b (a marked row moved as a Prime 4 moved it, loop included) done\n";
     }
 
     // 12. writeHotCues() takes the mark off the row it writes when the
