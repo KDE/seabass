@@ -325,12 +325,17 @@ stick_fstype() {  # <mount point>
     esac
 }
 
+# Says what the tool answered when it refuses: macOS round 16 lost a
+# morning to "dissented by PID ..." going to /dev/null.
 unmount_device() {  # <device>
+    local said rc=0
     if [ "$rig_os" = "Darwin" ]; then
-        diskutil unmount "$1" >/dev/null 2>&1
+        said="$(diskutil unmount "$1" 2>&1)" || rc=1
     else
-        udisksctl unmount -b "$1" >/dev/null 2>&1
+        said="$(udisksctl unmount -b "$1" 2>&1)" || rc=1
     fi
+    [ $rc -eq 0 ] || echo "    unmount of $1 refused: $said" >&2
+    return $rc
 }
 
 # Puts a device back after unmount_device(). On macOS a disk image standing
