@@ -12,7 +12,8 @@
 # script behaves exactly as it did.
 #
 #   rig_parts_declare id...    every id this script is answerable for
-#   rig_part id PASS|FAIL      one result (PENDING: a manual check not done)
+#   rig_part id PASS|FAIL      one result (PENDING: a manual check not done;
+#                              NOTDUE: one this round has no reason to ask for)
 #   rig_parts_finish           declared but never reported -> FAIL
 #
 # Automatic and manual. The board shows the checks a round runs on its own
@@ -23,7 +24,9 @@
 # (rig-platform.sh) is the one list of which checks those are.
 #
 # A manual check nobody has done yet is PENDING, not FAIL: the manual tab
-# shows it as to do. That applies to the manual set only -- an automatic
+# shows it as to do. One whose code has not changed since it last passed
+# is NOTDUE instead (rig-human-gated.sh): neither done nor to do. Both
+# apply to the manual set only -- an automatic
 # check that skipped or did not run is a FAIL, as it always was.
 #
 # Declaring up front is the point: a script that dies halfway still
@@ -47,7 +50,7 @@ rig_is_manual() {  # id
 }
 
 # One summary line: "<id>\t<verdict>", plus "\tmanual" for a manual check.
-rig_summary_line() {  # id, PASS|FAIL|PENDING
+rig_summary_line() {  # id, PASS|FAIL|PENDING|NOTDUE
     if rig_is_manual "$1"; then
         printf '%s\t%s\tmanual\n' "$1" "$2"
     else
@@ -55,7 +58,7 @@ rig_summary_line() {  # id, PASS|FAIL|PENDING
     fi
 }
 
-rig_part() {  # id, PASS|FAIL|PENDING
+rig_part() {  # id, PASS|FAIL|PENDING|NOTDUE
     echo "--- $1: $2"
     rig_parts_seen="$rig_parts_seen $1"
     [ -n "${RIG_PARTS:-}" ] || return 0

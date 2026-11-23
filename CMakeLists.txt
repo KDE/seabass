@@ -1976,6 +1976,16 @@ else()
     message(STATUS "bash or file(1) not found: tools/macos-bundle-check.sh is not tested by ctest")
 endif()
 
+# tools/rig-human-gated.sh, the rule for when a shakedown round asks for
+# a check that needs a person, against a scratch git repository.
+find_program(SEABASS_GIT git)
+if(SEABASS_BASH AND SEABASS_GIT)
+    add_test(NAME rig_human_gated_test
+        COMMAND ${SEABASS_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/rig_human_gated_test.sh)
+else()
+    message(STATUS "bash or git not found: tools/rig-human-gated.sh is not tested by ctest")
+endif()
+
 # The vendored crate-digger specs and the parser generated from them have
 # to describe the same thing: nothing forces two vendored files to agree,
 # and a spec updated without regenerating the parser fails silently.
