@@ -520,6 +520,104 @@ If the track/cue counts change, update the exact numbers `anonymized_fixture_int
 
 One design point worth knowing if you're touching the anonymizer: the same real track's obfuscated title/filename comes out **identical** whether it's read from the rekordbox output or the Engine output, even though the two catalogs are anonymized in completely independent runs. That's deliberate -- `domain::TrackMatcher`'s primary cross-catalog matching signal is exactly the (normalized) filename, so if the two anonymizers assigned placeholders independently (e.g. a per-run sequential counter), the *same* real track would get *unrelated* obfuscated filenames in each catalog, and sync-matching tests against the fixture would look broken even though nothing in the real app is. See `src/infrastructure/anonymization_placeholder.hpp`'s own comment for the mechanism (a deterministic hash of the real filename, not a counter).
 
+## Test fixtures in three tiers
+
+The analysis code (beat grids, waveforms, keys; see
+`docs/track-analysis-plan.md`) is tested against three kinds of data:
+
+| Tier | What | Where |
+|---|---|---|
+| 1 | Generated tracks with a known grid, made when a test runs; a few short encoded files where a codec is the point | in the repository |
+| 2 | Real analysis data without audio: rekordbox grids and every waveform section, Engine grids and overviews, de-identified | a zip on the website, fetched on request |
+| 3 | Real audio | private, on the developer's machines only; never on a server |
+
+Tier 1 covers every code path, so a build that never fetches tier 2
+(KDE's CI among them) loses accuracy evidence and no coverage. Tier 3
+is for `tools/analysis_benchmark` only (`SEABASS_PRIVATE_AUDIO=<dir>`);
+no test in ctest depends on it.
+
+### Tier 2: fetching it, or pointing at it
+
+```
+cmake -DSEABASS_FETCH_FIXTURES=ON ...                  # download and unpack
+cmake -DSEABASS_REAL_ANALYSIS_FIXTURE=<dir> ...        # use an unpacked copy (wins)
+```
+
+`cmake/SeabassFixtures.cmake` downloads
+`real-analysis-2026-11-23.zip` from `SEABASS_FIXTURE_BASE_URL`
+(`https://vizzzion.org/seabass/downloads/fixtures` by default) into
+`<build>/fixtures/`, checks it against the SHA-256 pinned in that file,
+and unpacks it there. A failed download or a wrong hash stops the
+configure; it never quietly goes on without the data. A tree already
+unpacked from the pinned zip is left alone. A published zip is never
+replaced: a new fixture gets a new name and a new pin.
+
+`real_analysis_fixture_test` skips (naming both switches) when neither
+is given, and fails when a directory is given and its `MANIFEST.json`
+is missing or the tree does not match it: every file's size and
+SHA-256, and no file the manifest does not list. With a good tree it
+reads every paired track through the app's own readers (rekordbox's
+beat grid, PWAV, PWV4, PWV6, the scrolling and detail waveforms;
+Engine's overview and grid) and compares the counts with the ones the
+manifest took from the files' own headers.
+
+`SEABASS_FIXTURE_BASE_URL` also takes a `file://` URL or a local server,
+which is how the download path is tested before a zip is uploaded:
+
+```
+python3 -m http.server 8765 --bind 127.0.0.1 --directory <dir with the zip>
+cmake -DSEABASS_FETCH_FIXTURES=ON -DSEABASS_FIXTURE_BASE_URL=http://127.0.0.1:8765 ...
+```
+
+### What is in `real-analysis-2026-11-23`
+
+One real stick, cut down: the whole rekordbox export (1161 tracks), the
+analysis files of the 59 tracks that are also in its Engine library,
+and that Engine library (64 rows) with the player's own analysis and
+`.rgb` overview files, laid out as a stick (`PIONEER/`,
+`Engine Library/`). No audio, no artwork, no play history. Every name
+and path is replaced by `seabass-cli anonymize --keep-waveforms`, which
+keeps every waveform section and blob byte for byte and replaces
+everything else the plain export replaces. `MANIFEST.json` in the zip
+has the counts and the hashes; its `README.md` says the same as this.
+The data arrangement is CC0-1.0.
+
+### Regenerating it
+
+From the private stick (`<private stick>`, holding `PIONEER/` and
+`Engine Library/`), with a built `seabass-cli`:
+
+```
+python3 -I tools/make-real-analysis-fixture.py --seabass-cli <build>/seabass-cli \
+    --stick <private stick> --work <work dir> --date <YYYY-MM-DD>
+python3 -I tools/check-fixture-deidentified.py --source <private stick> \
+    --candidate <work dir>/out/real-analysis-<YYYY-MM-DD>.zip --scratch <dir> \
+    --extra <volume name> [--extra <other volume name>] \
+    [--allow anonymize-MANIFEST.txt:<word>]
+```
+
+The first writes the zip and its `.sha256` to `<work dir>/out/`. Two
+runs do not give the same bytes (Engine stamps the edit time, and
+SQLCipher salts the OneLibrary mirror afresh), so the pin in
+`cmake/SeabassFixtures.cmake` is the hash of the zip that is uploaded,
+whichever run made it.
+
+The second decides whether the zip may be published. It collects every
+title, artist, album, genre, label, comment, cue comment, file name,
+path component and playlist name from the source (export.pdb and
+exportExt.pdb string by string, exportLibrary.db decrypted, every
+Engine database, every ANLZ path, the stick's file names, the user
+name) and looks for each in every file of the candidate, in UTF-8,
+UTF-16LE and UTF-16BE, inside SQLite values and inflated Engine blobs
+too. Any hit of four characters or more fails it. Shorter strings,
+common words, format vocabulary (menu and colour names, schema words),
+hits inside the numeric sections of an analysis file (waveform bytes
+spell a four-letter name now and then) and hits in SQLite schema pages
+are listed apart. `--allow FILE:TEXT` is for a word of the anonymizer's
+own prose in `anonymize-MANIFEST.txt` that also happens to be a name
+in the library: read each one before allowing it. Run it on the
+un-anonymised source as the candidate once, to see it fail.
+
 ## Locks, sessions, and fake controllers
 
 - `library_edit_lock_store_test` forks a child process (POSIX only) to

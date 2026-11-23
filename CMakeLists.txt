@@ -230,6 +230,9 @@ endif()
 # its QML module, so a build that will not run it should not pay for it.
 option(SEABASS_GUI "Build the Qt GUI (requires Qt6)" ON)
 option(SEABASS_TESTS "Build and run the test suite" ON)
+# Tier 2 test data, fetched on request: SEABASS_FETCH_FIXTURES and
+# SEABASS_REAL_ANALYSIS_FIXTURE, see the file.
+include(cmake/SeabassFixtures.cmake)
 option(SEABASS_QML_TESTS "Build seabass_qml_tests and register the QML suite (tests/qml, qml-shader, qml-storm); needs SEABASS_TESTS and SEABASS_GUI" ON)
 option(SEABASS_STORM_TESTS "Also register the storm lane (tests/qml-storm) with ctest; minutes long, for nightlies and hunts" OFF)
 
@@ -4728,6 +4731,18 @@ add_executable(anonymize_library_test tests/anonymize_library_test.cpp)
 target_include_directories(anonymize_library_test PRIVATE src)
 target_link_libraries(anonymize_library_test PRIVATE seabass_core)
 add_test(NAME anonymize_library_test COMMAND anonymize_library_test)
+
+# Real analysis data (tier 2), read through the app's own readers. The
+# fixture directory comes from cmake/SeabassFixtures.cmake; empty, the
+# test skips and says how to get one. Set even when empty, so a value
+# left in the calling shell cannot stand in for the configured one.
+add_executable(real_analysis_fixture_test tests/real_analysis_fixture_test.cpp)
+target_include_directories(real_analysis_fixture_test PRIVATE src)
+target_link_libraries(real_analysis_fixture_test PRIVATE seabass_core Qt6::Core)
+add_test(NAME real_analysis_fixture_test COMMAND real_analysis_fixture_test)
+set_tests_properties(real_analysis_fixture_test PROPERTIES
+    ENVIRONMENT "SEABASS_REAL_ANALYSIS_FIXTURE=${SEABASS_REAL_ANALYSIS_FIXTURE_DIR}"
+    SKIP_RETURN_CODE 77)
 
 add_executable(libdjinterop_engine_cue_writer_propagate_test
     tests/libdjinterop_engine_cue_writer_propagate_test.cpp
