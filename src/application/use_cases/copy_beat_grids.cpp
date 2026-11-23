@@ -176,6 +176,9 @@ void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform wa
     case Waveform::RowUnreadable:
         ++counts.rowUnreadable;
         break;
+    case Waveform::PlayersWaveform:
+        ++counts.playersWaveform;
+        break;
     }
 }
 
@@ -262,6 +265,7 @@ AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
     write.grids = options.grids;
     write.waveforms = options.waveforms;
     write.overwriteEngineEdits = options.overwriteEngineEdits;
+    write.overwritePlayerWaveforms = options.overwritePlayerWaveforms;
     write.previewOnly = options.previewOnly;
     write.skipOverviewFile = options.skipOverviewFile;
     write.zeroLoudness = options.zeroLoudness;

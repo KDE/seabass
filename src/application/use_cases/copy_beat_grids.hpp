@@ -199,6 +199,8 @@ struct AnalysisCopyOptions
     bool grids = true;
     bool waveforms = true;
     bool overwriteEngineEdits = false;
+    // As AnalysisImportOptions::overwritePlayerWaveforms.
+    bool overwritePlayerWaveforms = false;
     // As BeatGridCopyOptions::previewOnly, for both parts: what would be
     // written or completed is counted apart from what was.
     bool previewOnly = false;
@@ -240,13 +242,15 @@ struct WaveformCopyCounts
     // As BeatGridCopyResult's.
     int cannotKeep = 0;
     int rowUnreadable = 0;
+    // The player drew its own waveform, left as it is (Waveform::PlayersWaveform).
+    int playersWaveform = 0;
     int failed = 0;
     int notReached = 0;
 
     int total() const
     {
         return written + wouldWrite + alreadySame + notRequested + noRekordboxWaveform + notAnalysed + noSampleCount
-            + unsupportedLibrary + cannotKeep + rowUnreadable + failed + notReached;
+            + unsupportedLibrary + cannotKeep + rowUnreadable + playersWaveform + failed + notReached;
     }
 };
 

@@ -1373,6 +1373,16 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                     }
                 }
                 result.waveform = overviewWrite || fileWrite ? Waveform::Written : Waveform::AlreadySame;
+                // The waveform the player drew stays unless asked for. An
+                // overview column already rekordbox's is Seabass's: only
+                // its file is put right.
+                if (overviewWrite && !options.overwritePlayerWaveforms
+                    && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
+                    overviewWrite.reset();
+                    fileWrite.reset();
+                    result.overviewFileRelativePath.clear();
+                    result.waveform = Waveform::PlayersWaveform;
+                }
             }
         }
 
@@ -1470,10 +1480,20 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                           : sampleCount == 0 ? Waveform::NoSampleCount
                                              : Waveform::RowNotAnalysed;
     }
+    // A row whose flag is down may still hold the player's waveform (an
+    // analysis it broke off: seen on a stick a Prime 4 loaded). Completing
+    // it would replace that waveform, so unless asked to the row is not
+    // completed, and the grid, which goes only with a completion, waits
+    // for the player with it.
+    if (options.waveforms && hasPreview && !options.overwritePlayerWaveforms
+        && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
+        result.waveform = Waveform::PlayersWaveform;
+    }
     if (result.waveform != Waveform::NoSampleCount) {
         result.noSampleCountReason.clear();
     }
-    if (!options.grids || !options.waveforms || !hasGrid || !hasPreview || sampleCount == 0) {
+    if (!options.grids || !options.waveforms || !hasGrid || !hasPreview || sampleCount == 0
+        || result.waveform == Waveform::PlayersWaveform) {
         return result;
     }
     // A lock is the user's word whether or not the player has analysed
@@ -1891,6 +1911,58 @@ LibdjinteropEngineCueWriter::Keep LibdjinteropEngineCueWriter::keepBeforeWrite(
                                              "it was not replaced: ")
                                  + e.what());
     }
+}
+
+bool LibdjinteropEngineCueWriter::holdsPlayersWaveform(std::int64_t id, const std::string &keepKey, const RowNow &row,
+                                                       const std::optional<std::string> &ledgerGrid)
+{
+    const EngineSqlValue &overview = row.columns.overviewWaveFormData;
+    if (overview.isNull()) {
+        return false;
+    }
+    if (const auto blob = decoded<OverviewBlob>(overview); blob && blob->waveform_points.empty()) {
+        return false;
+    }
+    // Seabass never leaves an overview of its own on a row whose flag is
+    // down: a completion raises the flag in the transaction that writes the
+    // overview, and markForDeviceAnalysis clears the overview with the
+    // flag. An overview there is the player's (an analysis it broke off),
+    // whatever the ledger or the kept store say: a grid fill (the CLI's
+    // --unanalysed fill) leaves the ledger's grid as both of its grids.
+    if (!flagOf(row.columns.isAnalyzed).value_or(false)) {
+        return true;
+    }
+    using Status = application::KeptEngineAnalysisLookup::Status;
+    if (m_keptStore && !keepKey.empty()) {
+        application::KeptEngineAnalysisLookup found;
+        try {
+            found = m_keptStore->find(keepKey);
+        } catch (const std::exception &) {
+            // Not knowing whose it is: the player's.
+            return true;
+        }
+        if (found.status == Status::Damaged) {
+            return true;
+        }
+        if (found.status == Status::Found && found.entry.trackFile == row.trackFile && found.entry.trackId == id
+            && found.entry.libraryUuid == row.libraryUuid) {
+            // The player's original is kept: an overview that is not the
+            // original's, in an analysis Seabass knows, is Seabass's.
+            const bool original = canonical(overview, BlobKind::Overview)
+                == canonical(found.entry.original.overviewWaveFormData, BlobKind::Overview);
+            return original || !analysisIsKnown(found.entry, row.columns);
+        }
+    }
+    // Nothing kept of the row: Seabass's only on a row it completed, both
+    // grids the ledger's (the player's analysis writes its own grid).
+    // Blind spot: a player that analyses a row Seabass FILLED (--unanalysed
+    // fill, a CLI-only hardware experiment) and keeps the filled grid as
+    // both grids leaves flag 1, the ledger's grid and its own waveform,
+    // which this calls Seabass's.
+    const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(row.columns.beatData);
+    const bool completedBySeabass = existing && ledgerGrid && *ledgerGrid == gridFingerprint(*existing)
+        && sameGrid(existing->default_beat_grid, existing->adjusted_beat_grid);
+    return !completedBySeabass;
 }
 
 EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(const std::string &trackSourceId,

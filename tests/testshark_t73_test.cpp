@@ -1223,13 +1223,14 @@ void testAnalysisBoth()
         assert(record.samples == static_cast<double>(exact->samples));
         assert(record.sample_rate == exact->sampleRateHz);
     }
-    // B01, analysed by the player: rekordbox's grid and waveform, the
-    // record the player wrote kept.
+    // B01, analysed by the player: rekordbox's grid; the waveform the
+    // player drew stays (a sync has no box to write over it), and the
+    // record the player wrote is kept.
     {
         const auto &was = run.before.at(b01);
         const auto &now = run.after.at(b01);
         assert(now[BeatData] != was[BeatData] && "rekordbox's grid");
-        assert(now[Overview] != was[Overview] && "rekordbox's waveform");
+        assert(now[Overview] == was[Overview] && "the player's waveform stays");
         assert(now[TrackData] == was[TrackData] && now[IsAnalyzed] == "1" && "the player's record stays");
     }
     // Every other row as it was (B05, B06, B09 and B10 the sync removes).
@@ -1249,14 +1250,15 @@ void testAnalysisBoth()
         grids += (fresh ? row[BeatData] != "<null>" : row[BeatData] != run.before.at(id)[BeatData]) ? 1 : 0;
         waveforms += (fresh ? row[Overview] != "<null>" : row[Overview] != run.before.at(id)[Overview]) ? 1 : 0;
     }
-    // The overview files of exactly those rows, the player's analysis of
-    // B01 kept, and the ledger with the four grids.
+    // The overview files of the created rows only (B01's waveform is the
+    // player's and stays), the player's analysis of B01 kept, and the
+    // ledger with the four grids.
     const auto overviews = filesUnder(overviewDirOf(stick));
     std::set<std::int64_t> overviewIds;
     for (const auto &[path, bytes] : overviews) {
         overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
     }
-    assert((overviewIds == std::set<std::int64_t>{created[0], created[1], created[2], b01}));
+    assert((overviewIds == std::set<std::int64_t>{created[0], created[1], created[2]}));
     const auto kept = filesUnder(keptDirOf(stick));
     assert(kept.size() == 1 && "B01's own analysis, and only that");
     std::string ledgerError;
@@ -1265,11 +1267,11 @@ void testAnalysisBoth()
     // The summary says what landed, counted from the stick.
     std::cout << "  landed: " << grids << " grid(s), " << waveforms << " waveform(s), " << completed
               << " completed, " << kept.size() << " kept\n";
-    assert(grids == 4 && waveforms == 4 && completed == 3);
+    assert(grids == 4 && waveforms == 3 && completed == 3);
     assert(run.summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 4 beat grids and 4 waveforms copied, 3 tracks now load without "
+           == QStringLiteral("From rekordbox, 4 beat grids and 3 waveforms copied, 3 tracks now load without "
                              "analysis. Engine's own analysis of one track was kept on the stick first."));
-    std::cout << "analysis both: 4 grids, 4 waveforms, 3 rows completed, B01's analysis kept, the rest as it was OK\n";
+    std::cout << "analysis both: 4 grids, 3 waveforms, 3 rows completed, B01's analysis kept, the rest as it was OK\n";
 
     // Undo: m.db as before the save (but the import counter, as the "save"
     // case has it), no overview file, nothing kept, no ledger.
@@ -1298,12 +1300,11 @@ void testAnalysisLocked()
     const auto &was = run.before.at(b01);
     const auto &now = run.after.at(b01);
     assert(now[BeatData] == was[BeatData] && now[Locked] == "1" && "a locked grid is never replaced by a sync");
-    assert(now[Overview] != was[Overview] && "the waveform has no lock");
+    assert(now[Overview] == was[Overview] && "the waveform the player drew stays too");
     assert(run.summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 3 beat grids and 4 waveforms copied, 3 tracks now load without "
-                             "analysis. Engine's own analysis of one track was kept on the stick first. Analysis "
-                             "left alone: one beat grid locked or moved on the player."));
-    std::cout << "analysis locked: B01's grid left alone and counted, its waveform copied OK\n";
+           == QStringLiteral("From rekordbox, 3 beat grids and 3 waveforms copied, 3 tracks now load without "
+                             "analysis. Analysis left alone: one beat grid locked or moved on the player."));
+    std::cout << "analysis locked: B01's grid and waveform left alone, the grid counted OK\n";
 }
 
 void testAnalysisGridsOnly()
@@ -1749,9 +1750,10 @@ void testCueSyncBoth()
                                         "cues go to Engine also get rekordbox's beat grids and waveforms, as set in "
                                         "Preferences."));
     // Each cue row says what its Engine copy gets, as the save then writes
-    // it: B11's locked grid is not among it.
-    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid and waveform from rekordbox"));
-    assert(run.rowAnalysis.at("B11") == QStringLiteral("Waveform from rekordbox"));
+    // it: B11's locked grid is not among it, and neither is a waveform the
+    // player drew (B04's and B11's).
+    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid from rekordbox"));
+    assert(run.rowAnalysis.at("B11").isEmpty() && "a locked grid and the player's waveform: nothing to say");
     assert(run.rowAnalysis.at("B03")
            == QStringLiteral("Beat grid and waveform from rekordbox, then loads without analysis on the player"));
     assert(run.staged.contains(QStringLiteral("The tracks whose cues go to Engine also get rekordbox's beat grids and "
@@ -1761,14 +1763,13 @@ void testCueSyncBoth()
     const std::int64_t b04 = trackIdOf(stick, "B04");
     const std::int64_t b11 = trackIdOf(stick, "B11");
     const std::int64_t n3 = trackIdOf(stick, "N3");
-    // B04, analysed by the player: rekordbox's grid and waveform, its own
-    // record stays.
+    // B04, analysed by the player: rekordbox's grid; the waveform the
+    // player drew and its own record stay.
     assert(run.after.at(b04)[BeatData] != run.before.at(b04)[BeatData]);
-    assert(run.after.at(b04)[Overview] != run.before.at(b04)[Overview]);
+    assert(run.after.at(b04)[Overview] == run.before.at(b04)[Overview]);
     assert(run.after.at(b04)[TrackData] == run.before.at(b04)[TrackData]);
-    // B11, its grid locked: the grid left alone, the waveform copied.
-    assert(run.after.at(b11)[BeatData] == run.before.at(b11)[BeatData] && "a locked grid is never replaced");
-    assert(run.after.at(b11)[Overview] != run.before.at(b11)[Overview]);
+    // B11, its grid locked: the grid left alone, and the player's waveform.
+    assert(run.after.at(b11) == run.before.at(b11) && "a locked grid and the player's waveform are never replaced");
     // B03, not analysed: completed over its file's own length.
     {
         const auto &row = run.after.at(b03);
@@ -1792,16 +1793,16 @@ void testCueSyncBoth()
     for (const auto &[path, bytes] : filesUnder(overviewDirOf(stick))) {
         overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
     }
-    assert((overviewIds == std::set<std::int64_t>{b03, b04, b11}));
-    assert(filesUnder(keptDirOf(stick)).size() == 2 && "B04's and B11's own analysis kept");
+    assert((overviewIds == std::set<std::int64_t>{b03}));
+    assert(filesUnder(keptDirOf(stick)).size() == 1 && "B04's own analysis kept");
     std::string ledgerError;
     const auto ledger = seabass::infrastructure::local::readBeatGridLedger(stick.root, &ledgerError);
     assert(ledgerError.empty() && ledger.size() == 2 && "the grids written: B03's and B04's");
-    // B11's rider carries what its row said, the waveform: its locked
-    // grid is not asked for, so not "left alone" in the note either.
+    // B11's row said no analysis, so it carried none: nothing of it was
+    // asked for, so it is not "left alone" in the note either.
     assert(run.summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 2 beat grids and 3 waveforms copied, one track now loads without "
-                             "analysis. Engine's own analysis of 2 tracks was kept on the stick first."));
+           == QStringLiteral("From rekordbox, 2 beat grids and one waveform copied, one track now loads without "
+                             "analysis. Engine's own analysis of one track was kept on the stick first."));
     std::cout << "cue sync both: B03 completed, B04 replaced and kept, B11's locked grid left alone, N3 untouched OK\n";
 
     // Undo: m.db, overview files, kept analyses and ledger as before.
@@ -1834,8 +1835,9 @@ void testCueSyncUnstage()
     for (const auto &[path, bytes] : filesUnder(overviewDirOf(run.stick))) {
         overviewIds.insert(std::stoll(pathToUtf8(pathFromUtf8(path).stem())));
     }
-    assert(!overviewIds.count(b04) && overviewIds.size() == 2);
-    assert(filesUnder(keptDirOf(run.stick)).size() == 1 && "B11's only");
+    // B03's only: B11's waveform is the player's, and stays.
+    assert(!overviewIds.count(b04) && overviewIds.size() == 1);
+    assert(filesUnder(keptDirOf(run.stick)).empty() && "nothing of B11's replaced, so nothing kept");
     std::cout << "cue sync unstage: B04's analysis left with its row OK\n";
 }
 
@@ -1847,7 +1849,7 @@ void testCueSyncUntick()
     SyncController controller;
     CueSyncRun run = runCueSync("t73_cuesync_untick", std::make_pair(true, true), true, controller, {}, {"B04"});
     const std::int64_t b04 = trackIdOf(run.stick, "B04");
-    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid and waveform from rekordbox"));
+    assert(run.rowAnalysis.at("B04") == QStringLiteral("Beat grid from rekordbox"));
     assert(run.after.at(b04) == run.before.at(b04) && "neither cues nor analysis for an unticked row");
     assert(quickCuesOf(run.stick, "B04") == run.cuesBefore.at("B04"));
     assertCuesLanded(run, {"B03", "B11"});
@@ -1969,8 +1971,9 @@ int analysisOnlyOf(SyncController &controller, const testing::EngineChangeStick 
 // as a row of its own, ticked, rekordbox to Engine, saying what it gets;
 // the search narrows those rows as it narrows cue rows; an unticked one is
 // not written; Save counts them as synced tracks; Undo puts the stick
-// back. B11's locked grid is never replaced: it is offered for its
-// waveform only.
+// back. B11's locked grid is never replaced, and neither is the waveform
+// the player drew of it: it is not offered. B04, analysed, is offered its
+// grid only.
 void testCueSyncAnalysisOnly()
 {
     using Model = seabass::gui::SyncPlanListModel;
@@ -1985,15 +1988,16 @@ void testCueSyncAnalysisOnly()
     assert(cueRowCount(controller) == 0 && controller.conflictCount() == 0 && "every track's cues in step");
     const int offered = controller.analysisOnlyCount();
     // Every Engine row of the fixture but B04 and B11 is one the player has
-    // not analysed; B11 offers its waveform only.
-    assert(offered == 11);
+    // not analysed; B11 offers nothing (its grid locked, its waveform the
+    // player's).
+    assert(offered == 10);
     // Rows like the others: listed, ticked, counted, rekordbox to Engine.
     assert(controller.planCount() == offered && controller.visiblePlanCount() == offered);
     assert(controller.selectedCount() == offered && controller.plansModel()->rowCount() == offered);
     const int b03 = analysisOnlyOf(controller, stick, "B03");
     const int b04 = analysisOnlyOf(controller, stick, "B04");
     const int b11 = analysisOnlyOf(controller, stick, "B11");
-    assert(b03 >= 0 && b04 >= 0 && b11 >= 0);
+    assert(b03 >= 0 && b04 >= 0 && b11 < 0);
     for (int i = 0; i < offered; ++i) {
         assert(rowRole(controller, i, Model::AnalysisOnlyRole).toBool());
         assert(rowRole(controller, i, Model::IncludedRole).toBool() && "ticked, as a cue row is");
@@ -2008,8 +2012,8 @@ void testCueSyncAnalysisOnly()
     }
     assert(analysisTextOf(controller, b03)
            == QStringLiteral("Beat grid and waveform from rekordbox, then loads without analysis on the player"));
-    assert(analysisTextOf(controller, b04) == QStringLiteral("Beat grid and waveform from rekordbox"));
-    assert(analysisTextOf(controller, b11) == QStringLiteral("Waveform from rekordbox") && "a locked grid: never");
+    assert(analysisTextOf(controller, b04) == QStringLiteral("Beat grid from rekordbox")
+           && "the waveform the player drew: never");
 
     // The search narrows them, and staging with it stages what it shows.
     const auto &b03Track = controller.plansModel()->plans()[static_cast<std::size_t>(b03)].match.trackA;
@@ -2055,11 +2059,11 @@ void testCueSyncAnalysisOnly()
     assert(summary.value("skipped").toInt() == 0);
     assert(summary.value("unit").toString() == QStringLiteral("tracks"));
     assert(summary.value("verb").toString() == QStringLiteral("synchronised"));
-    // B11 is staged with what its row said, its waveform: its locked grid
-    // is not asked for, so not "left alone" either.
+    // The 9 rows the player has not analysed, completed; B11, offering
+    // nothing, was never staged, so it is not "left alone" either.
     assert(summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 9 beat grids and 10 waveforms copied, 9 tracks now load without "
-                             "analysis. Engine's own analysis of one track was kept on the stick first."));
+           == QStringLiteral("From rekordbox, 9 beat grids and 9 waveforms copied, 9 tracks now load without "
+                             "analysis."));
     // The written rows leave; B04's, unticked, stays.
     assert(controller.planCount() == 1 && controller.stagedCount() == 0);
     assert(analysisOnlyOf(controller, stick, "B04") == 0);
@@ -2074,8 +2078,7 @@ void testCueSyncAnalysisOnly()
                && row[Overview] != "<null>" && "B03 completed");
     }
     assert(after.at(b04Id) == in.before.at(b04Id) && "B04, unticked, as it was");
-    assert(after.at(b11Id)[BeatData] == in.before.at(b11Id)[BeatData] && "B11's locked grid left alone");
-    assert(after.at(b11Id)[Overview] != in.before.at(b11Id)[Overview] && "B11's waveform copied");
+    assert(after.at(b11Id) == in.before.at(b11Id) && "B11's locked grid and the player's waveform left alone");
     // Every row not staged as it was.
     std::set<std::int64_t> changedIds;
     for (const auto &[id, row] : in.before) {
@@ -2263,7 +2266,9 @@ void testCueSyncSwitchOffAfterStage()
         assert(offered > 0);
         controller.stageSelected(false);
         assert(controller.stagedCount() == offered);
-        SyncAnalysisPolicy::set(true, false);
+        // Beat grids off: every row staged carries a grid (B04, analysed,
+        // its grid only: the waveform the player drew is never offered).
+        SyncAnalysisPolicy::set(false, true);
         const QVariantMap summary = waitForSyncSave(sessionOf(in.stick), controller, false);
         std::cout << "  " << summary.value("notes").toString().toStdString() << "\n";
         assert(summary.value("written").toInt() == 0 && summary.value("skipped").toInt() == offered);
@@ -2272,6 +2277,39 @@ void testCueSyncSwitchOffAfterStage()
         assert(analysisRows(in.stick.db) == in.before && "no analysis written");
         assert(filesUnder(overviewDirOf(in.stick)).empty());
         std::cout << "cue sync, a switch turned off after staging: every analysis-only row skipped OK\n";
+    }
+    {
+        // Waveforms off: every row staged with a waveform (the rows the
+        // player has not analysed, completed with both parts) is skipped;
+        // B04, staged with its grid only, still gets it.
+        InStepStick in = makeInStepStick("t73_cuesync_waveforms_off_after_stage", "B03");
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(true, true);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        SyncController controller;
+        analyze(controller, in.stick);
+        const int offered = controller.analysisOnlyCount();
+        assert(offered > 1 && analysisOnlyOf(controller, in.stick, "B04") >= 0);
+        controller.stageSelected(false);
+        assert(controller.stagedCount() == offered);
+        SyncAnalysisPolicy::set(true, false);
+        const QVariantMap summary = waitForSyncSave(sessionOf(in.stick), controller, false);
+        std::cout << "  " << summary.value("notes").toString().toStdString() << "\n";
+        assert(summary.value("written").toInt() == 1 && summary.value("skipped").toInt() == offered - 1);
+        assert(summary.value("notes").toString().contains(
+            QStringLiteral("(copying it from rekordbox was turned off in Preferences since it was staged)")));
+        const auto after = analysisRows(in.stick.db);
+        const std::int64_t b04 = trackIdOf(in.stick, "B04");
+        for (const auto &[id, row] : in.before) {
+            if (id == b04) {
+                assert(after.at(id)[BeatData] != row[BeatData] && after.at(id)[Overview] == row[Overview]
+                       && "B04: its grid, the player's waveform kept");
+            } else {
+                assert(after.at(id) == row && "a row staged with a waveform: skipped");
+            }
+        }
+        assert(filesUnder(overviewDirOf(in.stick)).empty());
+        std::cout << "cue sync, waveforms turned off after staging: every row with a waveform skipped OK\n";
     }
     {
         SyncController controller;

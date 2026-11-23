@@ -39,8 +39,16 @@ struct AnalysisImportOptions
     bool grids = true;
     bool waveforms = true;
     // Write over a grid the user set on the player: locked, or moved by
-    // hand. The waveform has no such state and is always replaced.
+    // hand.
     bool overwriteEngineEdits = false;
+    // Write over the waveform the player drew of a row it analysed. Off, a
+    // row's waveform is written only where it has none, or where it is one
+    // Seabass wrote (PlayersWaveform otherwise). Seabass's own is known as
+    // the kept store knows it (the player's original kept, and the row's
+    // analysis one Seabass left there) or, with no kept entry, as the
+    // keeping knows it: a row Seabass completed, both its grids the
+    // ledger's.
+    bool overwritePlayerWaveforms = false;
     // As BeatGridWriteOptions::ownGridFingerprint.
     std::optional<std::string> ownGridFingerprint;
     // The audio file's sample rate, for a row with no analysis record of
@@ -94,6 +102,9 @@ struct AnalysisImportResult
         // kept first and cannot be, or the row's flags cannot be read.
         CannotKeepEngines,
         RowUnreadable,
+        // The player drew its own waveform of the row, and
+        // overwritePlayerWaveforms is off: left as it is.
+        PlayersWaveform,
     };
     Waveform waveform = Waveform::NotRequested;
 

@@ -334,8 +334,9 @@ int main(int argc, char **argv)
     }
     g_fixtures = pathFromUtf8(argv[1]);
 
-    // 1. An analysed row: the waveform replaced, the grid as writeBeatGrid()
-    // writes it, everything else as it was; then AlreadySame.
+    // 1. An analysed row, told to write over the waveform the player drew:
+    // the waveform replaced, the grid as writeBeatGrid() writes it,
+    // everything else as it was; then AlreadySame.
     {
         const Copy copy = freshCopy("analysed");
         const TrackData record = TrackData::from_blob(perf(copy.mdb, kAnalysed, "trackData"));
@@ -355,8 +356,10 @@ int main(int argc, char **argv)
         const auto filesBefore = overviewFiles(copy);
         const auto rawRecordBefore = perf(copy.mdb, kAnalysed, "trackData");
 
+        AnalysisImportOptions replace;
+        replace.overwritePlayerWaveforms = true;
         auto writer = unshiftedWriter(pathToUtf8(copy.root));
-        const auto result = writer.importAnalysis(std::to_string(kAnalysed), analysis);
+        const auto result = writer.importAnalysis(std::to_string(kAnalysed), analysis, replace);
         check(result.grid.outcome == Outcome::Written, "an analysed row's grid is written");
         check(result.waveform == Waveform::Written, "and its waveform");
         check(!result.completedRow, "it is not a row completed");
@@ -406,7 +409,7 @@ int main(int argc, char **argv)
         int hookCalls = 0;
         auto again = unshiftedWriter(pathToUtf8(copy.root));
         again.setBeforeBeatGridWrite([&] { ++hookCalls; });
-        const auto same = again.importAnalysis(std::to_string(kAnalysed), analysis);
+        const auto same = again.importAnalysis(std::to_string(kAnalysed), analysis, replace);
         check(same.grid.outcome == Outcome::AlreadySame && same.waveform == Waveform::AlreadySame,
               "the same call again is AlreadySame for both parts");
         check(same.overviewFileRelativePath.empty(), "and names no file written");
@@ -415,6 +418,156 @@ int main(int argc, char **argv)
         check(fs::last_write_time(copy.root / fileOf(kAnalysed)) == fileTime, "the file's time stays");
         check(fileBytes(pathFromUtf8(copy.mdb)) == dbBytes, "m.db is byte for byte as it was");
         std::cout << "case 1 (analysed row) done\n";
+    }
+
+    // 1b. Not told to write over it, the waveform the player drew of an
+    // analysed row stays, column and file byte for byte, and is said to
+    // (PlayersWaveform), in a preview as in the write; the grid is written
+    // all the same. A row the player has not analysed is completed either
+    // way, and an analysed row with no overview gets one. A row Seabass
+    // completed, both its grids the ledger's, holds Seabass's waveform: a
+    // later copy refreshes it; without the ledger's word it is taken for
+    // the player's.
+    {
+        const Copy copy = freshCopy("players-waveform");
+        const TrackData record = TrackData::from_blob(perf(copy.mdb, kAnalysed, "trackData"));
+        const double seconds = static_cast<double>(record.samples) / record.sample_rate;
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(37.0, 60000.0 / 121.0, seconds * 1000.0);
+        analysis.threeBandPreview = synthetic(1200, 3, 11);
+        analysis.scrollEntries = static_cast<std::uint32_t>(std::ceil(seconds * 150.0));
+        // A file the player wrote beside the column, which must stay too.
+        const fs::path playersFile = copy.root / fileOf(kAnalysed);
+        fs::create_directories(playersFile.parent_path());
+        std::ofstream(playersFile, std::ios::binary) << synthetic(3000, 1, 12);
+        const auto overviewBefore = perf(copy.mdb, kAnalysed, "overviewWaveFormData");
+        check(!overviewBefore.empty(), "1b. the analysed row has the player's overview");
+        const auto filesBefore = overviewFiles(copy);
+
+        auto writer = unshiftedWriter(pathToUtf8(copy.root));
+        AnalysisImportOptions preview;
+        preview.previewOnly = true;
+        const auto previewed = writer.importAnalysis(std::to_string(kAnalysed), analysis, preview);
+        check(previewed.grid.outcome == Outcome::Written && previewed.waveform == Waveform::PlayersWaveform
+                  && previewed.overviewFileRelativePath.empty(),
+              "1b. a preview says the player's waveform is left alone, the grid written");
+        const auto result = writer.importAnalysis(std::to_string(kAnalysed), analysis);
+        check(result.grid.outcome == Outcome::Written, "1b. the grid is written");
+        check(result.waveform == Waveform::PlayersWaveform, "1b. the player's waveform is left alone, and said to be");
+        check(result.overviewFileRelativePath.empty(), "1b. no overview file named");
+        check(perf(copy.mdb, kAnalysed, "overviewWaveFormData") == overviewBefore,
+              "1b. the overview column is byte for byte the player's");
+        check(overviewFiles(copy) == filesBefore, "1b. and every overview file, the player's too");
+
+        // Told to, it is replaced.
+        AnalysisImportOptions replace;
+        replace.overwritePlayerWaveforms = true;
+        const auto replaced = writer.importAnalysis(std::to_string(kAnalysed), analysis, replace);
+        check(replaced.waveform == Waveform::Written && replaced.overviewFileRelativePath == fileOf(kAnalysed),
+              "1b. with overwritePlayerWaveforms the player's waveform is replaced");
+        check(perf(copy.mdb, kAnalysed, "overviewWaveFormData") != overviewBefore
+                  && fileBytes(playersFile) != filesBefore.at(fileOf(kAnalysed)),
+              "1b. column and file both");
+
+        // An analysed row with no overview gets one, not told to.
+        exec(copy.mdb, "UPDATE PerformanceData SET overviewWaveFormData = NULL WHERE trackId = "
+                           + std::to_string(kAnalysedToo));
+        RekordboxAnalysis colour;
+        colour.colourPreview = synthetic(1200, 6, 13);
+        AnalysisImportOptions waveformOnly;
+        waveformOnly.grids = false;
+        const auto none = writer.importAnalysis(std::to_string(kAnalysedToo), colour, waveformOnly);
+        check(none.waveform == Waveform::Written && perf(copy.mdb, kAnalysedToo, "overviewWaveFormData").size() > 0,
+              "1b. an analysed row with no overview gets rekordbox's");
+
+        // A row the player has not analysed: completed, with or without
+        // the option; then Seabass's own waveform, known by the ledger.
+        RekordboxAnalysis whole;
+        whole.beats = constantGrid(120.0, 480.0, 200000.0);
+        whole.threeBandPreview = synthetic(1200, 3, 14);
+        whole.scrollEntries = 30000;
+        for (const bool over : {false, true}) {
+            const Copy fresh = freshCopy(over ? "players-waveform-unanalysed-over" : "players-waveform-unanalysed");
+            AnalysisImportOptions options;
+            options.fileSampleRateHz = 48000.0;
+            options.overwritePlayerWaveforms = over;
+            auto w = unshiftedWriter(pathToUtf8(fresh.root));
+            const auto completed = w.importAnalysis(std::to_string(kUnanalysed), whole, options);
+            check(completed.completedRow && completed.waveform == Waveform::Written,
+                  std::string("1b. a row the player has not analysed gets the waveform, ")
+                      + (over ? "with" : "without") + " the option");
+            if (over) {
+                continue;
+            }
+            RekordboxAnalysis newer = whole;
+            newer.threeBandPreview = synthetic(1200, 3, 15);
+            const auto seabassBefore = perf(fresh.mdb, kUnanalysed, "overviewWaveFormData");
+            AnalysisImportOptions unknown;
+            unknown.fileSampleRateHz = 48000.0;
+            const auto unknownResult = w.importAnalysis(std::to_string(kUnanalysed), newer, unknown);
+            check(unknownResult.waveform == Waveform::PlayersWaveform
+                      && perf(fresh.mdb, kUnanalysed, "overviewWaveFormData") == seabassBefore,
+                  "1b. without the ledger's word, Seabass's waveform is taken for the player's");
+            AnalysisImportOptions ledger = unknown;
+            ledger.ownGridFingerprint = completed.grid.gridFingerprint;
+            const auto refreshed = w.importAnalysis(std::to_string(kUnanalysed), newer, ledger);
+            check(refreshed.waveform == Waveform::Written
+                      && perf(fresh.mdb, kUnanalysed, "overviewWaveFormData") != seabassBefore,
+                  "1b. a waveform Seabass completed the row with, the grid the ledger's, is refreshed");
+        }
+        // A row whose flag is down over the player's analysis (one it broke
+        // off; seen on a real stick): its waveform stays too, so it is not
+        // completed, and its grid waits for the player with it. Told to, it
+        // is completed as before.
+        for (const bool over : {false, true}) {
+            const Copy broken = freshCopy(over ? "players-waveform-flag-down-over" : "players-waveform-flag-down");
+            exec(broken.mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = " + std::to_string(kAnalysed));
+            check(!perf(broken.mdb, kAnalysed, "overviewWaveFormData").empty()
+                      && !perf(broken.mdb, kAnalysed, "beatData").empty(),
+                  "1b. the flag-down row keeps the player's overview and beat data");
+            const std::string dbBefore = fileBytes(pathFromUtf8(broken.mdb));
+            const auto brokenFilesBefore = overviewFiles(broken);
+            AnalysisImportOptions options;
+            options.fileSampleRateHz = record.sample_rate;
+            options.overwritePlayerWaveforms = over;
+            auto w = unshiftedWriter(pathToUtf8(broken.root));
+            const auto r = w.importAnalysis(std::to_string(kAnalysed), analysis, options);
+            if (!over) {
+                check(r.waveform == Waveform::PlayersWaveform && r.grid.outcome == Outcome::RowNotAnalysed
+                          && !r.completedRow && r.overviewFileRelativePath.empty(),
+                      "1b. flag down, the player's waveform there: left alone, not completed, grid "
+                          + std::to_string(int(r.grid.outcome)) + " waveform " + std::to_string(int(r.waveform)));
+                check(fileBytes(pathFromUtf8(broken.mdb)) == dbBefore && overviewFiles(broken) == brokenFilesBefore,
+                      "1b. m.db and every overview file byte for byte as they were");
+
+                // A grid fill (--unanalysed fill) leaves the ledger's grid as
+                // both grids of the flag-down row: its overview is still the
+                // player's, the ledger's word notwithstanding.
+                application::BeatGridWriteOptions fill;
+                fill.unanalysed = application::UnanalysedRowGrid::Fill;
+                fill.fileSampleRateHz = record.sample_rate;
+                fill.fileDurationMs = seconds * 1000.0;
+                const auto filled = w.writeBeatGrid(std::to_string(kAnalysed), analysis.beats, fill);
+                check(filled.outcome == Outcome::Written && !filled.gridFingerprint.empty(),
+                      "1b. the flag-down row's grid filled, outcome " + std::to_string(int(filled.outcome)));
+                const auto overviewFilled = perf(broken.mdb, kAnalysed, "overviewWaveFormData");
+                const auto filesFilled = overviewFiles(broken);
+                check(column(broken.mdb, "Track", "id", kAnalysed, "isAnalyzed") == "0", "1b. the fill leaves the flag down");
+                AnalysisImportOptions afterFill = options;
+                afterFill.ownGridFingerprint = filled.gridFingerprint;  // as the ledger says
+                const auto r2 = w.importAnalysis(std::to_string(kAnalysed), analysis, afterFill);
+                check(r2.waveform == Waveform::PlayersWaveform && !r2.completedRow,
+                      "1b. after a fill, with the ledger's grid: the player's waveform left alone, waveform "
+                          + std::to_string(int(r2.waveform)));
+                check(perf(broken.mdb, kAnalysed, "overviewWaveFormData") == overviewFilled
+                          && overviewFiles(broken) == filesFilled,
+                      "1b. its overview byte for byte as the player left it");
+            } else {
+                check(r.completedRow && r.waveform == Waveform::Written && r.grid.outcome == Outcome::Written,
+                      "1b. flag down, told to: completed, the player's waveform replaced");
+            }
+        }
+        std::cout << "case 1b (the player's waveform) done\n";
     }
 
     // 2. The colour preview when there is no three-band one, over the row's
@@ -427,6 +580,7 @@ int main(int argc, char **argv)
         analysis.colourPreview = synthetic(1200, 6, 3);
         AnalysisImportOptions waveformOnly;
         waveformOnly.grids = false;
+        waveformOnly.overwritePlayerWaveforms = true;
         auto writer = unshiftedWriter(pathToUtf8(copy.root));
         const std::string beatDataBefore = column(copy.mdb, "PerformanceData", "trackId", kAnalysedToo, "beatData");
         const auto result = writer.importAnalysis(std::to_string(kAnalysedToo), analysis, waveformOnly);
@@ -621,6 +775,7 @@ int main(int argc, char **argv)
         AnalysisImportOptions withRate;
         withRate.fileSampleRateHz = 44100.0;
         withRate.fileIsMp3 = true;
+        withRate.overwritePlayerWaveforms = true;
         const std::vector<std::pair<std::int64_t, RekordboxAnalysis>> calls = {
             {kAnalysed, analysed}, {kUnanalysed, unanalysed}, {kUnanalysedToo, RekordboxAnalysis{}}};
 
@@ -781,8 +936,31 @@ int main(int argc, char **argv)
         analysis.threeBandPreview = synthetic(1200, 3, 9);
         analysis.scrollEntries = 18000;
         analysis.bpm = 125.0;
+        // Not told to write over it, on a copy: the analysed row keeps the
+        // overview in its Track row, the unanalysed row is completed.
+        {
+            const fs::path offDir = testing::scratchRoot() / "engine_analysis_import" / "schema-2-off";
+            fs::remove_all(offDir);
+            fs::copy(dir, offDir, fs::copy_options::recursive);
+            const std::string offMdb = pathToUtf8(offDir / "Engine Library" / "Database2" / "m.db");
+            const auto overviewBefore = blobOf(offMdb, "Track", "id", analysedId, "overviewWaveFormData");
+            check(!overviewBefore.empty(), "2.18: the analysed row has an overview in Track");
+            AnalysisImportOptions off;
+            off.fileSampleRateHz = 44100.0;
+            auto offWriter = unshiftedWriter(pathToUtf8(offDir / "Engine Library"));
+            const auto kept = offWriter.importAnalysis(std::to_string(analysedId), analysis, off);
+            check(kept.grid.outcome == Outcome::Written && kept.waveform == Waveform::PlayersWaveform,
+                  "2.18, option off: the analysed row's grid written, its waveform left alone");
+            check(blobOf(offMdb, "Track", "id", analysedId, "overviewWaveFormData") == overviewBefore,
+                  "2.18, option off: Track's overview byte for byte as it was");
+            const auto completedOff = offWriter.importAnalysis(std::to_string(unanalysedId), analysis, off);
+            check(completedOff.completedRow && completedOff.waveform == Waveform::Written,
+                  "2.18, option off: the unanalysed row still completed");
+        }
+
         AnalysisImportOptions options;
         options.fileSampleRateHz = 44100.0;
+        options.overwritePlayerWaveforms = true;
         auto writer = unshiftedWriter(root);
         const auto analysedResult = writer.importAnalysis(std::to_string(analysedId), analysis, options);
         check(analysedResult.grid.outcome == Outcome::Written && analysedResult.waveform == Waveform::Written,
@@ -849,6 +1027,7 @@ int main(int argc, char **argv)
         analysis.threeBandPreview = synthetic(1200, 3, 10);
         AnalysisImportOptions waveformOnly;
         waveformOnly.grids = false;
+        waveformOnly.overwritePlayerWaveforms = true;
         auto writer = unshiftedWriter(pathToUtf8(copy.root));
         check(writer.importAnalysis(std::to_string(id), analysis, waveformOnly).waveform == Waveform::Written,
               "ours written over it");

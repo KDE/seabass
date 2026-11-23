@@ -112,8 +112,9 @@ void collectPlaylistSummary(const std::vector<domain::Track> &rekordboxTracks,
 // scope rekordbox and Engine share, paired as Beat Grids & Waveforms pairs
 // them, each through the writer with nothing written (previewOnly), as that
 // page's preview takes it. A part counts only when the preview would write
-// it: a grid locked or moved on the player is never replaced here
-// (overwriteEngineEdits stays off), and a row the player has not analysed
+// it: a grid locked or moved on the player and a waveform the player drew
+// are never replaced here (overwriteEngineEdits and
+// overwritePlayerWaveforms stay off), and a row the player has not analysed
 // is completed with both parts or not at all. A track whose preview failed
 // is left alone and counted (`unchecked`): the page says it was not
 // checked rather than showing it in step. Runs on the analysis' worker,
@@ -226,6 +227,7 @@ AnalysisPreview previewAnalysis(const std::vector<domain::Track> &rekordboxTrack
     writer.setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
     options.previewOnly = true;
     options.overwriteEngineEdits = false;
+    options.overwritePlayerWaveforms = false;
     options.skipOverviewFile = false;
     options.zeroLoudness = false;
     using Outcome = application::BeatGridWriteResult::Outcome;

@@ -595,6 +595,10 @@ Words waveformWords(const BeatGridTrackState &s)
         return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip(s)};
     case Waveform::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
+    case Waveform::PlayersWaveform:
+        return {QStringLiteral("Drawn by the player"), QStringLiteral("warn"),
+                QStringLiteral("The player drew its own waveform of this track, and it stays. \"Also replace "
+                               "waveforms the player drew\" replaces it all the same.")};
     }
     return {};
 }
@@ -617,6 +621,9 @@ QString whyLeftForThePlayer(const BeatGridTrackState &s)
     }
     if (s.result.waveform == Waveform::NoSourceWaveform) {
         return QStringLiteral("Not analysed by the player yet: rekordbox has no waveform to complete it with");
+    }
+    if (s.result.waveform == Waveform::PlayersWaveform) {
+        return QStringLiteral("Not analysed by the player yet, and it holds a waveform the player drew");
     }
     if (s.result.grid.outcome == Outcome::RowLocked) {
         return QStringLiteral("Not analysed by the player yet, and its beat grid is locked");
@@ -646,6 +653,9 @@ QString leftAloneReason(const BeatGridTrackState &s)
     if (s.result.grid.outcome == Outcome::RowUnreadable || s.result.waveform == Waveform::RowUnreadable) {
         return QStringLiteral("analysed or not cannot be read");
     }
+    if (s.result.waveform == Waveform::PlayersWaveform) {
+        return QStringLiteral("waveform drawn by the player");
+    }
     if (notAnalysed(s)) {
         return QStringLiteral("left for the player");
     }
@@ -670,6 +680,7 @@ BeatGridsController::BeatGridsController(QObject *parent) : QObject(parent)
     m_options.grids = true;
     m_options.waveforms = true;
     m_options.overwriteEngineEdits = false;
+    m_options.overwritePlayerWaveforms = false;
     recount();
     // The rows' reads wait while any library is being written.
     connect(EditSessionRegistry::instance(), &EditSessionRegistry::stateChanged, this,
@@ -1454,6 +1465,16 @@ void BeatGridsController::setReplaceEngineEdits(bool on)
     invalidateStates();
 }
 
+void BeatGridsController::setReplacePlayerWaveforms(bool on)
+{
+    if (m_options.overwritePlayerWaveforms == on || !m_stagedIds.isEmpty()) {
+        return;
+    }
+    m_options.overwritePlayerWaveforms = on;
+    emit optionsChanged();
+    invalidateStates();
+}
+
 void BeatGridsController::invalidateStates()
 {
     ++m_generation;
@@ -1680,6 +1701,7 @@ void BeatGridsController::recount()
             s.grids += t.result.grid.outcome == Outcome::Written ? 1 : 0;
             s.waveforms += t.result.waveform == Waveform::Written ? 1 : 0;
             s.completed += t.result.completedRow ? 1 : 0;
+            s.playersWaveforms += t.result.waveform == Waveform::PlayersWaveform ? 1 : 0;
         } else {
             ++s.leftAlone;
             ++reasons[leftAloneReason(t)];
@@ -1701,6 +1723,14 @@ void BeatGridsController::recount()
         s.leftAloneText = plural(s.leftAlone, QStringLiteral("One ticked track is left alone"),
                                  QStringLiteral("ticked tracks are left alone"))
             + QStringLiteral(": ") + parts.join(QStringLiteral(", ")) + QLatin1Char('.');
+    }
+    if (s.playersWaveforms > 0) {
+        // Said the same way for a track whose grid is copied all the same.
+        const QString kept = plural(s.playersWaveforms,
+                                    QStringLiteral("One track to copy keeps the waveform the player drew"),
+                                    QStringLiteral("tracks to copy keep the waveform the player drew"))
+            + QLatin1Char('.');
+        s.leftAloneText = s.leftAloneText.isEmpty() ? kept : s.leftAloneText + QLatin1Char(' ') + kept;
     }
     if (s.text.isEmpty()) {
         const int ticked = static_cast<int>(m_ticked.size());

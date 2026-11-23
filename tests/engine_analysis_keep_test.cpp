@@ -56,6 +56,7 @@
 #include <djinterop/engine/v3/track_data_blob.hpp>
 #include <sqlite3.h>
 
+#include "application/use_cases/copy_beat_grids.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
@@ -173,10 +174,13 @@ LibdjinteropEngineCueWriter writerFor(const Stick &stick, StickKeptEngineAnalysi
     return writer;
 }
 
+// Every copy here but those of the refresh case writes over the waveform
+// the player drew: keeping it before it is replaced is what this tests.
 AnalysisImportOptions keyed(const std::string &key)
 {
     AnalysisImportOptions o;
     o.keepKey = key;
+    o.overwritePlayerWaveforms = true;
     return o;
 }
 
@@ -672,6 +676,142 @@ int main(int argc, char **argv)
         check(third.grid.outcome == Outcome::Written && !third.keptEngineAnalysis
                   && store.find("k13").entry.original == original,
               "11. Seabass's own grid is never taken for the DJ's");
+    }
+
+    // 12. Not told to write over the player's waveform: the player's is left
+    // byte for byte; one Seabass wrote over it (the player's kept) is
+    // Seabass's and refreshed; the player's new analysis since is the
+    // player's again and left.
+    {
+        const Stick stick = freshStick("players-waveform");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        AnalysisImportOptions plain = keyed("k13");
+        plain.overwritePlayerWaveforms = false;
+        const EngineAnalysisColumns before = snapshot(stick, 13);
+        const auto left = writer.importAnalysis("13", first, plain);
+        check(left.grid.outcome == Outcome::Written && left.waveform == Waveform::PlayersWaveform,
+              "12. the grid written, the player's waveform left alone");
+        const EngineAnalysisColumns afterLeft = snapshot(stick, 13);
+        check(afterLeft.overviewWaveFormData == before.overviewWaveFormData && afterLeft.overviewFile == before.overviewFile,
+              "12. the player's overview column and file byte for byte");
+
+        const auto replaced = writer.importAnalysis("13", first, keyed("k13"));
+        check(replaced.waveform == Waveform::Written, "12. told to, it is replaced");
+        const EngineAnalysisColumns ours = snapshot(stick, 13);
+        AnalysisImportOptions ledger = plain;
+        ledger.ownGridFingerprint = replaced.grid.gridFingerprint;
+        const auto refreshed = writer.importAnalysis("13", second, ledger);
+        check(refreshed.waveform == Waveform::Written && !(snapshot(stick, 13).overviewWaveFormData == ours.overviewWaveFormData),
+              "12. Seabass's own waveform, the player's kept, is refreshed without being told to");
+
+        // The player analyses the row anew (row 15's blobs).
+        exec(stick.mdb, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE trackId = 15),"
+                        " overviewWaveFormData = (SELECT overviewWaveFormData FROM PerformanceData WHERE trackId = 15),"
+                        " beatData = (SELECT beatData FROM PerformanceData WHERE trackId = 15) WHERE trackId = 13");
+        const EngineAnalysisColumns newer = snapshot(stick, 13);
+        const auto again = writer.importAnalysis("13", first, plain);
+        check(again.waveform == Waveform::PlayersWaveform
+                  && snapshot(stick, 13).overviewWaveFormData == newer.overviewWaveFormData,
+              "12. the player's new waveform is the player's: left alone");
+    }
+
+    // 12b. Unsure counts as the player's. A kept entry of another row or
+    // library would otherwise say the waveform Seabass wrote over the
+    // player's is Seabass's; a kept file that cannot be read stands for
+    // the player's even where the ledger alone would call it Seabass's (a
+    // row Seabass completed).
+    for (const std::string which : {"another row", "another library"}) {
+        const Stick stick = freshStick(which == "another row" ? "players-waveform-stale-row" : "players-waveform-stale-uuid");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        const auto replaced = writer.importAnalysis("13", first, keyed("k13"));
+        check(replaced.waveform == Waveform::Written, "12b. Seabass's waveform over the player's (" + which + ")");
+        auto entry = store.find("k13").entry;
+        if (which == "another row") {
+            entry.trackId = 99;
+        } else {
+            entry.libraryUuid = "00000000-0000-0000-0000-000000000000";
+        }
+        store.keep(entry);
+        const EngineAnalysisColumns ours = snapshot(stick, 13);
+        AnalysisImportOptions plain = keyed("k13");
+        plain.overwritePlayerWaveforms = false;
+        plain.ownGridFingerprint = replaced.grid.gridFingerprint;
+        const auto r = writer.importAnalysis("13", second, plain);
+        check(r.waveform == Waveform::PlayersWaveform, "12b. a kept entry of " + which + ": taken for the player's, got "
+                                                           + std::to_string(int(r.waveform)));
+        check(snapshot(stick, 13).overviewWaveFormData == ours.overviewWaveFormData,
+              "12b. " + which + ": the overview byte for byte as it was");
+    }
+    {
+        const Stick stick = freshStick("players-waveform-damaged");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        AnalysisImportOptions complete = keyed("k9");
+        complete.fileSampleRateHz = 44100.0;
+        complete.fileCountRequired = true;
+        complete.fileSampleCount = 7938000;
+        const auto done = writer.importAnalysis("9", analysisOf(180.0, 102.0, 3), complete);
+        check(done.completedRow, "12b. row 9 completed by Seabass");
+        const fs::path file = infrastructure::local::keptEngineAnalysisFile(stick.root, "k9");
+        fs::create_directories(file.parent_path());
+        std::ofstream(file, std::ios::binary) << "seabass-engine-analysis\t1\ndamaged";
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        AnalysisImportOptions plain = keyed("k9");
+        plain.overwritePlayerWaveforms = false;
+        plain.ownGridFingerprint = done.grid.gridFingerprint;
+        const auto r = writer.importAnalysis("9", analysisOf(180.0, 103.0, 4), plain);
+        check(r.waveform == Waveform::PlayersWaveform,
+              "12b. a kept file that cannot be read: taken for the player's, got " + std::to_string(int(r.waveform)));
+        check(snapshot(stick, 9).overviewWaveFormData == before.overviewWaveFormData,
+              "12b. damaged: the overview byte for byte as it was");
+    }
+
+    // 12c. The CLI's sequence through the use cases, with the store: N2's
+    // flag put down over the player's analysis, its grid filled
+    // (--unanalysed fill, the ledger then recording it), then a copy with
+    // waveforms and the option off. The overview is the player's: left
+    // alone, the row not completed, nothing written over it.
+    {
+        const Stick stick = freshStick("players-waveform-fill");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = 15");
+        const EngineAnalysisColumns before = snapshot(stick, 15);
+        check(!before.overviewWaveFormData.isNull(), "12c. N2 keeps the player's overview with its flag down");
+        application::BeatGridCopyPlan plan;
+        application::BeatGridCopyItem item;
+        item.rekordboxTrackId = "r15";
+        item.engineTrackId = "15";
+        item.ledgerKey = "k15";
+        plan.items.push_back(item);
+        const RekordboxAnalysis n2 = analysisOf(240.0, 120.0, 7);
+        application::BeatGridCopyOptions fill;
+        fill.unanalysed = application::UnanalysedRowGrid::Fill;
+        const auto filled = application::copyBeatGrids(
+            plan, [&](const application::BeatGridCopyItem &) { return n2.beats; }, writer, {}, fill,
+            [](const application::BeatGridCopyItem &) {
+                return application::BeatGridFileFacts{48000.0, 240000.0};
+            });
+        check(filled.written == 1 && filled.ledgerEntries.contains("k15"), "12c. the grid filled and recorded");
+        const EngineAnalysisColumns afterFill = snapshot(stick, 15);
+        application::AnalysisCopyOptions copy;  // overwritePlayerWaveforms off
+        const auto result = application::copyRekordboxAnalysis(
+            plan, [&](const application::BeatGridCopyItem &) { return n2; }, writer, filled.ledgerEntries, copy,
+            [](const application::BeatGridCopyItem &) {
+                application::AnalysisFileFacts f;
+                f.sampleRateHz = 48000.0;
+                f.sampleCount = 48000ull * 240;
+                return f;
+            });
+        check(result.waveforms.playersWaveform == 1 && result.waveforms.written == 0 && result.completedRows == 0,
+              "12c. the player's waveform left alone, the row not completed: written "
+                  + std::to_string(result.waveforms.written) + ", completed " + std::to_string(result.completedRows));
+        check(snapshot(stick, 15).overviewWaveFormData == afterFill.overviewWaveFormData
+                  && afterFill.overviewWaveFormData == before.overviewWaveFormData
+                  && snapshot(stick, 15).overviewFile == before.overviewFile,
+              "12c. N2's overview column and file byte for byte the player's");
     }
 
     if (failures > 0) {

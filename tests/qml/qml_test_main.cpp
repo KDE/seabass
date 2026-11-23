@@ -1000,6 +1000,15 @@ public:
     // count the rows a save really changed. Empty on failure.
     Q_INVOKABLE QVariantMap engineBeatDataDigests(const QString &stickRoot) const
     {
+        return performanceDataDigests(stickRoot, "SELECT trackId, beatData FROM PerformanceData;");
+    }
+    // The same of the overview column (the waveform the player drew).
+    Q_INVOKABLE QVariantMap engineOverviewDigests(const QString &stickRoot) const
+    {
+        return performanceDataDigests(stickRoot, "SELECT trackId, overviewWaveFormData FROM PerformanceData;");
+    }
+    QVariantMap performanceDataDigests(const QString &stickRoot, const char *sql) const
+    {
         const std::string file = stickRoot.toStdString() + "/Engine Library/Database2/m.db";
         sqlite3 *db = nullptr;
         QVariantMap out;
@@ -1008,7 +1017,7 @@ public:
             return out;
         }
         sqlite3_stmt *stmt = nullptr;
-        if (sqlite3_prepare_v2(db, "SELECT trackId, beatData FROM PerformanceData;", -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
             while (sqlite3_step(stmt) == SQLITE_ROW) {
                 const QString id = QString::number(sqlite3_column_int64(stmt, 0));
                 const auto *bytes = static_cast<const char *>(sqlite3_column_blob(stmt, 1));
