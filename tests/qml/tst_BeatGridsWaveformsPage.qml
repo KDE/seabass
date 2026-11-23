@@ -313,12 +313,23 @@ TestCase {
     function test_tickingAPlaylistTicksItsTracks() {
         const o = openOn(t73());
         waitSettled(o.c);
+        compare(playlistRow(o.page, "T73 Renamed").checkTooltip,
+                "No tracks of this playlist are ticked. Click to tick them all.");
+        compare(playlistRow(o.page, "").checkTooltip, "No tracks are ticked. Click to tick them all.");
         clickPlaylistBox(o.page, "T73 Renamed");
         compare(o.c.tickedCount, 5);
         compare(playlistRow(o.page, "T73 Renamed").checkState, Qt.Checked);
         compare(playlistRow(o.page, "").checkState, Qt.PartiallyChecked, "All tracks: some of it");
         compare(playlistRow(o.page, "T73 Order").checkState, Qt.PartiallyChecked, "B12 is in T73 Order too");
         compare(playlistRow(o.page, "T73 Folder/T73 New").checkState, Qt.Unchecked);
+        // Each box says in words what it shows.
+        compare(playlistRow(o.page, "T73 Renamed").checkTooltip,
+                "All tracks of this playlist are ticked. Click to untick them all.");
+        compare(playlistRow(o.page, "").checkTooltip, "Some tracks are ticked. Click to tick them all.");
+        compare(playlistRow(o.page, "T73 Order").checkTooltip,
+                "Some tracks of this playlist are ticked. Click to tick them all.");
+        compare(playlistRow(o.page, "T73 Folder/T73 New").checkTooltip,
+                "No tracks of this playlist are ticked. Click to tick them all.");
         for (const id of [b01, b02, b04, b12]) {
             compare(row(o.c, id).ticked, true, id + " is ticked");
         }
