@@ -30,6 +30,7 @@ root="$(cd "$here/../.." && pwd)"
 # Never beside a working stick or a reference (see rig-platform.sh).
 refuse_if_protected_sticks_inserted
 . "$root/tools/rig-parts.sh"
+. "$root/tools/rig-human-gated.sh"
 # Builds usually live outside the repository: SEABASS_BUILD_DIR says where.
 build="${SEABASS_BUILD_DIR:-$root/build}"
 bin="$build/seabass_qml_tests"
@@ -233,7 +234,15 @@ if rig_is_windows; then
     # Windows this is a manual check (rig_manual_ids), shown on the
     # board's manual tab as still to do until a person has pulled the
     # stick with this test running and reported how it went.
-    rig_part live-stick-pulled PENDING
+    # ... unless nothing it tests has changed since a person last saw it
+    # pass (tools/rig-human-gated.sh): then it is not due, and says so.
+    if pull_due="$(rig_human_gated_due live-stick-pulled)"; then
+        echo "    it is $pull_due"
+        rig_part live-stick-pulled PENDING
+    else
+        echo "    it is $pull_due"
+        rig_part live-stick-pulled NOTDUE
+    fi
 elif [ -n "$device" ]; then
     ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &

@@ -833,6 +833,26 @@ not failed -- and a person who does it reports its `PASS` or `FAIL` for the
 board. That is for the manual set only: an automatic check that skipped or
 did not run is a `FAIL`, as it always was.
 
+A round asks for a manual check only when it is due (`tools/rig-human-gated.sh`):
+
+- the code it tests changed since the commit it last passed at on that
+  machine (the script lists the paths per check), or
+- the round is a release's, run with `RIG_HUMAN_CHECKS=all`, or
+- `RIG_ONLY` names it (for the stick pull, the live bundle it runs in), or
+- the rig cannot tell: no recorded pass, uncommitted changes, a recorded
+  commit this history does not hold. A release tag is no pass.
+
+One that is not due is written `NOTDUE` (`<check>\tNOTDUE\tmanual`), and the
+board shows it as not due: neither done nor to do. The rig records the pass
+of a manual check it runs itself (D2 on Windows). A person who has done one
+by hand records it, so that later rounds stand on it:
+
+    tools/rig-human-gated.sh passed P3-pull-mid-save
+
+`tools/rig-human-gated.sh due <check>` says whether a check is due and why.
+The passes are kept in `~/Seabass/e2e/human-gated/` (`RIG_HUMAN_STATE`), one
+file per check, per machine.
+
 Some checks run several tests. Those write one `PASS`/`FAIL` line per test
 into `$RIG_PARTS` (`tools/rig-parts.sh` for shell, `tools/rig_parts.hpp` for
 the rig's C++ programs, `RIG_PART_SUFFIX` to tell two runs of one program

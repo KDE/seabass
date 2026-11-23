@@ -19,6 +19,16 @@ write down the message verbatim.
 Always start on a **scratch copy** of a stick, never the live one, the
 first time through a list.
 
+## When a round asks for these
+
+A shakedown round asks for a by-hand check only when the code it tests has
+changed since it last passed on that machine, and a release's round asks
+for all of them (`RIG_HUMAN_CHECKS=all`); see "tools/rig-human-gated.sh" in
+docs/testing.md. After doing one by hand, record it, or every later round
+goes on asking:
+
+    tools/rig-human-gated.sh passed P3-pull-mid-save
+
 ## Windows: the stick pull is one of these
 
 `LiveStickPull::test_stickPulledWhileEditing` runs in every scripted

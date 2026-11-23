@@ -26,6 +26,10 @@
 # their references. The references are only read. Run it with the sandbox
 # profile (SEABASS_HOME, XDG_*) so nothing lands in a real profile.
 #
+#   RIG_HUMAN_CHECKS    "all" asks for every check that needs a person, as a
+#                       release's round does; the default, "due", only for
+#                       those whose code changed (tools/rig-human-gated.sh)
+#
 # Each check writes <out dir>/<check>.log and one line "<check> PASS|FAIL"
 # to <out dir>/summary.tsv. A failed check does not stop the run, except
 # when a stick could not be put into the state the next checks need.
@@ -36,6 +40,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$here/rig-platform.sh"
 . "$here/rig-parts.sh"
+. "$here/rig-human-gated.sh"
+# The commit this round tests, read once: a pass is recorded for it and
+# for no other, should the checkout move while the round runs.
+RIG_HUMAN_ROUND_COMMIT="$(rig_human_gated_head || true)"
+export RIG_HUMAN_ROUND_COMMIT
 
 # One round at a time on one machine. The sticks are a single resource
 # with no lock of their own, and two rounds sharing them do not collide
@@ -230,6 +239,9 @@ rig_wants() {  # <check name> -> 0 when this run includes it
     # The restores from a REFERENCE only: FB8 also restores, from an
     # archive FB1 makes, and ran unasked against a missing one.
     [[ "$1" == B?-restore-? || "$1" == *-from-reference || "$1" == *-at-reference* ]] && return 0
+    # And the restore after the format, whenever the format runs: a re-run
+    # of D2 alone left the stick empty (macOS, round 16).
+    [[ "$1" == D2-restore-A-after-format && " $(rig_only_names) " == *" D2-format-stick-A "* ]] && return 0
     [[ " $(rig_only_names) " == *" $1 "* ]]
 }
 if [ -n "${RIG_ONLY:-}" ] && [ -z "$(rig_only_names | tr -d ' ')" ]; then
@@ -248,6 +260,7 @@ RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-
 check() {
     local name="$1"; shift
     rig_wants "$name" || return 0
+    not_due "$name" && return 0
     ran="$ran $name"
     echo "$(date +%T) === $name"
     local parts=""
@@ -266,6 +279,10 @@ check() {
     elif [ $rc -eq 0 ]; then
         echo "$(date +%T) --- $name: PASS"
         verdict=PASS
+        # What later rounds compare with, to know whether it is due again.
+        if rig_is_manual "$name"; then
+            rig_human_gated_passed "$name" || echo "           (its pass could not be recorded, so the next round asks for it again)"
+        fi
     elif rig_is_manual "$name" \
         && grep -qF "cancelled at the Windows permission prompt" "$out/$name.log"; then
         # A manual check whose person did not come: D2's UAC prompt timed
@@ -295,10 +312,25 @@ check() {
     return $rc
 }
 
+# A check that needs a person and that this round has no reason to ask
+# for (tools/rig-human-gated.sh): written NOTDUE, and 0 for "handled".
+# Never for a check a machine runs on its own.
+not_due() {  # name
+    local name="$1"
+    rig_is_manual "$name" || return 1
+    local why
+    why="$(rig_human_gated_due "$name")" && { echo "$(date +%T)     $name is $why"; return 1; }
+    ran="$ran $name"
+    echo "$(date +%T) --- $name: NOTDUE (${why#not due: })"
+    rig_summary_line "$name" NOTDUE >> "$summary"
+    return 0
+}
+
 # A manual check this round does not run, on the board as still to do.
 pending() {  # name, why
     local name="$1"
     rig_wants "$name" || return 0
+    not_due "$name" && return 0
     ran="$ran $name"
     echo "$(date +%T) --- $name: PENDING ($2)"
     rig_summary_line "$name" PENDING >> "$summary"
@@ -1362,6 +1394,10 @@ check X3-file-failures-as-issues "$build/rig_file_failure" "$B"
 check X5-moved-file-found "$build/rig_moved_file" "$B"
 
 check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
+# Its log is read below for where the stick came back. One left by an
+# earlier run into this folder must not answer for a format that this
+# round did not run (not due) or could not start.
+rig_wants D2-format-stick-A && rm -f "$out/D2-format-stick-A.log"
 check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute
 # A stick that has just been formatted is mounted again wherever the
 # system puts it, and on Windows that is not where it was: Round 9's SD8
