@@ -193,9 +193,12 @@ On every platform, sandbox profile, a test stick:
       levels move.
 - [ ] Pause, then play again from where it stopped.
 - [ ] Click in the waveform: playback continues from the click.
-- [ ] Skip beats forward and back, and jump to a hot cue.
+- [ ] Skip beats forward and back (the arrow keys do this in the
+      fullscreen player only), and jump to a hot cue.
 - [ ] Next and previous track, from the player bar.
-- [ ] The volume slider, including from 0 back up.
+- [ ] The volume, set from the desktop's media player control (MPRIS on
+      Linux), including from 0 back up. Seabass has no volume slider of
+      its own.
 - [ ] The media keys (play/pause, next, previous), with Seabass not
       focused.
 - [ ] Let a track run to its end: the next one starts by itself.
